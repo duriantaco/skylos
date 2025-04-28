@@ -1,0 +1,14 @@
+/target/
+**/*.rs.bk                     
+*.dSYM/ 
+/Cargo.lock
+/venv/
+**/__pycache__/
+/*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+.dist/
+build/
+.eggs/
+/test/__pycache__/  

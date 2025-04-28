@@ -1,0 +1,24 @@
+[package]
+name = "skylos"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "skylos_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tree-sitter = "0.22"
+# Remove the non-existent feature
+tree-sitter-python = "0.23"
+petgraph = "0.6"
+walkdir = "2"
+rayon = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pyo3 = { version = "0.24", features = ["extension-module"] }
+
+[build-dependencies]
+cc = "1"
