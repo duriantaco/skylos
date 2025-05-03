@@ -1,6 +1,6 @@
 import subprocess, pathlib, sys, json
 
-SAMPLE = pathlib.Path(__file__).parent / "sample_proj"
+SAMPLE = pathlib.Path(__file__).parent / "sample_project"
 
 def test_cli_runs_and_json_ok(tmp_path):
     res = subprocess.run(
@@ -11,4 +11,3 @@ def test_cli_runs_and_json_ok(tmp_path):
     )
     data = json.loads(res.stdout)
     assert any(d["name"] == "module1.unused_function" for d in data)
-

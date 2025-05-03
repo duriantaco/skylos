@@ -4,12 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "skylos_core"
+name = "skylos"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 tree-sitter = "0.22"
-# Remove the non-existent feature
 tree-sitter-python = "0.23"
 petgraph = "0.6"
 walkdir = "2"
@@ -22,3 +21,6 @@ pyo3 = { version = "0.24", features = ["extension-module"] }
 
 [build-dependencies]
 cc = "1"
+
+[dev-dependencies]
+tempfile = "3.8.0"
