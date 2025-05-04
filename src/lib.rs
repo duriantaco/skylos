@@ -50,6 +50,8 @@ fn parse_file(
     let q_main = Query::new(&lang, MAIN_QUERY)?;
     let q_asn = Query::new(&lang, ASSIGN_QUERY)?;
     let q_return = Query::new(&lang, "(return_statement (identifier) @ret_val)")?;
+    let q_prop = Query::new(&lang, PROPERTY_QUERY)?;
+    let q_inst = Query::new(&lang, INSTANTIATION_QUERY)?;
 
     let module = module_name(root, file);
 
@@ -63,6 +65,8 @@ fn parse_file(
     let mut method_returns_self = HashMap::<String, String>::new();
 
     let mut cursor = QueryCursor::new();
+
+    let mut imported_classes = HashMap::<String, String>::new(); 
 
     for m in cursor.matches(&q_imp, tree.root_node(), bytes) {
         for c in m.captures {
@@ -81,22 +85,172 @@ fn parse_file(
             } else {
                 let rest = txt.strip_prefix("from ").unwrap_or(txt);
                 if let Some((pkg, items)) = rest.split_once(" import ") {
+                    let full_pkg = resolve_import_path(&module, pkg)?;
+
                     for itm in items.split(',') {
                         let itm = itm.trim();
                         if let Some(pos) = itm.find(" as ") {
                             let (name, al) = itm.split_at(pos);
-                            aliases.insert(
-                                al[4..].trim().into(),
-                                format!("{}.{}", pkg.trim(), name.trim()),
-                            );
+                            let alias = al[4..].trim();
+                            let full_name = format!("{}.{}", full_pkg, name.trim());
+                            aliases.insert(alias.into(), full_name.clone());
+                            imported_classes.insert(alias.into(), full_name);
                         } else {
-                            aliases.insert(itm.into(), format!("{}.{}", pkg.trim(), itm.trim()));
+                            let full_name = format!("{}.{}", full_pkg, itm);
+                            aliases.insert(itm.into(), full_name.clone());
+                            imported_classes.insert(itm.into(), full_name);
                         }
                     }
                 }
             }
         }
     }
+
+    fn resolve_import_path(current_module: &str, import_path: &str) -> Result<String> {
+        if import_path.starts_with('.') {
+            let parts: Vec<&str> = current_module.split('.').collect();
+            let dots = import_path.chars().take_while(|&c| c == '.').count();
+            
+            if dots > parts.len() {
+                return Err(anyhow::anyhow!("Relative import goes beyond top-level package"));
+            }
+            
+            let base_parts = &parts[..parts.len() - (dots - 1)];
+            let rest = import_path.trim_start_matches('.');
+            
+            if rest.is_empty() {
+                Ok(base_parts.join("."))
+            } else {
+                Ok(format!("{}.{}", base_parts.join("."), rest))
+            }
+        } else {
+            Ok(import_path.to_string())
+        }
+    }
+    
+    fn resolve_attribute_chain(
+        attr_chain: &str,
+        object_types: &HashMap<String, String>,
+        imported_classes: &HashMap<String, String>,
+    ) -> Option<(String, bool)> {
+        if let Some(cls) = object_types.get(attr_chain) {
+            let is_imported = imported_classes.contains_key(cls);
+            return Some((cls.clone(), is_imported));
+        }
+        
+        if let Some(dot_pos) = attr_chain.rfind('.') {
+            let parent = &attr_chain[..dot_pos];
+            if let Some((_, _)) = resolve_attribute_chain(parent, object_types, imported_classes) {
+                let full_attr = attr_chain;
+                if let Some(cls) = object_types.get(full_attr) {
+                    let is_imported = imported_classes.contains_key(cls);
+                    return Some((cls.clone(), is_imported));
+                }
+            }
+        }
+        
+        None
+    }
+    
+    fn process_chained_calls(
+        node: Node, 
+        bytes: &[u8], 
+        object_types: &HashMap<String, String>,
+        method_returns_self: &HashMap<String, String>,
+        imported_classes: &HashMap<String, String>,
+        module: &str,
+        calls: &mut HashSet<String>,
+        aliases: &HashMap<String, String>
+    ) -> Option<String> {
+        match node.kind() {
+            "call" => {
+                if let Some(func_node) = node.child_by_field_name("function") {
+                    match func_node.kind() {
+                        "attribute" => {
+                            if let (Some(obj_node), Some(attr_node)) = (
+                                func_node.child_by_field_name("object"),
+                                func_node.child_by_field_name("attribute")
+                            ) {
+                                let method_name = attr_node.utf8_text(bytes).ok()?;
+                                
+                                if obj_node.kind() == "call" {
+                                    if let Some(class_func) = obj_node.child_by_field_name("function") {
+                                        if let Ok(class_name) = class_func.utf8_text(bytes) {
+                                            if let Some(full_class_path) = imported_classes.get(class_name) {
+                                                let call_name = format!("{}.{}", full_class_path, method_name);
+                                                calls.insert(call_name);
+                                                
+                                                let class_only = full_class_path.split('.').last()?;
+                                                let key = format!("{}.{}", class_only, method_name);
+                                                return method_returns_self.get(&key)
+                                                    .map(|_| full_class_path.to_string());
+                                            } else {
+                                                let call_name = format!("{}.{}.{}", module, class_name, method_name);
+                                                calls.insert(call_name);
+                                                
+                                                let key = format!("{}.{}", class_name, method_name);
+                                                if method_returns_self.contains_key(&key) {
+                                                    return Some(class_name.to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                if let Some(obj_type) = process_chained_calls(
+                                    obj_node, 
+                                    bytes, 
+                                    object_types, 
+                                    method_returns_self,
+                                    imported_classes,
+                                    module, 
+                                    calls,
+                                    aliases
+                                ) {
+                                    if let Some(full_class_path) = imported_classes.get(&obj_type) {
+                                        let call_name = format!("{}.{}", full_class_path, method_name);
+                                        calls.insert(call_name);
+                                    } else {
+                                        let call_name = format!("{}.{}.{}", module, obj_type, method_name);
+                                        calls.insert(call_name);
+                                    }
+                                    
+                                    let class_name = obj_type.split('.').last().unwrap_or(&obj_type);
+                                    let key = format!("{}.{}", class_name, method_name);
+                                    
+                                    if let Some(returned_type) = method_returns_self.get(&key) {
+                                        return Some(returned_type.clone());
+                                    }
+                                    
+                                    return None;
+                                }
+                            }
+                        }
+                        "identifier" => {
+                            let func_name = func_node.utf8_text(bytes).ok()?;
+                            
+                            if let Some(full_path) = imported_classes.get(func_name) {
+                                calls.insert(format!("{}.__init__", full_path));
+                                return Some(full_path.clone());
+                            } else {
+                                calls.insert(format!("{}.{}", module, func_name));
+                                return Some(func_name.to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            }
+            "identifier" => {
+                let var_name = node.utf8_text(bytes).ok()?;
+                object_types.get(var_name).cloned()
+                    .or_else(|| imported_classes.get(var_name).cloned())
+            }
+            _ => None
+        }
+    }
+    
 
     for m in cursor.matches(&q_class, tree.root_node(), bytes) {
         let cls_node = m.captures.iter()
@@ -153,6 +307,81 @@ fn parse_file(
     }
 
     for m in cursor.matches(&q_asn, tree.root_node(), bytes) {
+        if let (Some(left_obj), Some(left_attr), Some(right_value)) = (
+            m.captures.iter()
+                .find(|c| q_asn.capture_names()[c.index as usize] == "left_obj")
+                .map(|c| c.node),
+            m.captures.iter()
+                .find(|c| q_asn.capture_names()[c.index as usize] == "left_attr")
+                .map(|c| c.node.utf8_text(bytes).ok())
+                .flatten(),
+            m.captures.iter()
+                .find(|c| q_asn.capture_names()[c.index as usize] == "right_value")
+                .map(|c| c.node)
+        ) {
+            if let Ok(obj_text) = left_obj.utf8_text(bytes) {
+                let var_name = format!("{}.{}", obj_text, left_attr);
+                
+                if right_value.kind() == "call" {
+                    if let Some(func_node) = right_value.child_by_field_name("function") {
+                        if let Ok(class_name) = func_node.utf8_text(bytes) {
+                            // resolve later lmao 
+                            object_types.insert(var_name, class_name.to_string());
+                            
+                            if let Some(full_path) = imported_classes.get(class_name) {
+                                calls.insert(format!("{}.__init__", full_path));
+                            } else {
+                                calls.insert(format!("{}.{}.__init__", module, class_name));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Handle simple assignments like `obj = ClassName()`
+        if let (Some(var), Some(value_node)) = (
+            m.captures.iter()
+                .find(|c| q_asn.capture_names()[c.index as usize] == "var")
+                .map(|c| c.node.utf8_text(bytes).ok())
+                .flatten(),
+            m.captures.iter()
+                .find(|c| c.node.kind() == "call")
+                .map(|c| c.node)
+        ) {
+            if let Some(func_node) = value_node.child_by_field_name("function") {
+                if let Ok(class_name) = func_node.utf8_text(bytes) {
+                    object_types.insert(var.to_string(), class_name.to_string());
+                    
+                    if let Some(full_path) = imported_classes.get(class_name) {
+                        calls.insert(format!("{}.__init__", full_path));
+                    } else {
+                        calls.insert(format!("{}.{}.__init__", module, class_name));
+                    }
+                }
+            }
+        }
+        
+        if let (Some(var), Some(value_node)) = (
+            m.captures.iter()
+                .find(|c| q_asn.capture_names()[c.index as usize] == "var")
+                .map(|c| c.node.utf8_text(bytes).ok())
+                .flatten(),
+            m.captures.iter()
+                .find(|c| c.node.kind() == "call")
+                .map(|c| c.node)
+        ) {
+            if let Some(func_node) = value_node.child_by_field_name("function") {
+                if let Ok(class_name) = func_node.utf8_text(bytes) {
+                    if let Some(full_path) = imported_classes.get(class_name) {
+                        object_types.insert(var.to_string(), full_path.split('.').last().unwrap_or(class_name).to_string());
+                    } else {
+                        object_types.insert(var.to_string(), class_name.to_string());
+                    }
+                }
+            }
+        }
+        
         if let (Some(var), Some(cls)) = (
             m.captures.iter()
                 .find(|c| q_asn.capture_names()[c.index as usize] == "var")
@@ -240,58 +469,6 @@ fn parse_file(
         }
     }
 
-    fn process_chained_calls(
-        node: Node, 
-        bytes: &[u8], 
-        object_types: &HashMap<String, String>,
-        method_returns_self: &HashMap<String, String>,
-        module: &str,
-        calls: &mut HashSet<String>
-    ) -> Option<String> {
-        match node.kind() {
-            "call" => {
-                if let Some(func_node) = node.child_by_field_name("function") {
-                    match func_node.kind() {
-                        "attribute" => {
-                            if let (Some(obj_node), Some(attr_node)) = (
-                                func_node.child_by_field_name("object"),
-                                func_node.child_by_field_name("attribute")
-                            ) {
-                                let method_name = attr_node.utf8_text(bytes).ok()?;
-                                
-                                if let Some(obj_type) = process_chained_calls(
-                                    obj_node, 
-                                    bytes, 
-                                    object_types, 
-                                    method_returns_self, 
-                                    module, 
-                                    calls
-                                ) {
-                                    let call_name = format!("{}.{}.{}", module, obj_type, method_name);
-                                    calls.insert(call_name);
-                                    
-                                    let key = format!("{}.{}", obj_type, method_name);
-                                    return method_returns_self.get(&key).cloned();
-                                }
-                            }
-                        }
-                        "identifier" => {
-                            let func_name = func_node.utf8_text(bytes).ok()?;
-                            calls.insert(format!("{}.{}", module, func_name));
-                        }
-                        _ => {}
-                    }
-                }
-                None
-            }
-            "identifier" => {
-                let var_name = node.utf8_text(bytes).ok()?;
-                object_types.get(var_name).cloned()
-            }
-            _ => None
-        }
-    }
-
     for m in cursor.matches(&q_call, tree.root_node(), bytes) {
         if let Some(call_node) = m.captures.iter()
             .find(|c| c.node.kind() == "call")
@@ -301,10 +478,32 @@ fn parse_file(
                 call_node, 
                 bytes, 
                 &object_types, 
-                &method_returns_self, 
+                &method_returns_self,
+                &imported_classes,
                 &module, 
-                &mut calls
+                &mut calls,
+                &aliases 
             );
+        }
+        
+        if let Some(attr_node) = m.captures.iter()
+            .find(|c| c.node.kind() == "attribute")
+            .map(|c| c.node)
+        {
+            if let (Some(obj_node), Some(attr)) = (
+                attr_node.child_by_field_name("object"),
+                attr_node.child_by_field_name("attribute")
+            ) {
+                if let (Ok(obj_text), Ok(attr_text)) = (
+                    obj_node.utf8_text(bytes),
+                    attr.utf8_text(bytes)
+                ) {
+                    if let Some(cls) = object_types.get(obj_text) {
+                        let potential_property = format!("{}.{}.{}", module, cls, attr_text);
+                        calls.insert(potential_property);
+                    }
+                }
+            }
         }
         
         if let Some(func) = m.captures.iter()
@@ -323,22 +522,30 @@ fn parse_file(
             }
         }
 
-        if let (Some(obj), Some(method)) = (
+        if let (Some(obj_node), Some(method)) = (
             m.captures.iter()
                 .find(|c| q_call.capture_names()[c.index as usize] == "object")
-                .map(|c| c.node.utf8_text(bytes).ok())
-                .flatten(),
+                .map(|c| c.node),
             m.captures.iter()
                 .find(|c| q_call.capture_names()[c.index as usize] == "method_name")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten()
         ) {
-            if let Some(cls) = object_types.get(obj) {
-                calls.insert(format!("{}.{}.{}", module, cls, method));
-            } else if let Some(base) = aliases.get(obj) {
-                calls.insert(format!("{}.{}", base, method));
-            } else {
-                calls.insert(format!("{}.{}", obj, method));
+            if let Ok(obj_text) = obj_node.utf8_text(bytes) {
+                if let Some((cls, is_imported)) = resolve_attribute_chain(obj_text, &object_types, &imported_classes) {
+                    if is_imported {
+                        if let Some(full_path) = imported_classes.get(&cls) {
+                            calls.insert(format!("{}.{}", full_path, method));
+                        }
+                    } else {
+                        calls.insert(format!("{}.{}.{}", module, cls, method));
+                    }
+                } else if let Some(base) = aliases.get(obj_text) {
+                    calls.insert(format!("{}.{}", base, method));
+                } else {
+                    // fallback
+                    calls.insert(format!("{}.{}", obj_text, method));
+                }
             }
         }
     }
@@ -383,6 +590,31 @@ fn parse_file(
                         calls.insert(format!("{}.{}", base, method));
                     } else {
                         calls.insert(format!("{}.{}", obj, method));
+                    }
+                }
+            }
+        }
+    }
+
+    // property access
+    for m in cursor.matches(&q_prop, tree.root_node(), bytes) {
+        if let (Some(obj_node), Some(prop)) = (
+            m.captures.iter()
+                .find(|c| q_prop.capture_names()[c.index as usize] == "prop_object")
+                .map(|c| c.node),
+            m.captures.iter()
+                .find(|c| q_prop.capture_names()[c.index as usize] == "prop_name")
+                .map(|c| c.node.utf8_text(bytes).ok())
+                .flatten()
+        ) {
+            if let Ok(obj_text) = obj_node.utf8_text(bytes) {
+                if let Some((cls, is_imported)) = resolve_attribute_chain(obj_text, &object_types, &imported_classes) {
+                    if is_imported {
+                        if let Some(full_path) = imported_classes.get(&cls) {
+                            calls.insert(format!("{}.{}", full_path, prop));
+                        }
+                    } else {
+                        calls.insert(format!("{}.{}.{}", module, cls, prop));
                     }
                 }
             }
@@ -803,4 +1035,82 @@ print(obj.used_property)
     assert!(calls.contains(&"property".to_string()) || calls.contains(&"test.property".to_string()));
 }
 
+#[test]
+fn test_star_imports() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("test.py");
+    fs::write(&file_path, r#"
+from math import *
+
+sqrt(16)
+"#).unwrap();
+    
+    let (_, calls) = parse_file(dir.path(), &file_path).unwrap();
+    assert!(calls.contains(&"test.sqrt".to_string()) || calls.contains(&"math.sqrt".to_string()));
+}
+
+#[test]
+fn test_multiple_decorators() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("test.py");
+    fs::write(&file_path, r#"
+def decorator1(func):
+    return func
+
+def decorator2(func):
+    return func
+
+@decorator1
+@decorator2
+def decorated_func():
+    pass
+"#).unwrap();
+    
+    let (_, calls) = parse_file(dir.path(), &file_path).unwrap();
+    
+    assert!(calls.contains(&"test.decorator1".to_string()));
+    assert!(calls.contains(&"test.decorator2".to_string()));
+}
+
+#[test]
+fn test_comprehensions_with_calls() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("test.py");
+    fs::write(&file_path, r#"
+def process(x):
+    return x * 2
+
+def unused(x):
+    return x
+
+result = [process(x) for x in range(10)]
+"#).unwrap();
+    
+    let (_, calls) = parse_file(dir.path(), &file_path).unwrap();
+    
+    assert!(calls.contains(&"test.process".to_string()));
+    assert!(!calls.contains(&"test.unused".to_string()));
+}
+
+#[test]
+fn test_context_managers() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("test.py");
+    fs::write(&file_path, r#"
+class MyContext:
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+with MyContext() as ctx:
+    pass
+"#).unwrap();
+    
+    let (defs, calls) = parse_file(dir.path(), &file_path).unwrap();
+    
+    assert!(calls.contains(&"test.MyContext.__enter__".to_string()));
+    assert!(calls.contains(&"test.MyContext.__exit__".to_string()));
+}
 }
