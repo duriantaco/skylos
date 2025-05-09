@@ -16,7 +16,6 @@ class MyClass:
     def unused_method(self):
         return "I'm not used"
 
-# Create an instance and call used_method
 obj = MyClass()
 obj.used_method()
             """)

@@ -1,3 +1,4 @@
+# module2.py
 from module1 import used_function
 
 def another_unused():
