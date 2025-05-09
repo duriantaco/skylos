@@ -108,25 +108,29 @@ fn parse_file(
 
     fn resolve_import_path(current_module: &str, import_path: &str) -> Result<String> {
         if import_path.starts_with('.') {
-            let parts: Vec<&str> = current_module.split('.').collect();
+            let mut parts: Vec<&str> = current_module.split('.').collect();
+    
+            // remove the module filename ⇒ operate on the *package* path
+            parts.pop();                                    // ← add this line
+    
             let dots = import_path.chars().take_while(|&c| c == '.').count();
-            
-            if dots > parts.len() {
+            if dots > parts.len() + 1 {
                 return Err(anyhow::anyhow!("Relative import goes beyond top-level package"));
             }
-            
+    
             let base_parts = &parts[..parts.len() - (dots - 1)];
             let rest = import_path.trim_start_matches('.');
-            
-            if rest.is_empty() {
-                Ok(base_parts.join("."))
+    
+            Ok(if rest.is_empty() {
+                base_parts.join(".")
             } else {
-                Ok(format!("{}.{}", base_parts.join("."), rest))
-            }
+                format!("{}.{}", base_parts.join("."), rest)
+            })
         } else {
             Ok(import_path.to_string())
         }
     }
+    
     
     fn resolve_attribute_chain(
         attr_chain: &str,
@@ -624,6 +628,14 @@ fn parse_file(
     Ok((defs, calls))
 }
 
+fn collapsed(pkg_call: &str) -> String {
+    let mut pieces: Vec<&str> = pkg_call.split('.').collect();
+    if pieces.len() > 2 {
+        pieces.remove(pieces.len() - 2);
+    }
+    pieces.join(".")
+}
+
 pub fn analyze_dir(path: &str) -> Result<Vec<Unreachable>> {
     let input = PathBuf::from(path).canonicalize()?;
 
@@ -648,20 +660,25 @@ pub fn analyze_dir(path: &str) -> Result<Vec<Unreachable>> {
         })
         .collect();
 
-    let mut all_calls = HashSet::<String>::new();
-    for (_, _, calls) in &parsed {
-        all_calls.extend(calls.iter().cloned());
-    }
+        let mut all_calls = HashSet::<String>::new();
+        for (_, _, calls) in &parsed {
+            for c in calls {
+                all_calls.insert(c.clone());
+                all_calls.insert(collapsed(c));
+            }
+        }
 
     let mut dead = Vec::<Unreachable>::new();
     for (path, defs, _) in parsed {
         for (def, line) in defs {
-            if def.ends_with(".__init__") || def.ends_with(".__str__") || 
-               (def.contains(".__") && def.ends_with("__")) {
+            if def.ends_with(".__init__") || def.ends_with(".__str__")
+                || (def.contains(".__") && def.ends_with("__"))
+            {
                 continue;
             }
-            
-            if !all_calls.contains(&def) {
+        
+            let def_alt = collapsed(&def);
+            if !all_calls.contains(&def) && !all_calls.contains(&def_alt) {
                 dead.push(Unreachable {
                     file: path.display().to_string(),
                     name: def,
@@ -669,7 +686,7 @@ pub fn analyze_dir(path: &str) -> Result<Vec<Unreachable>> {
                 });
             }
         }
-    }
+    }    
     
     Ok(dead)
 }
@@ -874,7 +891,7 @@ class MyClass:
 
 obj = MyClass()
 method_ref = obj.my_method
-method_ref()  # This should mark my_method as used
+method_ref()
 "#).unwrap();
     
     let (defs, calls) = parse_file(dir.path(), &file_path).unwrap();
@@ -922,7 +939,7 @@ class MyClass:
     def __str__(self):
         return "MyClass"
     
-    def __custom__(self):  # Non-standard dunder
+    def __custom__(self):
         return "custom"
     
     def regular_method(self):
