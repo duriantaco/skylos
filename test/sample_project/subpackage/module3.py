@@ -1,3 +1,4 @@
+## sample_project/subpackage/module3.py
 from module1 import used_function
 
 class TestClass:
