@@ -13,7 +13,7 @@ mod queries;
 use queries::*; 
 
 mod types;
-use types::Unreachable;
+use types::{Unreachable, UnusedImport};
 
 mod utils;
 use utils::{ts_lang, module_name, has_parent_of_kind};
@@ -24,13 +24,13 @@ extern "C" { fn tree_sitter_python() -> Language; }
 fn parse_file(
     root: &Path,
     file: &Path,
-) -> Result<(Vec<(String, usize)>, HashSet<String>)> {
+) -> Result<(Vec<(String, usize)>, HashSet<String>, Vec<(String, usize)>, HashSet<String>)> {
     if file.file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n == "__init__.py")
         && std::fs::read_to_string(file)?.trim().is_empty()
     {
-        return Ok((vec![], HashSet::new()));
+        return Ok((vec![], HashSet::new(), vec![], HashSet::new()));
     }
 
     let src = std::fs::read_to_string(file)?;
@@ -52,7 +52,8 @@ fn parse_file(
     let q_return = Query::new(&lang, "(return_statement (identifier) @ret_val)")?;
     let q_prop = Query::new(&lang, PROPERTY_QUERY)?;
     let q_inst = Query::new(&lang, INSTANTIATION_QUERY)?;
-
+    let q_ident = Query::new(&lang, IDENT_QUERY)?;   
+    
     let module = module_name(root, file);
 
     let mut defs = Vec::<(String, usize)>::new();
@@ -60,26 +61,34 @@ fn parse_file(
     let mut aliases = HashMap::<String, String>::new();
     let mut object_types = HashMap::<String, String>::new();
     let mut method_vars = HashMap::<String, (String, String)>::new();
+
     let mut seen_fn = HashSet::<usize>::new();
     let mut class_methods = HashMap::<String, HashSet<String>>::new();
     let mut method_returns_self = HashMap::<String, String>::new();
 
     let mut cursor = QueryCursor::new();
-
     let mut imported_classes = HashMap::<String, String>::new(); 
+    
+    let mut import_defs = Vec::<(String, usize)>::new();
+    let mut used_idents = HashSet::<String>::new();
 
     for m in cursor.matches(&q_imp, tree.root_node(), bytes) {
         for c in m.captures {
             let txt = c.node.utf8_text(bytes)?;
+            let line_number = c.node.start_position().row + 1;
+            
             if c.node.kind() == "import_statement" {
                 for item in txt.trim_start_matches("import ").split(',') {
                     let item = item.trim();
                     if let Some(pos) = item.find(" as ") {
                         let (path, al) = item.split_at(pos);
-                        aliases.insert(al[4..].trim().into(), path.trim().into());
+                        let alias = al[4..].trim();
+                        aliases.insert(alias.into(), path.trim().into());
+                        import_defs.push((alias.to_string(), line_number));
                     } else {
                         let key = item.split('.').last().unwrap_or(item).trim();
                         aliases.insert(key.into(), item.into());
+                        import_defs.push((key.to_string(), line_number));
                     }
                 }
             } else {
@@ -95,10 +104,12 @@ fn parse_file(
                             let full_name = format!("{}.{}", full_pkg, name.trim());
                             aliases.insert(alias.into(), full_name.clone());
                             imported_classes.insert(alias.into(), full_name);
+                            import_defs.push((alias.to_string(), line_number));
                         } else {
                             let full_name = format!("{}.{}", full_pkg, itm);
                             aliases.insert(itm.into(), full_name.clone());
                             imported_classes.insert(itm.into(), full_name);
+                            import_defs.push((itm.to_string(), line_number));
                         }
                     }
                 }
@@ -343,7 +354,6 @@ fn parse_file(
             }
         }
         
-        // Handle simple assignments like `obj = ClassName()`
         if let (Some(var), Some(value_node)) = (
             m.captures.iter()
                 .find(|c| q_asn.capture_names()[c.index as usize] == "var")
@@ -515,6 +525,8 @@ fn parse_file(
             .map(|c| c.node.utf8_text(bytes).ok())
             .flatten() 
         {
+            used_idents.insert(func.to_string());
+            
             if let Some((cls, method)) = method_vars.get(func) {
                 calls.insert(format!("{}.{}.{}", module, cls, method));
             } else {
@@ -536,6 +548,8 @@ fn parse_file(
                 .flatten()
         ) {
             if let Ok(obj_text) = obj_node.utf8_text(bytes) {
+                used_idents.insert(obj_text.to_string());
+                
                 if let Some((cls, is_imported)) = resolve_attribute_chain(obj_text, &object_types, &imported_classes) {
                     if is_imported {
                         if let Some(full_path) = imported_classes.get(&cls) {
@@ -575,6 +589,7 @@ fn parse_file(
                     .map(|c| c.node.utf8_text(bytes).ok())
                     .flatten() 
                 {
+                    used_idents.insert(func.to_string());
                     calls.insert(format!("{}.{}", module, func));
                 }
 
@@ -588,6 +603,8 @@ fn parse_file(
                         .map(|c| c.node.utf8_text(bytes).ok())
                         .flatten()
                 ) {
+                    used_idents.insert(obj.to_string());
+                    
                     if let Some(cls) = object_types.get(obj) {
                         calls.insert(format!("{}.{}.{}", module, cls, method));
                     } else if let Some(base) = aliases.get(obj) {
@@ -612,6 +629,8 @@ fn parse_file(
                 .flatten()
         ) {
             if let Ok(obj_text) = obj_node.utf8_text(bytes) {
+                used_idents.insert(obj_text.to_string());
+                
                 if let Some((cls, is_imported)) = resolve_attribute_chain(obj_text, &object_types, &imported_classes) {
                     if is_imported {
                         if let Some(full_path) = imported_classes.get(&cls) {
@@ -625,7 +644,16 @@ fn parse_file(
         }
     }
 
-    Ok((defs, calls))
+    // Collect all identifiers
+    for m in cursor.matches(&q_ident, tree.root_node(), bytes) {
+        for capture in m.captures {
+            if let Ok(ident) = capture.node.utf8_text(bytes) {
+                used_idents.insert(ident.to_string());
+            }
+        }
+    }
+
+    Ok((defs, calls, import_defs, used_idents))
 }
 
 fn collapsed(pkg_call: &str) -> String {
@@ -636,7 +664,7 @@ fn collapsed(pkg_call: &str) -> String {
     pieces.join(".")
 }
 
-pub fn analyze_dir(path: &str) -> Result<Vec<Unreachable>> {
+pub fn analyze_dir(path: &str) -> Result<(Vec<Unreachable>, Vec<UnusedImport>)> {
     let input = PathBuf::from(path).canonicalize()?;
 
     let (root, files): (PathBuf, Vec<PathBuf>) = if input.is_file() {
@@ -656,20 +684,23 @@ pub fn analyze_dir(path: &str) -> Result<Vec<Unreachable>> {
     let parsed: Vec<_> = files.par_iter()
         .filter_map(|p| {
             let r = Arc::clone(&root);
-            parse_file(&r, p).ok().map(|(d, c)| (p.clone(), d, c))
+            parse_file(&r, p).ok().map(|(d, c, i, u)| (p.clone(), d, c, i, u))
         })
         .collect();
 
-        let mut all_calls = HashSet::<String>::new();
-        for (_, _, calls) in &parsed {
-            for c in calls {
-                all_calls.insert(c.clone());
-                all_calls.insert(collapsed(c));
-            }
+    let mut all_calls = HashSet::<String>::new();
+    for (_, _, calls, _, _) in &parsed {
+        for c in calls {
+            all_calls.insert(c.clone());
+            all_calls.insert(collapsed(c));
         }
+    }
 
     let mut dead = Vec::<Unreachable>::new();
-    for (path, defs, _) in parsed {
+    let mut unused_imports = Vec::<UnusedImport>::new();
+    
+    for (path, defs, _, imports, used_idents) in parsed {
+        // Check for unused functions
         for (def, line) in defs {
             if def.ends_with(".__init__") || def.ends_with(".__str__")
                 || (def.contains(".__") && def.ends_with("__"))
@@ -686,15 +717,83 @@ pub fn analyze_dir(path: &str) -> Result<Vec<Unreachable>> {
                 });
             }
         }
-    }    
+        
+        // Check for unused imports with better detection
+for (import_name, line) in &imports {
+    if import_name == "*" {
+        continue;
+    }
     
-    Ok(dead)
+    // Re-parse the file to get identifiers excluding import statements
+    let mut import_usage_idents = HashSet::<String>::new();
+    
+    if let Ok(src) = std::fs::read_to_string(&path) {
+        let bytes = src.as_bytes();
+        let mut parser = Parser::new();
+        let _ = parser.set_language(&ts_lang());
+        
+        if let Some(tree) = parser.parse(&src, None) {
+            let lang = ts_lang();
+            if let Ok(q_ident) = Query::new(&lang, IDENT_QUERY) {
+                let mut cursor = QueryCursor::new();
+                
+                for m in cursor.matches(&q_ident, tree.root_node(), bytes) {
+                    for capture in m.captures {
+                        let ident_node = capture.node;
+                        
+                        // Check if this identifier is inside an import statement
+                        let mut parent = ident_node.parent();
+                        let mut in_import = false;
+                        
+                        while let Some(p) = parent {
+                            let kind = p.kind();
+                            if kind == "import_statement" || kind == "import_from_statement" {
+                                in_import = true;
+                                break;
+                            }
+                            parent = p.parent();
+                        }
+                        
+                        // Only add identifiers that are NOT in import statements
+                        if !in_import {
+                            if let Ok(ident) = ident_node.utf8_text(bytes) {
+                                import_usage_idents.insert(ident.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check if the import is actually used using the filtered identifiers
+    let is_used = import_usage_idents.contains(import_name) || 
+                  // Check if it's used as part of an attribute access
+                  import_usage_idents.iter().any(|ident| ident.starts_with(&format!("{}.", import_name)));
+    
+    if !is_used {
+        unused_imports.push(UnusedImport {
+            file: path.display().to_string(),
+            name: import_name.clone(),
+            line: *line,
+        });
+    }
+        }
+    }
+    
+    Ok((dead, unused_imports))
 }
 
 #[pyfunction]
 fn analyze(path: String) -> PyResult<String> {
     match analyze_dir(&path) {
-        Ok(result) => Ok(serde_json::to_string_pretty(&result).unwrap()),
+        Ok((dead, unused_imports)) => {
+            let result = serde_json::json!({
+                "unused_functions": dead,
+                "unused_imports": unused_imports
+            });
+            Ok(serde_json::to_string_pretty(&result).unwrap())
+        },
         Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}", e))),
     }
 }
@@ -710,7 +809,6 @@ fn _core(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 // It uses the `tempfile` crate to create temporary directories and files for testing purposes.
 // The tests cover various scenarios, including parsing files, detecting function and method calls,
 // handling decorators, and checking for dead code.
-
 
 #[cfg(test)]
 mod tests {
@@ -735,13 +833,14 @@ mod tests {
         let result = parse_file(dir.path(), &init_path).unwrap();
         assert!(result.0.is_empty());
         assert!(result.1.is_empty());
+        assert!(result.2.is_empty());
     }
 
     #[test]
-fn test_simple_function_detection() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    fn test_simple_function_detection() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 def used_function():
     return "Used"
 
@@ -750,21 +849,21 @@ def unused_function():
 
 print(used_function())
 "#).unwrap();
-    
-    let (defs, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert_eq!(defs.len(), 2);
-    
-    assert!(calls.contains(&"test.used_function".to_string()));
-    
-    assert!(!calls.contains(&"test.unused_function".to_string()));
-}
+        
+        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert_eq!(defs.len(), 2);
+        
+        assert!(calls.contains(&"test.used_function".to_string()));
+        
+        assert!(!calls.contains(&"test.unused_function".to_string()));
+    }
 
-#[test]
-fn test_class_method_detection() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_class_method_detection() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 class TestClass:
     def __init__(self):
         self.data = "test"
@@ -778,24 +877,24 @@ class TestClass:
 obj = TestClass()
 obj.used_method()
 "#).unwrap();
-    
-    let (defs, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(defs.iter().any(|(name, _)| name == "test.TestClass.__init__"));
-    assert!(defs.iter().any(|(name, _)| name == "test.TestClass.used_method"));
-    assert!(defs.iter().any(|(name, _)| name == "test.TestClass.unused_method"));
-    
-    assert!(calls.contains(&"test.TestClass.__init__".to_string()));
-    assert!(calls.contains(&"test.TestClass.used_method".to_string()));
-    assert!(!calls.contains(&"test.TestClass.unused_method".to_string()));
-}
+        
+        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(defs.iter().any(|(name, _)| name == "test.TestClass.__init__"));
+        assert!(defs.iter().any(|(name, _)| name == "test.TestClass.used_method"));
+        assert!(defs.iter().any(|(name, _)| name == "test.TestClass.unused_method"));
+        
+        assert!(calls.contains(&"test.TestClass.__init__".to_string()));
+        assert!(calls.contains(&"test.TestClass.used_method".to_string()));
+        assert!(!calls.contains(&"test.TestClass.unused_method".to_string()));
+    }
 
-#[test]
-fn test_analyze_dir_integration() {
-    let dir = tempdir().unwrap();
-    
-    let file_path = dir.path().join("example.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_analyze_dir_integration() {
+        let dir = tempdir().unwrap();
+        
+        let file_path = dir.path().join("example.py");
+        fs::write(&file_path, r#"
 def used_function():
     return "used"
 
@@ -804,18 +903,18 @@ def unused_function():
 
 used_function()
 "#).unwrap();
-    
-    let result = analyze_dir(dir.path().to_str().unwrap()).unwrap();
-    
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].name, "example.unused_function");
-}
+        
+        let (dead, _) = analyze_dir(dir.path().to_str().unwrap()).unwrap();
+        
+        assert_eq!(dead.len(), 1);
+        assert_eq!(dead[0].name, "example.unused_function");
+    }
 
-#[test]
-fn test_import_alias_detection() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_import_alias_detection() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 import os.path as osp
 from datetime import datetime as dt
 
@@ -824,18 +923,18 @@ def test_func():
 
 dt.now()
 "#).unwrap();
-    
-    let (_, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(calls.contains(&"os.path.join".to_string()));
-    assert!(calls.contains(&"datetime.datetime.now".to_string()));
-}
+        
+        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(calls.contains(&"os.path.join".to_string()));
+        assert!(calls.contains(&"datetime.datetime.now".to_string()));
+    }
 
-#[test]
-fn test_decorator_usage() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_decorator_usage() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 def my_decorator(func):
     return func
 
@@ -843,18 +942,18 @@ def my_decorator(func):
 def decorated_func():
     pass
 "#).unwrap();
-    
-    let (defs, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(calls.contains(&"test.my_decorator".to_string()));
-    assert_eq!(defs.len(), 2); 
-}
+        
+        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(calls.contains(&"test.my_decorator".to_string()));
+        assert_eq!(defs.len(), 2); 
+    }
 
-#[test]
-fn test_main_block_detection() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_main_block_detection() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 def main():
     return "Main function"
 
@@ -864,24 +963,24 @@ def helper():
 if __name__ == "__main__":
     main()
 "#).unwrap();
-    
-    let (_, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(calls.contains(&"test.main".to_string()));
-    assert!(!calls.contains(&"test.helper".to_string()));
-}
+        
+        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(calls.contains(&"test.main".to_string()));
+        assert!(!calls.contains(&"test.helper".to_string()));
+    }
 
-#[test]
-fn test_nonexistent_file() {
-    let result = analyze_dir("/nonexistent/path");
-    assert!(result.is_err());
-}
+    #[test]
+    fn test_nonexistent_file() {
+        let result = analyze_dir("/nonexistent/path");
+        assert!(result.is_err());
+    }
 
-#[test]
-fn test_method_reference_assignment() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_method_reference_assignment() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 class MyClass:
     def my_method(self):
         return "test"
@@ -893,45 +992,45 @@ obj = MyClass()
 method_ref = obj.my_method
 method_ref()
 "#).unwrap();
-    
-    let (defs, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(calls.contains(&"test.MyClass.my_method".to_string()));
-    assert!(!calls.contains(&"test.MyClass.unused_method".to_string()));
-}
+        
+        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(calls.contains(&"test.MyClass.my_method".to_string()));
+        assert!(!calls.contains(&"test.MyClass.unused_method".to_string()));
+    }
 
-#[test]
-fn test_cross_module_imports() {
-    let dir = tempdir().unwrap();
-    
-    let module_a = dir.path().join("module_a.py");
-    fs::write(&module_a, r#"
+    #[test]
+    fn test_cross_module_imports() {
+        let dir = tempdir().unwrap();
+        
+        let module_a = dir.path().join("module_a.py");
+        fs::write(&module_a, r#"
 def used_function():
     return "used"
 
 def unused_function():
     return "unused"
 "#).unwrap();
-    
-    let module_b = dir.path().join("module_b.py");
-    fs::write(&module_b, r#"
+        
+        let module_b = dir.path().join("module_b.py");
+        fs::write(&module_b, r#"
 from module_a import used_function
 
 used_function()
 "#).unwrap();
-    
-    let result = analyze_dir(dir.path().to_str().unwrap()).unwrap();
-    
-    assert!(result.iter().any(|u| u.name == "module_a.unused_function"));
-    // used_function should NOT be in the dead code list
-    assert!(!result.iter().any(|u| u.name == "module_a.used_function"));
-}
+        
+        let (dead, _) = analyze_dir(dir.path().to_str().unwrap()).unwrap();
+        
+        assert!(dead.iter().any(|u| u.name == "module_a.unused_function"));
+        // used_function should NOT be in the dead code list
+        assert!(!dead.iter().any(|u| u.name == "module_a.used_function"));
+    }
 
-#[test]
-fn test_dunder_methods() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_dunder_methods() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 class MyClass:
     def __init__(self):
         pass
@@ -945,19 +1044,19 @@ class MyClass:
     def regular_method(self):
         return "regular"
 "#).unwrap();
-    
-    let (defs, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(calls.contains(&"test.MyClass.__init__".to_string()));
-    assert!(calls.contains(&"test.MyClass.__str__".to_string()));
-    assert!(calls.contains(&"test.MyClass.__custom__".to_string()));
-}
+        
+        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(calls.contains(&"test.MyClass.__init__".to_string()));
+        assert!(calls.contains(&"test.MyClass.__str__".to_string()));
+        assert!(calls.contains(&"test.MyClass.__custom__".to_string()));
+    }
 
-#[test]
-fn test_nested_functions() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_nested_functions() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 def outer_function():
     def inner_function():
         return "inner"
@@ -969,20 +1068,20 @@ def standalone_function():
 
 outer_function()
 "#).unwrap();
-    
-    let (defs, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert_eq!(defs.len(), 2);
-    assert!(defs.iter().any(|(name, _)| name == "test.outer_function"));
-    assert!(defs.iter().any(|(name, _)| name == "test.standalone_function"));
-    assert!(!defs.iter().any(|(name, _)| name.contains("inner_function")));
-}
+        
+        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert_eq!(defs.len(), 2);
+        assert!(defs.iter().any(|(name, _)| name == "test.outer_function"));
+        assert!(defs.iter().any(|(name, _)| name == "test.standalone_function"));
+        assert!(!defs.iter().any(|(name, _)| name.contains("inner_function")));
+    }
 
-#[test]
-fn test_complex_imports() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_complex_imports() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 import sys, os
 from datetime import datetime, timedelta as td
 import numpy as np
@@ -993,21 +1092,21 @@ datetime.now()
 td(days=1)
 np.array([1, 2, 3])
 "#).unwrap();
-    
-    let (_, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(calls.contains(&"sys.exit".to_string()));
-    assert!(calls.contains(&"os.path.join".to_string()));
-    assert!(calls.contains(&"datetime.datetime.now".to_string()));
-    assert!(calls.contains(&"datetime.timedelta".to_string()));
-    assert!(calls.contains(&"numpy.array".to_string()));
-}
+        
+        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(calls.contains(&"sys.exit".to_string()));
+        assert!(calls.contains(&"os.path.join".to_string()));
+        assert!(calls.contains(&"datetime.datetime.now".to_string()));
+        assert!(calls.contains(&"datetime.timedelta".to_string()));
+        assert!(calls.contains(&"numpy.array".to_string()));
+    }
 
-#[test]
-fn test_chained_method_calls() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_chained_method_calls() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 class Builder:
     def step1(self):
         return self
@@ -1021,19 +1120,19 @@ class Builder:
 builder = Builder()
 builder.step1().step2()
 "#).unwrap();
-    
-    let (defs, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(calls.contains(&"test.Builder.step1".to_string()));
-    assert!(calls.contains(&"test.Builder.step2".to_string()));
-    assert!(!calls.contains(&"test.Builder.unused_method".to_string()));
-}
+        
+        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(calls.contains(&"test.Builder.step1".to_string()));
+        assert!(calls.contains(&"test.Builder.step2".to_string()));
+        assert!(!calls.contains(&"test.Builder.unused_method".to_string()));
+    }
 
-#[test]
-fn test_property_decorator() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_property_decorator() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 class MyClass:
     @property
     def used_property(self):
@@ -1046,31 +1145,31 @@ class MyClass:
 obj = MyClass()
 print(obj.used_property)
 "#).unwrap();
-    
-    let (_, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(calls.contains(&"property".to_string()) || calls.contains(&"test.property".to_string()));
-}
+        
+        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(calls.contains(&"property".to_string()) || calls.contains(&"test.property".to_string()));
+    }
 
-#[test]
-fn test_star_imports() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_star_imports() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 from math import *
 
 sqrt(16)
 "#).unwrap();
-    
-    let (_, calls) = parse_file(dir.path(), &file_path).unwrap();
-    assert!(calls.contains(&"test.sqrt".to_string()) || calls.contains(&"math.sqrt".to_string()));
-}
+        
+        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        assert!(calls.contains(&"test.sqrt".to_string()) || calls.contains(&"math.sqrt".to_string()));
+    }
 
-#[test]
-fn test_multiple_decorators() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_multiple_decorators() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 def decorator1(func):
     return func
 
@@ -1082,18 +1181,18 @@ def decorator2(func):
 def decorated_func():
     pass
 "#).unwrap();
-    
-    let (_, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(calls.contains(&"test.decorator1".to_string()));
-    assert!(calls.contains(&"test.decorator2".to_string()));
-}
+        
+        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(calls.contains(&"test.decorator1".to_string()));
+        assert!(calls.contains(&"test.decorator2".to_string()));
+    }
 
-#[test]
-fn test_comprehensions_with_calls() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_comprehensions_with_calls() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 def process(x):
     return x * 2
 
@@ -1102,18 +1201,18 @@ def unused(x):
 
 result = [process(x) for x in range(10)]
 "#).unwrap();
-    
-    let (_, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(calls.contains(&"test.process".to_string()));
-    assert!(!calls.contains(&"test.unused".to_string()));
-}
+        
+        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(calls.contains(&"test.process".to_string()));
+        assert!(!calls.contains(&"test.unused".to_string()));
+    }
 
-#[test]
-fn test_context_managers() {
-    let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test.py");
-    fs::write(&file_path, r#"
+    #[test]
+    fn test_context_managers() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.py");
+        fs::write(&file_path, r#"
 class MyContext:
     def __enter__(self):
         return self
@@ -1124,10 +1223,10 @@ class MyContext:
 with MyContext() as ctx:
     pass
 "#).unwrap();
-    
-    let (defs, calls) = parse_file(dir.path(), &file_path).unwrap();
-    
-    assert!(calls.contains(&"test.MyContext.__enter__".to_string()));
-    assert!(calls.contains(&"test.MyContext.__exit__".to_string()));
-}
+        
+        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        
+        assert!(calls.contains(&"test.MyContext.__enter__".to_string()));
+        assert!(calls.contains(&"test.MyContext.__exit__".to_string()));
+    }
 }
