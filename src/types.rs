@@ -7,3 +7,10 @@ pub struct Unreachable {
     pub name: String,
     pub line: usize,
 }
+
+#[derive(Debug, Serialize)]
+pub struct UnusedImport {
+    pub file: String,
+    pub name: String,
+    pub line: usize,
+}
