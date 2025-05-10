@@ -27,3 +27,8 @@ pub const PROPERTY_QUERY: &str = r#"
 pub const INSTANTIATION_QUERY: &str = r#"
 (call function: (identifier) @class_name arguments: (argument_list)) @instantiation
 "#;
+pub const IDENT_QUERY: &str = r#"
+((identifier) @ident
+  (#not-ancestor? @ident import_statement)
+  (#not-ancestor? @ident import_from_statement))
+"#;
