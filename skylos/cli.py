@@ -306,7 +306,23 @@ def main() -> None:
             
             logger.info(f"\n{Colors.GRAY}{'─' * 50}{Colors.RESET}")
             logger.info(f"{Colors.GRAY}Analysis complete.{Colors.RESET}")
-            
+
+            logger.info(f"\n{Colors.GRAY}{'─' * 50}{Colors.RESET}")
+            logger.info(f"{Colors.GRAY}Analysis complete.{Colors.RESET}")
+
+            dead_code_count = len(unused_functions) + len(unused_imports)
+
+            if dead_code_count == 0:
+                logger.info(f"\n✨ Your code is 100% dead code free! Add this badge to your README:")
+                logger.info("```markdown")
+                logger.info("![Dead Code Free](https://img.shields.io/badge/Dead_Code-Free-brightgreen?logo=moleculer&logoColor=white)")
+                logger.info("```")
+            else:
+                logger.info(f"Found {dead_code_count} dead code items. Add this badge to your README:")
+                logger.info("```markdown")  
+                logger.info(f"![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange?logo=codacy&logoColor=red)")
+                logger.info("```")
+
             if unused_functions or unused_imports:
                 logger.info(f"\n{Colors.BOLD}Next steps:{Colors.RESET}")
                 logger.info(f"  • Use --interactive to select specific items to remove")
