@@ -14,3 +14,4 @@ build/
 /test/__pycache__/  
 __pycache__
 chunks
+venvtest
