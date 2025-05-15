@@ -5,6 +5,9 @@
 ![PyPI version](https://img.shields.io/pypi/v/tacz)
 ![100% Dead Code Free](https://img.shields.io/badge/Dead%20Code-100%25%20Free-brightgreen)
 
+<div align="center">
+   <img src="assets/SKYLOS.png" alt="Skylos Logo" width="200">
+</div>
 
 > A static analysis tool for Python codebases written in Rust that detects unreachable functions and unused imports, aka dead code. 
 
@@ -18,6 +21,7 @@
 - **Dry Run Support**: Preview changes before applying them
 - **Auto-removal**: Auto clean up
 - **Cross-module Analysis**: Tracks imports and calls across your entire project
+- **Nice badges!!**: Pin your badge if you get 100% clean code! 
 
 ## Benchmark (You can find this benchmark test in `test/sample_project`)
 
@@ -226,6 +230,12 @@ format = "colored"  # Options: colored, plain, json
 colors = "default"  # Options: default, dark, light
 ```
 
+## Limitations 
+
+- Occassionally there will be false positives and false negatives especially for extreme edge cases 
+
+- The library is currently available **ONLY** for python
+
 ## Troubleshooting
 
 ### Common Issues
@@ -262,13 +272,13 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 
 ## Roadmap
 
-- [ ] Configuration file support
+- [ ] Configuration file support (White lists etc)
 - [ ] Custom analysis rules
-- [ ] IDE integrations (VS Code, PyCharm)
 - [ ] Git hooks integration
 - [ ] CI/CD integration examples
 - [ ] Web interface
 - [ ] Support for other languages
+- [ ] Further optimization
 
 ## License
 
