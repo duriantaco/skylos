@@ -1,3 +1,4 @@
+## sample_project/subpackage/module7.py
 import sys
 from ..module6 import Module6Class
 from . import module3

@@ -1,18 +1,16 @@
 # Skylos 🔍
 
-> A high-performance static analysis tool for Python codebases that detects unreachable functions and unused imports.
-
-Skylos combines the power of Rust's tree-sitter parser with an elegant Python CLI to help you clean up your codebase and identify dead code.
+> A static analysis tool for Python codebases written in Rust that detects unreachable functions and unused imports, aka dead code. 
 
 ## Features
 
-- **Unreachable Function Detection**: Find functions and methods that are never called
-- **Unused Import Detection**: Identify imports that are never used
-- **High Performance**: Built with Rust for lightning-fast analysis
-- **Beautiful Output**: Colorized, structured CLI output
+- **Unreachable Function Detection**: Find functions and methods that are never called aka dead code
+- **Unused Import Detection**: Imports that are never used
+- **High Performance**: Built with Rust
+- **Nice Output**: Colorized CLI output
 - **Interactive Mode**: Select and remove specific items interactively
 - **Dry Run Support**: Preview changes before applying them
-- **Auto-removal**: Automatically clean up selected functions and imports
+- **Auto-removal**: Auto clean up
 - **Cross-module Analysis**: Tracks imports and calls across your entire project
 
 ## Installation
@@ -35,7 +33,7 @@ pip install skylos[interactive]
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/skylos.git
+git clone https://github.com/duriantaco/skylos.git
 cd skylos
 
 # Install maturin (if not already installed)

@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use once_cell::sync::Lazy;
 use tree_sitter::{Language, Node, Parser, Query, QueryCursor};
 use walkdir::WalkDir;
 use rayon::prelude::*;
@@ -21,6 +22,55 @@ use utils::{ts_lang, module_name, has_parent_of_kind};
 #[link(name = "tree-sitter-python")]
 extern "C" { fn tree_sitter_python() -> Language; }
 
+static Q_CLASS: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), CLASS_QUERY)
+        .expect("Failed to compile CLASS_QUERY")
+});
+static Q_METH: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), METHOD_QUERY)
+        .expect("Failed to compile METHOD_QUERY")
+});
+static Q_FUN: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), FUNCTION_QUERY)
+        .expect("Failed to compile FUNCTION_QUERY")
+});
+static Q_IMP: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), IMPORT_QUERY)
+        .expect("Failed to compile IMPORT_QUERY")
+});
+static Q_CALL: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), CALL_QUERY)
+        .expect("Failed to compile CALL_QUERY")
+});
+static Q_DECO: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), DECORATOR_QUERY)
+        .expect("Failed to compile DECORATOR_QUERY")
+});
+static Q_MAIN: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), MAIN_QUERY)
+        .expect("Failed to compile MAIN_QUERY")
+});
+static Q_ASN: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), ASSIGN_QUERY)
+        .expect("Failed to compile ASSIGN_QUERY")
+});
+static Q_RETURN: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), "(return_statement (identifier) @ret_val)")
+        .expect("Failed to compile return query")
+});
+static Q_PROP: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), PROPERTY_QUERY)
+        .expect("Failed to compile PROPERTY_QUERY")
+});
+static Q_INST: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), INSTANTIATION_QUERY)
+        .expect("Failed to compile INSTANTIATION_QUERY")
+});
+static Q_IDENT: Lazy<Query> = Lazy::new(|| {
+    Query::new(&ts_lang(), IDENT_QUERY)
+        .expect("Failed to compile IDENT_QUERY")
+});
+
 fn parse_file(
     root: &Path,
     file: &Path,
@@ -39,21 +89,6 @@ fn parse_file(
     let mut parser = Parser::new();
     parser.set_language(&ts_lang())?;
     let tree = parser.parse(&src, None).context("tree-sitter parse")?;
-
-    let lang = ts_lang();
-    let q_class = Query::new(&lang, CLASS_QUERY)?;
-    let q_meth = Query::new(&lang, METHOD_QUERY)?;
-    let q_fun = Query::new(&lang, FUNCTION_QUERY)?;
-    let q_imp = Query::new(&lang, IMPORT_QUERY)?;
-    let q_call = Query::new(&lang, CALL_QUERY)?;
-    let q_deco = Query::new(&lang, DECORATOR_QUERY)?;
-    let q_main = Query::new(&lang, MAIN_QUERY)?;
-    let q_asn = Query::new(&lang, ASSIGN_QUERY)?;
-    let q_return = Query::new(&lang, "(return_statement (identifier) @ret_val)")?;
-    let q_prop = Query::new(&lang, PROPERTY_QUERY)?;
-    let q_inst = Query::new(&lang, INSTANTIATION_QUERY)?;
-    let q_ident = Query::new(&lang, IDENT_QUERY)?;   
-    
     let module = module_name(root, file);
 
     let mut defs = Vec::<(String, usize)>::new();
@@ -72,7 +107,7 @@ fn parse_file(
     let mut import_defs = Vec::<(String, usize)>::new();
     let mut used_idents = HashSet::<String>::new();
 
-    for m in cursor.matches(&q_imp, tree.root_node(), bytes) {
+    for m in cursor.matches(&Q_IMP, tree.root_node(), bytes) {
         for c in m.captures {
             let txt = c.node.utf8_text(bytes)?;
             let line_number = c.node.start_position().row + 1;
@@ -122,7 +157,7 @@ fn parse_file(
             let mut parts: Vec<&str> = current_module.split('.').collect();
     
             // remove the module filename ⇒ operate on the *package* path
-            parts.pop();                                    // ← add this line
+            parts.pop();
     
             let dots = import_path.chars().take_while(|&c| c == '.').count();
             if dots > parts.len() + 1 {
@@ -267,28 +302,28 @@ fn parse_file(
     }
     
 
-    for m in cursor.matches(&q_class, tree.root_node(), bytes) {
+    for m in cursor.matches(&Q_CLASS, tree.root_node(), bytes) {
         let cls_node = m.captures.iter()
-            .find(|c| q_class.capture_names()[c.index as usize] == "class")
+            .find(|c| Q_CLASS.capture_names()[c.index as usize] == "class")
             .map(|c| c.node)
             .unwrap();
         
         let cls_name = m.captures.iter()
-            .find(|c| q_class.capture_names()[c.index as usize] == "class_name")
+            .find(|c| Q_CLASS.capture_names()[c.index as usize] == "class_name")
             .map(|c| c.node.utf8_text(bytes).unwrap())
             .unwrap();
 
         class_methods.insert(cls_name.to_string(), HashSet::new());
 
         let mut mc = QueryCursor::new();
-        for mm in mc.matches(&q_meth, cls_node, bytes) {
+        for mm in mc.matches(&Q_METH, cls_node, bytes) {
             let method_node = mm.captures.iter()
-                .find(|c| q_meth.capture_names()[c.index as usize] == "method")
+                .find(|c| Q_METH.capture_names()[c.index as usize] == "method")
                 .map(|c| c.node)
                 .unwrap();
                 
             let method_name = mm.captures.iter()
-                .find(|c| q_meth.capture_names()[c.index as usize] == "method_name")
+                .find(|c| Q_METH.capture_names()[c.index as usize] == "method_name")
                 .map(|c| c.node.utf8_text(bytes).unwrap())
                 .unwrap();
 
@@ -305,9 +340,9 @@ fn parse_file(
             }
 
             let mut rc = QueryCursor::new();
-            for rm in rc.matches(&q_return, method_node, bytes) {
+            for rm in rc.matches(&Q_RETURN, method_node, bytes) {
                 if let Some(ret_val) = rm.captures.iter()
-                    .find(|c| q_return.capture_names()[c.index as usize] == "ret_val")
+                    .find(|c| Q_RETURN.capture_names()[c.index as usize] == "ret_val")
                     .map(|c| c.node.utf8_text(bytes).unwrap_or(""))
                 {
                     if ret_val == "self" {
@@ -321,17 +356,17 @@ fn parse_file(
         }
     }
 
-    for m in cursor.matches(&q_asn, tree.root_node(), bytes) {
+    for m in cursor.matches(&Q_ASN, tree.root_node(), bytes) {
         if let (Some(left_obj), Some(left_attr), Some(right_value)) = (
             m.captures.iter()
-                .find(|c| q_asn.capture_names()[c.index as usize] == "left_obj")
+                .find(|c| Q_ASN.capture_names()[c.index as usize] == "left_obj")
                 .map(|c| c.node),
             m.captures.iter()
-                .find(|c| q_asn.capture_names()[c.index as usize] == "left_attr")
+                .find(|c| Q_ASN.capture_names()[c.index as usize] == "left_attr")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten(),
             m.captures.iter()
-                .find(|c| q_asn.capture_names()[c.index as usize] == "right_value")
+                .find(|c| Q_ASN.capture_names()[c.index as usize] == "right_value")
                 .map(|c| c.node)
         ) {
             if let Ok(obj_text) = left_obj.utf8_text(bytes) {
@@ -356,7 +391,7 @@ fn parse_file(
         
         if let (Some(var), Some(value_node)) = (
             m.captures.iter()
-                .find(|c| q_asn.capture_names()[c.index as usize] == "var")
+                .find(|c| Q_ASN.capture_names()[c.index as usize] == "var")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten(),
             m.captures.iter()
@@ -378,7 +413,7 @@ fn parse_file(
         
         if let (Some(var), Some(value_node)) = (
             m.captures.iter()
-                .find(|c| q_asn.capture_names()[c.index as usize] == "var")
+                .find(|c| Q_ASN.capture_names()[c.index as usize] == "var")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten(),
             m.captures.iter()
@@ -398,11 +433,11 @@ fn parse_file(
         
         if let (Some(var), Some(cls)) = (
             m.captures.iter()
-                .find(|c| q_asn.capture_names()[c.index as usize] == "var")
+                .find(|c| Q_ASN.capture_names()[c.index as usize] == "var")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten(),
             m.captures.iter()
-                .find(|c| q_asn.capture_names()[c.index as usize] == "cls")
+                .find(|c| Q_ASN.capture_names()[c.index as usize] == "cls")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten()
         ) {
@@ -411,15 +446,15 @@ fn parse_file(
         
         if let (Some(var_method), Some(obj), Some(method)) = (
             m.captures.iter()
-                .find(|c| q_asn.capture_names()[c.index as usize] == "var_method")
+                .find(|c| Q_ASN.capture_names()[c.index as usize] == "var_method")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten(),
             m.captures.iter()
-                .find(|c| q_asn.capture_names()[c.index as usize] == "obj")
+                .find(|c| Q_ASN.capture_names()[c.index as usize] == "obj")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten(),
             m.captures.iter()
-                .find(|c| q_asn.capture_names()[c.index as usize] == "method")
+                .find(|c| Q_ASN.capture_names()[c.index as usize] == "method")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten()
         ) {
@@ -432,14 +467,14 @@ fn parse_file(
     }
 
     let mut fc = QueryCursor::new();
-    for m in fc.matches(&q_fun, tree.root_node(), bytes) {
+    for m in fc.matches(&Q_FUN, tree.root_node(), bytes) {
         let func_node = m.captures.iter()
-            .find(|c| q_fun.capture_names()[c.index as usize] == "function")
+            .find(|c| Q_FUN.capture_names()[c.index as usize] == "function")
             .map(|c| c.node)
             .unwrap();
             
         let func_name = m.captures.iter()
-            .find(|c| q_fun.capture_names()[c.index as usize] == "func_name")
+            .find(|c| Q_FUN.capture_names()[c.index as usize] == "func_name")
             .map(|c| c.node.utf8_text(bytes).unwrap())
             .unwrap();
 
@@ -452,9 +487,9 @@ fn parse_file(
         }
     }
 
-    for m in cursor.matches(&q_deco, tree.root_node(), bytes) {
+    for m in cursor.matches(&Q_DECO, tree.root_node(), bytes) {
         if let Some(deco) = m.captures.iter()
-            .find(|c| q_deco.capture_names()[c.index as usize] == "decorator_name")
+            .find(|c| Q_DECO.capture_names()[c.index as usize] == "decorator_name")
             .map(|c| c.node.utf8_text(bytes).ok())
             .flatten() 
         {
@@ -467,11 +502,11 @@ fn parse_file(
         
         if let (Some(obj), Some(attr)) = (
             m.captures.iter()
-                .find(|c| q_deco.capture_names()[c.index as usize] == "decorator_obj")
+                .find(|c| Q_DECO.capture_names()[c.index as usize] == "decorator_obj")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten(),
             m.captures.iter()
-                .find(|c| q_deco.capture_names()[c.index as usize] == "decorator_attr")
+                .find(|c| Q_DECO.capture_names()[c.index as usize] == "decorator_attr")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten()
         ) {
@@ -483,20 +518,15 @@ fn parse_file(
         }
     }
 
-    for m in cursor.matches(&q_call, tree.root_node(), bytes) {
+    for m in cursor.matches(&Q_CALL, tree.root_node(), bytes) {
         if let Some(call_node) = m.captures.iter()
             .find(|c| c.node.kind() == "call")
             .map(|c| c.node)
         {
             process_chained_calls(
-                call_node, 
-                bytes, 
-                &object_types, 
-                &method_returns_self,
-                &imported_classes,
-                &module, 
-                &mut calls,
-                &aliases 
+                call_node, bytes, &object_types, 
+                &method_returns_self, &imported_classes,
+                &module, &mut calls, &aliases 
             );
         }
         
@@ -521,7 +551,7 @@ fn parse_file(
         }
         
         if let Some(func) = m.captures.iter()
-            .find(|c| q_call.capture_names()[c.index as usize] == "call_func")
+            .find(|c| Q_CALL.capture_names()[c.index as usize] == "call_func")
             .map(|c| c.node.utf8_text(bytes).ok())
             .flatten() 
         {
@@ -540,10 +570,10 @@ fn parse_file(
 
         if let (Some(obj_node), Some(method)) = (
             m.captures.iter()
-                .find(|c| q_call.capture_names()[c.index as usize] == "object")
+                .find(|c| Q_CALL.capture_names()[c.index as usize] == "object")
                 .map(|c| c.node),
             m.captures.iter()
-                .find(|c| q_call.capture_names()[c.index as usize] == "method_name")
+                .find(|c| Q_CALL.capture_names()[c.index as usize] == "method_name")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten()
         ) {
@@ -568,9 +598,9 @@ fn parse_file(
         }
     }
 
-    for m in cursor.matches(&q_main, tree.root_node(), bytes) {
+    for m in cursor.matches(&Q_MAIN, tree.root_node(), bytes) {
         let cond = m.captures.iter()
-            .find(|c| q_main.capture_names()[c.index as usize] == "cond")
+            .find(|c| Q_MAIN.capture_names()[c.index as usize] == "cond")
             .map(|c| c.node.utf8_text(bytes).unwrap_or(""))
             .unwrap_or("");
             
@@ -579,13 +609,13 @@ fn parse_file(
         }
         
         if let Some(block) = m.captures.iter()
-            .find(|c| q_main.capture_names()[c.index as usize] == "block")
+            .find(|c| Q_MAIN.capture_names()[c.index as usize] == "block")
             .map(|c| c.node)
         {
             let mut ic = QueryCursor::new();
-            for cm in ic.matches(&q_call, block, bytes) {
+            for cm in ic.matches(&Q_CALL, block, bytes) {
                 if let Some(func) = cm.captures.iter()
-                    .find(|c| q_call.capture_names()[c.index as usize] == "call_func")
+                    .find(|c| Q_CALL.capture_names()[c.index as usize] == "call_func")
                     .map(|c| c.node.utf8_text(bytes).ok())
                     .flatten() 
                 {
@@ -595,11 +625,11 @@ fn parse_file(
 
                 if let (Some(obj), Some(method)) = (
                     cm.captures.iter()
-                        .find(|c| q_call.capture_names()[c.index as usize] == "object")
+                        .find(|c| Q_CALL.capture_names()[c.index as usize] == "object")
                         .map(|c| c.node.utf8_text(bytes).ok())
                         .flatten(),
                     cm.captures.iter()
-                        .find(|c| q_call.capture_names()[c.index as usize] == "method_name")
+                        .find(|c| Q_CALL.capture_names()[c.index as usize] == "method_name")
                         .map(|c| c.node.utf8_text(bytes).ok())
                         .flatten()
                 ) {
@@ -618,13 +648,13 @@ fn parse_file(
     }
 
     // property access
-    for m in cursor.matches(&q_prop, tree.root_node(), bytes) {
+    for m in cursor.matches(&Q_PROP, tree.root_node(), bytes) {
         if let (Some(obj_node), Some(prop)) = (
             m.captures.iter()
-                .find(|c| q_prop.capture_names()[c.index as usize] == "prop_object")
+                .find(|c| Q_PROP.capture_names()[c.index as usize] == "prop_object")
                 .map(|c| c.node),
             m.captures.iter()
-                .find(|c| q_prop.capture_names()[c.index as usize] == "prop_name")
+                .find(|c| Q_PROP.capture_names()[c.index as usize] == "prop_name")
                 .map(|c| c.node.utf8_text(bytes).ok())
                 .flatten()
         ) {
@@ -644,11 +674,27 @@ fn parse_file(
         }
     }
 
-    // Collect all identifiers
-    for m in cursor.matches(&q_ident, tree.root_node(), bytes) {
+    for m in cursor.matches(&Q_IDENT, tree.root_node(), bytes) {
         for capture in m.captures {
-            if let Ok(ident) = capture.node.utf8_text(bytes) {
-                used_idents.insert(ident.to_string());
+            let ident_node = capture.node;
+            
+            // Skip identifiers in import statements
+            let mut parent = ident_node.parent();
+            let mut in_import = false;
+            
+            while let Some(p) = parent {
+                let kind = p.kind();
+                if kind == "import_statement" || kind == "import_from_statement" {
+                    in_import = true;
+                    break;
+                }
+                parent = p.parent();
+            }
+            
+            if !in_import {
+                if let Ok(ident) = ident_node.utf8_text(bytes) {
+                    used_idents.insert(ident.to_string());
+                }
             }
         }
     }
@@ -700,7 +746,6 @@ pub fn analyze_dir(path: &str) -> Result<(Vec<Unreachable>, Vec<UnusedImport>)> 
     let mut unused_imports = Vec::<UnusedImport>::new();
     
     for (path, defs, _, imports, used_idents) in parsed {
-        // Check for unused functions
         for (def, line) in defs {
             if def.ends_with(".__init__") || def.ends_with(".__str__")
                 || (def.contains(".__") && def.ends_with("__"))
@@ -718,66 +763,21 @@ pub fn analyze_dir(path: &str) -> Result<(Vec<Unreachable>, Vec<UnusedImport>)> 
             }
         }
         
-        // Check for unused imports with better detection
-for (import_name, line) in &imports {
-    if import_name == "*" {
-        continue;
-    }
-    
-    // Re-parse the file to get identifiers excluding import statements
-    let mut import_usage_idents = HashSet::<String>::new();
-    
-    if let Ok(src) = std::fs::read_to_string(&path) {
-        let bytes = src.as_bytes();
-        let mut parser = Parser::new();
-        let _ = parser.set_language(&ts_lang());
-        
-        if let Some(tree) = parser.parse(&src, None) {
-            let lang = ts_lang();
-            if let Ok(q_ident) = Query::new(&lang, IDENT_QUERY) {
-                let mut cursor = QueryCursor::new();
-                
-                for m in cursor.matches(&q_ident, tree.root_node(), bytes) {
-                    for capture in m.captures {
-                        let ident_node = capture.node;
-                        
-                        // Check if this identifier is inside an import statement
-                        let mut parent = ident_node.parent();
-                        let mut in_import = false;
-                        
-                        while let Some(p) = parent {
-                            let kind = p.kind();
-                            if kind == "import_statement" || kind == "import_from_statement" {
-                                in_import = true;
-                                break;
-                            }
-                            parent = p.parent();
-                        }
-                        
-                        // Only add identifiers that are NOT in import statements
-                        if !in_import {
-                            if let Ok(ident) = ident_node.utf8_text(bytes) {
-                                import_usage_idents.insert(ident.to_string());
-                            }
-                        }
-                    }
-                }
+        for (import_name, line) in &imports {
+            if import_name == "*" {
+                continue;
             }
-        }
-    }
-    
-    // Check if the import is actually used using the filtered identifiers
-    let is_used = import_usage_idents.contains(import_name) || 
-                  // Check if it's used as part of an attribute access
-                  import_usage_idents.iter().any(|ident| ident.starts_with(&format!("{}.", import_name)));
-    
-    if !is_used {
-        unused_imports.push(UnusedImport {
-            file: path.display().to_string(),
-            name: import_name.clone(),
-            line: *line,
-        });
-    }
+            
+            let is_used = used_idents.contains(import_name) || 
+                          used_idents.iter().any(|ident| ident.starts_with(&format!("{}.", import_name)));
+            
+            if !is_used {
+                unused_imports.push(UnusedImport {
+                    file: path.display().to_string(),
+                    name: import_name.clone(),
+                    line: *line,
+                });
+            }
         }
     }
     
