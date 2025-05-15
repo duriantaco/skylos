@@ -9,25 +9,24 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest] # Kept your multi-OS for build
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
 
     steps:
-    - uses: actions/checkout@v4 # <<<< UPDATED to v4
-    - uses: actions/setup-python@v5 # <<<< UPDATED to v5
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
     - uses: PyO3/maturin-action@v1
       with:
         command: build
-        args: --release --strip --out dist # <<<< ADDED --out dist for consistency
-        # sccache: 'true' # Optional
+        args: --release --strip --out dist
 
     - name: Upload wheels
-      uses: actions/upload-artifact@v4 # <<<< UPDATED to v4
+      uses: actions/upload-artifact@v4
       with:
-        name: python-wheels-${{ matrix.os }}-${{ matrix.python-version }} # <<<< MORE UNIQUE artifact name
-        path: dist # <<<< Path is now 'dist' because of --out dist
+        name: python-wheels-${{ matrix.os }}-${{ matrix.python-version }}
+        path: dist
 
   publish:
     needs: build
