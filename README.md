@@ -1,5 +1,11 @@
 # Skylos 🔍
 
+![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
+![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
+![PyPI version](https://img.shields.io/pypi/v/tacz)
+![100% Dead Code Free](https://img.shields.io/badge/Dead%20Code-100%25%20Free-brightgreen)
+
+
 > A static analysis tool for Python codebases written in Rust that detects unreachable functions and unused imports, aka dead code. 
 
 ## Features
@@ -12,6 +18,18 @@
 - **Dry Run Support**: Preview changes before applying them
 - **Auto-removal**: Auto clean up
 - **Cross-module Analysis**: Tracks imports and calls across your entire project
+
+## Benchmark (You can find this benchmark test in `test/sample_project`)
+
+| Tool | Time (s) | Functions | Imports | Total |
+|------|----------|-----------|---------|-------|
+| Skylos | 0.039 | 48 | 8 | 56 |
+| Vulture (100%) | 0.040 | 0 | 3 | 3 |
+| Vulture (60%) | 0.041 | 28 | 3 | 31 |
+| Vulture (0%) | 0.041 | 28 | 3 | 31 |
+| Flake8 | 0.274 | 0 | 8 | 8 |
+| Pylint | 0.285 | 0 | 6 | 6 |
+| Dead | 0.035 | 0 | 0 | 0 |
 
 ## Installation
 
@@ -150,7 +168,7 @@ skylos/
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/skylos.git
+git clone https://github.com/duriantaco/skylos.git
 cd skylos
 
 # Create a virtual environment
@@ -266,10 +284,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Author**: oha
 - **Email**: aaronoh2015@gmail.com
-- **GitHub**: [@your-username](https://github.com/duriantaco)
-
----
-
-<p align="center">
-  Made with ❤️ by the Skylos team
-</p>
+- **GitHub**: [@duriantaco](https://github.com/duriantaco)
