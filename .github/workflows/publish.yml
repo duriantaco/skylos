@@ -10,35 +10,55 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+        os: [ubuntu-latest] # For Python wheels, usually one OS is enough unless you have OS-specific compiled bits not handled by manylinux
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12'] # Build for each Python version
 
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+    - uses: actions/checkout@v4 # Changed to v4, good practice
+    - uses: actions/setup-python@v5 # Changed to v5, good practice
       with:
         python-version: ${{ matrix.python-version }}
     - uses: PyO3/maturin-action@v1
       with:
         command: build
-        args: --release --strip
-    - run: |
-        mkdir -p dist
-        cp target/wheels/* dist/
+        args: --release --strip --out dist # Tell maturin to output directly to dist
+        # sccache: 'true' # Optional: consider adding sccache for faster Rust builds
+
+    - name: Upload wheels
+      uses: actions/upload-artifact@v4 # Use a newer version like v4
+      with:
+        name: python-wheels-${{ matrix.python-version }} # Unique name per Python version
+        path: dist/*.whl
 
   publish:
     needs: build
     runs-on: ubuntu-latest
+    # Only publish if the release is created, no need for if condition if 'on.release.types' is specific
+    # if: github.event_name == 'release' && github.event.action == 'created'
+
     steps:
-    - uses: actions/checkout@v4
-    - name: Download all artifacts
-      run: |
-        mkdir -p dist
-        find . -name "*.whl" -exec cp {} dist/ \;
+    # No checkout needed if you're only downloading artifacts and then uploading them
+    # - uses: actions/checkout@v4
+
+    - name: Download all wheels
+      uses: actions/download-artifact@v4 # Use a newer version like v4
+      with:
+        # No specific name, download all artifacts produced by previous jobs if that's intended
+        # Or, if you want to be specific (better):
+        # name: python-wheels-* # This pattern might not be supported directly
+        path: dist # Download all artifacts into the dist directory
+        # If download-artifact doesn't support patterns for artifact names directly,
+        # you'd need to list them or download all and then select.
+        # However, downloading all to a common path usually works if names are unique.
+
+    - name: List downloaded files # For debugging
+      run: ls -R dist
+
     - name: Publish to PyPI
       uses: PyO3/maturin-action@v1
       env:
-        MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }} # Ensure secret name matches what's in GitHub repo settings
       with:
         command: upload
-        args: --skip-existing dist/*.whl
+        args: --skip-existing dist/**/*.whl # Use glob pattern to find all wheels in subdirectories if download created them
+        # Or if all wheels are directly in dist: dist/*.whl
