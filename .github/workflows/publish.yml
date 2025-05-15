@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest]
         python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
 
     steps:
@@ -22,21 +22,19 @@ jobs:
       with:
         command: build
         args: --release --strip
-    - name: Upload wheels
-      uses: actions/upload-artifact@v4  # CHANGED FROM v3 TO v4
-      with:
-        name: wheels-${{ matrix.os }}-${{ matrix.python-version }}  # ADDED UNIQUE NAMES
-        path: target/wheels
+    - run: |
+        mkdir -p dist
+        cp target/wheels/* dist/
 
   publish:
     needs: build
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/download-artifact@v4
-      with:
-        pattern: wheels-* 
-        path: dist
-        merge-multiple: true
+    - uses: actions/checkout@v4
+    - name: Download all artifacts
+      run: |
+        mkdir -p dist
+        find . -name "*.whl" -exec cp {} dist/ \;
     - name: Publish to PyPI
       uses: PyO3/maturin-action@v1
       env:
