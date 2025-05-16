@@ -2,14 +2,14 @@
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 ![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
-![PyPI version](https://img.shields.io/pypi/v/tacz)
+![PyPI version](https://img.shields.io/pypi/v/skylos)
 ![100% Dead Code Free](https://img.shields.io/badge/Dead%20Code-100%25%20Free-brightgreen)
 
 <div align="center">
    <img src="assets/SKYLOS.png" alt="Skylos Logo" width="200">
 </div>
 
-> A static analysis tool for Python codebases written in Rust that detects unreachable functions and unused imports, aka dead code. 
+> A static analysis tool for Python codebases written in Rust that detects unreachable functions and unused imports, aka dead code. Faster and better results than many alternatives like Flake8 and Pylint, and finding more dead code than Vulture in our tests with comparable speed.
 
 ## Features
 
@@ -21,7 +21,6 @@
 - **Dry Run Support**: Preview changes before applying them
 - **Auto-removal**: Auto clean up
 - **Cross-module Analysis**: Tracks imports and calls across your entire project
-- **Nice badges!!**: Pin your badge if you get 100% clean code! 
 
 ## Benchmark (You can find this benchmark test in `test/sample_project`)
 
@@ -282,7 +281,7 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
