@@ -1,9 +1,10 @@
-// src/utils.rs
 use std::path::Path;
 use tree_sitter::{Language, Node};
 
-#[link(name = "tree-sitter-python")]
-extern "C" { fn tree_sitter_python() -> Language; }
+#[link(name = "tree-sitter-python", kind = "static")]
+extern "C" {
+    fn tree_sitter_python() -> Language;
+}
 
 pub fn ts_lang() -> Language {
     unsafe { tree_sitter_python() }
@@ -20,15 +21,16 @@ pub fn module_name(root: &Path, file: &Path) -> String {
         .filter_map(|c| c.as_os_str().to_str())
         .collect();
 
-    let init_at_root = matches!(parts.last(), Some(&"__init__"));
-    if init_at_root {
-        parts.pop();
-    }
-
-    if parts.is_empty() {
-        // eg.  /project/pkg/__init__.py  ---->  "pkg"
-        if let Some(pkg) = file.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()) {
-            parts.push(pkg);
+    if parts.last().map_or(false, |&p| p == "__init__") {
+        parts.pop(); 
+        if parts.is_empty() { 
+            if let Some(pkg_name) = file.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()) {
+                // Avoid adding the root project directory name if file is like /project/__init__.py
+                // This logic might need further refinement based on exact desired behavior for root __init__.py
+                if file.parent() != Some(root) { 
+                   parts.push(pkg_name);
+                }
+            }
         }
     }
 
