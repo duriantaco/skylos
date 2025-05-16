@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use once_cell::sync::Lazy;
-use tree_sitter::{Language, Node, Parser, Query, QueryCursor};
+use tree_sitter::{Node, Parser, Query, QueryCursor};
 use walkdir::WalkDir;
 use rayon::prelude::*;
 use anyhow::{Context, Result};
@@ -18,9 +18,6 @@ use types::{Unreachable, UnusedImport};
 
 mod utils;
 use utils::{ts_lang, module_name, has_parent_of_kind};
-
-#[link(name = "tree-sitter-python")]
-extern "C" { fn tree_sitter_python() -> Language; }
 
 static Q_CLASS: Lazy<Query> = Lazy::new(|| {
     Query::new(&ts_lang(), CLASS_QUERY)
