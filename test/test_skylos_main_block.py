@@ -21,7 +21,7 @@ if __name__ == "__main__":
             """)
         
         result = json.loads(skylos.analyze(str(temp_path)))
-        names = {d["name"] for d in result}
+        names = {d["name"] for d in result["unused_functions"]}
         
         assert "main_block.called_from_main" not in names
         assert "main_block.not_called" in names

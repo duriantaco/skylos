@@ -764,11 +764,16 @@ pub fn analyze_dir(path: &str) -> Result<(Vec<Unreachable>, Vec<UnusedImport>)> 
             if import_name == "*" {
                 continue;
             }
-            
-            let is_used = used_idents.contains(import_name) || 
-                          used_idents.iter().any(|ident| ident.starts_with(&format!("{}.", import_name)));
-            
-            if !is_used {
+
+            let mut is_really_used = used_idents.contains(import_name);
+            if !is_really_used {
+                let prefix_to_check = format!("{}.", import_name);
+                if used_idents.iter().any(|ident| ident.starts_with(&prefix_to_check)) {
+                    is_really_used = true;
+                }
+            }
+
+            if !is_really_used {
                 unused_imports.push(UnusedImport {
                     file: path.display().to_string(),
                     name: import_name.clone(),
@@ -847,7 +852,7 @@ def unused_function():
 print(used_function())
 "#).unwrap();
         
-        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (defs, calls, _import_defs, _used_idents) = parse_file(dir.path(), &file_path).unwrap();
         
         assert_eq!(defs.len(), 2);
         
@@ -875,7 +880,7 @@ obj = TestClass()
 obj.used_method()
 "#).unwrap();
         
-        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (defs, calls, _import_defs, _used_idents) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(defs.iter().any(|(name, _)| name == "test.TestClass.__init__"));
         assert!(defs.iter().any(|(name, _)| name == "test.TestClass.used_method"));
@@ -921,7 +926,7 @@ def test_func():
 dt.now()
 "#).unwrap();
         
-        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (_, calls, _, _) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(calls.contains(&"os.path.join".to_string()));
         assert!(calls.contains(&"datetime.datetime.now".to_string()));
@@ -940,7 +945,7 @@ def decorated_func():
     pass
 "#).unwrap();
         
-        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (defs, calls, _import_defs, _used_idents) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(calls.contains(&"test.my_decorator".to_string()));
         assert_eq!(defs.len(), 2); 
@@ -961,7 +966,7 @@ if __name__ == "__main__":
     main()
 "#).unwrap();
         
-        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (_, calls, _, _) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(calls.contains(&"test.main".to_string()));
         assert!(!calls.contains(&"test.helper".to_string()));
@@ -990,7 +995,7 @@ method_ref = obj.my_method
 method_ref()
 "#).unwrap();
         
-        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (defs, calls, _import_defs, _used_idents) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(calls.contains(&"test.MyClass.my_method".to_string()));
         assert!(!calls.contains(&"test.MyClass.unused_method".to_string()));
@@ -1042,7 +1047,7 @@ class MyClass:
         return "regular"
 "#).unwrap();
         
-        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (defs, calls, _import_defs, _used_idents) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(calls.contains(&"test.MyClass.__init__".to_string()));
         assert!(calls.contains(&"test.MyClass.__str__".to_string()));
@@ -1066,7 +1071,7 @@ def standalone_function():
 outer_function()
 "#).unwrap();
         
-        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (defs, calls, _import_defs, _used_idents) = parse_file(dir.path(), &file_path).unwrap();
         
         assert_eq!(defs.len(), 2);
         assert!(defs.iter().any(|(name, _)| name == "test.outer_function"));
@@ -1090,7 +1095,7 @@ td(days=1)
 np.array([1, 2, 3])
 "#).unwrap();
         
-        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (_, calls, _, _) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(calls.contains(&"sys.exit".to_string()));
         assert!(calls.contains(&"os.path.join".to_string()));
@@ -1118,7 +1123,7 @@ builder = Builder()
 builder.step1().step2()
 "#).unwrap();
         
-        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (defs, calls, _import_defs, _used_idents) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(calls.contains(&"test.Builder.step1".to_string()));
         assert!(calls.contains(&"test.Builder.step2".to_string()));
@@ -1143,7 +1148,7 @@ obj = MyClass()
 print(obj.used_property)
 "#).unwrap();
         
-        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (_, calls, _, _) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(calls.contains(&"property".to_string()) || calls.contains(&"test.property".to_string()));
     }
@@ -1158,7 +1163,7 @@ from math import *
 sqrt(16)
 "#).unwrap();
         
-        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (_, calls, _, _) = parse_file(dir.path(), &file_path).unwrap();
         assert!(calls.contains(&"test.sqrt".to_string()) || calls.contains(&"math.sqrt".to_string()));
     }
 
@@ -1179,7 +1184,7 @@ def decorated_func():
     pass
 "#).unwrap();
         
-        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (_, calls, _, _) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(calls.contains(&"test.decorator1".to_string()));
         assert!(calls.contains(&"test.decorator2".to_string()));
@@ -1199,7 +1204,7 @@ def unused(x):
 result = [process(x) for x in range(10)]
 "#).unwrap();
         
-        let (_, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (_, calls, _, _) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(calls.contains(&"test.process".to_string()));
         assert!(!calls.contains(&"test.unused".to_string()));
@@ -1221,9 +1226,71 @@ with MyContext() as ctx:
     pass
 "#).unwrap();
         
-        let (defs, calls, _) = parse_file(dir.path(), &file_path).unwrap();
+        let (defs, calls, _import_defs, _used_idents) = parse_file(dir.path(), &file_path).unwrap();
         
         assert!(calls.contains(&"test.MyContext.__enter__".to_string()));
         assert!(calls.contains(&"test.MyContext.__exit__".to_string()));
+    }
+    #[test]
+    fn test_async_def_and_await_usage() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("async_test.py");
+        let content = r#"
+async def used_async_function():
+    return 1
+
+async def unused_async_function():
+    return 2
+
+async def main_runner():
+    await used_async_function()
+
+if __name__ == "__main__":
+    # asyncio.run(main_runner()) # Actual execution
+    main_runner() # Simulate call for analysis
+"#;
+        fs::write(&file_path, content).unwrap();
+
+        let (dead, _unused_imports) = analyze_dir(dir.path().to_str().unwrap()).unwrap();
+
+        assert!(!dead.iter().any(|d| d.name == "async_test.used_async_function"), "used_async_function should be used");
+        assert!(dead.iter().any(|d| d.name == "async_test.unused_async_function"), "unused_async_function should be dead");
+        assert!(!dead.iter().any(|d| d.name == "async_test.main_runner"), "main_runner should be used");
+    }
+
+    #[test]
+    fn test_class_decorator_usage() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("decorator_test.py");
+        let content = r#"
+def simple_class_decorator(cls):
+    cls.decorated = True
+    return cls
+
+def unused_class_decorator(cls):
+    cls.never_decorated = True
+    return cls
+
+@simple_class_decorator
+class MyDecoratedClass:
+    def __init__(self):
+        pass
+    def a_method(self):
+        pass
+
+class AnotherClass:
+    pass
+
+obj = MyDecoratedClass()
+obj.a_method()
+"#;
+        fs::write(&file_path, content).unwrap();
+
+        let (dead, _unused_imports) = analyze_dir(dir.path().to_str().unwrap()).unwrap();
+
+        assert!(!dead.iter().any(|d| d.name == "decorator_test.simple_class_decorator"), "simple_class_decorator should be used");
+        assert!(dead.iter().any(|d| d.name == "decorator_test.unused_class_decorator"), "unused_class_decorator should be dead");
+        assert!(!dead.iter().any(|d| d.name == "decorator_test.MyDecoratedClass.__init__"));
+        assert!(!dead.iter().any(|d| d.name == "decorator_test.MyDecoratedClass.a_method"));
     }
 }
