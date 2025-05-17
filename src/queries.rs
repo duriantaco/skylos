@@ -24,9 +24,6 @@ pub const ASSIGN_QUERY: &str = r#"
 pub const PROPERTY_QUERY: &str = r#"
 (expression_statement (attribute object: (_) @prop_object attribute: (identifier) @prop_name)) @property_access
 "#;
-pub const INSTANTIATION_QUERY: &str = r#"
-(call function: (identifier) @class_name arguments: (argument_list)) @instantiation
-"#;
 pub const IDENT_QUERY: &str = r#"
 ((identifier) @ident
   (#not-ancestor? @ident import_statement)

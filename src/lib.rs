@@ -59,10 +59,6 @@ static Q_PROP: Lazy<Query> = Lazy::new(|| {
     Query::new(&ts_lang(), PROPERTY_QUERY)
         .expect("Failed to compile PROPERTY_QUERY")
 });
-static Q_INST: Lazy<Query> = Lazy::new(|| {
-    Query::new(&ts_lang(), INSTANTIATION_QUERY)
-        .expect("Failed to compile INSTANTIATION_QUERY")
-});
 static Q_IDENT: Lazy<Query> = Lazy::new(|| {
     Query::new(&ts_lang(), IDENT_QUERY)
         .expect("Failed to compile IDENT_QUERY")
