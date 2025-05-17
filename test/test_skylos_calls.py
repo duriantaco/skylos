@@ -21,7 +21,7 @@ obj.used_method()
             """)
         
         result = json.loads(skylos.analyze(str(temp_path)))
-        names = {d["name"] for d in result}
+        names = {d["name"] for d in result["unused_functions"]}
         
         assert "method_calls.MyClass.used_method" not in names
         assert any("unused_method" in name for name in names)

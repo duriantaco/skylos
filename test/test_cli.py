@@ -10,4 +10,4 @@ def test_cli_runs_and_json_ok(tmp_path):
         text=True,
     )
     data = json.loads(res.stdout)
-    assert any(d["name"] == "module1.unused_function" for d in data)
+    assert any(d["name"] == "module1.unused_function" for d in data["unused_functions"])
