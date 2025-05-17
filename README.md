@@ -42,14 +42,6 @@
 pip install skylos
 ```
 
-### With Interactive Features
-
-For the interactive selection mode, install with:
-
-```bash
-pip install skylos[interactive]
-```
-
 ### From Source
 
 ```bash
@@ -71,13 +63,13 @@ maturin develop
 skylos /path/to/your/project
 
 # Interactive mode - select items to remove
-skylos /path/to/your/project --interactive
+skylos --interactive /path/to/your/project 
 
 # Dry run - see what would be removed
-skylos /path/to/your/project --interactive --dry-run
+skylos --interactive --dry-run /path/to/your/project 
 
 # Output to JSON
-skylos /path/to/your/project --json
+skylos --json /path/to/your/project 
 ```
 
 ## CLI Options
