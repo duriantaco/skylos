@@ -13,6 +13,9 @@ PYTHON_BUILTINS={"print","len","str","int","float","list","dict","set","tuple","
 DYNAMIC_PATTERNS={"getattr","globals","eval","exec"}
 AUTO_CALLED={"__init__","__enter__","__exit__"}
 
+TEST_BASE_CLASSES = {"TestCase", "AsyncioTestCase", "unittest.TestCase", "unittest.AsyncioTestCase"}
+TEST_METHOD_PATTERN = re.compile(r"^test_\w+$")
+
 class Definition:
     __slots__ = ('name', 'type', 'filename', 'line', 'simple_name', 'confidence', 'references', 'is_exported', 'in_init')
     
@@ -26,8 +29,28 @@ class Definition:
         self.references = 0
         self.is_exported = False
         self.in_init = "__init__.py" in str(f)
+    
     def to_dict(self):
-        return{"name":self.name,"simple_name":self.simple_name,"type":self.type,"file":str(self.filename),"basename":Path(self.filename).name,"line":self.line,"confidence":self.confidence,"references":self.references}
+        if self.type == "method" and "." in self.name:
+            parts = self.name.split(".")
+            if len(parts) >= 3:
+                output_name = ".".join(parts[-2:])
+            else:
+                output_name = self.name
+        else:
+            output_name = self.simple_name
+            
+        return{
+            "name": output_name,
+            "full_name": self.name,
+            "simple_name": self.simple_name,
+            "type": self.type,
+            "file": str(self.filename),
+            "basename": Path(self.filename).name,
+            "line": self.line,
+            "confidence": self.confidence,
+            "references": self.references
+        }
 
 class Skylos:
 
