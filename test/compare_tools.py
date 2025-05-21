@@ -400,11 +400,9 @@ def run_ruff(test_dir):
         return {"tool": "Ruff", "items": [], "time": 0, "capabilities": []}
 
 def calculate_metrics(detected_items, ground_truth_items):
-    def get_key(item):
-        return (item["type"], Path(item["file"]).name, item["simple_name"])
-    
-    detected_set = {get_key(item) for item in detected_items}
-    ground_truth_set = {get_key(item) for item in ground_truth_items}
+    """Calculate metrics using normalized item names and types"""
+    detected_set = {(normalize_item(item), item["type"]) for item in detected_items}
+    ground_truth_set = {(normalize_item(item), item["type"]) for item in ground_truth_items}
     
     true_positives = detected_set.intersection(ground_truth_set)
     false_positives = detected_set - ground_truth_set
@@ -443,6 +441,24 @@ def calculate_metrics_by_type(detected_items, ground_truth_items, capabilities):
             }
     
     return metrics_by_type
+
+def normalize_item(item):
+    """Normalize an item name for better comparison"""
+    if isinstance(item, str):
+        return item
+    
+    name = item.get("name", "")
+    
+    if item.get("type") == "method" and "." in name:
+        parts = name.split(".")
+        if len(parts) > 2:
+            return ".".join(parts[-2:])
+        return name
+    
+    if "." in name:
+        return name.split(".")[-1]
+    
+    return name
 
 def run_benchmarks(test_dir, output_dir=None):
     
@@ -581,50 +597,6 @@ def generate_charts(results, ground_truth_items, output_dir):
     
     df = pd.DataFrame(data)
     
-    # if not df.empty:
-    #     plt.figure(figsize=(12, 8))
-    #     for dead_code_type in df["Type"].unique():
-    #         type_df = df[df["Type"] == dead_code_type]
-    #         plt.scatter(type_df["Precision"], type_df["Recall"], s=type_df["F1"]*100, 
-    #                     label=dead_code_type, alpha=0.7)
-            
-    #         for i, row in type_df.iterrows():
-    #             plt.annotate(row["Tool"], (row["Precision"], row["Recall"]), 
-    #                          xytext=(5, 5), textcoords="offset points")
-        
-    #     plt.xlabel("Precision")
-    #     plt.ylabel("Recall")
-    #     plt.xlim(0, 1.05)
-    #     plt.ylim(0, 1.05)
-    #     plt.grid(True, alpha=0.3)
-    #     plt.legend()
-    #     plt.title("Dead Code Detection: Precision vs Recall by Tool and Type")
-    #     plt.savefig(output_dir / "precision_recall.png", dpi=300, bbox_inches="tight")
-        
-    #     plt.figure(figsize=(12, 8))
-    #     for tool in df["Tool"].unique():
-    #         tool_df = df[df["Tool"] == tool]
-    #         plt.plot(tool_df["Type"], tool_df["F1"], marker="o", label=tool)
-        
-    #     plt.xlabel("Dead Code Type")
-    #     plt.ylabel("F1 Score")
-    #     plt.ylim(0, 1.05)
-    #     plt.grid(True, alpha=0.3)
-    #     plt.legend()
-    #     plt.title("F1 Score by Tool and Dead Code Type")
-    #     plt.savefig(output_dir / "f1_by_type.png", dpi=300, bbox_inches="tight")
-        
-    #     plt.figure(figsize=(12, 8))
-    #     time_by_tool = df.groupby("Tool")["Time"].first().reset_index()
-    #     plt.bar(time_by_tool["Tool"], time_by_tool["Time"])
-    #     plt.xlabel("Tool")
-    #     plt.ylabel("Execution Time (seconds)")
-    #     plt.title("Execution Time by Tool")
-    #     plt.xticks(rotation=45, ha="right")
-    #     plt.grid(True, alpha=0.3)
-    #     plt.tight_layout()
-    #     plt.savefig(output_dir / "execution_time.png", dpi=300, bbox_inches="tight")
-
 def main():
     parser = argparse.ArgumentParser(description="Fair Dead Code Detection Benchmark")
     parser.add_argument("test_dir", nargs="?", default="cases", help="Directory containing test cases")
