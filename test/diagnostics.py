@@ -4,7 +4,6 @@ import json
 import subprocess
 import re
 from pathlib import Path
-import importlib.util
 
 def load_ground_truth(path):
     """Load the ground truth data from a ground_truth.json file with the Skylos test structure"""
