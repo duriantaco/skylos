@@ -8,9 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import argparse
-from collections import defaultdict
 import pandas as pd
-# import matplotlib.pyplot as plt
 
 class Colors:
     GREEN = '\033[92m'
