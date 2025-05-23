@@ -1,4 +1,4 @@
-from .analyzer import analyze
+from skylos.analyzer import analyze
 
 __version__ = "0.0.8"
 
