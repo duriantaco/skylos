@@ -62,7 +62,23 @@ class Visitor(ast.NodeVisitor):
         if n in self.alias:return self.alias[n]
         if n in PYTHON_BUILTINS:return n
         return f"{self.mod}.{n}"if self.mod else n
-    
+
+    def visit_annotation(self, node):
+        if node is not None:
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                self.visit_string_annotation(node.value)
+            elif hasattr(node, 's') and isinstance(node.s, str):
+                self.visit_string_annotation(node.s)
+            else:
+                self.visit(node)
+
+    def visit_string_annotation(self, annotation_str):
+        try:
+            parsed = ast.parse(annotation_str, mode='eval')
+            self.visit(parsed.body)
+        except:
+            pass
+
     def visit_Import(self,node):
         for a in node.names:
             full=a.name
@@ -81,6 +97,23 @@ class Visitor(ast.NodeVisitor):
             self.alias[a.asname or a.name]=full
             self.add_def(full,"import",node.lineno)
 
+    def visit_arguments(self, args):
+        for arg in args.args:
+            self.visit_annotation(arg.annotation)
+        for arg in args.posonlyargs:
+            self.visit_annotation(arg.annotation)
+        for arg in args.kwonlyargs:
+            self.visit_annotation(arg.annotation)
+        if args.vararg:
+            self.visit_annotation(args.vararg.annotation)
+        if args.kwarg:
+            self.visit_annotation(args.kwarg.annotation)
+        for default in args.defaults:
+            self.visit(default)
+        for default in args.kw_defaults:
+            if default:
+                self.visit(default)
+
     def visit_FunctionDef(self,node):
         outer_scope_prefix = '.'.join(self.current_function_scope) + '.' if self.current_function_scope else ''
         
@@ -94,8 +127,13 @@ class Visitor(ast.NodeVisitor):
         self.add_def(qualified_name,"method"if self.cls else"function",node.lineno)
         
         self.current_function_scope.append(node.name)
+        
         for d_node in node.decorator_list:
             self.visit(d_node)
+        
+        self.visit_arguments(node.args)
+        self.visit_annotation(node.returns)
+        
         for stmt in node.body:
             self.visit(stmt)
         self.current_function_scope.pop()
@@ -105,9 +143,39 @@ class Visitor(ast.NodeVisitor):
     def visit_ClassDef(self,node):
         cname=f"{self.mod}.{node.name}"
         self.add_def(cname,"class",node.lineno)
+        
+        for base in node.bases:
+            self.visit(base)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        
         prev=self.cls;self.cls=node.name
         for b in node.body:self.visit(b)
         self.cls=prev
+
+    def visit_AnnAssign(self, node):
+        self.visit_annotation(node.annotation)
+        if node.value:
+            self.visit(node.value)
+        self.visit(node.target)
+
+    def visit_AugAssign(self, node):
+        self.visit(node.target)
+        self.visit(node.value)
+
+    def visit_Subscript(self, node):
+        self.visit(node.value)
+        self.visit(node.slice)
+
+    def visit_Slice(self, node):
+        if node.lower:
+            self.visit(node.lower)
+        if node.upper:
+            self.visit(node.upper)
+        if node.step:
+            self.visit(node.step)
 
     def visit_Assign(self, node):
         for target in node.targets:
@@ -148,16 +216,6 @@ class Visitor(ast.NodeVisitor):
                 func_name = parent.slice.value
                 self.add_ref(func_name)
                 self.add_ref(f"{self.mod}.{func_name}")
-        
-        elif (isinstance(node.func, ast.Attribute) and 
-            node.func.attr == "format" and 
-            isinstance(node.func.value, ast.Constant) and 
-            isinstance(node.func.value.value, str)):
-            fmt = node.func.value.value
-            if any(isinstance(k.arg, str) and k.arg is None for k in node.keywords):
-                for _, n, _, _ in re.findall(r'\{([^}:!]+)', fmt):
-                    if n:
-                        self.add_ref(self.qual(n))
 
     def visit_Name(self,node):
         if isinstance(node.ctx,ast.Load):
@@ -168,6 +226,20 @@ class Visitor(ast.NodeVisitor):
         self.generic_visit(node)
         if isinstance(node.ctx,ast.Load)and isinstance(node.value,ast.Name):
             self.add_ref(f"{self.qual(node.value.id)}.{node.attr}")
+
+    def visit_keyword(self, node):
+        self.visit(node.value)
+
+    def visit_withitem(self, node):
+        self.visit(node.context_expr)
+        if node.optional_vars:
+            self.visit(node.optional_vars)
+
+    def visit_ExceptHandler(self, node):
+        if node.type:
+            self.visit(node.type)
+        for stmt in node.body:
+            self.visit(stmt)
 
     def generic_visit(self, node):
         for field, value in ast.iter_fields(node):
