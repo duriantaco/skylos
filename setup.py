@@ -2,9 +2,9 @@ from setuptools import setup, find_packages
 
 setup(
     name="skylos",
-    version="0.0.8",
+    version="1.0.7",
     packages=find_packages(),
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     install_requires=["inquirer>=3.0.0"],
     classifiers=[
         "Development Status :: 4 - Beta",
