@@ -24,9 +24,10 @@ class Colors:
     RESET = '\033[0m'
     GRAY = '\033[90m'
 
-class ColoredFormatter(logging.Formatter):
+class CleanFormatter(logging.Formatter):
+    """Custom formatter that removes timestamps and log levels for clean output"""
     def format(self, record):
-        return super().format(record)
+        return record.getMessage()
 
 def setup_logger(output_file=None):
     logger = logging.getLogger('skylos')
@@ -34,16 +35,19 @@ def setup_logger(output_file=None):
     
     logger.handlers.clear()
     
-    formatter = ColoredFormatter('%(message)s')
+    formatter = CleanFormatter()
     
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
     
     if output_file:
+        file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         file_handler = logging.FileHandler(output_file)
-        file_handler.setFormatter(formatter)
+        file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
+    
+    logger.propagate = False
     
     return logger
 
@@ -176,6 +180,21 @@ def interactive_selection(logger, unused_functions, unused_imports):
     
     return selected_functions, selected_imports
 
+def print_badge(dead_code_count: int, logger):
+    """Print appropriate badge based on dead code count"""
+    logger.info(f"\n{Colors.GRAY}{'─' * 50}{Colors.RESET}")
+    
+    if dead_code_count == 0:
+        logger.info(f"✨ Your code is 100% dead code free! Add this badge to your README:")
+        logger.info("```markdown")
+        logger.info("![Dead Code Free](https://img.shields.io/badge/Dead_Code-Free-brightgreen?logo=moleculer&logoColor=white)")
+        logger.info("```")
+    else:
+        logger.info(f"Found {dead_code_count} dead code items. Add this badge to your README:")
+        logger.info("```markdown")  
+        logger.info(f"![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange?logo=codacy&logoColor=red)")
+        logger.info("```")
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Detect unreachable functions and unused imports in a Python project"
@@ -224,109 +243,94 @@ def main() -> None:
 
     if args.json:
         logger.info(result_json)
-    else:
-        unused_functions = result.get("unused_functions", [])
-        unused_imports = result.get("unused_imports", [])
+        return
+
+    unused_functions = result.get("unused_functions", [])
+    unused_imports = result.get("unused_imports", [])
+    
+    logger.info(f"{Colors.CYAN}{Colors.BOLD}🔍 Python Static Analysis Results{Colors.RESET}")
+    logger.info(f"{Colors.CYAN}{'=' * 35}{Colors.RESET}")
+    
+    logger.info(f"\n{Colors.BOLD}Summary:{Colors.RESET}")
+    logger.info(f"  • Unreachable functions: {Colors.YELLOW}{len(unused_functions)}{Colors.RESET}")
+    logger.info(f"  • Unused imports: {Colors.YELLOW}{len(unused_imports)}{Colors.RESET}")
+    
+    if args.interactive and (unused_functions or unused_imports):
+        logger.info(f"\n{Colors.BOLD}Interactive Mode:{Colors.RESET}")
+        selected_functions, selected_imports = interactive_selection(logger, unused_functions, unused_imports)
         
-        logger.info(f"\n{Colors.CYAN}{Colors.BOLD}🔍 Python Static Analysis Results{Colors.RESET}")
-        logger.info(f"{Colors.CYAN}{'=' * 35}{Colors.RESET}")
-        
-        logger.info(f"\n{Colors.BOLD}Summary:{Colors.RESET}")
-        logger.info(f"  • Unreachable functions: {Colors.YELLOW}{len(unused_functions)}{Colors.RESET}")
-        logger.info(f"  • Unused imports: {Colors.YELLOW}{len(unused_imports)}{Colors.RESET}")
-        
-        if args.interactive and (unused_functions or unused_imports):
-            logger.info(f"\n{Colors.BOLD}Interactive Mode:{Colors.RESET}")
-            selected_functions, selected_imports = interactive_selection(logger, unused_functions, unused_imports)
+        if selected_functions or selected_imports:
+            logger.info(f"\n{Colors.BOLD}Selected items to remove:{Colors.RESET}")
             
-            if selected_functions or selected_imports:
-                logger.info(f"\n{Colors.BOLD}Selected items to remove:{Colors.RESET}")
+            if selected_functions:
+                logger.info(f"  Functions: {len(selected_functions)}")
+                for func in selected_functions:
+                    logger.info(f"    - {func['name']} ({func['file']}:{func['line']})")
+            
+            if selected_imports:
+                logger.info(f"  Imports: {len(selected_imports)}")
+                for imp in selected_imports:
+                    logger.info(f"    - {imp['name']} ({imp['file']}:{imp['line']})")
+            
+            if not args.dry_run:
+                questions = [
+                    inquirer.Confirm('confirm',
+                                   message="Are you sure you want to remove these items?",
+                                   default=False)
+                ]
+                answers = inquirer.prompt(questions)
                 
-                if selected_functions:
-                    logger.info(f"  Functions: {len(selected_functions)}")
-                    for func in selected_functions:
-                        logger.info(f"    - {func['name']} ({func['file']}:{func['line']})")
-                
-                if selected_imports:
-                    logger.info(f"  Imports: {len(selected_imports)}")
-                    for imp in selected_imports:
-                        logger.info(f"    - {imp['name']} ({imp['file']}:{imp['line']})")
-                
-                if not args.dry_run:
-                    questions = [
-                        inquirer.Confirm('confirm',
-                                       message="Are you sure you want to remove these items?",
-                                       default=False)
-                    ]
-                    answers = inquirer.prompt(questions)
+                if answers and answers['confirm']:
+                    logger.info(f"\n{Colors.YELLOW}Removing selected items...{Colors.RESET}")
                     
-                    if answers and answers['confirm']:
-                        logger.info(f"\n{Colors.YELLOW}Removing selected items...{Colors.RESET}")
-                        
-                        for func in selected_functions:
-                            success = remove_unused_function(func['file'], func['name'], func['line'])
-                            if success:
-                                logger.info(f"  {Colors.GREEN}✓{Colors.RESET} Removed function: {func['name']}")
-                            else:
-                                logger.error(f"  {Colors.RED}✗{Colors.RESET} Failed to remove: {func['name']}")
-                        
-                        for imp in selected_imports:
-                            success = remove_unused_import(imp['file'], imp['name'], imp['line'])
-                            if success:
-                                logger.info(f"  {Colors.GREEN}✓{Colors.RESET} Removed import: {imp['name']}")
-                            else:
-                                logger.error(f"  {Colors.RED}✗{Colors.RESET} Failed to remove: {imp['name']}")
-                        
-                        logger.info(f"\n{Colors.GREEN}Cleanup complete!{Colors.RESET}")
-                    else:
-                        logger.info(f"\n{Colors.YELLOW}Operation cancelled.{Colors.RESET}")
+                    for func in selected_functions:
+                        success = remove_unused_function(func['file'], func['name'], func['line'])
+                        if success:
+                            logger.info(f"  {Colors.GREEN}✓{Colors.RESET} Removed function: {func['name']}")
+                        else:
+                            logger.error(f"  {Colors.RED}✗{Colors.RESET} Failed to remove: {func['name']}")
+                    
+                    for imp in selected_imports:
+                        success = remove_unused_import(imp['file'], imp['name'], imp['line'])
+                        if success:
+                            logger.info(f"  {Colors.GREEN}✓{Colors.RESET} Removed import: {imp['name']}")
+                        else:
+                            logger.error(f"  {Colors.RED}✗{Colors.RESET} Failed to remove: {imp['name']}")
+                    
+                    logger.info(f"\n{Colors.GREEN}Cleanup complete!{Colors.RESET}")
                 else:
-                    logger.info(f"\n{Colors.YELLOW}Dry run - no files were modified.{Colors.RESET}")
+                    logger.info(f"\n{Colors.YELLOW}Operation cancelled.{Colors.RESET}")
             else:
-                logger.info(f"\n{Colors.BLUE}No items selected.{Colors.RESET}")
-        
+                logger.info(f"\n{Colors.YELLOW}Dry run - no files were modified.{Colors.RESET}")
         else:
-            if unused_functions:
-                logger.info(f"\n{Colors.RED}{Colors.BOLD}📦 Unreachable Functions{Colors.RESET}")
-                logger.info(f"{Colors.RED}{'=' * 23}{Colors.RESET}")
-                for i, item in enumerate(unused_functions, 1):
-                    logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.RED}{item['name']}{Colors.RESET}")
-                    logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-            else:
-                logger.info(f"\n{Colors.GREEN}✓ All functions are reachable!{Colors.RESET}")
-            
-            if unused_imports:
-                logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD}📥 Unused Imports{Colors.RESET}")
-                logger.info(f"{Colors.MAGENTA}{'=' * 16}{Colors.RESET}")
-                for i, item in enumerate(unused_imports, 1):
-                    logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.MAGENTA}{item['name']}{Colors.RESET}")
-                    logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-            else:
-                logger.info(f"\n{Colors.GREEN}✓ All imports are being used!{Colors.RESET}")
-            
-            logger.info(f"\n{Colors.GRAY}{'─' * 50}{Colors.RESET}")
-            logger.info(f"{Colors.GRAY}Analysis complete.{Colors.RESET}")
+            logger.info(f"\n{Colors.BLUE}No items selected.{Colors.RESET}")
+    
+    else:
+        if unused_functions:
+            logger.info(f"\n{Colors.RED}{Colors.BOLD}📦 Unreachable Functions{Colors.RESET}")
+            logger.info(f"{Colors.RED}{'=' * 23}{Colors.RESET}")
+            for i, item in enumerate(unused_functions, 1):
+                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.RED}{item['name']}{Colors.RESET}")
+                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
+        else:
+            logger.info(f"\n{Colors.GREEN}✓ All functions are reachable!{Colors.RESET}")
+        
+        if unused_imports:
+            logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD}📥 Unused Imports{Colors.RESET}")
+            logger.info(f"{Colors.MAGENTA}{'=' * 16}{Colors.RESET}")
+            for i, item in enumerate(unused_imports, 1):
+                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.MAGENTA}{item['name']}{Colors.RESET}")
+                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
+        else:
+            logger.info(f"\n{Colors.GREEN}✓ All imports are being used!{Colors.RESET}")
+        
+        dead_code_count = len(unused_functions) + len(unused_imports)
+        print_badge(dead_code_count, logger)
 
-            logger.info(f"\n{Colors.GRAY}{'─' * 50}{Colors.RESET}")
-            logger.info(f"{Colors.GRAY}Analysis complete.{Colors.RESET}")
-
-            dead_code_count = len(unused_functions) + len(unused_imports)
-
-            if dead_code_count == 0:
-                logger.info(f"\n✨ Your code is 100% dead code free! Add this badge to your README:")
-                logger.info("```markdown")
-                logger.info("![Dead Code Free](https://img.shields.io/badge/Dead_Code-Free-brightgreen?logo=moleculer&logoColor=white)")
-                logger.info("```")
-            else:
-                logger.info(f"Found {dead_code_count} dead code items. Add this badge to your README:")
-                logger.info("```markdown")  
-                logger.info(f"![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange?logo=codacy&logoColor=red)")
-                logger.info("```")
-
-            if unused_functions or unused_imports:
-                logger.info(f"\n{Colors.BOLD}Next steps:{Colors.RESET}")
-                logger.info(f"  • Use --interactive to select specific items to remove")
-                logger.info(f"  • Use --dry-run to preview changes before applying them")
+        if unused_functions or unused_imports:
+            logger.info(f"\n{Colors.BOLD}Next steps:{Colors.RESET}")
+            logger.info(f"  • Use --interactive to select specific items to remove")
+            logger.info(f"  • Use --dry-run to preview changes before applying them")
 
 if __name__ == "__main__":
     main()
