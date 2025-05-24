@@ -1,0 +1,141 @@
+{
+    "test_id": "imports_002",
+    "title": "Cross-Module Usage Detection",
+    "description": "Tests detection of functions and classes defined in one module and used in another",
+    "category": "imports",
+    "difficulty": "hard",
+    "files": {
+      "module_a.py": {
+        "dead_items": [
+          {
+            "type": "function",
+            "name": "exported_unused_function",
+            "line_start": 12,
+            "line_end": 14,
+            "reason": "Function is exported but never used by the importing module",
+            "detectable_by_static_analysis": true
+          },
+          {
+            "type": "function",
+            "name": "internal_unused_function",
+            "line_start": 20,
+            "line_end": 22,
+            "reason": "Function is neither used internally nor exported",
+            "detectable_by_static_analysis": true
+          },
+          {
+            "type": "class",
+            "name": "ExportedUnusedClass",
+            "line_start": 38,
+            "line_end": 45,
+            "reason": "Class is exported but never instantiated",
+            "detectable_by_static_analysis": true
+          },
+          {
+            "type": "method",
+            "name": "ExportedUnusedClass.method",
+            "line_start": 42,
+            "line_end": 44,
+            "reason": "Method belongs to a class that is never instantiated",
+            "detectable_by_static_analysis": true
+          },
+          {
+            "type": "method",
+            "name": "ExportedUsedClass.unused_method",
+            "line_start": 34,
+            "line_end": 36,
+            "reason": "Method is never called by the importing module",
+            "detectable_by_static_analysis": true
+          }
+        ],
+        "live_items": [
+          {
+            "type": "function",
+            "name": "exported_used_function",
+            "line_start": 8,
+            "line_end": 10,
+            "reason": "Function is imported and called by module_b on line 19"
+          },
+          {
+            "type": "function",
+            "name": "internal_used_function",
+            "line_start": 16,
+            "line_end": 18,
+            "reason": "Function is called internally on line 51"
+          },
+          {
+            "type": "class",
+            "name": "ExportedUsedClass",
+            "line_start": 24,
+            "line_end": 36,
+            "reason": "Class is imported and instantiated by module_b on line 22"
+          },
+          {
+            "type": "method",
+            "name": "ExportedUsedClass.used_method",
+            "line_start": 30,
+            "line_end": 32,
+            "reason": "Method is called by module_b on line 23"
+          },
+          {
+            "type": "class",
+            "name": "InternalClass",
+            "line_start": 47,
+            "line_end": 54,
+            "reason": "Class is instantiated internally on line 52"
+          },
+          {
+            "type": "method",
+            "name": "InternalClass.method",
+            "line_start": 51,
+            "line_end": 53,
+            "reason": "Method is called internally on line 53"
+          }
+        ]
+      },
+      "module_b.py": {
+        "dead_items": [
+          {
+            "type": "import",
+            "name": "exported_unused_function",
+            "line_start": 9,
+            "reason": "Imported but never used in this module",
+            "detectable_by_static_analysis": true
+          },
+          {
+            "type": "import",
+            "name": "ExportedUnusedClass",
+            "line_start": 11,
+            "reason": "Imported but never instantiated in this module",
+            "detectable_by_static_analysis": true
+          }
+        ],
+        "live_items": [
+          {
+            "type": "import",
+            "name": "exported_used_function",
+            "line_start": 8,
+            "reason": "Imported and used on line 19"
+          },
+          {
+            "type": "import",
+            "name": "ExportedUsedClass",
+            "line_start": 10,
+            "reason": "Imported and instantiated on line 22"
+          },
+          {
+            "type": "function",
+            "name": "function_using_imports",
+            "line_start": 14,
+            "line_end": 25,
+            "reason": "Called on line 28"
+          }
+        ]
+      }
+    },
+    "challenges": [
+      "Tests tool's ability to detect cross-module usage patterns",
+      "Requires analyzing multiple files together, not just individually",
+      "Verifies that a tool can track imports and their usage across module boundaries"
+    ]
+  }

@@ -19,15 +19,13 @@
 2.  **Clone your fork:** `git clone https://github.com/YOUR_USERNAME/skylos.git`
 3.  **Create a separate branch:** `git checkout -b feature/your-changes` or `bugfix/the-bug-you-fixed`
 4.  **Set Up Development Environment:**
-    * Please ensure that you have Python (>=3.8) and Rust installed.
-    * Install `maturin`: `pip install maturin`
+    * Please ensure that you have Python (>=3.9) installed.
+
     * Install Python development dependencies (like `inquirer` for interactive mode testing, `pytest`): `pip install inquirer pytest`
-    * Build Skylos in development mode: `maturin develop`
+    * Build Skylos in development mode: `pip install -e .`
 5.  **Make Your Changes:**
-    * For Rust changes, primarily in the `src/` directory.
     * For Python CLI changes, primarily in `skylos/cli.py`.
 6.  **Add Tests:**
-    * For Rust unit tests: `cargo test` within the `src/` directory (or project root).
     * For Python integration tests: `pytest tests/` from the project root.
     * Ensure your changes are covered by new or existing tests.
 7.  **Update Documentation:** If your changes affect user-facing features or the API, please update `README.md` or other relevant documentation.
