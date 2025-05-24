@@ -134,12 +134,10 @@ class Skylos:
         self._apply_heuristics()
         self._mark_exports()
         
-        print("\nDEBUG - FINAL REFERENCE COUNTS:")
-        for name, d in self.defs.items():
-            print(f"  {d.type} '{name}': {d.references} refs, exported: {d.is_exported}, confidence: {d.confidence}")
+        # for name, d in self.defs.items():
+        #     print(f"  {d.type} '{name}': {d.references} refs, exported: {d.is_exported}, confidence: {d.confidence}")
             
         thr = max(0, thr)
-        print(f"\nDEBUG - ITEMS BELOW THRESHOLD ({thr}):")
 
         unused = []
         for d in self.defs.values():

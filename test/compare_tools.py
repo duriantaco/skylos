@@ -125,13 +125,10 @@ def run_vulture(test_dir, confidence=60):
 def run_skylos_local(test_dir):
     """Run the locally installed development version of Skylos"""
     try:
-        print(f"Running locally installed Skylos...")
         start_time = time.time()
         
         try:
             import skylos
-            print(f"Successfully imported local skylos module (version: {getattr(skylos, '__version__', 'unknown')})")
-            print(f"Path: {skylos.__file__}")
         except ImportError as e:
             print(f"Error importing local skylos: {e}")
             return {"tool": "Skylos (Local Dev)", "items": [], "time": 0, "capabilities": []}
@@ -193,9 +190,7 @@ def run_skylos_local(test_dir):
                     "basename": Path(item["file"]).name,
                     "line": item["line"]
                 })
-            
-            print(f"Skylos (Local) found {len(detected_items)} dead code items")
-            
+                        
             elapsed_time = time.time() - start_time
             return {
                 "tool": "Skylos (Local Dev)",
@@ -206,8 +201,8 @@ def run_skylos_local(test_dir):
             
         except Exception as e:
             print(f"Analysis error with local Skylos: {e}")
-            import traceback
-            traceback.print_exc()
+            # import traceback
+            # traceback.print_exc()
             return {"tool": "Skylos (Local Dev)", "items": [], "time": 0, "capabilities": []}
     except Exception as e:
         print(f"Error running local Skylos: {e}")
@@ -461,7 +456,6 @@ def normalize_item(item):
 def run_benchmarks(test_dir, output_dir=None):
     
     ground_truth_items = load_ground_truth(test_dir)
-    print(f"Found {len(ground_truth_items)} dead items in ground truth")
     
     tools = [
         run_skylos_local(test_dir),
@@ -603,7 +597,6 @@ def main():
     
     print(f"{Colors.BOLD}Fair Dead Code Detection Benchmark{Colors.END}")
     print(f"{Colors.BOLD}==============================={Colors.END}")
-    print(f"Testing directory: {args.test_dir}")
     
     run_benchmarks(args.test_dir, args.output)
 
