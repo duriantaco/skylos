@@ -171,6 +171,9 @@ A: They test common scenarios but can't cover every edge case. Use them as a gui
 **Q: Should I automatically delete everything flagged as unused?**
 A: No. Always review results manually, especially for framework code, APIs, and test utilities.
 
+**Q: Why did Ruff underperform?**
+A: Like all other tools, Ruff is focused on detecting specific, surface-level issues. Tools like Vulture and Skylos are built SPECIFICALLY for dead code detection. It is NOT a specialized dead code detector. If your goal is dead code, then ruff is the wrong tool. It is a good tool but it's like using a wrench to hammer a nail. Good tool, wrong purpose. 
+
 ## Limitations
 
 - **Dynamic code**: `getattr()`, `globals()`, runtime imports are hard to detect
