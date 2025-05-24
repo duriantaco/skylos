@@ -1,0 +1,59 @@
+{
+    "test_id": "basic_002",
+    "title": "Unused Class Detection",
+    "description": "Tests detection of unused classes and their methods",
+    "category": "basic",
+    "difficulty": "easy",
+    "files": {
+      "code.py": {
+        "dead_items": [
+          {
+            "type": "class",
+            "name": "UnusedClass",
+            "line_start": 14,
+            "line_end": 21,
+            "reason": "Class is never instantiated or inherited from",
+            "detectable_by_static_analysis": true
+          },
+          {
+            "type": "method",
+            "name": "UnusedClass.method",
+            "line_start": 18,
+            "line_end": 20,
+            "reason": "Method belongs to an unused class",
+            "detectable_by_static_analysis": true
+          }
+        ],
+        "live_items": [
+          {
+            "type": "class",
+            "name": "UsedClass",
+            "line_start": 7,
+            "line_end": 13,
+            "reason": "Instantiated on line 31 and inherited by ChildClass"
+          },
+          {
+            "type": "method",
+            "name": "UsedClass.method",
+            "line_start": 11,
+            "line_end": 13,
+            "reason": "Called on line 32 and by ChildClass.method via super()"
+          },
+          {
+            "type": "class",
+            "name": "ChildClass",
+            "line_start": 23,
+            "line_end": 27,
+            "reason": "Instantiated on line 34"
+          },
+          {
+            "type": "method",
+            "name": "ChildClass.method",
+            "line_start": 25,
+            "line_end": 27,
+            "reason": "Called on line 35"
+          }
+        ]
+      }
+    }
+  }

@@ -3,36 +3,39 @@
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 ![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
 ![PyPI version](https://img.shields.io/pypi/v/skylos)
-![100% Dead Code Free](https://img.shields.io/badge/Dead%20Code-100%25%20Free-brightgreen)
 
 <div align="center">
    <img src="assets/SKYLOS.png" alt="Skylos Logo" width="200">
 </div>
 
-> A static analysis tool for Python codebases written in Rust that detects unreachable functions and unused imports, aka dead code. Faster and better results than many alternatives like Flake8 and Pylint, and finding more dead code than Vulture in our tests with comparable speed.
+> A static analysis tool for Python codebases written in Python (formerly was written in Rust but we ditched that) that detects unreachable functions and unused imports, aka dead code. Faster and better results than many alternatives like Flake8 and Pylint, and finding more dead code than Vulture in our tests with comparable speed.
 
 ## Features
 
-- **Unreachable Function Detection**: Find functions and methods that are never called aka dead code
-- **Unused Import Detection**: Imports that are never used
-- **High Performance**: Built with Rust
-- **Nice Output**: Colorized CLI output
-- **Interactive Mode**: Select and remove specific items interactively
-- **Dry Run Support**: Preview changes before applying them
-- **Auto-removal**: Auto clean up
-- **Cross-module Analysis**: Tracks imports and calls across your entire project
+* Unused Functions & Methods: Finds functions and methods that are never called
+* Unused Classes: Detects classes that are never instantiated or inherited
+* Unused Imports: Identifies imports that serve no purpose
+* Cross-Module Tracking: Analyzes usage patterns across your entire codebase
 
-## Benchmark (You can find this benchmark test in `test/sample_project`)
+## Benchmark (You can find this benchmark test in `test` folder)
 
-| Tool | Time (s) | Functions | Imports | Total |
-|------|----------|-----------|---------|-------|
-| Skylos | 0.039 | 48 | 8 | 56 |
-| Vulture (100%) | 0.040 | 0 | 3 | 3 |
-| Vulture (60%) | 0.041 | 28 | 3 | 31 |
-| Vulture (0%) | 0.041 | 28 | 3 | 31 |
-| Flake8 | 0.274 | 0 | 8 | 8 |
-| Pylint | 0.285 | 0 | 6 | 6 |
-| Dead | 0.035 | 0 | 0 | 0 |
+The benchmark checks how well static analysis tools spot dead code in Python. Things such as unused functions, classes, imports, variables, that kinda stuff. To read more refer down below.
+
+**The methodology and process for benchmarking can be found in `BENCHMARK.md`** 
+
+| Tool | Time (s) | Items | TP | FP | FN | Precision | Recall | F1 Score |
+|------|----------|-------|----|----|----|-----------|---------|---------| 
+| **Skylos (Local Dev)** | **0.013** | **34** | **22** | **12** | **7** | **0.6471** | **0.7586** | **0.6984** |
+| Vulture (0%) | 0.054 | 32 | 11 | 20 | 18 | 0.3548 | 0.3793 | 0.3667 |
+| Vulture (60%) | 0.044 | 32 | 11 | 20 | 18 | 0.3548 | 0.3793 | 0.3667 |
+| Flake8 | 0.371 | 16 | 5 | 7 | 24 | 0.4167 | 0.1724 | 0.2439 |
+| Pylint | 0.705 | 11 | 0 | 8 | 29 | 0.0000 | 0.0000 | 0.0000 |
+| Ruff | 0.140 | 16 | 5 | 7 | 24 | 0.4167 | 0.1724 | 0.2439 |
+
+To run the benchmark:
+`python compare_tools.py /path/to/sample_repo`
+
+**Note: More can be found in `BENCHMARK.md`**
 
 ## Installation
 
@@ -49,11 +52,8 @@ pip install skylos
 git clone https://github.com/duriantaco/skylos.git
 cd skylos
 
-# Install maturin (if not already installed)
-pip install maturin
-
-# Build and install
-maturin develop
+## Install your dependencies 
+pip install .
 ```
 
 ## Quick Start
@@ -130,34 +130,13 @@ The interactive mode lets you select specific functions and imports to remove:
 2. **Confirm changes**: Review selected items before applying
 3. **Auto-cleanup**: Files are automatically updated
 
-## Architecture
-
-Skylos uses a hybrid architecture combining Rust and Python:
-
-- **Rust Core**: Fast tree-sitter based parsing and analysis
-- **Python CLI**: User-friendly interface and file manipulation
-- **maturin**: Seamless Python-Rust integration
-
-### Core Components
-
-```
-skylos/
-├── src/lib.rs          # Main Rust analysis engine
-├── src/queries.rs      # Tree-sitter query definitions
-├── src/types.rs       # Data structures for results
-├── src/utils.rs       # Helper functions
-├── skylos/
-│   └── cli.py         # Python CLI interface
-└── pyproject.toml     # Project configuration
-```
-
 ## Development
 
 ### Prerequisites
 
-- Python ≥3.8
-- Rust and Cargo
-- maturin
+- `Python ≥3.9`
+- `pytest`
+- `inquirer`
 
 ### Setup
 
@@ -169,81 +148,49 @@ cd skylos
 # Create a virtual environment
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install development dependencies
-pip install maturin inquirer pytest
-
-# Build in development mode
-maturin develop
 ```
 
 ### Running Tests
 
 ```bash
-# Run Rust tests
-cd src
-cargo test
-
 # Run Python tests
 python -m pytest tests/
 ```
 
-### Adding New Features
+## FAQ 
 
-1. **Rust Analysis**: Add new queries in `src/queries.rs`
-2. **Python CLI**: Extend functionality in `skylos/cli.py`
-3. **Documentation**: Update this README and add docstrings
+**Q: Why doesn't Skylos find 100% of dead code?**
+A: Python's dynamic features (getattr, globals, etc.) can't be perfectly analyzed statically. No tool can achieve 100% accuracy. If they say they can, they're lying.
 
-## Configuration
+**Q: Why are the results different on my codebase?**
+A: These benchmarks use specific test cases. Your code patterns (frameworks, legacy code, etc.) will give different results.
 
-Skylos supports configuration via `.skylos.toml` (coming soon):
+**Q: Are these benchmarks realistic?**
+A: They test common scenarios but can't cover every edge case. Use them as a guide, not gospel.
 
-```toml
-[analysis]
-# Exclude patterns
-exclude = [
-    "*/migrations/*",
-    "*/tests/*",
-    "__pycache__"
-]
+**Q: Should I automatically delete everything flagged as unused?**
+A: No. Always review results manually, especially for framework code, APIs, and test utilities.
 
-# Custom patterns for dead code detection
-patterns = [
-    "test_*",      # Test functions
-    "_*_internal"  # Internal functions
-]
+## Limitations
 
-[output]
-# Default output format
-format = "colored"  # Options: colored, plain, json
+- **Dynamic code**: `getattr()`, `globals()`, runtime imports are hard to detect
+- **Frameworks**: Django models, Flask routes may appear unused but aren't
+- **Test data**: Limited scenarios, your mileage may vary
+- **False positives**: Always manually review before deleting code
 
-# Color scheme
-colors = "default"  # Options: default, dark, light
-```
-
-## Limitations 
-
-- Occassionally there will be false positives and false negatives especially for extreme edge cases 
-
-- The library is currently available **ONLY** for python
+If we can detect 100% of all dead code in any structure, we wouldn't be sitting here. But we definitely tried our best
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Tree-sitter Errors**
-   ```
-   Error: tree-sitter parse failed
-   ```
-   Ensure your Python files have valid syntax.
-
-2. **Permission Errors**
+1. **Permission Errors**
    ```
    Error: Permission denied when removing function
    ```
    Check file permissions before running in interactive mode.
 
-3. **Missing Dependencies**
+2. **Missing Dependencies**
    ```
    Interactive mode requires 'inquirer' package
    ```
@@ -263,7 +210,8 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 
 ## Roadmap
 
-- [ ] Configuration file support (White lists etc)
+- [ ] Expand our test cases
+- [ ] Configuration file support 
 - [ ] Custom analysis rules
 - [ ] Git hooks integration
 - [ ] CI/CD integration examples
@@ -274,12 +222,6 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 ## License
 
 This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- [tree-sitter](https://tree-sitter.github.io/) for the powerful parsing framework
-- [maturin](https://github.com/PyO3/maturin) for seamless Rust-Python integration
-- [inquirer](https://github.com/magmax/python-inquirer) for the interactive CLI
 
 ## Contact
 
