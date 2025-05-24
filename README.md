@@ -212,7 +212,7 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 5. Open a Pull Request
 
 ## Roadmap
-
+- [ ] Add a production flag, to include dead codes that are used in test but not in the actual execution 
 - [ ] Expand our test cases
 - [ ] Configuration file support 
 - [ ] Custom analysis rules
