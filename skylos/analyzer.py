@@ -26,7 +26,6 @@ class Skylos:
         return".".join(p)
     
     def _mark_exports(self):
-        
         for name, d in self.defs.items():
             if d.in_init and not d.simple_name.startswith('_'):
                 d.is_exported = True
@@ -71,7 +70,6 @@ class Skylos:
                 d.references += 1
     
     def _get_base_classes(self, class_name):
-        """Get base classes for a given class name"""
         if class_name not in self.defs:
             return []
         
@@ -83,7 +81,6 @@ class Skylos:
         return []
             
     def _apply_heuristics(self):
-
         class_methods=defaultdict(list)
         for d in self.defs.values():
             if d.type in("method","function") and"." in d.name:
@@ -97,17 +94,21 @@ class Skylos:
                     if m.simple_name in AUTO_CALLED:m.references+=1
                     
         for d in self.defs.values():
-            if d.simple_name in MAGIC_METHODS or d.simple_name.startswith("__")and d.simple_name.endswith("__"):d.confidence=0
-            if not d.simple_name.startswith("_")and d.type in("function","method","class"):d.confidence=min(d.confidence,90)
-            if d.in_init and d.type in("function","class"):d.confidence=min(d.confidence,85)
-            if d.name.split(".")[0] in self.dynamic:d.confidence=min(d.confidence,50)
-        
-        for d in self.defs.values():
+            if d.simple_name in MAGIC_METHODS or (d.simple_name.startswith("__") and d.simple_name.endswith("__")):
+                d.confidence = 0
+            
+            if not d.simple_name.startswith("_") and d.type in ("function", "method", "class"):
+                d.confidence = min(d.confidence, 90)
+            
+            if d.in_init and d.type in ("function", "class"):
+                d.confidence = min(d.confidence, 85)
+            
+            if d.name.split(".")[0] in self.dynamic:
+                d.confidence = min(d.confidence, 60)
+            
             if d.type == "method" and TEST_METHOD_PATTERN.match(d.simple_name):
-                # check if its in a class that inherits from a test base class
                 class_name = d.name.rsplit(".", 1)[0]
                 class_simple_name = class_name.split(".")[-1]
-                # class name suggests it's a test class, ignore test methods
                 if "Test" in class_simple_name or class_simple_name.endswith("TestCase"):
                     d.confidence = 0
 
@@ -134,9 +135,6 @@ class Skylos:
         self._apply_heuristics()
         self._mark_exports()
         
-        # for name, d in self.defs.items():
-        #     print(f"  {d.type} '{name}': {d.references} refs, exported: {d.is_exported}, confidence: {d.confidence}")
-            
         thr = max(0, thr)
 
         unused = []
@@ -144,7 +142,13 @@ class Skylos:
             if d.references == 0 and not d.is_exported and d.confidence >= thr:
                 unused.append(d.to_dict())
         
-        result = {"unused_functions": [], "unused_imports": [], "unused_classes": []}
+        result = {
+            "unused_functions": [], 
+            "unused_imports": [], 
+            "unused_classes": [],
+            "unused_variables": []
+        }
+        
         for u in unused:
             if u["type"] in ("function", "method"):
                 result["unused_functions"].append(u)
@@ -152,6 +156,8 @@ class Skylos:
                 result["unused_imports"].append(u)
             elif u["type"] == "class": 
                 result["unused_classes"].append(u)
+            elif u["type"] == "variable":
+                result["unused_variables"].append(u)
                 
         return json.dumps(result, indent=2)
 
@@ -175,6 +181,60 @@ def analyze(path,conf=60):return Skylos().analyze(path,conf)
 if __name__=="__main__":
     if len(sys.argv)>1:
         p=sys.argv[1];c=int(sys.argv[2])if len(sys.argv)>2 else 60
-        print(analyze(p,c))
+        result = analyze(p,c)
+        
+        data = json.loads(result)
+        print("\n🔍 Python Static Analysis Results")
+        print("===================================\n")
+        
+        total_items = sum(len(items) for items in data.values())
+        
+        print("Summary:")
+        if data["unused_functions"]:
+            print(f"  • Unreachable functions: {len(data['unused_functions'])}")
+        if data["unused_imports"]:
+            print(f"  • Unused imports: {len(data['unused_imports'])}")
+        if data["unused_classes"]:
+            print(f"  • Unused classes: {len(data['unused_classes'])}")
+        if data["unused_variables"]:
+            print(f"  • Unused variables: {len(data['unused_variables'])}")
+        
+        if data["unused_functions"]:
+            print("\n📦 Unreachable Functions")
+            print("=======================")
+            for i, func in enumerate(data["unused_functions"], 1):
+                print(f" {i}. {func['name']}")
+                print(f"    └─ {func['file']}:{func['line']}")
+        
+        if data["unused_imports"]:
+            print("\n📥 Unused Imports")
+            print("================")
+            for i, imp in enumerate(data["unused_imports"], 1):
+                print(f" {i}. {imp['simple_name']}")
+                print(f"    └─ {imp['file']}:{imp['line']}")
+        
+        if data["unused_classes"]:
+            print("\n📋 Unused Classes")
+            print("=================")
+            for i, cls in enumerate(data["unused_classes"], 1):
+                print(f" {i}. {cls['name']}")
+                print(f"    └─ {cls['file']}:{cls['line']}")
+                
+        if data["unused_variables"]:
+            print("\n📊 Unused Variables")
+            print("==================")
+            for i, var in enumerate(data["unused_variables"], 1):
+                print(f" {i}. {var['name']}")
+                print(f"    └─ {var['file']}:{var['line']}")
+        
+        print("\n" + "─" * 50)
+        print(f"Found {total_items} dead code items. Add this badge to your README:")
+        print(f"```markdown")
+        print(f"![Dead Code: {total_items}](https://img.shields.io/badge/Dead_Code-{total_items}_detected-orange?logo=codacy&logoColor=red)")
+        print(f"```")
+        
+        print("\nNext steps:")
+        print("  • Use --interactive to select specific items to remove")
+        print("  • Use --dry-run to preview changes before applying them")
     else:
         print("Usage: python Skylos.py <path> [confidence_threshold]")

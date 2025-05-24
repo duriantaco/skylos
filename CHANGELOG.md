@@ -1,6 +1,6 @@
 ## Changelog
 
-## [1.0.9] - 2025-05-24
+## [1.0.10] - 2025-05-24
 ### Fixed
 
 Major Changes: Changed from Rust to Python. Surprisingly it's faster!
