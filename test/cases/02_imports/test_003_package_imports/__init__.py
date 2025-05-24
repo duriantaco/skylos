@@ -11,4 +11,4 @@ def unused_package_function():
     """Function defined at package level but never used."""
     return "Unused package function"
 
-__version__ = "1.0.9"
+__version__ = "1.0.10"
