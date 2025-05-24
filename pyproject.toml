@@ -1,18 +1,14 @@
 [build-system]
-requires = ["maturin>=1.5"]
-build-backend = "maturin"
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "0.0.7"
-requires-python = ">=3.8"
+version = "1.0.7"
+requires-python = ">=3.9"
 description = "A static analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
 dependencies = ["inquirer>=3.0.0"]
 
 [project.scripts]
 skylos = "skylos.cli:main"
-
-[tool.maturin]
-module-name = "skylos._core"
-python-source = "."
