@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="skylos",
-    version="1.0.9",
+    version="1.0.10",
     packages=find_packages(),
     python_requires=">=3.9",
     install_requires=["inquirer>=3.0.0"],
