@@ -1,4 +1,3 @@
-# Standard library imports
 import os                 # Used
 import sys                # Used
 import json               # Unused - should be detected
