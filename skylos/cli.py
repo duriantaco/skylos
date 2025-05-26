@@ -247,6 +247,8 @@ def main() -> None:
 
     unused_functions = result.get("unused_functions", [])
     unused_imports = result.get("unused_imports", [])
+    unused_parameters = result.get("unused_parameters", [])
+    unused_variables = result.get("unused_variables", [])
     
     logger.info(f"{Colors.CYAN}{Colors.BOLD}🔍 Python Static Analysis Results{Colors.RESET}")
     logger.info(f"{Colors.CYAN}{'=' * 35}{Colors.RESET}")
@@ -254,7 +256,10 @@ def main() -> None:
     logger.info(f"\n{Colors.BOLD}Summary:{Colors.RESET}")
     logger.info(f"  • Unreachable functions: {Colors.YELLOW}{len(unused_functions)}{Colors.RESET}")
     logger.info(f"  • Unused imports: {Colors.YELLOW}{len(unused_imports)}{Colors.RESET}")
-    
+    logger.info(f"  • Unused parameters: {Colors.YELLOW}{len(unused_parameters)}{Colors.RESET}")
+    logger.info(f"  • Unused variables: {Colors.YELLOW}{len(unused_variables)}{Colors.RESET}")
+
+
     if args.interactive and (unused_functions or unused_imports):
         logger.info(f"\n{Colors.BOLD}Interactive Mode:{Colors.RESET}")
         selected_functions, selected_imports = interactive_selection(logger, unused_functions, unused_imports)
@@ -324,6 +329,24 @@ def main() -> None:
         else:
             logger.info(f"\n{Colors.GREEN}✓ All imports are being used!{Colors.RESET}")
         
+        if unused_parameters:
+            logger.info(f"\n{Colors.BLUE}{Colors.BOLD}🔧 Unused Parameters{Colors.RESET}")
+            logger.info(f"{Colors.BLUE}{'=' * 18}{Colors.RESET}")
+            for i, item in enumerate(unused_parameters, 1):
+                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.BLUE}{item['name']}{Colors.RESET}")
+                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
+        else:
+            logger.info(f"\n{Colors.GREEN}✓ All parameters are being used!{Colors.RESET}")
+        
+        if unused_variables:
+            logger.info(f"\n{Colors.YELLOW}{Colors.BOLD}📊 Unused Variables{Colors.RESET}")
+            logger.info(f"{Colors.YELLOW}{'=' * 18}{Colors.RESET}")
+            for i, item in enumerate(unused_variables, 1):
+                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.YELLOW}{item['name']}{Colors.RESET}")
+                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
+        else:
+            logger.info(f"\n{Colors.GREEN}✓ All variables are being used!{Colors.RESET}")
+
         dead_code_count = len(unused_functions) + len(unused_imports)
         print_badge(dead_code_count, logger)
 
