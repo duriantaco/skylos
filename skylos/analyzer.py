@@ -97,6 +97,12 @@ class Skylos:
             if d.simple_name in MAGIC_METHODS or (d.simple_name.startswith("__") and d.simple_name.endswith("__")):
                 d.confidence = 0
             
+            if d.type == "parameter" and d.simple_name in ("self", "cls"):
+                d.confidence = 0
+
+            if d.type != "parameter" and (d.simple_name in MAGIC_METHODS or (d.simple_name.startswith("__") and d.simple_name.endswith("__"))):
+                d.confidence = 0
+
             if not d.simple_name.startswith("_") and d.type in ("function", "method", "class"):
                 d.confidence = min(d.confidence, 90)
             
@@ -105,6 +111,9 @@ class Skylos:
             
             if d.name.split(".")[0] in self.dynamic:
                 d.confidence = min(d.confidence, 60)
+            
+            if d.type == "variable" and d.simple_name == "_":
+                d.confidence = 0
             
             if d.type == "method" and TEST_METHOD_PATTERN.match(d.simple_name):
                 class_name = d.name.rsplit(".", 1)[0]
@@ -134,7 +143,7 @@ class Skylos:
         self._mark_refs()
         self._apply_heuristics()
         self._mark_exports()
-        
+                
         thr = max(0, thr)
 
         unused = []
@@ -146,7 +155,8 @@ class Skylos:
             "unused_functions": [], 
             "unused_imports": [], 
             "unused_classes": [],
-            "unused_variables": []
+            "unused_variables": [],
+            "unused_parameters": []
         }
         
         for u in unused:
@@ -158,6 +168,8 @@ class Skylos:
                 result["unused_classes"].append(u)
             elif u["type"] == "variable":
                 result["unused_variables"].append(u)
+            elif u["type"] == "parameter":
+                result["unused_parameters"].append(u)
                 
         return json.dumps(result, indent=2)
 

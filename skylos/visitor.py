@@ -52,6 +52,7 @@ class Visitor(ast.NodeVisitor):
         self.dyn=set()
         self.exports=set()
         self.current_function_scope = []
+        self.current_function_params = []
 
     def add_def(self,n,t,l):
         if n not in{d.name for d in self.defs}:self.defs.append(Definition(n,t,self.file,l))
@@ -85,17 +86,27 @@ class Visitor(ast.NodeVisitor):
             self.alias[a.asname or a.name.split(".")[-1]]=full
             self.add_def(full,"import",node.lineno)
 
-    def visit_ImportFrom(self,node):
-        if node.module is None:return
+    def visit_ImportFrom(self, node):
+        if node.module is None:
+            return
         for a in node.names:
-            if a.name=="*":continue
-            base=node.module
+            if a.name == "*":
+                continue
+            base = node.module
             if node.level:
-                parts=self.mod.split(".")
-                base=".".join(parts[:-node.level])+(f".{node.module}"if node.module else"")
-            full=f"{base}.{a.name}"
-            self.alias[a.asname or a.name]=full
-            self.add_def(full,"import",node.lineno)
+                parts = self.mod.split(".")
+                base = ".".join(parts[:-node.level]) + (f".{node.module}" if node.module else "")
+            
+            full = f"{base}.{a.name}"
+            
+            if a.asname:
+                alias_full = f"{self.mod}.{a.asname}" if self.mod else a.asname
+                self.add_def(alias_full, "import", node.lineno)
+                self.alias[a.asname] = full
+                self.add_ref(full)
+            else:
+                self.alias[a.name] = full
+                self.add_def(full, "import", node.lineno)
 
     def visit_arguments(self, args):
         for arg in args.args:
@@ -128,15 +139,25 @@ class Visitor(ast.NodeVisitor):
         
         self.current_function_scope.append(node.name)
         
+        old_params = self.current_function_params
+        self.current_function_params = []
+        
         for d_node in node.decorator_list:
             self.visit(d_node)
+        
+        for arg in node.args.args:
+            param_name = f"{qualified_name}.{arg.arg}"
+            self.add_def(param_name, "parameter", node.lineno)
+            self.current_function_params.append((arg.arg, param_name))
         
         self.visit_arguments(node.args)
         self.visit_annotation(node.returns)
         
         for stmt in node.body:
             self.visit(stmt)
+            
         self.current_function_scope.pop()
+        self.current_function_params = old_params
         
     visit_AsyncFunctionDef=visit_FunctionDef
 
@@ -178,6 +199,30 @@ class Visitor(ast.NodeVisitor):
             self.visit(node.step)
 
     def visit_Assign(self, node):
+        def process_target_for_def(target_node):
+            if isinstance(target_node, ast.Name):
+                var_name_simple = target_node.id
+                if var_name_simple == "__all__" and not self.current_function_scope and not self.cls:
+                    return
+
+                scope_parts = [self.mod]
+                if self.cls:
+                    scope_parts.append(self.cls)
+                if self.current_function_scope:
+                    scope_parts.extend(self.current_function_scope)
+                
+                prefix = '.'.join(filter(None, scope_parts))
+                qualified_var_name = f"{prefix}.{var_name_simple}" if prefix else var_name_simple
+
+                self.add_def(qualified_var_name, "variable", target_node.lineno)
+
+            elif isinstance(target_node, (ast.Tuple, ast.List)):
+                for elt in target_node.elts:
+                    process_target_for_def(elt)
+
+        for t in node.targets:
+            process_target_for_def(t)
+        
         for target in node.targets:
             if isinstance(target, ast.Name) and target.id == "__all__":
                 if isinstance(node.value, (ast.List, ast.Tuple)):
@@ -189,9 +234,10 @@ class Visitor(ast.NodeVisitor):
                             value = elt.s
                             
                         if value is not None:
-                            full_name = f"{self.mod}.{value}"
-                            self.add_ref(full_name)
-                            self.add_ref(value)
+                            full_name_export = f"{self.mod}.{value}" if self.mod else value
+                            self.add_ref(full_name_export)
+                            self.add_ref(value) 
+        
         self.generic_visit(node)
 
     def visit_Call(self, node):
@@ -219,12 +265,26 @@ class Visitor(ast.NodeVisitor):
 
     def visit_Name(self,node):
         if isinstance(node.ctx,ast.Load):
-            self.add_ref(self.qual(node.id))
-            if node.id in DYNAMIC_PATTERNS:self.dyn.add(self.mod.split(".")[0])
+            for param_name, param_full_name in self.current_function_params:
+                if node.id == param_name:
+                    self.add_ref(param_full_name)
+                    break
+            else:
+                # not parameter, handle normally
+                self.add_ref(self.qual(node.id))
+                if node.id in DYNAMIC_PATTERNS:
+                    self.dyn.add(self.mod.split(".")[0])
 
-    def visit_Attribute(self,node):
+    def visit_Attribute(self, node):
         self.generic_visit(node)
-        if isinstance(node.ctx,ast.Load)and isinstance(node.value,ast.Name):
+        if isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Name):
+            if node.value.id in [param_name for param_name, _ in self.current_function_params]:
+                # mark parameter as referenced
+                for param_name, param_full_name in self.current_function_params:
+                    if node.value.id == param_name:
+                        self.add_ref(param_full_name)
+                        break
+
             self.add_ref(f"{self.qual(node.value.id)}.{node.attr}")
 
     def visit_keyword(self, node):
