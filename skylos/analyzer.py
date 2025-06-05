@@ -12,6 +12,21 @@ TEST_BASE_CLASSES = {"TestCase", "AsyncioTestCase", "unittest.TestCase", "unitte
 TEST_METHOD_PATTERN = re.compile(r"^test_\w+$")
 MAGIC_METHODS={f"__{n}__"for n in["init","new","call","getattr","getattribute","enter","exit","str","repr","hash","eq","ne","lt","gt","le","ge","iter","next","contains","len","getitem","setitem","delitem","iadd","isub","imul","itruediv","ifloordiv","imod","ipow","ilshift","irshift","iand","ixor","ior","round","format","dir","abs","complex","int","float","bool","bytes","reduce","await","aiter","anext","add","sub","mul","truediv","floordiv","mod","divmod","pow","lshift","rshift","and","or","xor","radd","rsub","rmul","rtruediv","rfloordiv","rmod","rdivmod","rpow","rlshift","rrshift","rand","ror","rxor"]}
 
+DEFAULT_EXCLUDE_FOLDERS = {
+    "__pycache__",
+    ".git", 
+    ".pytest_cache",
+    ".mypy_cache",
+    ".tox",
+    "htmlcov",
+    ".coverage",
+    "build",
+    "dist",
+    "*.egg-info",
+    "venv",
+    ".venv"
+}
+
 class Skylos:
     def __init__(self):
         self.defs={}
@@ -24,6 +39,54 @@ class Skylos:
         if p[-1].endswith(".py"):p[-1]=p[-1][:-3]
         if p[-1]=="__init__":p.pop()
         return".".join(p)
+    
+    def _should_exclude_file(self, file_path, root_path, exclude_folders):
+        if not exclude_folders:
+            return False
+            
+        try:
+            rel_path = file_path.relative_to(root_path)
+        except ValueError:
+            return False
+        
+        path_parts = rel_path.parts
+        
+        for exclude_folder in exclude_folders:
+            if "*" in exclude_folder:
+                for part in path_parts:
+                    if part.endswith(exclude_folder.replace("*", "")):
+                        return True
+            else:
+                if exclude_folder in path_parts:
+                    return True
+        
+        return False
+    
+    def _get_python_files(self, path, exclude_folders=None):
+        p = Path(path).resolve()
+        
+        if p.is_file():
+            return [p], p.parent
+        
+        root = p
+        all_files = list(p.glob("**/*.py"))
+        
+        if exclude_folders:
+            filtered_files = []
+            excluded_count = 0
+            
+            for file_path in all_files:
+                if self._should_exclude_file(file_path, root, exclude_folders):
+                    excluded_count += 1
+                    continue
+                filtered_files.append(file_path)
+            
+            if excluded_count > 0:
+                logger.info(f"Excluded {excluded_count} files from analysis")
+            
+            return filtered_files, root
+        
+        return all_files, root
     
     def _mark_exports(self):
         for name, d in self.defs.items():
@@ -121,10 +184,32 @@ class Skylos:
                 if "Test" in class_simple_name or class_simple_name.endswith("TestCase"):
                     d.confidence = 0
 
-    def analyze(self, path, thr=60):
-        p = Path(path).resolve()
-        files = [p] if p.is_file() else list(p.glob("**/*.py"))
-        root = p.parent if p.is_file() else p
+    def analyze(self, path, thr=60, exclude_folders=None):
+        if exclude_folders is None:
+            exclude_folders = list(DEFAULT_EXCLUDE_FOLDERS)
+        else:
+            # merge the user's exclusions with defaults up above. line 15
+            all_exclusions = set(DEFAULT_EXCLUDE_FOLDERS)
+            all_exclusions.update(exclude_folders)
+            exclude_folders = list(all_exclusions)
+        
+        files, root = self._get_python_files(path, exclude_folders)
+        
+        if not files:
+            logger.warning(f"No Python files found in {path}")
+            return json.dumps({
+                "unused_functions": [], 
+                "unused_imports": [], 
+                "unused_classes": [],
+                "unused_variables": [],
+                "unused_parameters": [],
+                 "analysis_summary": {
+                    "total_files": 0,
+                    "excluded_folders": exclude_folders if exclude_folders else []
+                }
+            })
+        
+        logger.info(f"Analyzing {len(files)} Python files...")
         
         modmap = {}
         for f in files:
@@ -156,7 +241,11 @@ class Skylos:
             "unused_imports": [], 
             "unused_classes": [],
             "unused_variables": [],
-            "unused_parameters": []
+            "unused_parameters": [],
+            "analysis_summary": {
+                "total_files": len(files),
+                "excluded_folders": exclude_folders if exclude_folders else [],
+            }
         }
         
         for u in unused:
@@ -188,7 +277,8 @@ def proc_file(file_or_args, mod=None):
         logger.error(f"{file}: {e}")
         return [], [], set(), set()
 
-def analyze(path,conf=60):return Skylos().analyze(path,conf)
+def analyze(path,conf=60, exclude_folders=None):
+    return Skylos().analyze(path,conf, exclude_folders)
 
 if __name__=="__main__":
     if len(sys.argv)>1:
