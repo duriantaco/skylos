@@ -226,6 +226,19 @@ def main() -> None:
         action="store_true",
         help="Show what would be removed without actually modifying files"
     )
+    parser.add_argument(
+        "--exclude-folder",
+        action="append",
+        dest="exclude_folders",
+        help="Exclude a folder from analysis (can be used multiple times). Common examples: node_modules, .git, __pycache__, build, dist, .venv"
+    )
+    ## kiv. added confidence threshold argument temporarily, gotta check if it is needed again in next iteration
+    parser.add_argument(
+        "--confidence",
+        type=int,
+        default=60,
+        help="Confidence threshold (0-100) for reporting unused code (default: 60)"
+    )
 
     args = parser.parse_args()
     logger = setup_logger(args.output)
@@ -233,9 +246,16 @@ def main() -> None:
     if args.verbose:
         logger.setLevel(logging.DEBUG)
         logger.debug(f"Analyzing path: {args.path}")
+        if args.exclude_folders:
+            logger.debug(f"Excluding folders: {args.exclude_folders}")
+
+    ## show the info for the excluded folders.. 
+    if args.exclude_folders:
+        if not args.json:
+            logger.info(f"{Colors.YELLOW}📁 Excluding folders: {', '.join(args.exclude_folders)}{Colors.RESET}")
 
     try:
-        result_json = skylos.analyze(args.path)
+        result_json = skylos.analyze(confidence=args.confidence, exclude_folders=args.exclude_folders)
         result = json.loads(result_json)
     except Exception as e:
         logger.error(f"Error during analysis: {e}")
@@ -352,8 +372,9 @@ def main() -> None:
 
         if unused_functions or unused_imports:
             logger.info(f"\n{Colors.BOLD}Next steps:{Colors.RESET}")
-            logger.info(f"  • Use --interactive to select specific items to remove")
-            logger.info(f"  • Use --dry-run to preview changes before applying them")
+            logger.info(f" • Use --interactive to select specific items to remove")
+            logger.info(f" • Use --dry-run to preview changes before applying them")
+            logger.info(f" • Use --exclude-folder to skip directories like node_modules, .git")
 
 if __name__ == "__main__":
     main()
