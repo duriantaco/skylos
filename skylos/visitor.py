@@ -98,16 +98,13 @@ class Visitor(ast.NodeVisitor):
                 base = ".".join(parts[:-node.level]) + (f".{node.module}" if node.module else "")
             
             full = f"{base}.{a.name}"
-            
             if a.asname:
-                alias_full = f"{self.mod}.{a.asname}" if self.mod else a.asname
-                self.add_def(alias_full, "import", node.lineno)
                 self.alias[a.asname] = full
-                self.add_ref(full)
+                self.add_def(full, "import", node.lineno)
             else:
                 self.alias[a.name] = full
                 self.add_def(full, "import", node.lineno)
-
+            
     def visit_arguments(self, args):
         for arg in args.args:
             self.visit_annotation(arg.annotation)
@@ -271,7 +268,8 @@ class Visitor(ast.NodeVisitor):
                     break
             else:
                 # not parameter, handle normally
-                self.add_ref(self.qual(node.id))
+                qualified = self.qual(node.id)
+                self.add_ref(qualified)
                 if node.id in DYNAMIC_PATTERNS:
                     self.dyn.add(self.mod.split(".")[0])
 
