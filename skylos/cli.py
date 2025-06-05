@@ -89,6 +89,7 @@ def remove_unused_import(file_path: str, import_name: str, line_number: int) -> 
         return False
 
 def remove_unused_function(file_path: str, function_name: str, line_number: int) -> bool:
+    # remove the entire def from the source code
     try:
         with open(file_path, 'r') as f:
             content = f.read()
@@ -232,13 +233,6 @@ def main() -> None:
         dest="exclude_folders",
         help="Exclude a folder from analysis (can be used multiple times). Common examples: node_modules, .git, __pycache__, build, dist, .venv"
     )
-    ## kiv. added confidence threshold argument temporarily, gotta check if it is needed again in next iteration
-    parser.add_argument(
-        "--confidence",
-        type=int,
-        default=60,
-        help="Confidence threshold (0-100) for reporting unused code (default: 60)"
-    )
 
     args = parser.parse_args()
     logger = setup_logger(args.output)
@@ -255,7 +249,7 @@ def main() -> None:
             logger.info(f"{Colors.YELLOW}📁 Excluding folders: {', '.join(args.exclude_folders)}{Colors.RESET}")
 
     try:
-        result_json = skylos.analyze(confidence=args.confidence, exclude_folders=args.exclude_folders)
+        result_json = skylos.analyze(args.path, exclude_folders=args.exclude_folders)
         result = json.loads(result_json)
     except Exception as e:
         logger.error(f"Error during analysis: {e}")
@@ -278,7 +272,6 @@ def main() -> None:
     logger.info(f"  • Unused imports: {Colors.YELLOW}{len(unused_imports)}{Colors.RESET}")
     logger.info(f"  • Unused parameters: {Colors.YELLOW}{len(unused_parameters)}{Colors.RESET}")
     logger.info(f"  • Unused variables: {Colors.YELLOW}{len(unused_variables)}{Colors.RESET}")
-
 
     if args.interactive and (unused_functions or unused_imports):
         logger.info(f"\n{Colors.BOLD}Interactive Mode:{Colors.RESET}")
