@@ -72,7 +72,7 @@ skylos --interactive --dry-run /path/to/your/project
 skylos --json /path/to/your/project 
 ```
 
-## Folder Management
+## **NEW** Folder Management
 
 ### Default Exclusions
 By default, Skylos excludes common folders: `__pycache__`, `.git`, `.pytest_cache`, `.mypy_cache`, `.tox`, `htmlcov`, `.coverage`, `build`, `dist`, `*.egg-info`, `venv`, `.venv`
