@@ -15,4 +15,6 @@ build/
 __pycache__
 chunks
 venvtest
-pykomodo
+snugbug
+.ruff_cache
+dist

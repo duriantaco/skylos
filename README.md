@@ -72,6 +72,28 @@ skylos --interactive --dry-run /path/to/your/project
 skylos --json /path/to/your/project 
 ```
 
+## Folder Management
+
+### Default Exclusions
+By default, Skylos excludes common folders: `__pycache__`, `.git`, `.pytest_cache`, `.mypy_cache`, `.tox`, `htmlcov`, `.coverage`, `build`, `dist`, `*.egg-info`, `venv`, `.venv`
+
+### Folder Options
+```bash
+# List default excluded folders
+skylos --list-default-excludes
+
+# Exclude single folder (The example here will be venv)
+skylos /path/to/your/project --exclude-folder venv 
+
+# Exclude multiple folders
+skylos /path/to/your/project --exclude-folder venv --exclude-folder build
+
+# Force include normally excluded folders
+skylos /path/to/your/project --include-folder venv 
+
+# Scan everything (no exclusions)
+skylos path/to/your/project --no-default-excludes 
+
 ## CLI Options
 
 ```
@@ -81,12 +103,16 @@ Arguments:
   PATH  Path to the Python project to analyze
 
 Options:
-  -h, --help              Show this help message and exit
-  -j, --json             Output raw JSON instead of formatted text
-  -o, --output FILE      Write output to file instead of stdout
-  -v, --verbose          Enable verbose output
-  -i, --interactive      Interactively select items to remove
-  --dry-run              Show what would be removed without modifying files
+  -h, --help                    Show this help message and exit
+  -j, --json                   Output raw JSON instead of formatted text  
+  -o, --output FILE            Write output to file instead of stdout
+  -v, --verbose                Enable verbose output
+  -i, --interactive            Interactively select items to remove
+  --dry-run                    Show what would be removed without modifying files
+  --exclude-folder FOLDER      Exclude a folder from analysis (can be used multiple times)
+  --include-folder FOLDER      Force include a folder that would otherwise be excluded
+  --no-default-excludes        Don't exclude default folders (__pycache__, .git, venv, etc.)
+  --list-default-excludes      List the default excluded folders and
 ```
 
 ## Example Output
@@ -123,8 +149,6 @@ Next steps:
 ## Interactive Mode
 
 The interactive mode lets you select specific functions and imports to remove:
-
-![Interactive Demo](docs/interactive-demo.gif)
 
 1. **Select items**: Use arrow keys and space to select/deselect
 2. **Confirm changes**: Review selected items before applying
@@ -213,13 +237,11 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 
 ## Roadmap
 - [ ] Add a production flag, to include dead codes that are used in test but not in the actual execution 
-- [ ] Expand our test cases
+- [x] Expand our test cases
 - [ ] Configuration file support 
-- [ ] Custom analysis rules
 - [ ] Git hooks integration
 - [ ] CI/CD integration examples
-- [ ] Web interface
-- [ ] Support for other languages
+~~- [] Support for other languages (unless I have contributors, this ain't possible)~~
 - [ ] Further optimization
 
 ## License
