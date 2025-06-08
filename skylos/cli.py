@@ -4,6 +4,7 @@ import sys
 import logging
 import ast
 import skylos
+from skylos.analyzer import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
 
 try:
     import inquirer
@@ -227,14 +228,49 @@ def main() -> None:
         action="store_true",
         help="Show what would be removed without actually modifying files"
     )
+    
     parser.add_argument(
         "--exclude-folder",
         action="append",
         dest="exclude_folders",
-        help="Exclude a folder from analysis (can be used multiple times). Common examples: node_modules, .git, __pycache__, build, dist, .venv"
+        help="Exclude a folder from analysis (can be used multiple times). "
+             "By default, common folders like __pycache__, .git, venv are excluded. "
+             "Use --no-default-excludes to disable default exclusions."
+    )
+    
+    parser.add_argument(
+        "--include-folder", 
+        action="append",
+        dest="include_folders",
+        help="Force include a folder that would otherwise be excluded "
+             "(overrides both default and custom exclusions). "
+             "Example: --include-folder venv to scan your venv folder."
+    )
+    
+    parser.add_argument(
+        "--no-default-excludes",
+        action="store_true",
+        help="Don't exclude default folders (__pycache__, .git, venv, etc.). "
+             "Only exclude folders specified with --exclude-folder."
+    )
+    
+    parser.add_argument(
+        "--list-default-excludes",
+        action="store_true", 
+        help="List the default excluded folders and exit."
     )
 
     args = parser.parse_args()
+
+    if args.list_default_excludes:
+        print("Default excluded folders:")
+        for folder in sorted(DEFAULT_EXCLUDE_FOLDERS):
+            print(f"  {folder}")
+        print(f"\nTotal: {len(DEFAULT_EXCLUDE_FOLDERS)} folders")
+        print("\nUse --no-default-excludes to disable these exclusions")
+        print("Use --include-folder <folder> to force include specific folders")
+        return
+    
     logger = setup_logger(args.output)
     
     if args.verbose:
@@ -243,14 +279,23 @@ def main() -> None:
         if args.exclude_folders:
             logger.debug(f"Excluding folders: {args.exclude_folders}")
 
-    ## show the info for the excluded folders.. 
-    if args.exclude_folders:
-        if not args.json:
-            logger.info(f"{Colors.YELLOW}📁 Excluding folders: {', '.join(args.exclude_folders)}{Colors.RESET}")
+    use_defaults = not args.no_default_excludes
+    final_exclude_folders = parse_exclude_folders(
+        user_exclude_folders=args.exclude_folders,
+        use_defaults=use_defaults,
+        include_folders=args.include_folders
+    )
+    
+    if not args.json:
+        if final_exclude_folders:
+            logger.info(f"{Colors.YELLOW}📁 Excluding: {', '.join(sorted(final_exclude_folders))}{Colors.RESET}")
+        else:
+            logger.info(f"{Colors.GREEN}📁 No folders excluded{Colors.RESET}")
 
     try:
-        result_json = skylos.analyze(args.path, exclude_folders=args.exclude_folders)
+        result_json = skylos.analyze(args.path, exclude_folders=list(final_exclude_folders))
         result = json.loads(result_json)
+
     except Exception as e:
         logger.error(f"Error during analysis: {e}")
         sys.exit(1)

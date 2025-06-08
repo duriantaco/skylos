@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import ast,re
+import ast
 from pathlib import Path
 
 PYTHON_BUILTINS={"print","len","str","int","float","list","dict","set","tuple","range","open","super","object","type","enumerate","zip","map","filter","sorted","reversed","sum","min","max","all","any","next","iter","repr","chr","ord","bytes","bytearray","memoryview","format","round","abs","pow","divmod","complex","hash","id","bool","callable","getattr","setattr","delattr","hasattr","isinstance","issubclass","globals","locals","vars","dir","property","classmethod","staticmethod"}

@@ -8,7 +8,6 @@ logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(levelname)s - %(m
 logger=logging.getLogger('Skylos')
 
 AUTO_CALLED={"__init__","__enter__","__exit__"}
-TEST_BASE_CLASSES = {"TestCase", "AsyncioTestCase", "unittest.TestCase", "unittest.AsyncioTestCase"}
 TEST_METHOD_PATTERN = re.compile(r"^test_\w+$")
 MAGIC_METHODS={f"__{n}__"for n in["init","new","call","getattr","getattribute","enter","exit","str","repr","hash","eq","ne","lt","gt","le","ge","iter","next","contains","len","getitem","setitem","delitem","iadd","isub","imul","itruediv","ifloordiv","imod","ipow","ilshift","irshift","iand","ixor","ior","round","format","dir","abs","complex","int","float","bool","bytes","reduce","await","aiter","anext","add","sub","mul","truediv","floordiv","mod","divmod","pow","lshift","rshift","and","or","xor","radd","rsub","rmul","rtruediv","rfloordiv","rmod","rdivmod","rpow","rlshift","rrshift","rand","ror","rxor"]}
 
@@ -26,6 +25,21 @@ DEFAULT_EXCLUDE_FOLDERS = {
     "venv",
     ".venv"
 }
+
+def parse_exclude_folders(user_exclude_folders, use_defaults=True, include_folders=None):
+    exclude_set = set()
+    
+    if use_defaults:
+        exclude_set.update(DEFAULT_EXCLUDE_FOLDERS)
+        
+    if user_exclude_folders:
+        exclude_set.update(user_exclude_folders)
+    
+    if include_folders:
+        for folder in include_folders:
+            exclude_set.discard(folder)
+    
+    return exclude_set
 
 class Skylos:
     def __init__(self):
@@ -118,7 +132,7 @@ class Skylos:
         for d in self.defs.values():
             simple_name_lookup[d.simple_name].append(d)
         
-        for ref, file in self.refs:
+        for ref, _ in self.refs:
             if ref in self.defs:
                 self.defs[ref].references += 1
                 
@@ -181,17 +195,12 @@ class Skylos:
             if d.type == "method" and TEST_METHOD_PATTERN.match(d.simple_name):
                 class_name = d.name.rsplit(".", 1)[0]
                 class_simple_name = class_name.split(".")[-1]
-                if "Test" in class_simple_name or class_simple_name.endswith("TestCase"):
+                if (class_simple_name.startswith("Test") or 
+                    class_simple_name.endswith("Test") or 
+                    class_simple_name.endswith("TestCase")):
                     d.confidence = 0
 
     def analyze(self, path, thr=60, exclude_folders=None):
-        if exclude_folders is None:
-            exclude_folders = list(DEFAULT_EXCLUDE_FOLDERS)
-        else:
-            # merge the user's exclusions with defaults up above. line 15
-            all_exclusions = set(DEFAULT_EXCLUDE_FOLDERS)
-            all_exclusions.update(exclude_folders)
-            exclude_folders = list(all_exclusions)
         
         files, root = self._get_python_files(path, exclude_folders)
         
