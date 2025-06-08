@@ -1,5 +1,34 @@
 ## Changelog
 
+## [1.0.12] - 2025-06-07
+
+### Added
+
+- Folder Management: Control over folder exclusions/inclusions
+
+`--exclude-folder`: Add custom folder exclusions to defaults
+`--include-folder`: Include specific folders
+`--no-default-excludes`: Disable default exclusions
+`--list-default-excludes`: Display all default excluded folders
+
+### Fixed
+
+- Improved accuracy for test method identification
+- Fixed false positives where classes containing "Test" were incorrectly identified as test classes
+- Resolved issue where `NotATestClass` was incorrectly identified as test class
+- Changed from "Test" in class_name to precise pattern matching
+- Fixed module import issues in CLI components
+
+### Changed
+
+- Standardized default folder exclusions across all components
+
+### Technical Details
+
+`analyzer.py`: Updated _`apply_heuristics()` with better test class detection logic
+`cli.py`: Folder management update
+`analyzer.py`: Added `parse_exclude_folders()` function for more flexible folder handling
+
 ## [1.0.11] - 2025-05-27
 
 ### Added
