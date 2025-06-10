@@ -118,7 +118,7 @@ Options:
 ## Example Output
 
 ```
-🔍 Python Static Analysis Results
+Python Static Analysis Results
 ===================================
 
 Summary:
@@ -127,24 +127,30 @@ Summary:
 
 📦 Unreachable Functions
 ========================
+```
  1. module_13.test_function
     └─ /Users/oha/project/module_13.py:5
  2. module_13.unused_function
     └─ /Users/oha/project/module_13.py:13
 ...
+```
 
-📥 Unused Imports
+Unused Imports
 =================
+```
  1. os
     └─ /Users/oha/project/module_13.py:1
  2. json
     └─ /Users/oha/project/module_13.py:3
 ...
+```
 
 Next steps:
-  • Use --interactive to select specific items to remove
-  • Use --dry-run to preview changes before applying them
-```
+
+  • Use `--interactive` to select specific items to remove
+  
+  • Use `--dry-run` to preview changes before applying them
+
 
 ## Interactive Mode
 
@@ -201,7 +207,7 @@ A: Like all other tools, Ruff is focused on detecting specific, surface-level is
 ## Limitations
 
 - **Dynamic code**: `getattr()`, `globals()`, runtime imports are hard to detect
-- **Frameworks**: Django models, Flask routes may appear unused but aren't
+- **Frameworks**: Django models, Flask, FastAPI routes may appear unused but aren't
 - **Test data**: Limited scenarios, your mileage may vary
 - **False positives**: Always manually review before deleting code
 
