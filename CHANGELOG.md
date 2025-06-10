@@ -1,5 +1,28 @@
 ## Changelog
 
+## [1.1.12] - 2025-06-10
+
+### Added
+
+- Auto identifies test files in `/tests/`, `/test/`, `test_*.py` patterns
+- Detects test files by test library imports (unittest.mock, pytest, responses, etc.)
+- Decorator detection
+- Constants Module: New `skylos/constants.py` for centralized configuration management
+- Test lifecycle methods: setUp, tearDown, setUpClass, tearDownClass, setup_method, teardown_method
+- Test import patterns: `unittest`, `pytest`, `mock`, `responses`, `freezegun`, `hypothesis`, `faker`
+- Test decorators: `@patch`, `@pytest.fixture`, `@pytest.mark`, `@responses.activate`
+
+### Fixed
+
+- Fixed false positives where private items starting with `_` were wrongly reported as unused
+- Fixed false positives where from `__future__import annotations`
+- Missing detection of test_* method patterns that were not being excluded from unused reports
+
+### Changed
+
+- Refactored constants into separate module
+- Pattern matching for test classes eg. TestExample, ExampleTest, ExampleTestCase 
+
 ## [1.1.11] - 2025-06-08
 
 ### Added
