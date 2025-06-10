@@ -3,28 +3,14 @@ import ast,sys,json,logging,re
 from pathlib import Path
 from collections import defaultdict
 from skylos.visitor import Visitor
+from skylos.constants import (
+    AUTO_CALLED, TEST_METHOD_PATTERN, MAGIC_METHODS,
+    TEST_LIFECYCLE_METHODS, TEST_IMPORT_PATTERNS, TEST_DECORATORS,
+    DEFAULT_EXCLUDE_FOLDERS
+)
 
 logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(levelname)s - %(message)s')
 logger=logging.getLogger('Skylos')
-
-AUTO_CALLED={"__init__","__enter__","__exit__"}
-TEST_METHOD_PATTERN = re.compile(r"^test_\w+$")
-MAGIC_METHODS={f"__{n}__"for n in["init","new","call","getattr","getattribute","enter","exit","str","repr","hash","eq","ne","lt","gt","le","ge","iter","next","contains","len","getitem","setitem","delitem","iadd","isub","imul","itruediv","ifloordiv","imod","ipow","ilshift","irshift","iand","ixor","ior","round","format","dir","abs","complex","int","float","bool","bytes","reduce","await","aiter","anext","add","sub","mul","truediv","floordiv","mod","divmod","pow","lshift","rshift","and","or","xor","radd","rsub","rmul","rtruediv","rfloordiv","rmod","rdivmod","rpow","rlshift","rrshift","rand","ror","rxor"]}
-
-DEFAULT_EXCLUDE_FOLDERS = {
-    "__pycache__",
-    ".git", 
-    ".pytest_cache",
-    ".mypy_cache",
-    ".tox",
-    "htmlcov",
-    ".coverage",
-    "build",
-    "dist",
-    "*.egg-info",
-    "venv",
-    ".venv"
-}
 
 def parse_exclude_folders(user_exclude_folders, use_defaults=True, include_folders=None):
     exclude_set = set()
@@ -156,7 +142,79 @@ class Skylos:
             return class_def.base_classes
         
         return []
+    
+    def _has_test_imports(self, file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            for test_import in TEST_IMPORT_PATTERNS:
+                if f"import {test_import}" in content or f"from {test_import}" in content:
+                    return True
+                    
+            return False
+        except:
+            return False
+    
+    def _is_test_file(self, file_path):
+        """check if file locs indicates its a test file"""
+        file_str = str(file_path).lower()
+        
+        if (file_str.endswith("test.py") or 
+            file_str.endswith("_test.py") or 
+            "test_" in file_str or
+            "/test/" in file_str or
+            "/tests/" in file_str or
+            "\\test\\" in file_str or
+            "\\tests\\" in file_str):
+            return True
             
+        return False
+
+    def _has_test_decorators(self, file_path):
+        """Check if file uses test-related decorators"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            for decorator in TEST_DECORATORS:
+                if f"@{decorator}" in content:
+                    return True
+                    
+            return False
+        except:
+            return False
+        
+    def _is_test_related(self, definition):
+        
+        if "." in definition.name:
+            class_name = definition.name.rsplit(".", 1)[0]
+            class_simple_name = class_name.split(".")[-1]
+            
+            if (class_simple_name.startswith("Test") or 
+                class_simple_name.endswith("Test") or 
+                class_simple_name.endswith("TestCase")):
+                return True
+        
+        if (definition.type == "method" and 
+            (TEST_METHOD_PATTERN.match(definition.simple_name) or
+             definition.simple_name in TEST_LIFECYCLE_METHODS)):
+            return True
+        
+        # NOT for imports, variables, parameters
+        if definition.type in ("function", "method", "class"):
+            if self._is_test_file(definition.filename):
+                return True
+                
+            if self._has_test_imports(definition.filename):
+                return True
+                
+            ## check decorators -- test related
+            if self._has_test_decorators(definition.filename):
+                return True
+            
+        return False
+                    
     def _apply_heuristics(self):
         class_methods=defaultdict(list)
         for d in self.defs.values():
@@ -180,6 +238,16 @@ class Skylos:
             if d.type != "parameter" and (d.simple_name in MAGIC_METHODS or (d.simple_name.startswith("__") and d.simple_name.endswith("__"))):
                 d.confidence = 0
 
+            if (d.type == "import" and d.name.startswith("__future__.") and
+                d.simple_name in ("annotations", "absolute_import", "division", 
+                                "print_function", "unicode_literals", "generator_stop")):
+                d.confidence = 0
+
+            if (d.simple_name.startswith("_") and 
+                not d.simple_name.startswith("__") and  
+                d.simple_name != "_"):
+                d.confidence = 0
+
             if not d.simple_name.startswith("_") and d.type in ("function", "method", "class"):
                 d.confidence = min(d.confidence, 90)
             
@@ -192,13 +260,8 @@ class Skylos:
             if d.type == "variable" and d.simple_name == "_":
                 d.confidence = 0
             
-            if d.type == "method" and TEST_METHOD_PATTERN.match(d.simple_name):
-                class_name = d.name.rsplit(".", 1)[0]
-                class_simple_name = class_name.split(".")[-1]
-                if (class_simple_name.startswith("Test") or 
-                    class_simple_name.endswith("Test") or 
-                    class_simple_name.endswith("TestCase")):
-                    d.confidence = 0
+            if self._is_test_related(d):
+                d.confidence = 0
 
     def analyze(self, path, thr=60, exclude_folders=None):
         
