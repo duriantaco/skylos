@@ -93,9 +93,9 @@ skylos /path/to/your/project --include-folder venv
 
 # Scan everything (no exclusions)
 skylos path/to/your/project --no-default-excludes 
+```
 
 ## CLI Options
-
 ```
 Usage: skylos [OPTIONS] PATH
 
@@ -125,19 +125,19 @@ Summary:
   • Unreachable functions: 48
   • Unused imports: 8
 
-📦 Unreachable Functions
+Unreachable Functions
 ========================
-```
+
  1. module_13.test_function
     └─ /Users/oha/project/module_13.py:5
  2. module_13.unused_function
     └─ /Users/oha/project/module_13.py:13
 ...
-```
+
 
 Unused Imports
 =================
-```
+
  1. os
     └─ /Users/oha/project/module_13.py:1
  2. json
@@ -148,7 +148,7 @@ Unused Imports
 Next steps:
 
   • Use `--interactive` to select specific items to remove
-  
+
   • Use `--dry-run` to preview changes before applying them
 
 
