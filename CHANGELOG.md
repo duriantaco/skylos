@@ -1,5 +1,30 @@
 ## Changelog
 
+## [1.2.0] - 2025-06-12
+
+### Added
+
+- Detection for web frameworks (Flask, Django, FastAPI) 
+- Framework-specific patterns: `@app.route`, `@router.get`, `@task`, etc.
+- More granular dead code detection using confidence. Eg, 0, 20, 40, 60, 100% confidence
+- Regex patterns for `/test/` and `/tests/` directory detection
+- Added new confidence flag in the CLI
+
+### Fixed
+
+- Fixed issue where Flask/Django routes were incorrectly flagged as unused
+- Fixed regression where some test files weren't properly excluded
+- Files in `/test/` directories now better detected and excluded
+- Test files ending with `_test.py` should be filtered out
+- Improved CLI argument parsing for confidence values
+
+### Technical Details
+
+- `framework_aware.py`: `FrameworkAwareVisitor` now should have better decorator detection
+- `analyzer.py`: `_apply_penalties()` method for framework confidence scoring
+- `cli.py`: Added confidence threshold validation
+- `constants.py`: Framework detection patterns and test file regex
+
 ## [1.1.12] - 2025-06-10
 
 ### Added
