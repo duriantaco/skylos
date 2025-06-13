@@ -219,6 +219,13 @@ def main() -> None:
         help="Enable verbose output"
     )
     parser.add_argument(
+        "--confidence",
+        "-c",
+        type=int,
+        default=60,
+        help="Confidence threshold (0-100). Lower values include more items. Default: 60"
+    )
+    parser.add_argument(
         "--interactive", "-i",
         action="store_true",
         help="Interactively select items to remove (requires inquirer)"
@@ -293,7 +300,7 @@ def main() -> None:
             logger.info(f"{Colors.GREEN}📁 No folders excluded{Colors.RESET}")
 
     try:
-        result_json = skylos.analyze(args.path, exclude_folders=list(final_exclude_folders))
+        result_json = skylos.analyze(args.path, conf=args.confidence, exclude_folders=list(final_exclude_folders))
         result = json.loads(result_json)
 
     except Exception as e:
@@ -308,6 +315,7 @@ def main() -> None:
     unused_imports = result.get("unused_imports", [])
     unused_parameters = result.get("unused_parameters", [])
     unused_variables = result.get("unused_variables", [])
+    unused_classes = result.get("unused_classes", [])
     
     logger.info(f"{Colors.CYAN}{Colors.BOLD}🔍 Python Static Analysis Results{Colors.RESET}")
     logger.info(f"{Colors.CYAN}{'=' * 35}{Colors.RESET}")
@@ -317,6 +325,7 @@ def main() -> None:
     logger.info(f"  • Unused imports: {Colors.YELLOW}{len(unused_imports)}{Colors.RESET}")
     logger.info(f"  • Unused parameters: {Colors.YELLOW}{len(unused_parameters)}{Colors.RESET}")
     logger.info(f"  • Unused variables: {Colors.YELLOW}{len(unused_variables)}{Colors.RESET}")
+    logger.info(f"  • Unused classes: {Colors.YELLOW}{len(unused_classes)}{Colors.RESET}")
 
     if args.interactive and (unused_functions or unused_imports):
         logger.info(f"\n{Colors.BOLD}Interactive Mode:{Colors.RESET}")
@@ -402,10 +411,19 @@ def main() -> None:
             for i, item in enumerate(unused_variables, 1):
                 logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.YELLOW}{item['name']}{Colors.RESET}")
                 logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
+                
+        if unused_classes:
+            logger.info(f"\n{Colors.YELLOW}{Colors.BOLD}📚 Unused Classes{Colors.RESET}")
+            logger.info(f"{Colors.YELLOW}{'=' * 18}{Colors.RESET}")
+            for i, item in enumerate(unused_classes, 1):
+                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.YELLOW}{item['name']}{Colors.RESET}")
+                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
+
         else:
             logger.info(f"\n{Colors.GREEN}✓ All variables are being used!{Colors.RESET}")
 
-        dead_code_count = len(unused_functions) + len(unused_imports)
+        dead_code_count = len(unused_functions) + len(unused_imports) + len(unused_variables) + len(unused_classes) + len(unused_parameters)
+
         print_badge(dead_code_count, logger)
 
         if unused_functions or unused_imports:
