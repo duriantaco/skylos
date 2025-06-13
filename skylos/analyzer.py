@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-import ast,sys,json,logging,re
+import ast
+import sys
+import json
+import logging
 from pathlib import Path
 from collections import defaultdict
 from skylos.visitor import Visitor
-from skylos.constants import (
-    AUTO_CALLED, TEST_METHOD_PATTERN, MAGIC_METHODS,
-    TEST_LIFECYCLE_METHODS, TEST_IMPORT_PATTERNS, TEST_DECORATORS,
-    DEFAULT_EXCLUDE_FOLDERS
-)
+from skylos.constants import ( DEFAULT_EXCLUDE_FOLDERS, PENALTIES, AUTO_CALLED )
+from skylos.test_aware import TestAwareVisitor
+import os
+import traceback
+from skylos.framework_aware import FrameworkAwareVisitor, detect_framework_usage
 
 logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(levelname)s - %(message)s')
 logger=logging.getLogger('Skylos')
@@ -131,6 +134,12 @@ class Skylos:
             matches = simple_name_lookup.get(simple, [])
             for d in matches:
                 d.references += 1
+ 
+        for module_name in self.dynamic:
+            for def_name, def_obj in self.defs.items():
+                if def_obj.name.startswith(f"{module_name}."):
+                    if def_obj.type in ("function", "method") and not def_obj.simple_name.startswith("_"):
+                        def_obj.references += 1
     
     def _get_base_classes(self, class_name):
         if class_name not in self.defs:
@@ -143,128 +152,62 @@ class Skylos:
         
         return []
     
-    def _has_test_imports(self, file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                
-            for test_import in TEST_IMPORT_PATTERNS:
-                if f"import {test_import}" in content or f"from {test_import}" in content:
-                    return True
-                    
-            return False
-        except:
-            return False
-    
-    def _is_test_file(self, file_path):
-        """check if file locs indicates its a test file"""
-        file_str = str(file_path).lower()
+    def _apply_penalties(self, def_obj, visitor, framework):
+        c = 100
         
-        if (file_str.endswith("test.py") or 
-            file_str.endswith("_test.py") or 
-            "test_" in file_str or
-            "/test/" in file_str or
-            "/tests/" in file_str or
-            "\\test\\" in file_str or
-            "\\tests\\" in file_str):
-            return True
-            
-        return False
+        if def_obj.simple_name.startswith("_") and not def_obj.simple_name.startswith("__"):
+            c -= PENALTIES["private_name"] 
+        if def_obj.simple_name.startswith("__") and def_obj.simple_name.endswith("__"):
+            c -= PENALTIES["dunder_or_magic"]
+        if def_obj.type == "variable" and def_obj.simple_name == "_":
+            c -= PENALTIES["underscored_var"]
+        if def_obj.in_init and def_obj.type in ("function", "class"):
+            c -= PENALTIES["in_init_file"]
+        if def_obj.name.split(".")[0] in self.dynamic:
+            c -= PENALTIES["dynamic_module"]
+        if visitor.is_test_file or def_obj.line in visitor.test_decorated_lines:
+            c -= PENALTIES["test_related"]
+        
+        framework_confidence = detect_framework_usage(def_obj, visitor=framework)
+        if framework_confidence is not None:
+            c = min(c, framework_confidence)
 
-    def _has_test_decorators(self, file_path):
-        """Check if file uses test-related decorators"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                
-            for decorator in TEST_DECORATORS:
-                if f"@{decorator}" in content:
-                    return True
-                    
-            return False
-        except:
-            return False
-        
-    def _is_test_related(self, definition):
-        
-        if "." in definition.name:
-            class_name = definition.name.rsplit(".", 1)[0]
-            class_simple_name = class_name.split(".")[-1]
-            
-            if (class_simple_name.startswith("Test") or 
-                class_simple_name.endswith("Test") or 
-                class_simple_name.endswith("TestCase")):
-                return True
-        
-        if (definition.type == "method" and 
-            (TEST_METHOD_PATTERN.match(definition.simple_name) or
-             definition.simple_name in TEST_LIFECYCLE_METHODS)):
-            return True
-        
-        # NOT for imports, variables, parameters
-        if definition.type in ("function", "method", "class"):
-            if self._is_test_file(definition.filename):
-                return True
-                
-            if self._has_test_imports(definition.filename):
-                return True
-                
-            ## check decorators -- test related
-            if self._has_test_decorators(definition.filename):
-                return True
-            
-        return False
-                    
-    def _apply_heuristics(self):
-        class_methods=defaultdict(list)
-        for d in self.defs.values():
-            if d.type in("method","function") and"." in d.name:
-                cls=d.name.rsplit(".",1)[0]
-                if cls in self.defs and self.defs[cls].type=="class":
-                    class_methods[cls].append(d)
+        if (def_obj.simple_name.startswith("__") and def_obj.simple_name.endswith("__")):
+            c = 0
 
-        for cls,methods in class_methods.items():
-            if self.defs[cls].references>0:
-                for m in methods:
-                    if m.simple_name in AUTO_CALLED:m.references+=1
-                    
-        for d in self.defs.values():
-            if d.simple_name in MAGIC_METHODS or (d.simple_name.startswith("__") and d.simple_name.endswith("__")):
-                d.confidence = 0
-            
-            if d.type == "parameter" and d.simple_name in ("self", "cls"):
-                d.confidence = 0
-
-            if d.type != "parameter" and (d.simple_name in MAGIC_METHODS or (d.simple_name.startswith("__") and d.simple_name.endswith("__"))):
-                d.confidence = 0
-
-            if (d.type == "import" and d.name.startswith("__future__.") and
-                d.simple_name in ("annotations", "absolute_import", "division", 
+        if def_obj.type == "parameter":
+            if def_obj.simple_name in ("self", "cls"):
+                c = 0
+            elif "." in def_obj.name:
+                method_name = def_obj.name.split(".")[-2]
+                if method_name.startswith("__") and method_name.endswith("__"):
+                    c = 0
+        
+        if visitor.is_test_file or def_obj.line in visitor.test_decorated_lines:
+            c = 0
+        
+        if (def_obj.type == "import" and def_obj.name.startswith("__future__.") and
+            def_obj.simple_name in ("annotations", "absolute_import", "division", 
                                 "print_function", "unicode_literals", "generator_stop")):
-                d.confidence = 0
+            c = 0
+        
+        def_obj.confidence = max(c, 0)
 
-            if (d.simple_name.startswith("_") and 
-                not d.simple_name.startswith("__") and  
-                d.simple_name != "_"):
-                d.confidence = 0
-
-            if not d.simple_name.startswith("_") and d.type in ("function", "method", "class"):
-                d.confidence = min(d.confidence, 90)
-            
-            if d.in_init and d.type in ("function", "class"):
-                d.confidence = min(d.confidence, 85)
-            
-            if d.name.split(".")[0] in self.dynamic:
-                d.confidence = min(d.confidence, 60)
-            
-            if d.type == "variable" and d.simple_name == "_":
-                d.confidence = 0
-            
-            if self._is_test_related(d):
-                d.confidence = 0
+    def _apply_heuristics(self):
+        class_methods = defaultdict(list)
+        for d in self.defs.values():
+            if d.type in ("method", "function") and "." in d.name:
+                cls = d.name.rsplit(".", 1)[0]
+                if cls in self.defs and self.defs[cls].type == "class":
+                    class_methods[cls].append(d)
+        
+        for cls, methods in class_methods.items():
+            if self.defs[cls].references > 0:
+                for m in methods:
+                    if m.simple_name in AUTO_CALLED:  # __init__, __enter__, __exit__
+                        m.references += 1
 
     def analyze(self, path, thr=60, exclude_folders=None):
-        
         files, root = self._get_python_files(path, exclude_folders)
         
         if not files:
@@ -289,25 +232,28 @@ class Skylos:
         
         for file in files:
             mod = modmap[file]
-            defs, refs, dyn, exports = proc_file(file, mod)
-            
-            for d in defs: 
+            defs, refs, dyn, exports, test_flags, framework_flags = proc_file(file, mod)
+
+            # apply penalties while we still have the file-specific flags
+            for d in defs:
+                self._apply_penalties(d, test_flags, framework_flags) 
                 self.defs[d.name] = d
+
             self.refs.extend(refs)
             self.dynamic.update(dyn)
             self.exports[mod].update(exports)
-        
+
         self._mark_refs()
-        self._apply_heuristics()
+        self._apply_heuristics() 
         self._mark_exports()
-                
+        
         thr = max(0, thr)
 
         unused = []
         for d in self.defs.values():
-            if d.references == 0 and not d.is_exported and d.confidence >= thr:
-                unused.append(d.to_dict())
-        
+                if d.references == 0 and not d.is_exported and d.confidence > 0 and d.confidence >= thr:
+                    unused.append(d.to_dict())
+
         result = {
             "unused_functions": [], 
             "unused_imports": [], 
@@ -341,13 +287,27 @@ def proc_file(file_or_args, mod=None):
         file = file_or_args 
 
     try:
-        tree = ast.parse(Path(file).read_text(encoding="utf-8"))
-        v = Visitor(mod, file)
+        source = Path(file).read_text(encoding="utf-8")
+        tree   = ast.parse(source)
+
+        tv = TestAwareVisitor(filename=file)
+        tv.visit(tree)
+
+        fv = FrameworkAwareVisitor(filename=file)
+        fv.visit(tree)
+
+        v  = Visitor(mod, file)
         v.visit(tree)
-        return v.defs, v.refs, v.dyn, v.exports
+
+        return v.defs, v.refs, v.dyn, v.exports, tv, fv
     except Exception as e:
         logger.error(f"{file}: {e}")
-        return [], [], set(), set()
+        if os.getenv("SKYLOS_DEBUG"):
+            logger.error(traceback.format_exc())
+        dummy_visitor = TestAwareVisitor(filename=file)
+        dummy_framework_visitor = FrameworkAwareVisitor(filename=file)
+
+        return [], [], set(), set(), dummy_visitor, dummy_framework_visitor
 
 def analyze(path,conf=60, exclude_folders=None):
     return Skylos().analyze(path,conf, exclude_folders)
