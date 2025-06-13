@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 import ast
 from pathlib import Path
+import os 
+import re, logging, traceback
+DBG = bool(int(os.getenv("SKYLOS_DEBUG", "0")))
+log = logging.getLogger("Skylos")
+
 
 PYTHON_BUILTINS={"print","len","str","int","float","list","dict","set","tuple","range","open","super","object","type","enumerate","zip","map","filter","sorted","reversed","sum","min","max","all","any","next","iter","repr","chr","ord","bytes","bytearray","memoryview","format","round","abs","pow","divmod","complex","hash","id","bool","callable","getattr","setattr","delattr","hasattr","isinstance","issubclass","globals","locals","vars","dir","property","classmethod","staticmethod"}
 DYNAMIC_PATTERNS={"getattr","globals","eval","exec"}
@@ -74,11 +79,23 @@ class Visitor(ast.NodeVisitor):
                 self.visit(node)
 
     def visit_string_annotation(self, annotation_str):
+        if not isinstance(annotation_str, str):
+            return
+
+        if DBG:
+            log.debug(f"[visitor] parsing string annotation {annotation_str!r} "
+                    f"in {self.filename}:{getattr(self, 'line', '?')}")
+
         try:
-            parsed = ast.parse(annotation_str, mode='eval')
+            parsed = ast.parse(annotation_str, mode="eval")
             self.visit(parsed.body)
-        except:
-            pass
+        except Exception:
+            if DBG:
+                log.debug("[visitor] inner-annotation parse failed:\n" +
+                        traceback.format_exc())
+            # keep going but dont swallow symbol names:
+            for tok in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", annotation_str):
+                self.add_ref(tok)
 
     def visit_Import(self,node):
         for a in node.names:
@@ -250,6 +267,11 @@ class Visitor(ast.NodeVisitor):
                     if module_name != "self": 
                         qualified_name = f"{self.qual(module_name)}.{attr_name}"
                         self.add_ref(qualified_name)
+            
+            elif isinstance(node.args[0], ast.Name):
+                target_name = node.args[0].id
+                if target_name != "self":
+                    self.dyn.add(self.mod.split(".")[0] if self.mod else "")
         
         elif isinstance(node.func, ast.Name) and node.func.id == "globals":
             parent = getattr(node, 'parent', None)
@@ -259,6 +281,9 @@ class Visitor(ast.NodeVisitor):
                 func_name = parent.slice.value
                 self.add_ref(func_name)
                 self.add_ref(f"{self.mod}.{func_name}")
+        
+        elif isinstance(node.func, ast.Name) and node.func.id in ("eval", "exec"):
+            self.dyn.add(self.mod.split(".")[0] if self.mod else "")
 
     def visit_Name(self,node):
         if isinstance(node.ctx,ast.Load):
