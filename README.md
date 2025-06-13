@@ -10,12 +10,36 @@
 
 > A static analysis tool for Python codebases written in Python (formerly was written in Rust but we ditched that) that detects unreachable functions and unused imports, aka dead code. Faster and better results than many alternatives like Flake8 and Pylint, and finding more dead code than Vulture in our tests with comparable speed.
 
+## Table of Contents
+
+- [Features](#features)
+- [Benchmark](#benchmark-you-can-find-this-benchmark-test-in-test-folder)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Understanding Confidence Levels](#understanding-confidence-levels)
+- [Test File Detection](#test-file-detection)
+- [Folder Management](#folder-management)
+- [CLI Options](#cli-options)
+- [Example Output](#example-output)
+- [Interactive Mode](#interactive-mode)
+- [Development](#development)
+- [FAQ](#faq)
+- [Limitations](#limitations)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [Roadmap](#roadmap)
+- [License](#license)
+- [Contact](#contact)
+
 ## Features
 
-* Unused Functions & Methods: Finds functions and methods that are never called
-* Unused Classes: Detects classes that are never instantiated or inherited
-* Unused Imports: Identifies imports that serve no purpose
-* Cross-Module Tracking: Analyzes usage patterns across your entire codebase
+* **Framework-Aware Detection**: Attempt at handling Flask, Django, FastAPI routes and decorators  
+* **Test File Exclusion**: Auto excludes test files (you can include it back if you want)
+* **Interactive Cleanup**: Select specific items to remove from CLI
+* **Unused Functions & Methods**: Finds functions and methods that not called
+* **Unused Classes**: Detects classes that are not instantiated or inherited
+* **Unused Imports**: Identifies imports that are not used
+* **Folder Management**: Inclusion/exclusion of directories 
 
 ## Benchmark (You can find this benchmark test in `test` folder)
 
@@ -70,9 +94,74 @@ skylos --interactive --dry-run /path/to/your/project
 
 # Output to JSON
 skylos --json /path/to/your/project 
+
+# With confidence
+skylos path/to/your/file --confidence 20 ## or whatever value u wanna set
 ```
 
-## **NEW** Folder Management
+## Understanding Confidence Levels
+
+Skylos uses a confidence-based system to try to handle Python's dynamic nature and web frameworks.
+
+### How Confidence Works
+
+- **Confidence 100**: 100% unused (default imports, obvious dead functions)
+- **Confidence 60**: Default value - conservative detection 
+- **Confidence 40**: Framework helpers, functions in web app files
+- **Confidence 20**: Framework routes, decorated functions
+- **Confidence 0**: Show everything
+
+### Framework Detection
+
+When Skylos detects web framework imports (Flask, Django, FastAPI), it applies different confidence levels:
+
+```bash
+# only obvious dead codes
+skylos app.py --confidence 60  # THIS IS THE DEFAULT
+
+# include unused helpers in framework files  
+skylos app.py --confidence 30
+
+# include potentially unused routes
+skylos app.py --confidence 20
+
+# everything.. shows how all potential dead code
+skylos app.py --confidence 0
+```
+
+## Test File Detection
+
+Skylos automatically excludes test files from analysis because test code patterns often appear as "dead code" but are actually called by test frameworks. Should you need to include them in your test, just refer to the [Folder Management](#folder-management)  
+
+### What Gets Detected as Test Files
+
+**File paths containing:**
+- `/test/` or `/tests/` directories
+- Files ending with `_test.py`
+
+**Test imports:**
+- `pytest`, `unittest`, `nose`, `mock`, `responses`
+
+**Test decorators:**  
+- `@pytest.fixture`, `@pytest.mark.*`
+- `@patch`, `@mock.*`
+
+### Test File Behavior
+
+When Skylos detects a test file, it by default, will apply a confidence penalty of 100, which will essentially filter out all dead code detection
+
+```bash
+# This will show 0 dead code because its treated as test file
+/project/tests/test_user.py
+/project/test/helper.py  
+/project/utils_test.py
+
+# The files will be analyzed normally. Note that it doesn't end with _test.py
+/project/user.py
+/project/test_data.py 
+```
+
+## Including & Excluding Files
 
 ### Default Exclusions
 By default, Skylos excludes common folders: `__pycache__`, `.git`, `.pytest_cache`, `.mypy_cache`, `.tox`, `htmlcov`, `.coverage`, `build`, `dist`, `*.egg-info`, `venv`, `.venv`
@@ -113,6 +202,7 @@ Options:
   --include-folder FOLDER      Force include a folder that would otherwise be excluded
   --no-default-excludes        Don't exclude default folders (__pycache__, .git, venv, etc.)
   --list-default-excludes      List the default excluded folders and
+  -c, --confidence LEVEL       Confidence threshold (0-100). Lower values will show more items.
 ```
 
 ## Example Output
@@ -204,6 +294,12 @@ A: No. Always review results manually, especially for framework code, APIs, and 
 **Q: Why did Ruff underperform?**
 A: Like all other tools, Ruff is focused on detecting specific, surface-level issues. Tools like Vulture and Skylos are built SPECIFICALLY for dead code detection. It is NOT a specialized dead code detector. If your goal is dead code, then ruff is the wrong tool. It is a good tool but it's like using a wrench to hammer a nail. Good tool, wrong purpose. 
 
+**Q: Why doesn't Skylos detect my unused Flask routes?**
+A: Web framework routes are given low confidence (20) because they might be called by external HTTP requests. Use `--confidence 20` to see them. We acknowledge there are current limitations to this approach so use it sparingly.
+
+**Q: What confidence level should I use?**
+A: Start with 60 (default) for safe cleanup. Use 30 for framework applications. Use 20 for more comprehensive auditing.
+
 ## Limitations
 
 - **Dynamic code**: `getattr()`, `globals()`, runtime imports are hard to detect
@@ -211,7 +307,7 @@ A: Like all other tools, Ruff is focused on detecting specific, surface-level is
 - **Test data**: Limited scenarios, your mileage may vary
 - **False positives**: Always manually review before deleting code
 
-If we can detect 100% of all dead code in any structure, we wouldn't be sitting here. But we definitely tried our best
+This is a STATIC code analyzer. If we can detect 100% of all dead code in any structure and framework, we wouldn't be sitting here. But we definitely tried our best.
 
 ## Troubleshooting
 
@@ -242,7 +338,6 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 5. Open a Pull Request
 
 ## Roadmap
-- [ ] Add a production flag, to include dead codes that are used in test but not in the actual execution 
 - [x] Expand our test cases
 - [ ] Configuration file support 
 - [ ] Git hooks integration
