@@ -77,25 +77,20 @@ class TestDefinition(unittest.TestCase):
             self.assertEqual(definition.type, def_type)
 
 class TestVisitor(unittest.TestCase):
-    """Test the Visitor class."""
     
     def setUp(self):
-        """Set up test fixtures."""
         self.temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
         self.visitor = Visitor("test_module", self.temp_file.name)
     
     def tearDown(self):
-        """Clean up test fixtures."""
         Path(self.temp_file.name).unlink()
     
     def parse_and_visit(self, code):
-        """Helper method to parse code and visit with the visitor."""
         tree = ast.parse(code)
         self.visitor.visit(tree)
         return self.visitor
     
     def test_simple_function(self):
-        """Test detection of simple function definitions."""
         code = """
 def my_function():
     pass
@@ -108,7 +103,6 @@ def my_function():
         self.assertEqual(definition.simple_name, "my_function")
         
     def test_async_function(self):
-        """Test detection of async function definitions."""
         code = """
 async def async_function():
     await some_call()
@@ -121,7 +115,6 @@ async def async_function():
         self.assertEqual(definition.simple_name, "async_function")
         
     def test_class_with_methods(self):
-        """Test detection of classes and methods."""
         code = """
 class MyClass:
     def __init__(self):
@@ -140,7 +133,6 @@ class MyClass:
 """
         visitor = self.parse_and_visit(code)
         
-        print(f"DEBUG: Found {len(visitor.defs)} definitions:")
         for d in visitor.defs:
             print(f"  {d.type}: {d.name}")
         
@@ -189,7 +181,6 @@ from os.path import join as path_join
         self.assertEqual(visitor.alias["path_join"], "os.path.join")
 
     def test_relative_imports(self):
-        """Test relative import detection."""
         code = """
 from . import sibling_module
 from ..parent import parent_function
@@ -209,7 +200,6 @@ from ...grandparent.utils import helper
             self.assertEqual(visitor.alias["parent_function"], "package.parent_function")
         
     def test_nested_functions(self):
-        """Test nested function detection."""
         code = """
 def outer():
     def inner():
