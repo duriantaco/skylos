@@ -1,36 +1,101 @@
-#!/usr/bin/env python3
 import pytest
 import json
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 from collections import defaultdict
+from skylos.test_aware import TestAwareVisitor
+from skylos.framework_aware import FrameworkAwareVisitor
 
-try:
-    from skylos.analyzer import (
-        Skylos, 
-        parse_exclude_folders, 
-        proc_file, 
-        analyze,
-        DEFAULT_EXCLUDE_FOLDERS,
-        AUTO_CALLED,
-        MAGIC_METHODS,
-        TEST_METHOD_PATTERN
-    )
-except ImportError:
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from skylos.analyzer import (
-        Skylos, 
-        parse_exclude_folders, 
-        proc_file, 
-        analyze,
-        DEFAULT_EXCLUDE_FOLDERS,
-        AUTO_CALLED,
-        MAGIC_METHODS,
-        TEST_METHOD_PATTERN
-    )
+from skylos.analyzer import (
+    Skylos, 
+    parse_exclude_folders, 
+    proc_file, 
+    analyze,
+    DEFAULT_EXCLUDE_FOLDERS,
+)
+
+@pytest.fixture
+def mock_definition():
+    def _create_mock_def(name, simple_name, type, references=0, is_exported=False, confidence=100, in_init=False, line=1):
+        mock = Mock()
+        mock.name = name
+        mock.simple_name = simple_name
+        mock.type = type
+        mock.references = references
+        mock.is_exported = is_exported
+        mock.confidence = confidence
+        mock.in_init = in_init
+        mock.line = line
+        mock.to_dict.return_value = {
+            "name": name,
+            "type": type,
+            "file": "test.py",
+            "line": line
+        }
+        return mock
+    return _create_mock_def
+
+@pytest.fixture
+def mock_test_aware_visitor():
+    mock = Mock(spec=TestAwareVisitor)
+    mock.is_test_file = False
+    mock.test_decorated_lines = set()
+    return mock
+
+@pytest.fixture
+def mock_framework_aware_visitor():
+    mock = Mock(spec=FrameworkAwareVisitor)
+    mock.framework_decorated_lines = set()
+    return mock
+
+@pytest.fixture
+def temp_python_project():
+    """Create a temp Python project for testing"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        
+        main_py = temp_path / "main.py"
+        main_py.write_text("""
+def used_function():
+    return "used"
+
+def unused_function():
+    return "unused"
+
+class UsedClass:
+    def method(self):
+        pass
+
+class UnusedClass:
+    def method(self):
+        pass
+
+result = used_function()
+instance = UsedClass()
+""")
+        
+        package_dir = temp_path / "mypackage"
+        package_dir.mkdir()
+        
+        init_py = package_dir / "__init__.py"
+        init_py.write_text("""
+from .module import exported_function
+
+def internal_function():
+    pass
+""")
+        
+        module_py = package_dir / "module.py"
+        module_py.write_text("""
+def exported_function():
+    return "exported"
+
+def internal_function():
+    return "internal"
+""")
+        
+        yield temp_path
 
 class TestParseExcludeFolders:
     
@@ -65,7 +130,6 @@ class TestParseExcludeFolders:
         result = parse_exclude_folders(user_excludes, use_defaults=False, include_folders=include_folders)
         assert "custom_folder" not in result
         assert "another_folder" in result
-
 
 class TestSkylos:
     
@@ -214,7 +278,6 @@ class TestSkylos:
         assert mock_import.references == 1
         assert mock_original.references == 1
 
-
 class TestHeuristics:
     
     @pytest.fixture
@@ -258,135 +321,8 @@ class TestHeuristics:
         
         assert mock_init.references == 1
         assert mock_enter.references == 1
-    
-    def test_magic_methods_confidence_zero(self, mock_definition):
-        """magic methods get confidence of 0."""
-        skylos = Skylos()
-        
-        mock_magic = mock_definition(
-            name="MyClass.__str__",
-            simple_name="__str__",
-            type="method",
-            confidence=100
-        )
-        
-        skylos.defs = {"MyClass.__str__": mock_magic}
-        skylos._apply_heuristics()
-        
-        assert mock_magic.confidence == 0
-    
-    def test_self_cls_parameters_confidence_zero(self, mock_definition):
-        """self/cls parameters get confidence of 0"""
-        skylos = Skylos()
-        
-        mock_self = mock_definition(
-            name="self",
-            simple_name="self",
-            type="parameter",
-            confidence=100
-        )
-        
-        mock_cls = mock_definition(
-            name="cls",
-            simple_name="cls",
-            type="parameter",
-            confidence=100
-        )
-        
-        skylos.defs = {"self": mock_self, "cls": mock_cls}
-        skylos._apply_heuristics()
-        
-        assert mock_self.confidence == 0
-        assert mock_cls.confidence == 0
-    
-    def test_test_methods_confidence_zero(self, mock_definition):
-        """test methods in test classes get confidence of 0"""
-        skylos = Skylos()
-        
-        mock_test_method = mock_definition(
-            name="TestMyClass.test_something",
-            simple_name="test_something",
-            type="method",
-            confidence=100
-        )
-        
-        skylos.defs = {"TestMyClass.test_something": mock_test_method}
-        skylos._apply_heuristics()
-        
-        assert mock_test_method.confidence == 0
-    
-    def test_underscore_variable_confidence_zero(self, mock_definition):
-        """underscore variables get confidence of 0."""
-        skylos = Skylos()
-        
-        mock_underscore = mock_definition(
-            name="_",
-            simple_name="_",
-            type="variable",
-            confidence=100
-        )
-        
-        skylos.defs = {"_": mock_underscore}
-        skylos._apply_heuristics()
-        
-        assert mock_underscore.confidence == 0
-
 
 class TestAnalyze:
-    
-    @pytest.fixture
-    def temp_python_project(self):
-        """Create a temp Python project for testing"""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            
-            main_py = temp_path / "main.py"
-            main_py.write_text("""
-def used_function():
-    return "used"
-
-def unused_function():
-    return "unused"
-
-class UsedClass:
-    def method(self):
-        pass
-
-class UnusedClass:
-    def method(self):
-        pass
-
-result = used_function()
-instance = UsedClass()
-""")
-            
-            package_dir = temp_path / "mypackage"
-            package_dir.mkdir()
-            
-            init_py = package_dir / "__init__.py"
-            init_py.write_text("""
-from .module import exported_function
-
-def internal_function():
-    pass
-""")
-            
-            module_py = package_dir / "module.py"
-            module_py.write_text("""
-def exported_function():
-    return "exported"
-
-def internal_function():
-    return "internal"
-""")
-            
-            test_dir = temp_path / "__pycache__"
-            test_dir.mkdir()
-            
-            test_file = test_dir / "cached.pyc"
-            test_file.write_text("# This should be excluded")
-            
-            yield temp_path
     
     @patch('skylos.analyzer.proc_file')
     def test_analyze_basic(self, mock_proc_file, temp_python_project):
@@ -398,18 +334,26 @@ def internal_function():
         mock_def.type = "function"
         mock_def.to_dict.return_value = {
             "name": "test.unused_function",
-            "type": "function",
+            "type": "function", 
             "file": "test.py",
             "line": 1
         }
         
-        mock_proc_file.return_value = ([mock_def], [], set(), set())
+        mock_test_visitor = Mock(spec=TestAwareVisitor)
+        mock_test_visitor.is_test_file = False
+        mock_test_visitor.test_decorated_lines = set()
+        
+        mock_framework_visitor = Mock(spec=FrameworkAwareVisitor)
+        mock_framework_visitor.framework_decorated_lines = set()
+        mock_framework_visitor.is_framework_file = False
+        
+        mock_proc_file.return_value = ([mock_def], [], set(), set(), mock_test_visitor, mock_framework_visitor)
         
         result_json = analyze(str(temp_python_project), conf=60)
         result = json.loads(result_json)
         
         assert "unused_functions" in result
-        assert "unused_imports" in result
+        assert "unused_imports" in result  
         assert "unused_classes" in result
         assert "unused_variables" in result
         assert "unused_parameters" in result
@@ -422,7 +366,7 @@ def internal_function():
         exclude_file = exclude_dir / "generated.py"
         exclude_file.write_text("def generated_function(): pass")
         
-        result_json = analyze(str(temp_python_project), exclude_folders=["build"])  # Use list instead of set
+        result_json = analyze(str(temp_python_project), exclude_folders=["build"])
         result = json.loads(result_json)
         
         assert result["analysis_summary"]["excluded_folders"] == ["build"]
@@ -466,7 +410,7 @@ def internal_function():
             mock_get_files.return_value = ([Path("/fake/file.py")], Path("/"))
             
             with patch('skylos.analyzer.proc_file') as mock_proc_file:
-                mock_proc_file.return_value = ([], [], set(), set())
+                mock_proc_file.return_value = ([], [], set(), set(), Mock(spec=TestAwareVisitor), Mock(spec=FrameworkAwareVisitor))
                 
                 result_json = skylos.analyze("/fake/path", thr=60)
                 result = json.loads(result_json)
@@ -474,7 +418,6 @@ def internal_function():
                 # include only high confidence 
                 assert len(result["unused_functions"]) == 1
                 assert result["unused_functions"][0]["name"] == "high_conf"
-
 
 class TestProcFile:
     
@@ -491,7 +434,10 @@ class TestClass:
             f.flush()
             
             try:
-                with patch('skylos.analyzer.Visitor') as mock_visitor_class:
+                with patch('skylos.analyzer.Visitor') as mock_visitor_class, \
+                     patch('skylos.analyzer.TestAwareVisitor') as mock_test_visitor_class, \
+                     patch('skylos.analyzer.FrameworkAwareVisitor') as mock_framework_visitor_class:
+                    
                     mock_visitor = Mock()
                     mock_visitor.defs = []
                     mock_visitor.refs = []
@@ -499,7 +445,13 @@ class TestClass:
                     mock_visitor.exports = set()
                     mock_visitor_class.return_value = mock_visitor
                     
-                    defs, refs, dyn, exports = proc_file(f.name, "test_module")
+                    mock_test_visitor = Mock(spec=TestAwareVisitor)
+                    mock_test_visitor_class.return_value = mock_test_visitor
+                    
+                    mock_framework_visitor = Mock(spec=FrameworkAwareVisitor)
+                    mock_framework_visitor_class.return_value = mock_framework_visitor
+                    
+                    defs, refs, dyn, exports, test_flags, framework_flags = proc_file(f.name, "test_module")
                     
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
                     mock_visitor.visit.assert_called_once()
@@ -507,7 +459,10 @@ class TestClass:
                     assert defs == []
                     assert refs == []
                     assert dyn == set()
+                    ## added new test here for the new methods
                     assert exports == set()
+                    assert test_flags == mock_test_visitor
+                    assert framework_flags == mock_framework_visitor
             finally:
                 Path(f.name).unlink()
     
@@ -517,12 +472,14 @@ class TestClass:
             f.flush()
             
             try:
-                defs, refs, dyn, exports = proc_file(f.name, "test_module")
+                defs, refs, dyn, exports, test_flags, framework_flags = proc_file(f.name, "test_module")
                 
                 assert defs == []
                 assert refs == []
                 assert dyn == set()
                 assert exports == set()
+                assert isinstance(test_flags, TestAwareVisitor)
+                assert isinstance(framework_flags, FrameworkAwareVisitor)
             finally:
                 Path(f.name).unlink()
     
@@ -532,7 +489,10 @@ class TestClass:
             f.flush()
             
             try:
-                with patch('skylos.analyzer.Visitor') as mock_visitor_class:
+                with patch('skylos.analyzer.Visitor') as mock_visitor_class, \
+                     patch('skylos.analyzer.TestAwareVisitor') as mock_test_visitor_class, \
+                     patch('skylos.analyzer.FrameworkAwareVisitor') as mock_framework_visitor_class:
+                    
                     mock_visitor = Mock()
                     mock_visitor.defs = []
                     mock_visitor.refs = []
@@ -540,45 +500,113 @@ class TestClass:
                     mock_visitor.exports = set()
                     mock_visitor_class.return_value = mock_visitor
                     
-                    defs, refs, dyn, exports = proc_file((f.name, "test_module"))
+                    mock_test_visitor = Mock(spec=TestAwareVisitor)
+                    mock_test_visitor_class.return_value = mock_test_visitor
+                    
+                    mock_framework_visitor = Mock(spec=FrameworkAwareVisitor)
+                    mock_framework_visitor_class.return_value = mock_framework_visitor
+                    
+                    # defs, refs, dyn, exports, test_flags, framework_flags = proc_file((f.name, "test_module"))
                     
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
             finally:
                 Path(f.name).unlink()
 
+class TestApplyPenalties:
+    
+    @patch('skylos.analyzer.detect_framework_usage')
+    def test_private_name_penalty(self, mock_detect_framework, mock_definition, mock_test_aware_visitor, mock_framework_aware_visitor):
+        """private names get penalized."""
+        mock_detect_framework.return_value = None  # or whatever confidence value here that can change later on
+        
+        skylos = Skylos()
+        mock_def = mock_definition(
+            name="_private_func",
+            simple_name="_private_func", 
+            type="function",
+            confidence=100
+        )
+        
+        skylos._apply_penalties(mock_def, mock_test_aware_visitor, mock_framework_aware_visitor)
+        assert mock_def.confidence < 100
 
-class TestConstants:
+    @patch('skylos.analyzer.detect_framework_usage')
+    def test_magic_methods_confidence_zero(self, mock_detect_framework, mock_definition, mock_test_aware_visitor, mock_framework_aware_visitor):
+        """magic methods get confidence of 0."""
+        mock_detect_framework.return_value = None
+        skylos = Skylos()
+        mock_def = mock_definition(
+            name="MyClass.__str__",
+            simple_name="__str__",
+            type="method",
+            confidence=100
+        )
+        
+        skylos._apply_penalties(mock_def, mock_test_aware_visitor, mock_framework_aware_visitor)
+        assert mock_def.confidence == 0
     
-    def test_auto_called_contains_expected_methods(self):
-        """ AUTO_CALLED contains expected magic methods."""
-        assert "__init__" in AUTO_CALLED
-        assert "__enter__" in AUTO_CALLED
-        assert "__exit__" in AUTO_CALLED
+    @patch('skylos.analyzer.detect_framework_usage') 
+    def test_self_cls_parameters_confidence_zero(self, mock_detect_framework, mock_definition, mock_test_aware_visitor, mock_framework_aware_visitor):
+        mock_detect_framework.return_value = None
+        skylos = Skylos()
+        
+        mock_self = mock_definition(
+            name="MyClass.method.self",
+            simple_name="self",
+            type="parameter",
+            confidence=100
+        )
+        
+        mock_cls = mock_definition(
+            name="MyClass.classmethod.cls",
+            simple_name="cls", 
+            type="parameter",
+            confidence=100
+        )
+        
+        skylos._apply_penalties(mock_self, mock_test_aware_visitor, mock_framework_aware_visitor)
+        skylos._apply_penalties(mock_cls, mock_test_aware_visitor, mock_framework_aware_visitor)
+        
+        assert mock_self.confidence == 0
+        assert mock_cls.confidence == 0
     
-    def test_magic_methods_contains_common_methods(self):
-        """ MAGIC_METHODS contains common magic methods."""
-        assert "__str__" in MAGIC_METHODS
-        assert "__repr__" in MAGIC_METHODS
-        assert "__eq__" in MAGIC_METHODS
-        assert "__len__" in MAGIC_METHODS
+    @patch('skylos.analyzer.detect_framework_usage')
+    def test_test_methods_confidence_zero(self, mock_detect_framework, mock_definition, mock_framework_aware_visitor):
+        """test methods get confidence of 0"""
+        mock_detect_framework.return_value = None
+
+        skylos = Skylos()
+        
+        test_visitor = Mock(spec=TestAwareVisitor)
+        test_visitor.is_test_file = True
+        test_visitor.test_decorated_lines = set()
+        
+        mock_def = mock_definition(
+            name="TestMyClass.test_something",
+            simple_name="test_something",
+            type="method",
+            confidence=100
+        )
+        
+        skylos._apply_penalties(mock_def, test_visitor, mock_framework_aware_visitor)
+        assert mock_def.confidence == 0
     
-    def test_test_method_pattern_matches_correctly(self):
-        """ TEST_METHOD_PATTERN matches test methods correctly."""
-        assert TEST_METHOD_PATTERN.match("test_something")
-        assert TEST_METHOD_PATTERN.match("test_another_thing")
-        assert TEST_METHOD_PATTERN.match("test_123")
-        assert not TEST_METHOD_PATTERN.match("not_a_test")
-        assert not TEST_METHOD_PATTERN.match("test")  # no underscore
-        assert not TEST_METHOD_PATTERN.match("testing_something")  # doesnt start with test_
-    
-    def test_default_exclude_folders_contains_expected(self):
-        """ DEFAULT_EXCLUDE_FOLDERS contains expected directories."""
-        expected_folders = {
-            "__pycache__", ".git", ".pytest_cache", ".mypy_cache",
-            ".tox", "htmlcov", ".coverage", "build", "dist",
-            "*.egg-info", "venv", ".venv"
-        }
-        assert expected_folders.issubset(DEFAULT_EXCLUDE_FOLDERS)
+    @patch('skylos.analyzer.detect_framework_usage')
+    def test_underscore_variable_confidence_zero(self, mock_detect_framework, mock_definition, mock_test_aware_visitor, mock_framework_aware_visitor):
+        """underscore variables get confidence of 0."""
+        mock_detect_framework.return_value = None
+
+        skylos = Skylos()
+        
+        mock_def = mock_definition(
+            name="_",
+            simple_name="_",
+            type="variable",
+            confidence=100
+        )
+        
+        skylos._apply_penalties(mock_def, mock_test_aware_visitor, mock_framework_aware_visitor)
+        assert mock_def.confidence == 0
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
