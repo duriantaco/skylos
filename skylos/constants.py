@@ -1,35 +1,42 @@
 import re
+from pathlib import Path
 
-AUTO_CALLED={"__init__","__enter__","__exit__"}
+PENALTIES = {
+    "private_name":       80,   
+    "dunder_or_magic":    100, 
+    "underscored_var":    100, 
+    "in_init_file":       15, 
+    "dynamic_module":     40,
+    "test_related":       100,
+     "framework_magic":    40,
+}
+
+TEST_FILE_RE   = re.compile(r"(?:^|[/\\])tests?[/\\]|_test\.py$", re.I)
+TEST_IMPORT_RE = re.compile(r"^(pytest|unittest|nose|mock|responses)(\.|$)")
+TEST_DECOR_RE  = re.compile(r"""^(
+    pytest\.(fixture|mark) |
+    patch(\.|$) |
+    responses\.activate |
+    freeze_time
+)$""", re.X)
+
+AUTO_CALLED = {"__init__", "__enter__", "__exit__"}
 TEST_METHOD_PATTERN = re.compile(r"^test_\w+$")
-MAGIC_METHODS={f"__{n}__"for n in["init","new","call","getattr","getattribute","enter","exit","str","repr","hash","eq","ne","lt","gt","le","ge","iter","next","contains","len","getitem","setitem","delitem","iadd","isub","imul","itruediv","ifloordiv","imod","ipow","ilshift","irshift","iand","ixor","ior","round","format","dir","abs","complex","int","float","bool","bytes","reduce","await","aiter","anext","add","sub","mul","truediv","floordiv","mod","divmod","pow","lshift","rshift","and","or","xor","radd","rsub","rmul","rtruediv","rfloordiv","rmod","rdivmod","rpow","rlshift","rrshift","rand","ror","rxor"]}
-TEST_LIFECYCLE_METHODS = {
-    "setUp", "tearDown", "setUpClass", "tearDownClass", 
-    "setUpModule", "tearDownModule", "setup_method", "teardown_method",
-    "setup_class", "teardown_class", "setup_function", "teardown_function"
-}
-TEST_IMPORT_PATTERNS = {
-    "unittest", "unittest.mock", "mock", "pytest", "nose", "nose2",
-    "responses", "requests_mock", "freezegun", "factory_boy", 
-    "hypothesis", "sure", "expects", "testfixtures", "faker"
+
+UNITTEST_LIFECYCLE_METHODS = {
+    'setUp', 'tearDown', 'setUpClass', 'tearDownClass', 
+    'setUpModule', 'tearDownModule'
 }
 
-TEST_DECORATORS = {
-    "patch", "mock", "pytest.fixture", "pytest.mark", "given",
-    "responses.activate", "freeze_time", "patch.object", "patch.dict"
-}
+FRAMEWORK_FILE_RE = re.compile(r"(?:views|handlers|endpoints|routes|api)\.py$", re.I)
 
 DEFAULT_EXCLUDE_FOLDERS = {
-    "__pycache__",
-    ".git", 
-    ".pytest_cache",
-    ".mypy_cache",
-    ".tox",
-    "htmlcov",
-    ".coverage",
-    "build",
-    "dist",
-    "*.egg-info",
-    "venv",
-    ".venv"
+    "__pycache__", ".git", ".pytest_cache", ".mypy_cache", ".tox",
+    "htmlcov", ".coverage", "build", "dist", "*.egg-info", "venv", ".venv"
 }
+
+def is_test_path(p: Path | str) -> bool:
+    return bool(TEST_FILE_RE.search(str(p)))
+
+def is_framework_path(p: Path | str) -> bool:
+    return bool(FRAMEWORK_FILE_RE.search(str(p)))
