@@ -3,6 +3,7 @@
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 ![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
 ![PyPI version](https://img.shields.io/pypi/v/skylos)
+![Security Policy](https://img.shields.io/badge/security-policy-brightgreen)
 
 <div align="center">
    <img src="assets/SKYLOS.png" alt="Skylos Logo" width="200">
