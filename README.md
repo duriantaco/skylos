@@ -163,6 +163,18 @@ When Skylos detects a test file, it by default, will apply a confidence penalty 
 /project/test_data.py 
 ```
 
+## Ignoring Pragmas
+
+To ignore any warning, indicate `# pragma: no skylos` **ON THE SAME LINE** as the function/class you want to ignore
+
+Example
+
+```python
+    def with_logging(self, enabled: bool = True) -> "WebPath":     # pragma: no skylos
+        new_path = WebPath(self._url)
+        return new_path
+```
+
 ## Including & Excluding Files
 
 ### Default Exclusions
