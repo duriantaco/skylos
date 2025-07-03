@@ -20,6 +20,8 @@
 - [Understanding Confidence Levels](#understanding-confidence-levels)
 - [Test File Detection](#test-file-detection)
 - [Folder Management](#folder-management)
+- [Ignoring Pragmas](#ignoring-pragmas)
+- [Including & Excluding Files](#including--excluding-files)
 - [CLI Options](#cli-options)
 - [Example Output](#example-output)
 - [Interactive Mode](#interactive-mode)
