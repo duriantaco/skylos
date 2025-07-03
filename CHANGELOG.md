@@ -1,5 +1,31 @@
 ## Changelog
 
+## [1.2.1] - 2025-07-03
+
+### Added
+-  Skylos now recognises comment directives that mark code as intentionally unreachable:  
+  `# pragma: no skylos`, `# pragma: no cover`, and standard `# noqa`. Lines carrying these tags are skipped in all unused-code reports
+- `proc_file()` returns a 7 tuple: the final item is the `set[int]` of ignored line
+  numbers. Library users can consume it immediately. Legacy callers still work
+- **Deprecation warning**  
+  A `DeprecationWarning` is emitted when the legacy 6 tuple signature is used.
+- **Back-compat shim**  
+  `Skylos.analyze()` auto detects whether `proc_file()` yielded 6 or 7 items and
+  remaps transparently
+
+### Fixed
+- Updated test suite to handle the new 7 value signature and ignore pragmas
+
+### Changed
+- `analyzer.py`- Switched `proc_file` call site to signature agnostic pattern and inserted the `DeprecationWarning`
+
+### Technical Details
+- `proc_file()` always returns seven values. The except path appends an empty
+  `set()` for parity
+- Environment variable **`SKYLOS_STRICT_APIS=1`** (optional) will raise an error
+  if the legacy 6 tuple is encountered
+- Unit-tests: added `TestIgnorePragmas`
+
 ## [1.2.0] - 2025-06-12
 
 ### Added

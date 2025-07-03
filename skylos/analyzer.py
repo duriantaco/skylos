@@ -11,6 +11,10 @@ from skylos.test_aware import TestAwareVisitor
 import os
 import traceback
 from skylos.framework_aware import FrameworkAwareVisitor, detect_framework_usage
+import io
+import tokenize
+import re
+import warnings
 
 logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(levelname)s - %(message)s')
 logger=logging.getLogger('Skylos')
@@ -30,12 +34,27 @@ def parse_exclude_folders(user_exclude_folders, use_defaults=True, include_folde
     
     return exclude_set
 
+IGNORE_PATTERNS = (
+    r"#\s*pragma:\s*no\s+skylos", ## our own pragma
+    r"#\s*pragma:\s*no\s+cover",
+    r"#\s*noqa(?:\b|:)", # flake8 style
+)
+
+def _collect_ignored_lines(source: str) -> set[int]:
+    ignores = set()
+    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+        if tok.type == tokenize.COMMENT:
+            if any(re.search(pat, tok.string, flags=re.I) for pat in IGNORE_PATTERNS):
+                ignores.add(tok.start[0])
+    return ignores
+
 class Skylos:
     def __init__(self):
         self.defs={}
         self.refs=[]
         self.dynamic=set()
         self.exports=defaultdict(set)
+        self.ignored_lines:set[int]=set()
 
     def _module(self,root,f):
         p=list(f.relative_to(root).parts)
@@ -232,7 +251,20 @@ class Skylos:
         
         for file in files:
             mod = modmap[file]
-            defs, refs, dyn, exports, test_flags, framework_flags = proc_file(file, mod)
+
+            result = proc_file(file, mod)
+
+            if len(result) == 7: ##new
+                defs, refs, dyn, exports, test_flags, framework_flags, ignored = result
+                self.ignored_lines.update(ignored)
+            else: ##legacy
+                warnings.warn(
+                    "proc_file() now returns 7 values (added ignored_lines). "
+                    "The 6-value form is deprecated and will disappear.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                defs, refs, dyn, exports, test_flags, framework_flags = result
 
             # apply penalties while we still have the file-specific flags
             for d in defs:
@@ -251,8 +283,10 @@ class Skylos:
 
         unused = []
         for d in self.defs.values():
-                if d.references == 0 and not d.is_exported and d.confidence > 0 and d.confidence >= thr:
-                    unused.append(d.to_dict())
+                if (d.references == 0 and not d.is_exported
+                    and d.confidence >= thr
+                    and d.line not in self.ignored_lines):
+                        unused.append(d.to_dict())
 
         result = {
             "unused_functions": [], 
@@ -288,6 +322,7 @@ def proc_file(file_or_args, mod=None):
 
     try:
         source = Path(file).read_text(encoding="utf-8")
+        ignored = _collect_ignored_lines(source)   
         tree   = ast.parse(source)
 
         tv = TestAwareVisitor(filename=file)
@@ -299,7 +334,7 @@ def proc_file(file_or_args, mod=None):
         v  = Visitor(mod, file)
         v.visit(tree)
 
-        return v.defs, v.refs, v.dyn, v.exports, tv, fv
+        return v.defs, v.refs, v.dyn, v.exports, tv, fv, ignored
     except Exception as e:
         logger.error(f"{file}: {e}")
         if os.getenv("SKYLOS_DEBUG"):
@@ -307,7 +342,7 @@ def proc_file(file_or_args, mod=None):
         dummy_visitor = TestAwareVisitor(filename=file)
         dummy_framework_visitor = FrameworkAwareVisitor(filename=file)
 
-        return [], [], set(), set(), dummy_visitor, dummy_framework_visitor
+        return [], [], set(), set(), dummy_visitor, dummy_framework_visitor, set()
 
 def analyze(path,conf=60, exclude_folders=None):
     return Skylos().analyze(path,conf, exclude_folders)

@@ -451,7 +451,7 @@ class TestClass:
                     mock_framework_visitor = Mock(spec=FrameworkAwareVisitor)
                     mock_framework_visitor_class.return_value = mock_framework_visitor
                     
-                    defs, refs, dyn, exports, test_flags, framework_flags = proc_file(f.name, "test_module")
+                    defs, refs, dyn, exports, test_flags, framework_flags, _ = proc_file(f.name, "test_module")
                     
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
                     mock_visitor.visit.assert_called_once()
@@ -472,7 +472,7 @@ class TestClass:
             f.flush()
             
             try:
-                defs, refs, dyn, exports, test_flags, framework_flags = proc_file(f.name, "test_module")
+                defs, refs, dyn, exports, test_flags, framework_flags, _ = proc_file(f.name, "test_module")
                 
                 assert defs == []
                 assert refs == []
@@ -506,7 +506,7 @@ class TestClass:
                     mock_framework_visitor = Mock(spec=FrameworkAwareVisitor)
                     mock_framework_visitor_class.return_value = mock_framework_visitor
                     
-                    # defs, refs, dyn, exports, test_flags, framework_flags = proc_file((f.name, "test_module"))
+                    defs, refs, dyn, exports, test_flags, framework_flags, _ = proc_file((f.name, "test_module"))
                     
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
             finally:
@@ -607,6 +607,36 @@ class TestApplyPenalties:
         
         skylos._apply_penalties(mock_def, mock_test_aware_visitor, mock_framework_aware_visitor)
         assert mock_def.confidence == 0
+
+class TestIgnorePragmas:
+    def test_analyze_respects_ignore_pragmas(self, tmp_path):
+        src = tmp_path / "demo.py"
+        src.write_text(
+            """
+def used():
+    pass
+
+def unused_no_ignore():
+    pass
+
+def unused_ignore():   # pragma: no skylos
+    pass
+
+used()
+"""
+        )
+
+        result_json = analyze(str(tmp_path), conf=0)
+        result = json.loads(result_json)
+
+        # collect names of functions flagged as unreachable
+        unreachable = {item["name"].split(".")[-1] for item in result["unused_functions"]}
+
+        # expectations
+        assert "unused_no_ignore" in unreachable
+        assert "unused_ignore" not in unreachable
+        assert "used" not in unreachable
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
