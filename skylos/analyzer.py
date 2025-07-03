@@ -283,10 +283,13 @@ class Skylos:
 
         unused = []
         for d in self.defs.values():
-                if (d.references == 0 and not d.is_exported
-                    and d.confidence >= thr
-                    and d.line not in self.ignored_lines):
-                        unused.append(d.to_dict())
+            # skip anything on line that carries ignore pragma
+            if d.line in self.ignored_lines:
+                continue
+
+            if (d.references == 0 and not d.is_exported
+                and d.confidence >= thr):
+                    unused.append(d.to_dict())
 
         result = {
             "unused_functions": [], 
