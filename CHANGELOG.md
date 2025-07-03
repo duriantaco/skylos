@@ -1,5 +1,11 @@
 ## Changelog
 
+## [1.2.2] - 2025-07-03
+
+### Fixed
+
+- Patched bug because down in the loop accidentally overwrote `self.ignored_lines` so it never fires lmao
+
 ## [1.2.1] - 2025-07-03
 
 ### Added
