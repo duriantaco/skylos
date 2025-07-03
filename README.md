@@ -41,6 +41,7 @@
 * **Unused Classes**: Detects classes that are not instantiated or inherited
 * **Unused Imports**: Identifies imports that are not used
 * **Folder Management**: Inclusion/exclusion of directories 
+* **Ignore Pragmas**: Skip lines tagged with `# pragma: no skylos`, `# pragma: no cover`, or `# noqa`
 
 ## Benchmark (You can find this benchmark test in `test` folder)
 
