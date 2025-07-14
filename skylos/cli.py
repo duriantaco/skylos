@@ -4,7 +4,8 @@ import sys
 import logging
 import ast
 import skylos
-from skylos.analyzer import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
+from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
+from skylos.server import start_server
 
 try:
     import inquirer
@@ -19,9 +20,7 @@ class Colors:
     BLUE = '\033[94m'
     MAGENTA = '\033[95m'
     CYAN = '\033[96m'
-    WHITE = '\033[97m'
     BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
     RESET = '\033[0m'
     GRAY = '\033[90m'
 
@@ -61,6 +60,7 @@ def remove_unused_import(file_path: str, import_name: str, line_number: int) -> 
         
         if original_line.startswith(f'import {import_name}'):
             lines[line_idx] = ''
+            
         elif original_line.startswith('import ') and f' {import_name}' in original_line:
             parts = original_line.split(' ', 1)[1].split(',')
             new_parts = [p.strip() for p in parts if p.strip() != import_name]
@@ -68,6 +68,7 @@ def remove_unused_import(file_path: str, import_name: str, line_number: int) -> 
                 lines[line_idx] = f'import {", ".join(new_parts)}\n'
             else:
                 lines[line_idx] = ''
+
         elif original_line.startswith('from ') and import_name in original_line:
             if f'import {import_name}' in original_line and ',' not in original_line:
                 lines[line_idx] = ''
@@ -89,7 +90,6 @@ def remove_unused_import(file_path: str, import_name: str, line_number: int) -> 
         return False
 
 def remove_unused_function(file_path: str, function_name: str, line_number: int) -> bool:
-    # remove the entire def from the source code
     try:
         with open(file_path, 'r') as f:
             content = f.read()
@@ -129,8 +129,8 @@ def remove_unused_function(file_path: str, function_name: str, line_number: int)
                     return True
         
         return False
-    except Exception as e:
-        logging.error(f"Failed to remove function {function_name} from {file_path}: {e}")
+    except:
+        logging.error(f"Failed to remove function {function_name}")
         return False
 
 def interactive_selection(logger, unused_functions, unused_imports):
@@ -184,7 +184,6 @@ def interactive_selection(logger, unused_functions, unused_imports):
     return selected_functions, selected_imports
 
 def print_badge(dead_code_count: int, logger):
-    """Print appropriate badge based on dead code count"""
     logger.info(f"\n{Colors.GRAY}{'─' * 50}{Colors.RESET}")
     
     if dead_code_count == 0:
@@ -199,25 +198,34 @@ def print_badge(dead_code_count: int, logger):
         logger.info("```")
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == 'run':
+        try:
+            start_server()
+            return
+        except ImportError:
+            print(f"{Colors.RED}Error: Flask is required {Colors.RESET}")
+            print(f"{Colors.YELLOW}Install with: pip install flask flask-cors{Colors.RESET}")
+            sys.exit(1)
+
     parser = argparse.ArgumentParser(
         description="Detect unreachable functions and unused imports in a Python project"
     )
-    parser.add_argument("path", help="Path to the Python project to analyze")
+    parser.add_argument("path", help="Path to the Python project")
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Output raw JSON instead of formatted text",
+        help="Output raw JSON",
     )
     parser.add_argument(
         "--output",
         "-o",
         type=str,
-        help="Write output to file instead of stdout",
+        help="Write output to file",
     )
     parser.add_argument(
         "--verbose", "-v",
         action="store_true",
-        help="Enable verbose output"
+        help="Enable verbose"
     )
     parser.add_argument(
         "--confidence",
@@ -229,12 +237,12 @@ def main() -> None:
     parser.add_argument(
         "--interactive", "-i",
         action="store_true",
-        help="Interactively select items to remove (requires inquirer)"
+        help="Select items to remove"
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what would be removed without actually modifying files"
+        help="Show what would be removed"
     )
     
     parser.add_argument(
@@ -252,14 +260,14 @@ def main() -> None:
         dest="include_folders",
         help="Force include a folder that would otherwise be excluded "
              "(overrides both default and custom exclusions). "
-             "Example: --include-folder venv to scan your venv folder."
+             "Example: --include-folder venv"
     )
     
     parser.add_argument(
         "--no-default-excludes",
         action="store_true",
         help="Don't exclude default folders (__pycache__, .git, venv, etc.). "
-             "Only exclude folders specified with --exclude-folder."
+             "Only exclude folders with --exclude-folder."
     )
     
     parser.add_argument(
@@ -319,15 +327,15 @@ def main() -> None:
     unused_variables = result.get("unused_variables", [])
     unused_classes = result.get("unused_classes", [])
     
-    logger.info(f"{Colors.CYAN}{Colors.BOLD}🔍 Python Static Analysis Results{Colors.RESET}")
+    logger.info(f"{Colors.CYAN}{Colors.BOLD} Python Static Analysis Results{Colors.RESET}")
     logger.info(f"{Colors.CYAN}{'=' * 35}{Colors.RESET}")
     
     logger.info(f"\n{Colors.BOLD}Summary:{Colors.RESET}")
-    logger.info(f" • Unreachable functions: {Colors.YELLOW}{len(unused_functions)}{Colors.RESET}")
-    logger.info(f" • Unused imports: {Colors.YELLOW}{len(unused_imports)}{Colors.RESET}")
-    logger.info(f" • Unused parameters: {Colors.YELLOW}{len(unused_parameters)}{Colors.RESET}")
-    logger.info(f" • Unused variables: {Colors.YELLOW}{len(unused_variables)}{Colors.RESET}")
-    logger.info(f" • Unused classes: {Colors.YELLOW}{len(unused_classes)}{Colors.RESET}")
+    logger.info(f" * Unreachable functions: {Colors.YELLOW}{len(unused_functions)}{Colors.RESET}")
+    logger.info(f" * Unused imports: {Colors.YELLOW}{len(unused_imports)}{Colors.RESET}")
+    logger.info(f" * Unused parameters: {Colors.YELLOW}{len(unused_parameters)}{Colors.RESET}")
+    logger.info(f" * Unused variables: {Colors.YELLOW}{len(unused_variables)}{Colors.RESET}")
+    logger.info(f" * Unused classes: {Colors.YELLOW}{len(unused_classes)}{Colors.RESET}")
 
     if args.interactive and (unused_functions or unused_imports):
         logger.info(f"\n{Colors.BOLD}Interactive Mode:{Colors.RESET}")
@@ -360,16 +368,16 @@ def main() -> None:
                     for func in selected_functions:
                         success = remove_unused_function(func['file'], func['name'], func['line'])
                         if success:
-                            logger.info(f"  {Colors.GREEN}✓{Colors.RESET} Removed function: {func['name']}")
+                            logger.info(f"  {Colors.GREEN} {Colors.RESET} Removed function: {func['name']}")
                         else:
-                            logger.error(f"  {Colors.RED}✗{Colors.RESET} Failed to remove: {func['name']}")
+                            logger.error(f"  {Colors.RED} x {Colors.RESET} Failed to remove: {func['name']}")
                     
                     for imp in selected_imports:
                         success = remove_unused_import(imp['file'], imp['name'], imp['line'])
                         if success:
-                            logger.info(f"  {Colors.GREEN}✓{Colors.RESET} Removed import: {imp['name']}")
+                            logger.info(f"  {Colors.GREEN} {Colors.RESET} Removed import: {imp['name']}")
                         else:
-                            logger.error(f"  {Colors.RED}✗{Colors.RESET} Failed to remove: {imp['name']}")
+                            logger.error(f"  {Colors.RED} x {Colors.RESET} Failed to remove: {imp['name']}")
                     
                     logger.info(f"\n{Colors.GREEN}Cleanup complete!{Colors.RESET}")
                 else:
@@ -381,16 +389,16 @@ def main() -> None:
     
     else:
         if unused_functions:
-            logger.info(f"\n{Colors.RED}{Colors.BOLD}📦 Unreachable Functions{Colors.RESET}")
+            logger.info(f"\n{Colors.RED}{Colors.BOLD} - Unreachable Functions{Colors.RESET}")
             logger.info(f"{Colors.RED}{'=' * 23}{Colors.RESET}")
             for i, item in enumerate(unused_functions, 1):
                 logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.RED}{item['name']}{Colors.RESET}")
                 logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
         else:
-            logger.info(f"\n{Colors.GREEN}✓ All functions are reachable!{Colors.RESET}")
+            logger.info(f"\n{Colors.GREEN} All functions are reachable!{Colors.RESET}")
         
         if unused_imports:
-            logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD}📥 Unused Imports{Colors.RESET}")
+            logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD} - Unused Imports{Colors.RESET}")
             logger.info(f"{Colors.MAGENTA}{'=' * 16}{Colors.RESET}")
             for i, item in enumerate(unused_imports, 1):
                 logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.MAGENTA}{item['name']}{Colors.RESET}")
@@ -399,7 +407,7 @@ def main() -> None:
             logger.info(f"\n{Colors.GREEN}✓ All imports are being used!{Colors.RESET}")
         
         if unused_parameters:
-            logger.info(f"\n{Colors.BLUE}{Colors.BOLD}🔧 Unused Parameters{Colors.RESET}")
+            logger.info(f"\n{Colors.BLUE}{Colors.BOLD} - Unused Parameters{Colors.RESET}")
             logger.info(f"{Colors.BLUE}{'=' * 18}{Colors.RESET}")
             for i, item in enumerate(unused_parameters, 1):
                 logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.BLUE}{item['name']}{Colors.RESET}")
@@ -408,14 +416,14 @@ def main() -> None:
             logger.info(f"\n{Colors.GREEN}✓ All parameters are being used!{Colors.RESET}")
         
         if unused_variables:
-            logger.info(f"\n{Colors.YELLOW}{Colors.BOLD}📊 Unused Variables{Colors.RESET}")
+            logger.info(f"\n{Colors.YELLOW}{Colors.BOLD} - Unused Variables{Colors.RESET}")
             logger.info(f"{Colors.YELLOW}{'=' * 18}{Colors.RESET}")
             for i, item in enumerate(unused_variables, 1):
                 logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.YELLOW}{item['name']}{Colors.RESET}")
                 logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
                 
         if unused_classes:
-            logger.info(f"\n{Colors.YELLOW}{Colors.BOLD}📚 Unused Classes{Colors.RESET}")
+            logger.info(f"\n{Colors.YELLOW}{Colors.BOLD} - Unused Classes{Colors.RESET}")
             logger.info(f"{Colors.YELLOW}{'=' * 18}{Colors.RESET}")
             for i, item in enumerate(unused_classes, 1):
                 logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.YELLOW}{item['name']}{Colors.RESET}")
@@ -430,9 +438,9 @@ def main() -> None:
 
         if unused_functions or unused_imports:
             logger.info(f"\n{Colors.BOLD}Next steps:{Colors.RESET}")
-            logger.info(f" • Use --interactive to select specific items to remove")
-            logger.info(f" • Use --dry-run to preview changes before applying them")
-            logger.info(f" • Use --exclude-folder to skip directories like node_modules, .git")
+            logger.info(f" * Use --select specific items to remove")
+            logger.info(f" * Use --dry-run to preview changes")
+            logger.info(f" * Use --exclude-folder to skip directories")
 
 if __name__ == "__main__":
     main()

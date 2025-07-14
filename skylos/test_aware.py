@@ -7,7 +7,6 @@ class TestAwareVisitor:
         self.is_test_file = False
         self.test_decorated_lines = set()
         
-        # mark as test file based on the file path/name NOT imports
         if filename and TEST_FILE_RE.search(str(filename)):
             self.is_test_file = True
 

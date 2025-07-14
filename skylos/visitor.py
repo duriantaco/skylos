@@ -7,18 +7,14 @@ DBG = bool(int(os.getenv("SKYLOS_DEBUG", "0")))
 log = logging.getLogger("Skylos")
 
 
-PYTHON_BUILTINS={"print", "len", "str", "int", "float", "list", "dict",
-                "set", "tuple", "range", "open", "super", "object", "type",
-                "enumerate", "zip", "map", "filter", "sorted", "reversed", "sum", 
-                "min", "max", "all", "any", "next", "iter", "repr", "chr", "ord",
-                "bytes", "bytearray", "memoryview", "format", "round", "abs", 
-                "pow", "divmod", "complex", "hash", "id", "bool", "callable", "getattr", 
-                "setattr", "delattr", "hasattr", "isinstance", "issubclass", "globals", "locals", 
+PYTHON_BUILTINS={"print", "len", "str", "int", "float", "list", "dict", "set", "tuple", "range", "open", 
+                 "super", "object", "type", "enumerate", "zip", "map", "filter", "sorted", "sum", "min", 
+                "next", "iter", "bytes", "bytearray", "format", "round", "abs", "complex", "hash", "id", "bool", "callable", 
+                "getattr", "max", "all", "any", "setattr", "hasattr", "isinstance", "globals", "locals", 
                 "vars", "dir" ,"property", "classmethod", "staticmethod"}
 DYNAMIC_PATTERNS={"getattr", "globals", "eval", "exec"}
 
 class Definition:
-    __slots__ = ('name', 'type', 'filename', 'line', 'simple_name', 'confidence', 'references', 'is_exported', 'in_init')
     
     def __init__(self, name, t, filename, line):
         self.name = name
@@ -94,17 +90,16 @@ class Visitor(ast.NodeVisitor):
             return
 
         if DBG:
-            log.debug(f"[visitor] parsing string annotation {annotation_str!r} "
-                    f"in {self.filename}: {getattr(self, 'line', '?')}")
+            log.debug(f"parsing annotation: {annotation_str}")
+
 
         try:
             parsed = ast.parse(annotation_str, mode="eval")
             self.visit(parsed.body)
-        except Exception:
+        except:
             if DBG:
-                log.debug("[visitor] inner-annotation parse failed:\n" +
-                        traceback.format_exc())
-            # keep going but dont swallow symbol names:
+                if DBG: log.debug("annotation parse failed")
+            
             for tok in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", annotation_str):
                 self.add_ref(tok)
 
@@ -244,9 +239,9 @@ class Visitor(ast.NodeVisitor):
                     scope_parts.extend(self.current_function_scope)
                 
                 prefix = '.'.join(filter(None, scope_parts))
-                qualified_var_name = f"{prefix}.{name_simple}" if prefix else name_simple
+                var_name = f"{prefix}.{name_simple}" if prefix else name_simple
 
-                self.add_def(qualified_var_name, "variable", target_node.lineno)
+                self.add_def(var_name, "variable", target_node.lineno)
 
             elif isinstance(target_node, (ast.Tuple, ast.List)):
                 for elt in target_node.elts:
@@ -266,8 +261,8 @@ class Visitor(ast.NodeVisitor):
                             value = elt.s
                             
                         if value is not None:
-                            full_name_export = f"{self.mod}.{value}" if self.mod else value
-                            self.add_ref(full_name_export)
+                            export_name = f"{self.mod}.{value}" if self.mod else value
+                            self.add_ref(export_name)
                             self.add_ref(value) 
         
         self.generic_visit(node)
