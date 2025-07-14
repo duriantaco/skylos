@@ -2,7 +2,6 @@ import ast
 import fnmatch
 from pathlib import Path
 
-# decorator patterns for each of the more popular frameworks
 FRAMEWORK_DECORATORS = [
     # flask
     "@app.route", "@app.get", "@app.post", "@app.put", "@app.delete", 
@@ -148,7 +147,7 @@ class FrameworkAwareVisitor:
         except:
             pass
 
-def detect_framework_usage(definition, decorator_nodes=None, visitor=None):
+def detect_framework_usage(definition, visitor=None):
     if not visitor:
         return None
     

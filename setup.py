@@ -5,7 +5,10 @@ setup(
     version="1.2.2",
     packages=find_packages(),
     python_requires=">=3.9",
-    install_requires=["inquirer>=3.0.0"],
+    install_requires=[
+        "inquirer>=3.0.0",
+        "flask>=2.0.0",
+        "flask-cors>=3.0.0"],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
