@@ -40,3 +40,18 @@ def is_test_path(p: Path | str) -> bool:
 
 def is_framework_path(p: Path | str) -> bool:
     return bool(FRAMEWORK_FILE_RE.search(str(p)))
+
+def parse_exclude_folders(user_exclude_folders= None, use_defaults= True, include_folders= None):
+    exclude_folders = set()
+    
+    if use_defaults:
+        exclude_folders.update(DEFAULT_EXCLUDE_FOLDERS)
+    
+    if user_exclude_folders:
+        exclude_folders.update(user_exclude_folders)
+    
+    if include_folders:
+        for folder in include_folders:
+            exclude_folders.discard(folder)
+    
+    return exclude_folders 

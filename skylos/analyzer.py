@@ -1,438 +1,375 @@
-import argparse
-import json
-import sys
-import logging
+#!/usr/bin/env python3
 import ast
-import skylos
-from skylos.analyzer import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
+import sys
+import json
+import logging
+from pathlib import Path
+from collections import defaultdict
+from skylos.visitor import Visitor
+from skylos.constants import ( DEFAULT_EXCLUDE_FOLDERS, PENALTIES, AUTO_CALLED )
+from skylos.test_aware import TestAwareVisitor
+import os
+import traceback
+from skylos.framework_aware import FrameworkAwareVisitor, detect_framework_usage
 
-try:
-    import inquirer
-    INTERACTIVE_AVAILABLE = True
-except ImportError:
-    INTERACTIVE_AVAILABLE = False
+logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(levelname)s - %(message)s')
+logger=logging.getLogger('Skylos')
 
-class Colors:
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    MAGENTA = '\033[95m'
-    CYAN = '\033[96m'
-    WHITE = '\033[97m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
-    RESET = '\033[0m'
-    GRAY = '\033[90m'
-
-class CleanFormatter(logging.Formatter):
-    def format(self, record):
-        return record.getMessage()
-
-def setup_logger(output_file=None):
-    logger = logging.getLogger('skylos')
-    logger.setLevel(logging.INFO)
+def parse_exclude_folders(user_exclude_folders, use_defaults=True, include_folders=None):
+    exclude_set = set()
     
-    logger.handlers.clear()
-    
-    formatter = CleanFormatter()
-    
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-    
-    if output_file:
-        file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        file_handler = logging.FileHandler(output_file)
-        file_handler.setFormatter(file_formatter)
-        logger.addHandler(file_handler)
-    
-    logger.propagate = False
-    
-    return logger
-
-def remove_unused_import(file_path: str, import_name: str, line_number: int) -> bool:
-    try:
-        with open(file_path, 'r') as f:
-            lines = f.readlines()
+    if use_defaults:
+        exclude_set.update(DEFAULT_EXCLUDE_FOLDERS)
         
-        line_idx = line_number - 1
-        original_line = lines[line_idx].strip()
+    if user_exclude_folders:
+        exclude_set.update(user_exclude_folders)
+    
+    if include_folders:
+        for folder in include_folders:
+            exclude_set.discard(folder)
+    
+    return exclude_set
+
+class Skylos:
+    def __init__(self):
+        self.defs={}
+        self.refs=[]
+        self.dynamic=set()
+        self.exports=defaultdict(set)
+
+    def _module(self,root,f):
+        p = list(f.relative_to(root).parts)
+        if p[-1].endswith(".py"):
+            p[-1] = p[-1][:-3]
+        if p[-1] == "__init__":
+            p.pop()
+        return ".".join(p)
+    
+    def _should_exclude_file(self, file_path, root_path, exclude_folders):
+        if not exclude_folders:
+            return False
+            
+        try:
+            rel_path = file_path.relative_to(root_path)
+        except ValueError:
+            return False
         
-        if original_line.startswith(f'import {import_name}'):
-            lines[line_idx] = ''
-        elif original_line.startswith('import ') and f' {import_name}' in original_line:
-            parts = original_line.split(' ', 1)[1].split(',')
-            new_parts = [p.strip() for p in parts if p.strip() != import_name]
-            if new_parts:
-                lines[line_idx] = f'import {", ".join(new_parts)}\n'
+        path_parts = rel_path.parts
+        
+        for exclude_folder in exclude_folders:
+            if "*" in exclude_folder:
+                for part in path_parts:
+                    if part.endswith(exclude_folder.replace("*", "")):
+                        return True
             else:
-                lines[line_idx] = ''
-        elif original_line.startswith('from ') and import_name in original_line:
-            if f'import {import_name}' in original_line and ',' not in original_line:
-                lines[line_idx] = ''
-            else:
-                parts = original_line.split('import ', 1)[1].split(',')
-                new_parts = [p.strip() for p in parts if p.strip() != import_name]
-                if new_parts:
-                    prefix = original_line.split(' import ')[0]
-                    lines[line_idx] = f'{prefix} import {", ".join(new_parts)}\n'
-                else:
-                    lines[line_idx] = ''
-        
-        with open(file_path, 'w') as f:
-            f.writelines(lines)
-        
-        return True
-    except Exception as e:
-        logging.error(f"Failed to remove import {import_name} from {file_path}: {e}")
-        return False
-
-def remove_unused_function(file_path: str, function_name: str, line_number: int) -> bool:
-    # remove the entire def from the source code
-    try:
-        with open(file_path, 'r') as f:
-            content = f.read()
-        
-        tree = ast.parse(content)
-        
-        lines = content.splitlines()
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if (node.name in function_name and 
-                    node.lineno == line_number):
-                    
-                    start_line = node.lineno - 1
-                    
-                    if node.decorator_list:
-                        start_line = node.decorator_list[0].lineno - 1
-                    
-                    end_line = len(lines)
-                    base_indent = len(lines[start_line]) - len(lines[start_line].lstrip())
-                    
-                    for i in range(node.end_lineno, len(lines)):
-                        if lines[i].strip() == '':
-                            continue
-                        current_indent = len(lines[i]) - len(lines[i].lstrip())
-                        if current_indent <= base_indent and lines[i].strip():
-                            end_line = i
-                            break
-                    
-                    while end_line < len(lines) and lines[end_line].strip() == '':
-                        end_line += 1
-                    
-                    new_lines = lines[:start_line] + lines[end_line:]
-                    
-                    with open(file_path, 'w') as f:
-                        f.write('\n'.join(new_lines) + '\n')
-                    
+                if exclude_folder in path_parts:
                     return True
         
         return False
-    except Exception as e:
-        logging.error(f"Failed to remove function {function_name} from {file_path}: {e}")
-        return False
+    
+    def _get_python_files(self, path, exclude_folders=None):
+        p = Path(path).resolve()
+        
+        if p.is_file():
+            return [p], p.parent
+        
+        root = p
+        all_files = list(p.glob("**/*.py"))
+        
+        if exclude_folders:
+            filtered_files = []
+            excluded_count = 0
+            
+            for file_path in all_files:
+                if self._should_exclude_file(file_path, root, exclude_folders):
+                    excluded_count += 1
+                    continue
+                filtered_files.append(file_path)
+            
+            if excluded_count > 0:
+                logger.info(f"Excluded {excluded_count} files from analysis")
+            
+            return filtered_files, root
+        
+        return all_files, root
+    
+    def _mark_exports(self):
+        for name, definition in self.defs.items():
+            if definition.in_init and not definition.simple_name.startswith('_'):
+                definition.is_exported = True
+        
+        for mod, export_names in self.exports.items():
+            for name in export_names:
+                for def_name, def_obj in self.defs.items():
+                    if (def_name.startswith(f"{mod}.") and 
+                        def_obj.simple_name == name and
+                        def_obj.type != "import"):
+                        def_obj.is_exported = True
 
-def interactive_selection(logger, unused_functions, unused_imports):
-    if not INTERACTIVE_AVAILABLE:
-        logger.error("Interactive mode requires 'inquirer' package. Install with: pip install inquirer")
-        return [], []
-    
-    selected_functions = []
-    selected_imports = []
-    
-    if unused_functions:
-        logger.info(f"\n{Colors.CYAN}{Colors.BOLD}Select unused functions to remove:{Colors.RESET}")
-        
-        function_choices = []
+    def _mark_refs(self):
+        import_to_original = {}
+        for name, def_obj in self.defs.items():
+            if def_obj.type == "import":
+                import_name = name.split('.')[-1]
+                
+                for def_name, orig_def in self.defs.items():
+                    if (orig_def.type != "import" and 
+                        orig_def.simple_name == import_name and
+                        def_name != name):
+                        import_to_original[name] = def_name
+                        break
 
-        for item in unused_functions:
-            choice_text = f"{item['name']} ({item['file']}:{item['line']})"
-            function_choices.append((choice_text, item))
+        simple_name_lookup = defaultdict(list)
+        for definition in self.defs.values():
+            simple_name_lookup[definition.simple_name].append(definition)
         
-        questions = [
-            inquirer.Checkbox('functions',
-                            message="Select functions to remove",
-                            choices=function_choices,
-                            )
-        ]
-        
-        answers = inquirer.prompt(questions)
-        if answers:
-            selected_functions = answers['functions']
+        for ref, _ in self.refs:
+            if ref in self.defs:
+                self.defs[ref].references += 1
+                
+                if ref in import_to_original:
+                    original = import_to_original[ref]
+                    self.defs[original].references += 1
+                continue
+            
+            simple = ref.split('.')[-1]
+            matches = simple_name_lookup.get(simple, [])
+            for definition in matches:
+                definition.references += 1
+ 
+        for module_name in self.dynamic:
+            for def_name, def_obj in self.defs.items():
+                if def_obj.name.startswith(f"{module_name}."):
+                    if def_obj.type in ("function", "method") and not def_obj.simple_name.startswith("_"):
+                        def_obj.references += 1
     
-    if unused_imports:
-        logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD}Select unused imports to remove:{Colors.RESET}")
+    def _get_base_classes(self, class_name):
+        if class_name not in self.defs:
+            return []
         
-        import_choices = []
+        class_def = self.defs[class_name]
+        
+        if hasattr(class_def, 'base_classes'):
+            return class_def.base_classes
+        
+        return []
+    
+    def _apply_penalties(self, def_obj, visitor, framework):
+        confidence=100
+        if def_obj.simple_name.startswith("_") and not def_obj.simple_name.startswith("__"):
+            confidence -= PENALTIES["private_name"] 
+        if def_obj.simple_name.startswith("__") and def_obj.simple_name.endswith("__"):
+            confidence -= PENALTIES["dunder_or_magic"]
+        if def_obj.type == "variable" and def_obj.simple_name == "_":
+            confidence -= PENALTIES["underscored_var"]
+        if def_obj.in_init and def_obj.type in ("function", "class"):
+            confidence -= PENALTIES["in_init_file"]
+        if def_obj.name.split(".")[0] in self.dynamic:
+            confidence -= PENALTIES["dynamic_module"]
+        if visitor.is_test_file or def_obj.line in visitor.test_decorated_lines:
+            confidence -= PENALTIES["test_related"]
+        
+        framework_confidence = detect_framework_usage(def_obj, visitor=framework)
+        if framework_confidence is not None:
+            confidence = min(confidence, framework_confidence)
 
-        for item in unused_imports:
-            choice_text = f"{item['name']} ({item['file']}:{item['line']})"
-            import_choices.append((choice_text, item))
-        
-        questions = [
-            inquirer.Checkbox('imports',
-                            message="Select imports to remove",
-                            choices=import_choices,
-                            )
-        ]
-        
-        answers = inquirer.prompt(questions)
-        if answers:
-            selected_imports = answers['imports']
-    
-    return selected_functions, selected_imports
+        if (def_obj.simple_name.startswith("__") and def_obj.simple_name.endswith("__")):
+            confidence = 0
 
-def print_badge(dead_code_count: int, logger):
-    """Print appropriate badge based on dead code count"""
-    logger.info(f"\n{Colors.GRAY}{'─' * 50}{Colors.RESET}")
-    
-    if dead_code_count == 0:
-        logger.info(f" Your code is 100% dead code free! Add this badge to your README:")
-        logger.info("```markdown")
-        logger.info("![Dead Code Free](https://img.shields.io/badge/Dead_Code-Free-brightgreen?logo=moleculer&logoColor=white)")
-        logger.info("```")
+        if def_obj.type == "parameter":
+            if def_obj.simple_name in ("self", "cls"):
+                confidence = 0
+            elif "." in def_obj.name:
+                method_name = def_obj.name.split(".")[-2]
+                if method_name.startswith("__") and method_name.endswith("__"):
+                    confidence = 0
+        
+        if visitor.is_test_file or def_obj.line in visitor.test_decorated_lines:
+            confidence = 0
+        
+        if (def_obj.type == "import" and def_obj.name.startswith("__future__.") and
+            def_obj.simple_name in ("annotations", "absolute_import", "division", 
+                                "print_function", "unicode_literals", "generator_stop")):
+            confidence = 0
+        
+        def_obj.confidence = max(confidence, 0)
+
+    def _apply_heuristics(self):
+        class_methods = defaultdict(list)
+        for definition in self.defs.values():
+            if definition.type in ("method", "function") and "." in definition.name:
+                cls = definition.name.rsplit(".", 1)[0]
+                if cls in self.defs and self.defs[cls].type == "class":
+                    class_methods[cls].append(definition)
+        
+        for cls, methods in class_methods.items():
+            if self.defs[cls].references > 0:
+                for method in methods:
+                    if method.simple_name in AUTO_CALLED:
+                        method.references += 1
+
+    def analyze(self, path, thr=60, exclude_folders=None):
+        files, root = self._get_python_files(path, exclude_folders)
+        
+        if not files:
+            logger.warning(f"No Python files found in {path}")
+            return json.dumps({
+                "unused_functions": [], 
+                "unused_imports": [], 
+                "unused_classes": [],
+                "unused_variables": [],
+                "unused_parameters": [],
+                 "analysis_summary": {
+                    "total_files": 0,
+                    "excluded_folders": exclude_folders if exclude_folders else []
+                }
+            })
+        
+        logger.info(f"Analyzing {len(files)} Python files...")
+        
+        modmap = {}
+        for f in files:
+            modmap[f] = self._module(root, f)
+        
+        for file in files:
+            mod = modmap[file]
+            defs, refs, dyn, exports, test_flags, framework_flags = proc_file(file, mod)
+
+            for definition in defs:
+                self._apply_penalties(definition, test_flags, framework_flags) 
+                self.defs[definition.name] = definition
+
+            self.refs.extend(refs)
+            self.dynamic.update(dyn)
+            self.exports[mod].update(exports)
+
+        self._mark_refs()
+        self._apply_heuristics() 
+        self._mark_exports()
+        
+        thr = max(0, thr)
+
+        unused = []
+        for definition in self.defs.values():
+                if definition.references == 0 and not definition.is_exported and definition.confidence > 0 and definition.confidence >= thr:
+                    unused.append(definition.to_dict())
+
+        result = {
+            "unused_functions": [], 
+            "unused_imports": [], 
+            "unused_classes": [],
+            "unused_variables": [],
+            "unused_parameters": [],
+            "analysis_summary": {
+                "total_files": len(files),
+                "excluded_folders": exclude_folders if exclude_folders else [],
+            }
+        }
+        
+        for u in unused:
+            if u["type"] in ("function", "method"):
+                result["unused_functions"].append(u)
+            elif u["type"] == "import":
+                result["unused_imports"].append(u)
+            elif u["type"] == "class": 
+                result["unused_classes"].append(u)
+            elif u["type"] == "variable":
+                result["unused_variables"].append(u)
+            elif u["type"] == "parameter":
+                result["unused_parameters"].append(u)
+                
+        return json.dumps(result, indent=2)
+
+def proc_file(file_or_args, mod=None):
+    if mod is None and isinstance(file_or_args, tuple):
+        file, mod = file_or_args 
     else:
-        logger.info(f"Found {dead_code_count} dead code items. Add this badge to your README:")
-        logger.info("```markdown")  
-        logger.info(f"![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange?logo=codacy&logoColor=red)")
-        logger.info("```")
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Detect unreachable functions and unused imports in a Python project"
-    )
-    parser.add_argument("path", help="Path to the Python project to analyze")
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output raw JSON instead of formatted text",
-    )
-    parser.add_argument(
-        "--output",
-        "-o",
-        type=str,
-        help="Write output to file instead of stdout",
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--confidence",
-        "-c",
-        type=int,
-        default=60,
-        help="Confidence threshold (0-100). Lower values include more items. Default: 60"
-    )
-    parser.add_argument(
-        "--interactive", "-i",
-        action="store_true",
-        help="Interactively select items to remove (requires inquirer)"
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be removed without actually modifying files"
-    )
-    
-    parser.add_argument(
-        "--exclude-folder",
-        action="append",
-        dest="exclude_folders",
-        help="Exclude a folder from analysis (can be used multiple times). "
-             "By default, common folders like __pycache__, .git, venv are excluded. "
-             "Use --no-default-excludes to disable default exclusions."
-    )
-    
-    parser.add_argument(
-        "--include-folder", 
-        action="append",
-        dest="include_folders",
-        help="Force include a folder that would otherwise be excluded "
-             "(overrides both default and custom exclusions). "
-             "Example: --include-folder venv to scan your venv folder."
-    )
-    
-    parser.add_argument(
-        "--no-default-excludes",
-        action="store_true",
-        help="Don't exclude default folders (__pycache__, .git, venv, etc.). "
-             "Only exclude folders specified with --exclude-folder."
-    )
-    
-    parser.add_argument(
-        "--list-default-excludes",
-        action="store_true", 
-        help="List the default excluded folders and exit."
-    )
-
-    args = parser.parse_args()
-
-    if args.list_default_excludes:
-        print("Default excluded folders:")
-        for folder in sorted(DEFAULT_EXCLUDE_FOLDERS):
-            print(f"  {folder}")
-        print(f"\nTotal: {len(DEFAULT_EXCLUDE_FOLDERS)} folders")
-        print("\nUse --no-default-excludes to disable these exclusions")
-        print("Use --include-folder <folder> to force include specific folders")
-        return
-    
-    logger = setup_logger(args.output)
-    
-    if args.verbose:
-        logger.setLevel(logging.DEBUG)
-        logger.debug(f"Analyzing path: {args.path}")
-        
-        if args.exclude_folders:
-            logger.debug(f"Excluding folders: {args.exclude_folders}")
-
-    use_defaults = not args.no_default_excludes
-    final_exclude_folders = parse_exclude_folders(
-        user_exclude_folders=args.exclude_folders,
-        use_defaults=use_defaults,
-        include_folders=args.include_folders
-    )
-    
-    if not args.json:
-        if final_exclude_folders:
-            logger.info(f"{Colors.YELLOW}📁 Excluding: {', '.join(sorted(final_exclude_folders))}{Colors.RESET}")
-        else:
-            logger.info(f"{Colors.GREEN}📁 No folders excluded{Colors.RESET}")
+        file = file_or_args 
 
     try:
-        result_json = skylos.analyze(args.path, conf=args.confidence, exclude_folders=list(final_exclude_folders))
-        result = json.loads(result_json)
+        source = Path(file).read_text(encoding="utf-8")
+        tree   = ast.parse(source)
 
+        tv = TestAwareVisitor(filename=file)
+        tv.visit(tree)
+
+        fv = FrameworkAwareVisitor(filename=file)
+        fv.visit(tree)
+
+        v  = Visitor(mod, file)
+        v.visit(tree)
+
+        return v.defs, v.refs, v.dyn, v.exports, tv, fv
     except Exception as e:
-        logger.error(f"Error during analysis: {e}")
-        sys.exit(1)
+        logger.error(f"{file}: {e}")
+        if os.getenv("SKYLOS_DEBUG"):
+            logger.error(traceback.format_exc())
+        dummy_visitor = TestAwareVisitor(filename=file)
+        dummy_framework_visitor = FrameworkAwareVisitor(filename=file)
 
-    if args.json:
-        logger.info(result_json)
-        return
+        return [], [], set(), set(), dummy_visitor, dummy_framework_visitor
 
-    unused_functions = result.get("unused_functions", [])
-    unused_imports = result.get("unused_imports", [])
-    unused_parameters = result.get("unused_parameters", [])
-    unused_variables = result.get("unused_variables", [])
-    unused_classes = result.get("unused_classes", [])
-    
-    logger.info(f"{Colors.CYAN}{Colors.BOLD}🔍 Python Static Analysis Results{Colors.RESET}")
-    logger.info(f"{Colors.CYAN}{'=' * 35}{Colors.RESET}")
-    
-    logger.info(f"\n{Colors.BOLD}Summary:{Colors.RESET}")
-    logger.info(f" • Unreachable functions: {Colors.YELLOW}{len(unused_functions)}{Colors.RESET}")
-    logger.info(f" • Unused imports: {Colors.YELLOW}{len(unused_imports)}{Colors.RESET}")
-    logger.info(f" • Unused parameters: {Colors.YELLOW}{len(unused_parameters)}{Colors.RESET}")
-    logger.info(f" • Unused variables: {Colors.YELLOW}{len(unused_variables)}{Colors.RESET}")
-    logger.info(f" • Unused classes: {Colors.YELLOW}{len(unused_classes)}{Colors.RESET}")
-
-    if args.interactive and (unused_functions or unused_imports):
-        logger.info(f"\n{Colors.BOLD}Interactive Mode:{Colors.RESET}")
-        selected_functions, selected_imports = interactive_selection(logger, unused_functions, unused_imports)
-        
-        if selected_functions or selected_imports:
-            logger.info(f"\n{Colors.BOLD}Selected items to remove:{Colors.RESET}")
-            
-            if selected_functions:
-                logger.info(f"  Functions: {len(selected_functions)}")
-                for func in selected_functions:
-                    logger.info(f"    - {func['name']} ({func['file']}:{func['line']})")
-            
-            if selected_imports:
-                logger.info(f"  Imports: {len(selected_imports)}")
-                for imp in selected_imports:
-                    logger.info(f"    - {imp['name']} ({imp['file']}:{imp['line']})")
-            
-            if not args.dry_run:
-                questions = [
-                    inquirer.Confirm('confirm',
-                                   message="Are you sure you want to remove these items?",
-                                   default=False)
-                ]
-                answers = inquirer.prompt(questions)
-                
-                if answers and answers['confirm']:
-                    logger.info(f"\n{Colors.YELLOW}Removing selected items...{Colors.RESET}")
-                    
-                    for func in selected_functions:
-                        success = remove_unused_function(func['file'], func['name'], func['line'])
-                        if success:
-                            logger.info(f"  {Colors.GREEN}✓{Colors.RESET} Removed function: {func['name']}")
-                        else:
-                            logger.error(f"  {Colors.RED}✗{Colors.RESET} Failed to remove: {func['name']}")
-                    
-                    for imp in selected_imports:
-                        success = remove_unused_import(imp['file'], imp['name'], imp['line'])
-                        if success:
-                            logger.info(f"  {Colors.GREEN}✓{Colors.RESET} Removed import: {imp['name']}")
-                        else:
-                            logger.error(f"  {Colors.RED}✗{Colors.RESET} Failed to remove: {imp['name']}")
-                    
-                    logger.info(f"\n{Colors.GREEN}Cleanup complete!{Colors.RESET}")
-                else:
-                    logger.info(f"\n{Colors.YELLOW}Operation cancelled.{Colors.RESET}")
-            else:
-                logger.info(f"\n{Colors.YELLOW}Dry run - no files were modified.{Colors.RESET}")
-        else:
-            logger.info(f"\n{Colors.BLUE}No items selected.{Colors.RESET}")
-    
-    else:
-        if unused_functions:
-            logger.info(f"\n{Colors.RED}{Colors.BOLD}📦 Unreachable Functions{Colors.RESET}")
-            logger.info(f"{Colors.RED}{'=' * 23}{Colors.RESET}")
-            for i, item in enumerate(unused_functions, 1):
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.RED}{item['name']}{Colors.RESET}")
-                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-        else:
-            logger.info(f"\n{Colors.GREEN}✓ All functions are reachable!{Colors.RESET}")
-        
-        if unused_imports:
-            logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD}📥 Unused Imports{Colors.RESET}")
-            logger.info(f"{Colors.MAGENTA}{'=' * 16}{Colors.RESET}")
-            for i, item in enumerate(unused_imports, 1):
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.MAGENTA}{item['name']}{Colors.RESET}")
-                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-        else:
-            logger.info(f"\n{Colors.GREEN}✓ All imports are being used!{Colors.RESET}")
-        
-        if unused_parameters:
-            logger.info(f"\n{Colors.BLUE}{Colors.BOLD}🔧 Unused Parameters{Colors.RESET}")
-            logger.info(f"{Colors.BLUE}{'=' * 18}{Colors.RESET}")
-            for i, item in enumerate(unused_parameters, 1):
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.BLUE}{item['name']}{Colors.RESET}")
-                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-        else:
-            logger.info(f"\n{Colors.GREEN}✓ All parameters are being used!{Colors.RESET}")
-        
-        if unused_variables:
-            logger.info(f"\n{Colors.YELLOW}{Colors.BOLD}📊 Unused Variables{Colors.RESET}")
-            logger.info(f"{Colors.YELLOW}{'=' * 18}{Colors.RESET}")
-            for i, item in enumerate(unused_variables, 1):
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.YELLOW}{item['name']}{Colors.RESET}")
-                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-                
-        if unused_classes:
-            logger.info(f"\n{Colors.YELLOW}{Colors.BOLD}📚 Unused Classes{Colors.RESET}")
-            logger.info(f"{Colors.YELLOW}{'=' * 18}{Colors.RESET}")
-            for i, item in enumerate(unused_classes, 1):
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.YELLOW}{item['name']}{Colors.RESET}")
-                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-
-        else:
-            logger.info(f"\n{Colors.GREEN}✓ All variables are being used!{Colors.RESET}")
-
-        dead_code_count = len(unused_functions) + len(unused_imports) + len(unused_variables) + len(unused_classes) + len(unused_parameters)
-
-        print_badge(dead_code_count, logger)
-
-        if unused_functions or unused_imports:
-            logger.info(f"\n{Colors.BOLD}Next steps:{Colors.RESET}")
-            logger.info(f" • Use --interactive to select specific items to remove")
-            logger.info(f" • Use --dry-run to preview changes before applying them")
-            logger.info(f" • Use --exclude-folder to skip directories like node_modules, .git")
+def analyze(path,conf=60, exclude_folders=None):
+    return Skylos().analyze(path,conf, exclude_folders)
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv)>1:
+        p = sys.argv[1]
+        confidence = int(sys.argv[2]) if len(sys.argv) >2 else 60
+        result = analyze(p,confidence)
+        
+        data = json.loads(result)
+        print("\n Python Static Analysis Results")
+        print("===================================\n")
+        
+        total_items = sum(len(items) for items in data.values())
+        
+        print("Summary:")
+        if data["unused_functions"]:
+            print(f" * Unreachable functions: {len(data['unused_functions'])}")
+        if data["unused_imports"]:
+            print(f" * Unused imports: {len(data['unused_imports'])}")
+        if data["unused_classes"]:
+            print(f" * Unused classes: {len(data['unused_classes'])}")
+        if data["unused_variables"]:
+            print(f" * Unused variables: {len(data['unused_variables'])}")
+        
+        if data["unused_functions"]:
+            print("\n - Unreachable Functions")
+            print("=======================")
+            for i, func in enumerate(data["unused_functions"], 1):
+                print(f" {i}. {func['name']}")
+                print(f"    └─ {func['file']}:{func['line']}")
+        
+        if data["unused_imports"]:
+            print("\n - Unused Imports")
+            print("================")
+            for i, imp in enumerate(data["unused_imports"], 1):
+                print(f" {i}. {imp['simple_name']}")
+                print(f"    └─ {imp['file']}:{imp['line']}")
+        
+        if data["unused_classes"]:
+            print("\n - Unused Classes")
+            print("=================")
+            for i, cls in enumerate(data["unused_classes"], 1):
+                print(f" {i}. {cls['name']}")
+                print(f"    └─ {cls['file']}:{cls['line']}")
+                
+        if data["unused_variables"]:
+            print("\n - Unused Variables")
+            print("==================")
+            for i, var in enumerate(data["unused_variables"], 1):
+                print(f" {i}. {var['name']}")
+                print(f"    └─ {var['file']}:{var['line']}")
+        
+        print("\n" + "─" * 50)
+        print(f"Found {total_items} dead code items. Add this badge to your README:")
+        print(f"```markdown")
+        print(f"![Dead Code: {total_items}](https://img.shields.io/badge/Dead_Code-{total_items}_detected-orange?logo=codacy&logoColor=red)")
+        print(f"```")
+        
+        print("\nNext steps:")
+        print("  * Use --interactive to select specific items to remove")
+        print("  * Use --dry-run to preview changes before applying them")
+    else:
+        print("Usage: python Skylos.py <path> [confidence_threshold]")
