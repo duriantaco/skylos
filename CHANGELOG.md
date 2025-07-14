@@ -1,5 +1,11 @@
 ## Changelog
 
+## [2.0.0] - 2025-07-14
+
+### Added
+
+- Front end integration! 
+
 ## [1.2.2] - 2025-07-03
 
 ### Fixed
