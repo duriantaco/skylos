@@ -11,12 +11,18 @@
 
 > A static analysis tool for Python codebases written in Python (formerly was written in Rust but we ditched that) that detects unreachable functions and unused imports, aka dead code. Faster and better results than many alternatives like Flake8 and Pylint, and finding more dead code than Vulture in our tests with comparable speed.
 
+<div align="center">
+   <img src="assets/FE_SS.png" alt="FE" width="800">
+</div>
+
+
 ## Table of Contents
 
 - [Features](#features)
 - [Benchmark](#benchmark-you-can-find-this-benchmark-test-in-test-folder)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Web Interface](#web-interface)
 - [Understanding Confidence Levels](#understanding-confidence-levels)
 - [Test File Detection](#test-file-detection)
 - [Folder Management](#folder-management)
@@ -90,6 +96,9 @@ pip install .
 # Analyze a project
 skylos /path/to/your/project
 
+# To launch the front end
+skylos run
+
 # Interactive mode - select items to remove
 skylos --interactive /path/to/your/project 
 
@@ -101,6 +110,17 @@ skylos --json /path/to/your/project
 
 # With confidence
 skylos path/to/your/file --confidence 20 ## or whatever value u wanna set
+```
+
+## Web Interface
+
+Skylos includes a modern web dashboard for interactive analysis:
+
+```bash
+# Start web interface
+skylos run
+
+# Opens browser at http://localhost:5090
 ```
 
 ## Understanding Confidence Levels
