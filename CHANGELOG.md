@@ -1,5 +1,17 @@
 ## Changelog
 
+## [2.0.1] - 2025-08-11
+
+### Fixed 
+
+- Patched framework aware pass now finalized and applied early. Route-decorated endpoints were clamped to very low confidence.. helpers/models require they're actually reference
+
+- Improved matching
+
+- `_mark_refs()` rewritten for more clarity. Lesser magic 
+
+- Updated the manual test cases for frameworks
+
 ## [2.0.0] - 2025-07-14
 
 ### Added
