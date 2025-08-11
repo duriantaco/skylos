@@ -23,7 +23,7 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Web Interface](#web-interface)
-- [Understanding Confidence Levels](#understanding-confidence-levels)
+- [Design](#design)
 - [Test File Detection](#test-file-detection)
 - [Folder Management](#folder-management)
 - [Ignoring Pragmas](#ignoring-pragmas)
@@ -123,7 +123,17 @@ skylos run
 # Opens browser at http://localhost:5090
 ```
 
-## Understanding Confidence Levels
+## Design
+
+### Summary 
+
+Framework endpoints are often invoked externally (eg, via HTTP, signals), so we use framework aware signals + confidence scores to try avoid false positives while still catching dead codes
+
+Name resolution handles aliases and modules, but when things get ambiguous, we rather miss some dead code than accidentally mark live code as dead lmao
+
+Tests are excluded by default because their call patterns are noisy. You can opt in when you really need to audit it
+
+### Understanding Confidence Levels
 
 Skylos uses a confidence-based system to try to handle Python's dynamic nature and web frameworks.
 
@@ -228,8 +238,8 @@ Arguments:
   PATH  Path to the Python project to analyze
 
 Options:
-  -h, --help                    Show this help message and exit
-  -j, --json                   Output raw JSON instead of formatted text  
+  -h, --help                   Show this help message and exit
+  --json                       Output raw JSON instead of formatted text  
   -o, --output FILE            Write output to file instead of stdout
   -v, --verbose                Enable verbose output
   -i, --interactive            Interactively select items to remove
