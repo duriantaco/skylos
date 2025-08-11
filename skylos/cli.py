@@ -3,9 +3,9 @@ import json
 import sys
 import logging
 import ast
-import skylos
 from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
 from skylos.server import start_server
+from skylos.analyzer import analyze as run_analyze
 
 try:
     import inquirer
@@ -310,7 +310,7 @@ def main() -> None:
             logger.info(f"{Colors.GREEN}📁 No folders excluded{Colors.RESET}")
 
     try:
-        result_json = skylos.analyze(args.path, conf=args.confidence, exclude_folders=list(final_exclude_folders))
+        result_json = run_analyze(args.path, conf=args.confidence, exclude_folders=list(final_exclude_folders))
         result = json.loads(result_json)
 
     except Exception as e:
