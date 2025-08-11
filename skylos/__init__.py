@@ -1,6 +1,6 @@
 from skylos.analyzer import analyze
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 def debug_test():
     return "debug-ok"
