@@ -126,17 +126,31 @@ class Skylos:
         for ref, _ in self.refs:
             if ref in self.defs:
                 self.defs[ref].references += 1
-                
                 if ref in import_to_original:
                     original = import_to_original[ref]
                     self.defs[original].references += 1
                 continue
-            
+
             simple = ref.split('.')[-1]
-            matches = simple_name_lookup.get(simple, [])
-            for definition in matches:
-                definition.references += 1
- 
+            ref_mod = ref.rsplit(".", 1)[0]
+            candidates = simple_name_lookup.get(simple, [])
+
+            if ref_mod:
+                filtered = []
+                for d in candidates:
+                    if d.name.startswith(ref_mod + ".") and d.type != "import":
+                        filtered.append(d)
+                candidates = filtered
+            else:
+                filtered = []
+                for d in candidates:
+                    if d.type != "import":
+                        filtered.append(d)
+                candidates = filtered
+
+            if len(candidates) == 1:
+                candidates[0].references += 1
+
         for module_name in self.dynamic:
             for def_name, def_obj in self.defs.items():
                 if def_obj.name.startswith(f"{module_name}."):
@@ -246,8 +260,17 @@ class Skylos:
         self._mark_refs()
         self._apply_heuristics() 
         self._mark_exports()
-        
-        thr = max(0, thr)
+
+        shown = 0
+
+        def def_sort_key(d):
+            return (d.type, d.name)
+
+        for d in sorted(self.defs.values(), key=def_sort_key):
+            if shown >= 50:
+                break
+            print(f" {d.type:<8} refs={d.references:<2} conf={d.confidence:<3} exported={d.is_exported} line={d.line:<4} {d.name}")
+            shown += 1
 
         unused = []
         for definition in self.defs.values():
@@ -262,7 +285,7 @@ class Skylos:
             "unused_parameters": [],
             "analysis_summary": {
                 "total_files": len(files),
-                "excluded_folders": exclude_folders if exclude_folders else [],
+                "excluded_folders": exclude_folders or [],
             }
         }
         
@@ -295,7 +318,7 @@ def proc_file(file_or_args, mod=None):
 
         fv = FrameworkAwareVisitor(filename=file)
         fv.visit(tree)
-
+        fv.finalize()
         v  = Visitor(mod, file)
         v.visit(tree)
 
@@ -322,7 +345,10 @@ if __name__ == "__main__":
         print("\n Python Static Analysis Results")
         print("===================================\n")
         
-        total_items = sum(len(items) for items in data.values())
+        total_items = 0
+        for key, items in data.items():
+            if key.startswith("unused_") and isinstance(items, list):
+                total_items += len(items)
         
         print("Summary:")
         if data["unused_functions"]:
