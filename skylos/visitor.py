@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 import ast
 from pathlib import Path
-import os 
-import re, logging, traceback
-DBG = bool(int(os.getenv("SKYLOS_DEBUG", "0")))
+import re, logging
 log = logging.getLogger("Skylos")
 
 
@@ -89,17 +87,10 @@ class Visitor(ast.NodeVisitor):
         if not isinstance(annotation_str, str):
             return
 
-        if DBG:
-            log.debug(f"parsing annotation: {annotation_str}")
-
-
         try:
             parsed = ast.parse(annotation_str, mode="eval")
             self.visit(parsed.body)
         except:
-            if DBG:
-                if DBG: log.debug("annotation parse failed")
-            
             for tok in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", annotation_str):
                 self.add_ref(tok)
 
@@ -261,7 +252,10 @@ class Visitor(ast.NodeVisitor):
                             value = elt.s
                             
                         if value is not None:
-                            export_name = f"{self.mod}.{value}" if self.mod else value
+                            if self.mod:
+                                export_name = f"{self.mod}.{value}"
+                            else:
+                                export_name = value
                             self.add_ref(export_name)
                             self.add_ref(value) 
         
@@ -296,7 +290,10 @@ class Visitor(ast.NodeVisitor):
                 self.add_ref(f"{self.mod}.{func_name}")
         
         elif isinstance(node.func, ast.Name) and node.func.id in ("eval", "exec"):
-            self.dyn.add(self.mod.split(".")[0] if self.mod else "")
+            root_mod = ""
+            if self.mod:
+                root_mod = self.mod.split(".")[0]
+            self.dyn.add(root_mod)
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
