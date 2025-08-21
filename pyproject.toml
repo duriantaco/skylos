@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "2.0.1"
+version = "2.1.0"
 requires-python = ">=3.9"
 description = "A static analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
-dependencies = ["inquirer>=3.0.0"]
+dependencies = ["inquirer>=3.0.0", "flask>=2.1.0", "flask-cors>=3.0.0", "libcst>=1.8.2"]
 
 [project.scripts]
 skylos = "skylos.cli:main"
