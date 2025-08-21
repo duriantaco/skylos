@@ -2,10 +2,14 @@ import argparse
 import json
 import sys
 import logging
-import ast
 from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
 from skylos.server import start_server
 from skylos.analyzer import analyze as run_analyze
+from skylos.codemods import (
+    remove_unused_import_cst,
+    remove_unused_function_cst,
+)
+import pathlib
 
 try:
     import inquirer
@@ -50,87 +54,30 @@ def setup_logger(output_file=None):
     
     return logger
 
-def remove_unused_import(file_path: str, import_name: str, line_number: int) -> bool:
+def remove_unused_import(file_path, import_name, line_number):
+    path = pathlib.Path(file_path)
     try:
-        with open(file_path, 'r') as f:
-            lines = f.readlines()
-        
-        line_idx = line_number - 1
-        original_line = lines[line_idx].strip()
-        
-        if original_line.startswith(f'import {import_name}'):
-            lines[line_idx] = ''
-            
-        elif original_line.startswith('import ') and f' {import_name}' in original_line:
-            parts = original_line.split(' ', 1)[1].split(',')
-            new_parts = [p.strip() for p in parts if p.strip() != import_name]
-            if new_parts:
-                lines[line_idx] = f'import {", ".join(new_parts)}\n'
-            else:
-                lines[line_idx] = ''
-
-        elif original_line.startswith('from ') and import_name in original_line:
-            if f'import {import_name}' in original_line and ',' not in original_line:
-                lines[line_idx] = ''
-            else:
-                parts = original_line.split('import ', 1)[1].split(',')
-                new_parts = [p.strip() for p in parts if p.strip() != import_name]
-                if new_parts:
-                    prefix = original_line.split(' import ')[0]
-                    lines[line_idx] = f'{prefix} import {", ".join(new_parts)}\n'
-                else:
-                    lines[line_idx] = ''
-        
-        with open(file_path, 'w') as f:
-            f.writelines(lines)
-        
+        src = path.read_text(encoding="utf-8")
+        new_code, changed = remove_unused_import_cst(src, import_name, line_number)
+        if not changed:
+            return False
+        path.write_text(new_code, encoding="utf-8")
         return True
     except Exception as e:
         logging.error(f"Failed to remove import {import_name} from {file_path}: {e}")
         return False
 
-def remove_unused_function(file_path: str, function_name: str, line_number: int) -> bool:
+def remove_unused_function(file_path, function_name, line_number):
+    path = pathlib.Path(file_path)
     try:
-        with open(file_path, 'r') as f:
-            content = f.read()
-        
-        tree = ast.parse(content)
-        
-        lines = content.splitlines()
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if (node.name in function_name and 
-                    node.lineno == line_number):
-                    
-                    start_line = node.lineno - 1
-                    
-                    if node.decorator_list:
-                        start_line = node.decorator_list[0].lineno - 1
-                    
-                    end_line = len(lines)
-                    base_indent = len(lines[start_line]) - len(lines[start_line].lstrip())
-                    
-                    for i in range(node.end_lineno, len(lines)):
-                        if lines[i].strip() == '':
-                            continue
-                        current_indent = len(lines[i]) - len(lines[i].lstrip())
-                        if current_indent <= base_indent and lines[i].strip():
-                            end_line = i
-                            break
-                    
-                    while end_line < len(lines) and lines[end_line].strip() == '':
-                        end_line += 1
-                    
-                    new_lines = lines[:start_line] + lines[end_line:]
-                    
-                    with open(file_path, 'w') as f:
-                        f.write('\n'.join(new_lines) + '\n')
-                    
-                    return True
-        
-        return False
-    except:
-        logging.error(f"Failed to remove function {function_name}")
+        src = path.read_text(encoding="utf-8")
+        new_code, changed = remove_unused_function_cst(src, function_name, line_number)
+        if not changed:
+            return False
+        path.write_text(new_code, encoding="utf-8")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to remove function {function_name} from {file_path}: {e}")
         return False
 
 def interactive_selection(logger, unused_functions, unused_imports):
@@ -142,7 +89,7 @@ def interactive_selection(logger, unused_functions, unused_imports):
     selected_imports = []
     
     if unused_functions:
-        logger.info(f"\n{Colors.CYAN}{Colors.BOLD}Select unused functions to remove:{Colors.RESET}")
+        logger.info(f"\n{Colors.CYAN}{Colors.BOLD}Select unused functions to remove (hit spacebar to select):{Colors.RESET}")
         
         function_choices = []
 
@@ -162,7 +109,7 @@ def interactive_selection(logger, unused_functions, unused_imports):
             selected_functions = answers['functions']
     
     if unused_imports:
-        logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD}Select unused imports to remove:{Colors.RESET}")
+        logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD}Select unused imports to remove (hit spacebar to select):{Colors.RESET}")
         
         import_choices = []
 
