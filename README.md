@@ -9,7 +9,7 @@
    <img src="assets/SKYLOS.png" alt="Skylos Logo" width="200">
 </div>
 
-> A static analysis tool for Python codebases written in Python (formerly was written in Rust but we ditched that) that detects unreachable functions and unused imports, aka dead code. Faster and better results than many alternatives like Flake8 and Pylint, and finding more dead code than Vulture in our tests with comparable speed.
+> A static analysis tool for Python codebases written in Python that detects unreachable functions and unused imports, aka dead code. Faster and better results than many alternatives like Flake8 and Pylint, and finding more dead code than Vulture in our tests with comparable speed.
 
 <div align="center">
    <img src="assets/FE_SS.png" alt="FE" width="800">
@@ -42,6 +42,7 @@
 
 ## Features
 
+* **CST-safe removals:** Uses LibCST to remove selected imports or functions (handles multiline imports, aliases, decorators, async etc..)
 * **Framework-Aware Detection**: Attempt at handling Flask, Django, FastAPI routes and decorators  
 * **Test File Exclusion**: Auto excludes test files (you can include it back if you want)
 * **Interactive Cleanup**: Select specific items to remove from CLI
@@ -82,18 +83,15 @@ pip install skylos
 ### From Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/duriantaco/skylos.git
 cd skylos
 
-## Install your dependencies 
 pip install .
 ```
 
 ## Quick Start
 
 ```bash
-# Analyze a project
 skylos /path/to/your/project
 
 # To launch the front end
@@ -105,7 +103,6 @@ skylos --interactive /path/to/your/project
 # Dry run - see what would be removed
 skylos --interactive --dry-run /path/to/your/project 
 
-# Output to JSON
 skylos --json /path/to/your/project 
 
 # With confidence
@@ -117,7 +114,6 @@ skylos path/to/your/file --confidence 20 ## or whatever value u wanna set
 Skylos includes a modern web dashboard for interactive analysis:
 
 ```bash
-# Start web interface
 skylos run
 
 # Opens browser at http://localhost:5090
@@ -214,7 +210,6 @@ By default, Skylos excludes common folders: `__pycache__`, `.git`, `.pytest_cach
 
 ### Folder Options
 ```bash
-# List default excluded folders
 skylos --list-default-excludes
 
 # Exclude single folder (The example here will be venv)
@@ -251,48 +246,11 @@ Options:
   -c, --confidence LEVEL       Confidence threshold (0-100). Lower values will show more items.
 ```
 
-## Example Output
-
-```
-Python Static Analysis Results
-===================================
-
-Summary:
-  • Unreachable functions: 48
-  • Unused imports: 8
-
-Unreachable Functions
-========================
-
- 1. module_13.test_function
-    └─ /Users/oha/project/module_13.py:5
- 2. module_13.unused_function
-    └─ /Users/oha/project/module_13.py:13
-...
-
-
-Unused Imports
-=================
-
- 1. os
-    └─ /Users/oha/project/module_13.py:1
- 2. json
-    └─ /Users/oha/project/module_13.py:3
-...
-```
-
-Next steps:
-
-  • Use `--interactive` to select specific items to remove
-
-  • Use `--dry-run` to preview changes before applying them
-
-
 ## Interactive Mode
 
 The interactive mode lets you select specific functions and imports to remove:
 
-1. **Select items**: Use arrow keys and space to select/deselect
+1. **Select items**: Use arrow keys and `spacebar` to select/unselect
 2. **Confirm changes**: Review selected items before applying
 3. **Auto-cleanup**: Files are automatically updated
 
@@ -307,11 +265,9 @@ The interactive mode lets you select specific functions and imports to remove:
 ### Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/duriantaco/skylos.git
 cd skylos
 
-# Create a virtual environment
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
@@ -319,7 +275,6 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 ### Running Tests
 
 ```bash
-# Run Python tests
 python -m pytest tests/
 ```
 
@@ -352,8 +307,6 @@ A: Start with 60 (default) for safe cleanup. Use 30 for framework applications. 
 - **Frameworks**: Django models, Flask, FastAPI routes may appear unused but aren't
 - **Test data**: Limited scenarios, your mileage may vary
 - **False positives**: Always manually review before deleting code
-
-This is a STATIC code analyzer. If we can detect 100% of all dead code in any structure and framework, we wouldn't be sitting here. But we definitely tried our best.
 
 ## Troubleshooting
 
@@ -388,7 +341,6 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 - [ ] Configuration file support 
 - [ ] Git hooks integration
 - [ ] CI/CD integration examples
-~~- [] Support for other languages (unless I have contributors, this ain't possible)~~
 - [ ] Further optimization
 
 ## License
