@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 import ast
 from pathlib import Path
-import re, logging
-log = logging.getLogger("Skylos")
-
+import re
 
 PYTHON_BUILTINS={"print", "len", "str", "int", "float", "list", "dict", "set", "tuple", "range", "open", 
                  "super", "object", "type", "enumerate", "zip", "map", "filter", "sorted", "sum", "min", 
@@ -59,6 +57,9 @@ class Visitor(ast.NodeVisitor):
         self.exports= set()
         self.current_function_scope= []
         self.current_function_params= []
+        self.local_var_maps = []
+        self.in_cst_class = 0
+        self.local_type_maps = []
 
     def add_def(self, name, t, line):
         if name not in {d.name for d in self.defs}:
@@ -150,7 +151,9 @@ class Visitor(ast.NodeVisitor):
         self.add_def(qualified_name,"method"if self.cls else"function",node.lineno)
         
         self.current_function_scope.append(node.name)
-        
+        self.local_var_maps.append({})
+        self.local_type_maps.append({})
+
         old_params = self.current_function_params
         self.current_function_params = []
         
@@ -170,6 +173,8 @@ class Visitor(ast.NodeVisitor):
             
         self.current_function_scope.pop()
         self.current_function_params = old_params
+        self.local_var_maps.pop()
+        self.local_type_maps.pop()
         
     visit_AsyncFunctionDef= visit_FunctionDef
 
@@ -177,29 +182,86 @@ class Visitor(ast.NodeVisitor):
         cname =f"{self.mod}.{node.name}"
         self.add_def(cname, "class",node.lineno)
         
+        is_cst = False
+        
         for base in node.bases:
+            base_name = ""
+            if isinstance(base, ast.Attribute):
+                base_name = base.attr
+            elif isinstance(base, ast.Name):
+                base_name = base.id
             self.visit(base)
+            if base_name in {"CSTTransformer", "CSTVisitor"}:
+                is_cst = True
         for keyword in node.keywords:
             self.visit(keyword.value)
         for decorator in node.decorator_list:
             self.visit(decorator)
         
         prev= self.cls
+        if is_cst:
+            self.in_cst_class += 1
 
         self.cls= node.name
         for b in node.body:
             self.visit(b)
 
         self.cls= prev
+        if is_cst:
+            self.in_cst_class -= 1
 
     def visit_AnnAssign(self, node):
         self.visit_annotation(node.annotation)
         if node.value:
             self.visit(node.value)
-        self.visit(node.target)
+    
+        def _define(t):
+            if isinstance(t, ast.Name):
+                name_simple = t.id
+                scope_parts = [self.mod]
+                if self.cls: scope_parts.append(self.cls)
+                if self.current_function_scope: scope_parts.extend(self.current_function_scope)
+                prefix = '.'.join(filter(None, scope_parts))
+                if prefix:
+                    var_name = f"{prefix}.{name_simple}"
+                else:
+                    var_name = name_simple
+
+                self.add_def(var_name, "variable", t.lineno)
+                if self.current_function_scope and self.local_var_maps:
+                    self.local_var_maps[-1][name_simple] = var_name
+            elif isinstance(t, (ast.Tuple, ast.List)):
+                for elt in t.elts:
+                    _define(elt)
+        _define(node.target)
 
     def visit_AugAssign(self, node):
-        self.visit(node.target)
+        if isinstance(node.target, ast.Name):
+            nm = node.target.id
+            if (self.current_function_scope and 
+                self.local_var_maps and 
+                self.local_var_maps and 
+                nm in self.local_var_maps[-1]):
+
+                self.add_ref(self.local_var_maps[-1][nm])
+
+            else:
+                self.add_ref(self.qual(nm))
+            scope_parts = [self.mod]
+            if self.cls: scope_parts.append(self.cls)
+
+            if self.current_function_scope: scope_parts.extend(self.current_function_scope)
+            prefix = '.'.join(filter(None, scope_parts))
+            if prefix:
+                var_name = f"{prefix}.{nm}"
+            else:
+                var_name = nm
+
+            self.add_def(var_name, "variable", node.lineno)
+            if self.current_function_scope and self.local_var_maps:
+                self.local_var_maps[-1][nm] = var_name
+        else:
+            self.visit(node.target)
         self.visit(node.value)
 
     def visit_Subscript(self, node):
@@ -218,21 +280,27 @@ class Visitor(ast.NodeVisitor):
         def process_target_for_def(target_node):
             if isinstance(target_node, ast.Name):
                 name_simple = target_node.id
+                if (name_simple == "METADATA_DEPENDENCIES"
+                    and self.cls and self.in_cst_class > 0):
+                    return
                 if name_simple == "__all__" and not self.current_function_scope and not self.cls:
                     return
 
                 scope_parts = [self.mod]
-
                 if self.cls:
                     scope_parts.append(self.cls)
-
                 if self.current_function_scope:
                     scope_parts.extend(self.current_function_scope)
-                
+
                 prefix = '.'.join(filter(None, scope_parts))
-                var_name = f"{prefix}.{name_simple}" if prefix else name_simple
+                if prefix:
+                    var_name = f"{prefix}.{name_simple}"
+                else:
+                    var_name = name_simple
 
                 self.add_def(var_name, "variable", target_node.lineno)
+                if self.current_function_scope and self.local_var_maps:
+                    self.local_var_maps[-1][name_simple] = var_name
 
             elif isinstance(target_node, (ast.Tuple, ast.List)):
                 for elt in target_node.elts:
@@ -240,7 +308,7 @@ class Visitor(ast.NodeVisitor):
 
         for t in node.targets:
             process_target_for_def(t)
-        
+
         for target in node.targets:
             if isinstance(target, ast.Name) and target.id == "__all__":
                 if isinstance(node.value, (ast.List, ast.Tuple)):
@@ -250,15 +318,48 @@ class Visitor(ast.NodeVisitor):
                             value = elt.value
                         elif hasattr(elt, 's') and isinstance(elt.s, str):
                             value = elt.s
-                            
+
                         if value is not None:
                             if self.mod:
                                 export_name = f"{self.mod}.{value}"
                             else:
                                 export_name = value
+
                             self.add_ref(export_name)
-                            self.add_ref(value) 
-        
+                            self.add_ref(value)
+
+        try:
+            if isinstance(node.value, ast.Call):
+                callee = node.value.func
+                fqname = None
+
+                if isinstance(callee, ast.Name):
+                    fqname = self.alias.get(callee.id, self.qual(callee.id))
+
+                elif isinstance(callee, ast.Attribute):
+                    parts = []
+                    cur = callee
+                    while isinstance(cur, ast.Attribute):
+                        parts.append(cur.attr)
+                        cur = cur.value
+                    head = None
+                    if isinstance(cur, ast.Name):
+                        head = self.alias.get(cur.id, self.qual(cur.id))
+                    if head:
+                        fqname = ".".join([head] + list(reversed(parts)))
+
+                if fqname and self.current_function_scope and self.local_type_maps:
+                    def _mark_target(t):
+                        if isinstance(t, ast.Name):
+                            self.local_type_maps[-1][t.id] = fqname
+                        elif isinstance(t, (ast.Tuple, ast.List)):
+                            for elt in t.elts:
+                                _mark_target(elt)
+                    for t in node.targets:
+                        _mark_target(t)
+        except Exception:
+            pass
+
         self.generic_visit(node)
 
     def visit_Call(self, node):
@@ -278,7 +379,10 @@ class Visitor(ast.NodeVisitor):
             elif isinstance(node.args[0], ast.Name):
                 target_name = node.args[0].id
                 if target_name != "self":
-                    self.dyn.add(self.mod.split(".")[0] if self.mod else "")
+                    if self.mod:
+                        self.dyn.add(self.mod.split(".")[0])
+                    else:
+                        self.dyn.add("")
         
         elif isinstance(node.func, ast.Name) and node.func.id == "globals":
             parent = getattr(node, 'parent', None)
@@ -300,26 +404,70 @@ class Visitor(ast.NodeVisitor):
             for param_name, param_full_name in self.current_function_params:
                 if node.id == param_name:
                     self.add_ref(param_full_name)
-                    break
+                    return
+            
+            if (self.current_function_scope and 
+                self.local_var_maps 
+                and self.local_var_maps 
+                and node.id in self.local_var_maps[-1]):
 
-            else:
-                # not parameter, handle normally
-                qualified = self.qual(node.id)
-                self.add_ref(qualified)
-                if node.id in DYNAMIC_PATTERNS:
-                    self.dyn.add(self.mod.split(".")[0])
+                self.add_ref(self.local_var_maps[-1][node.id])
+                return
+            
+            qualified = self.qual(node.id)
+            self.add_ref(qualified)
+            if node.id in DYNAMIC_PATTERNS:
+                self.dyn.add(self.mod.split(".")[0])
 
     def visit_Attribute(self, node):
         self.generic_visit(node)
-        if isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Name):
-            if node.value.id in [param_name for param_name, _ in self.current_function_params]:
-                # mark parameter as referenced
-                for param_name, param_full_name in self.current_function_params:
-                    if node.value.id == param_name:
-                        self.add_ref(param_full_name)
-                        break
 
-            self.add_ref(f"{self.qual(node.value.id)}.{node.attr}")
+        if not isinstance(node.ctx, ast.Load):
+            return
+
+        if isinstance(node.value, ast.Name):
+            base = node.value.id
+
+            param_hit = None
+            for param_name, param_full in self.current_function_params:
+                if base == param_name:
+                    param_hit = (param_name, param_full)
+                    break
+
+            if param_hit:
+                self.add_ref(param_hit[1])
+
+            if self.cls and base in {"self", "cls"}:
+                if self.mod:
+                    owner = f"{self.mod}.{self.cls}"
+                else:
+                    owner = self.cls
+
+                self.add_ref(f"{owner}.{node.attr}")
+                return
+
+            if (self.current_function_scope and 
+                self.local_type_maps and 
+                self.local_type_maps[-1].get(base)):
+                
+                self.add_ref(f"{self.local_type_maps[-1][base]}.{node.attr}")
+                return
+
+            self.add_ref(f"{self.qual(base)}.{node.attr}")
+
+    def visit_NamedExpr(self, node):
+        self.visit(node.value)
+        if isinstance(node.target, ast.Name):
+            nm = node.target.id
+            scope_parts = [self.mod]
+            if self.cls: scope_parts.append(self.cls)
+            if self.current_function_scope: scope_parts.extend(self.current_function_scope)
+            prefix = '.'.join(filter(None, scope_parts))
+            var_name = f"{prefix}.{nm}" if prefix else nm
+            self.add_def(var_name, "variable", node.lineno)
+            if self.current_function_scope and self.local_var_maps:
+                self.local_var_maps[-1][nm] = var_name
+            self.add_ref(var_name)
 
     def visit_keyword(self, node):
         self.visit(node.value)
