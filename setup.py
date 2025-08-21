@@ -2,13 +2,15 @@ from setuptools import setup, find_packages
 
 setup(
     name="skylos",
-    version="2.0.1",
+    version="2.1.0",
     packages=find_packages(),
     python_requires=">=3.9",
     install_requires=[
         "inquirer>=3.0.0",
-        "flask>=2.0.1",
-        "flask-cors>=3.0.0"],
+        "flask>=2.1.0",
+        "flask-cors>=3.0.0",
+        "libcst>=1.8.2"],
+
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
