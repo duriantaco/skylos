@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from collections import defaultdict
 from skylos.visitor import Visitor
-from skylos.constants import ( DEFAULT_EXCLUDE_FOLDERS, PENALTIES, AUTO_CALLED )
+from skylos.constants import ( PENALTIES, AUTO_CALLED )
 from skylos.test_aware import TestAwareVisitor
 import os
 import traceback
@@ -14,21 +14,6 @@ from skylos.framework_aware import FrameworkAwareVisitor, detect_framework_usage
 
 logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(levelname)s - %(message)s')
 logger=logging.getLogger('Skylos')
-
-def parse_exclude_folders(user_exclude_folders, use_defaults=True, include_folders=None):
-    exclude_set = set()
-    
-    if use_defaults:
-        exclude_set.update(DEFAULT_EXCLUDE_FOLDERS)
-        
-    if user_exclude_folders:
-        exclude_set.update(user_exclude_folders)
-    
-    if include_folders:
-        for folder in include_folders:
-            exclude_set.discard(folder)
-    
-    return exclude_set
 
 class Skylos:
     def __init__(self):
@@ -174,8 +159,8 @@ class Skylos:
             confidence -= PENALTIES["private_name"] 
         if def_obj.simple_name.startswith("__") and def_obj.simple_name.endswith("__"):
             confidence -= PENALTIES["dunder_or_magic"]
-        if def_obj.type == "variable" and def_obj.simple_name == "_":
-            confidence -= PENALTIES["underscored_var"]
+        if def_obj.type == "variable" and def_obj.simple_name.isupper():
+            confidence = 0
         if def_obj.in_init and def_obj.type in ("function", "class"):
             confidence -= PENALTIES["in_init_file"]
         if def_obj.name.split(".")[0] in self.dynamic:
@@ -220,6 +205,14 @@ class Skylos:
             if self.defs[cls].references > 0:
                 for method in methods:
                     if method.simple_name in AUTO_CALLED:
+                        method.references += 1
+                    
+                    if (method.simple_name.startswith("visit_") or
+                        method.simple_name.startswith("leave_") or
+                        method.simple_name.startswith("transform_")):
+                        method.references += 1
+
+                    if method.simple_name == "format" and cls.endswith("Formatter"):
                         method.references += 1
 
     def analyze(self, path, thr=60, exclude_folders=None):
