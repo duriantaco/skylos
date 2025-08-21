@@ -1,5 +1,26 @@
 ## Changelog
 
+## [2.1.0] - 2025-08-21
+
+### Added
+- CST based safe edits for removals.. `remove_unused_import_cst` and `remove_unused_function_cst` using `libcst` + `PositionProvider`. Handles multiline imports, aliases, decorators, async defs etc ..
+- Unit tests done for `codemode.py`  
+- Added dependency: `libcst>=1.4` to project requirements.
+
+### Changed
+- `visitor.py` improvements by tracking locals and types per function scope 
+- `logging.Formatter.format` credited as implicitly called by the logging subsystem.
+- Cleaner constants handling. Module-level ALL_CAPS variables treated as constants, reducing noise.
+
+### Fixed
+- LibCST removal sentinel: returned `cst.RemoveFromParent()` to avoid transformer errors
+- Removed the redundant `parse_exclude_folders` in `analyzer.py` 
+- `self.attr` / `cls.attr` now credited to `CurrentClass.attr`. Fixed some false positives
+
+### Known limitations
+- Factory functions or some complex builders may still require a pragma (e.g., `# skylos: ignore`)
+- Star imports are intentionally left untouched
+
 ## [2.0.1] - 2025-08-11
 
 ### Fixed 
