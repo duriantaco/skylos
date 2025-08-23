@@ -1,0 +1,9 @@
+- id: skylos-scan
+  name: skylos-deadcode-scan
+  description: Scan your repo for dead code with Skylos :)
+  entry: python -m skylos.analyzer
+  language: python
+  types_or: [python]
+  pass_filenames: false
+  require_serial: true
+  args: ["--output", "skylos.json", "--confidence", "70", "--fail-on-find"]
