@@ -1,5 +1,10 @@
 ## Changelog
 
+## [2.1.1] - 2025-08-23
+
+### Added
+- Added pre-commit hooks
+
 ## [2.1.0] - 2025-08-21
 
 ### Added
