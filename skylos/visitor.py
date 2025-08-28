@@ -3,12 +3,14 @@ import ast
 from pathlib import Path
 import re
 
-PYTHON_BUILTINS={"print", "len", "str", "int", "float", "list", "dict", "set", "tuple", "range", "open", 
+PYTHON_BUILTINS={"print", "len", "str", "int", "float", "list", "dict", "set", "tuple", "range", "open", "reversed", 
                  "super", "object", "type", "enumerate", "zip", "map", "filter", "sorted", "sum", "min", 
                 "next", "iter", "bytes", "bytearray", "format", "round", "abs", "complex", "hash", "id", "bool", "callable", 
                 "getattr", "max", "all", "any", "setattr", "hasattr", "isinstance", "globals", "locals", 
                 "vars", "dir" ,"property", "classmethod", "staticmethod"}
 DYNAMIC_PATTERNS={"getattr", "globals", "eval", "exec"}
+
+## "🥚" hi :) 
 
 class Definition:
     
@@ -60,9 +62,17 @@ class Visitor(ast.NodeVisitor):
         self.local_var_maps = []
         self.in_cst_class = 0
         self.local_type_maps = []
+        self._dataclass_stack = [] 
+        self.dataclass_fields = set()
+        self.first_read_lineno = {} 
 
     def add_def(self, name, t, line):
-        if name not in {d.name for d in self.defs}:
+        found = False
+        for d in self.defs:
+            if d.name == name:
+                found = True
+                break
+        if not found:
             self.defs.append(Definition(name, t, self.file, line))
 
     def add_ref(self, name):
@@ -72,8 +82,23 @@ class Visitor(ast.NodeVisitor):
         if name in self.alias:
             return self.alias[name]
         if name in PYTHON_BUILTINS:
+            if self.mod:
+                mod_candidate = f"{self.mod}.{name}"
+            else:
+                mod_candidate = name
+            if any(d.name == mod_candidate for d in self.defs):
+                return mod_candidate
+            
+        if self.mod:
+            return f"{self.mod}.{name}"
+        else:
             return name
-        return f"{self.mod}.{name}" if self.mod else name
+    
+    def visit_Global(self, node):
+        if self.current_function_scope and self.local_var_maps:
+            for name in node.names:
+                self.local_var_maps[-1][name] = f"{self.mod}.{name}"
+        return
 
     def visit_annotation(self, node):
         if node is not None:
@@ -148,7 +173,11 @@ class Visitor(ast.NodeVisitor):
         
         qualified_name= ".".join(filter(None, name_parts))
 
-        self.add_def(qualified_name,"method"if self.cls else"function",node.lineno)
+        if self.cls:
+            def_type = "method"
+        else:
+            def_type = "function"
+        self.add_def(qualified_name, def_type, node.lineno)
         
         self.current_function_scope.append(node.name)
         self.local_var_maps.append({})
@@ -183,19 +212,41 @@ class Visitor(ast.NodeVisitor):
         self.add_def(cname, "class",node.lineno)
         
         is_cst = False
-        
+        is_dc  = False
+
         for base in node.bases:
             base_name = ""
+
             if isinstance(base, ast.Attribute):
                 base_name = base.attr
+                
             elif isinstance(base, ast.Name):
                 base_name = base.id
             self.visit(base)
+
             if base_name in {"CSTTransformer", "CSTVisitor"}:
                 is_cst = True
+                
         for keyword in node.keywords:
             self.visit(keyword.value)
+
         for decorator in node.decorator_list:
+            def _is_dc(dec):
+                if isinstance(dec, ast.Call):
+                    target = dec.func
+                else:
+                    target = dec
+
+                if isinstance(target, ast.Name):
+                    return target.id == "dataclass"
+                
+                if isinstance(target, ast.Attribute):
+                    return target.attr == "dataclass"
+                
+                return False
+            
+            if _is_dc(decorator):
+                is_dc = True
             self.visit(decorator)
         
         prev= self.cls
@@ -203,10 +254,13 @@ class Visitor(ast.NodeVisitor):
             self.in_cst_class += 1
 
         self.cls= node.name
+        self._dataclass_stack.append(is_dc)
         for b in node.body:
             self.visit(b)
 
         self.cls= prev
+        self._dataclass_stack.pop()
+    
         if is_cst:
             self.in_cst_class -= 1
 
@@ -220,6 +274,7 @@ class Visitor(ast.NodeVisitor):
                 name_simple = t.id
                 scope_parts = [self.mod]
                 if self.cls: scope_parts.append(self.cls)
+
                 if self.current_function_scope: scope_parts.extend(self.current_function_scope)
                 prefix = '.'.join(filter(None, scope_parts))
                 if prefix:
@@ -228,9 +283,16 @@ class Visitor(ast.NodeVisitor):
                     var_name = name_simple
 
                 self.add_def(var_name, "variable", t.lineno)
+                if (self._dataclass_stack and self._dataclass_stack[-1] 
+                    and self.cls 
+                    and not self.current_function_scope):
+                    self.dataclass_fields.add(var_name)
+
                 if self.current_function_scope and self.local_var_maps:
                     self.local_var_maps[-1][name_simple] = var_name
+
             elif isinstance(t, (ast.Tuple, ast.List)):
+
                 for elt in t.elts:
                     _define(elt)
         _define(node.target)
@@ -243,19 +305,24 @@ class Visitor(ast.NodeVisitor):
                 self.local_var_maps and 
                 nm in self.local_var_maps[-1]):
 
-                self.add_ref(self.local_var_maps[-1][nm])
+                # self.add_ref(self.local_var_maps[-1][nm])
+                fq = self.local_var_maps[-1][nm]
+                self.add_ref(fq)
+                var_name = fq
 
             else:
                 self.add_ref(self.qual(nm))
-            scope_parts = [self.mod]
-            if self.cls: scope_parts.append(self.cls)
+                scope_parts = [self.mod]
+                if self.cls: 
+                    scope_parts.append(self.cls)
 
-            if self.current_function_scope: scope_parts.extend(self.current_function_scope)
-            prefix = '.'.join(filter(None, scope_parts))
-            if prefix:
-                var_name = f"{prefix}.{nm}"
-            else:
-                var_name = nm
+                if self.current_function_scope: 
+                    scope_parts.extend(self.current_function_scope)
+                prefix = '.'.join(filter(None, scope_parts))
+                if prefix:
+                    var_name = f"{prefix}.{nm}"
+                else:
+                    var_name = nm
 
             self.add_def(var_name, "variable", node.lineno)
             if self.current_function_scope and self.local_var_maps:
@@ -292,14 +359,19 @@ class Visitor(ast.NodeVisitor):
                 if self.current_function_scope:
                     scope_parts.extend(self.current_function_scope)
 
-                prefix = '.'.join(filter(None, scope_parts))
-                if prefix:
-                    var_name = f"{prefix}.{name_simple}"
+                if (self.current_function_scope and self.local_var_maps 
+                        and name_simple in self.local_var_maps[-1]):
+                    var_name = self.local_var_maps[-1][name_simple]
                 else:
-                    var_name = name_simple
+                    prefix = '.'.join(filter(None, scope_parts))
+                    if prefix:
+                        var_name = f"{prefix}.{name_simple}"
+                    else:
+                        var_name = name_simple
 
                 self.add_def(var_name, "variable", target_node.lineno)
-                if self.current_function_scope and self.local_var_maps:
+                if (self.current_function_scope and self.local_var_maps 
+                        and name_simple not in self.local_var_maps[-1]):
                     self.local_var_maps[-1][name_simple] = var_name
 
             elif isinstance(target_node, (ast.Tuple, ast.List)):
@@ -403,18 +475,19 @@ class Visitor(ast.NodeVisitor):
         if isinstance(node.ctx, ast.Load):
             for param_name, param_full_name in self.current_function_params:
                 if node.id == param_name:
+                    self.first_read_lineno.setdefault(param_full_name, node.lineno)
                     self.add_ref(param_full_name)
                     return
             
-            if (self.current_function_scope and 
-                self.local_var_maps 
-                and self.local_var_maps 
+            if (self.current_function_scope and self.local_var_maps
                 and node.id in self.local_var_maps[-1]):
-
-                self.add_ref(self.local_var_maps[-1][node.id])
+                fq = self.local_var_maps[-1][node.id]
+                self.first_read_lineno.setdefault(fq, node.lineno)
+                self.add_ref(fq)
                 return
             
             qualified = self.qual(node.id)
+            self.first_read_lineno.setdefault(qualified, node.lineno)
             self.add_ref(qualified)
             if node.id in DYNAMIC_PATTERNS:
                 self.dyn.add(self.mod.split(".")[0])
