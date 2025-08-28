@@ -155,18 +155,40 @@ class Skylos:
     
     def _apply_penalties(self, def_obj, visitor, framework):
         confidence=100
+
+        if getattr(visitor, "ignore_lines", None) and def_obj.line in visitor.ignore_lines:
+            def_obj.confidence = 0
+            return
+
+        if def_obj.type == "variable" and def_obj.simple_name == "_":
+            def_obj.confidence = 0
+            return
+
         if def_obj.simple_name.startswith("_") and not def_obj.simple_name.startswith("__"):
             confidence -= PENALTIES["private_name"] 
+
         if def_obj.simple_name.startswith("__") and def_obj.simple_name.endswith("__"):
             confidence -= PENALTIES["dunder_or_magic"]
-        if def_obj.type == "variable" and def_obj.simple_name.isupper():
-            confidence = 0
+
         if def_obj.in_init and def_obj.type in ("function", "class"):
             confidence -= PENALTIES["in_init_file"]
+            
         if def_obj.name.split(".")[0] in self.dynamic:
             confidence -= PENALTIES["dynamic_module"]
+
         if visitor.is_test_file or def_obj.line in visitor.test_decorated_lines:
             confidence -= PENALTIES["test_related"]
+
+        if def_obj.type == "variable" and getattr(framework, "dataclass_fields", None):
+            if def_obj.name in framework.dataclass_fields:
+                def_obj.confidence = 0
+                return
+            
+        if def_obj.type == "variable":
+            fr = getattr(framework, "first_read_lineno", {}).get(def_obj.name)
+            if fr is not None and fr >= def_obj.line:
+                def_obj.confidence = 0
+                return
         
         framework_confidence = detect_framework_usage(def_obj, visitor=framework)
         if framework_confidence is not None:
@@ -262,7 +284,7 @@ class Skylos:
         for d in sorted(self.defs.values(), key=def_sort_key):
             if shown >= 50:
                 break
-            print(f" {d.type:<8} refs={d.references:<2} conf={d.confidence:<3} exported={d.is_exported} line={d.line:<4} {d.name}")
+            print(f" type={d.type} refs={d.references} conf={d.confidence} exported={d.is_exported} line={d.line} name={d.name}")
             shown += 1
 
         unused = []
@@ -304,10 +326,13 @@ def proc_file(file_or_args, mod=None):
 
     try:
         source = Path(file).read_text(encoding="utf-8")
-        tree   = ast.parse(source)
+        ignore_lines = {i for i, line in enumerate(source.splitlines(), start=1)
+                        if "pragma: no skylos" in line}
+        tree = ast.parse(source)
 
         tv = TestAwareVisitor(filename=file)
         tv.visit(tree)
+        tv.ignore_lines = ignore_lines
 
         fv = FrameworkAwareVisitor(filename=file)
         fv.visit(tree)
@@ -315,12 +340,17 @@ def proc_file(file_or_args, mod=None):
         v  = Visitor(mod, file)
         v.visit(tree)
 
+        fv.dataclass_fields = getattr(v, "dataclass_fields", set())
+        fv.first_read_lineno = getattr(v, "first_read_lineno", {})
+
         return v.defs, v.refs, v.dyn, v.exports, tv, fv
+    
     except Exception as e:
         logger.error(f"{file}: {e}")
         if os.getenv("SKYLOS_DEBUG"):
             logger.error(traceback.format_exc())
         dummy_visitor = TestAwareVisitor(filename=file)
+        dummy_visitor.ignore_lines = set()
         dummy_framework_visitor = FrameworkAwareVisitor(filename=file)
 
         return [], [], set(), set(), dummy_visitor, dummy_framework_visitor
