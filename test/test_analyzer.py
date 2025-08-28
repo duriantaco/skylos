@@ -8,11 +8,9 @@ from skylos.test_aware import TestAwareVisitor
 from skylos.framework_aware import FrameworkAwareVisitor
 
 from skylos.analyzer import (
-    Skylos, 
-    parse_exclude_folders, 
+    Skylos,  
     proc_file, 
-    analyze,
-    DEFAULT_EXCLUDE_FOLDERS,
+    analyze
 )
 
 @pytest.fixture
@@ -97,40 +95,6 @@ def internal_function():
         
         yield temp_path
 
-class TestParseExcludeFolders:
-    
-    def test_default_exclude_folders_included(self):
-        """default folders are included by default."""
-        result = parse_exclude_folders(None, use_defaults=True)
-        assert DEFAULT_EXCLUDE_FOLDERS.issubset(result)
-    
-    def test_default_exclude_folders_disabled(self):
-        """default folders can be disabled."""
-        result = parse_exclude_folders(None, use_defaults=False)
-        assert not DEFAULT_EXCLUDE_FOLDERS.intersection(result)
-    
-    def test_user_exclude_folders_added(self):
-        """user-specified folders are added."""
-        user_folders = {"custom_folder", "another_folder"}
-        result = parse_exclude_folders(user_folders, use_defaults=True)
-        assert user_folders.issubset(result)
-        assert DEFAULT_EXCLUDE_FOLDERS.issubset(result)
-    
-    def test_include_folders_override_defaults(self):
-        """include_folders can override defaults."""
-        include_folders = {"__pycache__", ".git"}
-        result = parse_exclude_folders(None, use_defaults=True, include_folders=include_folders)
-        for folder in include_folders:
-            assert folder not in result
-    
-    def test_include_folders_override_user_excludes(self):
-        """include_folders can override user excludes."""
-        user_excludes = {"custom_folder", "another_folder"}
-        include_folders = {"custom_folder"}
-        result = parse_exclude_folders(user_excludes, use_defaults=False, include_folders=include_folders)
-        assert "custom_folder" not in result
-        assert "another_folder" in result
-
 class TestSkylos:
     
     @pytest.fixture
@@ -144,7 +108,6 @@ class TestSkylos:
         assert isinstance(skylos.exports, defaultdict)
     
     def test_module_name_generation(self, skylos):
-        """Test module name generation from file paths."""
         root = Path("/project")
         
         # test a regular Python file
@@ -315,7 +278,7 @@ class TestHeuristics:
     
     def test_auto_called_methods_get_references(self, skylos_with_class_methods):
         """auto-called methods get reference counts when class is used."""
-        skylos, mock_class, mock_init, mock_enter = skylos_with_class_methods
+        skylos, _, mock_init, mock_enter = skylos_with_class_methods
         
         skylos._apply_heuristics()
         
@@ -451,7 +414,7 @@ class TestClass:
                     mock_framework_visitor = Mock(spec=FrameworkAwareVisitor)
                     mock_framework_visitor_class.return_value = mock_framework_visitor
                     
-                    defs, refs, dyn, exports, test_flags, framework_flags, _ = proc_file(f.name, "test_module")
+                    defs, refs, dyn, exports, test_flags, framework_flags = proc_file(f.name, "test_module")
                     
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
                     mock_visitor.visit.assert_called_once()
@@ -472,7 +435,7 @@ class TestClass:
             f.flush()
             
             try:
-                defs, refs, dyn, exports, test_flags, framework_flags, _ = proc_file(f.name, "test_module")
+                defs, refs, dyn, exports, test_flags, framework_flags = proc_file(f.name, "test_module")
                 
                 assert defs == []
                 assert refs == []
@@ -506,7 +469,7 @@ class TestClass:
                     mock_framework_visitor = Mock(spec=FrameworkAwareVisitor)
                     mock_framework_visitor_class.return_value = mock_framework_visitor
                     
-                    defs, refs, dyn, exports, test_flags, framework_flags, _ = proc_file((f.name, "test_module"))
+                    defs, refs, dyn, exports, test_flags, framework_flags = proc_file((f.name, "test_module"))
                     
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
             finally:
