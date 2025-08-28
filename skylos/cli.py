@@ -10,6 +10,7 @@ from skylos.codemods import (
     remove_unused_function_cst,
 )
 import pathlib
+import skylos
 
 try:
     import inquirer
@@ -144,7 +145,7 @@ def print_badge(dead_code_count: int, logger):
         logger.info(f"![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange?logo=codacy&logoColor=red)")
         logger.info("```")
 
-def main() -> None:
+def main():
     if len(sys.argv) > 1 and sys.argv[1] == 'run':
         try:
             start_server()
@@ -158,6 +159,14 @@ def main() -> None:
         description="Detect unreachable functions and unused imports in a Python project"
     )
     parser.add_argument("path", help="Path to the Python project")
+
+    parser.add_argument(
+        "--version",
+        action="version", 
+        version=f"skylos {skylos.__version__}",
+        help="Show version and exit"
+    )
+    
     parser.add_argument(
         "--json",
         action="store_true",
@@ -368,6 +377,8 @@ def main() -> None:
             for i, item in enumerate(unused_variables, 1):
                 logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.YELLOW}{item['name']}{Colors.RESET}")
                 logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
+        else:
+            logger.info(f"\n{Colors.GREEN}✓ All variables are being used!{Colors.RESET}")
                 
         if unused_classes:
             logger.info(f"\n{Colors.YELLOW}{Colors.BOLD} - Unused Classes{Colors.RESET}")
@@ -375,9 +386,8 @@ def main() -> None:
             for i, item in enumerate(unused_classes, 1):
                 logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.YELLOW}{item['name']}{Colors.RESET}")
                 logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-
         else:
-            logger.info(f"\n{Colors.GREEN}✓ All variables are being used!{Colors.RESET}")
+            logger.info(f"\n{Colors.GREEN}✓ All classes are being used!{Colors.RESET}")
 
         dead_code_count = len(unused_functions) + len(unused_imports) + len(unused_variables) + len(unused_classes) + len(unused_parameters)
 
