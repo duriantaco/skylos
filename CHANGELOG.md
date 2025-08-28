@@ -1,5 +1,25 @@
 ## Changelog
 
+## [2.1.2] - 2025-08-27
+
+### Added
+
+- `Dataclass` field detection in `visitor.py`. When a class has `@dataclass`, its annotated class attributes are tagged as dataclass fields
+- `first_read_lineno` tracking. Record the first line where each variable is read.
+- `visit_Global` to bind global names to module-level FQNs
+
+### Changed
+
+- Report `ALL_CAPS` constants. Previously we had a blanket mute which caused quite a bit of problems 
+- `_apply_penalties` mute dataclass fields
+- In `Definition` class, add `lineno` alias to `.line` for back-compat.
+
+### Fixed
+
+- Crash: missing `_dataclass_stack` init in `Visitor.__init__`
+- False positives fixes. dataclass fields, `global` singletons (e.g., PROCESS_POOL)
+- no “All variables…” when an “Unused Variables” section exists inside `cli.py`
+
 ## [2.1.1] - 2025-08-23
 
 ### Added
