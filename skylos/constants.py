@@ -1,5 +1,4 @@
 import re
-from pathlib import Path
 
 PENALTIES = {
     "private_name": 80,   
@@ -35,10 +34,10 @@ DEFAULT_EXCLUDE_FOLDERS = {
     "htmlcov", ".coverage", "build", "dist", "*.egg-info", "venv", ".venv"
 }
 
-def is_test_path(p: Path | str) -> bool:
+def is_test_path(p):
     return bool(TEST_FILE_RE.search(str(p)))
 
-def is_framework_path(p: Path | str) -> bool:
+def is_framework_path(p):
     return bool(FRAMEWORK_FILE_RE.search(str(p)))
 
 def parse_exclude_folders(user_exclude_folders= None, use_defaults= True, include_folders= None):
