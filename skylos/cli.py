@@ -8,6 +8,8 @@ from skylos.analyzer import analyze as run_analyze
 from skylos.codemods import (
     remove_unused_import_cst,
     remove_unused_function_cst,
+    comment_out_unused_import_cst,
+    comment_out_unused_function_cst, 
 )
 import pathlib
 import skylos
@@ -80,6 +82,32 @@ def remove_unused_function(file_path, function_name, line_number):
     except Exception as e:
         logging.error(f"Failed to remove function {function_name} from {file_path}: {e}")
         return False
+    
+def comment_out_unused_import(file_path, import_name, line_number, marker="SKYLOS DEADCODE"):
+    path = pathlib.Path(file_path)
+    try:
+        src = path.read_text(encoding="utf-8")
+        new_code, changed = comment_out_unused_import_cst(src, import_name, line_number, marker=marker)
+        if not changed:
+            return False
+        path.write_text(new_code, encoding="utf-8")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to comment out import {import_name} from {file_path}: {e}")
+        return False
+
+def comment_out_unused_function(file_path, function_name, line_number, marker="SKYLOS DEADCODE"):
+    path = pathlib.Path(file_path)
+    try:
+        src = path.read_text(encoding="utf-8")
+        new_code, changed = comment_out_unused_function_cst(src, function_name, line_number, marker=marker)
+        if not changed:
+            return False
+        path.write_text(new_code, encoding="utf-8")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to comment out function {function_name} from {file_path}: {e}")
+        return False
 
 def interactive_selection(logger, unused_functions, unused_imports):
     if not INTERACTIVE_AVAILABLE:
@@ -110,7 +138,7 @@ def interactive_selection(logger, unused_functions, unused_imports):
             selected_functions = answers['functions']
     
     if unused_imports:
-        logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD}Select unused imports to remove (hit spacebar to select):{Colors.RESET}")
+        logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD}Select unused imports to act on (hit spacebar to select):{Colors.RESET}")
         
         import_choices = []
 
@@ -172,6 +200,13 @@ def main():
         action="store_true",
         help="Output raw JSON",
     )
+
+    parser.add_argument(
+        "--comment-out",
+        action="store_true",
+        help="Comment out selected dead code instead of deleting it",
+    )
+
     parser.add_argument(
         "--output",
         "-o",
@@ -237,7 +272,7 @@ def main():
     if args.list_default_excludes:
         print("Default excluded folders:")
         for folder in sorted(DEFAULT_EXCLUDE_FOLDERS):
-            print(f"  {folder}")
+            print(f" {folder}")
         print(f"\nTotal: {len(DEFAULT_EXCLUDE_FOLDERS)} folders")
         print("\nUse --no-default-excludes to disable these exclusions")
         print("Use --include-folder <folder> to force include specific folders")
@@ -298,43 +333,67 @@ def main():
         selected_functions, selected_imports = interactive_selection(logger, unused_functions, unused_imports)
         
         if selected_functions or selected_imports:
-            logger.info(f"\n{Colors.BOLD}Selected items to remove:{Colors.RESET}")
+            logger.info(f"\n{Colors.BOLD}Selected items to process:{Colors.RESET}")
             
             if selected_functions:
-                logger.info(f"  Functions: {len(selected_functions)}")
+                logger.info(f" Functions: {len(selected_functions)}")
                 for func in selected_functions:
-                    logger.info(f"    - {func['name']} ({func['file']}:{func['line']})")
+                    logger.info(f"  - {func['name']} ({func['file']}: {func['line']})")
             
             if selected_imports:
-                logger.info(f"  Imports: {len(selected_imports)}")
+                logger.info(f" Imports: {len(selected_imports)}")
                 for imp in selected_imports:
-                    logger.info(f"    - {imp['name']} ({imp['file']}:{imp['line']})")
+                    logger.info(f"  - {imp['name']} ({imp['file']}: {imp['line']})")
             
             if not args.dry_run:
+                if args.comment_out:
+                    confirm_verb = "comment out"
+                else:
+                    confirm_verb = "remove"
+
                 questions = [
                     inquirer.Confirm('confirm',
-                                   message="Are you sure you want to remove these items?",
+                                   message="Are you sure you want to process these items?",
                                    default=False)
                 ]
                 answers = inquirer.prompt(questions)
                 
                 if answers and answers['confirm']:
-                    logger.info(f"\n{Colors.YELLOW}Removing selected items...{Colors.RESET}")
-                    
+                    action = "Commenting out" if args.comment_out else "Removing"
+                    logger.info(f"\n{Colors.YELLOW}{action} selected items...{Colors.RESET}")
+
+                    action_func = comment_out_unused_function if args.comment_out else remove_unused_function
+                    if args.comment_out:
+                        action_past = "Commented out"
+                        action_verb = "comment out"
+                    else:
+                        action_past = "Removed"
+                        action_verb = "remove"
+
                     for func in selected_functions:
-                        success = remove_unused_function(func['file'], func['name'], func['line'])
+                        success = action_func(func['file'], func['name'], func['line'])
+                        
                         if success:
-                            logger.info(f"  {Colors.GREEN} {Colors.RESET} Removed function: {func['name']}")
+                            logger.info(f"  {Colors.GREEN} ✓ {Colors.RESET} {action_past} function: {func['name']}")
                         else:
-                            logger.error(f"  {Colors.RED} x {Colors.RESET} Failed to remove: {func['name']}")
-                    
+                            logger.error(f"  {Colors.RED} x {Colors.RESET} Failed to {action_verb}: {func['name']}")
+                            
+                    import_func = comment_out_unused_import if args.comment_out else remove_unused_import
+                    if args.comment_out:
+                        action_past = "Commented out"
+                        action_verb = "comment out"
+                    else:
+                        action_past = "Removed"
+                        action_verb = "remove"
+
                     for imp in selected_imports:
-                        success = remove_unused_import(imp['file'], imp['name'], imp['line'])
+                        success = import_func(imp['file'], imp['name'], imp['line'])
+                        
                         if success:
-                            logger.info(f"  {Colors.GREEN} {Colors.RESET} Removed import: {imp['name']}")
+                            logger.info(f"  {Colors.GREEN} ✓ {Colors.RESET} {action_past} import: {imp['name']}")
                         else:
-                            logger.error(f"  {Colors.RED} x {Colors.RESET} Failed to remove: {imp['name']}")
-                    
+                            logger.error(f"  {Colors.RED} x {Colors.RESET} Failed to {action_verb}: {imp['name']}")
+                            
                     logger.info(f"\n{Colors.GREEN}Cleanup complete!{Colors.RESET}")
                 else:
                     logger.info(f"\n{Colors.YELLOW}Operation cancelled.{Colors.RESET}")

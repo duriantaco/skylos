@@ -32,6 +32,7 @@
 - [Example Output](#example-output)
 - [Interactive Mode](#interactive-mode)
 - [Development](#development)
+- [CI/CD (Pre-commit & GitHub Actions)](#cicd-pre-commit--github-actions)
 - [FAQ](#faq)
 - [Limitations](#limitations)
 - [Troubleshooting](#troubleshooting)
@@ -99,6 +100,9 @@ skylos run
 
 # Interactive mode - select items to remove
 skylos --interactive /path/to/your/project 
+
+# Comment out items
+skylos . --interactive --comment-out
 
 # Dry run - see what would be removed
 skylos --interactive --dry-run /path/to/your/project 
@@ -253,6 +257,206 @@ The interactive mode lets you select specific functions and imports to remove:
 1. **Select items**: Use arrow keys and `spacebar` to select/unselect
 2. **Confirm changes**: Review selected items before applying
 3. **Auto-cleanup**: Files are automatically updated
+
+## CI/CD (Pre-commit & GitHub Actions)
+
+Pick **one** (or use **both**) 
+
+1. Pre-commit (local + CI): runs Skylos before commits/PRs.
+   - You must install pre-commit locally once. Skylos gets installed automatically by the hook.
+
+2. GitHub Actions: runs Skylos on pushes/PRs in CI.
+   - No local install needed
+
+### Option A — Pre-commit (local + CI)
+
+1. Create or edit `.pre-commit-config.yaml` at the repo root:
+
+**A: Skylos hook repo**
+```yaml
+## .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/duriantaco/skylos
+    rev: v2.1.2
+    hooks:
+      - id: skylos-scan
+        name: skylos report
+        entry: python -m skylos.cli
+        language: python
+        types_or: [python]
+        pass_filenames: false
+        require_serial: true
+        args: [".", "--output", "report.json", "--confidence", "70"]
+
+  - repo: local
+    hooks:
+      - id: skylos-fail-on-findings
+        name: skylos
+        env:
+          SKYLOS_SOFT: "1"
+        language: python
+        language_version: python3
+        pass_filenames: false
+        require_serial: true
+        entry: >
+          python -c "import os, json, sys, pathlib;
+          p=pathlib.Path('report.json');
+
+          if not p.exists(): 
+            sys.exit(0);
+
+          data=json.loads(p.read_text(encoding='utf-8'));
+
+          count = 0
+          for v in data.values():
+            if isinstance(v, list):
+              count += len(v)
+
+          print(f'[skylos] findings: {count}');
+          sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"
+```
+**B: self-contained local hook**
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: skylos-scan
+        name: skylos report
+        language: python
+        entry: python -m skylos.cli
+        pass_filenames: false
+        require_serial: true
+        additional_dependencies: [skylos==2.1.2]
+        args: [".", "--output", "report.json", "--confidence", "70"]
+
+      - id: skylos-fail-on-findings
+        name: skylos (soft)
+        language: python
+        language_version: python3
+        pass_filenames: false
+        require_serial: true
+        entry: >
+          python -c "import os, json, sys, pathlib;
+          p=pathlib.Path('report.json');
+
+          if not p.exists(): 
+            sys.exit(0);
+
+          data=json.loads(p.read_text(encoding='utf-8'));
+
+          count = 0
+          for v in data.values():
+            if isinstance(v, list):
+              count += len(v)
+
+          print(f'[skylos] findings: {count}');
+          sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"
+```
+
+**Install requirements:**
+
+You must install pre-commit locally once:
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+2. pre-commit run --all-files
+
+
+3. Run the same hooks in CI (GitHub Actions): create .github/workflows/pre-commit.yml:
+
+```yaml
+name: pre-commit
+on: [push, pull_request]
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: "pip" }
+      - uses: pre-commit/action@v3.0.1
+        with: { extra_args: --all-files }
+```
+
+**Pre commit behavior:** the second hook is soft by default (SKYLOS_SOFT=1). This means that it prints findings and passes. You can remove the env/logic if you want pre-commit to block commits on finding
+
+### Option B — Github Actions
+
+1. Create .github/workflows/skylos.yml:
+
+```yaml
+name: Skylos Deadcode Scan
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      SKYLOS_STRICT: ${{ vars.SKYLOS_STRICT || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Skylos
+        run: pip install skylos
+
+      - name: Run Skylos
+        env:
+          REPORT: skylos_${{ github.run_number }}_${{ github.sha }}.json
+        run: |
+          echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
+          skylos . --json > "$REPORT"
+        id: scan
+
+      - name: Fail if there are findings
+        continue-on-error: ${{ env.SKYLOS_STRICT != 'true' }}
+        env:
+          REPORT: ${{ steps.scan.outputs.REPORT }}
+        run: |
+            python - << 'PY'
+            import json, sys, os
+            report = os.environ["REPORT"]
+            data = json.load(open(report, "r", encoding="utf-8"))
+            count = 0
+            for value in data.values():
+                if isinstance(value, list):
+                    count += len(value)
+            print(f"Findings: {count}")
+            if count > 0:
+              print(f"::warning title=Skylos findings::{count} potential issues found. See {report}")
+            sys.exit(1 if count > 0 else 0)
+            PY
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.scan.outputs.REPORT }}
+          path: ${{ steps.scan.outputs.REPORT }}
+
+      - name: Summarize in job log
+        if: always()
+        run: |
+          echo "Skylos report: ${{ steps.scan.outputs.REPORT }}" >> $GITHUB_STEP_SUMMARY
+```
+
+**To make the job fail on findings (strict mode)**:
+
+1. Go to GitHub -> Settings -> Secrets and variables -> Actions -> Variables
+
+2. Add variable SKYLOS_STRICT with value true
 
 ## Development
 

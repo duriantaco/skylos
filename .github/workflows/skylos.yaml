@@ -1,0 +1,62 @@
+name: Skylos Deadcode Scan
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      SKYLOS_STRICT: ${{ vars.SKYLOS_STRICT || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Skylos
+        run: pip install skylos
+
+      - name: Run Skylos
+        env:
+          REPORT: skylos_${{ github.run_number }}_${{ github.sha }}.json
+        run: |
+          echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
+          skylos . --json > "$REPORT"
+        id: scan
+
+      - name: Fail if there are findings
+        continue-on-error: ${{ env.SKYLOS_STRICT != 'true' }}
+        env:
+          REPORT: ${{ steps.scan.outputs.REPORT }}
+        run: |
+            python - << 'PY'
+            import json, sys, os
+            report = os.environ["REPORT"]
+            data = json.load(open(report, "r", encoding="utf-8"))
+            count = 0
+            for value in data.values():
+                if isinstance(value, list):
+                    count += len(value)
+            print(f"Findings: {count}")
+            if count > 0:
+              print(f"::warning title=Skylos findings::{count} potential issues found. See {report}")
+            sys.exit(1 if count > 0 else 0)
+            PY
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.scan.outputs.REPORT }}
+          path: ${{ steps.scan.outputs.REPORT }}
+
+      - name: Summarize in job log
+        if: always()
+        run: |
+          echo "Skylos report: ${{ steps.scan.outputs.REPORT }}" >> $GITHUB_STEP_SUMMARY
