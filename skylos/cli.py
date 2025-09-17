@@ -267,6 +267,9 @@ def main():
         help="List the default excluded folders and exit."
     )
 
+    parser.add_argument("--secrets", action="store_true",
+                   help="Scan for API keys. Off by default.")
+    
     args = parser.parse_args()
 
     if args.list_default_excludes:
@@ -301,7 +304,7 @@ def main():
             logger.info(f"{Colors.GREEN}📁 No folders excluded{Colors.RESET}")
 
     try:
-        result_json = run_analyze(args.path, conf=args.confidence, exclude_folders=list(final_exclude_folders))
+        result_json = run_analyze(args.path, conf=args.confidence, enable_secrets=bool(args.secrets), exclude_folders=list(final_exclude_folders))
         result = json.loads(result_json)
 
     except Exception as e:
@@ -317,6 +320,7 @@ def main():
     unused_parameters = result.get("unused_parameters", [])
     unused_variables = result.get("unused_variables", [])
     unused_classes = result.get("unused_classes", [])
+    secrets_findings = result.get("secrets", [])
     
     logger.info(f"{Colors.CYAN}{Colors.BOLD} Python Static Analysis Results{Colors.RESET}")
     logger.info(f"{Colors.CYAN}{'=' * 35}{Colors.RESET}")
@@ -327,6 +331,8 @@ def main():
     logger.info(f" * Unused parameters: {Colors.YELLOW}{len(unused_parameters)}{Colors.RESET}")
     logger.info(f" * Unused variables: {Colors.YELLOW}{len(unused_variables)}{Colors.RESET}")
     logger.info(f" * Unused classes: {Colors.YELLOW}{len(unused_classes)}{Colors.RESET}")
+    if secrets_findings:
+        logger.info(f" * Secrets: {Colors.RED}{len(secrets_findings)}{Colors.RESET}")
 
     if args.interactive and (unused_functions or unused_imports):
         logger.info(f"\n{Colors.BOLD}Interactive Mode:{Colors.RESET}")
@@ -447,6 +453,16 @@ def main():
                 logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
         else:
             logger.info(f"\n{Colors.GREEN}✓ All classes are being used!{Colors.RESET}")
+
+        if secrets_findings:
+            logger.info(f"\n{Colors.RED}{Colors.BOLD} - Secrets{Colors.RESET}")
+            logger.info(f"{Colors.RED}{'=' * 9}{Colors.RESET}")
+            for i, s in enumerate(secrets_findings[:20], 1):
+                provider = s.get("provider", "generic")
+                where = f"{s.get('file','?')}:{s.get('line','?')}"
+                prev = s.get("preview", "****")
+                msg = s.get("message", "Secret detected")
+                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{msg} [{provider}] {Colors.GRAY}({where}){Colors.RESET} -> {prev}")
 
         dead_code_count = len(unused_functions) + len(unused_imports) + len(unused_variables) + len(unused_classes) + len(unused_parameters)
 
