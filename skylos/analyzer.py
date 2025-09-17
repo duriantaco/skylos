@@ -7,10 +7,11 @@ from pathlib import Path
 from collections import defaultdict
 from skylos.visitor import Visitor
 from skylos.constants import ( PENALTIES, AUTO_CALLED )
-from skylos.test_aware import TestAwareVisitor
+from skylos.visitors.test_aware import TestAwareVisitor
+from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 import os
 import traceback
-from skylos.framework_aware import FrameworkAwareVisitor, detect_framework_usage
+from skylos.visitors.framework_aware import FrameworkAwareVisitor, detect_framework_usage
 
 logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(levelname)s - %(message)s')
 logger=logging.getLogger('Skylos')
@@ -237,7 +238,7 @@ class Skylos:
                     if method.simple_name == "format" and cls.endswith("Formatter"):
                         method.references += 1
 
-    def analyze(self, path, thr=60, exclude_folders=None):
+    def analyze(self, path, thr=60, exclude_folders= None, enable_secrets = False):
         files, root = self._get_python_files(path, exclude_folders)
         
         if not files:
@@ -260,6 +261,7 @@ class Skylos:
         for f in files:
             modmap[f] = self._module(root, f)
         
+        all_secrets = []
         for file in files:
             mod = modmap[file]
             defs, refs, dyn, exports, test_flags, framework_flags = proc_file(file, mod)
@@ -271,6 +273,16 @@ class Skylos:
             self.refs.extend(refs)
             self.dynamic.update(dyn)
             self.exports[mod].update(exports)
+
+            if enable_secrets and _secrets_scan_ctx is not None:
+                try:
+                    src_lines = Path(file).read_text(encoding="utf-8", errors="ignore").splitlines(True)
+                    ctx = {"relpath": str(file), "lines": src_lines, "tree": None}
+                    findings = list(_secrets_scan_ctx(ctx))
+                    if findings:
+                        all_secrets.extend(findings)
+                except Exception:
+                    pass
 
         self._mark_refs()
         self._apply_heuristics() 
@@ -303,6 +315,9 @@ class Skylos:
                 "excluded_folders": exclude_folders or [],
             }
         }
+
+        if enable_secrets and all_secrets:
+            result["secrets"] = all_secrets
         
         for u in unused:
             if u["type"] in ("function", "method"):
@@ -355,8 +370,8 @@ def proc_file(file_or_args, mod=None):
 
         return [], [], set(), set(), dummy_visitor, dummy_framework_visitor
 
-def analyze(path,conf=60, exclude_folders=None):
-    return Skylos().analyze(path,conf, exclude_folders)
+def analyze(path, conf=60, exclude_folders=None, enable_secrets=False):
+    return Skylos().analyze(path,conf, exclude_folders, enable_secrets)
 
 if __name__ == "__main__":
     if len(sys.argv)>1:
