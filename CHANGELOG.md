@@ -1,5 +1,23 @@
 ## Changelog
 
+## [2.2.2] - 2025-09-17
+
+### Added
+
+- Secrets scanning PoC (SKY-S101): provider patterns + generic high entropy
+- `--secrets` CLI flag. Results shown in JSON output. To trigger secrets scanning run with `--secrets` flag
+- Unit tests covering secrets
+- GitHub Actions CI. Skylos Deadcode Scan workflow (.github/workflows/skylos.yml)
+
+### Changed
+
+- Lazy imports to avoid cycles
+
+### Fixed
+
+- Circular import causing scan_ctx import errors.
+- Minor preview/test stability issues
+
 ## [2.1.2] - 2025-08-27
 
 ### Added
