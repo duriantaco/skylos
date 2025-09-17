@@ -1,6 +1,8 @@
-from skylos.analyzer import analyze
+__version__ = "2.2.2"
 
-__version__ = "2.1.2"
+def analyze(*args, **kwargs):
+    from .analyzer import analyze as _analyze
+    return _analyze(*args, **kwargs)
 
 def debug_test():
     return "debug-ok"

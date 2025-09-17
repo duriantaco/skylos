@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Skylos Web Server
-Serves the frontend and provides API to analyze projects using skylos
-"""
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import skylos
@@ -17,7 +11,6 @@ CORS(app)
 
 @app.route('/')
 def serve_frontend():
-    """Serve the frontend HTML"""
     return """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -461,7 +454,6 @@ def serve_frontend():
                 classes: analysisData.unused_classes || []
             };
 
-            // Filter by confidence threshold
             Object.keys(data).forEach(key => {
                 data[key] = data[key].filter(item => item.confidence >= confidenceThreshold);
             });
@@ -481,12 +473,11 @@ def serve_frontend():
             const listElement = document.getElementById('deadCodeList');
             const allItems = [];
 
-            // Combine all items with their categories
             Object.keys(data).forEach(category => {
                 data[category].forEach(item => {
                     allItems.push({
                         ...item,
-                        category: category.slice(0, -1) // Remove 's' from end
+                        category: category.slice(0, -1)
                     });
                 });
             });
@@ -500,7 +491,6 @@ def serve_frontend():
                 return;
             }
 
-            // Sort by confidence (highest first)
             allItems.sort((a, b) => b.confidence - a.confidence);
 
             listElement.innerHTML = allItems.map(item => `
@@ -551,7 +541,6 @@ def start_server():
     print(" Starting Skylos Web Interface...")
     print("Opening browser at: http://localhost:5090")
     
-    # Open browser after a short delay
     Timer(1.5, open_browser).start()
     
     app.run(debug=False, host='0.0.0.0', port=5090, use_reloader=False)
