@@ -52,6 +52,8 @@
 * **Unused Imports**: Identifies imports that are not used
 * **Folder Management**: Inclusion/exclusion of directories 
 * **Ignore Pragmas**: Skip lines tagged with `# pragma: no skylos`, `# pragma: no cover`, or `# noqa`
+**NEW** **Secrets Scanning (PoC, opt-in)**: Detects API keys & secrets (GitHub, GitLab, Slack, Stripe, AWS, Google, SendGrid, Twilio, private key blocks)
+
 
 ## Benchmark (You can find this benchmark test in `test` folder)
 
@@ -94,6 +96,8 @@ pip install .
 
 ```bash
 skylos /path/to/your/project
+
+skylos /path/to/your/project --secrets  ## include api key scan
 
 # To launch the front end
 skylos run
@@ -197,7 +201,7 @@ When Skylos detects a test file, it by default, will apply a confidence penalty 
 
 ## Ignoring Pragmas
 
-To ignore any warning, indicate `# pragma: no skylos` **ON THE SAME LINE** as the function/class you want to ignore
+1. To ignore any warning, indicate `# pragma: no skylos` **ON THE SAME LINE** as the function/class you want to ignore
 
 Example
 
@@ -205,6 +209,14 @@ Example
     def with_logging(self, enabled: bool = True) -> "WebPath":     # pragma: no skylos
         new_path = WebPath(self._url)
         return new_path
+```
+
+2. To suppress a **secret** on a line, add: `# skylos: ignore[SKY-S101]`
+ 
+Example
+ ```python
+
+API_KEY = "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"  # skylos: ignore[SKY-S101]
 ```
 
 ## Including & Excluding Files
@@ -248,6 +260,7 @@ Options:
   --no-default-excludes        Don't exclude default folders (__pycache__, .git, venv, etc.)
   --list-default-excludes      List the default excluded folders and
   -c, --confidence LEVEL       Confidence threshold (0-100). Lower values will show more items.
+  -- secrets                   Scan for api keys/secrets
 ```
 
 ## Interactive Mode
@@ -277,7 +290,7 @@ Pick **one** (or use **both**)
 ## .pre-commit-config.yaml
 repos:
   - repo: https://github.com/duriantaco/skylos
-    rev: v2.1.2
+    rev: v2.2.2
     hooks:
       - id: skylos-scan
         name: skylos report
@@ -327,7 +340,7 @@ repos:
         entry: python -m skylos.cli
         pass_filenames: false
         require_serial: true
-        additional_dependencies: [skylos==2.1.2]
+        additional_dependencies: [skylos==2.2.2]
         args: [".", "--output", "report.json", "--confidence", "70"]
 
       - id: skylos-fail-on-findings
@@ -511,6 +524,7 @@ A: Start with 60 (default) for safe cleanup. Use 30 for framework applications. 
 - **Frameworks**: Django models, Flask, FastAPI routes may appear unused but aren't
 - **Test data**: Limited scenarios, your mileage may vary
 - **False positives**: Always manually review before deleting code
+- **Secrets PoC**: May emit both a provider hit and a generic high-entropy hit for the same token. All tokens are detected only in py files (`.py`, `.pyi`, `.pyw`).
 
 ## Troubleshooting
 
@@ -543,9 +557,10 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 ## Roadmap
 - [x] Expand our test cases
 - [ ] Configuration file support 
-- [ ] Git hooks integration
-- [ ] CI/CD integration examples
+- [x] Git hooks integration
+- [x] CI/CD integration examples
 - [ ] Further optimization
+- [ ] Add new rules
 
 ## License
 
