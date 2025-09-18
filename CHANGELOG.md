@@ -1,5 +1,11 @@
 ## Changelog
 
+## [2.2.3] - 2025-09-18
+
+### Fix
+
+Interactive remove and comment out works for dotted imports (e.g. import pkg.subpkg.mod) and class/async methods (Class.method). There was a name mismatch in `codemods.py` script
+
 ## [2.2.2] - 2025-09-17
 
 ### Added
