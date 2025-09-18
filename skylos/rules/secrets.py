@@ -1,7 +1,6 @@
 from __future__ import annotations
 import re, ast
 from math import log2
-from typing import Dict, Any, Iterable, List, Optional
 
 __all__ = ["scan_ctx"]
 
