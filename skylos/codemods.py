@@ -1,6 +1,7 @@
 from __future__ import annotations
 import libcst as cst
 from libcst.metadata import PositionProvider
+from libcst.helpers import get_full_name_for_node
 
 class _CommentOutBlock(cst.CSTTransformer):
 
@@ -31,14 +32,16 @@ class _CommentOutFunctionAtLine(_CommentOutBlock):
         return pos and pos.start.line == self.target_line
 
     def leave_FunctionDef(self, orig: cst.FunctionDef, updated: cst.FunctionDef):
-        if self._is_target(orig) and (orig.name.value == self.func_name):
+        target = self.func_name.split(".")[-1]
+        if self._is_target(orig) and (orig.name.value == target):
             self.changed = True
             pos = self.get_metadata(PositionProvider, orig)
             return cst.FlattenSentinel(self._comment_block(pos.start.line, pos.end.line))
         return updated
 
     def leave_AsyncFunctionDef(self, orig: cst.AsyncFunctionDef, updated: cst.AsyncFunctionDef):
-        if self._is_target(orig) and (orig.name.value == self.func_name):
+        target = self.func_name.split(".")[-1] 
+        if self._is_target(orig) and (orig.name.value == target):
             self.changed = True
             pos = self.get_metadata(PositionProvider, orig)
             return cst.FlattenSentinel(self._comment_block(pos.start.line, pos.end.line))
@@ -73,7 +76,9 @@ class _CommentOutImportAtLine(_CommentOutBlock):
         removed_for_comment= []
         for alias in list(aliases):
             bound = _bound_name_for_import_alias(alias)
-            if bound == self.target_name:
+            name_code = get_full_name_for_node(alias.name)
+            tail = name_code.split(".")[-1]
+            if self.target_name in (bound, tail):
                 self.changed = True
                 removed_for_comment.append(self._render_single_alias_text(head, alias, is_from))
             else:
@@ -175,7 +180,9 @@ class _RemoveImportAtLine(cst.CSTTransformer):
         kept = []
         for alias in aliases:
             bound = _bound_name_for_import_alias(alias)
-            if bound == self.target_name:
+            name_code = get_full_name_for_node(alias.name) or ""
+            tail = name_code.split(".")[-1]
+            if self.target_name in (bound, tail):
                 self.changed = True
                 continue
             kept.append(alias)
@@ -213,13 +220,15 @@ class _RemoveFunctionAtLine(cst.CSTTransformer):
         return pos and pos.start.line == self.target_line
 
     def leave_FunctionDef(self, orig: cst.FunctionDef, updated: cst.FunctionDef):
-        if self._is_target(orig) and (orig.name.value == self.func_name):
+        target = self.func_name.split(".")[-1]
+        if self._is_target(orig) and (orig.name.value == target):
             self.changed = True
             return cst.RemoveFromParent()
         return updated
 
     def leave_AsyncFunctionDef(self, orig: cst.AsyncFunctionDef, updated: cst.AsyncFunctionDef):
-        if self._is_target(orig) and (orig.name.value == self.func_name):
+        target = self.func_name.split(".")[-1]
+        if self._is_target(orig) and (orig.name.value == target):
             self.changed = True
             return cst.RemoveFromParent()
 

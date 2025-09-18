@@ -253,6 +253,7 @@ Options:
   --json                       Output raw JSON instead of formatted text  
   -o, --output FILE            Write output to file instead of stdout
   -v, --verbose                Enable verbose output
+  --version                    Checks version
   -i, --interactive            Interactively select items to remove
   --dry-run                    Show what would be removed without modifying files
   --exclude-folder FOLDER      Exclude a folder from analysis (can be used multiple times)
