@@ -1,5 +1,5 @@
 from pathlib import Path
-from skylos.rules.dangerous import scan_ctx
+from skylos.rules.danger import scan_ctx
 
 def _write(tmp_path: Path, name, code):
     p = tmp_path / name
