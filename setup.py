@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="skylos",
-    version="2.2.3",
+    version="2.2.4",
     packages=find_packages(),
     python_requires=">=3.9",
     install_requires=[
