@@ -18,3 +18,4 @@ venvtest
 snugbug
 .ruff_cache
 dist
+node_modules
