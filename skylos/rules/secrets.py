@@ -22,7 +22,15 @@ GENERIC_VALUE = re.compile(r"""(?ix)
     (?:
       (token|api[_-]?key|secret|password|passwd|pwd|bearer|auth[_-]?token|access[_-]?token)
       \s*[:=]\s*(?P<q>['"])(?P<val>[^'"]{16,})(?P=q)
-    )|(?P<bare>[A-Za-z0-9_\-]{24,})
+    )
+    |
+    (?P<bare>
+      (?=[A-Za-z0-9_-]{32,}\b)
+      (?=.*[A-Z])
+      (?=.*[a-z])
+      (?=.*\d)
+      [A-Za-z0-9_-]+
+    )
 """)
 
 SAFE_TEST_HINTS = {
@@ -30,8 +38,12 @@ SAFE_TEST_HINTS = {
     "changeme", "password", "secret", "not_a_real", "do_not_use",
 }
 
+_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
 IGNORE_DIRECTIVE = "skylos: ignore[SKY-S101]"
-DEFAULT_MIN_ENTROPY = 3.6
+DEFAULT_MIN_ENTROPY = 3.9
+
+IS_TEST_PATH = re.compile(r"(^|/)(tests?(/|$)|test_[^/]+\.py$)")
 
 def _entropy(s):
     if len(s) == 0:
@@ -63,6 +75,9 @@ def _mask(tok):
         first_part = tok[:4]
         last_part = tok[-4:]
         return first_part + "…" + last_part
+
+def _looks_like_identifier(s):
+    return bool(_IDENTIFIER.fullmatch(s))
 
 def _docstring_lines(tree):
     if tree is None:
@@ -107,10 +122,13 @@ def _docstring_lines(tree):
     return docstring_line_numbers
 
 def scan_ctx(ctx, *, min_entropy= DEFAULT_MIN_ENTROPY, scan_comments= True,
-              scan_docstrings= True, allowlist_patterns= None, ignore_path_substrings= None):
+              scan_docstrings= True, allowlist_patterns= None, ignore_path_substrings= None, ignore_tests=True):
     
     rel_path = ctx.get("relpath", "")
     if not rel_path.endswith(ALLOWED_FILE_SUFFIXES):
+        return []
+    
+    if ignore_tests and IS_TEST_PATH.search(rel_path.replace("\\", "/")):
         return []
     
     if ignore_path_substrings:
@@ -220,22 +238,33 @@ def scan_ctx(ctx, *, min_entropy= DEFAULT_MIN_ENTROPY, scan_comments= True,
                         "entropy": round(tok_entropy, 2),
                     }
                     findings.append(aws_finding)
-        
-        generic_match = GENERIC_VALUE.search(line_content)
+
+        in_tests = bool(IS_TEST_PATH.search(rel_path.replace("\\", "/")))
+
+        if in_tests:
+            generic_match = None
+        else:
+            generic_match= GENERIC_VALUE.search(line_content)
+
         if generic_match:
             val_group = generic_match.group("val")
             bare_group = generic_match.group("bare")
             
+            is_bare = False
             if val_group:
                 extracted_token = val_group
             elif bare_group:
                 extracted_token = bare_group
+                is_bare = True
             else:
                 extracted_token = ""
             
             clean_token = extracted_token.strip()
             
             if clean_token:
+                if is_bare and _looks_like_identifier(clean_token):
+                    continue
+                
                 token_lowercase = clean_token.lower()
                 has_safe_hint = False
                 
