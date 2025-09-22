@@ -1,5 +1,19 @@
 ## Changelog
 
+## [2.2.4] - 2025-09-22
+
+### Added
+
+- Added dangerous patterns scanner (from SKY-D201 -> D210). Results appear in JSON under dangerous
+- Danger flag for cli to trigger the dangerous pattern scanning `--danger`
+- Added test for danger script
+
+### Fixed
+
+- Removed non JSON prints which was causing some CICD pipeline failures
+- Fixed the REGEX for secrets which was causing a lot of false positives
+- Analyzer now emits separate secrets and dangerous buckets
+
 ## [2.2.3] - 2025-09-18
 
 ### Fix
