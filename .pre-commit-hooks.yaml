@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/duriantaco/skylos
-    rev: v2.2.3
+    rev: v2.2.4
     hooks:
       - id: skylos-scan
         name: skylos (report only)
@@ -9,4 +9,4 @@ repos:
         types_or: [python]
         pass_filenames: false
         require_serial: true
-        args: [".", "--output", "report.json", "--confidence", "70"]
+        args: [".", "--output", "report.json", "--confidence", "70", "--danger"]
