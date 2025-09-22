@@ -9,7 +9,7 @@ from skylos.visitor import Visitor
 from skylos.constants import ( PENALTIES, AUTO_CALLED )
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
-from skylos.rules.dangerous import scan_ctx as scan_dangerous
+from skylos.rules.danger import scan_ctx as scan_danger
 import os
 import traceback
 from skylos.visitors.framework_aware import FrameworkAwareVisitor, detect_framework_usage
@@ -239,7 +239,7 @@ class Skylos:
                     if method.simple_name == "format" and cls.endswith("Formatter"):
                         method.references += 1
 
-    def analyze(self, path, thr=60, exclude_folders= None, enable_secrets = False, enable_dangerous = False):
+    def analyze(self, path, thr=60, exclude_folders= None, enable_secrets = False, enable_danger = False):
         files, root = self._get_python_files(path, exclude_folders)
         
         if not files:
@@ -288,9 +288,9 @@ class Skylos:
                 except Exception:
                     pass
             
-            if enable_dangerous and scan_dangerous is not None:
+            if enable_danger and scan_danger is not None:
                 try:
-                    findings = scan_dangerous(root, [file])
+                    findings = scan_danger(root, [file])
                     if findings:
                         all_dangers.extend(findings)
                 except Exception:
@@ -331,9 +331,9 @@ class Skylos:
             result["secrets"] = all_secrets
             result["analysis_summary"]["secrets_count"] = len(all_secrets)
         
-        if enable_dangerous and all_dangers:
-            result["dangerous"] = all_dangers
-            result["analysis_summary"]["dangerous_count"] = len(all_dangers)
+        if enable_danger and all_dangers:
+            result["danger"] = all_dangers
+            result["analysis_summary"]["danger_count"] = len(all_dangers)
 
         for u in unused:
             if u["type"] in ("function", "method"):
@@ -386,13 +386,13 @@ def proc_file(file_or_args, mod=None):
 
         return [], [], set(), set(), dummy_visitor, dummy_framework_visitor
 
-def analyze(path, conf=60, exclude_folders=None, enable_secrets=False, enable_dangerous=False):
-    return Skylos().analyze(path,conf, exclude_folders, enable_secrets, enable_dangerous)
+def analyze(path, conf=60, exclude_folders=None, enable_secrets=False, enable_danger=False):
+    return Skylos().analyze(path,conf, exclude_folders, enable_secrets, enable_danger)
 
 if __name__ == "__main__":
     if len(sys.argv)>1:
         p = sys.argv[1]
-        
+
         if len(sys.argv) > 2:
             confidence = int(sys.argv[2])
         else:
