@@ -189,6 +189,12 @@ def main():
     parser.add_argument("path", help="Path to the Python project")
 
     parser.add_argument(
+        "--table",
+        action="store_true",
+        help="Show findings in table"
+    )
+
+    parser.add_argument(
         "--version",
         action="version", 
         version=f"skylos {skylos.__version__}",
@@ -307,7 +313,8 @@ def main():
             logger.info(f"{Colors.GREEN}📁 No folders excluded{Colors.RESET}")
 
     try:
-        result_json = run_analyze(args.path, conf=args.confidence, enable_secrets=bool(args.secrets), exclude_folders=list(final_exclude_folders))
+        result_json = run_analyze(args.path, conf=args.confidence, enable_secrets=bool(args.secrets), 
+                                  enable_danger=bool(args.danger), exclude_folders=list(final_exclude_folders))
 
         if args.json:
             print(result_json)
@@ -318,6 +325,121 @@ def main():
     except Exception as e:
         logger.error(f"Error during analysis: {e}")
         sys.exit(1)
+    
+    if args.table:
+        ELLIPSIS = "…"
+
+        def clip(text, max_length):
+            if not text:
+                text = ""
+            
+            if len(text) <= max_length:
+                return text
+            
+            truncated_end = max(0, max_length - 1)
+            return text[:truncated_end] + ELLIPSIS
+
+        def severity_color(severity):
+            severity_upper = (severity or "").upper()
+            
+            if severity_upper in ("HIGH", "CRITICAL"):
+                return Colors.RED
+            elif severity_upper == "MEDIUM":
+                return Colors.YELLOW
+            else:
+                return Colors.GRAY
+
+        print(f"\n{Colors.CYAN}{Colors.BOLD}Unused {Colors.RESET}")
+        print(f"{Colors.CYAN}{'='*18}{Colors.RESET}")
+
+        print(f"{Colors.BOLD}{'kind':9} {'name':28} {'where'}{Colors.RESET}")
+        print(f"{'-'*9} {'-'*28} {'-'*36}")
+        
+        unused_categories = [
+            ("unused_functions", "function"),
+            ("unused_imports", "import"),
+            ("unused_classes", "class"),
+            ("unused_variables", "variable"),
+            ("unused_parameters", "parameter"),
+        ]
+
+        for bucket, kind in unused_categories:
+            items = result.get(bucket, [])
+            for item in items:
+                name = item.get("name") or item.get("simple_name") or ""
+                file_path = item.get('file', '?')
+                line_num = item.get('line', item.get('lineno', '?'))
+                where = f"{file_path}:{line_num}"
+                
+                clipped_name = clip(name, 28)
+                clipped_where = clip(where, 36)
+                print(f"{kind:9} {clipped_name:28} {clipped_where}")
+
+        secrets = result.get("secrets", []) or []
+        if secrets:
+            print(f"\n{Colors.RED}{Colors.BOLD}Secrets{Colors.RESET}")
+            print(f"{Colors.RED}{'=' * 7}{Colors.RESET}")
+            print(f"{Colors.BOLD}{'provider':12} {'message':22} {'preview':24} {'where'}{Colors.RESET}")
+            print(f"{'-' * 12} {'-' * 22} {'-' * 24} {'-' * 36}")
+            
+            for secret in secrets[:100]:
+                provider = clip(secret.get("provider") or "generic", 12)
+                message = clip(secret.get("message") or "Secret detected", 22)
+                preview = clip(secret.get("preview") or "****", 24)
+                
+                file_path = secret.get('file', '?')
+                line_num = secret.get('line', '?')
+                location = f"{file_path}:{line_num}"
+                clipped_location = clip(location, 36)
+                
+                print(f"{Colors.MAGENTA}{provider:12}{Colors.RESET} {message:22} {preview:24} {clipped_location}")
+
+            
+        security_issues = result.get("danger", [])
+        if security_issues:
+            print(f"\n{Colors.RED}{Colors.BOLD}Security issues{Colors.RESET}")
+            print(f"{Colors.RED}{'=' * 15}{Colors.RESET}")
+            print(f"{Colors.BOLD}{'rule_id':10} {'sev':5} {'message':38} {'where'}{Colors.RESET}")
+            print(f"{'-' * 10} {'-' * 5} {'-' * 38} {'-' * 36}")
+            
+            for issue in security_issues[:100]:
+                rule_id = clip(issue.get("rule_id") or "", 10)
+                severity = (issue.get("severity") or "").upper()
+                message = clip(issue.get("message") or "", 38)
+                
+                file_path = issue.get('file', '?')
+                line_num = issue.get('line', '?')
+                location = f"{file_path}:{line_num}"
+                clipped_location = clip(location, 36)
+                
+                severity_color_code = severity_color(severity)
+                clipped_severity = clip(severity, 5)
+                
+                print(f"{rule_id:10} {severity_color_code}{clipped_severity:5}{Colors.RESET} {message:38} {clipped_location}")
+
+        summ = result.get("analysis_summary", {})
+        unused_keys = [
+            "unused_functions",
+            "unused_imports", 
+            "unused_classes",
+            "unused_variables",
+            "unused_parameters"
+        ]
+
+        total_unused = 0
+        for k in unused_keys:
+            total_unused += len(result.get(k, []))
+  
+        print(f"\n{Colors.BOLD}Summary{Colors.RESET}")
+
+        print("=======")
+        print(f"files analyzed : {summ.get('total_files','?')}")
+        print(f"unused items   : {total_unused}")
+        if "secrets_count" in summ:
+            print(f"secrets        : {summ['secrets_count']}")
+        if "dangerous_count" in summ:
+            print(f"security issues: {summ['dangerous_count']}")
+        return
 
     if args.json:
         lg = logging.getLogger('skylos')
@@ -335,6 +457,7 @@ def main():
     unused_variables = result.get("unused_variables", [])
     unused_classes = result.get("unused_classes", [])
     secrets_findings = result.get("secrets", [])
+    danger_findings = result.get("danger", [])
     
     logger.info(f"{Colors.CYAN}{Colors.BOLD} Python Static Analysis Results{Colors.RESET}")
     logger.info(f"{Colors.CYAN}{'=' * 35}{Colors.RESET}")
@@ -347,6 +470,8 @@ def main():
     logger.info(f" * Unused classes: {Colors.YELLOW}{len(unused_classes)}{Colors.RESET}")
     if secrets_findings:
         logger.info(f" * Secrets: {Colors.RED}{len(secrets_findings)}{Colors.RESET}")
+    if danger_findings:
+        logger.info(f" * Security issues: {Colors.RED}{len(danger_findings)}{Colors.RESET}")
 
     if args.interactive and (unused_functions or unused_imports):
         logger.info(f"\n{Colors.BOLD}Interactive Mode:{Colors.RESET}")
@@ -477,6 +602,17 @@ def main():
                 prev = s.get("preview", "****")
                 msg = s.get("message", "Secret detected")
                 logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{msg} [{provider}] {Colors.GRAY}({where}){Colors.RESET} -> {prev}")
+        
+        if danger_findings:
+            logger.info(f"\n{Colors.RED}{Colors.BOLD} - Security Issues{Colors.RESET}")
+            logger.info(f"{Colors.RED}{'=' * 16}{Colors.RESET}")
+            for i, d in enumerate(danger_findings[:20], 1):
+                rule_id = d.get("rule_id", "unknown_rule")
+                severity = d.get("severity", "UNKNOWN").upper()
+                message = d.get("message", "Issue detected")
+                file = d.get("file", "?")
+                line = d.get("line", "?")
+                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{message} [{rule_id}] {Colors.GRAY}({file}:{line}){Colors.RESET} Severity: {severity}")
 
         dead_code_count = len(unused_functions) + len(unused_imports) + len(unused_variables) + len(unused_classes) + len(unused_parameters)
 
