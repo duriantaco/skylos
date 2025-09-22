@@ -43,7 +43,7 @@ def setup_logger(output_file=None):
     
     formatter = CleanFormatter()
     
-    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
     
@@ -270,6 +270,9 @@ def main():
     parser.add_argument("--secrets", action="store_true",
                    help="Scan for API keys. Off by default.")
     
+    parser.add_argument("--danger", action="store_true",
+                   help="Scan for security issues. Off by default.")
+    
     args = parser.parse_args()
 
     if args.list_default_excludes:
@@ -305,6 +308,11 @@ def main():
 
     try:
         result_json = run_analyze(args.path, conf=args.confidence, enable_secrets=bool(args.secrets), exclude_folders=list(final_exclude_folders))
+
+        if args.json:
+            print(result_json)
+            return
+
         result = json.loads(result_json)
 
     except Exception as e:
@@ -312,8 +320,14 @@ def main():
         sys.exit(1)
 
     if args.json:
-        logger.info(result_json)
+        lg = logging.getLogger('skylos')
+        for h in list(lg.handlers):
+            if isinstance(h, logging.StreamHandler):
+                lg.removeHandler(h)
+        print(result_json)
         return
+    
+    result = json.loads(result_json)
 
     unused_functions = result.get("unused_functions", [])
     unused_imports = result.get("unused_imports", [])
