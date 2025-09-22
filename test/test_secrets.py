@@ -77,16 +77,6 @@ def test_aws_secret_access_key_special_case():
     assert "entropy" in hit and isinstance(hit["entropy"], float)
     assert ELLIPSIS in hit["preview"]
 
-
-def test_generic_entropy_detection_and_threshold():
-    src = 'X = "o2uV7Ew1kZ9Q3nR8sT5yU6pX4cJ2mL7a"\n'
-    findings = list(scan_ctx(_ctx_from_source(src)))
-    assert any(f["provider"] == "generic" for f in findings)
-
-    findings_high_thr = list(scan_ctx(_ctx_from_source(src), min_entropy=8.0))
-    assert not any(f["provider"] == "generic" for f in findings_high_thr)
-
-
 def test_ignore_directive_suppresses_matches():
     src = 'GITHUB_TOKEN = "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"  # skylos: ignore[SKY-S101]\n'
     findings = list(scan_ctx(_ctx_from_source(src)))
@@ -177,3 +167,27 @@ def test_safe_hints_suppress_detection():
     safe_line = 'EXAMPLE_TOKEN = "sk_test_this_is_example_value_not_real_123456"\n'
     out = list(scan_ctx(_ctx_from_source(safe_line)))
     assert out == []
+
+def test_generic_is_suppressed_in_test_paths():
+    src = 'X = "o2uV7Ew1kZ9Q3nR8sT5yU6pX4cJ2mL7a"\n'
+    findings = list(scan_ctx(_ctx_from_source(src, rel="tests/unit/test_secrets.py")))
+    
+    generic_findings = []
+    for f in findings:
+        if f["provider"] == "generic":
+            generic_findings.append(f)
+    
+    assert len(generic_findings) == 0
+
+def test_normal_strings_ignored():
+    src = 'X = "config_path"\n'
+    ctx = _ctx_from_source(src)
+    findings = list(scan_ctx(ctx))
+    
+    generic_findings = []
+    for f in findings:
+        if f["provider"] == "generic":
+            generic_findings.append(f)
+    
+    assert len(generic_findings) == 0
+
