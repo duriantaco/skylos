@@ -1,12 +1,14 @@
 ## Changelog
 
-## [2.2.4] - 2025-09-22
+## [2.3.0] - 2025-09-22
 
 ### Added
 
+- You can now download the plugin via 
 - Added dangerous patterns scanner (from SKY-D201 -> D210). Results appear in JSON under dangerous
 - Danger flag for cli to trigger the dangerous pattern scanning `--danger`
 - Added test for danger script
+- `--table` flag to output results in table format
 
 ### Fixed
 
