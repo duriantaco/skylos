@@ -2,8 +2,10 @@
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 ![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 ![PyPI version](https://img.shields.io/pypi/v/skylos)
 ![Security Policy](https://img.shields.io/badge/security-policy-brightgreen)
+![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
 
 <div align="center">
    <img src="assets/SKYLOS.png" alt="Skylos Logo" width="200">
@@ -33,6 +35,7 @@
 - [Interactive Mode](#interactive-mode)
 - [Development](#development)
 - [CI/CD (Pre-commit & GitHub Actions)](#cicd-pre-commit--github-actions)
+- [VS Code extension](#vsc-extension)
 - [FAQ](#faq)
 - [Limitations](#limitations)
 - [Troubleshooting](#troubleshooting)
@@ -112,7 +115,11 @@ skylos . --interactive --comment-out
 # Dry run - see what would be removed
 skylos --interactive --dry-run /path/to/your/project 
 
+# Load the results in json format
 skylos --json /path/to/your/project 
+
+# Load the results in table format
+skylos --table /path/to/your/project 
 
 # With confidence
 skylos path/to/your/file --confidence 20 ## or whatever value u wanna set
@@ -252,6 +259,7 @@ Arguments:
 Options:
   -h, --help                   Show this help message and exit
   --json                       Output raw JSON instead of formatted text  
+  --table                      Output results in table format via the CLI
   -o, --output FILE            Write output to file instead of stdout
   -v, --verbose                Enable verbose output
   --version                    Checks version
@@ -368,7 +376,7 @@ jobs:
 ## .pre-commit-config.yaml
 repos:
   - repo: https://github.com/duriantaco/skylos
-    rev: v2.2.4
+    rev: v2.3.0
     hooks:
       - id: skylos-scan
         name: skylos report
@@ -418,7 +426,7 @@ repos:
         entry: python -m skylos.cli
         pass_filenames: false
         require_serial: true
-        additional_dependencies: [skylos==2.2.4]
+        additional_dependencies: [skylos==2.3.0]
         args: [".", "--output", "report.json", "--confidence", "70"]
 
       - id: skylos-fail-on-findings
@@ -473,6 +481,16 @@ jobs:
 ```
 
 **Pre commit behavior:** the second hook is soft by default (SKYLOS_SOFT=1). This means that it prints findings and passes. You can remove the env/logic if you want pre-commit to block commits on finding
+
+## VS Code extension
+
+Skylos has a VS Code extension that runs on save like a linter. Runs automatically on save of Python files. You will ll see squiggles + a popup like "Skylos found N items." For more information, refer to the VSC `README.md` inside the marketplace.
+
+### Install
+
+From VS Code Marketplace: "Skylos" (publisher: oha)
+
+Version: `0.1.0`
 
 ## Development
 
@@ -568,6 +586,7 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 - [ ] Further optimization
 - [ ] Add new rules
 - [ ] Expanding on the `dangerous.py` list
+- [ ] Porting to uv
 
 ## License
 
