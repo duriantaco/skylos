@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2020",
+    "lib": ["es2020"],
+    "outDir": "out",
+    "rootDir": "src",
+    "moduleResolution": "node",
+    "types": ["node", "vscode"],
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["out", "node_modules", ".vscode-test"]
+}
