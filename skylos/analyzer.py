@@ -9,6 +9,7 @@ from skylos.visitor import Visitor
 from skylos.constants import ( PENALTIES, AUTO_CALLED )
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
+from skylos.rules.dangerous import scan_ctx as scan_dangerous
 import os
 import traceback
 from skylos.visitors.framework_aware import FrameworkAwareVisitor, detect_framework_usage
@@ -238,7 +239,7 @@ class Skylos:
                     if method.simple_name == "format" and cls.endswith("Formatter"):
                         method.references += 1
 
-    def analyze(self, path, thr=60, exclude_folders= None, enable_secrets = False):
+    def analyze(self, path, thr=60, exclude_folders= None, enable_secrets = False, enable_dangerous = False):
         files, root = self._get_python_files(path, exclude_folders)
         
         if not files:
@@ -262,6 +263,7 @@ class Skylos:
             modmap[f] = self._module(root, f)
         
         all_secrets = []
+        all_dangers = []
         for file in files:
             mod = modmap[file]
             defs, refs, dyn, exports, test_flags, framework_flags = proc_file(file, mod)
@@ -276,11 +278,21 @@ class Skylos:
 
             if enable_secrets and _secrets_scan_ctx is not None:
                 try:
-                    src_lines = Path(file).read_text(encoding="utf-8", errors="ignore").splitlines(True)
-                    ctx = {"relpath": str(file), "lines": src_lines, "tree": None}
+                    src = Path(file).read_text(encoding="utf-8", errors="ignore")
+                    src_lines = src.splitlines(True)
+                    rel = str(Path(file).relative_to(root))
+                    ctx = {"relpath": rel, "lines": src_lines, "tree": None}
                     findings = list(_secrets_scan_ctx(ctx))
                     if findings:
                         all_secrets.extend(findings)
+                except Exception:
+                    pass
+            
+            if enable_dangerous and scan_dangerous is not None:
+                try:
+                    findings = scan_dangerous(root, [file])
+                    if findings:
+                        all_dangers.extend(findings)
                 except Exception:
                     pass
 
@@ -296,7 +308,6 @@ class Skylos:
         for d in sorted(self.defs.values(), key=def_sort_key):
             if shown >= 50:
                 break
-            print(f" type={d.type} refs={d.references} conf={d.confidence} exported={d.is_exported} line={d.line} name={d.name}")
             shown += 1
 
         unused = []
@@ -318,7 +329,12 @@ class Skylos:
 
         if enable_secrets and all_secrets:
             result["secrets"] = all_secrets
+            result["analysis_summary"]["secrets_count"] = len(all_secrets)
         
+        if enable_dangerous and all_dangers:
+            result["dangerous"] = all_dangers
+            result["analysis_summary"]["dangerous_count"] = len(all_dangers)
+
         for u in unused:
             if u["type"] in ("function", "method"):
                 result["unused_functions"].append(u)
@@ -370,13 +386,18 @@ def proc_file(file_or_args, mod=None):
 
         return [], [], set(), set(), dummy_visitor, dummy_framework_visitor
 
-def analyze(path, conf=60, exclude_folders=None, enable_secrets=False):
-    return Skylos().analyze(path,conf, exclude_folders, enable_secrets)
+def analyze(path, conf=60, exclude_folders=None, enable_secrets=False, enable_dangerous=False):
+    return Skylos().analyze(path,conf, exclude_folders, enable_secrets, enable_dangerous)
 
 if __name__ == "__main__":
     if len(sys.argv)>1:
         p = sys.argv[1]
-        confidence = int(sys.argv[2]) if len(sys.argv) >2 else 60
+        
+        if len(sys.argv) > 2:
+            confidence = int(sys.argv[2])
+        else:
+            confidence = 60
+
         result = analyze(p,confidence)
         
         data = json.loads(result)
