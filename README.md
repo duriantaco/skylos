@@ -53,7 +53,7 @@
 * **Folder Management**: Inclusion/exclusion of directories 
 * **Ignore Pragmas**: Skip lines tagged with `# pragma: no skylos`, `# pragma: no cover`, or `# noqa`
 **NEW** **Secrets Scanning (PoC, opt-in)**: Detects API keys & secrets (GitHub, GitLab, Slack, Stripe, AWS, Google, SendGrid, Twilio, private key blocks)
-
+**NEW** **Dangerous Patterns**: Flags risky code such as `eval/exec`, `os.system`, `subprocess(shell=True)`, `pickle.load/loads`, `yaml.load` without SafeLoader, hashlib.md5/sha1. Refer to `DANGEROUS_CODE.md` for the whole list.
 
 ## Benchmark (You can find this benchmark test in `test` folder)
 
@@ -98,6 +98,7 @@ pip install .
 skylos /path/to/your/project
 
 skylos /path/to/your/project --secrets  ## include api key scan
+skylos /path/to/your/project --danger   ## include safety scan for dangerous code
 
 # To launch the front end
 skylos run
@@ -262,6 +263,7 @@ Options:
   --list-default-excludes      List the default excluded folders and
   -c, --confidence LEVEL       Confidence threshold (0-100). Lower values will show more items.
   -- secrets                   Scan for api keys/secrets
+  -- danger                    Scan for dangerous code
 ```
 
 ## Interactive Mode
@@ -276,130 +278,15 @@ The interactive mode lets you select specific functions and imports to remove:
 
 Pick **one** (or use **both**) 
 
-1. Pre-commit (local + CI): runs Skylos before commits/PRs.
-   - You must install pre-commit locally once. Skylos gets installed automatically by the hook.
-
-2. GitHub Actions: runs Skylos on pushes/PRs in CI.
+1. GitHub Actions: runs Skylos on pushes/PRs in CI.
    - No local install needed
 
-### Option A — Pre-commit (local + CI)
+2. Pre-commit (local + CI): runs Skylos before commits/PRs.
+   - You must install pre-commit locally once. Skylos gets installed automatically by the hook.
 
-1. Create or edit `.pre-commit-config.yaml` at the repo root:
+### Option A — Github Actions
 
-**A: Skylos hook repo**
-```yaml
-## .pre-commit-config.yaml
-repos:
-  - repo: https://github.com/duriantaco/skylos
-    rev: v2.2.3
-    hooks:
-      - id: skylos-scan
-        name: skylos report
-        entry: python -m skylos.cli
-        language: python
-        types_or: [python]
-        pass_filenames: false
-        require_serial: true
-        args: [".", "--output", "report.json", "--confidence", "70"]
-
-  - repo: local
-    hooks:
-      - id: skylos-fail-on-findings
-        name: skylos
-        env:
-          SKYLOS_SOFT: "1"
-        language: python
-        language_version: python3
-        pass_filenames: false
-        require_serial: true
-        entry: >
-          python -c "import os, json, sys, pathlib;
-          p=pathlib.Path('report.json');
-
-          if not p.exists(): 
-            sys.exit(0);
-
-          data=json.loads(p.read_text(encoding='utf-8'));
-
-          count = 0
-          for v in data.values():
-            if isinstance(v, list):
-              count += len(v)
-
-          print(f'[skylos] findings: {count}');
-          sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"
-```
-**B: self-contained local hook**
-
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: skylos-scan
-        name: skylos report
-        language: python
-        entry: python -m skylos.cli
-        pass_filenames: false
-        require_serial: true
-        additional_dependencies: [skylos==2.2.3]
-        args: [".", "--output", "report.json", "--confidence", "70"]
-
-      - id: skylos-fail-on-findings
-        name: skylos (soft)
-        language: python
-        language_version: python3
-        pass_filenames: false
-        require_serial: true
-        entry: >
-          python -c "import os, json, sys, pathlib;
-          p=pathlib.Path('report.json');
-
-          if not p.exists(): 
-            sys.exit(0);
-
-          data=json.loads(p.read_text(encoding='utf-8'));
-
-          count = 0
-          for v in data.values():
-            if isinstance(v, list):
-              count += len(v)
-
-          print(f'[skylos] findings: {count}');
-          sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"
-```
-
-**Install requirements:**
-
-You must install pre-commit locally once:
-```bash
-pip install pre-commit
-pre-commit install
-```
-
-2. pre-commit run --all-files
-
-
-3. Run the same hooks in CI (GitHub Actions): create .github/workflows/pre-commit.yml:
-
-```yaml
-name: pre-commit
-on: [push, pull_request]
-jobs:
-  run:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11", cache: "pip" }
-      - uses: pre-commit/action@v3.0.1
-        with: { extra_args: --all-files }
-```
-
-**Pre commit behavior:** the second hook is soft by default (SKYLOS_SOFT=1). This means that it prints findings and passes. You can remove the env/logic if you want pre-commit to block commits on finding
-
-### Option B — Github Actions
-
-1. Create .github/workflows/skylos.yml:
+1. Create .github/workflows/skylos.yml **(COPY THE ENTIRE SKYLOS.YAML FROM BELOW)**:
 
 ```yaml
 name: Skylos Deadcode Scan
@@ -472,6 +359,121 @@ jobs:
 
 2. Add variable SKYLOS_STRICT with value true
 
+### Option B — Pre-commit (local + CI)
+
+. Create or edit `.pre-commit-config.yaml` at the repo root:
+
+**A: Skylos hook repo**
+```yaml
+## .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/duriantaco/skylos
+    rev: v2.2.4
+    hooks:
+      - id: skylos-scan
+        name: skylos report
+        entry: python -m skylos.cli
+        language: python
+        types_or: [python]
+        pass_filenames: false
+        require_serial: true
+        args: [".", "--output", "report.json", "--confidence", "70", "--danger"]
+
+  - repo: local
+    hooks:
+      - id: skylos-fail-on-findings
+        name: skylos
+        env:
+          SKYLOS_SOFT: "1"
+        language: python
+        language_version: python3
+        pass_filenames: false
+        require_serial: true
+        entry: >
+          python -c "import os, json, sys, pathlib;
+          p=pathlib.Path('report.json');
+
+          if not p.exists(): 
+            sys.exit(0);
+
+          data=json.loads(p.read_text(encoding='utf-8'));
+
+          count = 0
+          for v in data.values():
+            if isinstance(v, list):
+              count += len(v)
+
+          print(f'[skylos] findings: {count}');
+          sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"
+```
+**B: self-contained local hook**
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: skylos-scan
+        name: skylos report
+        language: python
+        entry: python -m skylos.cli
+        pass_filenames: false
+        require_serial: true
+        additional_dependencies: [skylos==2.2.4]
+        args: [".", "--output", "report.json", "--confidence", "70"]
+
+      - id: skylos-fail-on-findings
+        name: skylos (soft)
+        language: python
+        language_version: python3
+        pass_filenames: false
+        require_serial: true
+        entry: >
+          python -c "import os, json, sys, pathlib;
+          p=pathlib.Path('report.json');
+
+          if not p.exists(): 
+            sys.exit(0);
+
+          data=json.loads(p.read_text(encoding='utf-8'));
+
+          count = 0
+          for v in data.values():
+            if isinstance(v, list):
+              count += len(v)
+
+          print(f'[skylos] findings: {count}');
+          sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"
+```
+
+**Install requirements:**
+
+You must install pre-commit locally once:
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+2. pre-commit run --all-files
+
+
+3. Run the same hooks in CI (GitHub Actions): create .github/workflows/pre-commit.yml:
+
+```yaml
+name: pre-commit
+on: [push, pull_request]
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: "pip" }
+      - uses: pre-commit/action@v3.0.1
+        with: { extra_args: --all-files }
+```
+
+**Pre commit behavior:** the second hook is soft by default (SKYLOS_SOFT=1). This means that it prints findings and passes. You can remove the env/logic if you want pre-commit to block commits on finding
+
 ## Development
 
 ### Prerequisites
@@ -519,6 +521,9 @@ A: Web framework routes are given low confidence (20) because they might be call
 **Q: What confidence level should I use?**
 A: Start with 60 (default) for safe cleanup. Use 30 for framework applications. Use 20 for more comprehensive auditing.
 
+**Q: What does `--danger` check**?
+A: It flags common security problems. Refer to `DANGEROUS_CODE.md` for the full details
+
 ## Limitations
 
 - **Dynamic code**: `getattr()`, `globals()`, runtime imports are hard to detect
@@ -562,6 +567,7 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 - [x] CI/CD integration examples
 - [ ] Further optimization
 - [ ] Add new rules
+- [ ] Expanding on the `dangerous.py` list
 
 ## License
 
