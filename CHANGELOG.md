@@ -4,7 +4,7 @@
 
 ### Added
 
-- You can now download the plugin via 
+- You can now download the plugin via marketplace VSC
 - Added dangerous patterns scanner (from SKY-D201 -> D210). Results appear in JSON under dangerous
 - Danger flag for cli to trigger the dangerous pattern scanning `--danger`
 - Added test for danger script
