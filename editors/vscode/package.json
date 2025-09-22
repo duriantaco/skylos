@@ -1,0 +1,73 @@
+{
+  "name": "skylos-vscode-extension",
+  "displayName": "Skylos",
+  "description": "Inline dead code + optional secrets/dangerous findings powered by skylos --json.",
+  "version": "0.1.0",
+  "publisher": "oha",
+  "repository": { "type": "git", "url": "https://github.com/oha/skylos" },
+  "license": "Apache-2.0",
+  "engines": { "vscode": "^1.87.0" },
+  "categories": ["Linters"],
+  "activationEvents": [
+    "onStartupFinished", "onLanguage:python", "onCommand:skylos.scan"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "skylos.scan", "title": "Skylos: Scan Workspace" }
+    ],
+    "configuration": {
+      "title": "Skylos",
+      "properties": {
+        "skylos.path": {
+          "type": "string",
+          "default": "skylos",
+          "description": "Path to the skylos executable"
+        },
+        "skylos.confidence": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Confidence threshold, lower will show more"
+        },
+        "skylos.excludeFolders": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["venv", ".venv", "build", "dist", ".git", "__pycache__"],
+          "description": "Folders to exclude"
+        },
+        "skylos.enableSecrets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include secrets scanning"
+        },
+        "skylos.enableDanger": {
+          "type": "boolean",
+          "default": true,
+          "description": "Dangerous pattern checks when supported by your Skylos build"
+        },
+        "skylos.runOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto run skylos when you save the python file."
+        },
+        "skylos.showPopup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a toast after scans"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.87.0",
+    "typescript": "^5.0.0"
+  }
+}
