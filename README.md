@@ -4,6 +4,7 @@
 ![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 ![PyPI version](https://img.shields.io/pypi/v/skylos)
+![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
 ![Security Policy](https://img.shields.io/badge/security-policy-brightgreen)
 ![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
 
@@ -55,8 +56,8 @@
 * **Unused Imports**: Identifies imports that are not used
 * **Folder Management**: Inclusion/exclusion of directories 
 * **Ignore Pragmas**: Skip lines tagged with `# pragma: no skylos`, `# pragma: no cover`, or `# noqa`
-**NEW** **Secrets Scanning (PoC, opt-in)**: Detects API keys & secrets (GitHub, GitLab, Slack, Stripe, AWS, Google, SendGrid, Twilio, private key blocks)
-**NEW** **Dangerous Patterns**: Flags risky code such as `eval/exec`, `os.system`, `subprocess(shell=True)`, `pickle.load/loads`, `yaml.load` without SafeLoader, hashlib.md5/sha1. Refer to `DANGEROUS_CODE.md` for the whole list.
+* **NEW** **Secrets Scanning (PoC, opt-in)**: Detects API keys & secrets (GitHub, GitLab, Slack, Stripe, AWS, Google, SendGrid, Twilio, private key blocks)
+* **NEW** **Dangerous Patterns**: Flags risky code such as `eval/exec`, `os.system`, `subprocess(shell=True)`, `pickle.load/loads`, `yaml.load` without SafeLoader, hashlib.md5/sha1. Refer to `DANGEROUS_CODE.md` for the whole list.
 
 ## Benchmark (You can find this benchmark test in `test` folder)
 
