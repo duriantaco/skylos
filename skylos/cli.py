@@ -437,8 +437,8 @@ def main():
         print(f"unused items   : {total_unused}")
         if "secrets_count" in summ:
             print(f"secrets        : {summ['secrets_count']}")
-        if "dangerous_count" in summ:
-            print(f"security issues: {summ['dangerous_count']}")
+        if "danger_count" in summ:
+            print(f"security issues: {summ['danger_count']}")
         return
 
     if args.json:
