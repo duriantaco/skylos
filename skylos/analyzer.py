@@ -293,8 +293,10 @@ class Skylos:
                     findings = scan_danger(root, [file])
                     if findings:
                         all_dangers.extend(findings)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error scanning {file} for dangerous code: {e}")
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error(traceback.format_exc())
 
         self._mark_refs()
         self._apply_heuristics() 
