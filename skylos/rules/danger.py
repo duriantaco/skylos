@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from .danger_sql.sql_flow import scan as scan_sql
 from .danger_cmd.cmd_flow import scan as scan_cmd
+from .danger_sql.sql_raw_flow import scan as scan_sql_raw
+from .danger_net.ssrf_flow import scan as scan_ssrf
 
 ALLOWED_SUFFIXES = (".py", ".pyi", ".pyw")
 
@@ -91,6 +93,8 @@ def _scan_file(file_path: Path, findings):
     
     scan_sql(tree, file_path, findings)
     scan_cmd(tree, file_path, findings)
+    scan_sql_raw(tree, file_path, findings)
+    scan_ssrf(tree, file_path, findings)
     
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -123,7 +127,7 @@ def _scan_file(file_path: Path, findings):
             _add_finding(findings, file_path, node, rule_id, severity, message)
             break
 
-def scan_ctx(root, files):
+def scan_ctx( _, files):
     findings = []
 
     for file_path in files:
