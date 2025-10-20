@@ -9,7 +9,7 @@ from skylos.visitor import Visitor
 from skylos.constants import ( PENALTIES, AUTO_CALLED )
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
-from skylos.rules.danger import scan_ctx as scan_danger
+from skylos.rules.danger.danger import scan_ctx as scan_danger
 import os
 import traceback
 from skylos.visitors.framework_aware import FrameworkAwareVisitor, detect_framework_usage
@@ -392,71 +392,100 @@ def analyze(path, conf=60, exclude_folders=None, enable_secrets=False, enable_da
     return Skylos().analyze(path,conf, exclude_folders, enable_secrets, enable_danger)
 
 if __name__ == "__main__":
-    if len(sys.argv)>1:
-        p = sys.argv[1]
+    enable_secrets = ("--secrets" in sys.argv)
+    enable_danger  = ("--danger"  in sys.argv)
 
-        if len(sys.argv) > 2:
-            confidence = int(sys.argv[2])
-        else:
-            confidence = 60
+    positional = [a for a in sys.argv[1:] if not a.startswith("--")]
 
-        result = analyze(p,confidence)
+    if not positional:
+        print("Usage: python Skylos.py <path> [confidence_threshold] [--secrets] [--danger]")
+        sys.exit(2)
+
+    p = positional[0]
+    confidence = int(positional[1]) if len(positional) > 1 else 60
+
+    result = analyze(p, confidence, enable_secrets=enable_secrets, enable_danger=enable_danger)
         
-        data = json.loads(result)
-        print("\n Python Static Analysis Results")
-        print("===================================\n")
-        
-        total_items = 0
-        for key, items in data.items():
-            if key.startswith("unused_") and isinstance(items, list):
-                total_items += len(items)
-        
-        print("Summary:")
-        if data["unused_functions"]:
-            print(f" * Unreachable functions: {len(data['unused_functions'])}")
-        if data["unused_imports"]:
-            print(f" * Unused imports: {len(data['unused_imports'])}")
-        if data["unused_classes"]:
-            print(f" * Unused classes: {len(data['unused_classes'])}")
-        if data["unused_variables"]:
-            print(f" * Unused variables: {len(data['unused_variables'])}")
-        
-        if data["unused_functions"]:
-            print("\n - Unreachable Functions")
-            print("=======================")
-            for i, func in enumerate(data["unused_functions"], 1):
-                print(f" {i}. {func['name']}")
-                print(f"    └─ {func['file']}:{func['line']}")
-        
-        if data["unused_imports"]:
-            print("\n - Unused Imports")
-            print("================")
-            for i, imp in enumerate(data["unused_imports"], 1):
-                print(f" {i}. {imp['simple_name']}")
-                print(f"    └─ {imp['file']}:{imp['line']}")
-        
-        if data["unused_classes"]:
-            print("\n - Unused Classes")
-            print("=================")
-            for i, cls in enumerate(data["unused_classes"], 1):
-                print(f" {i}. {cls['name']}")
-                print(f"    └─ {cls['file']}:{cls['line']}")
-                
-        if data["unused_variables"]:
-            print("\n - Unused Variables")
-            print("==================")
-            for i, var in enumerate(data["unused_variables"], 1):
-                print(f" {i}. {var['name']}")
-                print(f"    └─ {var['file']}:{var['line']}")
-        
-        print("\n" + "─" * 50)
-        print(f"Found {total_items} dead code items. Add this badge to your README:")
-        print(f"```markdown")
-        print(f"![Dead Code: {total_items}](https://img.shields.io/badge/Dead_Code-{total_items}_detected-orange?logo=codacy&logoColor=red)")
-        print(f"```")
-        
-        print("\nNext steps:")
-        print("  * Use --interactive to select specific items to remove")
-        print("  * Use --dry-run to preview changes before applying them")
+    data = json.loads(result)
+    print("\n Python Static Analysis Results")
+    print("===================================\n")
+    
+    total_dead = 0
+    for key, items in data.items():
+        if key.startswith("unused_") and isinstance(items, list):
+            total_dead += len(items)
+
+    danger_count = data.get("analysis_summary", {}).get("danger_count", 0) if enable_danger else 0
+    secrets_count = data.get("analysis_summary", {}).get("secrets_count", 0) if enable_secrets else 0
+    
+    print("Summary:")
+    if data["unused_functions"]:
+        print(f" * Unreachable functions: {len(data['unused_functions'])}")
+    if data["unused_imports"]:
+        print(f" * Unused imports: {len(data['unused_imports'])}")
+    if data["unused_classes"]:
+        print(f" * Unused classes: {len(data['unused_classes'])}")
+    if data["unused_variables"]:
+        print(f" * Unused variables: {len(data['unused_variables'])}")
+    if enable_danger:
+        print(f" * Security issues: {danger_count}")
+    if enable_secrets:
+        print(f" * Secrets found: {secrets_count}")
+
+    if data["unused_functions"]:
+        print("\n - Unreachable Functions")
+        print("=======================")
+        for i, func in enumerate(data["unused_functions"], 1):
+            print(f" {i}. {func['name']}")
+            print(f"    └─ {func['file']}:{func['line']}")
+    
+    if data["unused_imports"]:
+        print("\n - Unused Imports")
+        print("================")
+        for i, imp in enumerate(data["unused_imports"], 1):
+            print(f" {i}. {imp['simple_name']}")
+            print(f"    └─ {imp['file']}:{imp['line']}")
+    
+    if data["unused_classes"]:
+        print("\n - Unused Classes")
+        print("=================")
+        for i, cls in enumerate(data["unused_classes"], 1):
+            print(f" {i}. {cls['name']}")
+            print(f"    └─ {cls['file']}:{cls['line']}")
+            
+    if data["unused_variables"]:
+        print("\n - Unused Variables")
+        print("==================")
+        for i, var in enumerate(data["unused_variables"], 1):
+            print(f" {i}. {var['name']}")
+            print(f"    └─ {var['file']}:{var['line']}")
+
+    if enable_danger and data.get("danger"):
+        print("\n - Security Issues")
+        print("================")
+        for i, f in enumerate(data["danger"], 1):
+            print(f" {i}. {f['message']} [{f['rule_id']}] ({f['file']}:{f['line']}) Severity: {f['severity']}")
+
+    if enable_secrets and data.get("secrets"):
+        print("\n - Secrets")
+        print("==========")
+        for i, s in enumerate(data["secrets"], 1):
+            rid = s.get("rule_id", "SECRET")
+            msg = s.get("message", "Potential secret")
+            file = s.get("file")
+            line = s.get("line", 1)
+            sev = s.get("severity", "HIGH")
+            print(f" {i}. {msg} [{rid}] ({file}:{line}) Severity: {sev}")
+    
+    print("\n" + "─" * 50)
+    if enable_danger:
+        print(f"Found {total_dead} dead code items and {danger_count} security flaws. Add this badge to your README:")
     else:
-        print("Usage: python Skylos.py <path> [confidence_threshold]")
+        print(f"Found {total_dead} dead code items. Add this badge to your README:")
+    print("```markdown")
+    print(f"![Dead Code: {total_dead}](https://img.shields.io/badge/Dead_Code-{total_dead}_detected-orange?logo=codacy&logoColor=red)")
+    print("```")
+    
+    print("\nNext steps:")
+    print("  * Use --interactive to select specific items to remove")
+    print("  * Use --dry-run to preview changes before applying them")
