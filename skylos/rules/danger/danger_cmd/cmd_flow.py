@@ -50,8 +50,8 @@ class _CmdFlowChecker(ast.NodeVisitor):
     def _push(self):
         self.env_stack.append({})
         
-    # def _pop(self):
-    #     popped = self.env_stack.pop()
+    def _pop(self):
+        popped = self.env_stack.pop() # pragma: no skylos
         
     def _set(self, name, tainted):
         if not self.env_stack:
@@ -116,8 +116,8 @@ class _CmdFlowChecker(ast.NodeVisitor):
         self.current_function = node.name
         self._push()
         
-        for arg in node.args.args:
-            self._set(arg.arg, True)
+        # for arg in node.args.args:
+        #     self._set(arg.arg, True)
         
         self._traverse_children(node)
         self._pop()
@@ -165,7 +165,7 @@ class _CmdFlowChecker(ast.NodeVisitor):
                 _add_finding(
                     self.findings, self.file_path, node,
                     "SKY-D212", "CRITICAL",
-                    "Possible command injection: string-built or tainted shell command."
+                    "Possible command injection (RCE): string-built or tainted shell command."
                 )
 
         if qn and qn.startswith(self.SUBPROC_PREFIX) and node.args:
@@ -184,7 +184,7 @@ class _CmdFlowChecker(ast.NodeVisitor):
                     _add_finding(
                         self.findings, self.file_path, node,
                         "SKY-D212", "CRITICAL",
-                        "Possible command injection: string-built or tainted command with shell=True."
+                        "Possible command injection (RCE): string-built or tainted command with shell=True."
                     )
 
         self._traverse_children(node)
