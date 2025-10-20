@@ -159,19 +159,25 @@ def interactive_selection(logger, unused_functions, unused_imports):
     
     return selected_functions, selected_imports
 
-def print_badge(dead_code_count: int, logger):
+def print_badge(dead_code_count, logger, *, danger_enabled = False, danger_count = 0):
     logger.info(f"\n{Colors.GRAY}{'─' * 50}{Colors.RESET}")
     
-    if dead_code_count == 0:
-        logger.info(f" Your code is 100% dead code free! Add this badge to your README:")
+    if dead_code_count == 0 and (not danger_enabled or danger_count == 0):
+        logger.info(" Your code is 100% dead code free! Add this badge to your README:")
         logger.info("```markdown")
         logger.info("![Dead Code Free](https://img.shields.io/badge/Dead_Code-Free-brightgreen?logo=moleculer&logoColor=white)")
         logger.info("```")
+        return
+
+    if danger_enabled:
+        logger.info(f"Found {dead_code_count} dead code items and {danger_count} security flaws. Add this badge to your README:")
     else:
         logger.info(f"Found {dead_code_count} dead code items. Add this badge to your README:")
-        logger.info("```markdown")  
-        logger.info(f"![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange?logo=codacy&logoColor=red)")
-        logger.info("```")
+
+    logger.info("```markdown")  
+    logger.info(f"![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange?logo=codacy&logoColor=red)")
+    logger.info("```")
+
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == 'run':
@@ -616,7 +622,13 @@ def main():
 
         dead_code_count = len(unused_functions) + len(unused_imports) + len(unused_variables) + len(unused_classes) + len(unused_parameters)
 
-        print_badge(dead_code_count, logger)
+        danger_count = len(danger_findings) if args.danger else 0
+        print_badge(
+            dead_code_count,
+            logger,
+            danger_enabled=bool(args.danger),
+            danger_count=danger_count,
+        )
 
         if unused_functions or unused_imports:
             logger.info(f"\n{Colors.BOLD}Next steps:{Colors.RESET}")
