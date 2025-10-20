@@ -1,5 +1,16 @@
 ## Changelog
 
+## [2.4.0] - 2025-10-14
+
+### Added
+
+- SKY-D211 (CRITICAL) + test –> SQL injection (cursor): tainted/string-built SQL into .execute etc
+- SKY-D217 (CRITICAL) -> SQL injection (raw-api): tainted SQL 
+- SKY-D216 (CRITICAL) + test –> SSRF: tainted URL into HTTP clients 
+- SKY-D215 (HIGH) + test –> Path traversal: tainted file path into open(...), os.* etc
+- SKY-D212 (CRITICAL) + test –> Cmd injection: tainted command to os.system(...) or subprocess.*(...).
+- Added new UI materials into the VSC extension
+
 ## [2.3.0] - 2025-09-22
 
 ### Added
