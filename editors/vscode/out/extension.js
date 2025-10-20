@@ -7,9 +7,16 @@ const child_process_1 = require("child_process");
 const path = require("path");
 const collection = vscode.languages.createDiagnosticCollection("skylos");
 const out = vscode.window.createOutputChannel("skylos");
+let statusBarItem;
 function activate(context) {
     context.subscriptions.push(collection);
     out.appendLine("Skylos extension activated");
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    statusBarItem.command = "skylos.scan";
+    statusBarItem.text = "$(shield) Skylos";
+    statusBarItem.tooltip = "Click to scan with Skylos";
+    statusBarItem.show();
+    context.subscriptions.push(statusBarItem);
     context.subscriptions.push(vscode.commands.registerCommand("skylos.scan", runSkylos));
     if (vscode.workspace.getConfiguration().get("skylos.runOnSave")) {
         context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(doc => {
@@ -25,6 +32,9 @@ function deactivate() {
 }
 async function runSkylos() {
     collection.clear();
+    out.clear();
+    out.appendLine("=".repeat(60));
+    out.appendLine("Starting Skylos scan...");
     const ws = vscode.workspace.workspaceFolders?.[0];
     if (!ws) {
         vscode.window.showWarningMessage("Skylos: open a folder to scan.");
@@ -72,9 +82,23 @@ async function runSkylos() {
         const uri = vscode.Uri.file(filePath);
         collection.set(uri, diags);
     }
+    printDetailedReport(report, ws.uri.fsPath);
     const total = [...byFile.values()].reduce((n, d) => n + d.length, 0);
-    vscode.window.setStatusBarMessage(`Skylos: ${total} findings`, 3500);
-    vscode.window.showInformationMessage(total > 0 ? `Skylos found ${total} issue(s) (dead code, secrets, dangerous).` : "Skylos found no issues.");
+    if (total > 0) {
+        statusBarItem.text = `$(alert) Skylos: ${total}`;
+        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+        vscode.window.setStatusBarMessage(`Skylos: ${total} findings`, 5000);
+        const action = await vscode.window.showWarningMessage(`Skylos found ${total} issue(s)`, "Show Details", "Dismiss");
+        if (action === "Show Details") {
+            out.show();
+        }
+    }
+    else {
+        statusBarItem.text = "$(check) Skylos";
+        statusBarItem.backgroundColor = undefined;
+        vscode.window.setStatusBarMessage("Skylos: no issues", 5000);
+        vscode.window.showInformationMessage("Skylos found no issues.");
+    }
 }
 function toDiagnostics(report) {
     const map = new Map();
@@ -130,6 +154,73 @@ function runCommand(cmd, args, opts) {
             resolve({ stdout, stderr });
         });
     });
+}
+function printDetailedReport(report, workspaceRoot) {
+    out.appendLine("");
+    out.appendLine("=".repeat(60));
+    out.appendLine("DETAILED RESULTS");
+    out.appendLine("=".repeat(60));
+    const allFindings = [];
+    (report.danger || []).forEach(f => allFindings.push({ category: "SECURITY", finding: f }));
+    (report.secrets || []).forEach(f => allFindings.push({ category: "SECRETS", finding: f }));
+    const addUnused = (arr, type) => {
+        (arr || []).forEach(u => {
+            if (u?.file) {
+                allFindings.push({
+                    category: "DEAD CODE",
+                    finding: {
+                        message: `Unused ${type}: ${u.name ?? u.simple_name ?? ""}`,
+                        file: u.file,
+                        line: u.line ?? u.lineno ?? 1,
+                        severity: "INFO"
+                    }
+                });
+            }
+        });
+    };
+    addUnused(report.unused_functions || [], "function");
+    addUnused(report.unused_imports || [], "import");
+    addUnused(report.unused_classes || [], "class");
+    addUnused(report.unused_variables || [], "variable");
+    addUnused(report.unused_parameters || [], "parameter");
+    if (allFindings.length === 0) {
+        out.appendLine("No issues found.");
+        return;
+    }
+    const byCategory = new Map();
+    allFindings.forEach(({ category, finding }) => {
+        const severity = finding.severity?.toUpperCase() || "INFO";
+        if (!byCategory.has(category)) {
+            byCategory.set(category, new Map());
+        }
+        const catMap = byCategory.get(category);
+        if (!catMap.has(severity)) {
+            catMap.set(severity, []);
+        }
+        catMap.get(severity).push(finding);
+    });
+    const severityOrder = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+    for (const [category, severityMap] of byCategory) {
+        out.appendLine("");
+        out.appendLine(`${category}`);
+        out.appendLine("-".repeat(60));
+        const sorted = [...severityMap.keys()].sort((a, b) => severityOrder.indexOf(a) - severityOrder.indexOf(b));
+        for (const severity of sorted) {
+            const findings = severityMap.get(severity) || [];
+            out.appendLine("");
+            out.appendLine(`  ${severity} (${findings.length})`);
+            findings.forEach((f, idx) => {
+                const relPath = path.relative(workspaceRoot, f.file);
+                const ruleId = f.rule_id ? `[${f.rule_id}] ` : "";
+                const location = `${relPath}:${f.line}${f.col ? `:${f.col}` : ""}`;
+                out.appendLine(` ${idx + 1}. ${ruleId}${f.message}`);
+                out.appendLine(` File: ${location}`);
+            });
+        }
+    }
+    out.appendLine("");
+    out.appendLine("=".repeat(60));
+    out.appendLine(`Total: ${allFindings.length} issue(s)`);
 }
 class IgnoreLineQuickFix {
     provideCodeActions(doc, _range, ctx) {
