@@ -28,7 +28,7 @@
 - [Web Interface](#web-interface)
 - [Design](#design)
 - [Test File Detection](#test-file-detection)
-- [Folder Management](#folder-management)
+- [Vibe Coding](#vibe-coding)
 - [Ignoring Pragmas](#ignoring-pragmas)
 - [Including & Excluding Files](#including--excluding-files)
 - [CLI Options](#cli-options)
@@ -57,7 +57,7 @@
 * **Folder Management**: Inclusion/exclusion of directories 
 * **Ignore Pragmas**: Skip lines tagged with `# pragma: no skylos`, `# pragma: no cover`, or `# noqa`
 * **NEW** **Secrets Scanning (PoC, opt-in)**: Detects API keys & secrets (GitHub, GitLab, Slack, Stripe, AWS, Google, SendGrid, Twilio, private key blocks)
-* **NEW** **Dangerous Patterns**: Flags risky code such as `eval/exec`, `os.system`, `subprocess(shell=True)`, `pickle.load/loads`, `yaml.load` without SafeLoader, hashlib.md5/sha1. Refer to `DANGEROUS_CODE.md` for the whole list.
+* **NEW** **Dangerous Patterns**: Flags risky code such as `eval/exec`, `os.system`, `subprocess(shell=True)`, `pickle.load/loads`, `yaml.load` without SafeLoader, hashlib.md5/sha1. Refer to `DANGEROUS_CODE.md` for the whole list. This includes SQL injection, path traversal and any other security flaws that may arise from the practise of vibe-coding. 
 
 ## Benchmark (You can find this benchmark test in `test` folder)
 
@@ -207,6 +207,49 @@ When Skylos detects a test file, it by default, will apply a confidence penalty 
 /project/user.py
 /project/test_data.py 
 ```
+
+## Vibe-Coding
+
+We are aware that vibe coding has created a lot of vulnerabilities. To an AI, it's job is to spit out a list of tokens with the highest probability, whether it's right or not. This may introduce vulnerabilities in their applications. We have expanded Skylos to catch the most important problems first. 
+
+- SQL injection (cursor)
+- SQL injection (raw-API)
+- Command injection
+- SSRF
+- Path traversal
+- eval/exec
+- pickle.load/loads
+- yaml.load w/o SafeLoader
+- weak hashes MD5/SHA1
+- subprocess(..., shell=True)
+- requests(..., verify=False)
+
+### Quick Start
+
+```bash
+skylos /path/to/your/project --danger
+```
+
+### Examples that will be flagged
+
+```
+# SQLi (cursor)
+cur.execute(f"SELECT * FROM users WHERE name='{name}'")
+
+# SQLi (raw-api)
+pd.read_sql("SELECT * FROM users WHERE name='" + q + "'", conn)
+
+# Command injection
+os.system("zip -r out.zip " + folder)
+
+# SSRF
+requests.get(request.args["url"], timeout=3)
+
+# Path traversal
+with open(request.args.get("p"), "r") as f: ...
+```
+
+This list will be expanded in the near future. For more information, refer to `DANGEROUS_CODE.md` 
 
 ## Ignoring Pragmas
 
@@ -377,7 +420,7 @@ jobs:
 ## .pre-commit-config.yaml
 repos:
   - repo: https://github.com/duriantaco/skylos
-    rev: v2.3.0
+    rev: v2.4.0
     hooks:
       - id: skylos-scan
         name: skylos report
@@ -427,7 +470,7 @@ repos:
         entry: python -m skylos.cli
         pass_filenames: false
         require_serial: true
-        additional_dependencies: [skylos==2.3.0]
+        additional_dependencies: [skylos==2.4.0]
         args: [".", "--output", "report.json", "--confidence", "70"]
 
       - id: skylos-fail-on-findings
