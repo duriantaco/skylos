@@ -6,21 +6,20 @@ from .danger_sql.sql_flow import scan as scan_sql
 from .danger_cmd.cmd_flow import scan as scan_cmd
 from .danger_sql.sql_raw_flow import scan as scan_sql_raw
 from .danger_net.ssrf_flow import scan as scan_ssrf
+from .danger_fs.path_flow import scan as scan_path
+from .danger_web.xss_flow import scan as scan_xss
 
 ALLOWED_SUFFIXES = (".py", ".pyi", ".pyw")
 
 DANGEROUS_CALLS = {
     "eval": ("SKY-D201", "HIGH", "Use of eval()"),
     "exec": ("SKY-D202", "HIGH", "Use of exec()"),
-    "os.system": ("SKY-D203", "MEDIUM", "Use of os.system"),
-    "pickle.load": ("SKY-D204", "CRITICAL", "Untrusted deserialization via pickle.load"),
-    "pickle.loads": ("SKY-D205", "CRITICAL", "Untrusted deserialization via pickle.loads"),
-    "yaml.load": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
-    "hashlib.md5": ("SKY-D207", "MEDIUM", "Weak hash (MD5)"),
-    "hashlib.sha1": ("SKY-D208", "MEDIUM", "Weak hash (SHA1)"),
-    "subprocess.*": ("SKY-D209", "HIGH", "subprocess.* with shell=True",
-                     {"kw_equals": {"shell": True}}),
-    "requests.*": ("SKY-D210", "HIGH", "requests call with verify=False",
+    "pickle.load": ("SKY-D203", "CRITICAL", "Untrusted deserialization via pickle.load"),
+    "pickle.loads": ("SKY-D204", "CRITICAL", "Untrusted deserialization via pickle.loads"),
+    "yaml.load": ("SKY-D205", "HIGH", "yaml.load without SafeLoader"),
+    "hashlib.md5": ("SKY-D206", "MEDIUM", "Weak hash (MD5)"),
+    "hashlib.sha1": ("SKY-D207", "MEDIUM", "Weak hash (SHA1)"),
+    "requests.*": ("SKY-D208", "HIGH", "requests call with verify=False",
                    {"kw_equals": {"verify": False}}),
 }
 
@@ -43,7 +42,7 @@ def _kw_equals(node: ast.Call, requirements):
         val = kw_map.get(key)
         if not isinstance(val, ast.Constant):
             return False
-        if val.value is not expected:
+        if val.value != expected:
             return False
     return True
 
@@ -57,8 +56,6 @@ def qualified_name_from_call(node: ast.Call):
         parts.append(func.id)
         parts.reverse()
         return ".".join(parts)
-    if isinstance(func, ast.Name):
-        return func.id
     return None
 
 def _yaml_load_without_safeloader(node: ast.Call):
@@ -95,6 +92,8 @@ def _scan_file(file_path: Path, findings):
     scan_cmd(tree, file_path, findings)
     scan_sql_raw(tree, file_path, findings)
     scan_ssrf(tree, file_path, findings)
+    scan_path(tree, file_path, findings)
+    scan_xss(tree, file_path, findings)
     
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
