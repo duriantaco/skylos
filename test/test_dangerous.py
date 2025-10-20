@@ -1,5 +1,5 @@
 from pathlib import Path
-from skylos.rules.danger import scan_ctx
+from skylos.rules.danger.danger import scan_ctx
 
 def _write(tmp_path: Path, name, code):
     p = tmp_path / name
@@ -68,3 +68,34 @@ def test_requests_default_verify_true_is_ok(tmp_path):
     code = "import requests\nrequests.get('https://example.com')\n"
     out = _scan_one(tmp_path, "b_requests_ok.py", code)
     assert "SKY-D210" not in _rule_ids(out)
+
+def test_sql_execute_interpolated_flags(tmp_path):
+    code = """
+def f(cur, name):
+    # f-string interpolation -> should flag SKY-D211
+    cur.execute(f"SELECT * FROM users WHERE name = '{name}'")
+"""
+    out = _scan_one(tmp_path, "sql_interp.py", code)
+    assert "SKY-D211" in _rule_ids(out)
+
+
+def test_sql_execute_parameterized_ok(tmp_path):
+    code = """
+def f(cur, name):
+    cur.execute("SELECT * FROM users WHERE name = %s", (name,))
+"""
+    out = _scan_one(tmp_path, "sql_param_ok.py", code)
+    assert "SKY-D211" not in _rule_ids(out)
+
+
+def test_sql_executescript_or_executemany_interpolated_flags(tmp_path):
+    code = """
+def g(cur, tbl):
+    cur.executescript("CREATE TABLE " + tbl)
+
+def h(cur, values):
+    cur.executemany("INSERT INTO t (a,b) VALUES (" + values + ")", [])
+"""
+    out = _scan_one(tmp_path, "sql_execscripts.py", code)
+    ids = _rule_ids(out)
+    assert "SKY-D211" in ids
