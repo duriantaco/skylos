@@ -4,16 +4,17 @@ import sys
 
 def _qualified_name_from_call(node):
     func = node.func
+
     parts = []
     while isinstance(func, ast.Attribute):
         parts.append(func.attr)
         func = func.value
+
     if isinstance(func, ast.Name):
         parts.append(func.id)
         parts.reverse()
         return ".".join(parts)
-    if isinstance(func, ast.Name):
-        return func.id
+    
     return None
 
 def _is_interpolated_string(node):
@@ -37,6 +38,33 @@ def _add_finding(findings, file_path, node, rule_id, severity, message):
         "col": getattr(node, "col_offset", 0),
     })
 
+def is_passthrough_return(node: ast.AST, parameter_names):
+    """
+    boolean checking if the return node is directly returning a parameter
+    returns true/false
+    """
+    if isinstance(node, ast.Name):
+        if node.id in parameter_names:
+            return True
+
+    if isinstance(node, ast.JoinedStr):
+        for part in node.values:
+            if isinstance(part, ast.FormattedValue) and isinstance(part.value, ast.Name):
+                if part.value.id in parameter_names:
+                    return True
+
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr == "format":
+            return True
+
+    if isinstance(node, ast.BinOp):
+        return True
+
+    return False
+
+def function_name(node: ast.FunctionDef | ast.AsyncFunctionDef):
+    return node.name
+
 class _CmdFlowChecker(ast.NodeVisitor):
     OS_SYSTEM = "os.system"
     SUBPROC_PREFIX = "subprocess."
@@ -46,6 +74,7 @@ class _CmdFlowChecker(ast.NodeVisitor):
         self.findings = findings
         self.env_stack = [{}]
         self.current_function = None
+        self.passthrough_functions = set()
 
     def _push(self):
         self.env_stack.append({})
@@ -66,13 +95,11 @@ class _CmdFlowChecker(ast.NodeVisitor):
         return False
 
     def _tainted(self, node):
-        
         if _is_interpolated_string(node):
             if isinstance(node, ast.JoinedStr):
                 for value in node.values:
-                    if isinstance(value, ast.FormattedValue):
-                        if self._tainted(value.value):
-                            return True
+                    if isinstance(value, ast.FormattedValue) and self._tainted(value.value):
+                        return True
             return True
 
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "input":
@@ -86,13 +113,11 @@ class _CmdFlowChecker(ast.NodeVisitor):
                 return True
 
         if isinstance(node, ast.Name):
-            result = self._get(node.id)
-            return result
+            return self._get(node.id)
 
         if isinstance(node, (ast.Attribute, ast.Subscript)):
             target_value = node.value
-            result = self._tainted(target_value)
-            return result
+            return self._tainted(target_value)
 
         if isinstance(node, ast.BinOp):
             left = self._tainted(node.left)
@@ -104,6 +129,18 @@ class _CmdFlowChecker(ast.NodeVisitor):
             for arg in node.args:
                 if self._tainted(arg):
                     return True
+            for keyword in (node.keywords or []):
+                if self._tainted(keyword.value):
+                    return True
+
+            qual_name = _qualified_name_from_call(node)
+            if qual_name and qual_name in self.passthrough_functions:
+                for arg in node.args:
+                    if self._tainted(arg):
+                        return True
+                for keyword in (node.keywords or []):
+                    if self._tainted(keyword.value):
+                        return True
             return False
 
         return False
@@ -115,10 +152,21 @@ class _CmdFlowChecker(ast.NodeVisitor):
     def visit_FunctionDef(self, node):
         self.current_function = node.name
         self._push()
-        
-        # for arg in node.args.args:
-        #     self._set(arg.arg, True)
-        
+ 
+        parameter_names = set()
+        for arg in node.args.args:
+            parameter_names.add(arg.arg)
+
+        for stmt in node.body:
+            if isinstance(stmt, ast.Return):
+                return_value = stmt.value
+                if return_value is not None:
+                    if is_passthrough_return(return_value, parameter_names):
+                        fn_name = function_name(node)
+                        self.passthrough_functions.add(fn_name)
+                        break
+
+
         self._traverse_children(node)
         self._pop()
         self.current_function = None
@@ -153,39 +201,77 @@ class _CmdFlowChecker(ast.NodeVisitor):
             self._set(node.target.id, taint)
         self._traverse_children(node)
 
+    def iter_argv_elements(self, expr: ast.AST):
+        if isinstance(expr, (ast.List, ast.Tuple)):
+            for element in expr.elts:
+                yield element
+        else:
+            yield expr
+
+    def looks_shell_like(self, head_literals):
+        shells = {"sh", "bash", "zsh", "ksh", "cmd", "powershell", "pwsh"}
+        for value in head_literals[:2]:
+            if value in shells:
+                return True
+        return False
+
     def visit_Call(self, node):
-        qn = _qualified_name_from_call(node)
+        qual_name = _qualified_name_from_call(node)
 
-        if qn == self.OS_SYSTEM and node.args:
+        if qual_name == self.OS_SYSTEM and node.args:
             arg0 = node.args[0]
-            is_interp = _is_interpolated_string(arg0)
-            is_taint = self._tainted(arg0)
-          
-            if is_interp or is_taint:
-                _add_finding(
-                    self.findings, self.file_path, node,
-                    "SKY-D212", "CRITICAL",
-                    "Possible command injection (RCE): string-built or tainted shell command."
-                )
+            if _is_interpolated_string(arg0) or self._tainted(arg0):
+                _add_finding(self.findings, self.file_path, node,
+                            "SKY-D212", "CRITICAL",
+                            "Possible command injection (RCE): string-built or tainted shell command.")
+            self._traverse_children(node)
+            return
 
-        if qn and qn.startswith(self.SUBPROC_PREFIX) and node.args:
+        if qual_name and qual_name.startswith(self.SUBPROC_PREFIX):
             shell_true = False
             for kw in (node.keywords or []):
                 if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
                     shell_true = True
                     break
-                        
+
+            argv_expr = None
+            if node.args:
+                argv_expr = node.args[0]
+            for kw in (node.keywords or []):
+                if kw.arg == "args" and kw.value is not None:
+                    argv_expr = kw.value
+                    break
+
+            tainted_elem = False
+            shellish = False
+            if argv_expr is not None:
+                elements = list(self.iter_argv_elements(argv_expr))
+
+                for element in elements:
+                    if _is_interpolated_string(element):
+                        tainted_elem = True
+                        break
+                    if self._tainted(element):
+                        tainted_elem = True
+                        break
+
+                literal_heads: list[str] = []
+                for element in elements[:2]:
+                    if isinstance(element, ast.Constant) and isinstance(element.value, str):
+                        literal_heads.append(element.value.lower())
+
+                shellish = self.looks_shell_like(literal_heads)
+
             if shell_true:
-                arg0 = node.args[0]
-                is_interp = _is_interpolated_string(arg0)
-                is_taint = self._tainted(arg0)
-        
-                if is_interp or is_taint:
-                    _add_finding(
-                        self.findings, self.file_path, node,
-                        "SKY-D212", "CRITICAL",
-                        "Possible command injection (RCE): string-built or tainted command with shell=True."
-                    )
+                if tainted_elem:
+                    _add_finding(self.findings, self.file_path, node,
+                                "SKY-D212", "CRITICAL",
+                                "Possible command injection (RCE): tainted command with shell=True.")
+            else:
+                if tainted_elem or shellish:
+                    _add_finding(self.findings, self.file_path, node,
+                                "SKY-D212", "CRITICAL",
+                                "Possible command injection (RCE): tainted argv element or shell-like list invocation.")
 
         self._traverse_children(node)
 
