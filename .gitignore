@@ -1,5 +1,6 @@
 /target/
-**/*.rs.bk                     
+**/*.rs.bk    
+.DS_Store                 
 *.dSYM/ 
 /Cargo.lock
 /venv/
