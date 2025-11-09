@@ -35,6 +35,7 @@ class FrameworkAwareVisitor:
         self.pydantic_models = set()
         self._mark_functions = set()
         self._mark_classes = set()
+        self.declarative_classes = set() 
         self._mark_cbv_http_methods = set()
         self._type_refs_in_routes = set()
         if filename:
@@ -132,9 +133,19 @@ class FrameworkAwareVisitor:
         if is_view_like:
             self.is_framework_file = True
             self._mark_cbv_http_methods.add(node.name)
+
         if is_pydantic:
             self.pydantic_models.add(node.name)
+            self.declarative_classes.add(node.name)
             self.is_framework_file = True
+            
+        else:
+            for base in bases:
+                tail = base.split(".")[-1]
+                if tail in ("schema", "model"):
+                    self.declarative_classes.add(node.name)
+                    break
+
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign):
