@@ -120,11 +120,26 @@ class Visitor(ast.NodeVisitor):
             for tok in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", annotation_str):
                 self.add_ref(tok)
 
+    # def visit_Import(self, node):
+    #     for a in node.names:
+    #         full= a.name
+    #         self.alias[a.asname or a.name.split(".")[-1]]= full
+    #         self.add_def(full,"import",node.lineno)
+
     def visit_Import(self, node):
         for a in node.names:
-            full= a.name
-            self.alias[a.asname or a.name.split(".")[-1]]= full
-            self.add_def(full,"import",node.lineno)
+            full = a.name
+
+            if a.asname:
+                alias_name = a.asname
+                target = full
+            else:
+                head = full.split(".", 1)[0]
+                alias_name = head
+                target = head
+
+            self.alias[alias_name] = target
+            self.add_def(target, "import", node.lineno)
 
     def visit_ImportFrom(self, node):
         if node.module is None:
