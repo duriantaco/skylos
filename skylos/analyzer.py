@@ -123,11 +123,24 @@ class Skylos:
             candidates = simple_name_lookup.get(simple, [])
 
             if ref_mod:
-                filtered = []
-                for d in candidates:
-                    if d.name.startswith(ref_mod + ".") and d.type != "import":
-                        filtered.append(d)
-                candidates = filtered
+                if ref_mod in ("cls", "self"):
+                   
+                    cls_candidates = []
+                    for d in candidates:
+                        if d.type == "variable" and "." in d.name:
+                            cls_candidates.append(d)
+
+                    if cls_candidates:
+                        for d in cls_candidates:
+                            d.references += 1
+                        continue  
+
+                else:
+                    filtered = []
+                    for d in candidates:
+                        if d.name.startswith(ref_mod + ".") and d.type != "import":
+                            filtered.append(d)
+                    candidates = filtered
             else:
                 filtered = []
                 for d in candidates:
@@ -137,6 +150,16 @@ class Skylos:
 
             if len(candidates) == 1:
                 candidates[0].references += 1
+                continue
+            
+            non_import_defs = []
+            for d in simple_name_lookup.get(simple, []):
+                if d.type != "import":
+                    non_import_defs.append(d)
+
+            if len(non_import_defs) == 1:
+                non_import_defs[0].references += 1
+                continue
 
         for module_name in self.dynamic:
             for def_name, def_obj in self.defs.items():
@@ -185,10 +208,55 @@ class Skylos:
             if def_obj.name in framework.dataclass_fields:
                 def_obj.confidence = 0
                 return
-            
+        
+        if def_obj.type == "variable" and "." in def_obj.name:
+            prefix, _ = def_obj.name.rsplit(".", 1)
+
+            cls_def = self.defs.get(prefix)
+            if cls_def and cls_def.type == "class":
+                cls_simple = cls_def.simple_name
+
+                if getattr(framework, "pydantic_models", None) and cls_simple in framework.pydantic_models:
+                    def_obj.confidence = 0
+                    return
+
+                cls_node = getattr(framework, "class_defs", {}).get(cls_simple)
+                if cls_node is not None:
+                    schema_like = False
+
+                    for base in cls_node.bases:
+                        if isinstance(base, ast.Name) and base.id.lower().endswith(("schema", "model")):
+                            schema_like = True
+                            break
+
+                        if isinstance(base, ast.Attribute) and base.attr.lower().endswith(("schema", "model")):
+                            schema_like = True
+                            break
+
+                    if schema_like:
+                        def_obj.confidence = 0
+                        return
+                    
+     
         if def_obj.type == "variable":
             fr = getattr(framework, "first_read_lineno", {}).get(def_obj.name)
             if fr is not None and fr >= def_obj.line:
+                def_obj.confidence = 0
+                return
+        
+        if def_obj.type == "variable" and "." in def_obj.name:
+            _, attr = def_obj.name.rsplit(".", 1)
+
+            for other in self.defs.values():
+                if other is def_obj:
+                    continue
+                if other.type != "variable":
+                    continue
+                if "." not in other.name:
+                    continue
+                if other.simple_name != attr:
+                    continue
+
                 def_obj.confidence = 0
                 return
         
@@ -264,17 +332,46 @@ class Skylos:
         
         all_secrets = []
         all_dangers = []
+        file_contexts = []
+
         for file in files:
             mod = modmap[file]
             defs, refs, dyn, exports, test_flags, framework_flags = proc_file(file, mod)
 
             for definition in defs:
-                self._apply_penalties(definition, test_flags, framework_flags) 
                 self.defs[definition.name] = definition
 
             self.refs.extend(refs)
             self.dynamic.update(dyn)
             self.exports[mod].update(exports)
+
+            file_contexts.append((defs, test_flags, framework_flags, file, mod))
+
+            if enable_secrets and _secrets_scan_ctx is not None:
+                try:
+                    src = Path(file).read_text(encoding="utf-8", errors="ignore")
+                    src_lines = src.splitlines(True)
+                    rel = str(Path(file).relative_to(root))
+                    ctx = {"relpath": rel, "lines": src_lines, "tree": None}
+                    findings = list(_secrets_scan_ctx(ctx))
+                    if findings:
+                        all_secrets.extend(findings)
+                except Exception:
+                    pass
+
+            if enable_danger and scan_danger is not None:
+                try:
+                    findings = scan_danger(root, [file])
+                    if findings:
+                        all_dangers.extend(findings)
+                except Exception as e:
+                    logger.error(f"Error scanning {file} for dangerous code: {e}")
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error(traceback.format_exc())
+
+        for defs, test_flags, framework_flags, file, mod in file_contexts:
+            for definition in defs:
+                self._apply_penalties(definition, test_flags, framework_flags)
 
             if enable_secrets and _secrets_scan_ctx is not None:
                 try:
