@@ -2,6 +2,15 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+"""
+Rule ID: SKY-Q302
+Trigger: max nesting depth > threshold (default 3)
+Why: Deep nesting hurts readability/testability
+Fix: Use guard clauses / early returns / extract helpers / invert conditions
+"""
+
+RULE_ID = "SKY-Q302"
+
 NEST_NODES = (ast.If, ast.For, ast.While, ast.Try, ast.With)
 
 def _max_depth(nodes, depth=0):
@@ -85,6 +94,7 @@ def scan_nesting(ctx, threshold=3):
                 severity = "CRITICAL"
             
             yield {
+                "rule_id": RULE_ID,
                 "kind": "nesting",
                 "type": "function",
                 "name": full_name,

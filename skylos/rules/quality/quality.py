@@ -19,7 +19,7 @@ def _scan_file(root, file):
         q.setdefault("rule_id", "QUALITY_COMPLEXITY")
         findings.append(q)
 
-    for q in (scan_nesting(ctx, threshold=2) or []):
+    for q in (scan_nesting(ctx, threshold=3) or []):
         q.setdefault("rule_id", "QUALITY_NESTING")
         findings.append(q)
 
