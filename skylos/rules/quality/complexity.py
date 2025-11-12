@@ -1,6 +1,15 @@
 import ast
 from pathlib import Path
 
+"""
+Rule ID: SKY-Q301
+Trigger: Cyclomatic complexity > threshold (default 10)
+Why: Too many branches/paths can increase bug risk
+Fix: Use guard clauses / early returns, extract helpers, simplify boolean logic
+"""
+
+RULE_ID = "SKY-Q301" 
+
 _COMPLEX_NODES = (
     ast.If,
     ast.For,
@@ -57,9 +66,8 @@ def scan_complex_functions(ctx, threshold=10):
 
             length = _func_length(node)
 
-
-
             items.append({
+                "rule_id": RULE_ID,
                 "kind": "complexity",
                 "type": "function",
                 "name": f"{mod}.{node.name}" if mod else node.name,
@@ -81,6 +89,5 @@ def scan_complex_functions(ctx, threshold=10):
                 "message": f"Function is complex (McCabe={complexity} ≥ {threshold}). "
                         f"Consider splitting loops/branches or extracting helpers.",
             })
-
 
     return items
