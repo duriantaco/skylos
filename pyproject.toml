@@ -8,7 +8,11 @@ version = "2.4.0"
 requires-python = ">=3.9"
 description = "A static analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
-dependencies = ["inquirer>=3.0.0", "flask>=2.1.1", "flask-cors>=3.0.0", "libcst>=1.8.2"]
+dependencies = ["inquirer>=3.0.0", 
+                "flask>=2.1.1",
+                "flask-cors>=3.0.0", 
+                "libcst>=1.8.2",
+                "rich>=14.0.0"]
 
 [project.scripts]
 skylos = "skylos.cli:main"
