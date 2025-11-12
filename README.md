@@ -29,6 +29,7 @@
 - [Design](#design)
 - [Test File Detection](#test-file-detection)
 - [Vibe Coding](#vibe-coding)
+- [Quality](#quality)
 - [Ignoring Pragmas](#ignoring-pragmas)
 - [Including & Excluding Files](#including--excluding-files)
 - [CLI Options](#cli-options)
@@ -250,6 +251,51 @@ with open(request.args.get("p"), "r") as f: ...
 ```
 
 This list will be expanded in the near future. For more information, refer to `DANGEROUS_CODE.md` 
+
+## Quality
+
+### Code Quality
+
+Static checks that highlight functions likely to be hard to maintain (even if they're not "dead code"). Off by default. You can enable with `--quality`.
+
+### What it checks
+
+Cyclomatic complexity (a.k.a. “McCabe”): counts your decision points (ifs, loops, try/except, comprehensions, boolean ops, etc.).
+
+Nesting depth: how many levels deep your control-flow is. Deeply nested code is harder to read and refactor.
+
+### How to run
+
+`skylos /path/to/your/project --quality`
+
+- Quality Issues
+================
+1. [Complexity | Warn] app.omg_quality @ /path/app.py:1
+   High cyclomatic complexity: 13 (target ≤ 10), 27 lines.
+   -> This function has a lot of branching and loops.
+   -> Suggested fix: split parts into smaller helpers or simplify nested if/else logic.
+
+2. [Nesting | Medium] app.omg_quality @ /path/app.py:1
+   Deep nesting: depth 3 (target ≤ 2), 27 lines.
+   -> This function has a lot of branching and loops.
+   -> Suggested fix: use guard clauses / flatten branches.
+
+* Complexity 13 (target ≤ 10): the computed cyclomatic complexity is 13; the default target is 10.
+* Nesting depth 3 (target ≤ 2): control-flow is 3 levels deep.
+
+### Tuning thresholds (devs) 
+
+**DO NOTE**: 
+
+Right now thresholds are code-level constants (keeps the CLI simple). If you need to tweak:
+
+1. Open `skylos/rules/quality/quality.py`
+
+2. Change these functions:
+  * scan_complex_functions(ctx, threshold=10)
+  * scan_nesting(ctx, threshold=2)
+
+Config file support is on the roadmap
 
 ## Ignoring Pragmas
 
