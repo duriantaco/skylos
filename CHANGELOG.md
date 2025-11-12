@@ -1,5 +1,31 @@
 ## Changelog
 
+## [2.5.0] - 2025-11-12
+
+### Added
+
+- Code quality scanner with 2 new rules namely complexity and nesting
+  - flags high cyclomatic complexity
+  - flags deep nesting
+- Added uv.lock for frozen dependency snapshot
+
+### Changed
+
+- CLI ui/ux polish
+
+### Fixed 
+
+- Fixed dataframely schema class reports class variables marked as unused
+- Fixed multi-part module imports not detected correctly
+
+### Developer Notes
+
+Quality rules live under:
+
+- `skylos/rules/quality/complexity.py`
+- `skylos/rules/quality/nesting.py` (max depth across if/for/while/try/with)
+- `skylos/rules/quality/quality.py` (entry point)
+
 ## [2.4.0] - 2025-10-14
 
 ### Added

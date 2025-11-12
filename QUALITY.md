@@ -1,0 +1,4 @@
+| Rule ID     | Pattern / Trigger                                           | Why it’s risky                                                | Safer alternative / Fix                                                             |
+|-------------|--------------------------------------------------------------|----------------------------------------------------------------|-------------------------------------------------------------------------------------|
+| SKY-Q301    | **High cyclomatic complexity** (McCabe ≥ **10**)            | Many decision paths -> harder to test, reason about, and modify | Split into small helpers. Earlier returns. Remove dead branches |
+| SKY-Q302    | **Deep nesting** (max depth **> 3**)                         | Pyramid of doom. Bugs hide in nested branches                  | Use guard clauses. Return early. Extract inner blocks  |
