@@ -13,6 +13,7 @@ from skylos.rules.danger.danger import scan_ctx as scan_danger
 import os
 import traceback
 from skylos.visitors.framework_aware import FrameworkAwareVisitor, detect_framework_usage
+from skylos.rules.quality.quality import scan_ctx as scan_quality
 
 logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(levelname)s - %(message)s')
 logger=logging.getLogger('Skylos')
@@ -185,10 +186,24 @@ class Skylos:
             def_obj.confidence = 0
             return
 
+        if "." in def_obj.name:
+            owner, attr = def_obj.name.rsplit(".", 1)
+            owner_simple = owner.split(".")[-1]
+
+            if (
+                owner_simple == "Settings"
+                or owner_simple == "Config"
+                or owner_simple.endswith("Settings")
+                or owner_simple.endswith("Config")
+            ):
+                if attr.isupper() or not attr.startswith("_"):
+                    def_obj.confidence = 0
+                    return
+        
         if def_obj.type == "variable" and def_obj.simple_name == "_":
             def_obj.confidence = 0
             return
-
+        
         if def_obj.simple_name.startswith("_") and not def_obj.simple_name.startswith("__"):
             confidence -= PENALTIES["private_name"] 
 
@@ -307,7 +322,7 @@ class Skylos:
                     if method.simple_name == "format" and cls.endswith("Formatter"):
                         method.references += 1
 
-    def analyze(self, path, thr=60, exclude_folders= None, enable_secrets = False, enable_danger = False):
+    def analyze(self, path, thr=60, exclude_folders= None, enable_secrets = False, enable_danger = False, enable_quality = False):
         files, root = self._get_python_files(path, exclude_folders)
         
         if not files:
@@ -332,6 +347,7 @@ class Skylos:
         
         all_secrets = []
         all_dangers = []
+        all_quality = []
         file_contexts = []
 
         for file in files:
@@ -368,6 +384,16 @@ class Skylos:
                     logger.error(f"Error scanning {file} for dangerous code: {e}")
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
+                        
+            if enable_quality: 
+                try:
+                    findings = scan_quality(root, [file])
+                    if findings:
+                        all_quality.extend(findings)
+                except Exception as e:
+                    logger.error(f"Error scanning {file} for quality issues: {e}")
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error("Quality scan error", exc_info=True)
 
         for defs, test_flags, framework_flags, file, mod in file_contexts:
             for definition in defs:
@@ -433,6 +459,10 @@ class Skylos:
         if enable_danger and all_dangers:
             result["danger"] = all_dangers
             result["analysis_summary"]["danger_count"] = len(all_dangers)
+        
+        if enable_quality and all_quality:
+            result["quality"] = all_quality
+            result["analysis_summary"]["quality_count"] = len(all_quality)
 
         for u in unused:
             if u["type"] in ("function", "method"):
@@ -485,8 +515,8 @@ def proc_file(file_or_args, mod=None):
 
         return [], [], set(), set(), dummy_visitor, dummy_framework_visitor
 
-def analyze(path, conf=60, exclude_folders=None, enable_secrets=False, enable_danger=False):
-    return Skylos().analyze(path,conf, exclude_folders, enable_secrets, enable_danger)
+def analyze(path, conf=60, exclude_folders=None, enable_secrets=False, enable_danger=False, enable_quality=False):
+    return Skylos().analyze(path,conf, exclude_folders, enable_secrets, enable_danger, enable_quality)
 
 if __name__ == "__main__":
     enable_secrets = ("--secrets" in sys.argv)
