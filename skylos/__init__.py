@@ -1,4 +1,4 @@
-__version__ = "2.4.0"
+__version__ = "2.5.0"
 
 def analyze(*args, **kwargs):
     from .analyzer import analyze as _analyze
