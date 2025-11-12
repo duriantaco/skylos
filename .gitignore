@@ -20,3 +20,5 @@ snugbug
 .ruff_cache
 dist
 node_modules
+.pytest_cache
+.venv
