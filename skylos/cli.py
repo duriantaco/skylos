@@ -9,10 +9,18 @@ from skylos.codemods import (
     remove_unused_import_cst,
     remove_unused_function_cst,
     comment_out_unused_import_cst,
-    comment_out_unused_function_cst, 
+    comment_out_unused_function_cst,
 )
 import pathlib
 import skylos
+
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.theme import Theme
+from rich.logging import RichHandler
+from rich.rule import Rule
 
 try:
     import inquirer
@@ -20,46 +28,57 @@ try:
 except ImportError:
     INTERACTIVE_AVAILABLE = False
 
+
 class Colors:
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    MAGENTA = '\033[95m'
-    CYAN = '\033[96m'
-    BOLD = '\033[1m'
-    RESET = '\033[0m'
-    GRAY = '\033[90m'
-    ORANGE = '\033[38;5;208m'
+    # kept for compatibility with some strings. rich styles are primary use
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    CYAN = "\033[96m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+    GRAY = "\033[90m"
 
 class CleanFormatter(logging.Formatter):
     def format(self, record):
         return record.getMessage()
 
 def setup_logger(output_file=None):
-    logger = logging.getLogger('skylos')
+
+    theme = Theme(
+        {
+            "good": "bold green",
+            "warn": "bold yellow",
+            "bad": "bold red",
+            "muted": "dim",
+            "brand": "bold cyan",
+        }
+    )
+    console = Console(theme=theme)
+
+    logger = logging.getLogger("skylos")
     logger.setLevel(logging.INFO)
-    
     logger.handlers.clear()
-    
-    formatter = CleanFormatter()
-    
-    console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-    
+
+    rich_handler = RichHandler(console=console, show_time=False, show_path=False, markup=True)
+    rich_handler.setFormatter(CleanFormatter())
+    logger.addHandler(rich_handler)
+
     if output_file:
-        file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         file_handler = logging.FileHandler(output_file)
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
-    
+
     logger.propagate = False
-    
+    logger.console = console
     return logger
 
 def remove_unused_import(file_path, import_name, line_number):
     path = pathlib.Path(file_path)
+
     try:
         src = path.read_text(encoding="utf-8")
         new_code, changed = remove_unused_import_cst(src, import_name, line_number)
@@ -67,12 +86,15 @@ def remove_unused_import(file_path, import_name, line_number):
             return False
         path.write_text(new_code, encoding="utf-8")
         return True
+    
     except Exception as e:
         logging.error(f"Failed to remove import {import_name} from {file_path}: {e}")
         return False
 
+
 def remove_unused_function(file_path, function_name, line_number):
     path = pathlib.Path(file_path)
+
     try:
         src = path.read_text(encoding="utf-8")
         new_code, changed = remove_unused_function_cst(src, function_name, line_number)
@@ -80,12 +102,14 @@ def remove_unused_function(file_path, function_name, line_number):
             return False
         path.write_text(new_code, encoding="utf-8")
         return True
+    
     except Exception as e:
         logging.error(f"Failed to remove function {function_name} from {file_path}: {e}")
         return False
-    
+
 def comment_out_unused_import(file_path, import_name, line_number, marker="SKYLOS DEADCODE"):
     path = pathlib.Path(file_path)
+    
     try:
         src = path.read_text(encoding="utf-8")
         new_code, changed = comment_out_unused_import_cst(src, import_name, line_number, marker=marker)
@@ -93,12 +117,14 @@ def comment_out_unused_import(file_path, import_name, line_number, marker="SKYLO
             return False
         path.write_text(new_code, encoding="utf-8")
         return True
+    
     except Exception as e:
         logging.error(f"Failed to comment out import {import_name} from {file_path}: {e}")
         return False
 
 def comment_out_unused_function(file_path, function_name, line_number, marker="SKYLOS DEADCODE"):
     path = pathlib.Path(file_path)
+
     try:
         src = path.read_text(encoding="utf-8")
         new_code, changed = comment_out_unused_function_cst(src, function_name, line_number, marker=marker)
@@ -106,82 +132,219 @@ def comment_out_unused_function(file_path, function_name, line_number, marker="S
             return False
         path.write_text(new_code, encoding="utf-8")
         return True
+    
     except Exception as e:
         logging.error(f"Failed to comment out function {function_name} from {file_path}: {e}")
         return False
 
-def interactive_selection(logger, unused_functions, unused_imports):
+def interactive_selection(console: Console, unused_functions, unused_imports):
     if not INTERACTIVE_AVAILABLE:
-        logger.error("Interactive mode requires 'inquirer' package. Install with: pip install inquirer")
+        console.print("[bad]Interactive mode requires 'inquirer'. Install with: pip install inquirer[/bad]")
         return [], []
-    
+
     selected_functions = []
     selected_imports = []
-    
-    if unused_functions:
-        logger.info(f"\n{Colors.CYAN}{Colors.BOLD}Select unused functions to remove (hit spacebar to select):{Colors.RESET}")
-        
-        function_choices = []
 
+    if unused_functions:
+        console.print("\n[brand][bold]Select unused functions to remove (space to select):[/bold][/brand]")
+
+        function_choices = []
         for item in unused_functions:
             choice_text = f"{item['name']} ({item['file']}:{item['line']})"
             function_choices.append((choice_text, item))
-        
-        questions = [
-            inquirer.Checkbox('functions',
-                            message="Select functions to remove",
-                            choices=function_choices,
-                            )
-        ]
-        
+
+        questions = [inquirer.Checkbox("functions", message="Select functions to remove", choices=function_choices)]
         answers = inquirer.prompt(questions)
         if answers:
-            selected_functions = answers['functions']
-    
-    if unused_imports:
-        logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD}Select unused imports to act on (hit spacebar to select):{Colors.RESET}")
-        
-        import_choices = []
+            selected_functions = answers["functions"]
 
+    if unused_imports:
+        console.print("\n[brand][bold]Select unused imports to act on (space to select):[/bold][/brand]")
+
+        import_choices = []
         for item in unused_imports:
             choice_text = f"{item['name']} ({item['file']}:{item['line']})"
             import_choices.append((choice_text, item))
-        
-        questions = [
-            inquirer.Checkbox('imports',
-                            message="Select imports to remove",
-                            choices=import_choices,
-                            )
-        ]
-        
+
+        questions = [inquirer.Checkbox("imports", message="Select imports to remove", choices=import_choices)]
         answers = inquirer.prompt(questions)
         if answers:
-            selected_imports = answers['imports']
-    
+            selected_imports = answers["imports"]
+
     return selected_functions, selected_imports
 
-def print_badge(dead_code_count, logger, *, danger_enabled = False, danger_count = 0, quality_enabled = False, quality_count = 0):
-    logger.info(f"\n{Colors.GRAY}{'─' * 50}{Colors.RESET}")
-    
-    if dead_code_count == 0 and (not danger_enabled or danger_count == 0) and (not quality_enabled or quality_count == 0):
-        logger.info(" Your code is 100% dead code free! Add this badge to your README:")
-        logger.info("```markdown")
-        logger.info("![Dead Code Free](https://img.shields.io/badge/Dead_Code-Free-brightgreen?logo=moleculer&logoColor=white)")
-        logger.info("```")
+def print_badge(dead_code_count, logger, *, danger_enabled=False, danger_count=0, quality_enabled=False, quality_count=0):
+    console: Console = logger.console
+    console.print(Rule(style="muted"))
+
+    has_dead_code = dead_code_count > 0
+    has_danger = danger_enabled and danger_count > 0
+    has_quality = quality_enabled and quality_count > 0
+
+    if not has_dead_code and not has_danger and not has_quality:
+        
+        console.print(
+            Panel.fit("[good]Your code is 100% dead-code free![/good]\nAdd this badge to your README:", border_style="good")
+        )
+        console.print("```markdown")
+        console.print(
+            "![Dead Code Free](https://img.shields.io/badge/Dead_Code-Free-brightgreen?logo=moleculer&logoColor=white)"
+        )
+        console.print("```")
         return
 
+    headline = f"Found {dead_code_count} dead-code items"
     if danger_enabled:
-        logger.info(f"Found {dead_code_count} dead code items and {danger_count} security flaws and {quality_count}. Add this badge to your README:")
-    else:
-        logger.info(f"Found {dead_code_count} dead code items. Add this badge to your README:")
+        headline += f" and {danger_count} security issues"
+    if quality_enabled:
+        headline += f" and {quality_count} quality issues"
+    headline += ". Add this badge to your README:"
 
-    logger.info("```markdown")  
-    logger.info(f"![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange?logo=codacy&logoColor=red)")
-    logger.info("```")
+    console.print(Panel.fit(headline, border_style="warn"))
+    console.print("```markdown")
+    console.print(
+        f"![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange?logo=codacy&logoColor=red)"
+    )
+    console.print("```")
 
+def render_results(console: Console, result):
+    summ = result.get("analysis_summary", {})
+    console.print(
+        Panel.fit(
+            f"[brand]Python Static Analysis Results[/brand]\n[muted]Analyzed {summ.get('total_files','?')} file(s)[/muted]",
+            border_style="brand",
+        )
+    )
+
+    def _pill(label, n, ok_style="good", bad_style="bad"):
+
+        if n == 0:
+            style = ok_style
+        else:
+            style = bad_style
+        return f"[{style}]{label}: {n}[/{style}]"
+
+    console.print(
+        " ".join(
+            [
+                _pill("Unreachable", len(result.get("unused_functions", []))),
+                _pill("Unused imports", len(result.get("unused_imports", []))),
+                _pill("Unused params", len(result.get("unused_parameters", []))),
+                _pill("Unused vars", len(result.get("unused_variables", []))),
+                _pill("Unused classes", len(result.get("unused_classes", []))),
+                _pill("Quality", len(result.get("quality", []) or []), bad_style="warn"),
+            ]
+        )
+    )
+    console.print()
+
+    def _render_unused(title, items, name_key="name"):
+        if not items:
+            return
+        
+        console.rule(f"[bold]{title}")
+
+        table = Table(expand=True)
+        table.add_column("#", style="muted", width=3)
+        table.add_column("Name", style="bold")
+        table.add_column("Location", style="muted")
+
+        for i, item in enumerate(items, 1):
+            nm = item.get(name_key) or item.get("simple_name") or "<?>"
+            loc = f"{item.get('file','?')}:{item.get('line', item.get('lineno','?'))}"
+            table.add_row(str(i), nm, loc)
+            
+        console.print(table)
+        console.print()
+
+    def _render_quality(items):
+        if not items:
+            return
+        
+        console.rule("[bold red]Quality Issues")
+        table = Table(expand=True)
+        table.add_column("#", style="muted", width=3)
+        table.add_column("Type", style="yellow", width=12)
+        table.add_column("Function", style="bold")
+        table.add_column("Detail")
+        table.add_column("Location", style="muted", width=24)
+
+        for i, quality in enumerate(items, 1):
+            kind = (quality.get("kind") or quality.get("metric") or "quality").title()
+            func = quality.get("name") or quality.get("simple_name") or "<?>"
+            loc = f"{quality.get('basename','?')}:{quality.get('line','?')}"
+            value = quality.get("value") or quality.get("complexity")
+            thr = quality.get("threshold")
+            length = quality.get("length")
+
+            if quality.get("kind") == "nesting":
+                detail = f"Deep nesting: depth {value}"
+            else:
+                detail = f"Cyclomatic complexity: {value}"
+            if thr is not None:
+                detail += f" (target ≤ {thr})"
+            if length is not None:
+                detail += f", {length} lines"
+            table.add_row(str(i), kind, func, detail, loc)
+
+        console.print(table)
+        console.print("[muted]Tip: split helpers, add early returns, flatten branches.[/muted]\n")
+
+    def _render_secrets(items):
+        if not items:
+            return
+        
+        console.rule("[bold red]Secrets")
+        table = Table(expand=True)
+        table.add_column("#", style="muted", width=3)
+        table.add_column("Provider", style="yellow", width=14)
+        table.add_column("Message")
+        table.add_column("Preview", style="muted", width=18)
+        table.add_column("Location", style="muted", width=28)
+
+        for i, s in enumerate(items[:100], 1):
+            prov = s.get("provider") or "generic"
+            msg = s.get("message") or "Secret detected"
+            prev = s.get("preview") or "****"
+            loc = f"{s.get('file','?')}:{s.get('line','?')}"
+            table.add_row(str(i), prov, msg, prev, loc)
+
+        console.print(table)
+        console.print()
+
+    def _render_danger(items):
+        if not items:
+            return
+        
+        console.rule("[bold red]Security Issues")
+        table = Table(expand=True)
+        table.add_column("#", style="muted", width=3)
+        table.add_column("Rule", style="yellow", width=18)
+        table.add_column("Severity", width=10)
+        table.add_column("Message")
+        table.add_column("Location", style="muted", width=28)
+
+        for i, d in enumerate(items[:100], 1):
+            rule = d.get("rule_id") or "UNKNOWN"
+            sev = (d.get("severity") or "UNKNOWN").title()
+            msg = d.get("message") or "Issue detected"
+            loc = f"{d.get('file','?')}:{d.get('line','?')}"
+            table.add_row(str(i), rule, sev, msg, loc)
+
+        console.print(table)
+        console.print()
+
+    _render_unused("Unreachable Functions", result.get("unused_functions", []), name_key="name")
+    _render_unused("Unused Imports", result.get("unused_imports", []), name_key="name")
+    _render_unused("Unused Parameters", result.get("unused_parameters", []), name_key="name")
+    _render_unused("Unused Variables", result.get("unused_variables", []), name_key="name")
+    _render_unused("Unused Classes", result.get("unused_classes", []), name_key="name")
+    _render_secrets(result.get("secrets", []) or [])
+    _render_danger(result.get("danger", []) or [])
+    _render_quality(result.get("quality", []) or [])
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == 'run':
+    if len(sys.argv) > 1 and sys.argv[1] == "run":
         try:
             start_server()
             return
@@ -190,144 +353,94 @@ def main():
             print(f"{Colors.YELLOW}Install with: pip install flask flask-cors{Colors.RESET}")
             sys.exit(1)
 
-    parser = argparse.ArgumentParser(
-        description="Detect unreachable functions and unused imports in a Python project"
-    )
+    parser = argparse.ArgumentParser(description="Detect unreachable functions and unused imports in a Python project")
     parser.add_argument("path", help="Path to the Python project")
+    parser.add_argument("--table", action="store_true", help="(deprecated) Show findings in table")
+    parser.add_argument("--version", action="version", version=f"skylos {skylos.__version__}", help="Show version and exit")
+    parser.add_argument("--json", action="store_true", help="Output raw JSON")
+    parser.add_argument("--comment-out", action="store_true", help="Comment out selected dead code instead of deleting item")
+    parser.add_argument("--output", "-o", type=str, help="Write output to file")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose")
+    parser.add_argument(
+        "--confidence", "-c", type=int, default=60, help="Confidence threshold (0-100). Lower = include more. Default: 60"
+    )
+    parser.add_argument("--interactive", "-i", action="store_true", help="Select items to remove")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be removed")
 
-    parser.add_argument(
-        "--table",
-        action="store_true",
-        help="Show findings in table"
-    )
-
-    parser.add_argument(
-        "--version",
-        action="version", 
-        version=f"skylos {skylos.__version__}",
-        help="Show version and exit"
-    )
-    
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output raw JSON",
-    )
-
-    parser.add_argument(
-        "--comment-out",
-        action="store_true",
-        help="Comment out selected dead code instead of deleting it",
-    )
-
-    parser.add_argument(
-        "--output",
-        "-o",
-        type=str,
-        help="Write output to file",
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose"
-    )
-    parser.add_argument(
-        "--confidence",
-        "-c",
-        type=int,
-        default=60,
-        help="Confidence threshold (0-100). Lower values include more items. Default: 60"
-    )
-    parser.add_argument(
-        "--interactive", "-i",
-        action="store_true",
-        help="Select items to remove"
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be removed"
-    )
-    
     parser.add_argument(
         "--exclude-folder",
         action="append",
         dest="exclude_folders",
-        help="Exclude a folder from analysis (can be used multiple times). "
-             "By default, common folders like __pycache__, .git, venv are excluded. "
-             "Use --no-default-excludes to disable default exclusions."
+        help=(
+            "Exclude a folder from analysis (can be used multiple times). By default, common folders like __pycache__, "
+            ".git, venv are excluded. Use --no-default-excludes to disable default exclusions."
+        ),
     )
-    
     parser.add_argument(
-        "--include-folder", 
+        "--include-folder",
         action="append",
         dest="include_folders",
-        help="Force include a folder that would otherwise be excluded "
-             "(overrides both default and custom exclusions). "
-             "Example: --include-folder venv"
+        help=(
+            "Force include a folder that would otherwise be excluded (overrides both default and custom exclusions). "
+            "Example: --include-folder venv"
+        ),
     )
-    
     parser.add_argument(
         "--no-default-excludes",
         action="store_true",
-        help="Don't exclude default folders (__pycache__, .git, venv, etc.). "
-             "Only exclude folders with --exclude-folder."
+        help="Do not exclude default folders (__pycache__, .git, venv, etc.). Only exclude folders with --exclude-folder.",
     )
-    
-    parser.add_argument(
-        "--list-default-excludes",
-        action="store_true", 
-        help="List the default excluded folders and exit."
-    )
-
-    parser.add_argument("--secrets", action="store_true",
-                   help="Scan for API keys. Off by default.")
-    
-    parser.add_argument("--danger", action="store_true",
-                   help="Scan for security issues. Off by default.")
-    
-    parser.add_argument(
-        "--quality",
-        action="store_true",
-        help="Run code quality checks. Off by default."
-    )
+    parser.add_argument("--list-default-excludes", action="store_true", help="List the default excluded folders and exit.")
+    parser.add_argument("--secrets", action="store_true", help="Scan for API keys. Off by default.")
+    parser.add_argument("--danger", action="store_true", help="Scan for security issues. Off by default.")
+    parser.add_argument("--quality", action="store_true", help="Run code quality checks. Off by default.")
 
     args = parser.parse_args()
+    logger = setup_logger(args.output)
+    console = logger.console
 
     if args.list_default_excludes:
-        print("Default excluded folders:")
+        console.print("[brand]Default excluded folders:[/brand]")
         for folder in sorted(DEFAULT_EXCLUDE_FOLDERS):
-            print(f" {folder}")
-        print(f"\nTotal: {len(DEFAULT_EXCLUDE_FOLDERS)} folders")
-        print("\nUse --no-default-excludes to disable these exclusions")
-        print("Use --include-folder <folder> to force include specific folders")
+            console.print(f" {folder}")
+        console.print(f"\n[muted]Total: {len(DEFAULT_EXCLUDE_FOLDERS)} folders[/muted]")
+        console.print("\nUse --no-default-excludes to disable these exclusions")
+        console.print("Use --include-folder <folder> to force include specific folders")
         return
-    
-    logger = setup_logger(args.output)
-    
+
     if args.verbose:
         logger.setLevel(logging.DEBUG)
         logger.debug(f"Analyzing path: {args.path}")
-        
         if args.exclude_folders:
             logger.debug(f"Excluding folders: {args.exclude_folders}")
 
     use_defaults = not args.no_default_excludes
     final_exclude_folders = parse_exclude_folders(
-        user_exclude_folders=args.exclude_folders,
-        use_defaults=use_defaults,
-        include_folders=args.include_folders
+        user_exclude_folders=args.exclude_folders, use_defaults=use_defaults, include_folders=args.include_folders
     )
-    
+
     if not args.json:
         if final_exclude_folders:
-            logger.info(f"{Colors.YELLOW}📁 Excluding: {', '.join(sorted(final_exclude_folders))}{Colors.RESET}")
+            console.print(f"[warn] Excluding:[/warn] {', '.join(sorted(final_exclude_folders))}")
         else:
-            logger.info(f"{Colors.GREEN}📁 No folders excluded{Colors.RESET}")
+            console.print("[good] No folders excluded[/good]")
 
     try:
-        result_json = run_analyze(args.path, conf=args.confidence, enable_secrets=bool(args.secrets), 
-                                  enable_danger=bool(args.danger), enable_quality=bool(args.quality), exclude_folders=list(final_exclude_folders))
+        with Progress(
+            SpinnerColumn(style="brand"),
+            TextColumn("[brand]Skylos[/brand] analyzing your code…"),
+            transient=True,
+            console=console,
+        ) as progress:
+            progress.add_task("analyze", total=None)
+            result_json = run_analyze(
+                args.path,
+                conf=args.confidence,
+                enable_secrets=bool(args.secrets),
+                enable_danger=bool(args.danger),
+                enable_quality=bool(args.quality),
+                exclude_folders=list(final_exclude_folders),
+            )
 
         if args.json:
             print(result_json)
@@ -338,374 +451,75 @@ def main():
     except Exception as e:
         logger.error(f"Error during analysis: {e}")
         sys.exit(1)
-    
-    if args.table:
-        ELLIPSIS = "…"
 
-        def clip(text, max_length):
-            if not text:
-                text = ""
-            
-            if len(text) <= max_length:
-                return text
-            
-            truncated_end = max(0, max_length - 1)
-            return text[:truncated_end] + ELLIPSIS
+    if args.interactive:
+        unused_functions = result.get("unused_functions", [])
+        unused_imports = result.get("unused_imports", [])
 
-        def severity_color(severity):
-            severity_upper = (severity or "").upper()
-            
-            if severity_upper in ("HIGH", "CRITICAL"):
-                return Colors.RED
-            elif severity_upper == "MEDIUM":
-                return Colors.YELLOW
-            else:
-                return Colors.GRAY
+        if not (unused_functions or unused_imports):
+            console.print("[good]No unused functions/imports to process.[/good]")
+        else:
+            selected_functions, selected_imports = interactive_selection(console, unused_functions, unused_imports)
 
-        print(f"\n{Colors.CYAN}{Colors.BOLD}Unused {Colors.RESET}")
-        print(f"{Colors.CYAN}{'='*18}{Colors.RESET}")
-
-        print(f"{Colors.BOLD}{'kind':9} {'name':28} {'where'}{Colors.RESET}")
-        print(f"{'-'*9} {'-'*28} {'-'*36}")
-        
-        unused_categories = [
-            ("unused_functions", "function"),
-            ("unused_imports", "import"),
-            ("unused_classes", "class"),
-            ("unused_variables", "variable"),
-            ("unused_parameters", "parameter"),
-        ]
-
-        for bucket, kind in unused_categories:
-            items = result.get(bucket, [])
-            for item in items:
-                name = item.get("name") or item.get("simple_name") or ""
-                file_path = item.get('file', '?')
-                line_num = item.get('line', item.get('lineno', '?'))
-                where = f"{file_path}:{line_num}"
-                
-                clipped_name = clip(name, 28)
-                clipped_where = clip(where, 36)
-                print(f"{kind:9} {clipped_name:28} {clipped_where}")
-
-        secrets = result.get("secrets", []) or []
-        if secrets:
-            print(f"\n{Colors.RED}{Colors.BOLD}Secrets{Colors.RESET}")
-            print(f"{Colors.RED}{'=' * 7}{Colors.RESET}")
-            print(f"{Colors.BOLD}{'provider':12} {'message':22} {'preview':24} {'where'}{Colors.RESET}")
-            print(f"{'-' * 12} {'-' * 22} {'-' * 24} {'-' * 36}")
-            
-            for secret in secrets[:100]:
-                provider = clip(secret.get("provider") or "generic", 12)
-                message = clip(secret.get("message") or "Secret detected", 22)
-                preview = clip(secret.get("preview") or "****", 24)
-                
-                file_path = secret.get('file', '?')
-                line_num = secret.get('line', '?')
-                location = f"{file_path}:{line_num}"
-                clipped_location = clip(location, 36)
-                
-                print(f"{Colors.MAGENTA}{provider:12}{Colors.RESET} {message:22} {preview:24} {clipped_location}")
-
-            
-        security_issues = result.get("danger", [])
-        if security_issues:
-            print(f"\n{Colors.RED}{Colors.BOLD}Security issues{Colors.RESET}")
-            print(f"{Colors.RED}{'=' * 15}{Colors.RESET}")
-            print(f"{Colors.BOLD}{'rule_id':10} {'sev':5} {'message':38} {'where'}{Colors.RESET}")
-            print(f"{'-' * 10} {'-' * 5} {'-' * 38} {'-' * 36}")
-            
-            for issue in security_issues[:100]:
-                rule_id = clip(issue.get("rule_id") or "", 10)
-                severity = (issue.get("severity") or "").upper()
-                message = clip(issue.get("message") or "", 38)
-                
-                file_path = issue.get('file', '?')
-                line_num = issue.get('line', '?')
-                location = f"{file_path}:{line_num}"
-                clipped_location = clip(location, 36)
-                
-                severity_color_code = severity_color(severity)
-                clipped_severity = clip(severity, 5)
-                
-                print(f"{rule_id:10} {severity_color_code}{clipped_severity:5}{Colors.RESET} {message:38} {clipped_location}")
-            
-        quality_issues = result.get('quality', [])
-        if quality_issues:
-            print(f"\n{Colors.RED}{Colors.BOLD}Quality issues{Colors.RESET}")
-            print(f"{Colors.RED}{'=' * 15}{Colors.RESET}")
-            print(f"{Colors.BOLD}{'rule_id':10} {'sev':5} {'message':38} {'where'}{Colors.RESET}")
-            print(f"{'-' * 10} {'-' * 5} {'-' * 38} {'-' * 36}")
-            
-            for quality in quality_issues:
-                rule_id = clip(quality.get("rule_id") or "", 10)
-                severity = (quality.get("severity") or "").upper()
-                message = clip(quality.get("message") or "", 38)
-                
-                file_path = quality.get('file', '?')
-                line_num = quality.get('line', '?')
-                location = f"{file_path}:{line_num}"
-                clipped_location = clip(location, 36)
-                
-                severity_color_code = severity_color(severity)
-                clipped_severity = clip(severity, 5)
-                
-                print(f"{rule_id:10} {severity_color_code}{clipped_severity:5}{Colors.RESET} {message:38} {clipped_location}")
-
-        summ = result.get("analysis_summary", {})
-        unused_keys = [
-            "unused_functions",
-            "unused_imports", 
-            "unused_classes",
-            "unused_variables",
-            "unused_parameters",
-        ]
-
-        total_unused = 0
-        for k in unused_keys:
-            total_unused += len(result.get(k, []))
-  
-        print(f"\n{Colors.BOLD}Summary{Colors.RESET}")
-
-        print("=======")
-        print(f"files analyzed : {summ.get('total_files','?')}")
-        print(f"unused items   : {total_unused}")
-        if "secrets_count" in summ:
-            print(f"secrets        : {summ['secrets_count']}")
-        if "danger_count" in summ:
-            print(f"security issues: {summ['danger_count']}")
-        if "quality_count" in summ:
-            print(f"quality issues: {summ['quality_count']}" )
-        return
-
-    if args.json:
-        lg = logging.getLogger('skylos')
-        for h in list(lg.handlers):
-            if isinstance(h, logging.StreamHandler):
-                lg.removeHandler(h)
-        print(result_json)
-        return
-    
-    result = json.loads(result_json)
-
-    unused_functions = result.get("unused_functions", [])
-    unused_imports = result.get("unused_imports", [])
-    unused_parameters = result.get("unused_parameters", [])
-    unused_variables = result.get("unused_variables", [])
-    unused_classes = result.get("unused_classes", [])
-    secrets_findings = result.get("secrets", [])
-    danger_findings = result.get("danger", [])
-    quality_findings = result.get("quality", {}) or {}
-    
-    logger.info(f"{Colors.CYAN}{Colors.BOLD} Python Static Analysis Results{Colors.RESET}")
-    logger.info(f"{Colors.CYAN}{'=' * 35}{Colors.RESET}")
-    
-    logger.info(f"\n{Colors.BOLD}Summary:{Colors.RESET}")
-    logger.info(f" * Unreachable functions: {Colors.YELLOW}{len(unused_functions)}{Colors.RESET}")
-    logger.info(f" * Unused imports: {Colors.YELLOW}{len(unused_imports)}{Colors.RESET}")
-    logger.info(f" * Unused parameters: {Colors.YELLOW}{len(unused_parameters)}{Colors.RESET}")
-    logger.info(f" * Unused variables: {Colors.YELLOW}{len(unused_variables)}{Colors.RESET}")
-    logger.info(f" * Unused classes: {Colors.YELLOW}{len(unused_classes)}{Colors.RESET}")
-    if secrets_findings:
-        logger.info(f" * Secrets: {Colors.RED}{len(secrets_findings)}{Colors.RESET}")
-    if danger_findings:
-        logger.info(f" * Security issues: {Colors.RED}{len(danger_findings)}{Colors.RESET}")
-    if quality_findings:
-        logger.info(f" * Quality issues: {Colors.RED}{len(quality_findings)}{Colors.RESET}")
-
-    if args.interactive and (unused_functions or unused_imports):
-        logger.info(f"\n{Colors.BOLD}Interactive Mode:{Colors.RESET}")
-        selected_functions, selected_imports = interactive_selection(logger, unused_functions, unused_imports)
-        
-        if selected_functions or selected_imports:
-            logger.info(f"\n{Colors.BOLD}Selected items to process:{Colors.RESET}")
-            
-            if selected_functions:
-                logger.info(f" Functions: {len(selected_functions)}")
-                for func in selected_functions:
-                    logger.info(f"  - {func['name']} ({func['file']}: {func['line']})")
-            
-            if selected_imports:
-                logger.info(f" Imports: {len(selected_imports)}")
-                for imp in selected_imports:
-                    logger.info(f"  - {imp['name']} ({imp['file']}: {imp['line']})")
-            
-            if not args.dry_run:
-                if args.comment_out:
-                    confirm_verb = "comment out"
-                else:
-                    confirm_verb = "remove"
-
-                questions = [
-                    inquirer.Confirm('confirm',
-                                   message="Are you sure you want to process these items?",
-                                   default=False)
-                ]
-                answers = inquirer.prompt(questions)
-                
-                if answers and answers['confirm']:
-                    action = "Commenting out" if args.comment_out else "Removing"
-                    logger.info(f"\n{Colors.YELLOW}{action} selected items...{Colors.RESET}")
-
-                    action_func = comment_out_unused_function if args.comment_out else remove_unused_function
+            if selected_functions or selected_imports:
+                if not args.dry_run:
                     if args.comment_out:
+                        action_func_fn = comment_out_unused_function
+                        action_func_imp = comment_out_unused_import
                         action_past = "Commented out"
                         action_verb = "comment out"
                     else:
+                        action_func_fn = remove_unused_function
+                        action_func_imp = remove_unused_import
                         action_past = "Removed"
                         action_verb = "remove"
 
-                    for func in selected_functions:
-                        success = action_func(func['file'], func['name'], func['line'])
-                        
-                        if success:
-                            logger.info(f"  {Colors.GREEN} ✓ {Colors.RESET} {action_past} function: {func['name']}")
-                        else:
-                            logger.error(f"  {Colors.RED} x {Colors.RESET} Failed to {action_verb}: {func['name']}")
-                            
-                    import_func = comment_out_unused_import if args.comment_out else remove_unused_import
-                    if args.comment_out:
-                        action_past = "Commented out"
-                        action_verb = "comment out"
+                    if INTERACTIVE_AVAILABLE:
+                        confirm_q = [inquirer.Confirm("confirm", message="Proceed with changes?", default=False)]
+                        answers = inquirer.prompt(confirm_q)
+                        proceed = answers and answers.get("confirm")
                     else:
-                        action_past = "Removed"
-                        action_verb = "remove"
+                        proceed = True
 
-                    for imp in selected_imports:
-                        success = import_func(imp['file'], imp['name'], imp['line'])
-                        
-                        if success:
-                            logger.info(f"  {Colors.GREEN} ✓ {Colors.RESET} {action_past} import: {imp['name']}")
-                        else:
-                            logger.error(f"  {Colors.RED} x {Colors.RESET} Failed to {action_verb}: {imp['name']}")
-                            
-                    logger.info(f"\n{Colors.GREEN}Cleanup complete!{Colors.RESET}")
+                    if proceed:
+                        console.print(f"[warn]Applying changes…[/warn]")
+                        for func in selected_functions:
+                            ok = action_func_fn(func["file"], func["name"], func["line"])
+                            if ok:
+                                console.print(f"[good] ✓ {action_past} function:[/good] {func['name']}")
+                            else:
+                                console.print(f"[bad] x Failed to {action_verb} function:[/bad] {func['name']}")
+
+                        for imp in selected_imports:
+                            ok = action_func_imp(imp["file"], imp["name"], imp["line"])
+                            if ok:
+                                console.print(f"[good] ✓ {action_past} import:[/good] {imp['name']}")
+                            else:
+                                console.print(f"[bad] x Failed to {action_verb} import:[/bad] {imp['name']}")
+                        console.print(f"[good]Cleanup complete![/good]")
+                    else:
+                        console.print(f"[warn]Operation cancelled.[/warn]")
                 else:
-                    logger.info(f"\n{Colors.YELLOW}Operation cancelled.{Colors.RESET}")
+                    console.print(f"[warn]Dry run — no files modified.[/warn]")
             else:
-                logger.info(f"\n{Colors.YELLOW}Dry run - no files were modified.{Colors.RESET}")
-        else:
-            logger.info(f"\n{Colors.BLUE}No items selected.{Colors.RESET}")
-    
-    else:
-        if unused_functions:
-            logger.info(f"\n{Colors.RED}{Colors.BOLD} - Unreachable Functions{Colors.RESET}")
-            logger.info(f"{Colors.RED}{'=' * 23}{Colors.RESET}")
-            for i, item in enumerate(unused_functions, 1):
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.RED}{item['name']}{Colors.RESET}")
-                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-        else:
-            logger.info(f"\n{Colors.GREEN} All functions are reachable!{Colors.RESET}")
-        
-        if unused_imports:
-            logger.info(f"\n{Colors.MAGENTA}{Colors.BOLD} - Unused Imports{Colors.RESET}")
-            logger.info(f"{Colors.MAGENTA}{'=' * 16}{Colors.RESET}")
-            for i, item in enumerate(unused_imports, 1):
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.MAGENTA}{item['name']}{Colors.RESET}")
-                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-        else:
-            logger.info(f"\n{Colors.GREEN}✓ All imports are being used!{Colors.RESET}")
-        
-        if unused_parameters:
-            logger.info(f"\n{Colors.BLUE}{Colors.BOLD} - Unused Parameters{Colors.RESET}")
-            logger.info(f"{Colors.BLUE}{'=' * 18}{Colors.RESET}")
-            for i, item in enumerate(unused_parameters, 1):
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.BLUE}{item['name']}{Colors.RESET}")
-                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-        else:
-            logger.info(f"\n{Colors.GREEN}✓ All parameters are being used!{Colors.RESET}")
-        
-        if unused_variables:
-            logger.info(f"\n{Colors.YELLOW}{Colors.BOLD} - Unused Variables{Colors.RESET}")
-            logger.info(f"{Colors.YELLOW}{'=' * 18}{Colors.RESET}")
-            for i, item in enumerate(unused_variables, 1):
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.YELLOW}{item['name']}{Colors.RESET}")
-                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-        else:
-            logger.info(f"\n{Colors.GREEN}✓ All variables are being used!{Colors.RESET}")
-                
-        if unused_classes:
-            logger.info(f"\n{Colors.YELLOW}{Colors.BOLD} - Unused Classes{Colors.RESET}")
-            logger.info(f"{Colors.YELLOW}{'=' * 18}{Colors.RESET}")
-            for i, item in enumerate(unused_classes, 1):
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{Colors.YELLOW}{item['name']}{Colors.RESET}")
-                logger.info(f"    {Colors.GRAY}└─ {item['file']}:{item['line']}{Colors.RESET}")
-        else:
-            logger.info(f"\n{Colors.GREEN}✓ All classes are being used!{Colors.RESET}")
+                console.print("[muted]No items selected.[/muted]")
 
-        if secrets_findings:
-            logger.info(f"\n{Colors.RED}{Colors.BOLD} - Secrets{Colors.RESET}")
-            logger.info(f"{Colors.RED}{'=' * 9}{Colors.RESET}")
-            for i, s in enumerate(secrets_findings[:20], 1):
-                provider = s.get("provider", "generic")
-                where = f"{s.get('file','?')}:{s.get('line','?')}"
-                prev = s.get("preview", "****")
-                msg = s.get("message", "Secret detected")
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{msg} [{provider}] {Colors.GRAY}({where}){Colors.RESET} -> {prev}")
-        
-        if danger_findings:
-            logger.info(f"\n{Colors.RED}{Colors.BOLD} - Security Issues{Colors.RESET}")
-            logger.info(f"{Colors.RED}{'=' * 16}{Colors.RESET}")
-            for i, d in enumerate(danger_findings[:20], 1):
-                rule_id = d.get("rule_id", "unknown_rule")
-                severity = d.get("severity", "UNKNOWN").upper()
-                message = d.get("message", "Issue detected")
-                file = d.get("file", "?")
-                line = d.get("line", "?")
-                logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{message} [{rule_id}] {Colors.GRAY}({file}:{line}){Colors.RESET} Severity: {severity}")
+    render_results(console, result)
 
-        if quality_findings:
-            logger.info(f"\n{Colors.ORANGE}{Colors.BOLD} - Quality Issues{Colors.RESET}")
-            logger.info(f"{Colors.ORANGE}{'=' * 16}{Colors.RESET}")
-
-            for i, q in enumerate(quality_findings[:50], 1):
-                func_name = q.get("name") or q.get("simple_name") or "<?>"
-                file = q.get("file", "?")
-                line = q.get("line", "?")
-
-                severity = (q.get("severity") or "UNKNOWN").title()
-                kind = (q.get("kind") or "quality").title()
-                value = q.get("value") or q.get("complexity")
-                thresh = q.get("threshold")
-                length = q.get("length")
-
-                logger.info(
-                    f"{i}. [{kind} | {severity}] {func_name} @ {file}:{line}"
-                )
-
-                main_line_bits = []
-                if (q.get("kind") == "nesting") and (value is not None):
-                    main_line_bits.append(f"Deep nesting: depth {value}" + (f" (target ≤ {thresh})" if thresh is not None else ""))
-                elif (q.get("kind") == "complexity") and (value is not None):
-                    main_line_bits.append(f"High cyclomatic complexity: {value}" + (f" (target ≤ {thresh})" if thresh is not None else ""))
-                if length is not None:
-                    main_line_bits.append(f"{length} lines")
-
-                main_line = ", ".join(main_line_bits) if main_line_bits else "Possible maintainability issue."
-                logger.info(f" {main_line}.")
-                logger.info(" -> This function has a lot of branching and loops.")
-                logger.info(" -> Suggested fix: split parts into smaller helpers or simplify nested if/else logic.")
-
-
-        dead_code_count = len(unused_functions) + len(unused_imports) + len(unused_variables) + len(unused_classes) + len(unused_parameters)
-
-        danger_count = len(danger_findings) if args.danger else 0
-        quality_count = len(quality_findings) if args.quality else 0
-        
-        print_badge(
-            dead_code_count,
-            logger,
-            danger_enabled=bool(args.danger),
-            danger_count=danger_count,
-            quality_enabled = bool(args.quality),
-            quality_count = quality_count
-        )
-
-        if unused_functions or unused_imports:
-            logger.info(f"\n{Colors.BOLD}Next steps:{Colors.RESET}")
-            logger.info(f" * Use --select specific items to remove")
-            logger.info(f" * Use --dry-run to preview changes")
-            logger.info(f" * Use --exclude-folder to skip directories")
+    unused_total = sum(
+        len(result.get(k, []))
+        for k in ("unused_functions", "unused_imports", "unused_variables", "unused_classes", "unused_parameters")
+    )
+    danger_count = len(result.get("danger", []) or [])
+    quality_count = len(result.get("quality", []) or [])
+    print_badge(
+        unused_total,
+        logging.getLogger("skylos"),
+        danger_enabled=bool(danger_count),
+        danger_count=danger_count,
+        quality_enabled=bool(quality_count),
+        quality_count=quality_count,
+    )
 
 if __name__ == "__main__":
     main()
