@@ -30,6 +30,7 @@ class Colors:
     BOLD = '\033[1m'
     RESET = '\033[0m'
     GRAY = '\033[90m'
+    ORANGE = '\033[38;5;208m'
 
 class CleanFormatter(logging.Formatter):
     def format(self, record):
@@ -159,10 +160,10 @@ def interactive_selection(logger, unused_functions, unused_imports):
     
     return selected_functions, selected_imports
 
-def print_badge(dead_code_count, logger, *, danger_enabled = False, danger_count = 0):
+def print_badge(dead_code_count, logger, *, danger_enabled = False, danger_count = 0, quality_enabled = False, quality_count = 0):
     logger.info(f"\n{Colors.GRAY}{'─' * 50}{Colors.RESET}")
     
-    if dead_code_count == 0 and (not danger_enabled or danger_count == 0):
+    if dead_code_count == 0 and (not danger_enabled or danger_count == 0) and (not quality_enabled or quality_count == 0):
         logger.info(" Your code is 100% dead code free! Add this badge to your README:")
         logger.info("```markdown")
         logger.info("![Dead Code Free](https://img.shields.io/badge/Dead_Code-Free-brightgreen?logo=moleculer&logoColor=white)")
@@ -170,7 +171,7 @@ def print_badge(dead_code_count, logger, *, danger_enabled = False, danger_count
         return
 
     if danger_enabled:
-        logger.info(f"Found {dead_code_count} dead code items and {danger_count} security flaws. Add this badge to your README:")
+        logger.info(f"Found {dead_code_count} dead code items and {danger_count} security flaws and {quality_count}. Add this badge to your README:")
     else:
         logger.info(f"Found {dead_code_count} dead code items. Add this badge to your README:")
 
@@ -285,6 +286,12 @@ def main():
     parser.add_argument("--danger", action="store_true",
                    help="Scan for security issues. Off by default.")
     
+    parser.add_argument(
+        "--quality",
+        action="store_true",
+        help="Run code quality checks. Off by default."
+    )
+
     args = parser.parse_args()
 
     if args.list_default_excludes:
@@ -320,7 +327,7 @@ def main():
 
     try:
         result_json = run_analyze(args.path, conf=args.confidence, enable_secrets=bool(args.secrets), 
-                                  enable_danger=bool(args.danger), exclude_folders=list(final_exclude_folders))
+                                  enable_danger=bool(args.danger), enable_quality=bool(args.quality), exclude_folders=list(final_exclude_folders))
 
         if args.json:
             print(result_json)
@@ -422,6 +429,28 @@ def main():
                 clipped_severity = clip(severity, 5)
                 
                 print(f"{rule_id:10} {severity_color_code}{clipped_severity:5}{Colors.RESET} {message:38} {clipped_location}")
+            
+        quality_issues = result.get('quality', [])
+        if quality_issues:
+            print(f"\n{Colors.RED}{Colors.BOLD}Quality issues{Colors.RESET}")
+            print(f"{Colors.RED}{'=' * 15}{Colors.RESET}")
+            print(f"{Colors.BOLD}{'rule_id':10} {'sev':5} {'message':38} {'where'}{Colors.RESET}")
+            print(f"{'-' * 10} {'-' * 5} {'-' * 38} {'-' * 36}")
+            
+            for quality in quality_issues:
+                rule_id = clip(quality.get("rule_id") or "", 10)
+                severity = (quality.get("severity") or "").upper()
+                message = clip(quality.get("message") or "", 38)
+                
+                file_path = quality.get('file', '?')
+                line_num = quality.get('line', '?')
+                location = f"{file_path}:{line_num}"
+                clipped_location = clip(location, 36)
+                
+                severity_color_code = severity_color(severity)
+                clipped_severity = clip(severity, 5)
+                
+                print(f"{rule_id:10} {severity_color_code}{clipped_severity:5}{Colors.RESET} {message:38} {clipped_location}")
 
         summ = result.get("analysis_summary", {})
         unused_keys = [
@@ -429,7 +458,7 @@ def main():
             "unused_imports", 
             "unused_classes",
             "unused_variables",
-            "unused_parameters"
+            "unused_parameters",
         ]
 
         total_unused = 0
@@ -445,6 +474,8 @@ def main():
             print(f"secrets        : {summ['secrets_count']}")
         if "danger_count" in summ:
             print(f"security issues: {summ['danger_count']}")
+        if "quality_count" in summ:
+            print(f"quality issues: {summ['quality_count']}" )
         return
 
     if args.json:
@@ -464,6 +495,7 @@ def main():
     unused_classes = result.get("unused_classes", [])
     secrets_findings = result.get("secrets", [])
     danger_findings = result.get("danger", [])
+    quality_findings = result.get("quality", {}) or {}
     
     logger.info(f"{Colors.CYAN}{Colors.BOLD} Python Static Analysis Results{Colors.RESET}")
     logger.info(f"{Colors.CYAN}{'=' * 35}{Colors.RESET}")
@@ -478,6 +510,8 @@ def main():
         logger.info(f" * Secrets: {Colors.RED}{len(secrets_findings)}{Colors.RESET}")
     if danger_findings:
         logger.info(f" * Security issues: {Colors.RED}{len(danger_findings)}{Colors.RESET}")
+    if quality_findings:
+        logger.info(f" * Quality issues: {Colors.RED}{len(quality_findings)}{Colors.RESET}")
 
     if args.interactive and (unused_functions or unused_imports):
         logger.info(f"\n{Colors.BOLD}Interactive Mode:{Colors.RESET}")
@@ -620,14 +654,51 @@ def main():
                 line = d.get("line", "?")
                 logger.info(f"{Colors.GRAY}{i:2d}. {Colors.RESET}{message} [{rule_id}] {Colors.GRAY}({file}:{line}){Colors.RESET} Severity: {severity}")
 
+        if quality_findings:
+            logger.info(f"\n{Colors.ORANGE}{Colors.BOLD} - Quality Issues{Colors.RESET}")
+            logger.info(f"{Colors.ORANGE}{'=' * 16}{Colors.RESET}")
+
+            for i, q in enumerate(quality_findings[:50], 1):
+                func_name = q.get("name") or q.get("simple_name") or "<?>"
+                file = q.get("file", "?")
+                line = q.get("line", "?")
+
+                severity = (q.get("severity") or "UNKNOWN").title()
+                kind = (q.get("kind") or "quality").title()
+                value = q.get("value") or q.get("complexity")
+                thresh = q.get("threshold")
+                length = q.get("length")
+
+                logger.info(
+                    f"{i}. [{kind} | {severity}] {func_name} @ {file}:{line}"
+                )
+
+                main_line_bits = []
+                if (q.get("kind") == "nesting") and (value is not None):
+                    main_line_bits.append(f"Deep nesting: depth {value}" + (f" (target ≤ {thresh})" if thresh is not None else ""))
+                elif (q.get("kind") == "complexity") and (value is not None):
+                    main_line_bits.append(f"High cyclomatic complexity: {value}" + (f" (target ≤ {thresh})" if thresh is not None else ""))
+                if length is not None:
+                    main_line_bits.append(f"{length} lines")
+
+                main_line = ", ".join(main_line_bits) if main_line_bits else "Possible maintainability issue."
+                logger.info(f" {main_line}.")
+                logger.info(" -> This function has a lot of branching and loops.")
+                logger.info(" -> Suggested fix: split parts into smaller helpers or simplify nested if/else logic.")
+
+
         dead_code_count = len(unused_functions) + len(unused_imports) + len(unused_variables) + len(unused_classes) + len(unused_parameters)
 
         danger_count = len(danger_findings) if args.danger else 0
+        quality_count = len(quality_findings) if args.quality else 0
+        
         print_badge(
             dead_code_count,
             logger,
             danger_enabled=bool(args.danger),
             danger_count=danger_count,
+            quality_enabled = bool(args.quality),
+            quality_count = quality_count
         )
 
         if unused_functions or unused_imports:
