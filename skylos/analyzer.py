@@ -375,16 +375,6 @@ class Skylos:
                 except Exception:
                     pass
 
-            if enable_danger and scan_danger is not None:
-                try:
-                    findings = scan_danger(root, [file])
-                    if findings:
-                        all_dangers.extend(findings)
-                except Exception as e:
-                    logger.error(f"Error scanning {file} for dangerous code: {e}")
-                    if os.getenv("SKYLOS_DEBUG"):
-                        logger.error(traceback.format_exc())
-                        
             if enable_quality: 
                 try:
                     findings = scan_quality(root, [file])
@@ -398,18 +388,6 @@ class Skylos:
         for defs, test_flags, framework_flags, file, mod in file_contexts:
             for definition in defs:
                 self._apply_penalties(definition, test_flags, framework_flags)
-
-            if enable_secrets and _secrets_scan_ctx is not None:
-                try:
-                    src = Path(file).read_text(encoding="utf-8", errors="ignore")
-                    src_lines = src.splitlines(True)
-                    rel = str(Path(file).relative_to(root))
-                    ctx = {"relpath": rel, "lines": src_lines, "tree": None}
-                    findings = list(_secrets_scan_ctx(ctx))
-                    if findings:
-                        all_secrets.extend(findings)
-                except Exception:
-                    pass
             
             if enable_danger and scan_danger is not None:
                 try:
