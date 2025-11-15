@@ -1,5 +1,12 @@
 ## Changelog
 
+## [0.2.0] - 2025-11-16
+
+### Added 
+- Highlighting unused variables and dangerous/poor quality code. Warning messages will appear on the same line as the errors
+- Added config toggles for `enableSecrets`, `enableDanger`, and `enableQuality` that control `--secrets`, `--danger`, `--quality` flags
+- Wired quality issues into the extension output under a new `QUALITY` section
+
 ## [0.1.1] - 2025-10-14
 
 ### Added
