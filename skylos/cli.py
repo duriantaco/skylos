@@ -13,6 +13,7 @@ from skylos.codemods import (
 )
 import pathlib
 import skylos
+from collections import defaultdict
 
 from rich.console import Console
 from rich.table import Table
@@ -21,6 +22,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.theme import Theme
 from rich.logging import RichHandler
 from rich.rule import Rule
+from rich.tree import Tree
 
 try:
     import inquirer
@@ -137,7 +139,31 @@ def comment_out_unused_function(file_path, function_name, line_number, marker="S
         logging.error(f"Failed to comment out function {function_name} from {file_path}: {e}")
         return False
 
-def interactive_selection(console: Console, unused_functions, unused_imports):
+def _shorten_path(file_path, root_path=None):
+
+    if not file_path:
+        return "?"
+
+    try:
+        p = pathlib.Path(file_path)
+    except TypeError:
+        return str(file_path)
+
+    if root_path is not None:
+        try:
+            root = pathlib.Path(root_path)
+            if root.is_file():
+                root = root.parent
+            p = p.resolve()
+            root = root.resolve()
+            rel = p.relative_to(root)
+            return str(rel)
+        except Exception:
+            return p.name
+
+    return str(p)
+
+def interactive_selection(console: Console, unused_functions, unused_imports, root_path=None):
     if not INTERACTIVE_AVAILABLE:
         console.print("[bad]Interactive mode requires 'inquirer'. Install with: pip install inquirer[/bad]")
         return [], []
@@ -150,7 +176,8 @@ def interactive_selection(console: Console, unused_functions, unused_imports):
 
         function_choices = []
         for item in unused_functions:
-            choice_text = f"{item['name']} ({item['file']}:{item['line']})"
+            short = _shorten_path(item.get("file"), root_path)
+            choice_text = f"{item['name']} ({short}:{item['line']})"
             function_choices.append((choice_text, item))
 
         questions = [inquirer.Checkbox("functions", message="Select functions to remove", choices=function_choices)]
@@ -163,7 +190,8 @@ def interactive_selection(console: Console, unused_functions, unused_imports):
 
         import_choices = []
         for item in unused_imports:
-            choice_text = f"{item['name']} ({item['file']}:{item['line']})"
+            short = _shorten_path(item.get("file"), root_path)
+            choice_text = f"{item['name']} ({short}:{item['line']})"
             import_choices.append((choice_text, item))
 
         questions = [inquirer.Checkbox("imports", message="Select imports to remove", choices=import_choices)]
@@ -207,7 +235,7 @@ def print_badge(dead_code_count, logger, *, danger_enabled=False, danger_count=0
     )
     console.print("```")
 
-def render_results(console: Console, result):
+def render_results(console: Console, result, tree=False, root_path=None):
     summ = result.get("analysis_summary", {})
     console.print(
         Panel.fit(
@@ -247,11 +275,12 @@ def render_results(console: Console, result):
         table = Table(expand=True)
         table.add_column("#", style="muted", width=3)
         table.add_column("Name", style="bold")
-        table.add_column("Location", style="muted")
+        table.add_column("Location", style="muted", overflow="fold")
 
         for i, item in enumerate(items, 1):
             nm = item.get(name_key) or item.get("simple_name") or "<?>"
-            loc = f"{item.get('file','?')}:{item.get('line', item.get('lineno','?'))}"
+            short = _shorten_path(item.get("file"), root_path)
+            loc = f"{short}:{item.get('line', item.get('lineno','?'))}"
             table.add_row(str(i), nm, loc)
             
         console.print(table)
@@ -267,7 +296,7 @@ def render_results(console: Console, result):
         table.add_column("Type", style="yellow", width=12)
         table.add_column("Function", style="bold")
         table.add_column("Detail")
-        table.add_column("Location", style="muted", width=24)
+        table.add_column("Location", style="muted", width=36)
 
         for i, quality in enumerate(items, 1):
             kind = (quality.get("kind") or quality.get("metric") or "quality").title()
@@ -300,17 +329,77 @@ def render_results(console: Console, result):
         table.add_column("Provider", style="yellow", width=14)
         table.add_column("Message")
         table.add_column("Preview", style="muted", width=18)
-        table.add_column("Location", style="muted", width=28)
+        table.add_column("Location", style="muted", overflow="fold")
 
         for i, s in enumerate(items[:100], 1):
             prov = s.get("provider") or "generic"
             msg = s.get("message") or "Secret detected"
             prev = s.get("preview") or "****"
-            loc = f"{s.get('file','?')}:{s.get('line','?')}"
+            short = _shorten_path(s.get("file"), root_path)
+            loc = f"{short}:{s.get('line','?')}"
             table.add_row(str(i), prov, msg, prev, loc)
 
         console.print(table)
         console.print()
+    
+    def render_tree(console: Console, result, root_path=None):
+ 
+        by_file = defaultdict(list)
+
+        def _add_unused(items, kind):
+            for u in items or []:
+                file = u.get("file")
+                if not file:
+                    continue
+                line = u.get("line") or u.get("lineno") or 1
+                name = u.get("name") or u.get("simple_name") or "<?>"
+                msg = f"Unused {kind}: {name}"
+                by_file[file].append((line, "info", msg))
+
+        def _add_findings(items, kind, default_sev = "medium"):
+            for f in items or []:
+                file = f.get("file")
+                if not file:
+                    continue
+                line = f.get("line") or 1
+                sev = (f.get("severity") or default_sev).lower()
+                rule = f.get("rule_id")
+                msg = f.get("message") or kind
+                if rule:
+                    msg = f"[{rule}] {msg}"
+                by_file[file].append((line, sev, msg))
+
+        _add_unused(result.get("unused_functions"), "function")
+        _add_unused(result.get("unused_imports"), "import")
+        _add_unused(result.get("unused_classes"), "class")
+        _add_unused(result.get("unused_variables"), "variable")
+        _add_unused(result.get("unused_parameters"), "parameter")
+
+        _add_findings(result.get("danger"), "security", default_sev="high")
+        _add_findings(result.get("secrets"), "secret", default_sev="high")
+        _add_findings(result.get("quality"), "quality", default_sev="medium")
+
+        if not by_file:
+            console.print("[good]No findings to display.[/good]")
+            return
+
+        root_label = str(root_path) if root_path is not None else "Skylos results"
+        tree = Tree(f"[brand]{root_label}[/brand]")
+
+        for file in sorted(by_file.keys()):
+            short = _shorten_path(file, root_path)
+            file_node = tree.add(f"[bold]{short}[/bold]")
+
+            for line, sev, msg in sorted(by_file[file], key=lambda t: t[0]):
+                if sev == "high" or sev == "critical":
+                    style = "bad"
+                elif sev == "medium":
+                    style = "warn"
+                else:
+                    style = "muted"
+                file_node.add(f"[{style}]L{line}[/{style}] {msg}")
+
+        console.print(tree)
 
     def _render_danger(items):
         if not items:
@@ -321,27 +410,32 @@ def render_results(console: Console, result):
         table.add_column("#", style="muted", width=3)
         table.add_column("Rule", style="yellow", width=18)
         table.add_column("Severity", width=10)
-        table.add_column("Message")
-        table.add_column("Location", style="muted", width=28)
+        table.add_column("Message", overflow="fold")
+        table.add_column("Location", style="muted", width=36, overflow="fold")
 
         for i, d in enumerate(items[:100], 1):
             rule = d.get("rule_id") or "UNKNOWN"
             sev = (d.get("severity") or "UNKNOWN").title()
             msg = d.get("message") or "Issue detected"
-            loc = f"{d.get('file','?')}:{d.get('line','?')}"
+            short = _shorten_path(d.get("file"), root_path)
+            loc = f"{short}:{d.get('line','?')}"
             table.add_row(str(i), rule, sev, msg, loc)
 
         console.print(table)
         console.print()
 
-    _render_unused("Unreachable Functions", result.get("unused_functions", []), name_key="name")
-    _render_unused("Unused Imports", result.get("unused_imports", []), name_key="name")
-    _render_unused("Unused Parameters", result.get("unused_parameters", []), name_key="name")
-    _render_unused("Unused Variables", result.get("unused_variables", []), name_key="name")
-    _render_unused("Unused Classes", result.get("unused_classes", []), name_key="name")
-    _render_secrets(result.get("secrets", []) or [])
-    _render_danger(result.get("danger", []) or [])
-    _render_quality(result.get("quality", []) or [])
+    if tree:
+        render_tree(console, result, root_path=root_path)
+    else:
+        _render_unused("Unreachable Functions", result.get("unused_functions", []), name_key="name")
+        _render_unused("Unused Imports", result.get("unused_imports", []), name_key="name")
+        _render_unused("Unused Parameters", result.get("unused_parameters", []), name_key="name")
+        _render_unused("Unused Variables", result.get("unused_variables", []), name_key="name")
+        _render_unused("Unused Classes", result.get("unused_classes", []), name_key="name")
+        _render_secrets(result.get("secrets", []) or [])
+        _render_danger(result.get("danger", []) or [])
+        _render_quality(result.get("quality", []) or [])
+
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "run":
@@ -356,6 +450,7 @@ def main():
     parser = argparse.ArgumentParser(description="Detect unreachable functions and unused imports in a Python project")
     parser.add_argument("path", help="Path to the Python project")
     parser.add_argument("--table", action="store_true", help="(deprecated) Show findings in table")
+    parser.add_argument("--tree", action="store_true", help="Show findings in tree format")
     parser.add_argument("--version", action="version", version=f"skylos {skylos.__version__}", help="Show version and exit")
     parser.add_argument("--json", action="store_true", help="Output raw JSON")
     parser.add_argument("--comment-out", action="store_true", help="Comment out selected dead code instead of deleting item")
@@ -396,6 +491,10 @@ def main():
     parser.add_argument("--quality", action="store_true", help="Run code quality checks. Off by default.")
 
     args = parser.parse_args()
+    project_root = pathlib.Path(args.path).resolve()
+    if project_root.is_file():
+        project_root = project_root.parent
+
     logger = setup_logger(args.output)
     console = logger.console
 
@@ -459,7 +558,7 @@ def main():
         if not (unused_functions or unused_imports):
             console.print("[good]No unused functions/imports to process.[/good]")
         else:
-            selected_functions, selected_imports = interactive_selection(console, unused_functions, unused_imports)
+            selected_functions, selected_imports = interactive_selection(console, unused_functions, unused_imports, root_path=project_root)
 
             if selected_functions or selected_imports:
                 if not args.dry_run:
@@ -504,7 +603,7 @@ def main():
             else:
                 console.print("[muted]No items selected.[/muted]")
 
-    render_results(console, result)
+    render_results(console, result, tree=args.tree, root_path=project_root)
 
     unused_total = sum(
         len(result.get(k, []))
