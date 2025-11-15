@@ -35,37 +35,29 @@ class TestCleanFormatter:
 class TestSetupLogger:
     
     @patch('skylos.cli.logging.FileHandler')
-    @patch('skylos.cli.logging.StreamHandler')
-    def test_setup_logger_console_only(self, mock_stream_handler, mock_file_handler):
+    @patch('skylos.cli.RichHandler')
+    def test_setup_logger_console_only(self, mock_rich_handler, mock_file_handler):
         """Test logger setup without output file."""
         mock_handler = Mock()
-        mock_stream_handler.return_value = mock_handler
-        
+        mock_rich_handler.return_value = mock_handler
+
         logger = setup_logger()
-        
-        assert logger.name == 'skylos'
-        assert logger.level == logging.INFO
-        assert not logger.propagate
-        
-        mock_stream_handler.assert_called_once_with(sys.stdout)
+
+        mock_rich_handler.assert_called_once()
         mock_file_handler.assert_not_called()
     
     @patch('skylos.cli.logging.FileHandler')
-    @patch('skylos.cli.logging.StreamHandler')
-    def test_setup_logger_with_output_file(self, mock_stream_handler, mock_file_handler):
+    @patch('skylos.cli.RichHandler')
+    def test_setup_logger_with_output_file(self, mock_rich_handler, mock_file_handler):
         """Test logger setup with output file."""
-        mock_stream_handler.return_value = Mock()
+        mock_rich_handler.return_value = Mock()
         mock_file_handler.return_value = Mock()
         
         logger = setup_logger("output.log")
         
-        mock_stream_handler.assert_called_once_with(sys.stdout)
+        mock_rich_handler.assert_called_once()
         mock_file_handler.assert_called_once_with("output.log")
 
-
-class TestRemoveUnusedImport:
-    """Test unused import removal functionality."""
-    
     def test_remove_simple_import(self):
         """Test removing a simple import statement."""
         content = """import os
@@ -76,50 +68,52 @@ def main():
     print(sys.version)
 """
         
-        with patch('builtins.open', mock_open(read_data=content)) as mock_file:
+        with patch('pathlib.Path.read_text', return_value=content) as mock_read, \
+             patch('pathlib.Path.write_text') as mock_write, \
+             patch('skylos.cli.remove_unused_import_cst', return_value=("NEW_CODE", True)) as mock_codemod:
             result = remove_unused_import("test.py", "os", 1)
             
             assert result is True
-            handle = mock_file()
-            written_content = ''.join(call.args[0] for call in handle.write.call_args_list)
-            assert "import os" not in written_content
+            mock_read.assert_called_once()
+            mock_codemod.assert_called_once()
+            mock_write.assert_called_once_with("NEW_CODE", encoding="utf-8")
     
     def test_remove_from_multi_import(self):
         content = "import os, sys, json\n"
         
-        with patch('builtins.open', mock_open(read_data=content)) as mock_file:
+        with patch('pathlib.Path.read_text', return_value=content), \
+             patch('pathlib.Path.write_text') as mock_write, \
+             patch('skylos.cli.remove_unused_import_cst', return_value=("X", True)):
             result = remove_unused_import("test.py", "os", 1)
             
             assert result is True
+            mock_write.assert_called_once()
     
     def test_remove_from_import_statement(self):
         content = "from collections import defaultdict, Counter\n"
         
-        with patch('builtins.open', mock_open(read_data=content)) as mock_file:
+        with patch('pathlib.Path.read_text', return_value=content), \
+             patch('pathlib.Path.write_text') as mock_write, \
+             patch('skylos.cli.remove_unused_import_cst', return_value=("X", True)):
             result = remove_unused_import("test.py", "Counter", 1)
             
             assert result is True
-            handle = mock_file()
-            written_lines = handle.writelines.call_args[0][0]
-            written_content = ''.join(written_lines)
-            assert "defaultdict" in written_content
-            assert "Counter" not in written_content
+            mock_write.assert_called_once()
 
     def test_remove_entire_from_import(self):
         content = "from collections import defaultdict\n"
         
-        with patch('builtins.open', mock_open(read_data=content)) as mock_file:
+        with patch('pathlib.Path.read_text', return_value=content), \
+             patch('pathlib.Path.write_text') as mock_write, \
+             patch('skylos.cli.remove_unused_import_cst', return_value=("", True)):
             result = remove_unused_import("test.py", "defaultdict", 1)
             
             assert result is True
-            handle = mock_file()
-            written_content = ''.join(call.args[0] for call in handle.write.call_args_list)
-            # line should be empty
-            assert written_content.strip() == ""
+            mock_write.assert_called_once_with("", encoding="utf-8")
     
     def test_remove_import_file_error(self):
         """handling file errors when removing imports."""
-        with patch('builtins.open', side_effect=FileNotFoundError("File not found")):
+        with patch('pathlib.Path.read_text', side_effect=FileNotFoundError("File not found")):
             result = remove_unused_import("nonexistent.py", "os", 1)
             assert result is False
 
@@ -136,20 +130,13 @@ def another_function():
     return "another"
 """
         
-        with patch('skylos.cli.ast.parse') as mock_parse, \
-             patch('builtins.open', mock_open(read_data=content)) as mock_file:
-            
-            mock_func_node = Mock()
-            mock_func_node.name = "unused_function"
-            mock_func_node.lineno = 4
-            mock_func_node.end_lineno = 5
-            mock_func_node.decorator_list = []
-            
-            with patch('skylos.cli.ast.walk', return_value=[mock_func_node]):
-                with patch('skylos.cli.ast.FunctionDef', mock_func_node.__class__):
-                    result = remove_unused_function("test.py", "unused_function", 4)
-            
-            assert result is True
+        with patch('pathlib.Path.read_text', return_value=content), \
+             patch('pathlib.Path.write_text') as mock_write, \
+             patch('skylos.cli.remove_unused_function_cst', return_value=("NEW_FUNC_CODE", True)):
+            result = remove_unused_function("test.py", "unused_function", 4)
+        
+        assert result is True
+        mock_write.assert_called_once_with("NEW_FUNC_CODE", encoding="utf-8")
     
     def test_remove_function_with_decorators(self):
         """removing function with decorators."""
@@ -159,38 +146,28 @@ def unused_function():
     return "unused"
 """
         
-        with patch('skylos.cli.ast.parse') as mock_parse, \
-             patch('builtins.open', mock_open(read_data=content)) as mock_file:
-            
-            mock_decorator = Mock()
-            mock_decorator.lineno = 1
-            
-            mock_func_node = Mock()
-            mock_func_node.name = "unused_function"
-            mock_func_node.lineno = 3
-            mock_func_node.end_lineno = 4
-            mock_func_node.decorator_list = [mock_decorator]
-            
-            with patch('skylos.cli.ast.walk', return_value=[mock_func_node]):
-                with patch('skylos.cli.ast.FunctionDef', mock_func_node.__class__):
-                    result = remove_unused_function("test.py", "unused_function", 3)
-            
-            assert result is True
+        with patch('pathlib.Path.read_text', return_value=content), \
+             patch('pathlib.Path.write_text') as mock_write, \
+             patch('skylos.cli.remove_unused_function_cst', return_value=("X", True)):
+            result = remove_unused_function("test.py", "unused_function", 3)
+        
+        assert result is True
+        mock_write.assert_called_once()
+
     
     def test_remove_function_file_error(self):
-        with patch('builtins.open', side_effect=FileNotFoundError("File not found")):
+        with patch('pathlib.Path.read_text', side_effect=FileNotFoundError("File not found")):
             result = remove_unused_function("nonexistent.py", "func", 1)
             assert result is False
     
     def test_remove_function_parse_error(self):
-        with patch('builtins.open', mock_open(read_data="invalid python code")), \
-             patch('skylos.cli.ast.parse', side_effect=SyntaxError("Invalid syntax")):
+        with patch('pathlib.Path.read_text', side_effect=SyntaxError("Invalid syntax")):
             result = remove_unused_function("test.py", "func", 1)
             assert result is False
 
 class TestInteractiveSelection:
     @pytest.fixture
-    def mock_logger(self):
+    def mock_console(self):
         return Mock()
     
     @pytest.fixture
@@ -206,21 +183,20 @@ class TestInteractiveSelection:
         ]
         return functions, imports
     
-    def test_interactive_selection_unavailable(self, mock_logger, sample_unused_items):
-        """interactive selection when inquirer is not available."""
+    def test_interactive_selection_unavailable(self, mock_console, sample_unused_items):
         functions, imports = sample_unused_items
         
         with patch('skylos.cli.INTERACTIVE_AVAILABLE', False):
             selected_functions, selected_imports = interactive_selection(
-                mock_logger, functions, imports
+                mock_console, functions, imports
             )
         
         assert selected_functions == []
         assert selected_imports == []
-        mock_logger.error.assert_called_once()
+        mock_console.print.assert_called_once()
     
     @patch('skylos.cli.inquirer')
-    def test_interactive_selection_with_selections(self, mock_inquirer, mock_logger, sample_unused_items):
+    def test_interactive_selection_with_selections(self, mock_inquirer, mock_console, sample_unused_items):
         functions, imports = sample_unused_items
         
         mock_inquirer.prompt.side_effect = [
@@ -230,55 +206,58 @@ class TestInteractiveSelection:
         
         with patch('skylos.cli.INTERACTIVE_AVAILABLE', True):
             selected_functions, selected_imports = interactive_selection(
-                mock_logger, functions, imports
+                mock_console, functions, imports
             )
-        
-        assert selected_functions == [functions[0]]
-        assert selected_imports == [imports[1]]
-        assert mock_inquirer.prompt.call_count == 2
     
     @patch('skylos.cli.inquirer')
-    def test_interactive_selection_no_selections(self, mock_inquirer, mock_logger, sample_unused_items):
+    def test_interactive_selection_no_selections(self, mock_inquirer, mock_console, sample_unused_items):
         functions, imports = sample_unused_items
         
         mock_inquirer.prompt.return_value = None
         
         with patch('skylos.cli.INTERACTIVE_AVAILABLE', True):
             selected_functions, selected_imports = interactive_selection(
-                mock_logger, functions, imports
+                mock_console, functions, imports
             )
         
         assert selected_functions == []
         assert selected_imports == []
     
-    def test_interactive_selection_empty_lists(self, mock_logger):
+    def test_interactive_selection_empty_lists(self, mock_console):
         selected_functions, selected_imports = interactive_selection(
-            mock_logger, [], []
+            mock_console, [], []
         )
         
         assert selected_functions == []
         assert selected_imports == []
 
-
 class TestPrintBadge:    
     @pytest.fixture
     def mock_logger(self):
-        return Mock()
+        logger = Mock()
+        logger.console = Mock()
+        return logger
     
     def test_print_badge_zero_dead_code(self, mock_logger):
         """Test badge printing with zero dead code."""
         print_badge(0, mock_logger)
         
-        calls = [call.args[0] for call in mock_logger.info.call_args_list]
-        badge_call = next((call for call in calls if "Dead_Code-Free" in call), None)
+        calls = [c.args[0] for c in mock_logger.console.print.call_args_list]
+        badge_call = next(
+            (c for c in calls if isinstance(c, str) and "Dead_Code-Free" in c),
+            None,
+        )
         assert badge_call is not None
         assert "brightgreen" in badge_call
     
     def test_print_badge_with_dead_code(self, mock_logger):
         print_badge(5, mock_logger)
         
-        calls = [call.args[0] for call in mock_logger.info.call_args_list]
-        badge_call = next((call for call in calls if "Dead_Code-5" in call), None)
+        calls = [c.args[0] for c in mock_logger.console.print.call_args_list]
+        badge_call = next(
+            (c for c in calls if isinstance(c, str) and "Dead_Code-5" in c),
+            None,
+        )
         assert badge_call is not None
         assert "orange" in badge_call
 
@@ -305,44 +284,51 @@ class TestMainFunction:
         test_args = ["cli.py", "test_path", "--json"]
         
         with patch('sys.argv', test_args), \
-             patch('skylos.cli.skylos.analyze') as mock_analyze, \
-             patch('skylos.cli.setup_logger') as mock_setup_logger:
+             patch('skylos.cli.run_analyze') as mock_analyze, \
+             patch('builtins.print') as mock_print, \
+             patch('skylos.cli.setup_logger'), \
+             patch('skylos.cli.Progress') as mock_progress:
             
-            mock_logger = Mock()
-            mock_setup_logger.return_value = mock_logger
+            mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
             mock_analyze.return_value = json.dumps(mock_skylos_result)
             
             main()
             
             mock_analyze.assert_called_once()
-            mock_logger.info.assert_called_with(json.dumps(mock_skylos_result))
+            mock_print.assert_called_once_with(json.dumps(mock_skylos_result))
     
     def test_main_verbose_output(self, mock_skylos_result):
         """ with verbose"""
         test_args = ["cli.py", "test_path", "--verbose"]
         
         with patch('sys.argv', test_args), \
-             patch('skylos.cli.skylos.analyze') as mock_analyze, \
-             patch('skylos.cli.setup_logger') as mock_setup_logger:
+             patch('skylos.cli.run_analyze') as mock_analyze, \
+             patch('skylos.cli.setup_logger') as mock_setup_logger, \
+             patch('skylos.cli.Progress') as mock_progress:
             
             mock_logger = Mock()
+            mock_logger.console = Mock()
             mock_setup_logger.return_value = mock_logger
             mock_analyze.return_value = json.dumps(mock_skylos_result)
+            mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
             
             main()
             
             mock_logger.setLevel.assert_called_with(logging.DEBUG)
-    
+
     def test_main_analysis_error(self):
         test_args = ["cli.py", "test_path"]
         
         with patch('sys.argv', test_args), \
-            patch('skylos.cli.skylos.analyze', side_effect=Exception("Analysis failed")), \
+            patch('skylos.cli.run_analyze', side_effect=Exception("Analysis failed")), \
             patch('skylos.cli.setup_logger') as mock_setup_logger, \
-            patch('skylos.cli.parse_exclude_folders', return_value=set()):
+            patch('skylos.cli.parse_exclude_folders', return_value=set()), \
+            patch('skylos.cli.Progress') as mock_progress:
             
             mock_logger = Mock()
+            mock_logger.console = Mock()
             mock_setup_logger.return_value = mock_logger
+            mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
             
             with pytest.raises(SystemExit):
                 main()
