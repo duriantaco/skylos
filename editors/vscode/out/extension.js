@@ -7,13 +7,27 @@ const child_process_1 = require("child_process");
 const path = require("path");
 const collection = vscode.languages.createDiagnosticCollection("skylos");
 const out = vscode.window.createOutputChannel("skylos");
+const skylosDecorationType = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    backgroundColor: "rgba(255, 255, 0, 0.18)",
+    overviewRulerColor: "rgba(255, 255, 0, 0.8)",
+    overviewRulerLane: vscode.OverviewRulerLane.Full,
+    after: {
+        margin: "0 0 0 3ch",
+        color: new vscode.ThemeColor("editor.foreground"),
+        fontStyle: "italic",
+    },
+});
 let statusBarItem;
+let latestByFile = null;
 function activate(context) {
     context.subscriptions.push(collection);
+    context.subscriptions.push(skylosDecorationType);
     out.appendLine("Skylos extension activated");
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = "skylos.scan";
-    statusBarItem.text = "$(shield) Skylos";
+    // statusBarItem.text = "$(shield) Skylos";
+    statusBarItem.text = "$(shield) Skylos-TEST";
     statusBarItem.tooltip = "Click to scan with Skylos";
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
@@ -24,11 +38,17 @@ function activate(context) {
                 runSkylos();
         }));
     }
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
+        if (editor && latestByFile) {
+            applyDecorations(latestByFile);
+        }
+    }));
     context.subscriptions.push(vscode.languages.registerCodeActionsProvider({ language: "python" }, new IgnoreLineQuickFix(), { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }));
 }
 function deactivate() {
     collection.clear();
     collection.dispose();
+    skylosDecorationType.dispose();
 }
 async function runSkylos() {
     collection.clear();
@@ -46,12 +66,15 @@ async function runSkylos() {
     const excludes = cfg.get("skylos.excludeFolders", []);
     const enableSecrets = cfg.get("skylos.enableSecrets", true);
     const enableDanger = cfg.get("skylos.enableDanger", true);
+    const enableQuality = cfg.get("skylos.enableQuality", true);
     const args = [ws.uri.fsPath, "--json", "-c", String(conf)];
     excludes.forEach(f => args.push("--exclude-folder", f));
     if (enableSecrets)
         args.push("--secrets");
     if (enableDanger)
         args.push("--danger");
+    if (enableQuality)
+        args.push("--quality");
     // console.log(`Running skylos with args: ${args.join(" ")}`);
     // console.log(`Working directory: ${ws.uri.fsPath}`);
     let stdout;
@@ -75,13 +98,17 @@ async function runSkylos() {
     }
     const byFile = toDiagnostics(report);
     // console.log(`Processing diagnostics for ${byFile.size} files`);
+    const absMap = new Map();
     for (const [reportedPath, diags] of byFile) {
         const filePath = path.isAbsolute(reportedPath)
             ? reportedPath
             : path.join(ws.uri.fsPath, reportedPath);
         const uri = vscode.Uri.file(filePath);
         collection.set(uri, diags);
+        absMap.set(filePath, diags);
     }
+    latestByFile = absMap;
+    applyDecorations(absMap);
     printDetailedReport(report, ws.uri.fsPath);
     const total = [...byFile.values()].reduce((n, d) => n + d.length, 0);
     if (total > 0) {
@@ -163,6 +190,20 @@ function printDetailedReport(report, workspaceRoot) {
     const allFindings = [];
     (report.danger || []).forEach(f => allFindings.push({ category: "SECURITY", finding: f }));
     (report.secrets || []).forEach(f => allFindings.push({ category: "SECRETS", finding: f }));
+    (report.quality || []).forEach((q) => {
+        if (!q?.file)
+            return;
+        allFindings.push({
+            category: "QUALITY",
+            finding: {
+                message: q.message || `Quality issue (${q.kind || q.metric || "quality"})`,
+                file: q.file,
+                line: q.line ?? 1,
+                severity: q.severity || "MEDIUM",
+                rule_id: q.rule_id,
+            },
+        });
+    });
     const addUnused = (arr, type) => {
         (arr || []).forEach(u => {
             if (u?.file) {
@@ -221,6 +262,31 @@ function printDetailedReport(report, workspaceRoot) {
     out.appendLine("");
     out.appendLine("=".repeat(60));
     out.appendLine(`Total: ${allFindings.length} issue(s)`);
+}
+function applyDecorations(byFileAbs) {
+    const editors = vscode.window.visibleTextEditors;
+    out.appendLine(`Skylos: applyDecorations called, visible editors = ${editors.length}`);
+    for (const editor of editors) {
+        const fsPath = editor.document.uri.fsPath;
+        const diags = byFileAbs.get(fsPath) || [];
+        out.appendLine(`Skylos: editor=${fsPath}, diags=${diags.length}`);
+        const decorations = [];
+        for (const d of diags) {
+            const line = d.range.start.line;
+            const range = new vscode.Range(line, 0, line, 0);
+            decorations.push({
+                range,
+                hoverMessage: d.message,
+                renderOptions: {
+                    after: {
+                        contentText: d.message,
+                    },
+                },
+            });
+        }
+        out.appendLine(`Skylos: setting ${decorations.length} decoration(s) on ${fsPath}`);
+        editor.setDecorations(skylosDecorationType, decorations);
+    }
 }
 class IgnoreLineQuickFix {
     provideCodeActions(doc, _range, ctx) {
