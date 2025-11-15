@@ -2,7 +2,7 @@
   "name": "skylos-vscode-extension",
   "displayName": "Skylos",
   "description": "Inline dead code + optional secrets/dangerous findings powered by skylos --json.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "oha",
   "icon": "icon.png",
   "repository": { "type": "git", "url": "https://github.com/oha/skylos" },
