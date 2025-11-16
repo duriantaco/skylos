@@ -14,10 +14,11 @@
 
 > A static analysis tool for Python codebases written in Python that detects unreachable functions and unused imports, aka dead code. Faster and better results than many alternatives like Flake8 and Pylint, and finding more dead code than Vulture in our tests with comparable speed.
 
+<h2>CLI</h2>
 <div align="center">
-   <img src="assets/FE_SS.png" alt="FE" width="800">
+   <img src="assets/CLI.png" alt="CLI" width="800">
 </div>
-
+<p>The cli will output the results in a table format with the appropriate flags</p>
 
 ## Table of Contents
 
@@ -25,6 +26,7 @@
 - [Benchmark](#benchmark-you-can-find-this-benchmark-test-in-test-folder)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [VS-Code extension](#vs-code-extension)
 - [Web Interface](#web-interface)
 - [Design](#design)
 - [Test File Detection](#test-file-detection)
@@ -37,7 +39,6 @@
 - [Interactive Mode](#interactive-mode)
 - [Development](#development)
 - [CI/CD (Pre-commit & GitHub Actions)](#cicd-pre-commit--github-actions)
-- [VS Code extension](#vsc-extension)
 - [FAQ](#faq)
 - [Limitations](#limitations)
 - [Troubleshooting](#troubleshooting)
@@ -104,6 +105,9 @@ skylos /path/to/your/project
 
 skylos /path/to/your/project --secrets  ## include api key scan
 skylos /path/to/your/project --danger   ## include safety scan for dangerous code
+skylos /path/to/your/project --quality ## include quality scan for complex code
+
+skylos /path/to/your/project --secrets --danger --quality  ## you can string all the flags together
 
 # To launch the front end
 skylos run
@@ -120,14 +124,39 @@ skylos --interactive --dry-run /path/to/your/project
 # Load the results in json format
 skylos --json /path/to/your/project 
 
-# Load the results in table format
+# Load the results in table format 
+skylos --table /path/to/your/project ## the current skylos versoin does not use table anymore, this is kept for backward compatability and will be deprecated in the next update
+
+# Load the results in tree format 
 skylos --table /path/to/your/project 
 
 # With confidence
 skylos path/to/your/file --confidence 20 ## or whatever value u wanna set
 ```
 
+## VS-Code extension
+
+<h2>Extension</h2>
+<div align="center">
+   <img src="assets/extension.gif" alt="extension" width="800">
+</div>
+
+Skylos has a VS Code extension that runs on save like a linter. Runs automatically on save of Python files. You will see highlights + a popup like "Skylos found N items." For more information, refer to the VSC `README.md` inside the marketplace.
+
+The extension runs on Skylos engine. By default, the quality, danger and secrets engine should be running. If it is not, you can turn it on inside `settings`.
+
+### Install
+
+From VS Code Marketplace: "Skylos" (publisher: oha)
+
+Version: `0.2.0`
+
 ## Web Interface
+
+<h2>Front end</h2>
+<div align="center">
+   <img src="assets/FE_SS.png" alt="frontend" width="800">
+</div>
 
 Skylos includes a modern web dashboard for interactive analysis:
 
@@ -223,7 +252,7 @@ We are aware that vibe coding has created a lot of vulnerabilities. To an AI, it
 - yaml.load w/o SafeLoader
 - weak hashes MD5/SHA1
 - subprocess(..., shell=True)
-- requests(..., verify=False)
+- requests(..., verify=False) 
 
 ### Quick Start
 
@@ -553,7 +582,6 @@ pre-commit install
 
 2. pre-commit run --all-files
 
-
 3. Run the same hooks in CI (GitHub Actions): create .github/workflows/pre-commit.yml:
 
 ```yaml
@@ -571,16 +599,6 @@ jobs:
 ```
 
 **Pre commit behavior:** the second hook is soft by default (SKYLOS_SOFT=1). This means that it prints findings and passes. You can remove the env/logic if you want pre-commit to block commits on finding
-
-## VS Code extension
-
-Skylos has a VS Code extension that runs on save like a linter. Runs automatically on save of Python files. You will ll see squiggles + a popup like "Skylos found N items." For more information, refer to the VSC `README.md` inside the marketplace.
-
-### Install
-
-From VS Code Marketplace: "Skylos" (publisher: oha)
-
-Version: `0.1.0`
 
 ## Development
 
@@ -638,7 +656,8 @@ A: It flags common security problems. Refer to `DANGEROUS_CODE.md` for the full 
 - **Frameworks**: Django models, Flask, FastAPI routes may appear unused but aren't
 - **Test data**: Limited scenarios, your mileage may vary
 - **False positives**: Always manually review before deleting code
-- **Secrets PoC**: May emit both a provider hit and a generic high-entropy hit for the same token. All tokens are detected only in py files (`.py`, `.pyi`, `.pyw`).
+- **Secrets PoC**: May emit both a provider hit and a generic high-entropy hit for the same token. All tokens are detected only in py files (`.py`, `.pyi`, `.pyw`)
+- **Quality limitations**: The current `--quality` flag does not allow you to configure the cyclomatic complexity. 
 
 ## Troubleshooting
 
