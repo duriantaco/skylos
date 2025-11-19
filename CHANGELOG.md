@@ -1,5 +1,16 @@
 ## Changelog
 
+## [2.5.1] - 2025-11-19
+
+### Changed
+- CLI now displays **relative file paths** (relative to the scanned root), reducing text overflow in CLI output
+
+### Added
+- Added `--tree` flag so users can display their results in an ASCII tree format 
+
+### Downstream
+- Analyzer returns richer metadata (`analysis_summary`, secrets/danger/quality wiring), preparing for FE UI integrations down the road
+
 ## [2.5.0] - 2025-11-12
 
 ### Added
