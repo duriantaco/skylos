@@ -1,59 +1,148 @@
 
 {
-  "unused_functions": [],
+  "unused_functions": [
+    {
+      "name": "is_test_path",
+      "full_name": "constants.is_test_path",
+      "simple_name": "is_test_path",
+      "type": "function",
+      "file": "E:\\Github\\skylos\\skylos\\constants.py",
+      "basename": "constants.py",
+      "line": 37,
+      "confidence": 100,
+      "references": 0
+    },
+    {
+      "name": "is_framework_path",
+      "full_name": "constants.is_framework_path",
+      "simple_name": "is_framework_path",
+      "type": "function",
+      "file": "E:\\Github\\skylos\\skylos\\constants.py",
+      "basename": "constants.py",
+      "line": 40,
+      "confidence": 100,
+      "references": 0
+    }
+  ],
   "unused_imports": [],
   "unused_classes": [],
   "unused_variables": [
     {
+      "name": "GREEN",
+      "full_name": "cli.Colors.GREEN",
+      "simple_name": "GREEN",
+      "type": "variable",
+      "file": "E:\\Github\\skylos\\skylos\\cli.py",
+      "basename": "cli.py",
+      "line": 37,
+      "confidence": 100,
+      "references": 0
+    },
+    {
+      "name": "BLUE",
+      "full_name": "cli.Colors.BLUE",
+      "simple_name": "BLUE",
+      "type": "variable",
+      "file": "E:\\Github\\skylos\\skylos\\cli.py",
+      "basename": "cli.py",
+      "line": 39,
+      "confidence": 100,
+      "references": 0
+    },
+    {
       "name": "MAGENTA",
-      "full_name": "skylos.cli.Colors.MAGENTA",
+      "full_name": "cli.Colors.MAGENTA",
       "simple_name": "MAGENTA",
       "type": "variable",
       "file": "E:\\Github\\skylos\\skylos\\cli.py",
       "basename": "cli.py",
       "line": 40,
-      "confidence": 60,
+      "confidence": 100,
       "references": 0
     },
     {
       "name": "CYAN",
-      "full_name": "skylos.cli.Colors.CYAN",
+      "full_name": "cli.Colors.CYAN",
       "simple_name": "CYAN",
       "type": "variable",
       "file": "E:\\Github\\skylos\\skylos\\cli.py",
       "basename": "cli.py",
       "line": 41,
-      "confidence": 60,
+      "confidence": 100,
+      "references": 0
+    },
+    {
+      "name": "BOLD",
+      "full_name": "cli.Colors.BOLD",
+      "simple_name": "BOLD",
+      "type": "variable",
+      "file": "E:\\Github\\skylos\\skylos\\cli.py",
+      "basename": "cli.py",
+      "line": 42,
+      "confidence": 100,
       "references": 0
     },
     {
       "name": "GRAY",
-      "full_name": "skylos.cli.Colors.GRAY",
+      "full_name": "cli.Colors.GRAY",
       "simple_name": "GRAY",
       "type": "variable",
       "file": "E:\\Github\\skylos\\skylos\\cli.py",
       "basename": "cli.py",
       "line": 44,
+      "confidence": 100,
+      "references": 0
+    },
+    {
+      "name": "TEST_METHOD_PATTERN",
+      "full_name": "constants.TEST_METHOD_PATTERN",
+      "simple_name": "TEST_METHOD_PATTERN",
+      "type": "variable",
+      "file": "E:\\Github\\skylos\\skylos\\constants.py",
+      "basename": "constants.py",
+      "line": 23,
+      "confidence": 100,
+      "references": 0
+    },
+    {
+      "name": "UNITTEST_LIFECYCLE_METHODS",
+      "full_name": "constants.UNITTEST_LIFECYCLE_METHODS",
+      "simple_name": "UNITTEST_LIFECYCLE_METHODS",
+      "type": "variable",
+      "file": "E:\\Github\\skylos\\skylos\\constants.py",
+      "basename": "constants.py",
+      "line": 25,
+      "confidence": 100,
+      "references": 0
+    },
+    {
+      "name": "FRAMEWORK_FUNCTIONS",
+      "full_name": "visitors.framework_aware.FRAMEWORK_FUNCTIONS",
+      "simple_name": "FRAMEWORK_FUNCTIONS",
+      "type": "variable",
+      "file": "E:\\Github\\skylos\\skylos\\visitors\\framework_aware.py",
+      "basename": "framework_aware.py",
+      "line": 16,
       "confidence": 60,
       "references": 0
     }
   ],
   "unused_parameters": [],
   "analysis_summary": {
-    "total_files": 76,
+    "total_files": 29,
     "excluded_folders": [
-      "venv",
-      ".coverage",
       ".git",
+      "dist",
       "build",
-      ".pytest_cache",
-      "htmlcov",
-      ".tox",
       ".venv",
-      "__pycache__",
       "*.egg-info",
+      "__pycache__",
+      ".tox",
+      ".coverage",
       ".mypy_cache",
-      "dist"
+      "venv",
+      ".pytest_cache",
+      "htmlcov"
     ]
   }
 }
