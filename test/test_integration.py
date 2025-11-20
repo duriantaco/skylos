@@ -7,7 +7,7 @@ from textwrap import dedent
 
 import skylos
 from skylos.analyzer import Skylos
-from skylos.analyzer import DEFAULT_EXCLUDE_FOLDERS
+from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 
 class TestSkylosIntegration:
 
