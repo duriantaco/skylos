@@ -3,6 +3,14 @@ name = "skylos-rs"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "skylos_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "skylos-rs"
+path = "src/main.rs"
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 rustpython-parser = "0.3.0"
