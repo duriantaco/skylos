@@ -1,0 +1,59 @@
+
+{
+  "unused_functions": [],
+  "unused_imports": [],
+  "unused_classes": [],
+  "unused_variables": [
+    {
+      "name": "MAGENTA",
+      "full_name": "skylos.cli.Colors.MAGENTA",
+      "simple_name": "MAGENTA",
+      "type": "variable",
+      "file": "E:\\Github\\skylos\\skylos\\cli.py",
+      "basename": "cli.py",
+      "line": 40,
+      "confidence": 60,
+      "references": 0
+    },
+    {
+      "name": "CYAN",
+      "full_name": "skylos.cli.Colors.CYAN",
+      "simple_name": "CYAN",
+      "type": "variable",
+      "file": "E:\\Github\\skylos\\skylos\\cli.py",
+      "basename": "cli.py",
+      "line": 41,
+      "confidence": 60,
+      "references": 0
+    },
+    {
+      "name": "GRAY",
+      "full_name": "skylos.cli.Colors.GRAY",
+      "simple_name": "GRAY",
+      "type": "variable",
+      "file": "E:\\Github\\skylos\\skylos\\cli.py",
+      "basename": "cli.py",
+      "line": 44,
+      "confidence": 60,
+      "references": 0
+    }
+  ],
+  "unused_parameters": [],
+  "analysis_summary": {
+    "total_files": 74,
+    "excluded_folders": [
+      "venv",
+      ".tox",
+      ".venv",
+      ".git",
+      "dist",
+      ".mypy_cache",
+      ".coverage",
+      "__pycache__",
+      "*.egg-info",
+      "build",
+      "htmlcov",
+      ".pytest_cache"
+    ]
+  }
+}
