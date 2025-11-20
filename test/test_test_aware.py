@@ -1,7 +1,7 @@
 import pytest
 import ast
 from unittest.mock import patch
-from skylos.test_aware import TestAwareVisitor
+from skylos.visitors.test_aware import TestAwareVisitor
 
 class TestTestAwareVisitor:
     
@@ -15,7 +15,7 @@ class TestTestAwareVisitor:
         assert visitor.is_test_file == False
         assert visitor.test_decorated_lines == set()
     
-    @patch('skylos.test_aware.TEST_FILE_RE')
+    @patch('skylos.visitors.test_aware.TEST_FILE_RE')
     def test_init_with_test_filename(self, mock_test_file_re):
         mock_test_file_re.search.return_value = True
         
@@ -75,7 +75,7 @@ def regular_function():
         assert 29 in visitor.test_decorated_lines  # tearDownModule
         assert 32 not in visitor.test_decorated_lines  # gd ol regular_function
     
-    @patch('skylos.test_aware.TEST_DECOR_RE')
+    @patch('skylos.visitors.test_aware.TEST_DECOR_RE')
     def test_test_decorator_detection(self, mock_test_decor_re):
         mock_test_decor_re.match.return_value = True
         
@@ -168,7 +168,7 @@ def test_multiple_decorators():
         # should be detected as test
         assert 5 in visitor.test_decorated_lines
     
-    @patch('skylos.test_aware.TEST_IMPORT_RE')
+    @patch('skylos.visitors.test_aware.TEST_IMPORT_RE')
     def test_test_import_detection_when_test_file(self, mock_test_import_re):
         mock_test_import_re.match.return_value = True
         
@@ -184,7 +184,7 @@ from mock import Mock
         
         assert mock_test_import_re.match.call_count >= 2
     
-    @patch('skylos.test_aware.TEST_IMPORT_RE')
+    @patch('skylos.visitors.test_aware.TEST_IMPORT_RE')
     def test_test_import_detection_when_not_test_file(self, mock_test_import_re):
         code = """
 import pytest
@@ -198,7 +198,7 @@ import unittest
         #  no call regex match for imports
         assert mock_test_import_re.match.call_count == 0
     
-    @patch('skylos.test_aware.TEST_IMPORT_RE')
+    @patch('skylos.visitors.test_aware.TEST_IMPORT_RE')
     def test_import_from_detection_when_test_file(self, mock_test_import_re):
         mock_test_import_re.match.return_value = True
         
@@ -286,7 +286,7 @@ def outer_function():
 
 class TestTestAwareVisitorIntegration:
     
-    @patch('skylos.test_aware.TEST_FILE_RE')
+    @patch('skylos.visitors.test_aware.TEST_FILE_RE')
     def test_full_test_file_analysis(self, mock_test_file_re):
         mock_test_file_re.search.return_value = True
         
