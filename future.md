@@ -14,42 +14,61 @@ This document outlines the roadmap for bringing the Rust implementation to featu
 
 ## Critical Issues Found in Output Comparison
 
-### ❌ False Positives in Rust Output
+### ❌ False Positives in Rust Output (279 vs 11 items)
 
-The Rust version produces **many false positives** that the Python version correctly filters out:
+The Rust version produces **268 extra false positives** that the Python version correctly filters out:
 
-**Example from comparison:**
-- **Rust**: Reports `analyzer._module`, `analyzer._mark_refs`, `cli.main` as unused
-- **Python**: Correctly identifies these are used (methods called by class, entry points, etc.)
+**Comparison Results (Skylos repo - 29 files):**
+- **Python**: 11 items (2 functions, 9 variables) - All legitimate
+- **Rust**: 279 items (184 functions, 79 imports, 16 classes) - Mostly false positives
 
-**Root Causes:**
-1. No understanding of class methods vs standalone functions
-2. Missing module-level reference resolution
-3. No entry point detection
-4. Poor handling of private methods (should be penalized but not always flagged)
+**Root Causes (After Code Review):**
+1. ✅ **Cross-file aggregation EXISTS** (lines 155-172 in `analyzer.rs`)
+2. ❌ **Import resolution BROKEN** - `import sys` def doesn't match `sys.exit()` ref
+3. ❌ **Method call tracking BROKEN** - `self.method()` doesn't match `ClassName.method` def
+4. ❌ **Qualified name mismatches** - `analyzer.Skylos` vs `skylos.analyzer.Skylos`
+
+**Examples from actual output:**
+- ❌ `sys`, `json`, `Path` imports marked unused (79 total) - ref names don't match import names
+- ❌ `analyzer.Skylos.analyze()` marked unused - ref is `analyze`, def is `analyzer.Skylos.analyze`
+- ❌ `visitor.Visitor` class marked unused - methods called but class not instantiated in same file
 
 ---
 
 ## Phase 1: Critical Fixes (Must Have)
 
-### 1.1 Method and Class Context 🔴 HIGH PRIORITY
+### 1.1 Import Name Resolution 🔴 **HIGHEST PRIORITY**
 
-**Problem:** Rust treats `self.method_name()` calls as references to `method_name`, but doesn't understand class boundaries.
+**Problem:** Import `sys` creates definition `sys`, but usage `sys.exit()` creates reference `sys.exit`
+
+**Current Behavior:**
+```python
+import sys          # Creates def: "sys"
+sys.exit(1)         # Creates ref: "sys.exit" -> NO MATCH!
+```
+
+**Solution:**
+- When seeing `import foo`, also add reference to `foo` itself
+- When seeing `foo.bar()`, also add reference to parent `foo`
+- Create import alias tracking system
+
+**Impact:** Fixes 79/279 false positives (all imports)
+
+### 1.2 Method and Class Context 🔴 **HIGH PRIORITY**
+
+**Problem:** `self.method_name()` calls create reference to `method_name`, but definitions are `ClassName.method_name`
+
+**Current Behavior:**
+```python
+class Skylos:
+    def analyze(self):      # Creates def: "analyzer.Skylos.analyze"
+        self._module()      # Creates ref: "_module" -> NO MATCH!
+```
 
 **Solution:**
 - Track current class context in visitor
-- Qualify method names with class: `ClassName.method_name`
-- When seeing function call on `self`, match to current class methods
-- Apply auto-called method heuristics (`__init__`, `__str__`, etc.)
-
-**Impact:** Eliminates 90% of false positives in class-heavy code
-
-### 1.2 Module and Import Resolution 🔴 HIGH PRIORITY
-
-**Problem:** References like `analyzer.analyze()` don't match definition `skylos.analyzer.Skylos.analyze`
-
-**Solution:**
-- Track import statements and build alias map
+- Qualify method references with current class name
+- Match `self.foo()` to `CurrentClass.foo()`
 ### 2.1 Pragma Support ✅ **COMPLETED**
 
 **Current:** Implemented!  
@@ -205,59 +224,48 @@ exclude_folders = ["venv", ".tox", "build"]
 
 ## Implementation Priority Matrix
 
-| Feature | Priority | Impact | Effort | Order |
-|---------|----------|--------|--------|-------|
-| **Method/Class Context** | 🔴 Critical | Huge | High | 1 |
-| **Module Resolution** | 🔴 Critical | Huge | High | 2 |
-| **Advanced Heuristics** | 🔴 High | High | Medium | 3 |
-| **Entry Point Detection** | 🟡 Medium | Medium | Low | 4 |
-| **Pragma Support** | 🟡 Medium | Medium | Low | 5 |
-| **Unused Parameters** | 🟡 Medium | Medium | Medium | 6 |
-| **Config File** | 🟡 Medium | Low | Medium | 7 |
-| **`__all__` Exports** | 🟢 Low | Medium | Low | 8 |
-| **Dynamic Patterns** | 🟢 Low | Low | Medium | 9 |
-| **Web UI** | 🟢 Defer | Low | Very High | - |
-| **Code Removal** | 🟢 Defer | Low | Very High | - |
+| Feature | Priority | Impact | Effort | Order | Status |
+|---------|----------|--------|--------|-------|--------|
+| **Import Resolution** | 🔴 Critical | Huge | Medium | 1 | ⏳ TODO |
+| **Method/Class Context** | 🔴 Critical | Huge | High | 2 | ⏳ TODO |
+| **Qualified Name Matching** | 🔴 Critical | High | Medium | 3 | ⏳ TODO |
+| **Advanced Heuristics** | 🔴 High | High | Medium | 4 | ⏳ TODO |
+| **Pragma Support** | ✅ Complete | Medium | Low | - | ✅ DONE |
+| **Entry Point Detection** | ✅ Complete | Medium | Low | - | ✅ DONE |
+| **Unused Parameters** | 🟡 Medium | Medium | Medium | 5 | ⏳ Later |
+| **Config File** | 🟡 Medium | Low | Medium | 6 | ⏳ Later |
+| **`__all__` Exports** | 🟡 Medium | Medium | Low | 7 | ✅ DONE |
+| **Dynamic Patterns** | 🟢 Low | Low | Medium | 8 | ⏳ Later |
+| **Web UI** | 🟢 Defer | Low | Very High | - | ⏸️ Defer |
+| **Code Removal** | 🟢 Defer | Low | Very High | - | ⏸️ Defer |
 
 ---
 
 ## Estimated Timeline
 
 **Phase 1 (Critical Fixes):** 2-3 weeks
-- Week 1: Method/Class context
-- Week 2: Module resolution  
-- Week 3: Heuristics + entry point detection
+- Week 1: Import resolution (fix 79 false positives)
+- Week 2: Method/class context tracking (fix 184 false positives)
+- Week 3: Qualified name matching + advanced heuristics
 
-**Phase 2 (Feature Parity):** 2-3 weeks
-- Pragma, config, parameters, exports
+**Phase 2 (Feature Parity):** 1-2 weeks
+- Config file, unused parameters
 
 **Phase 3 (Advanced):** 1-2 months (optional)
 - Dynamic patterns, UI (if desired)
 
-**Total to Production Quality:** 1-2 months
+**Total to Production Quality:** 1-1.5 months
 
 ---
 ### Quick Wins for Contributors (Good First Issues):
 
-**1. Pragma Support** (2-3 hours)
-- Add `get_ignored_lines()` helper in `utils.rs`
-- Modify analyzer to skip definitions on ignored lines
-- Add test case in `tests/visitor_test.rs`
-- **Files to modify**: `src/utils.rs`, `src/analyzer.rs`
-
-**2. Config File Support** (4-6 hours)
+**1. Config File Support** ✅ (4-6 hours)
 - Add `toml = "0.8"` to `Cargo.toml`
 - Create `src/config.rs` with config struct
 - Load config in `main.rs` before analyzer
 - **Files to modify**: `Cargo.toml`, `src/main.rs`, new: `src/config.rs`
 
-**3. Entry Point Detection** (3-4 hours)
-- Parse `if __name__ == "__main__"` in visitor
-- Detect `setup.py` / `pyproject.toml` entry points
-- Mark matched functions as exported
-- **Files to modify**: `src/visitor.rs`, `src/analyzer.rs`
-
-**4. Fix Test Suite** (2-3 hours)
+**2. Fix Test Suite** (2-3 hours)
 - Address API mismatches in test files
 - Update `TestAwareVisitor::new()` calls to use `&Path`
 - Ensure all tests compile and pass
@@ -265,19 +273,21 @@ exclude_folders = ["venv", ".tox", "build"]
 
 ### Complex Tasks (Need Design Discussion):
 
-**1. Class/Method Context Tracking**
+**1. Import Resolution System** 🔴 **HIGHEST PRIORITY**
+- **Challenge**: Match `import sys` to `sys.exit()` usage
+- **Approach**: Track import-to-usage mapping, create parent references
+- **Design Doc Needed**: Yes - discuss matching strategy
+- **Estimated Effort**: 1 week
+- **Files to modify**: `src/visitor.rs`, `src/analyzer.rs`
+- **Impact**: Fixes 79/279 false positives
+
+**2. Class/Method Context Tracking** 🔴 **HIGH PRIORITY**
 - **Challenge**: Track class scope during AST traversal
 - **Approach**: Add `current_class: Option<String>` to visitor
 - **Design Doc Needed**: Yes - discuss in issue/PR
 - **Estimated Effort**: 1-2 weeks
 - **Files to modify**: `src/visitor.rs`, `src/analyzer.rs`
-
-**2. Module Resolution System**
-- **Challenge**: Match `import foo` references to `foo.bar()` calls
-- **Approach**: Build import alias map, resolve qualified names
-- **Design Doc Needed**: Yes - significant architecture change
-- **Estimated Effort**: 2-3 weeks
-- **Files to modify**: `src/visitor.rs`, `src/analyzer.rs`, new: `src/resolver.rs`
+- **Impact**: Fixes 184/279 false positives
 
 **3. Advanced Heuristics**
 - **Challenge**: Port 15+ penalty rules from Python
