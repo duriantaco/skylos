@@ -1,0 +1,15 @@
+{
+  "unused_functions": [],
+  "unused_imports": [],
+  "unused_classes": [],
+  "unused_variables": [],
+  "secrets": [],
+  "danger": [],
+  "quality": [],
+  "analysis_summary": {
+    "total_files": 0,
+    "secrets_count": 0,
+    "danger_count": 0,
+    "quality_count": 0
+  }
+}

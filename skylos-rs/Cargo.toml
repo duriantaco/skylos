@@ -1,0 +1,18 @@
+[package]
+name = "skylos-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+rustpython-parser = "0.3.0"
+rustpython-ast = "0.3.0"
+walkdir = "2.5"
+ignore = "0.4"
+rayon = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+regex = "1.10"
+anyhow = "1.0"
+colored = "2.1"
+lazy_static = "1.4"
