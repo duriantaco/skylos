@@ -1,9 +1,10 @@
-mod analyzer;
-mod visitor;
-mod framework;
-mod test_utils;
-mod rules;
-mod utils;
+pub mod analyzer;
+pub mod visitor;
+pub mod framework;
+pub mod test_utils;
+pub mod rules;
+pub mod utils;
+
 
 use clap::Parser;
 use std::path::PathBuf;
