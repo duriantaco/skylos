@@ -1,12 +1,8 @@
-repos:
-  - repo: https://github.com/duriantaco/skylos
-    rev: v2.5.1
-    hooks:
-      - id: skylos-scan
-        name: skylos (report only)
-        entry: python -m skylos.cli
-        language: python
-        types_or: [python]
-        pass_filenames: false
-        require_serial: true
-        args: [".", "--output", "report.json", "--confidence", "70", "--danger"]
+- id: skylos-scan
+  name: skylos (report only)
+  entry: python -m skylos.cli
+  language: python
+  types_or: [python]
+  pass_filenames: false
+  require_serial: true
+  args: [".", "--output", "report.json", "--confidence", "70", "--danger"]
