@@ -56,7 +56,7 @@ impl<'a> SkylosVisitor<'a> {
         });
     }
 
-    fn add_ref(&mut self, name: String) {
+    pub fn add_ref(&mut self, name: String) {
         self.references.push((name, self.file_path.clone()));
     }
     
