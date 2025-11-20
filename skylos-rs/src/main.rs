@@ -4,6 +4,7 @@ pub mod framework;
 pub mod test_utils;
 pub mod rules;
 pub mod utils;
+pub mod entry_point;
 
 
 use clap::Parser;

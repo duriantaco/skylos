@@ -40,20 +40,20 @@
   ],
   "unused_parameters": [],
   "analysis_summary": {
-    "total_files": 74,
+    "total_files": 76,
     "excluded_folders": [
       "venv",
+      ".coverage",
+      ".git",
+      "build",
+      ".pytest_cache",
+      "htmlcov",
       ".tox",
       ".venv",
-      ".git",
-      "dist",
-      ".mypy_cache",
-      ".coverage",
       "__pycache__",
       "*.egg-info",
-      "build",
-      "htmlcov",
-      ".pytest_cache"
+      ".mypy_cache",
+      "dist"
     ]
   }
 }

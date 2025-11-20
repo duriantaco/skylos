@@ -66,10 +66,11 @@ impl Skylos {
                 let path = entry.path();
                 let source = fs::read_to_string(path).unwrap_or_default();
                 let line_index = LineIndex::new(&source);
+                let ignored_lines = crate::utils::get_ignored_lines(&source);
                 
                 let module_name = path.file_stem().unwrap().to_string_lossy().to_string();
                 
-                let mut visitor = SkylosVisitor::new(path.to_path_buf(), module_name, &line_index);
+                let mut visitor = SkylosVisitor::new(path.to_path_buf(), module_name.clone(), &line_index);
                 let mut framework_visitor = FrameworkAwareVisitor::new(&line_index);
                 let mut test_visitor = TestAwareVisitor::new(path, &line_index);
                 
@@ -83,11 +84,24 @@ impl Skylos {
 
                 if let Ok(ast) = parse(&source, Mode::Module, path.to_str().unwrap()) {
                     if let rustpython_ast::Mod::Module(module) = &ast {
+                        // Detect entry point calls (if __name__ == "__main__")
+                        let entry_point_calls = crate::entry_point::detect_entry_point_calls(&module.body);
+                        
                         // Run visitors
                         for stmt in &module.body {
                              framework_visitor.visit_stmt(stmt);
                              test_visitor.visit_stmt(stmt);
                              visitor.visit_stmt(stmt);
+                        }
+                        
+                        // Add entry point calls as references
+                        for call_name in &entry_point_calls {
+                            // Try both simple name and qualified name
+                            visitor.add_ref(call_name.clone());
+                            if !module_name.is_empty() {
+                                let qualified = format!("{}.{}", module_name, call_name);
+                                visitor.add_ref(qualified);
+                            }
                         }
                         
                         if self.enable_danger {
@@ -108,9 +122,9 @@ impl Skylos {
                     }
                 }
                 
-                // Apply penalties/adjustments based on framework/test status
+                // Apply penalties/adjustments based on framework/test status and pragmas
                 for def in &mut visitor.definitions {
-                    apply_penalties(def, &framework_visitor, &test_visitor);
+                    apply_penalties(def, &framework_visitor, &test_visitor, &ignored_lines);
                 }
                 
                 (visitor.definitions, visitor.references, secrets, danger, quality)
@@ -180,7 +194,13 @@ impl Skylos {
     }
 }
 
-fn apply_penalties(def: &mut Definition, fv: &FrameworkAwareVisitor, tv: &TestAwareVisitor) {
+fn apply_penalties(def: &mut Definition, fv: &FrameworkAwareVisitor, tv: &TestAwareVisitor, ignored_lines: &std::collections::HashSet<usize>) {
+    // Pragma: no skylos (highest priority - always skip)
+    if ignored_lines.contains(&def.line) {
+        def.confidence = 0;
+        return;
+    }
+    
     // Test files: confidence 0 (ignore)
     if tv.is_test_file || tv.test_decorated_lines.contains(&def.line) {
         def.confidence = 0;

@@ -2,6 +2,16 @@
 
 This document outlines the roadmap for bringing the Rust implementation to feature parity with the Python version, based on actual output comparison and gap analysis.
 
+> [!NOTE]
+> See [`rust_vs_python_benchmark.md`](rust_vs_python_benchmark.md) for performance comparison and feature matrix.
+
+**Quick Links:**
+- [Critical Issues](#critical-issues-found-in-output-comparison)
+- [Phase 1: Critical Fixes](#phase-1-critical-fixes-must-have)
+- [Testing Roadmap](#testing-roadmap)
+- [Contribution Guide](#contribution-guide)
+
+
 ## Critical Issues Found in Output Comparison
 
 ### ❌ False Positives in Rust Output
@@ -40,45 +50,19 @@ The Rust version produces **many false positives** that the Python version corre
 
 **Solution:**
 - Track import statements and build alias map
-- Resolve module paths properly
-- Match references considering import aliases
-- Handle `from X import Y` vs `import X`
+### 2.1 Pragma Support ✅ **COMPLETED**
 
-**Impact:** Fixes most cross-module false positives
-
-### 1.3 Entry Point Detection 🟡 MEDIUM PRIORITY
-
-**Problem:** `cli.main`, `analyzer.analyze` reported as unused despite being entry points
-
-**Solution:**
-- Detect console_scripts in setup.py/pyproject.toml
-- Mark functions referenced in `if __name__ == "__main__"` as used
-- Recognize common entry point patterns
-
-**Impact:** Reduces false positives for CLI tools
-
----
-
-## Phase 2: Feature Parity
-
-### 2.1 Pragma Support 🟡 MEDIUM PRIORITY
-
-**Current:** None  
+**Current:** Implemented!  
 **Python has:** `# pragma: no skylos`
 
-**Implementation:**
-```rust
-// In LineIndex or new PragmaDetector
-pub fn get_ignored_lines(source: &str) -> HashSet<usize> {
-    source.lines()
-        .enumerate()
-        .filter(|(_, line)| line.contains("pragma: no skylos"))
-        .map(|(i, _)| i + 1)
-        .collect()
-}
-```
+**Implementation:** See [`skylos-rs/PRAGMA_IMPLEMENTATION.md`](skylos-rs/PRAGMA_IMPLEMENTATION.md)
 
-**Impact:** Allows users to suppress false positives inline
+**Files Modified:**
+- `src/utils.rs` - Added `get_ignored_lines()` function
+- `src/analyzer.rs` - Integrated pragma detection into penalty system
+
+**Impact:** Users can now suppress false positives inline
+
 
 ### 2.2 Configuration File Support 🟡 MEDIUM PRIORITY
 
@@ -197,6 +181,28 @@ exclude_folders = ["venv", ".tox", "build"]
 
 ---
 
+## Testing Roadmap
+
+### Current Test Status
+
+**Test Suite Created:**
+- ✅ `integration_test.rs` - End-to-end binary tests
+- ✅ `visitor_test.rs` - AST visitor unit tests
+- ✅ `framework_test.rs` - Framework detection tests
+- ✅ `test_utils_test.rs` - Test file detection tests
+- ✅ `security_test.rs` - Secrets & dangerous code tests
+- ✅ `quality_test.rs` - Code quality tests
+
+**Test Coverage Goals:**
+1. **Phase 1**: Fix API mismatches in existing tests → 100% passing unit tests
+2. **Phase 2**: Add integration tests for each critical fix
+3. **Phase 3**: Property-based testing for reference resolution
+4. **Phase 4**: Benchmark regression tests
+
+**Test Files Location:** `skylos-rs/tests/` (see [`tests/README.md`](skylos-rs/tests/README.md))
+
+---
+
 ## Implementation Priority Matrix
 
 | Feature | Priority | Impact | Effort | Order |
@@ -231,32 +237,63 @@ exclude_folders = ["venv", ".tox", "build"]
 **Total to Production Quality:** 1-2 months
 
 ---
+### Quick Wins for Contributors (Good First Issues):
 
-## Success Metrics
+**1. Pragma Support** (2-3 hours)
+- Add `get_ignored_lines()` helper in `utils.rs`
+- Modify analyzer to skip definitions on ignored lines
+- Add test case in `tests/visitor_test.rs`
+- **Files to modify**: `src/utils.rs`, `src/analyzer.rs`
 
-**Goal:** Match Python output accuracy
+**2. Config File Support** (4-6 hours)
+- Add `toml = "0.8"` to `Cargo.toml`
+- Create `src/config.rs` with config struct
+- Load config in `main.rs` before analyzer
+- **Files to modify**: `Cargo.toml`, `src/main.rs`, new: `src/config.rs`
 
-**Current State:**
-- Python: 3 unused variables (true positives)
-- Rust: 100+ false positives in methods/functions
+**3. Entry Point Detection** (3-4 hours)
+- Parse `if __name__ == "__main__"` in visitor
+- Detect `setup.py` / `pyproject.toml` entry points
+- Mark matched functions as exported
+- **Files to modify**: `src/visitor.rs`, `src/analyzer.rs`
 
-**Target:**
-- Phase 1 complete: <10 false positives on Skylos codebase
-- Phase 2 complete: ~Same output as Python version
-- Phase 3 complete: Better performance + same accuracy
+**4. Fix Test Suite** (2-3 hours)
+- Address API mismatches in test files
+- Update `TestAwareVisitor::new()` calls to use `&Path`
+- Ensure all tests compile and pass
+- **Files to modify**: `tests/*.rs`
 
----
+### Complex Tasks (Need Design Discussion):
 
-## Contribution Guide
+**1. Class/Method Context Tracking**
+- **Challenge**: Track class scope during AST traversal
+- **Approach**: Add `current_class: Option<String>` to visitor
+- **Design Doc Needed**: Yes - discuss in issue/PR
+- **Estimated Effort**: 1-2 weeks
+- **Files to modify**: `src/visitor.rs`, `src/analyzer.rs`
 
-Want to help? Pick an issue from Phase 1 (highest impact) or Phase 2 (easier wins).
+**2. Module Resolution System**
+- **Challenge**: Match `import foo` references to `foo.bar()` calls
+- **Approach**: Build import alias map, resolve qualified names
+- **Design Doc Needed**: Yes - significant architecture change
+- **Estimated Effort**: 2-3 weeks
+- **Files to modify**: `src/visitor.rs`, `src/analyzer.rs`, new: `src/resolver.rs`
 
-### Quick Wins for Contributors:
-1. ✅ Pragma support (regex-based, simple)
-2. ✅ Config file loading (use `toml` crate)
-3. ✅ Entry point detection (parse `setup.py` or `pyproject.toml`)
+**3. Advanced Heuristics**
+- **Challenge**: Port 15+ penalty rules from Python
+- **Approach**: Create penalty rule registry, apply in analyzer
+- **Design Doc Needed**: Optional - rules are well-defined in Python
+- **Estimated Effort**: 1 week
+- **Files to modify**: `src/analyzer.rs`, new: `src/heuristics.rs`
 
-### Complex Tasks (need design):
-1. ⚠️ Class/method context tracking
-2. ⚠️ Module resolution system
-3. ⚠️ Visitor pattern heuristics
+### How to Contribute
+
+1. **Check existing issues** on GitHub
+2. **Comment on an issue** to claim it (avoid duplicate work)
+3. **Fork and create a branch**: `git checkout -b fix/pragma-support`
+4. **Write tests first**: Add failing test, then implement
+5. **Run all tests**: `cargo test`
+6. **Format code**: `cargo fmt`
+7. **Submit PR**: Reference issue number, explain changes
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for full guidelines.
