@@ -8,6 +8,8 @@
 - **Python Version**: 3.11
 - **Rust Version**: 1.70+ (release build with optimizations)
 
+`skylos --json skylos > python_output.json`
+`skylos-rs\target\release\skylos-rs.exe skylos --json > rust_ouput.json `
 ### Execution Time
 
 | Implementation | Time (seconds) | Relative Speed |
