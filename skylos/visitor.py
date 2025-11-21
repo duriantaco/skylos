@@ -3,12 +3,12 @@ import ast
 from pathlib import Path
 import re
 
-PYTHON_BUILTINS={"print", "len", "str", "int", "float", "list", "dict", "set", "tuple", "range", "open", "reversed", 
+PYTHON_BUILTINS = {"print", "len", "str", "int", "float", "list", "dict", "set", "tuple", "range", "open", "reversed", 
                  "super", "object", "type", "enumerate", "zip", "map", "filter", "sorted", "sum", "min", 
                 "next", "iter", "bytes", "bytearray", "format", "round", "abs", "complex", "hash", "id", "bool", "callable", 
                 "getattr", "max", "all", "any", "setattr", "hasattr", "isinstance", "globals", "locals", 
                 "vars", "dir" ,"property", "classmethod", "staticmethod"}
-DYNAMIC_PATTERNS={"getattr", "globals", "eval", "exec"}
+DYNAMIC_PATTERNS = {"getattr", "globals", "eval", "exec"}
 
 ## "🥚" hi :) 
 
@@ -49,16 +49,16 @@ class Definition:
 
 class Visitor(ast.NodeVisitor):
     def __init__(self,mod,file):
-        self.mod= mod
-        self.file= file
-        self.defs= []
-        self.refs= []
-        self.cls= None
-        self.alias= {}
-        self.dyn= set()
-        self.exports= set()
-        self.current_function_scope= []
-        self.current_function_params= []
+        self.mod = mod
+        self.file = file
+        self.defs = []
+        self.refs = []
+        self.cls = None
+        self.alias = {}
+        self.dyn = set()
+        self.exports = set()
+        self.current_function_scope = []
+        self.current_function_params = []
         self.local_var_maps = []
         self.in_cst_class = 0
         self.local_type_maps = []
@@ -120,12 +120,6 @@ class Visitor(ast.NodeVisitor):
             for tok in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", annotation_str):
                 self.add_ref(tok)
 
-    # def visit_Import(self, node):
-    #     for a in node.names:
-    #         full= a.name
-    #         self.alias[a.asname or a.name.split(".")[-1]]= full
-    #         self.add_def(full,"import",node.lineno)
-
     def visit_Import(self, node):
         for a in node.names:
             full = a.name
@@ -182,11 +176,11 @@ class Visitor(ast.NodeVisitor):
         outer_scope_prefix = '.'.join(self.current_function_scope) + '.' if self.current_function_scope else ''
         
         if self.cls:
-            name_parts= [self.mod, self.cls, outer_scope_prefix + node.name]
+            name_parts = [self.mod, self.cls, outer_scope_prefix + node.name]
         else:
-            name_parts= [self.mod, outer_scope_prefix + node.name]
+            name_parts = [self.mod, outer_scope_prefix + node.name]
         
-        qualified_name= ".".join(filter(None, name_parts))
+        qualified_name = ".".join(filter(None, name_parts))
 
         if self.cls:
             def_type = "method"
@@ -227,7 +221,7 @@ class Visitor(ast.NodeVisitor):
         self.add_def(cname, "class",node.lineno)
         
         is_cst = False
-        is_dc  = False
+        is_dc = False
 
         for base in node.bases:
             base_name = ""
@@ -264,16 +258,16 @@ class Visitor(ast.NodeVisitor):
                 is_dc = True
             self.visit(decorator)
         
-        prev= self.cls
+        prev = self.cls
         if is_cst:
             self.in_cst_class += 1
 
-        self.cls= node.name
+        self.cls = node.name
         self._dataclass_stack.append(is_dc)
         for b in node.body:
             self.visit(b)
 
-        self.cls= prev
+        self.cls = prev
         self._dataclass_stack.pop()
     
         if is_cst:

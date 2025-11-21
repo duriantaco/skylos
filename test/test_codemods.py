@@ -4,11 +4,13 @@ from skylos.codemods import (
     remove_unused_function_cst,
 )
 
+
 def _line_no(code: str, startswith: str) -> int:
     for i, line in enumerate(code.splitlines(), start=1):
         if line.lstrip().startswith(startswith):
             return i
     raise AssertionError(f"Line starting with {startswith!r} not found")
+
 
 def test_remove_simple_import_entire_line():
     code = "import os\nprint(1)\n"
@@ -18,12 +20,14 @@ def test_remove_simple_import_entire_line():
     assert "import os" not in new
     assert "print(1)" in new
 
+
 def test_remove_one_name_from_multi_import():
     code = "import os, sys\n"
     ln = _line_no(code, "import os, sys")
     new, changed = remove_unused_import_cst(code, "os", ln)
     assert changed is True
     assert new.strip() == "import sys"
+
 
 def test_remove_from_import_keeps_other_names():
     code = "from a import b, c\n"
@@ -32,12 +36,14 @@ def test_remove_from_import_keeps_other_names():
     assert changed is True
     assert new.strip() == "from a import c"
 
+
 def test_remove_from_import_with_alias_uses_bound_name():
     code = "from a import b as c, d\n"
     ln = _line_no(code, "from a import")
     new, changed = remove_unused_import_cst(code, "c", ln)
     assert changed is True
     assert new.strip() == "from a import d"
+
 
 def test_parenthesized_multiline_from_import_preserves_formatting():
     code = textwrap.dedent(
@@ -57,12 +63,14 @@ def test_parenthesized_multiline_from_import_preserves_formatting():
     assert "b,  # keep me" in new
     assert "c," in new
 
+
 def test_import_star_is_noop():
     code = "from x import *\n"
     ln = _line_no(code, "from x import *")
     new, changed = remove_unused_import_cst(code, "*", ln)
     assert changed is False
     assert new == code
+
 
 def test_dotted_import_requires_bound_leftmost_segment():
     code = "import pkg.sub\n"
@@ -75,6 +83,7 @@ def test_dotted_import_requires_bound_leftmost_segment():
     assert changed2 is False
     assert new2 == code
 
+
 def test_import_idempotency():
     code = "import os, sys\n"
     ln = _line_no(code, "import os, sys")
@@ -83,6 +92,7 @@ def test_import_idempotency():
     new2, changed2 = remove_unused_import_cst(new, "os", ln)
     assert changed2 is False
     assert new2 == new
+
 
 def test_remove_simple_function_block():
     code = textwrap.dedent(
@@ -100,6 +110,7 @@ def test_remove_simple_function_block():
     assert changed is True
     assert "def unused" not in new
     assert "def used" in new
+
 
 def test_remove_decorated_function_removes_decorators_too():
     code = textwrap.dedent(
@@ -120,6 +131,7 @@ def test_remove_decorated_function_removes_decorators_too():
     assert "def target" not in new
     assert "def other" in new
 
+
 def test_remove_async_function():
     code = textwrap.dedent(
         """\
@@ -136,12 +148,14 @@ def test_remove_async_function():
     assert "async def coro" not in new
     assert "def ok" in new
 
+
 def test_function_wrong_line_noop():
     code = "def f():\n    return 1\n"
     ln = 999
     new, changed = remove_unused_function_cst(code, "f", ln)
     assert changed is False
     assert new == code
+
 
 def test_function_idempotency():
     code = "def g():\n    return 1\n"

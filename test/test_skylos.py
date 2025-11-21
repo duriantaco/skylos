@@ -7,26 +7,27 @@ import tempfile
 import shutil
 from pathlib import Path
 
-sys.path.insert(0, '/Users/oha/skylos')
+sys.path.insert(0, "/Users/oha/skylos")
 
 from skylos.analyzer import analyze, Skylos
+
 
 class SkylosTest:
     def __init__(self):
         self.test_dir = None
         self.tests_passed = 0
         self.tests_failed = 0
-        
+
     def setup_test_directory(self):
         """Create a temporary directory with test Python files"""
         self.test_dir = tempfile.mkdtemp(prefix="skylos_test_")
         print(f"Creating test directory: {self.test_dir}")
-        
+
         self.create_test_files()
-        
+
     def create_test_files(self):
         """Create various test Python files"""
-        
+
         test1_content = '''
 import os
 import sys  # unused import
@@ -65,7 +66,7 @@ class UnusedClass:
 instance = UsedClass()
 result = another_used_function()
 '''
-        
+
         test2_content = '''
 import unittest
 
@@ -110,10 +111,10 @@ class RegularClass:
 obj = RegularClass(42)
 print(obj)  # This calls __str__
 '''
-        
+
         pkg_dir = Path(self.test_dir) / "testpkg"
         pkg_dir.mkdir()
-        
+
         init_content = '''
 """Test package init file"""
 from .module1 import exported_function
@@ -127,7 +128,7 @@ def _private_init_function():
     """Private function in __init__.py"""
     return "private"
 '''
-        
+
         module1_content = '''
 """Module 1 in test package"""
 
@@ -143,7 +144,7 @@ def _private_function():
     """Private function"""
     return "private"
 '''
-        
+
         module2_content = '''
 """Module 2 in test package"""
 
@@ -176,7 +177,7 @@ def utility_function():
 _internal = NonExportedClass()
 result = utility_function()
 '''
-        
+
         test3_content = '''
 """Complex scenarios test file"""
 import importlib
@@ -220,35 +221,39 @@ func_name = "function_with_dynamic_usage"
 if hasattr(globals(), func_name):
     globals()[func_name]()
 '''
-        
+
         with open(Path(self.test_dir) / "test1.py", "w") as f:
             f.write(test1_content)
-            
+
         with open(Path(self.test_dir) / "test2.py", "w") as f:
             f.write(test2_content)
-            
+
         with open(pkg_dir / "__init__.py", "w") as f:
             f.write(init_content)
-            
+
         with open(pkg_dir / "module1.py", "w") as f:
             f.write(module1_content)
-            
+
         with open(pkg_dir / "module2.py", "w") as f:
             f.write(module2_content)
-            
+
         with open(Path(self.test_dir) / "test3.py", "w") as f:
             f.write(test3_content)
-    
+
     def run_analyzer(self, confidence_threshold=60):
         """Run the Skylos analyzer on the test directory"""
-        print(f"\nRunning Skylos analyzer with confidence threshold: {confidence_threshold}")
+        print(
+            f"\nRunning Skylos analyzer with confidence threshold: {confidence_threshold}"
+        )
         try:
             result = analyze(self.test_dir, confidence_threshold)
             return json.loads(result)
         except AttributeError as e:
             if "_get_base_classes" in str(e):
                 print("\n⚠️  ERROR: Missing _get_base_classes method in Skylos class")
-                print("This is a bug in the analyzer code. Please add the following method to the Skylos class:")
+                print(
+                    "This is a bug in the analyzer code. Please add the following method to the Skylos class:"
+                )
                 print("""
     def _get_base_classes(self, class_name):
         \"\"\"Get base classes for a given class name\"\"\"
@@ -264,14 +269,16 @@ if hasattr(globals(), func_name):
         # For now, return empty list as simplified implementation
         return []
                 """)
-                print("\nAlternatively, you can comment out the test method detection in _apply_heuristics")
+                print(
+                    "\nAlternatively, you can comment out the test method detection in _apply_heuristics"
+                )
                 raise
             else:
                 raise
-    
+
     def assert_contains(self, items, name_pattern, description):
         """Helper to check if a pattern exists in the results"""
-        found = any(item.get('name', '') == name_pattern for item in items)
+        found = any(item.get("name", "") == name_pattern for item in items)
         if found:
             print(f"✓ PASS: {description}")
             self.tests_passed += 1
@@ -282,158 +289,198 @@ if hasattr(globals(), func_name):
                 print(f"     - {item.get('name', 'unnamed')}")
             self.tests_failed += 1
         return found
-    
+
     def assert_not_contains(self, items, name_pattern, description):
         """Helper to check if a pattern does NOT exist in the results"""
-        found = any(item.get('name', '') == name_pattern for item in items)
+        found = any(item.get("name", "") == name_pattern for item in items)
         if not found:
             print(f"✓ PASS: {description}")
             self.tests_passed += 1
         else:
             print(f"✗ FAIL: {description}")
-            print(f"   Expected NOT to find item with exact name '{name_pattern}' but found:")
+            print(
+                f"   Expected NOT to find item with exact name '{name_pattern}' but found:"
+            )
             for item in items:
-                if item.get('name', '') == name_pattern:
+                if item.get("name", "") == name_pattern:
                     print(f"     - {item.get('name', 'unnamed')}")
             self.tests_failed += 1
         return not found
-    
+
     def test_basic_unused_detection(self, results):
         """Test basic unused function/class/import detection"""
         print("\n=== Testing Basic Unused Detection ===")
-        
-        unused_functions = results.get('unused_functions', [])
-        unused_imports = results.get('unused_imports', [])
-        unused_classes = results.get('unused_classes', [])
-        
-        self.assert_contains(unused_functions, 'unused_function', 
-                           "Detects unused function")
-        self.assert_contains(unused_classes, 'UnusedClass', 
-                           "Detects unused class")
-        self.assert_contains(unused_imports, 'sys', 
-                           "Detects unused import (sys)")
-        self.assert_contains(unused_imports, 'Path', 
-                           "Detects unused import (pathlib.Path)")
-        
-        self.assert_not_contains(unused_functions, 'used_function', 
-                               "Does not flag used function")
-        self.assert_not_contains(unused_functions, 'another_used_function', 
-                               "Does not flag another used function") 
-        self.assert_not_contains(unused_classes, 'UsedClass', 
-                               "Does not flag used class")
-        self.assert_not_contains(unused_imports, 'json', 
-                               "Does not flag used import (json)")
-        self.assert_not_contains(unused_imports, 'defaultdict', 
-                               "Does not flag used import (defaultdict)")
-    
+
+        unused_functions = results.get("unused_functions", [])
+        unused_imports = results.get("unused_imports", [])
+        unused_classes = results.get("unused_classes", [])
+
+        self.assert_contains(
+            unused_functions, "unused_function", "Detects unused function"
+        )
+        self.assert_contains(unused_classes, "UnusedClass", "Detects unused class")
+        self.assert_contains(unused_imports, "sys", "Detects unused import (sys)")
+        self.assert_contains(
+            unused_imports, "Path", "Detects unused import (pathlib.Path)"
+        )
+
+        self.assert_not_contains(
+            unused_functions, "used_function", "Does not flag used function"
+        )
+        self.assert_not_contains(
+            unused_functions,
+            "another_used_function",
+            "Does not flag another used function",
+        )
+        self.assert_not_contains(
+            unused_classes, "UsedClass", "Does not flag used class"
+        )
+        self.assert_not_contains(
+            unused_imports, "json", "Does not flag used import (json)"
+        )
+        self.assert_not_contains(
+            unused_imports, "defaultdict", "Does not flag used import (defaultdict)"
+        )
+
     def test_magic_and_test_methods(self, results):
         """Test that magic methods and test methods are ignored"""
         print("\n=== Testing Magic Methods and Test Methods ===")
-        
-        unused_functions = results.get('unused_functions', [])
-        
-        self.assert_not_contains(unused_functions, '__str__', 
-                               "Does not flag magic method __str__")
-        self.assert_not_contains(unused_functions, '__eq__', 
-                               "Does not flag magic method __eq__")
-        self.assert_not_contains(unused_functions, '__init__', 
-                               "Does not flag magic method __init__")
-        
-        self.assert_not_contains(unused_functions, 'test_something', 
-                               "Does not flag test method")
-        self.assert_not_contains(unused_functions, 'test_another_thing', 
-                               "Does not flag another test method")
-        
-        self.assert_contains(unused_functions, 'RegularClass.unused_method', 
-                           "Flags unused regular method")
-    
+
+        unused_functions = results.get("unused_functions", [])
+
+        self.assert_not_contains(
+            unused_functions, "__str__", "Does not flag magic method __str__"
+        )
+        self.assert_not_contains(
+            unused_functions, "__eq__", "Does not flag magic method __eq__"
+        )
+        self.assert_not_contains(
+            unused_functions, "__init__", "Does not flag magic method __init__"
+        )
+
+        self.assert_not_contains(
+            unused_functions, "test_something", "Does not flag test method"
+        )
+        self.assert_not_contains(
+            unused_functions, "test_another_thing", "Does not flag another test method"
+        )
+
+        self.assert_contains(
+            unused_functions,
+            "RegularClass.unused_method",
+            "Flags unused regular method",
+        )
+
     def test_package_exports(self, results):
         """Test package export detection"""
         print("\n=== Testing Package Exports ===")
-        
-        unused_functions = results.get('unused_functions', [])
-        unused_classes = results.get('unused_classes', [])
-        
-        self.assert_not_contains(unused_functions, 'exported_function', 
-                               "Does not flag exported function")
-        self.assert_not_contains(unused_classes, 'ExportedClass', 
-                               "Does not flag exported class")
-        self.assert_not_contains(unused_functions, 'init_function', 
-                               "Does not flag function in __init__.py")
-        
-        self.assert_contains(unused_functions, 'non_exported_function', 
-                           "Flags non-exported function")
-        self.assert_contains(unused_classes, 'TrulyUnusedClass', 
-                           "Flags non-exported class")
-    
+
+        unused_functions = results.get("unused_functions", [])
+        unused_classes = results.get("unused_classes", [])
+
+        self.assert_not_contains(
+            unused_functions, "exported_function", "Does not flag exported function"
+        )
+        self.assert_not_contains(
+            unused_classes, "ExportedClass", "Does not flag exported class"
+        )
+        self.assert_not_contains(
+            unused_functions, "init_function", "Does not flag function in __init__.py"
+        )
+
+        self.assert_contains(
+            unused_functions, "non_exported_function", "Flags non-exported function"
+        )
+        self.assert_contains(
+            unused_classes, "TrulyUnusedClass", "Flags non-exported class"
+        )
+
     def test_confidence_threshold(self):
         """Test different confidence thresholds"""
         print("\n=== Testing Confidence Thresholds ===")
-        
+
         results_high = self.run_analyzer(90)
-        
+
         results_low = self.run_analyzer(30)
-        
-        high_count = (len(results_high.get('unused_functions', [])) + 
-                     len(results_high.get('unused_imports', [])) + 
-                     len(results_high.get('unused_classes', [])))
-        
-        low_count = (len(results_low.get('unused_functions', [])) + 
-                    len(results_low.get('unused_imports', [])) + 
-                    len(results_low.get('unused_classes', [])))
-        
+
+        high_count = (
+            len(results_high.get("unused_functions", []))
+            + len(results_high.get("unused_imports", []))
+            + len(results_high.get("unused_classes", []))
+        )
+
+        low_count = (
+            len(results_low.get("unused_functions", []))
+            + len(results_low.get("unused_imports", []))
+            + len(results_low.get("unused_classes", []))
+        )
+
         if low_count >= high_count:
-            print(f"✓ PASS: Lower threshold finds more/equal items ({low_count} vs {high_count})")
+            print(
+                f"✓ PASS: Lower threshold finds more/equal items ({low_count} vs {high_count})"
+            )
             self.tests_passed += 1
         else:
-            print(f"✗ FAIL: Lower threshold should find more items ({low_count} vs {high_count})")
+            print(
+                f"✗ FAIL: Lower threshold should find more items ({low_count} vs {high_count})"
+            )
             self.tests_failed += 1
-    
+
     def print_detailed_results(self, results):
         """Print detailed analysis results"""
         print("\n=== Detailed Results ===")
-        
+
         print(f"\nUnused Functions ({len(results.get('unused_functions', []))}):")
-        for func in results.get('unused_functions', []):
-            print(f"  - {func.get('name')} at line {func.get('line', '?')} in {func.get('file', '?')}")
-        
+        for func in results.get("unused_functions", []):
+            print(
+                f"  - {func.get('name')} at line {func.get('line', '?')} in {func.get('file', '?')}"
+            )
+
         print(f"\nUnused Imports ({len(results.get('unused_imports', []))}):")
-        for imp in results.get('unused_imports', []):
-            print(f"  - {imp.get('name')} at line {imp.get('line', '?')} in {imp.get('file', '?')}")
-        
+        for imp in results.get("unused_imports", []):
+            print(
+                f"  - {imp.get('name')} at line {imp.get('line', '?')} in {imp.get('file', '?')}"
+            )
+
         print(f"\nUnused Classes ({len(results.get('unused_classes', []))}):")
-        for cls in results.get('unused_classes', []):
-            print(f"  - {cls.get('name')} at line {cls.get('line', '?')} in {cls.get('file', '?')}")
-    
+        for cls in results.get("unused_classes", []):
+            print(
+                f"  - {cls.get('name')} at line {cls.get('line', '?')} in {cls.get('file', '?')}"
+            )
+
     def run_all_tests(self):
         """Run all tests"""
         try:
             print("Starting Skylos Analyzer Tests...")
             self.setup_test_directory()
-            
+
             results = self.run_analyzer()
-            
+
             self.print_detailed_results(results)
-            
+
             self.test_basic_unused_detection(results)
             self.test_magic_and_test_methods(results)
             self.test_package_exports(results)
             self.test_confidence_threshold()
-            
+
             print(f"\n=== Test Summary ===")
             print(f"Tests Passed: {self.tests_passed}")
             print(f"Tests Failed: {self.tests_failed}")
-            print(f"Success Rate: {self.tests_passed/(self.tests_passed + self.tests_failed)*100:.1f}%")
-            
+            print(
+                f"Success Rate: {self.tests_passed / (self.tests_passed + self.tests_failed) * 100:.1f}%"
+            )
+
             if self.tests_failed == 0:
                 print("\n🎉 All tests passed!")
             else:
                 print(f"\n⚠️  {self.tests_failed} test(s) failed")
-                
+
         except AttributeError as e:
             if "_get_base_classes" in str(e):
                 print("\n❌ Cannot continue testing due to missing method in analyzer")
-                print("Please fix the analyzer code first using the provided fix above.")
+                print(
+                    "Please fix the analyzer code first using the provided fix above."
+                )
                 return False
             else:
                 raise
@@ -444,13 +491,15 @@ if hasattr(globals(), func_name):
             if self.test_dir and os.path.exists(self.test_dir):
                 shutil.rmtree(self.test_dir)
                 print(f"\nCleaned up test directory: {self.test_dir}")
-        
+
         return True
+
 
 def main():
     """Main test runner"""
     test_runner = SkylosTest()
     test_runner.run_all_tests()
+
 
 if __name__ == "__main__":
     main()

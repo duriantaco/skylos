@@ -26,6 +26,7 @@ from rich.tree import Tree
 
 try:
     import inquirer
+
     INTERACTIVE_AVAILABLE = True
 except ImportError:
     INTERACTIVE_AVAILABLE = False
@@ -43,12 +44,13 @@ class Colors:
     RESET = "\033[0m"
     GRAY = "\033[90m"
 
+
 class CleanFormatter(logging.Formatter):
     def format(self, record):
         return record.getMessage()
 
-def setup_logger(output_file=None):
 
+def setup_logger(output_file=None):
     theme = Theme(
         {
             "good": "bold green",
@@ -64,7 +66,9 @@ def setup_logger(output_file=None):
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
 
-    rich_handler = RichHandler(console=console, show_time=False, show_path=False, markup=True)
+    rich_handler = RichHandler(
+        console=console, show_time=False, show_path=False, markup=True
+    )
     rich_handler.setFormatter(CleanFormatter())
     logger.addHandler(rich_handler)
 
@@ -78,6 +82,7 @@ def setup_logger(output_file=None):
     logger.console = console
     return logger
 
+
 def remove_unused_import(file_path, import_name, line_number):
     path = pathlib.Path(file_path)
 
@@ -88,7 +93,7 @@ def remove_unused_import(file_path, import_name, line_number):
             return False
         path.write_text(new_code, encoding="utf-8")
         return True
-    
+
     except Exception as e:
         logging.error(f"Failed to remove import {import_name} from {file_path}: {e}")
         return False
@@ -104,43 +109,59 @@ def remove_unused_function(file_path, function_name, line_number):
             return False
         path.write_text(new_code, encoding="utf-8")
         return True
-    
+
     except Exception as e:
-        logging.error(f"Failed to remove function {function_name} from {file_path}: {e}")
+        logging.error(
+            f"Failed to remove function {function_name} from {file_path}: {e}"
+        )
         return False
 
-def comment_out_unused_import(file_path, import_name, line_number, marker="SKYLOS DEADCODE"):
-    path = pathlib.Path(file_path)
-    
-    try:
-        src = path.read_text(encoding="utf-8")
-        new_code, changed = comment_out_unused_import_cst(src, import_name, line_number, marker=marker)
-        if not changed:
-            return False
-        path.write_text(new_code, encoding="utf-8")
-        return True
-    
-    except Exception as e:
-        logging.error(f"Failed to comment out import {import_name} from {file_path}: {e}")
-        return False
 
-def comment_out_unused_function(file_path, function_name, line_number, marker="SKYLOS DEADCODE"):
+def comment_out_unused_import(
+    file_path, import_name, line_number, marker="SKYLOS DEADCODE"
+):
     path = pathlib.Path(file_path)
 
     try:
         src = path.read_text(encoding="utf-8")
-        new_code, changed = comment_out_unused_function_cst(src, function_name, line_number, marker=marker)
+        new_code, changed = comment_out_unused_import_cst(
+            src, import_name, line_number, marker=marker
+        )
         if not changed:
             return False
         path.write_text(new_code, encoding="utf-8")
         return True
-    
+
     except Exception as e:
-        logging.error(f"Failed to comment out function {function_name} from {file_path}: {e}")
+        logging.error(
+            f"Failed to comment out import {import_name} from {file_path}: {e}"
+        )
         return False
+
+
+def comment_out_unused_function(
+    file_path, function_name, line_number, marker="SKYLOS DEADCODE"
+):
+    path = pathlib.Path(file_path)
+
+    try:
+        src = path.read_text(encoding="utf-8")
+        new_code, changed = comment_out_unused_function_cst(
+            src, function_name, line_number, marker=marker
+        )
+        if not changed:
+            return False
+        path.write_text(new_code, encoding="utf-8")
+        return True
+
+    except Exception as e:
+        logging.error(
+            f"Failed to comment out function {function_name} from {file_path}: {e}"
+        )
+        return False
+
 
 def _shorten_path(file_path, root_path=None):
-
     if not file_path:
         return "?"
 
@@ -163,16 +184,23 @@ def _shorten_path(file_path, root_path=None):
 
     return str(p)
 
-def interactive_selection(console: Console, unused_functions, unused_imports, root_path=None):
+
+def interactive_selection(
+    console: Console, unused_functions, unused_imports, root_path=None
+):
     if not INTERACTIVE_AVAILABLE:
-        console.print("[bad]Interactive mode requires 'inquirer'. Install with: pip install inquirer[/bad]")
+        console.print(
+            "[bad]Interactive mode requires 'inquirer'. Install with: pip install inquirer[/bad]"
+        )
         return [], []
 
     selected_functions = []
     selected_imports = []
 
     if unused_functions:
-        console.print("\n[brand][bold]Select unused functions to remove (space to select):[/bold][/brand]")
+        console.print(
+            "\n[brand][bold]Select unused functions to remove (space to select):[/bold][/brand]"
+        )
 
         function_choices = []
         for item in unused_functions:
@@ -180,13 +208,21 @@ def interactive_selection(console: Console, unused_functions, unused_imports, ro
             choice_text = f"{item['name']} ({short}:{item['line']})"
             function_choices.append((choice_text, item))
 
-        questions = [inquirer.Checkbox("functions", message="Select functions to remove", choices=function_choices)]
+        questions = [
+            inquirer.Checkbox(
+                "functions",
+                message="Select functions to remove",
+                choices=function_choices,
+            )
+        ]
         answers = inquirer.prompt(questions)
         if answers:
             selected_functions = answers["functions"]
 
     if unused_imports:
-        console.print("\n[brand][bold]Select unused imports to act on (space to select):[/bold][/brand]")
+        console.print(
+            "\n[brand][bold]Select unused imports to act on (space to select):[/bold][/brand]"
+        )
 
         import_choices = []
         for item in unused_imports:
@@ -194,14 +230,27 @@ def interactive_selection(console: Console, unused_functions, unused_imports, ro
             choice_text = f"{item['name']} ({short}:{item['line']})"
             import_choices.append((choice_text, item))
 
-        questions = [inquirer.Checkbox("imports", message="Select imports to remove", choices=import_choices)]
+        questions = [
+            inquirer.Checkbox(
+                "imports", message="Select imports to remove", choices=import_choices
+            )
+        ]
         answers = inquirer.prompt(questions)
         if answers:
             selected_imports = answers["imports"]
 
     return selected_functions, selected_imports
 
-def print_badge(dead_code_count, logger, *, danger_enabled=False, danger_count=0, quality_enabled=False, quality_count=0):
+
+def print_badge(
+    dead_code_count,
+    logger,
+    *,
+    danger_enabled=False,
+    danger_count=0,
+    quality_enabled=False,
+    quality_count=0,
+):
     console: Console = logger.console
     console.print(Rule(style="muted"))
 
@@ -210,9 +259,11 @@ def print_badge(dead_code_count, logger, *, danger_enabled=False, danger_count=0
     has_quality = quality_enabled and quality_count > 0
 
     if not has_dead_code and not has_danger and not has_quality:
-        
         console.print(
-            Panel.fit("[good]Your code is 100% dead-code free![/good]\nAdd this badge to your README:", border_style="good")
+            Panel.fit(
+                "[good]Your code is 100% dead-code free![/good]\nAdd this badge to your README:",
+                border_style="good",
+            )
         )
         console.print("```markdown")
         console.print(
@@ -235,17 +286,17 @@ def print_badge(dead_code_count, logger, *, danger_enabled=False, danger_count=0
     )
     console.print("```")
 
+
 def render_results(console: Console, result, tree=False, root_path=None):
     summ = result.get("analysis_summary", {})
     console.print(
         Panel.fit(
-            f"[brand]Python Static Analysis Results[/brand]\n[muted]Analyzed {summ.get('total_files','?')} file(s)[/muted]",
+            f"[brand]Python Static Analysis Results[/brand]\n[muted]Analyzed {summ.get('total_files', '?')} file(s)[/muted]",
             border_style="brand",
         )
     )
 
     def _pill(label, n, ok_style="good", bad_style="bad"):
-
         if n == 0:
             style = ok_style
         else:
@@ -260,7 +311,9 @@ def render_results(console: Console, result, tree=False, root_path=None):
                 _pill("Unused params", len(result.get("unused_parameters", []))),
                 _pill("Unused vars", len(result.get("unused_variables", []))),
                 _pill("Unused classes", len(result.get("unused_classes", []))),
-                _pill("Quality", len(result.get("quality", []) or []), bad_style="warn"),
+                _pill(
+                    "Quality", len(result.get("quality", []) or []), bad_style="warn"
+                ),
             ]
         )
     )
@@ -269,7 +322,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
     def _render_unused(title, items, name_key="name"):
         if not items:
             return
-        
+
         console.rule(f"[bold]{title}")
 
         table = Table(expand=True)
@@ -280,16 +333,16 @@ def render_results(console: Console, result, tree=False, root_path=None):
         for i, item in enumerate(items, 1):
             nm = item.get(name_key) or item.get("simple_name") or "<?>"
             short = _shorten_path(item.get("file"), root_path)
-            loc = f"{short}:{item.get('line', item.get('lineno','?'))}"
+            loc = f"{short}:{item.get('line', item.get('lineno', '?'))}"
             table.add_row(str(i), nm, loc)
-            
+
         console.print(table)
         console.print()
 
     def _render_quality(items):
         if not items:
             return
-        
+
         console.rule("[bold red]Quality Issues")
         table = Table(expand=True)
         table.add_column("#", style="muted", width=3)
@@ -301,7 +354,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
         for i, quality in enumerate(items, 1):
             kind = (quality.get("kind") or quality.get("metric") or "quality").title()
             func = quality.get("name") or quality.get("simple_name") or "<?>"
-            loc = f"{quality.get('basename','?')}:{quality.get('line','?')}"
+            loc = f"{quality.get('basename', '?')}:{quality.get('line', '?')}"
             value = quality.get("value") or quality.get("complexity")
             thr = quality.get("threshold")
             length = quality.get("length")
@@ -317,12 +370,14 @@ def render_results(console: Console, result, tree=False, root_path=None):
             table.add_row(str(i), kind, func, detail, loc)
 
         console.print(table)
-        console.print("[muted]Tip: split helpers, add early returns, flatten branches.[/muted]\n")
+        console.print(
+            "[muted]Tip: split helpers, add early returns, flatten branches.[/muted]\n"
+        )
 
     def _render_secrets(items):
         if not items:
             return
-        
+
         console.rule("[bold red]Secrets")
         table = Table(expand=True)
         table.add_column("#", style="muted", width=3)
@@ -336,14 +391,13 @@ def render_results(console: Console, result, tree=False, root_path=None):
             msg = s.get("message") or "Secret detected"
             prev = s.get("preview") or "****"
             short = _shorten_path(s.get("file"), root_path)
-            loc = f"{short}:{s.get('line','?')}"
+            loc = f"{short}:{s.get('line', '?')}"
             table.add_row(str(i), prov, msg, prev, loc)
 
         console.print(table)
         console.print()
-    
+
     def render_tree(console: Console, result, root_path=None):
- 
         by_file = defaultdict(list)
 
         def _add_unused(items, kind):
@@ -356,7 +410,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
                 msg = f"Unused {kind}: {name}"
                 by_file[file].append((line, "info", msg))
 
-        def _add_findings(items, kind, default_sev = "medium"):
+        def _add_findings(items, kind, default_sev="medium"):
             for f in items or []:
                 file = f.get("file")
                 if not file:
@@ -404,7 +458,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
     def _render_danger(items):
         if not items:
             return
-        
+
         console.rule("[bold red]Security Issues")
         table = Table(expand=True)
         table.add_column("#", style="muted", width=3)
@@ -418,7 +472,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
             sev = (d.get("severity") or "UNKNOWN").title()
             msg = d.get("message") or "Issue detected"
             short = _shorten_path(d.get("file"), root_path)
-            loc = f"{short}:{d.get('line','?')}"
+            loc = f"{short}:{d.get('line', '?')}"
             table.add_row(str(i), rule, sev, msg, loc)
 
         console.print(table)
@@ -427,11 +481,21 @@ def render_results(console: Console, result, tree=False, root_path=None):
     if tree:
         render_tree(console, result, root_path=root_path)
     else:
-        _render_unused("Unreachable Functions", result.get("unused_functions", []), name_key="name")
-        _render_unused("Unused Imports", result.get("unused_imports", []), name_key="name")
-        _render_unused("Unused Parameters", result.get("unused_parameters", []), name_key="name")
-        _render_unused("Unused Variables", result.get("unused_variables", []), name_key="name")
-        _render_unused("Unused Classes", result.get("unused_classes", []), name_key="name")
+        _render_unused(
+            "Unreachable Functions", result.get("unused_functions", []), name_key="name"
+        )
+        _render_unused(
+            "Unused Imports", result.get("unused_imports", []), name_key="name"
+        )
+        _render_unused(
+            "Unused Parameters", result.get("unused_parameters", []), name_key="name"
+        )
+        _render_unused(
+            "Unused Variables", result.get("unused_variables", []), name_key="name"
+        )
+        _render_unused(
+            "Unused Classes", result.get("unused_classes", []), name_key="name"
+        )
         _render_secrets(result.get("secrets", []) or [])
         _render_danger(result.get("danger", []) or [])
         _render_quality(result.get("quality", []) or [])
@@ -444,23 +508,48 @@ def main():
             return
         except ImportError:
             print(f"{Colors.RED}Error: Flask is required {Colors.RESET}")
-            print(f"{Colors.YELLOW}Install with: pip install flask flask-cors{Colors.RESET}")
+            print(
+                f"{Colors.YELLOW}Install with: pip install flask flask-cors{Colors.RESET}"
+            )
             sys.exit(1)
 
-    parser = argparse.ArgumentParser(description="Detect unreachable functions and unused imports in a Python project")
+    parser = argparse.ArgumentParser(
+        description="Detect unreachable functions and unused imports in a Python project"
+    )
     parser.add_argument("path", help="Path to the Python project")
-    parser.add_argument("--table", action="store_true", help="(deprecated) Show findings in table")
-    parser.add_argument("--tree", action="store_true", help="Show findings in tree format")
-    parser.add_argument("--version", action="version", version=f"skylos {skylos.__version__}", help="Show version and exit")
+    parser.add_argument(
+        "--table", action="store_true", help="(deprecated) Show findings in table"
+    )
+    parser.add_argument(
+        "--tree", action="store_true", help="Show findings in tree format"
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"skylos {skylos.__version__}",
+        help="Show version and exit",
+    )
     parser.add_argument("--json", action="store_true", help="Output raw JSON")
-    parser.add_argument("--comment-out", action="store_true", help="Comment out selected dead code instead of deleting item")
+    parser.add_argument(
+        "--comment-out",
+        action="store_true",
+        help="Comment out selected dead code instead of deleting item",
+    )
     parser.add_argument("--output", "-o", type=str, help="Write output to file")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose")
     parser.add_argument(
-        "--confidence", "-c", type=int, default=60, help="Confidence threshold (0-100). Lower = include more. Default: 60"
+        "--confidence",
+        "-c",
+        type=int,
+        default=60,
+        help="Confidence threshold (0-100). Lower = include more. Default: 60",
     )
-    parser.add_argument("--interactive", "-i", action="store_true", help="Select items to remove")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be removed")
+    parser.add_argument(
+        "--interactive", "-i", action="store_true", help="Select items to remove"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be removed"
+    )
 
     parser.add_argument(
         "--exclude-folder",
@@ -485,10 +574,24 @@ def main():
         action="store_true",
         help="Do not exclude default folders (__pycache__, .git, venv, etc.). Only exclude folders with --exclude-folder.",
     )
-    parser.add_argument("--list-default-excludes", action="store_true", help="List the default excluded folders and exit.")
-    parser.add_argument("--secrets", action="store_true", help="Scan for API keys. Off by default.")
-    parser.add_argument("--danger", action="store_true", help="Scan for security issues. Off by default.")
-    parser.add_argument("--quality", action="store_true", help="Run code quality checks. Off by default.")
+    parser.add_argument(
+        "--list-default-excludes",
+        action="store_true",
+        help="List the default excluded folders and exit.",
+    )
+    parser.add_argument(
+        "--secrets", action="store_true", help="Scan for API keys. Off by default."
+    )
+    parser.add_argument(
+        "--danger",
+        action="store_true",
+        help="Scan for security issues. Off by default.",
+    )
+    parser.add_argument(
+        "--quality",
+        action="store_true",
+        help="Run code quality checks. Off by default.",
+    )
 
     args = parser.parse_args()
     project_root = pathlib.Path(args.path).resolve()
@@ -515,12 +618,16 @@ def main():
 
     use_defaults = not args.no_default_excludes
     final_exclude_folders = parse_exclude_folders(
-        user_exclude_folders=args.exclude_folders, use_defaults=use_defaults, include_folders=args.include_folders
+        user_exclude_folders=args.exclude_folders,
+        use_defaults=use_defaults,
+        include_folders=args.include_folders,
     )
 
     if not args.json:
         if final_exclude_folders:
-            console.print(f"[warn] Excluding:[/warn] {', '.join(sorted(final_exclude_folders))}")
+            console.print(
+                f"[warn] Excluding:[/warn] {', '.join(sorted(final_exclude_folders))}"
+            )
         else:
             console.print("[good] No folders excluded[/good]")
 
@@ -558,7 +665,9 @@ def main():
         if not (unused_functions or unused_imports):
             console.print("[good]No unused functions/imports to process.[/good]")
         else:
-            selected_functions, selected_imports = interactive_selection(console, unused_functions, unused_imports, root_path=project_root)
+            selected_functions, selected_imports = interactive_selection(
+                console, unused_functions, unused_imports, root_path=project_root
+            )
 
             if selected_functions or selected_imports:
                 if not args.dry_run:
@@ -574,7 +683,13 @@ def main():
                         action_verb = "remove"
 
                     if INTERACTIVE_AVAILABLE:
-                        confirm_q = [inquirer.Confirm("confirm", message="Proceed with changes?", default=False)]
+                        confirm_q = [
+                            inquirer.Confirm(
+                                "confirm",
+                                message="Proceed with changes?",
+                                default=False,
+                            )
+                        ]
                         answers = inquirer.prompt(confirm_q)
                         proceed = answers and answers.get("confirm")
                     else:
@@ -583,18 +698,28 @@ def main():
                     if proceed:
                         console.print(f"[warn]Applying changes…[/warn]")
                         for func in selected_functions:
-                            ok = action_func_fn(func["file"], func["name"], func["line"])
+                            ok = action_func_fn(
+                                func["file"], func["name"], func["line"]
+                            )
                             if ok:
-                                console.print(f"[good] ✓ {action_past} function:[/good] {func['name']}")
+                                console.print(
+                                    f"[good] ✓ {action_past} function:[/good] {func['name']}"
+                                )
                             else:
-                                console.print(f"[bad] x Failed to {action_verb} function:[/bad] {func['name']}")
+                                console.print(
+                                    f"[bad] x Failed to {action_verb} function:[/bad] {func['name']}"
+                                )
 
                         for imp in selected_imports:
                             ok = action_func_imp(imp["file"], imp["name"], imp["line"])
                             if ok:
-                                console.print(f"[good] ✓ {action_past} import:[/good] {imp['name']}")
+                                console.print(
+                                    f"[good] ✓ {action_past} import:[/good] {imp['name']}"
+                                )
                             else:
-                                console.print(f"[bad] x Failed to {action_verb} import:[/bad] {imp['name']}")
+                                console.print(
+                                    f"[bad] x Failed to {action_verb} import:[/bad] {imp['name']}"
+                                )
                         console.print(f"[good]Cleanup complete![/good]")
                     else:
                         console.print(f"[warn]Operation cancelled.[/warn]")
@@ -607,7 +732,13 @@ def main():
 
     unused_total = sum(
         len(result.get(k, []))
-        for k in ("unused_functions", "unused_imports", "unused_variables", "unused_classes", "unused_parameters")
+        for k in (
+            "unused_functions",
+            "unused_imports",
+            "unused_variables",
+            "unused_classes",
+            "unused_parameters",
+        )
     )
     danger_count = len(result.get("danger", []) or [])
     quality_count = len(result.get("quality", []) or [])
@@ -619,6 +750,7 @@ def main():
         quality_enabled=bool(quality_count),
         quality_count=quality_count,
     )
+
 
 if __name__ == "__main__":
     main()
