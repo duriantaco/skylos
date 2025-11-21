@@ -4,12 +4,13 @@ import ast
 from unittest.mock import Mock, patch
 
 from skylos.framework_aware import (
-        FrameworkAwareVisitor,
-        detect_framework_usage,
-        FRAMEWORK_DECORATORS,
-        FRAMEWORK_FUNCTIONS,
-        FRAMEWORK_IMPORTS,
-    )
+    FrameworkAwareVisitor,
+    detect_framework_usage,
+    FRAMEWORK_DECORATORS,
+    FRAMEWORK_FUNCTIONS,
+    FRAMEWORK_IMPORTS,
+)
+
 
 class TestFrameworkAwareVisitor:
     def test_init_default(self):
@@ -179,7 +180,9 @@ async def get_item(item_id: int):
     @patch("skylos.framework_aware.Path")
     def test_file_content_framework_detection(self, mock_path):
         mock_file = Mock()
-        mock_file.read_text.return_value = "from flask import Flask\napp = Flask(__name__)"
+        mock_file.read_text.return_value = (
+            "from flask import Flask\napp = Flask(__name__)"
+        )
         mock_path.return_value = mock_file
         v = FrameworkAwareVisitor(filename="test.py")
         v.finalize()
@@ -228,6 +231,7 @@ def calc(req: In):
         v.finalize()
         assert v.is_framework_file is True
         assert 4 in v.framework_decorated_lines
+
 
 class TestDetectFrameworkUsage:
     def test_decorated_endpoint_confidence_is_one(self):
@@ -284,6 +288,7 @@ class TestDetectFrameworkUsage:
         v.is_framework_file = True
         assert detect_framework_usage(d, visitor=v) is None
 
+
 class TestFrameworkPatterns:
     def test_framework_decorators_list(self):
         assert "@*.route" in FRAMEWORK_DECORATORS
@@ -301,6 +306,7 @@ class TestFrameworkPatterns:
         assert "django" in FRAMEWORK_IMPORTS
         assert "fastapi" in FRAMEWORK_IMPORTS
         assert "pydantic" in FRAMEWORK_IMPORTS
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

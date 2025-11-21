@@ -1,18 +1,37 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
 version = "2.5.1"
 requires-python = ">=3.9"
-description = "A static analysis tool for Python codebases"
+description = "An analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
-dependencies = ["inquirer>=3.0.0", 
-                "flask>=2.1.1",
-                "flask-cors>=3.0.0", 
-                "libcst>=1.8.2",
-                "rich>=14.0.0"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache 2.0 License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "inquirer>=3.0.0",
+    "flask>=2.1.1",
+    "flask-cors>=3.0.0",
+    "libcst>=1.8.2",
+    "rich>=14.0.0"
+]
 
 [project.scripts]
 skylos = "skylos.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["skylos*"]
+namespaces = false
