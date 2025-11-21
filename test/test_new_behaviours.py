@@ -1,6 +1,7 @@
 import json
 from skylos.analyzer import analyze
 
+
 def test_dataclass_fields(tmp_path):
     p = tmp_path / "dc.py"
     p.write_text(
@@ -14,21 +15,17 @@ def test_dataclass_fields(tmp_path):
         "f(C())\n"
     )
     result = json.loads(analyze(str(tmp_path), conf=0))
-    assert result['unused_variables'] == []
+    assert result["unused_variables"] == []
+
 
 def test_dead_store_guard(tmp_path):
     p = tmp_path / "dstore.py"
     p.write_text(
-        "lst=[1,2,3]\n"
-        "dir=0\n"
-        "if 'a' in lst:\n"
-        "    pass\n"
-        "else:\n"
-        "    dir=1\n"
-        "print(dir)\n"
+        "lst=[1,2,3]\ndir=0\nif 'a' in lst:\n    pass\nelse:\n    dir=1\nprint(dir)\n"
     )
     result = json.loads(analyze(str(tmp_path), conf=0))
-    assert result['unused_variables'] == []
+    assert result["unused_variables"] == []
+
 
 def test_unused_constant_reported(tmp_path):
     p = tmp_path / "pool.py"
@@ -45,8 +42,8 @@ def test_unused_constant_reported(tmp_path):
     )
     result = json.loads(analyze(str(tmp_path), conf=0))
     names = set()
-    for v in result['unused_variables']:
-        names.add(v['name'])
+    for v in result["unused_variables"]:
+        names.add(v["name"])
 
-    assert 'NEVER_USED' in names
-    assert 'PROCESS_POOL' not in names
+    assert "NEVER_USED" in names
+    assert "PROCESS_POOL" not in names

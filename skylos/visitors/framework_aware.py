@@ -3,29 +3,71 @@ import fnmatch
 from pathlib import Path
 
 FRAMEWORK_DECORATORS = [
-    "@*.route", "@*.get", "@*.post", "@*.put", "@*.delete", "@*.patch",
-    "@*.before_request", "@*.after_request", "@*.errorhandler", "@*.teardown_*",
-    "@*.head", "@*.options", "@*.trace", "@*.websocket",
-    "@*.middleware", "@*.on_event", "@*.exception_handler",
-    "@*_required", "@login_required", "@permission_required", "django.views.decorators.*",
-    "@*.simple_tag", "@*.inclusion_tag",
-    "@validator", "@field_validator", "@model_validator", "@root_validator",
-    "@field_serializer", "@model_serializer", "@computed_field",
+    "@*.route",
+    "@*.get",
+    "@*.post",
+    "@*.put",
+    "@*.delete",
+    "@*.patch",
+    "@*.before_request",
+    "@*.after_request",
+    "@*.errorhandler",
+    "@*.teardown_*",
+    "@*.head",
+    "@*.options",
+    "@*.trace",
+    "@*.websocket",
+    "@*.middleware",
+    "@*.on_event",
+    "@*.exception_handler",
+    "@*_required",
+    "@login_required",
+    "@permission_required",
+    "django.views.decorators.*",
+    "@*.simple_tag",
+    "@*.inclusion_tag",
+    "@validator",
+    "@field_validator",
+    "@model_validator",
+    "@root_validator",
+    "@field_serializer",
+    "@model_serializer",
+    "@computed_field",
 ]
 
 FRAMEWORK_FUNCTIONS = [
-    "get", "post", "put", "patch", "delete", "head", "options", "trace",
-    "*_queryset", "get_queryset", "get_object", "get_context_data",
-    "*_form", "form_valid", "form_invalid", "get_form_*",
+    "get",
+    "post",
+    "put",
+    "patch",
+    "delete",
+    "head",
+    "options",
+    "trace",
+    "*_queryset",
+    "get_queryset",
+    "get_object",
+    "get_context_data",
+    "*_form",
+    "form_valid",
+    "form_invalid",
+    "get_form_*",
 ]
 
 FRAMEWORK_IMPORTS = {
-    "flask", "fastapi", "django", "rest_framework", "pydantic", "celery", 
-    "starlette", "uvicorn"
+    "flask",
+    "fastapi",
+    "django",
+    "rest_framework",
+    "pydantic",
+    "celery",
+    "starlette",
+    "uvicorn",
 }
 
+
 class FrameworkAwareVisitor:
-    def __init__(self, filename = None):
+    def __init__(self, filename=None):
         self.is_framework_file = False
         self.detected_frameworks = set()
         self.framework_decorated_lines = set()
@@ -35,7 +77,7 @@ class FrameworkAwareVisitor:
         self.pydantic_models = set()
         self._mark_functions = set()
         self._mark_classes = set()
-        self.declarative_classes = set() 
+        self.declarative_classes = set()
         self._mark_cbv_http_methods = set()
         self._type_refs_in_routes = set()
         if filename:
@@ -58,14 +100,14 @@ class FrameworkAwareVisitor:
     def visit_Import(self, node: ast.Import):
         for alias in node.names:
             name = alias.name.lower()
-            
+
             for fw in FRAMEWORK_IMPORTS:
                 if fw in name:
                     self.is_framework_file = True
                     framework_name = name.split(".")[0]
                     self.detected_frameworks.add(framework_name)
                     break
-                    
+
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom):
@@ -138,7 +180,7 @@ class FrameworkAwareVisitor:
             self.pydantic_models.add(node.name)
             self.declarative_classes.add(node.name)
             self.is_framework_file = True
-            
+
         else:
             for base in bases:
                 tail = base.split(".")[-1]
@@ -153,11 +195,13 @@ class FrameworkAwareVisitor:
         for t in node.targets:
             if isinstance(t, ast.Name):
                 targets.append(t.id)
-                
+
         if "urlpatterns" in targets:
             self.is_framework_file = True
             for elt in self._iter_list_elts(node.value):
-                if isinstance(elt, ast.Call) and self._call_name_endswith(elt, {"path", "re_path"}):
+                if isinstance(elt, ast.Call) and self._call_name_endswith(
+                    elt, {"path", "re_path"}
+                ):
                     view_expr = self._get_posarg(elt, 1)
                     self._mark_view_from_url_pattern(view_expr)
         self.generic_visit(node)
@@ -171,7 +215,11 @@ class FrameworkAwareVisitor:
                     self._mark_classes.add(cls_name)
                     self._mark_cbv_http_methods.add(cls_name)
                     self.is_framework_file = True
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "connect" and node.args:
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "connect"
+            and node.args
+        ):
             func_name = self._simple_name(node.args[0])
             if func_name:
                 self._mark_functions.add(func_name)
@@ -187,7 +235,22 @@ class FrameworkAwareVisitor:
             if cls_node is not None:
                 self.framework_decorated_lines.add(cls_node.lineno)
         for cname in self._mark_cbv_http_methods:
-            for meth in ("get", "post", "put", "patch", "delete", "head", "options", "trace", "list", "create", "retrieve", "update", "partial_update", "destroy"):
+            for meth in (
+                "get",
+                "post",
+                "put",
+                "patch",
+                "delete",
+                "head",
+                "options",
+                "trace",
+                "list",
+                "create",
+                "retrieve",
+                "update",
+                "partial_update",
+                "destroy",
+            ):
                 lino = self.class_method_lines.get((cname, meth))
                 if lino:
                     self.framework_decorated_lines.add(lino)
@@ -206,19 +269,19 @@ class FrameworkAwareVisitor:
     def _check_framework_imports_in_file(self, filename):
         try:
             content = Path(filename).read_text(encoding="utf-8")
-            
+
             for framework in FRAMEWORK_IMPORTS:
                 import_statement = f"import {framework}"
                 from_statement = f"from {framework}"
-                
+
                 has_import = import_statement in content
                 has_from_import = from_statement in content
-                
+
                 if has_import or has_from_import:
                     self.is_framework_file = True
                     self.detected_frameworks.add(framework)
                     break
-                    
+
         except Exception:
             pass
 
@@ -233,12 +296,12 @@ class FrameworkAwareVisitor:
 
     def _matches_framework_pattern(self, text, patterns):
         text_clean = text.lstrip("@")
-        
+
         for pattern in patterns:
             pattern_clean = pattern.lstrip("@")
             if fnmatch.fnmatch(text_clean, pattern_clean):
                 return True
-        
+
         return False
 
     def _decorator_base_name_is(self, dec: ast.AST, name):
@@ -258,7 +321,7 @@ class FrameworkAwareVisitor:
             cur = cur.value
         if isinstance(cur, ast.Name):
             parts.append(cur.id)
-        
+
         parts.reverse()
         return ".".join(parts)
 
@@ -296,7 +359,11 @@ class FrameworkAwareVisitor:
     def _mark_view_from_url_pattern(self, view_expr):
         if view_expr is None:
             return
-        if isinstance(view_expr, ast.Call) and isinstance(view_expr.func, ast.Attribute) and view_expr.func.attr == "as_view":
+        if (
+            isinstance(view_expr, ast.Call)
+            and isinstance(view_expr.func, ast.Attribute)
+            and view_expr.func.attr == "as_view"
+        ):
             cls_name = self._simple_name(view_expr.func.value)
             if cls_name:
                 self._mark_classes.add(cls_name)
@@ -327,15 +394,15 @@ class FrameworkAwareVisitor:
         def collect(t):
             if t is None:
                 return
-                
+
             if isinstance(t, ast.Name):
                 self._type_refs_in_routes.add(t.id)
                 return
-                
+
             if isinstance(t, ast.Attribute):
                 self._type_refs_in_routes.add(t.attr)
                 return
-                
+
             if isinstance(t, ast.Subscript):
                 collect(t.value)
                 slice_node = t.slice
@@ -345,21 +412,22 @@ class FrameworkAwareVisitor:
                 else:
                     collect(slice_node)
                 return
-                    
+
             if isinstance(t, ast.Tuple):
                 for element in t.elts:
                     collect(element)
-        
+
         all_args = []
         all_args.extend(fn.args.args)
         all_args.extend(fn.args.posonlyargs)
         all_args.extend(fn.args.kwonlyargs)
-        
+
         for arg in all_args:
             collect(arg.annotation)
-        
+
         if fn.returns:
             collect(fn.returns)
+
 
 def detect_framework_usage(definition, visitor=None):
     if not visitor:

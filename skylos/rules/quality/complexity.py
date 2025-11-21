@@ -8,7 +8,7 @@ Why: Too many branches/paths can increase bug risk
 Fix: Use guard clauses / early returns, extract helpers, simplify boolean logic
 """
 
-RULE_ID = "SKY-Q301" 
+RULE_ID = "SKY-Q301"
 
 _COMPLEX_NODES = (
     ast.If,
@@ -22,12 +22,14 @@ _COMPLEX_NODES = (
     ast.comprehension,
 )
 
+
 def _func_complexity(node):
     c = 1
     for child in ast.walk(node):
         if isinstance(child, _COMPLEX_NODES):
             c += 1
     return c
+
 
 def _func_length(node):
     start = getattr(node, "lineno", None)
@@ -44,6 +46,7 @@ def _func_length(node):
                 end = ln
 
     return max(end - start + 1, 0)
+
 
 def scan_complex_functions(ctx, threshold=10):
     src = ctx.get("source") or ""
@@ -66,28 +69,32 @@ def scan_complex_functions(ctx, threshold=10):
 
             length = _func_length(node)
 
-            items.append({
-                "rule_id": RULE_ID,
-                "kind": "complexity",
-                "type": "function",
-                "name": f"{mod}.{node.name}" if mod else node.name,
-                "simple_name": node.name,
-                "file": str(file_path),
-                "basename": Path(file_path).name,
-                "line": int(getattr(node, "lineno", 1)),
-                "metric": "mccabe",
-                "value": int(complexity),
-                "threshold": int(threshold),
-                "length": int(length),
-                "severity": (
-                    "OK" if complexity < 10 else
-                    "WARN" if complexity < 15 else
-                    "HIGH" if complexity < 25 else
-                    "CRITICAL"
-                ),
-
-                "message": f"Function is complex (McCabe={complexity} ≥ {threshold}). "
-                        f"Consider splitting loops/branches or extracting helpers.",
-            })
+            items.append(
+                {
+                    "rule_id": RULE_ID,
+                    "kind": "complexity",
+                    "type": "function",
+                    "name": f"{mod}.{node.name}" if mod else node.name,
+                    "simple_name": node.name,
+                    "file": str(file_path),
+                    "basename": Path(file_path).name,
+                    "line": int(getattr(node, "lineno", 1)),
+                    "metric": "mccabe",
+                    "value": int(complexity),
+                    "threshold": int(threshold),
+                    "length": int(length),
+                    "severity": (
+                        "OK"
+                        if complexity < 10
+                        else "WARN"
+                        if complexity < 15
+                        else "HIGH"
+                        if complexity < 25
+                        else "CRITICAL"
+                    ),
+                    "message": f"Function is complex (McCabe={complexity} ≥ {threshold}). "
+                    f"Consider splitting loops/branches or extracting helpers.",
+                }
+            )
 
     return items

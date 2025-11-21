@@ -9,7 +9,8 @@ from threading import Timer
 app = Flask(__name__)
 CORS(app)
 
-@app.route('/')
+
+@app.route("/")
 def serve_frontend():
     return """<!DOCTYPE html>
 <html lang="en">
@@ -510,40 +511,44 @@ def serve_frontend():
 </body>
 </html>"""
 
-@app.route('/api/analyze', methods=['POST'])
+
+@app.route("/api/analyze", methods=["POST"])
 def analyze_project():
     """Analyze a project using skylos"""
     try:
         data = request.json
-        path = data.get('path')
-        confidence = data.get('confidence', 60)
-        
+        path = data.get("path")
+        confidence = data.get("confidence", 60)
+
         if not path:
-            return jsonify({'error': 'Path is required'}), 400
-            
+            return jsonify({"error": "Path is required"}), 400
+
         if not os.path.exists(path):
-            return jsonify({'error': f'Path does not exist: {path}'}), 400
-            
+            return jsonify({"error": f"Path does not exist: {path}"}), 400
+
         # Call your actual skylos analyzer
         result_json = skylos.analyze(path, conf=confidence)
         result = json.loads(result_json)
-        
+
         return jsonify(result)
-        
+
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
+
 
 def start_server():
     """Start the web server"""
+
     def open_browser():
-        webbrowser.open('http://localhost:5090')
+        webbrowser.open("http://localhost:5090")
 
     print(" Starting Skylos Web Interface...")
     print("Opening browser at: http://localhost:5090")
-    
-    Timer(1.5, open_browser).start()
-    
-    app.run(debug=False, host='0.0.0.0', port=5090, use_reloader=False)
 
-if __name__ == '__main__':
+    Timer(1.5, open_browser).start()
+
+    app.run(debug=False, host="0.0.0.0", port=5090, use_reloader=False)
+
+
+if __name__ == "__main__":
     start_server()
