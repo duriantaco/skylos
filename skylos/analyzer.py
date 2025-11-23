@@ -16,7 +16,14 @@ from skylos.visitors.framework_aware import (
     FrameworkAwareVisitor,
     detect_framework_usage,
 )
-from skylos.rules.quality.quality import scan_ctx as scan_quality
+
+from skylos.config import load_config
+from skylos.linter import LinterVisitor
+from skylos.rules.quality.complexity import ComplexityRule
+from skylos.rules.quality.nesting import NestingRule
+from skylos.rules.danger.calls import DangerousCallsRule
+from skylos.rules.quality.structure import ArgCountRule, FunctionLengthRule
+from skylos.rules.quality.logic import MutableDefaultRule, BareExceptRule, DangerousComparisonRule
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -365,6 +372,7 @@ class Skylos:
         enable_secrets=False,
         enable_danger=False,
         enable_quality=False,
+        extra_visitors=None,
     ):
         files, root = self._get_python_files(path, exclude_folders)
 
@@ -397,7 +405,17 @@ class Skylos:
 
         for file in files:
             mod = modmap[file]
-            defs, refs, dyn, exports, test_flags, framework_flags = proc_file(file, mod)
+            (
+                defs,
+                refs,
+                dyn,
+                exports,
+                test_flags,
+                framework_flags,
+                q_finds,
+                d_finds,
+                pro_finds,
+            ) = proc_file(file, mod, extra_visitors)
 
             for definition in defs:
                 self.defs[definition.name] = definition
@@ -407,6 +425,16 @@ class Skylos:
             self.exports[mod].update(exports)
 
             file_contexts.append((defs, test_flags, framework_flags, file, mod))
+
+            if enable_quality and q_finds:
+                all_quality.extend(q_finds)
+
+            if enable_danger and d_finds:
+                all_dangers.extend(d_finds)
+
+            # --- CHANGED: Collect Pro Findings ---
+            if pro_finds:
+                all_dangers.extend(pro_finds)
 
             if enable_secrets and _secrets_scan_ctx is not None:
                 try:
@@ -419,16 +447,6 @@ class Skylos:
                         all_secrets.extend(findings)
                 except Exception:
                     pass
-
-            if enable_quality:
-                try:
-                    findings = scan_quality(root, [file])
-                    if findings:
-                        all_quality.extend(findings)
-                except Exception as e:
-                    logger.error(f"Error scanning {file} for quality issues: {e}")
-                    if os.getenv("SKYLOS_DEBUG"):
-                        logger.error("Quality scan error", exc_info=True)
 
         for defs, test_flags, framework_flags, file, mod in file_contexts:
             for definition in defs:
@@ -507,7 +525,7 @@ class Skylos:
         return json.dumps(result, indent=2)
 
 
-def proc_file(file_or_args, mod=None):
+def proc_file(file_or_args, mod=None, extra_visitors=None):
     if mod is None and isinstance(file_or_args, tuple):
         file, mod = file_or_args
     else:
@@ -522,6 +540,39 @@ def proc_file(file_or_args, mod=None):
         }
         tree = ast.parse(source)
 
+        cfg = load_config(file)
+
+        q_rules = []
+        if "SKY-Q301" not in cfg["ignore"]:
+            q_rules.append(ComplexityRule(threshold=cfg["complexity"]))
+        if "SKY-Q302" not in cfg["ignore"]:
+            q_rules.append(NestingRule(threshold=cfg["nesting"]))
+        if "SKY-C303" not in cfg["ignore"]:
+            q_rules.append(ArgCountRule(max_args=cfg["max_args"]))
+        if "SKY-C304" not in cfg["ignore"]:
+            q_rules.append(FunctionLengthRule(max_lines=cfg["max_lines"]))
+        if "SKY-Q305" not in cfg["ignore"]:
+            q_rules.append(MutableDefaultRule())
+        if "SKY-Q306" not in cfg["ignore"]:
+            q_rules.append(BareExceptRule())
+        if "SKY-Q307" not in cfg["ignore"]:
+            q_rules.append(DangerousComparisonRule())
+
+        linter_q = LinterVisitor(q_rules, str(file))
+        linter_q.visit(tree)
+        quality_findings = linter_q.findings
+
+        d_rules = [DangerousCallsRule()]
+        linter_d = LinterVisitor(d_rules, str(file))
+        linter_d.visit(tree)
+        danger_findings = linter_d.findings
+
+        pro_findings = []
+        if extra_visitors:
+            for VisitorClass in extra_visitors:
+                checker = VisitorClass(file, pro_findings)
+                checker.visit(tree)
+
         tv = TestAwareVisitor(filename=file)
         tv.visit(tree)
         tv.ignore_lines = ignore_lines
@@ -535,7 +586,17 @@ def proc_file(file_or_args, mod=None):
         fv.dataclass_fields = getattr(v, "dataclass_fields", set())
         fv.first_read_lineno = getattr(v, "first_read_lineno", {})
 
-        return v.defs, v.refs, v.dyn, v.exports, tv, fv
+        return (
+            v.defs,
+            v.refs,
+            v.dyn,
+            v.exports,
+            tv,
+            fv,
+            quality_findings,
+            danger_findings,
+            pro_findings,
+        )
 
     except Exception as e:
         logger.error(f"{file}: {e}")
@@ -544,8 +605,7 @@ def proc_file(file_or_args, mod=None):
         dummy_visitor = TestAwareVisitor(filename=file)
         dummy_visitor.ignore_lines = set()
         dummy_framework_visitor = FrameworkAwareVisitor(filename=file)
-
-        return [], [], set(), set(), dummy_visitor, dummy_framework_visitor
+        return [], [], set(), set(), dummy_visitor, dummy_framework_visitor, [], [], []
 
 
 def analyze(
@@ -555,31 +615,40 @@ def analyze(
     enable_secrets=False,
     enable_danger=False,
     enable_quality=False,
+    extra_visitors=None,
 ):
     return Skylos().analyze(
-        path, conf, exclude_folders, enable_secrets, enable_danger, enable_quality
+        path,
+        conf,
+        exclude_folders,
+        enable_secrets,
+        enable_danger,
+        enable_quality,
+        extra_visitors,
     )
 
 
 if __name__ == "__main__":
     enable_secrets = "--secrets" in sys.argv
     enable_danger = "--danger" in sys.argv
+    enable_quality = "--quality" in sys.argv
 
     positional = [a for a in sys.argv[1:] if not a.startswith("--")]
-
     if not positional:
         print(
-            "Usage: python Skylos.py <path> [confidence_threshold] [--secrets] [--danger]"
+            "Usage: python Skylos.py <path> [confidence_threshold] [--secrets] [--danger] [--quality]"
         )
         sys.exit(2)
-
     p = positional[0]
     confidence = int(positional[1]) if len(positional) > 1 else 60
 
     result = analyze(
-        p, confidence, enable_secrets=enable_secrets, enable_danger=enable_danger
+        p,
+        confidence,
+        enable_secrets=enable_secrets,
+        enable_danger=enable_danger,
+        enable_quality=enable_quality,
     )
-
     data = json.loads(result)
     print("\n Python Static Analysis Results")
     print("===================================\n")
