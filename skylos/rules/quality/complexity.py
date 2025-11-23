@@ -1,12 +1,6 @@
 import ast
 from pathlib import Path
-
-"""
-Rule ID: SKY-Q301
-Trigger: Cyclomatic complexity > threshold (default 10)
-Why: Too many branches/paths can increase bug risk
-Fix: Use guard clauses / early returns, extract helpers, simplify boolean logic
-"""
+from skylos.rules.base import SkylosRule
 
 RULE_ID = "SKY-Q301"
 
@@ -48,53 +42,51 @@ def _func_length(node):
     return max(end - start + 1, 0)
 
 
-def scan_complex_functions(ctx, threshold=10):
-    src = ctx.get("source") or ""
-    file_path = ctx.get("file") or "?"
-    mod = ctx.get("mod") or ""
+class ComplexityRule(SkylosRule):
+    rule_id = "SKY-Q301"
+    name = "Cyclomatic Complexity"
 
-    try:
-        tree = ast.parse(src)
-    except SyntaxError:
-        return []
+    def __init__(self, threshold=10):
+        self.threshold = threshold
 
-    items = []
+    def visit_node(self, node, context):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
 
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            complexity = _func_complexity(node)
+        complexity = _func_complexity(node)
 
-            if complexity < threshold:
-                continue
+        if complexity < self.threshold:
+            return None
 
-            length = _func_length(node)
+        if complexity < 15:
+            severity = "WARN"
+        elif complexity < 25:
+            severity = "HIGH"
+        else:
+            severity = "CRITICAL"
 
-            items.append(
-                {
-                    "rule_id": RULE_ID,
-                    "kind": "complexity",
-                    "type": "function",
-                    "name": f"{mod}.{node.name}" if mod else node.name,
-                    "simple_name": node.name,
-                    "file": str(file_path),
-                    "basename": Path(file_path).name,
-                    "line": int(getattr(node, "lineno", 1)),
-                    "metric": "mccabe",
-                    "value": int(complexity),
-                    "threshold": int(threshold),
-                    "length": int(length),
-                    "severity": (
-                        "OK"
-                        if complexity < 10
-                        else "WARN"
-                        if complexity < 15
-                        else "HIGH"
-                        if complexity < 25
-                        else "CRITICAL"
-                    ),
-                    "message": f"Function is complex (McCabe={complexity} ≥ {threshold}). "
-                    f"Consider splitting loops/branches or extracting helpers.",
-                }
-            )
+        length = _func_length(node)
+        mod = context.get("mod", "")
 
-    return items
+        if mod:
+            func_name = f"{mod}.{node.name}"
+        else:
+            func_name = node.name
+
+        return [
+            {
+                "rule_id": self.rule_id,
+                "kind": "complexity",
+                "severity": severity,
+                "type": "function",
+                "name": func_name,
+                "simple_name": node.name,
+                "value": complexity,
+                "threshold": self.threshold,
+                "length": length,
+                "message": f"Function is complex (McCabe={complexity}). Consider splitting loops/branches.",
+                "file": context.get("filename"),
+                "basename": Path(context.get("filename", "")).name,
+                "line": node.lineno,
+            }
+        ]
