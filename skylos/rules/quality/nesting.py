@@ -1,13 +1,7 @@
 from __future__ import annotations
 import ast
 from pathlib import Path
-
-"""
-Rule ID: SKY-Q302
-Trigger: max nesting depth > threshold (default 3)
-Why: Deep nesting hurts readability/testability
-Fix: Use guard clauses / early returns / extract helpers / invert conditions
-"""
+from skylos.rules.base import SkylosRule
 
 RULE_ID = "SKY-Q302"
 
@@ -16,14 +10,12 @@ NEST_NODES = (ast.If, ast.For, ast.While, ast.Try, ast.With)
 
 def _max_depth(nodes, depth=0):
     max_depth = depth
-
     for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             continue
 
         if isinstance(node, NEST_NODES):
             branches = []
-
             if isinstance(node, ast.If):
                 branches.append(node.body)
                 if node.orelse:
@@ -52,66 +44,58 @@ def _max_depth(nodes, depth=0):
     return max_depth
 
 
-def _function_lengths(source, node):
-    start = node.lineno
-    end = node.end_lineno
-    lines = source.splitlines()[start - 1 : end]
-
-    physical = len(lines)
-    logical = 0
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
-            logical += 1
-
-    return physical, logical
+def _physical_length(node):
+    start = getattr(node, "lineno", 0)
+    end = getattr(node, "end_lineno", start)
+    return max(end - start + 1, 0)
 
 
-def scan_nesting(ctx, threshold=3):
-    source = ctx["source"]
-    file_path = ctx["file"]
-    module_name = ctx.get("mod")
-    tree = ast.parse(source)
+class NestingRule(SkylosRule):
+    rule_id = "SKY-Q302"
+    name = "Deep Nesting"
 
-    functions = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
+    def __init__(self, threshold=3):
+        self.threshold = threshold
 
-    for func in functions:
-        depth = _max_depth(func.body, 0)
+    def visit_node(self, node, context):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
 
-        if depth > threshold:
-            physical, logical = _function_lengths(source, func)
+        depth = _max_depth(node.body, 0)
 
-            if module_name:
-                full_name = f"{module_name}.{func.name}"
-            else:
-                full_name = func.name
+        if depth <= self.threshold:
+            return None
 
-            if depth <= threshold + 2:
-                severity = "MEDIUM"
-            elif depth <= threshold + 5:
-                severity = "HIGH"
-            else:
-                severity = "CRITICAL"
+        if depth <= self.threshold + 2:
+            severity = "MEDIUM"
+        elif depth <= self.threshold + 5:
+            severity = "HIGH"
+        else:
+            severity = "CRITICAL"
 
-            yield {
-                "rule_id": RULE_ID,
+        physical_len = _physical_length(node)
+        mod = context.get("mod", "")
+
+        if mod:
+            func_name = f"{mod}.{node.name}"
+        else:
+            func_name = node.name
+
+        return [
+            {
+                "rule_id": self.rule_id,
                 "kind": "nesting",
+                "severity": severity,
                 "type": "function",
-                "name": full_name,
-                "simple_name": func.name,
-                "file": str(file_path),
-                "basename": Path(file_path).name,
-                "line": func.lineno,
+                "name": func_name,
+                "simple_name": node.name,
+                "file": context.get("filename"),
+                "basename": Path(context.get("filename", "")).name,
+                "line": node.lineno,
                 "metric": "max_nesting",
                 "value": depth,
-                "threshold": threshold,
-                "length": physical,
-                "logical_length": logical,
-                "severity": severity,
-                "message": f"Nesting depth of {depth} exceeds threshold of {threshold}. "
-                f"Consider using early returns or extracting logic.",
+                "threshold": self.threshold,
+                "length": physical_len,
+                "message": f"Nesting depth of {depth} exceeds threshold of {self.threshold}. Consider using early returns.",
             }
+        ]
