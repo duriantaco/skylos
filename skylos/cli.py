@@ -11,6 +11,8 @@ from skylos.codemods import (
     comment_out_unused_import_cst,
     comment_out_unused_function_cst,
 )
+from skylos.config import load_config
+from skylos.gatekeeper import run_gate_interaction
 import pathlib
 import skylos
 from collections import defaultdict
@@ -500,8 +502,49 @@ def render_results(console: Console, result, tree=False, root_path=None):
         _render_danger(result.get("danger", []) or [])
         _render_quality(result.get("quality", []) or [])
 
+def run_init():
+
+    console = Console()
+    path = pathlib.Path("pyproject.toml")
+    
+    template = """
+[tool.skylos]
+# Analysis Settings
+complexity = 10
+nesting = 3
+max_args = 5
+max_lines = 50
+ignore = []  # e.g. ["SKY-L002", "SKY-C304"]
+
+[tool.skylos.gate]
+# Gatekeeper Settings (skylos --gate)
+fail_on_critical = true
+max_security = 0
+max_quality = 10
+strict = false
+"""
+
+    if path.exists():
+        content = path.read_text(encoding="utf-8")
+        if "[tool.skylos]" in content:
+            console.print("[warn]pyproject.toml already contains [tool.skylos] configuration.[/warn]")
+            return
+        
+        console.print("[brand]Appending Skylos configuration to existing pyproject.toml...[/brand]")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n" + template)
+    else:
+        console.print("[brand]Creating new pyproject.toml...[/brand]")
+        path.write_text(template.strip(), encoding="utf-8")
+
+    console.print("[good] ** Configuration initialized! You can now edit pyproject.toml[/good]")
 
 def main():
+
+    if len(sys.argv) > 1 and sys.argv[1] == "init":
+        run_init()
+        sys.exit(0)
+
     if len(sys.argv) > 1 and sys.argv[1] == "run":
         try:
             start_server()
@@ -517,6 +560,11 @@ def main():
         description="Detect unreachable functions and unused imports in a Python project"
     )
     parser.add_argument("path", help="Path to the Python project")
+    parser.add_argument(
+        "--gate", 
+        action="store_true", 
+        help="Run as a quality gate (block deployment on failure)"
+    )
     parser.add_argument(
         "--table", action="store_true", help="(deprecated) Show findings in table"
     )
@@ -591,6 +639,12 @@ def main():
         "--quality",
         action="store_true",
         help="Run code quality checks. Off by default.",
+    )
+
+    parser.add_argument(
+        "command", 
+        nargs="*",
+        help="Command to run if gate passes"
     )
 
     args = parser.parse_args()
@@ -750,6 +804,16 @@ def main():
         quality_enabled=bool(quality_count),
         quality_count=quality_count,
     )
+
+    if args.gate:
+        cfg = load_config(project_root)
+        
+        cmd = args.command
+        if cmd and cmd[0] == "--":
+            cmd = cmd[1:]
+ 
+        exit_code = run_gate_interaction(result, cfg, cmd)
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":
