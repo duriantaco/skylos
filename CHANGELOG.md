@@ -1,5 +1,29 @@
 ## Changelog
 
+## [2.5.2] - 2025-11-24
+
+### Added
+- **Gatekeeper (`--gate`):** A new "Quality Gate" feature that blocks CI/CD pipelines or local deployments if critical issues are found.
+  - Supports "Bypass" mode
+  - Includes a deployment wizard that handles git staging/commit/push if the checks pass
+- **Config Support:** Skylos now reads settings from `pyproject.toml` under `[tool.skylos]`.
+  - Users can change the complexity thresholds, max arguments, and ignore specific rules without waiting for a release 
+- **Quality Rules:** Added 5 new architectural checks:
+  - `SKY-C303`: Too Many Arguments (detects functions with >5 args).
+  - `SKY-C304`: Function Too Long (detects functions >50 lines).
+  - `SKY-L001`: Mutable Default Arguments (catches `def foo(x=[])`).
+  - `SKY-L002`: Bare Except Block (catches `except:` swallowing errors).
+  - `SKY-L003`: Dangerous Comparison (catches `if x == True:`).
+
+### Changed
+- **Architecture Refactor:** Split the monolithic `analyzer.py` logic into a modular `LinterVisitor` that will run multiple rules in a single pass.
+- CLI arguments now support command pass-through (e.g., `skylos . --gate -- git push`).
+
+### Fixed
+- Fixed `NameError: name 'ast' is not defined` crash in Python 3.13 by implementing manual AST traversal in `LinterVisitor`.
+- Fixed JSON serialization crash where `pathlib.Path` objects were breaking the reporter
+- Fixed false positives in `DangerousComparisonRule` where integer comparisons (`x == 1`) were flagged as Bool comparisons
+
 ## [2.5.1] - 2025-11-19
 
 ### Changed
