@@ -72,8 +72,10 @@ class DangerousComparisonRule(SkylosRule):
         findings = []
         for op, comparator in zip(node.ops, node.comparators):
             if isinstance(op, (ast.Eq, ast.NotEq)):
-                if isinstance(comparator, ast.Constant) and comparator.value in (True, False, None):
-                    findings.append({
+                if isinstance(comparator, ast.Constant):
+                    val = comparator.value
+                    if val is True or val is False or val is None:
+                        findings.append({
                         "rule_id": self.rule_id,
                         "kind": "logic",
                         "severity": "LOW",
