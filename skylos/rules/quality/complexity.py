@@ -21,7 +21,10 @@ def _func_complexity(node):
     c = 1
     for child in ast.walk(node):
         if isinstance(child, _COMPLEX_NODES):
-            c += 1
+            if isinstance(child, ast.BoolOp):
+                c += len(child.values) - 1
+            else:
+                c += 1
     return c
 
 

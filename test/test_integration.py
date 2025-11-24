@@ -1,7 +1,6 @@
 import pytest
 import json
 import tempfile
-import os
 from pathlib import Path
 from textwrap import dedent
 
