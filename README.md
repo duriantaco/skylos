@@ -26,6 +26,7 @@
 - [Benchmark](#benchmark-you-can-find-this-benchmark-test-in-test-folder)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Skylos Gate](#skylos-gate)
 - [VS-Code extension](#vs-code-extension)
 - [Web Interface](#web-interface)
 - [Design](#design)
@@ -133,6 +134,49 @@ skylos --table /path/to/your/project
 # With confidence
 skylos path/to/your/file --confidence 20 ## or whatever value u wanna set
 ```
+
+## Skylos Gate
+
+<div align="center">
+   <img src="assets/gate.png" alt="Skylos gate" width="500">
+</div>
+
+Skylos also has a **Quality Gate**. It prevents bad code, security risks, and spaghetti logic from entering your repository.
+
+### 1. Initialize Configuration
+Stop using default settings. Generate a `pyproject.toml` configuration file to define your team's standards.
+
+```bash
+skylos init
+```
+
+This creates a [tool.skylos] section in your pyproject.toml in which you can adjust the rules:
+
+```
+[tool.skylos]
+# Architectural Rules
+complexity = 10
+nesting = 3
+max_args = 5
+max_lines = 50
+ignore = ["SKY-L002"]
+
+[tool.skylos.gate]
+# Gatekeeper Policy
+fail_on_critical = true  # Block on critical security issues
+max_security = 0 # Block if ANY security issue is found
+max_quality = 10 # Allow up to 10 quality issues before blocking
+strict = false # If true, disables the "Bypass" prompt
+```
+
+### 2. Run the Gate
+Use the `--gate` flag to enforce these rules. If the scan fails, Skylos exits with an error code (blocking CI/CD or git push).
+
+```bash
+skylos . --quality --danger --gate
+```
+
+You will then be asked a series of questions on whether you will like to push. You can choose to select the files manually or push all at once. 
 
 ## VS-Code extension
 
@@ -495,7 +539,7 @@ jobs:
 ## .pre-commit-config.yaml
 repos:
   - repo: https://github.com/duriantaco/skylos
-    rev: v2.5.1
+    rev: v2.5.2
     hooks:
       - id: skylos-scan
         name: skylos report
@@ -545,7 +589,7 @@ repos:
         entry: python -m skylos.cli
         pass_filenames: false
         require_serial: true
-        additional_dependencies: [skylos==2.5.1]
+        additional_dependencies: [skylos==2.5.2]
         args: [".", "--output", "report.json", "--confidence", "70"]
 
       - id: skylos-fail-on-findings
@@ -689,13 +733,14 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 
 ## Roadmap
 - [x] Expand our test cases
-- [ ] Configuration file support 
+- [x] Configuration file support 
 - [x] Git hooks integration
 - [x] CI/CD integration examples
+- [x] Deployment Gatekeeper
 - [ ] Further optimization
 - [ ] Add new rules
 - [ ] Expanding on the `dangerous.py` list
-- [ ] Porting to uv
+- [x] Porting to uv
 
 ## License
 
