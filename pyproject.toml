@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "2.5.1"
+version = "2.5.2"
 requires-python = ">=3.9"
 description = "An analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
@@ -35,3 +35,18 @@ skylos = "skylos.cli:main"
 where = ["."]
 include = ["skylos*"]
 namespaces = false
+
+[tool.skylos]
+# Analysis Settings
+complexity = 10
+nesting = 3
+max_args = 5
+max_lines = 50
+ignore = []  # e.g. ["SKY-L002", "SKY-C304"]
+
+[tool.skylos.gate]
+# Gatekeeper Settings (skylos --gate)
+fail_on_critical = true
+max_security = 0
+max_quality = 10
+strict = false
