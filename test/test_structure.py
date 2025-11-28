@@ -1,16 +1,18 @@
 import ast
 from skylos.rules.quality.structure import ArgCountRule, FunctionLengthRule
 
+
 def check_code(rule, code, filename="test.py"):
     tree = ast.parse(code)
     findings = []
     context = {"filename": filename, "mod": "test_mod"}
-    
+
     for node in ast.walk(tree):
         res = rule.visit_node(node, context)
         if res:
             findings.extend(res)
     return findings
+
 
 class TestArgCountRule:
     def test_too_many_args(self):
@@ -19,7 +21,7 @@ def my_func(a, b, c, d, e, f):
     pass
         """
         rule = ArgCountRule(max_args=5)
-        
+
         findings = check_code(rule, code)
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-C303"
@@ -32,7 +34,7 @@ def my_func(a, b, c, d, e):
     pass
         """
         rule = ArgCountRule(max_args=5)
-        
+
         findings = check_code(rule, code)
         assert len(findings) == 0
 
@@ -56,7 +58,7 @@ def my_func(a, b, *, c, d, e, f):
     pass
         """
         rule = ArgCountRule(max_args=5)
-        
+
         findings = check_code(rule, code)
         assert len(findings) == 1
         assert findings[0]["value"] == 6
@@ -67,9 +69,10 @@ async def my_func(a, b, c, d, e, f):
     pass
         """
         rule = ArgCountRule(max_args=5)
-        
+
         findings = check_code(rule, code)
         assert len(findings) == 1
+
 
 class TestFunctionLengthRule:
     def test_short_function(self):
@@ -85,10 +88,10 @@ def short():
     def test_long_function(self):
         body = "\n".join([f"   print({i})" for i in range(11)])
         code = f"def long_func():\n{body}"
-        
+
         rule = FunctionLengthRule(max_lines=10)
         findings = check_code(rule, code)
-        
+
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-C304"
         assert findings[0]["value"] > 10
@@ -96,19 +99,19 @@ def short():
     def test_high_severity_for_huge_function(self):
         body = "\n".join([f"   print({i})" for i in range(105)])
         code = f"def huge_func():\n{body}"
-        
+
         rule = FunctionLengthRule(max_lines=50)
         findings = check_code(rule, code)
-        
+
         assert len(findings) == 1
         assert findings[0]["severity"] == "HIGH"
 
     def test_medium_severity_for_medium_function(self):
         body = "\n".join([f"   print({i})" for i in range(60)])
         code = f"def medium_func():\n{body}"
-        
+
         rule = FunctionLengthRule(max_lines=50)
         findings = check_code(rule, code)
-        
+
         assert len(findings) == 1
         assert findings[0]["severity"] == "MEDIUM"

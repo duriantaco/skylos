@@ -29,7 +29,7 @@ def load_config(start_path):
         return DEFAULTS.copy()
 
     try:
-        import tomllib
+        import tomllib  # pragma: no skylos
     except ImportError:
         try:
             import tomli as tomllib
