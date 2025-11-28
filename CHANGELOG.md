@@ -1,5 +1,14 @@
 ## Changelog
 
+## [2.5.3] - 2025-11-28
+
+### Fixed
+- Fixed a bug in `analyzer.py` where exclusion patterns were ignored 
+- Fixed `UnboundLocalError` in `start_server` by correctly passing `exclude_folders` as an argument
+
+### Added
+- Added support in `analyzer.py` for excluding nested directories (e.g., `--exclude-folder src/legacy`) using normalized path matching
+
 ## [2.5.2] - 2025-11-24
 
 ### Added
