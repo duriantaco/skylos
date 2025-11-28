@@ -5,6 +5,7 @@ import json
 import os
 import webbrowser
 from threading import Timer
+from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 
 app = Flask(__name__)
 CORS(app)
@@ -514,7 +515,6 @@ def serve_frontend():
 
 @app.route("/api/analyze", methods=["POST"])
 def analyze_project():
-    """Analyze a project using skylos"""
     try:
         data = request.json
         path = data.get("path")
@@ -526,8 +526,11 @@ def analyze_project():
         if not os.path.exists(path):
             return jsonify({"error": f"Path does not exist: {path}"}), 400
 
-        # Call your actual skylos analyzer
-        result_json = skylos.analyze(path, conf=confidence)
+        exclude_folders = app.config.get("EXCLUDE_FOLDERS", DEFAULT_EXCLUDE_FOLDERS)
+
+        result_json = skylos.analyze(
+            path, conf=confidence, exclude_folders=exclude_folders
+        )
         result = json.loads(result_json)
 
         return jsonify(result)
@@ -536,8 +539,10 @@ def analyze_project():
         return jsonify({"error": str(e)}), 500
 
 
-def start_server():
-    """Start the web server"""
+def start_server(exclude_folders=None):
+    if exclude_folders is None:
+        exclude_folders = DEFAULT_EXCLUDE_FOLDERS
+    app.config["EXCLUDE_FOLDERS"] = exclude_folders
 
     def open_browser():
         webbrowser.open("http://localhost:5090")

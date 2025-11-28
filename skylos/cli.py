@@ -502,11 +502,11 @@ def render_results(console: Console, result, tree=False, root_path=None):
         _render_danger(result.get("danger", []) or [])
         _render_quality(result.get("quality", []) or [])
 
-def run_init():
 
+def run_init():
     console = Console()
     path = pathlib.Path("pyproject.toml")
-    
+
     template = """
 [tool.skylos]
 # Analysis Settings
@@ -527,27 +527,57 @@ strict = false
     if path.exists():
         content = path.read_text(encoding="utf-8")
         if "[tool.skylos]" in content:
-            console.print("[warn]pyproject.toml already contains [tool.skylos] configuration.[/warn]")
+            console.print(
+                "[warn]pyproject.toml already contains [tool.skylos] configuration.[/warn]"
+            )
             return
-        
-        console.print("[brand]Appending Skylos configuration to existing pyproject.toml...[/brand]")
+
+        console.print(
+            "[brand]Appending Skylos configuration to existing pyproject.toml...[/brand]"
+        )
         with open(path, "a", encoding="utf-8") as f:
             f.write("\n" + template)
     else:
         console.print("[brand]Creating new pyproject.toml...[/brand]")
         path.write_text(template.strip(), encoding="utf-8")
 
-    console.print("[good] ** Configuration initialized! You can now edit pyproject.toml[/good]")
+    console.print(
+        "[good] ** Configuration initialized! You can now edit pyproject.toml[/good]"
+    )
+
 
 def main():
-
     if len(sys.argv) > 1 and sys.argv[1] == "init":
         run_init()
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] == "run":
+        run_exclude_folders = []
+        run_include_folders = []
+        no_defaults = False
+
+        i = 2
+        while i < len(sys.argv):
+            if sys.argv[i] == "--exclude-folder" and i + 1 < len(sys.argv):
+                run_exclude_folders.append(sys.argv[i + 1])
+                i += 2
+            elif sys.argv[i] == "--include-folder" and i + 1 < len(sys.argv):
+                run_include_folders.append(sys.argv[i + 1])
+                i += 2
+            elif sys.argv[i] == "--no-default-excludes":
+                no_defaults = True
+                i += 1
+            else:
+                i += 1
+
+        exclude_folders = parse_exclude_folders(
+            user_exclude_folders=run_exclude_folders or None,
+            use_defaults=not no_defaults,
+            include_folders=run_include_folders or None,
+        )
+
         try:
-            start_server()
+            start_server(exclude_folders=list(exclude_folders))
             return
         except ImportError:
             print(f"{Colors.RED}Error: Flask is required {Colors.RESET}")
@@ -561,9 +591,9 @@ def main():
     )
     parser.add_argument("path", help="Path to the Python project")
     parser.add_argument(
-        "--gate", 
-        action="store_true", 
-        help="Run as a quality gate (block deployment on failure)"
+        "--gate",
+        action="store_true",
+        help="Run as a quality gate (block deployment on failure)",
     )
     parser.add_argument(
         "--table", action="store_true", help="(deprecated) Show findings in table"
@@ -641,11 +671,7 @@ def main():
         help="Run code quality checks. Off by default.",
     )
 
-    parser.add_argument(
-        "command", 
-        nargs="*",
-        help="Command to run if gate passes"
-    )
+    parser.add_argument("command", nargs="*", help="Command to run if gate passes")
 
     args = parser.parse_args()
     project_root = pathlib.Path(args.path).resolve()
@@ -807,11 +833,11 @@ def main():
 
     if args.gate:
         cfg = load_config(project_root)
-        
+
         cmd = args.command
         if cmd and cmd[0] == "--":
             cmd = cmd[1:]
- 
+
         exit_code = run_gate_interaction(result, cfg, cmd)
         sys.exit(exit_code)
 
