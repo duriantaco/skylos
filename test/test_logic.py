@@ -1,16 +1,22 @@
 import ast
-from skylos.rules.quality.logic import MutableDefaultRule, BareExceptRule, DangerousComparisonRule
+from skylos.rules.quality.logic import (
+    MutableDefaultRule,
+    BareExceptRule,
+    DangerousComparisonRule,
+)
+
 
 def check_code(rule, code, filename="test.py"):
     tree = ast.parse(code)
     findings = []
     context = {"filename": filename, "mod": "test_module"}
-    
+
     for node in ast.walk(tree):
         res = rule.visit_node(node, context)
         if res:
             findings.extend(res)
     return findings
+
 
 class TestMutableDefaultRule:
     def test_list_default(self):
@@ -69,6 +75,7 @@ async def bad(x=[]):
         findings = check_code(rule, code)
         assert len(findings) == 1
 
+
 class TestBareExceptRule:
     def test_bare_except(self):
         code = """
@@ -104,6 +111,7 @@ except (ValueError, TypeError):
         rule = BareExceptRule()
         findings = check_code(rule, code)
         assert len(findings) == 0
+
 
 class TestDangerousComparisonRule:
     def test_compare_true(self):

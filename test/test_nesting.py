@@ -1,19 +1,20 @@
 import ast
 from skylos.rules.quality.nesting import NestingRule
 
+
 def check_code(rule, code, filename="test.py"):
     tree = ast.parse(code)
     findings = []
     context = {"filename": filename, "mod": "test_module"}
-    
+
     for node in ast.walk(tree):
         res = rule.visit_node(node, context)
         if res:
             findings.extend(res)
     return findings
 
+
 class TestNestingRule:
-    
     def test_flat_function(self):
         code = """
 def flat():
@@ -26,7 +27,6 @@ def flat():
         assert len(findings) == 0
 
     def test_shallow_nesting(self):
-   
         code = """
 def shallow():
     if True:
@@ -49,7 +49,7 @@ def deep():
 """
         rule = NestingRule(threshold=3)
         findings = check_code(rule, code)
-        
+
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-Q302"
         assert findings[0]["value"] == 4
@@ -59,7 +59,6 @@ def deep():
     def test_severity_levels(self):
         rule = NestingRule(threshold=2)
 
-        
         code_high = """
 def high_nesting():
     if a:
@@ -75,7 +74,6 @@ def high_nesting():
         assert findings[0]["severity"] == "HIGH"
 
     def test_ignore_inner_function_def(self):
-
         code = """
 def outer():
     if True:
@@ -84,8 +82,8 @@ def outer():
                 pass
         x = 1
 """
-        rule = NestingRule(threshold=1) 
-        
+        rule = NestingRule(threshold=1)
+
         findings = check_code(rule, code)
         assert len(findings) == 0
 
@@ -104,6 +102,6 @@ def complex_try():
 """
         rule = NestingRule(threshold=1)
         findings = check_code(rule, code)
-        
+
         assert len(findings) == 1
         assert findings[0]["value"] == 2

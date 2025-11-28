@@ -23,7 +23,11 @@ from skylos.rules.quality.complexity import ComplexityRule
 from skylos.rules.quality.nesting import NestingRule
 from skylos.rules.danger.calls import DangerousCallsRule
 from skylos.rules.quality.structure import ArgCountRule, FunctionLengthRule
-from skylos.rules.quality.logic import MutableDefaultRule, BareExceptRule, DangerousComparisonRule
+from skylos.rules.quality.logic import (
+    MutableDefaultRule,
+    BareExceptRule,
+    DangerousComparisonRule,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -56,12 +60,23 @@ class Skylos:
             return False
 
         path_parts = rel_path.parts
+        rel_path_str = str(rel_path).replace("\\", "/")
 
         for exclude_folder in exclude_folders:
+            exclude_normalized = exclude_folder.replace("\\", "/")
+
             if "*" in exclude_folder:
                 for part in path_parts:
                     if part.endswith(exclude_folder.replace("*", "")):
                         return True
+            elif "/" in exclude_normalized:
+                if rel_path_str == exclude_normalized:
+                    return True
+                if rel_path_str.startswith(exclude_normalized + "/"):
+                    return True
+                check = "/" + rel_path_str + "/"
+                if "/" + exclude_normalized + "/" in check:
+                    return True
             else:
                 if exclude_folder in path_parts:
                     return True
