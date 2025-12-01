@@ -1,9 +1,11 @@
 import argparse
 import json
 import sys
+import os
 import logging
 from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
 from skylos.server import start_server
+from skylos.fixer import Fixer
 from skylos.analyzer import analyze as run_analyze
 from skylos.codemods import (
     remove_unused_import_cst,
@@ -13,9 +15,12 @@ from skylos.codemods import (
 )
 from skylos.config import load_config
 from skylos.gatekeeper import run_gate_interaction
+from skylos.credentials import get_key, save_key
+
 import pathlib
 import skylos
 from collections import defaultdict
+import subprocess
 
 from rich.console import Console
 from rich.table import Table
@@ -515,6 +520,7 @@ nesting = 3
 max_args = 5
 max_lines = 50
 ignore = []  # e.g. ["SKY-L002", "SKY-C304"]
+model = "gpt-4.1"
 
 [tool.skylos.gate]
 # Gatekeeper Settings (skylos --gate)
@@ -545,6 +551,32 @@ strict = false
         "[good] ** Configuration initialized! You can now edit pyproject.toml[/good]"
     )
 
+def get_git_changed_files(root_path):
+    try:
+        subprocess.check_output(["git", "rev-parse", "--is-inside-work-tree"], cwd=root_path, stderr=subprocess.DEVNULL)
+        cmd = ["git", "diff", "--name-only", "HEAD"]
+        output = subprocess.check_output(cmd, cwd=root_path).decode("utf-8")
+        files = []
+        for line in output.splitlines():
+            if line.endswith(".py"):
+                full_path = pathlib.Path(root_path) / line
+                if full_path.exists():
+                    files.append(full_path)
+        return files
+    except Exception:
+        return []
+
+def estimate_cost(files):
+    total_chars = 0
+    for f in files:
+        try:
+            content = f.read_text(encoding="utf-8", errors="ignore")
+            total_chars += len(content)
+        except Exception:
+            pass 
+    est_tokens = total_chars / 4
+    est_cost_usd = (est_tokens / 1_000_000) * 2.50
+    return est_tokens, est_cost_usd
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "init":
@@ -595,12 +627,14 @@ def main():
         action="store_true",
         help="Run as a quality gate (block deployment on failure)",
     )
+    parser.add_argument("--fix", action="store_true", help="Attempt to auto-fix issues using AI")
     parser.add_argument(
         "--table", action="store_true", help="(deprecated) Show findings in table"
     )
     parser.add_argument(
         "--tree", action="store_true", help="Show findings in tree format"
     )
+    parser.add_argument("--model", default="gpt-4.1", help="OpenAI Model to use (default: gpt-4.1)")
     parser.add_argument(
         "--version",
         action="version",
@@ -628,6 +662,8 @@ def main():
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be removed"
     )
+
+    parser.add_argument("--audit", action="store_true", help="Deep scan logic using AI (Interactive)")
 
     parser.add_argument(
         "--exclude-folder",
@@ -737,6 +773,191 @@ def main():
     except Exception as e:
         logger.error(f"Error during analysis: {e}")
         sys.exit(1)
+
+    if args.fix:
+        console.print("[brand]Auto-Fix Mode Enabled (GPT-5)[/brand]")
+        
+        if "claude" in args.model.lower():
+            provider = "anthropic"
+            key_name = "ANTHROPIC_API_KEY"
+        else:
+            provider = "openai"
+            key_name = "OPENAI_API_KEY"
+
+        api_key = get_key(provider)
+
+        if not api_key:
+            console.print(f"[warn]No {key_name} found in environment or keychain.[/warn]")
+            try:
+                api_key = console.input(f"[bold yellow]Please paste your {provider.title()} API Key:[/bold yellow] ", password=True)
+                if not api_key:
+                    console.print("[bad]No key provided. Exiting.[/bad]")
+                    sys.exit(1)
+                
+                save_key(provider, api_key)
+                console.print(f"[good]Key saved[/good]")
+                
+            except KeyboardInterrupt:
+                sys.exit(0)
+        
+        fixer = Fixer(api_key=api_key, model=args.model)
+        
+        defs_map = result.get("definitions", {}) 
+        
+        all_findings = []
+        if result.get("danger"): 
+            all_findings.extend(result["danger"])
+        
+        if result.get("quality"):
+            all_findings.extend(result["quality"])
+        
+        for k in ["unused_functions", "unused_imports", "unused_classes", "unused_variables"]:
+            for item in result.get(k, []):
+                name = item.get("name") or item.get("simple_name")
+                item_type = item.get("type", "item")
+                all_findings.append({
+                    "file": item["file"],
+                    "line": item["line"],
+                    "message": f"Unused {item_type} '{name}' detected. Remove it safely.",
+                    "severity": "MEDIUM"
+                })
+        
+        if not all_findings:
+            console.print("[good]No security issues found to fix.[/good]")
+        else:
+            for finding in all_findings:
+                f_path = finding['file']
+                f_line = finding['line']
+                f_msg = finding['message']
+                
+                console.print(f"\n[warn]Attempting to fix:[/warn] {f_msg} in {f_path}:{f_line}")
+                
+                try:
+                    p = pathlib.Path(f_path)
+                    src = p.read_text(encoding="utf-8")
+
+                    with console.status(f"[bold cyan]Fixing script {f_path} now...[/bold cyan]", spinner="dots"):
+                        fixed_code = fixer.fix_bug(src, f_line, f_msg, defs_map)
+                                        
+                    if "Error" in fixed_code:
+                        console.print(f"[bad]{fixed_code}[/bad]")
+                    else:
+                        problem = fixed_code.get('problem', 'Issue detected')
+                        change = fixed_code.get('change', 'Applied fix')
+                        fixed_code = fixed_code.get('code', '')
+
+                        console.print(f"\n[bold]File:[/bold] {f_path}:{f_line}")
+                        console.print(f"[bold red]Problem:[/bold red] {problem}")
+                        console.print(f"[bold green]Change:[/bold green]  {change}")
+                        console.print(Panel(fixed_code, title="[brand]Proposed Code[/brand]", border_style="cyan"))
+
+                except Exception as e:
+                    console.print(f"[bad]Failed to fix: {e}[/bad]")
+
+    if args.audit:
+        console.print("[brand]Audit Mode Enabled[/brand]")
+        
+        if "claude" in args.model.lower():
+            provider = "anthropic"
+            key_name = "ANTHROPIC_API_KEY"
+        else:
+            provider = "openai"
+            key_name = "OPENAI_API_KEY"
+
+        api_key = get_key(provider)
+
+        if not api_key:
+            console.print(f"[warn]No {key_name} found in environment or keychain.[/warn]")
+            try:
+                api_key = console.input(f"[bold yellow]Please paste your {provider.title()} API Key:[/bold yellow] ", password=True)
+                if not api_key:
+                    console.print("[bad]No key provided. Exiting.[/bad]")
+                    sys.exit(1)
+                
+                save_key(provider, api_key)
+                console.print(f"[good]Key saved[/good]")
+                
+            except KeyboardInterrupt:
+                sys.exit(0)
+        
+        fixer = Fixer(api_key=api_key, model=args.model)
+        defs_map = result.get("definitions", {}) 
+        
+        p_arg = pathlib.Path(args.path)
+        candidates = []
+        
+        if p_arg.is_file():
+            candidates.append(p_arg)
+        else:
+            git_files = get_git_changed_files(p_arg)
+            all_files = list(p_arg.glob("**/*.py"))
+            
+            valid_files = []
+            for f in all_files:
+                is_excluded = False
+                for ex in final_exclude_folders:
+                    if ex in f.parts:
+                        is_excluded = True
+                        break
+                if not is_excluded:
+                    valid_files.append(f)
+
+            candidates = git_files + [f for f in valid_files if f not in git_files]
+
+        if not candidates:
+            console.print("[bad]No valid Python files found to audit.[/bad]")
+            sys.exit(0)
+
+        selected_files = []
+        if INTERACTIVE_AVAILABLE and len(candidates) > 1:
+            choices = []
+            for f in candidates:
+                try:
+                    size_kb = f.stat().st_size / 1024
+                    label = f"{f.name} ({size_kb:.1f} KB)"
+                    if f in git_files: label = f"[CHANGED] {label}"
+                    choices.append((label, f))
+                except: pass
+
+            defaults = [f for f in git_files] 
+
+            questions = [inquirer.Checkbox("files", message="Select files to audit (Space to select)", choices=choices, default=defaults)]
+            answers = inquirer.prompt(questions)
+            if not answers: sys.exit(0)
+            selected_files = answers['files']
+        else:
+            selected_files = candidates
+
+        if not selected_files:
+            console.print("[muted]No files selected.[/muted]")
+            sys.exit(0)
+
+        tokens, cost = estimate_cost(selected_files)
+        console.print(Rule(style="muted"))
+        console.print(f"Files:   [bold]{len(selected_files)}[/bold]")
+        console.print(f"Cost:    [bold green]~${cost:.4f}[/bold green]")
+        
+        if len(selected_files) > 10:
+            console.print("[bold red]WARNING: You are auditing >10 files. This will be slow and costly.[/bold red]")
+
+        if not inquirer.confirm("Proceed?", default=True):
+            sys.exit(0)
+
+        for target_file in selected_files:
+            try:
+
+                if target_file.stat().st_size > 100 * 1024:
+                    console.print(f"[warn]Skipping {target_file.name} (Too large: >100KB). AI works best on smaller modules.[/warn]")
+                    continue
+
+                src = target_file.read_text(encoding="utf-8")
+
+                with console.status(f"[cyan]Auditing {target_file.name}...[/cyan]", spinner="dots"):
+                    audit_report = fixer.audit_file(src, defs_map)
+                
+                console.print(Panel(audit_report, title=f"Audit: {target_file.name}", border_style="magenta"))
+            except Exception as e:
+                console.print(f"[bad]Error: {e}[/bad]")
 
     if args.interactive:
         unused_functions = result.get("unused_functions", [])
