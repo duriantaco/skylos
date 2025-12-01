@@ -28,6 +28,7 @@ from skylos.rules.quality.logic import (
     BareExceptRule,
     DangerousComparisonRule,
 )
+from skylos.rules.quality.performance import PerformanceRule
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -501,7 +502,29 @@ class Skylos:
             ):
                 unused.append(definition.to_dict())
 
+        # result = {
+        #     "unused_functions": [],
+        #     "unused_imports": [],
+        #     "unused_classes": [],
+        #     "unused_variables": [],
+        #     "unused_parameters": [],
+        #     "analysis_summary": {
+        #         "total_files": len(files),
+        #         "excluded_folders": exclude_folders or [],
+        #     },
+
+        context_map = {}
+        for name, d in self.defs.items():
+            # Only export relevant types (classes, functions) to save tokens
+            if d.type in ("class", "function", "method") and not name.startswith("_"):
+                context_map[name] = {
+                    "name": d.name,
+                    "file": str(d.filename),
+                    "line": d.line,
+                    "type": d.type
+                }
         result = {
+            "definitions": context_map,
             "unused_functions": [],
             "unused_imports": [],
             "unused_classes": [],
@@ -566,12 +589,15 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             q_rules.append(ArgCountRule(max_args=cfg["max_args"]))
         if "SKY-C304" not in cfg["ignore"]:
             q_rules.append(FunctionLengthRule(max_lines=cfg["max_lines"]))
-        if "SKY-Q305" not in cfg["ignore"]:
+
+        if "SKY-L001" not in cfg["ignore"]:
             q_rules.append(MutableDefaultRule())
-        if "SKY-Q306" not in cfg["ignore"]:
+        if "SKY-L002" not in cfg["ignore"]:
             q_rules.append(BareExceptRule())
-        if "SKY-Q307" not in cfg["ignore"]:
+        if "SKY-L003" not in cfg["ignore"]:
             q_rules.append(DangerousComparisonRule())
+
+        q_rules.append(PerformanceRule(ignore_list=cfg["ignore"]))
 
         linter_q = LinterVisitor(q_rules, str(file))
         linter_q.visit(tree)
