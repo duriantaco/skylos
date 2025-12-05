@@ -17,6 +17,8 @@ from skylos.visitors.framework_aware import (
     detect_framework_usage,
 )
 
+from skylos.visitors.languages.typescript import scan_typescript_file
+
 from skylos.config import load_config
 from skylos.linter import LinterVisitor
 from skylos.rules.quality.complexity import ComplexityRule
@@ -521,7 +523,7 @@ class Skylos:
                     "name": d.name,
                     "file": str(d.filename),
                     "line": d.line,
-                    "type": d.type
+                    "type": d.type,
                 }
         result = {
             "definitions": context_map,
@@ -569,6 +571,11 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
     else:
         file = file_or_args
 
+    cfg = load_config(file)
+
+    if str(file).endswith((".ts", ".tsx")):
+        return scan_typescript_file(file)
+
     try:
         source = Path(file).read_text(encoding="utf-8")
         ignore_lines = {
@@ -577,8 +584,6 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             if "pragma: no skylos" in line
         }
         tree = ast.parse(source)
-
-        cfg = load_config(file)
 
         q_rules = []
         if "SKY-Q301" not in cfg["ignore"]:
