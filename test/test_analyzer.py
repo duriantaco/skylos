@@ -4,8 +4,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 from collections import defaultdict
-from skylos.test_aware import TestAwareVisitor
-from skylos.framework_aware import FrameworkAwareVisitor
+from skylos.visitors.test_aware import TestAwareVisitor
+from skylos.visitors.framework_aware import FrameworkAwareVisitor
 
 from skylos.analyzer import Skylos, proc_file, analyze
 
