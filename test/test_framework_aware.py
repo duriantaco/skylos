@@ -3,7 +3,7 @@ import pytest
 import ast
 from unittest.mock import Mock, patch
 
-from skylos.framework_aware import (
+from skylos.visitors.framework_aware import (
     FrameworkAwareVisitor,
     detect_framework_usage,
     FRAMEWORK_DECORATORS,
