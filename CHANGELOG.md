@@ -1,5 +1,24 @@
 ## Changelog
 
+## [2.6.0] - 2025-12-05
+
+### Added
+
+- Added TypeScript support (dead code, security, and quality checks) using tree-sitter
+- Modular structure for languages for better separation of concerns
+- Added support for language-specific config overrides in `pyproject.toml` (e.g., [tool.skylos.languages.typescript])
+- Added `DummyVisitor` adapter to prevent the analyzer from crashing when it expects Python-specific attributes on non-Python files
+- Added `OpenAIAdapter` and `AnthropicAdapter` to support multi-provider AI fixes and auditing (you can call it using `skylos . --quality --danger --audit --model claude-haiku-4-5-20251001`)
+- Added secure credential storage using keyring to persist API keys locally
+- Added "Vibe Coding" detection in audit mode to identify hallucinated function calls not present in the repo context
+- Added `Fixer` engine for AI-powered code repair (you can call it using `skylos . --quality --danger --audit --fix --model claude-haiku-4-5-20251001`)
+
+### Changed
+
+- Refactored `analyzer.py` to route files based on extension (`.py` vs `.ts`/`.tsx`) instead of assuming everything is Python
+- Moved load_config to the start of `proc_file` so all languages can access the configuration
+- Updated `skylos init` template to include language-specific examples
+
 ## [2.5.3] - 2025-11-28
 
 ### Fixed

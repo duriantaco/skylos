@@ -30,8 +30,10 @@
 - [VS-Code extension](#vs-code-extension)
 - [Web Interface](#web-interface)
 - [Design](#design)
+- [Multi-Language Support](#multilanguagesupport)
 - [Test File Detection](#test-file-detection)
 - [Vibe Coding](#vibe-coding)
+- [AI Audit](#ai-audit)
 - [Quality](#quality)
 - [Ignoring Pragmas](#ignoring-pragmas)
 - [Including & Excluding Files](#including--excluding-files)
@@ -109,6 +111,8 @@ skylos /path/to/your/project --danger   ## include safety scan for dangerous cod
 skylos /path/to/your/project --quality ## include quality scan for complex code
 
 skylos /path/to/your/project --secrets --danger --quality  ## you can string all the flags together
+skylos /path/to/your/project --danger --quality --audit --model claude-haiku-4-5-20251001  ## if u want to add a LLM for auditing 
+skylos /path/to/your/project --danger --quality --audit --fix --model claude-haiku-4-5-20251001 ## for automated fixing 
 
 # To launch the front end
 skylos run
@@ -154,19 +158,25 @@ This creates a [tool.skylos] section in your pyproject.toml in which you can adj
 
 ```
 [tool.skylos]
-# Architectural Rules
+# 1. Global Defaults (Applies to all languages)
 complexity = 10
 nesting = 3
 max_args = 5
 max_lines = 50
-ignore = ["SKY-L002"]
+ignore = [] 
+model = "gpt-4.1"
+
+# 2. Language Overrides (Optional)
+[tool.skylos.languages.typescript]
+complexity = 15
+nesting = 4
 
 [tool.skylos.gate]
 # Gatekeeper Policy
-fail_on_critical = true  # Block on critical security issues
-max_security = 0 # Block if ANY security issue is found
-max_quality = 10 # Allow up to 10 quality issues before blocking
-strict = false # If true, disables the "Bypass" prompt
+fail_on_critical = true
+max_security = 0
+max_quality = 10
+strict = false
 ```
 
 ### 2. Run the Gate
@@ -250,6 +260,19 @@ skylos app.py --confidence 20
 skylos app.py --confidence 0
 ```
 
+## Multi-Language Support
+
+Skylos uses a Router Architecture to support multiple languages. It automatically detects file extensions and routes them to the correct analyzer.
+
+### TypeScript (.ts, .tsx)
+Skylos uses tree-sitter for robust TypeScript parsing.
+
+- Dead Code: Finds unused functions, classes, interfaces, and methods.
+- Security (--danger): Detects eval(), innerHTML XSS, and React `dangerouslySetInnerHTML`.
+- Quality (--quality): Calculates Cyclomatic Complexity for TS functions.
+
+**Note**: You do not need to install Node.js. The parser is built into Skylos.
+
 ## Test File Detection
 
 Skylos automatically excludes test files from analysis because test code patterns often appear as "dead code" but are actually called by test frameworks. Should you need to include them in your test, just refer to the [Folder Management](#folder-management)  
@@ -324,6 +347,40 @@ with open(request.args.get("p"), "r") as f: ...
 ```
 
 This list will be expanded in the near future. For more information, refer to `DANGEROUS_CODE.md` 
+
+## AI Audit
+
+### Audit
+
+Skylos now integrates with LLMs to fix bugs and audit code logic. We only support **OpenAI** and **Anthropic** models for now. We will integrate more models and providers in the upcoming months
+
+```bash
+skylos . --audit 
+```
+**Note**: If you leave this empty, the default is gpt-4.1
+
+If you want to select your own model
+
+```bash
+skylos . --audit --quality --model claude-haiku-4-5-20251001
+```
+
+By default, Skylos will run a few checks namely: 
+
+- Vibe Coding Detection: Checks if code calls functions that do not actually exist in the repo.
+- Secret Leaks: Scans comments and variable assignments for hardcoded secrets.
+- Logic Flaws: Detects confusing logic or bare exceptions.
+- Dangerous Codes
+
+### Fix
+
+```bash
+skylos . --fix
+```
+
+Supports OpenAI and Anthropic.
+
+Secure: API keys are asked for once and stored in your OS Keychain (Windows Credential Locker, macOS Keychain, etc.).
 
 ## Quality
 
@@ -539,7 +596,7 @@ jobs:
 ## .pre-commit-config.yaml
 repos:
   - repo: https://github.com/duriantaco/skylos
-    rev: v2.5.3
+    rev: v2.6.0
     hooks:
       - id: skylos-scan
         name: skylos report
@@ -589,7 +646,7 @@ repos:
         entry: python -m skylos.cli
         pass_filenames: false
         require_serial: true
-        additional_dependencies: [skylos==2.5.3]
+        additional_dependencies: [skylos==2.6.0]
         args: [".", "--output", "report.json", "--confidence", "70"]
 
       - id: skylos-fail-on-findings
@@ -741,6 +798,9 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 - [ ] Add new rules
 - [ ] Expanding on the `dangerous.py` list
 - [x] Porting to uv
+- [x] Small integration with typescript
+- [ ] Expand and improve on capabilities of Skylos in various other languages
+- [ ] Expand the providers for LLMs
 
 ## License
 

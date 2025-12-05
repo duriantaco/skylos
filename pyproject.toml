@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "2.5.3"
+version = "2.6.0"
 requires-python = ">=3.9"
 description = "An analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
@@ -28,7 +28,9 @@ dependencies = [
     "rich>=14.0.0",
     "openai",
     "anthropic",
-    "keyring>=25.7.0"
+    "keyring>=25.7.0",
+    "tree-sitter>=0.25.2",
+    "tree-sitter-typescript>=0.23.2"
 ]
 
 [project.scripts]
@@ -41,10 +43,10 @@ namespaces = false
 
 [tool.skylos]
 # Analysis Settings
-complexity = 10
-nesting = 3
+complexity = 15
+nesting = 5
 max_args = 5
-max_lines = 50
+max_lines = 100
 ignore = []  # e.g. ["SKY-L002", "SKY-C304"]
 
 [tool.skylos.gate]
