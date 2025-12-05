@@ -3,5 +3,5 @@ class BaseAdapter:
         self.model = model
         self.api_key = api_key
 
-    def complete(self, system_prompt, user_prompt):
+    def complete(self, _, user_prompt):
         raise NotImplementedError("Subclasses must implement this method")
