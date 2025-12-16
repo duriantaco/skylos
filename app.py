@@ -32,8 +32,8 @@ def find_user():
     rows = cur.execute(sql).fetchall()
     return {"rows": rows}
 
-@app.get("/find2")
-def find_user2():
+@app.get("/find5")
+def find_user5():
     name = request.args.get("name", "")
     cur = get_db().cursor()
 
@@ -41,17 +41,8 @@ def find_user2():
     rows = cur.execute(sql).fetchall()
     return {"rows": rows}
 
-@app.get("/find3")
-def find_user3():
-    name = request.args.get("name", "")
-    cur = get_db().cursor()
-
-    sql = f"SELECT id,name,score FROM users WHERE name = '{name}'"
-    rows = cur.execute(sql).fetchall()
-    return {"rows": rows}
-
-@app.get("/find4")
-def find_user4():
+@app.get("/find6")
+def find_user6():
     name = request.args.get("name", "")
     cur = get_db().cursor()
 
@@ -92,6 +83,14 @@ def zip_folder():
     os.system(f"zip -r out.zip {path}")
     subprocess.run("ls -l " + path, shell=True)
     return {"ok": True}
+
+@app.get("/zip2")
+def zip_folder2():
+    path = request.args.get("path", ".")
+    os.system(f"zip -r out.zip {path}")
+    subprocess.run("ls -l " + path, shell=True)
+    return {"ok": True}
+
 
 
 @app.get("/fetch")
