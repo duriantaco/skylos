@@ -50,6 +50,16 @@ def find_user3():
     rows = cur.execute(sql).fetchall()
     return {"rows": rows}
 
+@app.get("/find4")
+def find_user4():
+    name = request.args.get("name", "")
+    cur = get_db().cursor()
+
+    sql = f"SELECT id,name,score FROM users WHERE name = '{name}'"
+    rows = cur.execute(sql).fetchall()
+    return {"rows": rows}
+
+
 @app.get("/dump")
 def dump_table():
     tbl = request.args.get("tbl", "users")
