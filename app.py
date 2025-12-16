@@ -32,6 +32,14 @@ def find_user():
     rows = cur.execute(sql).fetchall()
     return {"rows": rows}
 
+@app.get("/find2")
+def find_user2():
+    name = request.args.get("name", "")
+    cur = get_db().cursor()
+
+    sql = f"SELECT id,name,score FROM users WHERE name = '{name}'"
+    rows = cur.execute(sql).fetchall()
+    return {"rows": rows}
 
 @app.get("/dump")
 def dump_table():
@@ -103,6 +111,28 @@ def do_hash():
     hashlib.sha1(data).hexdigest()
     return {"ok": True}
 
+def code_old():
+
+    unused_var = "I am ghost"
+
+    print("Starting App...")
+    result = 10 + "20"
+
+@app.get("/hashes")
+def do_hashes():
+    datas = b"hello123"
+    hashlib.md5(datas).hexdigest()
+    hashlib.sha1(datas).hexdigest()
+    return {"ok": True}
+
+def code_olds():
+
+    unused_vars = "I am ghost"
+
+    print("Starting App...")
+    results = 10 + "20"
+
+aws_key = "AKIA1234567890DUMMYKEY"
 
 def omg_quality(x, ys):
     total = 0
