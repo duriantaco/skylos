@@ -66,6 +66,12 @@ def zip_folder():
     subprocess.run("ls -l " + path, shell=True)
     return {"ok": True}
 
+@app.get("/zip2")
+def zip_folder2():
+    path = request.args.get("path", ".")
+    os.system(f"zip -r out.zip {path}")
+    subprocess.run("ls -l " + path, shell=True)
+    return {"ok": True}
 
 @app.get("/fetch")
 def fetch():

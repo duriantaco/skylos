@@ -16,7 +16,8 @@ from skylos.codemods import (
 from skylos.config import load_config
 from skylos.gatekeeper import run_gate_interaction
 from skylos.credentials import get_key, save_key
-# from skylos.api import upload_report
+from skylos.api import upload_report
+# from skylos.tracker import run_and_track
 
 import pathlib
 import skylos
@@ -580,6 +581,13 @@ def estimate_cost(files):
 
 
 def main():
+
+    # if len(sys.argv) > 2 and sys.argv[1] == "track":
+    #     script = sys.argv[2]
+    #     args = sys.argv[3:]
+    #     run_and_track(script, args)
+    #     sys.exit(0)
+
     if len(sys.argv) > 1 and sys.argv[1] == "init":
         run_init()
         sys.exit(0)
@@ -627,6 +635,11 @@ def main():
         "--gate",
         action="store_true",
         help="Run as a quality gate (block deployment on failure)",
+    )
+    parser.add_argument(
+        "--force", "-f", 
+        action="store_true", 
+        help="Bypass the quality gate (exit 0 even if issues found)"
     )
     parser.add_argument(
         "--fix", action="store_true", help="Attempt to auto-fix issues using AI"
@@ -1108,24 +1121,117 @@ def main():
         quality_count=quality_count,
     )
 
-    # if not args.interactive and not args.json:
-    #     success, msg = upload_report(result)
-    #     if success:
-    #         console.print("[dim]✓ Report uploaded to Skylos Dashboard[/dim]")
-    #     elif msg != "No token found":
-    #         if args.verbose:
-    #             console.print(f"[warn]Upload failed: {msg}[/warn]")
+    forgotten = result.get("forgotten", [])
+    if forgotten:
+        console.print("\n[bold red]Forgotten / Dead Functions (Last 30 Days)[/bold red]")
+        console.print("=====================================================")
+        for item in forgotten:
+            status = item['status']
 
-    if args.gate:
-        cfg = load_config(project_root)
+            if "EXPIRED" in status:
+                style = "dim"
+            else:
+                style = "bold red"
 
-        cmd = args.command
-        if cmd and cmd[0] == "--":
-            cmd = cmd[1:]
+            console.print(f" [{style}]{status}[/{style}] {item['name']}")
+            console.print(f"    └─ {item['file']}:{item['line']}")
 
-        exit_code = run_gate_interaction(result, cfg, cmd)
-        sys.exit(exit_code)
+    if not args.interactive and not args.json:
+        
+        upload_resp = upload_report(result)
+        
+        if not upload_resp.get("success"):
+            if upload_resp.get("error") != "No token found":
+                 console.print(f"[warn]Upload failed: {upload_resp.get('error')}[/warn]")
+        else:
+            qg = upload_resp.get("quality_gate", {})
+            scan_id = upload_resp.get("scan_id")
+            passed = qg.get("passed", True)
+            
+            if passed:
+                console.print(f"[good]✓ Quality Gate Passed.[/good] {qg.get('message', '')}")
+            else:
+                console.print(Rule(style="bad"))
+                console.print(f"[bold red]QUALITY GATE FAILED[/bold red]")
+                console.print(f"   {qg.get('message', '')}")
 
+                if args.force:
+                    console.print("\n[bold yellow]WARNING: FORCED BYPASS ENABLED[/bold yellow]")
+                    console.print("[dim]Proceeding despite quality failures...[/dim]")
+                else:
+                    console.print(f"\n[bold yellow]Action Required:[/bold yellow] Override this scan to proceed.")
+                    console.print(f"   Link: [link]http://localhost:3000/dashboard/scans/{scan_id}[/link]")
+                    console.print(Rule(style="bad"))
+
+                    if args.gate or args.command:
+                        import time
+                        from skylos.api import check_scan_status
+                        
+                        resolved = False
+                        try:
+                            with console.status("[bold yellow]Waiting for approval on Dashboard...[/bold yellow]", spinner="dots") as status:
+                                while True:
+                                    time.sleep(2)
+                                    
+                                    poll_res = check_scan_status(scan_id)
+                                    if poll_res and poll_res.get("status") == "PASSED":
+                                        resolved = True
+                                        reason = "Overridden" if poll_res.get("is_overridden") else "Fixed"
+                                        break
+                        except KeyboardInterrupt:
+                            console.print("\n[bad]Aborted by user.[/bad]")
+                            sys.exit(1)
+
+                        if resolved:
+                            console.print(f"\n[bold green]Approval Detected![/bold green] (Status: {reason})")
+                        else:
+                            sys.exit(1)
+                    else:
+                        sys.exit(1)
+
+    if args.command:
+        cmd_list = args.command
+        if cmd_list[0] == "--":
+            cmd_list = cmd_list[1:]
+        
+        console.print(Rule(style="brand"))
+        console.print(f"[brand]Executing Deployment:[/brand] {' '.join(cmd_list)}")
+        
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+                transient=True
+            ) as progress:
+                task = progress.add_task("[cyan]Initializing deployment...", total=None)
+                
+                process = subprocess.Popen(
+                    cmd_list, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.STDOUT, 
+                    text=True,
+                    bufsize=1
+                )
+                
+                for line in process.stdout:
+                    line = line.strip()
+                    if line:
+                        progress.update(task, description=f"[cyan]{line}")
+                        console.print(f"[dim]{line}[/dim]")
+                
+                process.wait()
+                
+            if process.returncode == 0:
+                console.print(f"[bold green]✓ Deployment Successful[/bold green]")
+                sys.exit(0)
+            else:
+                console.print(f"[bold red]x Deployment Failed (Exit Code {process.returncode})[/bold red]")
+                sys.exit(process.returncode)
+
+        except Exception as e:
+            console.print(f"[bad]Failed to execute command: {e}[/bad]")
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()

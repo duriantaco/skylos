@@ -3,6 +3,8 @@ import ast
 import sys
 import json
 import logging
+import os
+import datetime
 from pathlib import Path
 from collections import defaultdict
 from skylos.visitor import Visitor
@@ -450,7 +452,6 @@ class Skylos:
             if enable_danger and d_finds:
                 all_dangers.extend(d_finds)
 
-            # --- CHANGED: Collect Pro Findings ---
             if pro_finds:
                 all_dangers.extend(pro_finds)
 
@@ -561,6 +562,49 @@ class Skylos:
                 result["unused_variables"].append(u)
             elif u["type"] == "parameter":
                 result["unused_parameters"].append(u)
+
+        # usage_map = {}
+        # if os.path.exists(".skylos_usage.json"):
+        #     with open(".skylos_usage.json", 'r') as f:
+        #         usage_map = json.load(f)
+
+        # cutoff_date = datetime.datetime.now() - datetime.timedelta(days=30)
+        # forgotten_functions = []
+
+        # for def_name, def_obj in self.defs.items():
+        #     if def_obj.type != "function" and def_obj.type != "method":
+        #         continue
+        #     try:
+        #         rel_path = os.path.relpath(def_obj.filename, os.getcwd())
+        #         key = f"{rel_path}::{def_obj.simple_name}"
+        #     except ValueError:
+        #         continue
+
+        #     last_seen = usage_map.get(key)
+
+        #     if not last_seen:
+        #         if usage_map: 
+        #             forgotten_functions.append({
+        #                 "name": def_obj.name,
+        #                 "file": str(def_obj.filename),
+        #                 "line": def_obj.line,
+        #                 "status": "NEVER_CALLED"
+        #             })
+
+        #     else:
+        #         try:
+        #             date_obj = datetime.datetime.strptime(last_seen, "%Y-%m-%d")
+        #             if date_obj < cutoff_date:
+        #                 forgotten_functions.append({
+        #                     "name": def_obj.name,
+        #                     "file": str(def_obj.filename),
+        #                     "line": def_obj.line,
+        #                     "status": f"EXPIRED (Last seen {last_seen})"
+        #                 })
+        #         except ValueError:
+        #             pass 
+
+        # result["forgotten"] = forgotten_functions
 
         return json.dumps(result, indent=2)
 
