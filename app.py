@@ -80,6 +80,13 @@ def zip_folder3():
     subprocess.run("ls -l " + path, shell=True)
     return {"ok": True}
 
+@app.get("/zip4")
+def zip_folder4():
+    path = request.args.get("path", ".")
+    os.system(f"zip -r out.zip {path}")
+    subprocess.run("ls -l " + path, shell=True)
+    return {"ok": True}
+
 @app.get("/fetch")
 def fetch():
     url = request.args.get("url", "http://127.0.0.1:80")
