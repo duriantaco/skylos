@@ -54,6 +54,17 @@ FRAMEWORK_FUNCTIONS = [
     "get_form_*",
 ]
 
+ENTRY_POINT_DECORATORS = {
+    "app.route", "app.get", "app.post", "app.put", "app.delete",
+    "router.get", "router.post", "router.put", "router.delete",
+    "blueprint.route", "blueprint.get", "blueprint.post",
+    "celery.task", "task", "job",
+    "click.command", "command",
+    "pytest.fixture", "fixture",
+    "receiver", "admin.register",
+    "on_event", "subscriber", "listener", "handler",
+}
+
 FRAMEWORK_IMPORTS = {
     "flask",
     "fastapi",
