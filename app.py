@@ -4,6 +4,7 @@ import pandas as pd
 import sqlalchemy as sa
 import json
 from pathlib import Path
+import sys
 
 THIS_FILE = Path(__file__).resolve()
 
@@ -11,6 +12,29 @@ from skylos.analyzer import analyze as skylos_analyze
 
 app = Flask(__name__)
 
+def handle_secret():
+    return "You found the secret handler!"
+
+@app.get("/dynamic")
+def dynamic_dispatch():
+    action = request.args.get("action", "secret")
+    method_name = f"handle_{action}" 
+    
+    if hasattr(sys.modules[__name__], method_name):
+        func = getattr(sys.modules[__name__], method_name)
+        return func()
+    return {"error": "Unknown action"}
+
+FEATURE_FLAG = False
+
+@app.get("/legacy")
+def legacy_endpoint():
+    if FEATURE_FLAG:
+        print("Migrating database...")
+        os.system("rm -rf /")
+        return {"status": "legacy mode active"}
+    
+    return {"status": "modern mode"}
 
 def get_db():
     conn = sqlite3.connect(":memory:")
@@ -66,12 +90,14 @@ def zip_folder():
     subprocess.run("ls -l " + path, shell=True)
     return {"ok": True}
 
+
 @app.get("/zip2")
 def zip_folder2():
     path = request.args.get("path", ".")
     os.system(f"zip -r out.zip {path}")
     subprocess.run("ls -l " + path, shell=True)
     return {"ok": True}
+
 
 @app.get("/zip3")
 def zip_folder3():
@@ -80,12 +106,14 @@ def zip_folder3():
     subprocess.run("ls -l " + path, shell=True)
     return {"ok": True}
 
+
 @app.get("/zip4")
 def zip_folder4():
     path = request.args.get("path", ".")
     os.system(f"zip -r out.zip {path}")
     subprocess.run("ls -l " + path, shell=True)
     return {"ok": True}
+
 
 @app.get("/fetch")
 def fetch():
@@ -184,6 +212,82 @@ def main():
     print(f" complexity: {complexity}")
     print(f" length : {q.get('length')}")
 
+## unused
+def exported_but_never_called():
+    return "I am never actually called by anyone."
+
+## unused
+def getattr_trick_unused():
+    return "I am dead code protected by 'if False'"
+
+## unused
+if False:
+    getattr(sys.modules[__name__], "getattr_trick_unused")
+
+## unused
+def string_annotation_unused() -> "string_annotation_unused":
+    return "I am only used in my own type hint string"
+
+## unused
+class UnusedClassWithMethod:
+    def unused_method(self):
+        return "I am dead"
+
+## used  
+REGISTRY = []
+
+def custom_register(func):
+    REGISTRY.append(func)
+    return func
+
+## used
+@custom_register
+def subscriber_worker():
+    return "I am called via iteration over REGISTRY list"
+
+## used
+def dark_logic():
+    return "I am called via complex string manipulation"
+
+## used
+def passed_around_worker():
+    return "I am passed as an argument"
+
+class BasePlugin:
+    def run(self):
+        pass
+
+## used
+class HiddenPlugin(BasePlugin):
+    def run(self):
+        return "I am called via __subclasses__()"
+
+def obfus_calc():
+    return 42
+
+## unused
+def name_collision_unused():
+    return "I am shadowed"
+
+name_collision_unused = "Just a string variable"
+
+@app.get("/trigger_blindspots")
+def trigger_blindspots():
+    results = [f() for f in REGISTRY]
+
+    parts = ["dark", "_", "logic"]
+    func = globals()["".join(parts)]
+    results.append(func())
+
+    for cls in BasePlugin.__subclasses__():
+        results.append(cls().run())
+
+    op_name = "obfus_calc"
+    results.append(locals()[op_name]())
+
+    results.append(indirect_executor(passed_around_worker))
+
+    return {"results": results}
 
 if __name__ == "__main__":
     main()
