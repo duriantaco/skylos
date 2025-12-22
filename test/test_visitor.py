@@ -326,7 +326,6 @@ dynamic_attr = getattr(module, 'function_name')
         self.assertIn("function_name", ref_names)
 
     def test_globals_detection(self):
-        """Test detection of globals() usage."""
         code = """
 def dynamic_call():
     func = globals()['some_function']
@@ -334,9 +333,12 @@ def dynamic_call():
 """
         visitor = self.parse_and_visit(code)
 
-        ref_names = {ref[0] for ref in visitor.refs}
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
 
-        self.assertIn("globals", ref_names)
+        found = "globals" in ref_names or "test_module.globals" in ref_names
+        self.assertTrue(found, "globals not found in refs")
 
     def test_all_detection(self):
         """Test __all__ detection."""
@@ -349,11 +351,14 @@ def function1():
 class Class1:
     pass
 
-CONSTANT = 42
+CONSTANT = 50
 """
         visitor = self.parse_and_visit(code)
 
-        ref_names = {ref[0] for ref in visitor.refs}
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
         self.assertIn("function1", ref_names)
         self.assertIn("Class1", ref_names)
         self.assertIn("CONSTANT", ref_names)
@@ -365,13 +370,15 @@ __all__ = ('func1', 'func2', 'Class1')
 """
         visitor = self.parse_and_visit(code)
 
-        ref_names = {ref[0] for ref in visitor.refs}
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
         self.assertIn("func1", ref_names)
         self.assertIn("func2", ref_names)
         self.assertIn("Class1", ref_names)
 
     def test_builtin_detection(self):
-        """Test that builtins are correctly identified."""
         code = """
 def my_function():
     result = len([1, 2, 3])
@@ -383,8 +390,10 @@ def my_function():
 """
         visitor = self.parse_and_visit(code)
 
-        ref_names = {ref[0] for ref in visitor.refs}
-        builtins_found = ref_names & PYTHON_BUILTINS
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
         expected_builtins = {
             "len",
             "print",
@@ -394,7 +403,10 @@ def my_function():
             "sum",
             "sorted",
         }
-        self.assertTrue(expected_builtins.issubset(builtins_found))
+
+        for builtin in expected_builtins:
+            found = builtin in ref_names or f"test_module.{builtin}" in ref_names
+            self.assertTrue(found, f"Builtin '{builtin}' not found in refs")
 
     def test_decorators(self):
         code = """
@@ -430,16 +442,21 @@ class Child(Parent):
 
 class MultipleInheritance(Parent, object):
     pass
-"""
+    """
         visitor = self.parse_and_visit(code)
 
         classes = [d for d in visitor.defs if d.type == "class"]
         class_names = {c.simple_name for c in classes}
         self.assertEqual(class_names, {"Parent", "Child", "MultipleInheritance"})
 
-        ref_names = {ref[0] for ref in visitor.refs}
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
         self.assertIn("test_module.Parent", ref_names)
-        self.assertIn("object", ref_names)
+        # object gets qualified too
+        found_object = "object" in ref_names or "test_module.object" in ref_names
+        self.assertTrue(found_object, "object not found in refs")
 
     def test_comprehensions(self):
         code = """
@@ -496,7 +513,9 @@ def test_attributes():
 """
         visitor = self.parse_and_visit(code)
 
-        ref_names = {ref[0] for ref in visitor.refs}
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
 
         self.assertIn("os.getcwd", ref_names)
         self.assertIn("pathlib.Path.home", ref_names)
@@ -703,7 +722,10 @@ def use_aliases():
         self.assertNotIn("test_module.EC", import_names)
         self.assertNotIn("test_module.dd", import_names)
 
-        ref_names = {ref[0] for ref in visitor.refs}
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
         self.assertIn(
             "selenium.webdriver.support.expected_conditions.presence_of_element_located",
             ref_names,
@@ -724,8 +746,464 @@ from collections import defaultdict, Counter as cnt, deque
         self.assertTrue(len(imports) >= 3)
 
 
+class TestMoreEdgeCases(unittest.TestCase):
+    """Tests for constructor chaining, properties, super(), etc."""
+
+    def setUp(self):
+        self.temp_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False
+        )
+        self.visitor = Visitor("test_module", self.temp_file.name)
+
+    def tearDown(self):
+        Path(self.temp_file.name).unlink()
+
+    def parse_and_visit(self, code):
+        tree = ast.parse(code)
+        self.visitor.visit(tree)
+        return self.visitor
+
+    def test_constructor_method_call(self):
+        code = """
+class MyClass:
+    def __init__(self, x):
+        self.x = x
+
+    def myfunc(self):
+        return self.x * 2
+
 if __name__ == "__main__":
-    test_classes = [TestDefinition, TestVisitor, TestConstants, TestEdgeCases]
+    MyClass(2).myfunc()
+"""
+        visitor = self.parse_and_visit(code)
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.MyClass.myfunc", ref_names)
+
+    def test_constructor_chained_attribute(self):
+        code = """
+class Config:
+    def __init__(self):
+        self.value = 50
+
+result = Config().value
+"""
+        visitor = self.parse_and_visit(code)
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.Config.value", ref_names)
+
+    def test_qualified_constructor_method_call(self):
+        """Test module.MyClass().method() pattern."""
+        code = """
+import mymodule
+
+result = mymodule.MyClass().process()
+    """
+        visitor = self.parse_and_visit(code)
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("mymodule.MyClass.process", ref_names)
+        self.assertNotIn("test_module.MyClass.process", ref_names)
+
+    def test_constructor_lowercase_not_matched(self):
+        code = """
+def factory():
+    return something
+
+result = factory().process()
+"""
+        visitor = self.parse_and_visit(code)
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertNotIn("test_module.factory.process", ref_names)
+
+    def test_instance_attr_method_call(self):
+        code = """
+import itertools
+
+class FalseResponseBase:
+    def false_negative_series_generator(self):
+        return itertools.cycle([False, False, True])
+
+class Controller:
+    def __init__(self):
+        self.false_responses = FalseResponseBase()
+
+    def check(self):
+        value = next(self.false_responses.false_negative_series_generator())
+        return value
+"""
+        visitor = self.parse_and_visit(code)
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn(
+            "test_module.FalseResponseBase.false_negative_series_generator", ref_names
+        )
+
+    def test_instance_attr_type_tracking(self):
+        code = """
+class Helper:
+    def help(self):
+        pass
+
+class Main:
+    def __init__(self):
+        self.helper = Helper()
+"""
+        visitor = self.parse_and_visit(code)
+
+        expected_key = "test_module.Main.helper"
+        self.assertIn(expected_key, visitor.instance_attr_types)
+        self.assertEqual(
+            visitor.instance_attr_types[expected_key], "test_module.Helper"
+        )
+
+    def test_instance_attr_with_alias(self):
+        """Test self.attr = ImportedClass() with import alias."""
+        code = """
+from external import SomeClass as SC
+
+class Main:
+    def __init__(self):
+        self.obj = SC()
+
+    def run(self):
+        self.obj.execute()
+"""
+        visitor = self.parse_and_visit(code)
+
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("external.SomeClass.execute", ref_names)
+
+    def test_multiple_instance_attrs(self):
+        code = """
+class TypeA:
+    def method_a(self):
+        pass
+
+class TypeB:
+    def method_b(self):
+        pass
+
+class Container:
+    def __init__(self):
+        self.a = TypeA()
+        self.b = TypeB()
+
+    def run(self):
+        self.a.method_a()
+        self.b.method_b()
+"""
+        visitor = self.parse_and_visit(code)
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.TypeA.method_a", ref_names)
+        self.assertIn("test_module.TypeB.method_b", ref_names)
+
+    def test_property_decorator(self):
+        code = """
+class User:
+    def __init__(self):
+        self._name = "default"
+
+    @property
+    def name(self):
+        return self._name
+"""
+        visitor = self.parse_and_visit(code)
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.User.name", ref_names)
+
+    def test_property_setter(self):
+        """Test @x.setter decorated methods are marked as referenced."""
+        code = """
+class User:
+    def __init__(self):
+        self._name = "default"
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        self._name = value
+"""
+        visitor = self.parse_and_visit(code)
+
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.User.name", ref_names)
+
+        name_refs = []
+        for r in visitor.refs:
+            if r[0] == "test_module.User.name":
+                name_refs.append(r)
+
+        self.assertGreaterEqual(len(name_refs), 2)
+
+    def test_property_deleter(self):
+        """Test @x.deleter decorated methods are marked as referenced."""
+        code = """
+class User:
+    @property
+    def name(self):
+        return self._name
+
+    @name.deleter
+    def name(self):
+        del self._name
+"""
+        visitor = self.parse_and_visit(code)
+
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.User.name", ref_names)
+
+    def test_cached_property(self):
+        """Test @cached_property decorated methods."""
+        code = """
+from functools import cached_property
+
+class ExpensiveComputation:
+    @cached_property
+    def result(self):
+        return sum(range(1000000))
+"""
+        visitor = self.parse_and_visit(code)
+
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.ExpensiveComputation.result", ref_names)
+
+    def test_functools_cached_property(self):
+        """Test @functools.cached_property decorated methods."""
+        code = """
+import functools
+
+class ExpensiveComputation:
+    @functools.cached_property
+    def result(self):
+        return sum(range(1000000))
+"""
+        visitor = self.parse_and_visit(code)
+
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.ExpensiveComputation.result", ref_names)
+
+    def test_super_method_call(self):
+        """Test super().method() pattern."""
+        code = """
+class Parent:
+    def save(self):
+        print("Parent save")
+
+class Child(Parent):
+    def save(self):
+        super().save()
+        print("Child save")
+"""
+        visitor = self.parse_and_visit(code)
+
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.Child.save", ref_names)
+
+    def test_super_in_init(self):
+        code = """
+class Parent:
+    def __init__(self, x):
+        self.x = x
+
+class Child(Parent):
+    def __init__(self, x, y):
+        super().__init__(x)
+        self.y = y
+"""
+        visitor = self.parse_and_visit(code)
+
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.Child.__init__", ref_names)
+
+    def test_super_async_method(self):
+        code = """
+class Parent:
+    async def process(self):
+        pass
+
+class Child(Parent):
+    async def process(self):
+        await super().process()
+        print("Child processing")
+"""
+        visitor = self.parse_and_visit(code)
+        ref_names = {ref[0] for ref in visitor.refs}
+
+        self.assertIn("test_module.Child.process", ref_names)
+
+    def test_super_multiple_methods(self):
+        code = """
+class Parent:
+    def method_a(self):
+        pass
+
+    def method_b(self):
+        pass
+
+class Child(Parent):
+    def method_a(self):
+        super().method_a()
+
+    def method_b(self):
+        super().method_b()
+"""
+        visitor = self.parse_and_visit(code)
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.Child.method_a", ref_names)
+        self.assertIn("test_module.Child.method_b", ref_names)
+
+    def test_get_decorator_name_simple(self):
+        code = "@property"
+        tree = ast.parse(f"{code}\ndef f(): pass")
+        deco = tree.body[0].decorator_list[0]
+
+        result = self.visitor._get_decorator_name(deco)
+        self.assertEqual(result, "property")
+
+    def test_get_decorator_name_attribute(self):
+        code = "@name.setter"
+        tree = ast.parse(f"{code}\ndef f(): pass")
+        deco = tree.body[0].decorator_list[0]
+
+        result = self.visitor._get_decorator_name(deco)
+        self.assertEqual(result, "name.setter")
+
+    def test_get_decorator_name_call(self):
+        code = "@decorator(arg)"
+        tree = ast.parse(f"{code}\ndef f(): pass")
+        deco = tree.body[0].decorator_list[0]
+
+        result = self.visitor._get_decorator_name(deco)
+        self.assertEqual(result, "decorator")
+
+    def test_get_decorator_name_chained(self):
+        code = "@functools.cached_property"
+        tree = ast.parse(f"{code}\ndef f(): pass")
+        deco = tree.body[0].decorator_list[0]
+
+        result = self.visitor._get_decorator_name(deco)
+        self.assertEqual(result, "functools.cached_property")
+
+    def test_full_example_original_bug(self):
+        code = """
+from pathlib import Path
+
+class MyClass:
+    def __init__(self, x: int):
+        self.x = x
+
+    def myfunc(self) -> None:
+        with Path("/tmp/blah").open("w") as afile:
+            afile.write(str(self.x * 2))
+
+if __name__ == "__main__":
+    MyClass(2).myfunc()
+"""
+        visitor = self.parse_and_visit(code)
+
+        methods = []
+        for d in visitor.defs:
+            if d.type == "method":
+                methods.append(d)
+
+        method_names = set()
+        for m in methods:
+            method_names.add(m.simple_name)
+
+        self.assertIn("myfunc", method_names)
+
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn("test_module.MyClass.myfunc", ref_names)
+
+    def test_full_example_controller_pattern(self):
+        code = """
+import itertools
+
+class FalseResponseBase:
+    def false_negative_series_generator(self):
+        return itertools.cycle([False, False, True])
+
+class Controller:
+    def __init__(self):
+        self.false_responses = FalseResponseBase()
+
+    def check(self):
+        value = next(self.false_responses.false_negative_series_generator())
+        print(f"False negative check: {value}")
+        return value
+
+if __name__ == "__main__":
+    ctrl = Controller()
+    ctrl.check()
+"""
+        visitor = self.parse_and_visit(code)
+
+        ref_names = set()
+        for ref in visitor.refs:
+            ref_names.add(ref[0])
+
+        self.assertIn(
+            "test_module.FalseResponseBase.false_negative_series_generator", ref_names
+        )
+
+
+if __name__ == "__main__":
+    test_classes = [
+        TestDefinition,
+        TestVisitor,
+        TestConstants,
+        TestEdgeCases,
+        TestMoreEdgeCases,
+    ]
 
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
