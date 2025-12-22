@@ -7,24 +7,47 @@ RULE_ID = "SKY-Q301"
 _COMPLEX_NODES = (
     ast.If,
     ast.For,
+    ast.AsyncFor,
     ast.While,
-    ast.Try,
-    ast.With,
-    ast.ExceptHandler,
-    ast.BoolOp,
     ast.IfExp,
-    ast.comprehension,
 )
 
-
-def _func_complexity(node):
+def _func_complexity(fn_node: ast.AST) -> int:
     c = 1
-    for child in ast.walk(node):
-        if isinstance(child, _COMPLEX_NODES):
-            if isinstance(child, ast.BoolOp):
-                c += len(child.values) - 1
-            else:
+
+    class Visitor(ast.NodeVisitor):
+        def visit_FunctionDef(self, node):
+            return
+        def visit_AsyncFunctionDef(self, node):
+            return
+        def visit_ClassDef(self, node):
+            return
+        def visit_Lambda(self, node):
+            return
+
+        def generic_visit(self, node):
+            nonlocal c
+
+            if isinstance(node, _COMPLEX_NODES):
                 c += 1
+
+            if isinstance(node, ast.BoolOp):
+                c += max(len(node.values) - 1, 0)
+
+            if isinstance(node, ast.Try):
+                c += len(getattr(node, "handlers", []) or [])
+
+            if hasattr(ast, "Match") and isinstance(node, ast.Match):
+                cases = getattr(node, "cases", []) or []
+                c += max(len(cases) - 1, 0)
+
+            if isinstance(node, ast.comprehension):
+                c += 1
+                c += len(node.ifs or [])
+
+            super().generic_visit(node)
+
+    Visitor().visit(fn_node)
     return c
 
 
