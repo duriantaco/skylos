@@ -1,5 +1,33 @@
 ## Changelog
 
+## [2.7.0] - 2025-12-19
+
+### Fixed
+- Fixed bug where `Class(1).method()` patterns were incorrectly flagged
+- Fixed bug where `self.attr.method()` patterns were flagged as dead code when `self.attr` was assigned a class instance (e.g., `self.helper = Helper()`)
+- Fixed bug where `module.MyC lass().method()` was incorrectly resolving to wrong module
+- **Super() Calls:** Fixed bug where `super().method()` calls weren't registering the overridden method as used
+- Fixed Flask/FastAPI routes being incorrectly flagged
+
+### Added
+- Added `instance_attr_types` tracking in `Visitor` to infer types of instance attributes assigned in `__init__`
+- Added `_get_decorator_name()` helper method for robust decorator name extraction
+- Expanded `AUTO_CALLED` dunder methods
+- Added `TryBlockPatternsRule (SKY-L004)`. `try` blocks nested inside other try blocks to prevent flow
+- Added `UnreachableCodeRule (SKY-U001)`. Identifies codes that can never be executed because they follow a terminal statement
+- Added `--coverage` CLI flag. Run tests with coverage before analysis
+- Added `ImplicitRefTracker` for better dynamic pattern detection. This includes 1. f-string patterns 2. getattr 3. Framework decorators 
+- Expanded entry point decorators inside `framework_aware.py` 
+- Added test coverage for unreachable, cli coverage and implicit refs
+- Added `control_flow.py` to better catch `is False`
+
+### Changed
+- Modified tests for `test_constants.py` and `test_visitor.py` to test changes above
+- Changes for `@property`, `@x.setter`, `@x.deleter`, and `@cached_property` decorated methods
+- Modified `analyzer.py` to register new rules. SKY-L004 and SKY-U001
+- `_is_interpolated_string` flagged all f-strings, causing false positives on safe patterns. Added `_has_safe_base_url`
+- Replaced nuclear mark all functions as used in `analyzer.py`
+
 ## [2.6.0] - 2025-12-05
 
 ### Added
