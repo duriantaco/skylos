@@ -48,7 +48,7 @@ def scan_quality(root_node, source, file_path, threshold=10):
                     name = source[name_node.start_byte : name_node.end_byte].decode(
                         "utf-8", errors="replace"
                     )
-            except:
+            except Exception:
                 pass
 
             findings.append(

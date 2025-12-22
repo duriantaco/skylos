@@ -285,8 +285,44 @@ class TestConstants:
             assert value <= 100, f"Penalty {key} should be <= 100, got {value}"
 
     def test_auto_called_methods(self):
-        expected_methods = {"__init__", "__enter__", "__exit__"}
+        expected_methods = {
+            "__init__",
+            "__init__",
+            "__new__",
+            "__del__",
+            "__init_subclass__",
+            "__set_name__",
+            "__enter__",
+            "__exit__",
+            "__iter__",
+            "__next__",
+            "__len__",
+            "__getitem__",
+            "__setitem__",
+            "__delitem__",
+            "__contains__",
+            "__missing__",
+            "__getattr__",
+            "__setattr__",
+            "__delattr__",
+            "__getattribute__",
+            "__str__",
+            "__repr__",
+            "__format__",
+            "__bytes__",
+            "__hash__",
+            "__bool__",
+        }
+
+        assert expected_methods.issubset(AUTO_CALLED), (
+            f"Missing required methods: {expected_methods - AUTO_CALLED}"
+        )
+
         assert AUTO_CALLED == expected_methods
+
+        assert len(AUTO_CALLED) >= 20, (
+            f"AUTO_CALLED should have many dunder methods, got {len(AUTO_CALLED)}"
+        )
 
         for method in AUTO_CALLED:
             assert method.startswith("__") and method.endswith("__"), (

@@ -22,7 +22,35 @@ TEST_DECOR_RE = re.compile(
     re.X,
 )
 
-AUTO_CALLED = {"__init__", "__enter__", "__exit__"}
+AUTO_CALLED = {
+    "__init__",
+    "__init__",
+    "__new__",
+    "__del__",
+    "__init_subclass__",
+    "__set_name__",
+    "__enter__",
+    "__exit__",
+    "__iter__",
+    "__next__",
+    "__len__",
+    "__getitem__",
+    "__setitem__",
+    "__delitem__",
+    "__contains__",
+    "__missing__",
+    "__getattr__",
+    "__setattr__",
+    "__delattr__",
+    "__getattribute__",
+    "__str__",
+    "__repr__",
+    "__format__",
+    "__bytes__",
+    "__hash__",
+    "__bool__",
+}
+
 TEST_METHOD_PATTERN = re.compile(r"^test_\w+$")
 
 UNITTEST_LIFECYCLE_METHODS = {

@@ -2,6 +2,8 @@
 import ast
 from pathlib import Path
 import re
+from skylos.control_flow import evaluate_static_condition, extract_constant_string
+from skylos.implicit_refs import pattern_tracker
 
 PYTHON_BUILTINS = {
     "print",
@@ -57,7 +59,6 @@ DYNAMIC_PATTERNS = {"getattr", "globals", "eval", "exec"}
 
 ## "🥚" hi :)
 
-
 class Definition:
     def __init__(self, name, t, filename, line):
         self.name = name
@@ -111,6 +112,10 @@ class Visitor(ast.NodeVisitor):
         self._dataclass_stack = []
         self.dataclass_fields = set()
         self.first_read_lineno = {}
+        self.instance_attr_types = {}
+        self.local_constants = []
+
+        self.pattern_tracker = pattern_tracker
 
     def add_def(self, name, t, line):
         found = False
@@ -162,7 +167,7 @@ class Visitor(ast.NodeVisitor):
         try:
             parsed = ast.parse(annotation_str, mode="eval")
             self.visit(parsed.body)
-        except:
+        except SyntaxError:
             for tok in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", annotation_str):
                 self.add_ref(tok)
 
@@ -184,9 +189,11 @@ class Visitor(ast.NodeVisitor):
     def visit_ImportFrom(self, node):
         if node.module is None:
             return
+        
         for a in node.names:
             if a.name == "*":
                 continue
+
             base = node.module
             if node.level:
                 parts = self.mod.split(".")
@@ -201,6 +208,23 @@ class Visitor(ast.NodeVisitor):
             else:
                 self.alias[a.name] = full
                 self.add_def(full, "import", node.lineno)
+    
+    def visit_If(self, node):
+        condition = evaluate_static_condition(node.test)
+        
+        self.visit(node.test)
+
+        if condition is True:
+            for statement in node.body:
+                self.visit(statement)
+        elif condition is False:
+            for statement in node.orelse:
+                self.visit(statement)
+        else:
+            for statement in node.body:
+                self.visit(statement)
+            for statement in node.orelse:
+                self.visit(statement)
 
     def visit_arguments(self, args):
         for arg in args.args:
@@ -219,6 +243,18 @@ class Visitor(ast.NodeVisitor):
         for default in args.kw_defaults:
             if default:
                 self.visit(default)
+
+    def _get_decorator_name(self, deco):
+        if isinstance(deco, ast.Name):
+            return deco.id
+        elif isinstance(deco, ast.Attribute):
+            parent = self._get_decorator_name(deco.value)
+            if parent:
+                return f"{parent}.{deco.attr}"
+            return deco.attr
+        elif isinstance(deco, ast.Call):
+            return self._get_decorator_name(deco.func)
+        return None
 
     def visit_FunctionDef(self, node):
         outer_scope_prefix = (
@@ -240,9 +276,30 @@ class Visitor(ast.NodeVisitor):
             def_type = "function"
         self.add_def(qualified_name, def_type, node.lineno)
 
+        FRAMEWORK_DECORATORS = {
+            'route', '.get', '.post', '.put', '.delete', '.patch',
+            'fixture', 'pytest', 'task', 'celery', 'register',
+            'subscriber', 'listener', 'handler', 'receiver', 'command'
+        }
+
+        for deco in node.decorator_list:
+            deco_name = self._get_decorator_name(deco)
+            if deco_name:
+                if deco_name in ("property", "cached_property", "functools.cached_property"):
+                    self.add_ref(qualified_name)
+                elif deco_name.endswith((".setter", ".deleter")):
+                    self.add_ref(qualified_name)
+                elif any(keyword in deco_name.lower() for keyword in FRAMEWORK_DECORATORS):
+                    self.add_ref(qualified_name)
+
+            elif deco_name and deco_name.endswith((".setter", ".deleter")):
+                self.add_ref(qualified_name)
+
         self.current_function_scope.append(node.name)
         self.local_var_maps.append({})
         self.local_type_maps.append({})
+
+        self.local_constants.append({})
 
         old_params = self.current_function_params
         self.current_function_params = []
@@ -265,6 +322,7 @@ class Visitor(ast.NodeVisitor):
         self.current_function_params = old_params
         self.local_var_maps.pop()
         self.local_type_maps.pop()
+        self.local_constants.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
@@ -411,112 +469,221 @@ class Visitor(ast.NodeVisitor):
         if node.step:
             self.visit(node.step)
 
-    def visit_Assign(self, node):
-        def process_target_for_def(target_node):
-            if isinstance(target_node, ast.Name):
-                name_simple = target_node.id
-                if (
-                    name_simple == "METADATA_DEPENDENCIES"
-                    and self.cls
-                    and self.in_cst_class > 0
-                ):
-                    return
-                if (
-                    name_simple == "__all__"
-                    and not self.current_function_scope
-                    and not self.cls
-                ):
-                    return
+    def _should_skip_variable_def(self, name_simple):
+        if (
+            name_simple == "METADATA_DEPENDENCIES"
+            and self.cls
+            and self.in_cst_class > 0
+        ):
+            return True
 
-                scope_parts = [self.mod]
-                if self.cls:
-                    scope_parts.append(self.cls)
-                if self.current_function_scope:
-                    scope_parts.extend(self.current_function_scope)
+        if (
+            name_simple == "__all__"
+            and not self.current_function_scope
+            and not self.cls
+        ):
+            return True
 
-                if (
-                    self.current_function_scope
-                    and self.local_var_maps
-                    and name_simple in self.local_var_maps[-1]
-                ):
-                    var_name = self.local_var_maps[-1][name_simple]
+        return False
+
+    def _compute_variable_name(self, name_simple):
+        scope_parts = [self.mod]
+        if self.cls:
+            scope_parts.append(self.cls)
+        if self.current_function_scope:
+            scope_parts.extend(self.current_function_scope)
+
+        if (
+            self.current_function_scope
+            and self.local_var_maps
+            and name_simple in self.local_var_maps[-1]
+        ):
+            return self.local_var_maps[-1][name_simple]
+
+        prefix = ".".join(filter(None, scope_parts))
+        if prefix:
+            return f"{prefix}.{name_simple}"
+        return name_simple
+
+    def _process_target_for_def(self, target_node):
+        if isinstance(target_node, ast.Name):
+            name_simple = target_node.id
+
+            if self._should_skip_variable_def(name_simple):
+                return
+
+            var_name = self._compute_variable_name(name_simple)
+            self.add_def(var_name, "variable", target_node.lineno)
+
+            if (
+                self.current_function_scope
+                and self.local_var_maps
+                and name_simple not in self.local_var_maps[-1]
+            ):
+                self.local_var_maps[-1][name_simple] = var_name
+
+        elif isinstance(target_node, (ast.Tuple, ast.List)):
+            for elt in target_node.elts:
+                self._process_target_for_def(elt)
+
+    def _extract_string_value(self, elt):
+        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+            return elt.value
+        if hasattr(elt, "s") and isinstance(elt.s, str):
+            return elt.s
+        return None
+
+    def _process_dunder_all_exports(self, node):
+        for target in node.targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id != "__all__":
+                continue
+            if not isinstance(node.value, (ast.List, ast.Tuple)):
+                continue
+
+            for elt in node.value.elts:
+                value = self._extract_string_value(elt)
+                if value is None:
+                    continue
+
+                if self.mod:
+                    export_name = f"{self.mod}.{value}"
                 else:
-                    prefix = ".".join(filter(None, scope_parts))
-                    if prefix:
-                        var_name = f"{prefix}.{name_simple}"
-                    else:
-                        var_name = name_simple
+                    export_name = value
 
-                self.add_def(var_name, "variable", target_node.lineno)
-                if (
-                    self.current_function_scope
-                    and self.local_var_maps
-                    and name_simple not in self.local_var_maps[-1]
-                ):
-                    self.local_var_maps[-1][name_simple] = var_name
+                self.add_ref(export_name)
+                self.add_ref(value)
 
-            elif isinstance(target_node, (ast.Tuple, ast.List)):
-                for elt in target_node.elts:
-                    process_target_for_def(elt)
+    def _resolve_callee_fqname_from_name(self, callee):
+        return self.alias.get(callee.id, self.qual(callee.id))
 
-        for t in node.targets:
-            process_target_for_def(t)
+    def _resolve_callee_fqname_from_attribute(self, callee):
+        parts = []
+        cur = callee
+
+        while isinstance(cur, ast.Attribute):
+            parts.append(cur.attr)
+            cur = cur.value
+
+        if not isinstance(cur, ast.Name):
+            return None
+
+        head = self.alias.get(cur.id, self.qual(cur.id))
+        if not head:
+            return None
+
+        return ".".join([head] + list(reversed(parts)))
+
+    def _resolve_callee_fqname(self, callee):
+        if isinstance(callee, ast.Name):
+            return self._resolve_callee_fqname_from_name(callee)
+
+        if isinstance(callee, ast.Attribute):
+            return self._resolve_callee_fqname_from_attribute(callee)
+
+        return None
+
+    def _mark_target_type(self, target, fqname):
+        if isinstance(target, ast.Name):
+            self.local_type_maps[-1][target.id] = fqname
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for elt in target.elts:
+                self._mark_target_type(elt, fqname)
+
+    def _try_infer_types_from_call(self, node):
+        if not isinstance(node.value, ast.Call):
+            return
+
+        if not self.current_function_scope:
+            return
+        if not self.local_type_maps:
+            return
+
+        call_node = node.value
+        if not hasattr(call_node, "func"):
+            return
+
+        callee = call_node.func
+        fqname = self._resolve_callee_fqname(callee)
+
+        if not fqname:
+            return
 
         for target in node.targets:
-            if isinstance(target, ast.Name) and target.id == "__all__":
-                if isinstance(node.value, (ast.List, ast.Tuple)):
-                    for elt in node.value.elts:
-                        value = None
-                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                            value = elt.value
-                        elif hasattr(elt, "s") and isinstance(elt.s, str):
-                            value = elt.s
+            self._mark_target_type(target, fqname)
 
-                        if value is not None:
-                            if self.mod:
-                                export_name = f"{self.mod}.{value}"
-                            else:
-                                export_name = value
+    def _extract_class_name_from_call(self, call_func):
+        if isinstance(call_func, ast.Name):
+            return call_func.id
+        if isinstance(call_func, ast.Attribute):
+            return call_func.attr
+        return None
 
-                            self.add_ref(export_name)
-                            self.add_ref(value)
+    def _track_instance_attr_types(self, node):
+        if not self.cls:
+            return
 
-        try:
-            if isinstance(node.value, ast.Call):
-                callee = node.value.func
-                fqname = None
+        if not isinstance(node.value, ast.Call):
+            return
 
-                if isinstance(callee, ast.Name):
-                    fqname = self.alias.get(callee.id, self.qual(callee.id))
+        for target in node.targets:
+            if not isinstance(target, ast.Attribute):
+                continue
+            if not isinstance(target.value, ast.Name):
+                continue
+            if target.value.id != "self":
+                continue
 
-                elif isinstance(callee, ast.Attribute):
-                    parts = []
-                    cur = callee
-                    while isinstance(cur, ast.Attribute):
-                        parts.append(cur.attr)
-                        cur = cur.value
-                    head = None
-                    if isinstance(cur, ast.Name):
-                        head = self.alias.get(cur.id, self.qual(cur.id))
-                    if head:
-                        fqname = ".".join([head] + list(reversed(parts)))
+            call_func = node.value.func
+            class_name = self._extract_class_name_from_call(call_func)
 
-                if fqname and self.current_function_scope and self.local_type_maps:
+            if not class_name:
+                continue
+            if not class_name[0].isupper():
+                continue
 
-                    def _mark_target(t):
-                        if isinstance(t, ast.Name):
-                            self.local_type_maps[-1][t.id] = fqname
-                        elif isinstance(t, (ast.Tuple, ast.List)):
-                            for elt in t.elts:
-                                _mark_target(elt)
+            owner = f"{self.mod}.{self.cls}" if self.mod else self.cls
+            attr_key = f"{owner}.{target.attr}"
+            qualified_class = self.alias.get(class_name, self.qual(class_name))
+            self.instance_attr_types[attr_key] = qualified_class
 
-                    for t in node.targets:
-                        _mark_target(t)
-        except Exception:
-            pass
+    def visit_Assign(self, node):
+        
+        const_val = extract_constant_string(node.value)
+        if const_val is not None:
+            if len(self.local_constants) > 0:
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        self.local_constants[-1][t.id] = const_val
+        
+        if isinstance(node.value, ast.JoinedStr):
+            pattern = self._extract_fstring_pattern(node.value)
+            if pattern:
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        self.pattern_tracker.f_string_patterns[t.id] = pattern
 
+        for target in node.targets:
+            self._process_target_for_def(target)
+
+        self._process_dunder_all_exports(node)
+        self._try_infer_types_from_call(node)
         self.generic_visit(node)
+        self._track_instance_attr_types(node)
 
+    def _extract_fstring_pattern(self, node: ast.JoinedStr):
+        """Convert f'handle_{x}' to 'handle_*'"""
+        parts = []
+        has_var = False
+        for value in node.values:
+            if isinstance(value, ast.Constant):
+                parts.append(str(value.value))
+            elif isinstance(value, ast.FormattedValue):
+                parts.append("*")
+                has_var = True
+        return "".join(parts) if has_var else None
+    
     def visit_Call(self, node):
         self.generic_visit(node)
 
@@ -525,10 +692,16 @@ class Visitor(ast.NodeVisitor):
             and node.func.id in ("getattr", "hasattr")
             and len(node.args) >= 2
         ):
-            if isinstance(node.args[1], ast.Constant) and isinstance(
-                node.args[1].value, str
-            ):
-                attr_name = node.args[1].value
+            
+            attr_name = None
+
+            if isinstance(node.args[1], ast.Name) and self.local_constants:
+                attr_name = self.local_constants[-1].get(node.args[1].id)
+
+            if not attr_name:
+                attr_name = extract_constant_string(node.args[1])
+            
+            if attr_name:
                 self.add_ref(attr_name)
 
                 if isinstance(node.args[0], ast.Name):
@@ -536,14 +709,26 @@ class Visitor(ast.NodeVisitor):
                     if module_name != "self":
                         qualified_name = f"{self.qual(module_name)}.{attr_name}"
                         self.add_ref(qualified_name)
+            
+            # elif isinstance(node.args[0], ast.Name):
+            #     target_name = node.args[0].id
+            #     if target_name != "self":
+            #         if self.mod:
+            #             self.dyn.add(self.mod.split(".")[0])
+            #         else:
+            #             self.dyn.add("")
 
             elif isinstance(node.args[0], ast.Name):
                 target_name = node.args[0].id
                 if target_name != "self":
-                    if self.mod:
-                        self.dyn.add(self.mod.split(".")[0])
-                    else:
-                        self.dyn.add("")
+                    if isinstance(node.args[1], ast.Name):
+                        var_name = node.args[1].id
+                        if var_name in self.pattern_tracker.f_string_patterns:
+                            pattern = self.pattern_tracker.f_string_patterns[var_name]
+                            self.pattern_tracker.pattern_refs.append((pattern, 70))
+                        elif self.local_constants and var_name in self.local_constants[-1]:
+                            val = self.local_constants[-1][var_name]
+                            self.pattern_tracker.known_refs.add(val)
 
         elif isinstance(node.func, ast.Name) and node.func.id == "globals":
             parent = getattr(node, "parent", None)
@@ -561,6 +746,20 @@ class Visitor(ast.NodeVisitor):
             if self.mod:
                 root_mod = self.mod.split(".")[0]
             self.dyn.add(root_mod)
+
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Call)
+            and isinstance(node.func.value.func, ast.Name)
+            and node.func.value.func.id == "super"
+        ):
+            method_name = node.func.attr
+            if self.cls:
+                if self.mod:
+                    owner = f"{self.mod}.{self.cls}"
+                else:
+                    owner = self.cls
+                self.add_ref(f"{owner}.{method_name}")
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
@@ -623,17 +822,59 @@ class Visitor(ast.NodeVisitor):
 
             self.add_ref(f"{self.qual(base)}.{node.attr}")
 
+        elif isinstance(node.value, ast.Call):
+            call_func = node.value.func
+            class_name = None
+            qualified_class = None
+
+            if isinstance(call_func, ast.Name):
+                class_name = call_func.id
+                if class_name and class_name[0].isupper():
+                    qualified_class = self.alias.get(class_name, self.qual(class_name))
+
+            elif isinstance(call_func, ast.Attribute):
+                class_name = call_func.attr
+                if class_name and class_name[0].isupper():
+                    if isinstance(call_func.value, ast.Name):
+                        base = call_func.value.id
+                        base_resolved = self.alias.get(base, base)
+                        qualified_class = f"{base_resolved}.{class_name}"
+                    else:
+                        qualified_class = self.alias.get(
+                            class_name, self.qual(class_name)
+                        )
+
+            if qualified_class:
+                self.add_ref(f"{qualified_class}.{node.attr}")
+
+        elif isinstance(node.value, ast.Attribute):
+            inner = node.value
+            if (
+                isinstance(inner.value, ast.Name)
+                and inner.value.id == "self"
+                and self.cls
+            ):
+                owner = f"{self.mod}.{self.cls}" if self.mod else self.cls
+                attr_key = f"{owner}.{inner.attr}"
+                if attr_key in self.instance_attr_types:
+                    type_name = self.instance_attr_types[attr_key]
+                    self.add_ref(f"{type_name}.{node.attr}")
+
     def visit_NamedExpr(self, node):
         self.visit(node.value)
         if isinstance(node.target, ast.Name):
             nm = node.target.id
             scope_parts = [self.mod]
+
             if self.cls:
                 scope_parts.append(self.cls)
+
             if self.current_function_scope:
                 scope_parts.extend(self.current_function_scope)
+
             prefix = ".".join(filter(None, scope_parts))
             var_name = f"{prefix}.{nm}" if prefix else nm
+
             self.add_def(var_name, "variable", node.lineno)
             if self.current_function_scope and self.local_var_maps:
                 self.local_var_maps[-1][nm] = var_name
