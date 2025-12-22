@@ -19,11 +19,37 @@ def _qualified_name_from_call(node):
     return None
 
 
+def _has_safe_base_url(node):
+
+    if not node.values:
+        return True
+    
+    first = node.values[0]
+
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        val = first.value
+
+        if "://" in val:
+            parts = val.split("://", 1)
+            if len(parts) > 1 and "/" in parts[1]:
+                return True
+
+    if isinstance(first, ast.FormattedValue):
+        if isinstance(first.value, ast.Name) and first.value.id.isupper():
+            return True
+            
+    return False
+
+
 def _is_interpolated_string(node):
     if isinstance(node, ast.JoinedStr):
+        if _has_safe_base_url(node):
+            return False
         return True
+
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
         return True
+
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
