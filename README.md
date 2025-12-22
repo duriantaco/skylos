@@ -1,8 +1,8 @@
 # Skylos 🔍
 
 <div align="center">
-   <img src="assets/dog.png" alt="Skylos Logo" width="200">
-   <h1>Guard the Logic</h1>
+   <img src="assets/dog.png" alt="Skylos Logo" width="300">
+   <h1>Skylos: Guard the Logic</h1>
    <h3>We keep your codebases secure day and night</h3>
 </div>
 
@@ -16,25 +16,9 @@
 
 > Skylos is **the watchdog** for your repository. It maps your code's structure to hunt down dead logic, trace tainted data, and kill security rot before you hit `git push`.
 
-<h2>CLI</h2>
-<div align="center">
-   <img src="assets/CLI.png" alt="CLI" width="800">
-</div>
-<p>The cli will output the results in a table format with the appropriate flags</p>
-
-## Quick Action
-
-| Objective | Command | Outcome | Remarks
-| :--- | :--- | :--- |
-| **Hunt Dead Code** | `skylos .` | Prune unreachable functions and unused imports instantly. |
-| **Precise Hunt** | `skylos . --coverage` | Cross-reference results with actual runtime data | Run `skylos . --coverage` first then run your actual scan `skylos . --danger`|
-| **Audit Risk & Quality** | `skylos . --secrets --danger --quality` | Kill security leaks, tainted data, and architectural rot. | You can run one of the flags, or all 3
-| **Automated Repair** | `skylos . --audit --fix` | Let the watchdog handle the labor of cleaning your code. |
-| **Secure the Gate** | `skylos --gate` | Block risky code from merging with hard-coded standards. |
-
 ## Table of Contents
 
-- [Quick Action](#quick-action)
+- [Quick Start](#quick-start)
 - [Features](#features)
 - [Installation](#installation)
 - [Performance](#performance)
@@ -51,6 +35,16 @@
 - [Roadmap](#roadmap)
 - [License](#license)
 - [Contact](#contact)
+
+## Quick Start
+
+| Objective | Command | Outcome | Remarks |
+| :--- | :--- | :--- | :--- |
+| **Hunt Dead Code** | `skylos .` | Prune unreachable functions and unused imports instantly. | |
+| **Precise Hunt** | `skylos . --coverage` | Cross-reference results with actual runtime data | Run `skylos . --coverage` first then run your actual scan `skylos . --danger` |
+| **Audit Risk & Quality** | `skylos . --secrets --danger --quality` | Kill security leaks, tainted data, and architectural rot. | You can run one of the flags, or all 3 |
+| **Automated Repair** | `skylos . --audit --fix` | Let the watchdog handle the labor of cleaning your code. | |
+| **Secure the Gate** | `skylos --gate` | Block risky code from merging with hard-coded standards. | |
 
 ## Features
 
