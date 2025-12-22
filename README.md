@@ -685,7 +685,7 @@ jobs:
 ## .pre-commit-config.yaml
 repos:
   - repo: https://github.com/duriantaco/skylos
-    rev: v2.6.0
+    rev: v2.7.0
     hooks:
       - id: skylos-scan
         name: skylos report
@@ -735,7 +735,7 @@ repos:
         entry: python -m skylos.cli
         pass_filenames: false
         require_serial: true
-        additional_dependencies: [skylos==2.6.0]
+        additional_dependencies: [skylos==2.7.0]
         args: [".", "--output", "report.json", "--confidence", "70"]
 
       - id: skylos-fail-on-findings
