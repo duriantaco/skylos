@@ -1,7 +1,6 @@
 import argparse
 import json
 import sys
-import os
 import logging
 from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
 from skylos.server import start_server
