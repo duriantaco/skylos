@@ -1,4 +1,20 @@
-| Rule ID     | Pattern / Trigger                                           | Why it’s risky                                                | Safer alternative / Fix                                                             |
-|-------------|--------------------------------------------------------------|----------------------------------------------------------------|-------------------------------------------------------------------------------------|
-| SKY-Q301    | **High cyclomatic complexity** (McCabe ≥ **10**)            | Many decision paths -> harder to test, reason about, and modify | Split into small helpers. Earlier returns. Remove dead branches |
-| SKY-Q302    | **Deep nesting** (max depth **> 3**)                         | Pyramid of doom. Bugs hide in nested branches                  | Use guard clauses. Return early. Extract inner blocks  |
+| Rule | ID | What It Catches |
+|------|-----|-----------------|
+| **Complexity** | | |
+| Cyclomatic complexity | SKY-Q301 | Too many branches/loops (default: >10) |
+| Deep nesting | SKY-Q302 | Too many nested levels (default: >3) |
+| **Structure** | | |
+| Too many arguments | SKY-C303 | Functions with >5 args |
+| Function too long | SKY-C304 | Functions >50 lines |
+| **Logic** | | |
+| Mutable default | SKY-L001 | `def foo(x=[])` - causes state leaks |
+| Bare except | SKY-L002 | `except:` swallows SystemExit |
+| Dangerous comparison | SKY-L003 | `x == None` instead of `x is None` |
+| Anti-pattern try block | SKY-L004 | Nested try, or try wrapping too much logic |
+| **Performance** | | |
+| Memory load | SKY-P401 | `.read()` / `.readlines()` loads entire file |
+| Pandas no chunk | SKY-P402 | `read_csv()` without `chunksize` |
+| Nested loop | SKY-P403 | O(N²) complexity |
+| **Unreachable** | | |
+| Dead branch | SKY-U001 | `if False:` or `else` after always-true |
+| Dead statement | SKY-U002 | Code after `return`/`raise`/`break` |
