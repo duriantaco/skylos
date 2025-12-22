@@ -1,5 +1,10 @@
 ## Changelog
 
+## [2.7.1] - 2025-12-23
+
+### Fixed
+- Fixed `--version` bug. Language folder was missing an `__init__.py`
+
 ## [2.7.0] - 2025-12-19
 
 ### Fixed
