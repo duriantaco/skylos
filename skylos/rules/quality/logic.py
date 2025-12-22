@@ -103,3 +103,80 @@ class DangerousComparisonRule(SkylosRule):
             return findings
         else:
             return None
+        
+class TryBlockPatternsRule(SkylosRule):
+    rule_id = "SKY-L004"
+    name = "Anti-Pattern Try Block"
+
+    def __init__(self, max_lines=15, max_control_flow=3):
+        self.max_lines = max_lines
+        self.max_control_flow = max_control_flow
+
+    def visit_node(self, node, context):
+        if not isinstance(node, ast.Try):
+            return None
+
+        findings = []
+  
+        if node.body:
+            start = node.body[0].lineno
+            end = getattr(node.body[-1], "end_lineno", start)
+            length = end - start + 1
+
+            if length > self.max_lines:
+                findings.append(self._create_finding(
+                    node, context, 
+                    severity="LOW",
+                    value=length,
+                    msg=f"Try block covers {length} lines (limit: {self.max_lines}). Reduce scope to the risky operation only."
+                ))
+
+
+        control_flow_count = 0
+        has_nested_try = False
+
+        for stmt in node.body:
+            for child in ast.walk(stmt):
+                if isinstance(child, ast.Try):
+                    has_nested_try = True
+                
+                if isinstance(child, (ast.If, ast.For, ast.While)):
+                    control_flow_count += 1
+
+        if has_nested_try:
+            findings.append(self._create_finding(
+                node, context,
+                severity="MEDIUM",
+                value="nested",
+                msg="Nested 'try' block detected. Flatten logic or move inner try to a helper function."
+            ))
+
+        if control_flow_count > self.max_control_flow:
+            findings.append(self._create_finding(
+                node, context,
+                severity="HIGH",
+                value=control_flow_count,
+                msg=f"Try block contains {control_flow_count} control flow statements. Don't wrap complex logic in error handling."
+            ))
+
+        if findings:
+            return findings
+        else: 
+            return None
+
+    def _create_finding(self, node, context, severity, value, msg):
+        return {
+            "rule_id": self.rule_id,
+            "kind": "quality",
+            "severity": severity,
+            "type": "block",
+            "name": "try",
+            "simple_name": "try",
+            "value": value,
+            "threshold": 0,
+            "message": msg,
+            "file": context.get("filename"),
+            "basename": Path(context.get("filename", "")).name,
+            "line": node.lineno,
+            "col": node.col_offset,
+        }

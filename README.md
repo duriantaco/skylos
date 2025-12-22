@@ -36,6 +36,7 @@
 - [AI Audit](#ai-audit)
 - [Quality](#quality)
 - [Ignoring Pragmas](#ignoring-pragmas)
+- [Coverage Integration](#coverage-integration)
 - [Including & Excluding Files](#including--excluding-files)
 - [CLI Options](#cli-options)
 - [Example Output](#example-output)
@@ -61,8 +62,10 @@
 * **Unused Imports**: Identifies imports that are not used
 * **Folder Management**: Inclusion/exclusion of directories 
 * **Ignore Pragmas**: Skip lines tagged with `# pragma: no skylos`, `# pragma: no cover`, or `# noqa`
-* **NEW** **Secrets Scanning (PoC, opt-in)**: Detects API keys & secrets (GitHub, GitLab, Slack, Stripe, AWS, Google, SendGrid, Twilio, private key blocks)
-* **NEW** **Dangerous Patterns**: Flags risky code such as `eval/exec`, `os.system`, `subprocess(shell=True)`, `pickle.load/loads`, `yaml.load` without SafeLoader, hashlib.md5/sha1. Refer to `DANGEROUS_CODE.md` for the whole list. This includes SQL injection, path traversal and any other security flaws that may arise from the practise of vibe-coding. 
+* **Secrets Scanning (PoC, opt-in)**: Detects API keys & secrets (GitHub, GitLab, Slack, Stripe, AWS, Google, SendGrid, Twilio, private key blocks)
+* **Dangerous Patterns**: Flags risky code such as `eval/exec`, `os.system`, `subprocess(shell=True)`, `pickle.load/loads`, `yaml.load` without SafeLoader, hashlib.md5/sha1. Refer to `DANGEROUS_CODE.md` for the whole list. This includes SQL injection, path traversal and any other security flaws that may arise from the practise of vibe-coding. 
+* **Coverage Integration**: Auto-detects `.coverage` files to verify dead code with runtime data
+* **Implicit Reference Detection**: Catches dynamic patterns like `getattr(mod, f"handle_{x}")`, framework decorators (`@app.route`, `@pytest.fixture`), and f-string dispatch patterns
 
 ## Benchmark (You can find this benchmark test in `test` folder)
 
@@ -103,15 +106,19 @@ pip install .
 
 ## Quick Start
 
+So there's essentially 2 routes for you. If you have tests? Use `--coverage` for even better results. No tests? It's ok, just run the skylos command below as per usual. Key commands are marked with `(*)`
+
 ```bash
-skylos /path/to/your/project
+skylos /path/to/your/project ## pure dead code scan, does not include quality, danger etc
+
+* skylos /path/to/your/project --coverage # With runtime verification (runs tests first)
 
 skylos /path/to/your/project --secrets  ## include api key scan
 skylos /path/to/your/project --danger   ## include safety scan for dangerous code
 skylos /path/to/your/project --quality ## include quality scan for complex code
 
-skylos /path/to/your/project --secrets --danger --quality  ## you can string all the flags together
-skylos /path/to/your/project --danger --quality --audit --model claude-haiku-4-5-20251001  ## if u want to add a LLM for auditing 
+* skylos /path/to/your/project --secrets --danger --quality  ## you can string all the flags together
+* skylos /path/to/your/project --danger --quality --audit --model claude-haiku-4-5-20251001  ## if u want to add a LLM 
 skylos /path/to/your/project --danger --quality --audit --fix --model claude-haiku-4-5-20251001 ## for automated fixing 
 
 # To launch the front end
@@ -447,6 +454,88 @@ Example
 API_KEY = "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"  # skylos: ignore[SKY-S101]
 ```
 
+## Coverage Integration
+
+Static analysis can't see everything. Python's dynamic nature means patterns like `getattr()`, plugin registries, and string-based dispatch look like dead code—but they're not.
+
+**Coverage integration solves this.** If a function actually ran during tests or execution, it's definitely not dead.
+
+### Quick Start
+```bash
+# Step 1: 
+# Option 1: Let Skylos run your tests first
+skylos . --coverage
+
+# Option 2: Use existing coverage data
+coverage run -m pytest    # or: coverage run app.py
+skylos .                   # Auto-detects .coverage file
+
+# Step 2:
+# Run skylos as per usual
+skylos . --danger --quality 
+```
+
+### How It Works
+
+| Analysis Type | Confidence | What It Catches |
+|---------------|------------|-----------------|
+| Static only | 60-95% | Direct calls, imports, decorators |
+| + Coverage | 100% | Dynamic dispatch, plugins, registries |
+
+### Example
+```python
+# Static analysis thinks this is dead (no direct call visible)
+def handle_login():
+    return "Login handler"
+
+# But it's called dynamically at runtime
+action = request.args.get("action")  
+func = getattr(module, f"handle_{action}")
+func()  # Calls handle_login
+```
+
+| Without Coverage | With Coverage |
+|------------------|---------------|
+| `handle_login` flagged as dead ❌ | `handle_login` marked as used ✅ |
+
+### When To Use
+
+| Situation | Command |
+|-----------|---------|
+| Have pytest/unittest tests | `skylos . --coverage` |
+| No tests, but can run app | `coverage run app.py` then `skylos .` |
+| No tests, can't run app | `skylos .` (static only) |
+
+### What Coverage Catches
+
+These patterns are invisible to static analysis but caught with coverage:
+```python
+# 1. Dynamic dispatch
+func = getattr(module, f"handle_{action}")
+func()
+
+# 2. Plugin/registry patterns  
+PLUGINS = []
+def register(f): PLUGINS.append(f); return f
+
+@register
+def my_plugin(): ...  # Called via: for p in PLUGINS: p()
+
+# 3. Subclass discovery
+for cls in BasePlugin.__subclasses__():
+    cls().run()
+
+# 4. String-based access
+globals()["my_" + "func"]()
+locals()[func_name]()
+```
+
+### Important Notes
+
+- **Coverage only adds information.** Low test coverage will not create false positives. It just means some dynamic patterns may still be flagged.
+- **Any execution helps.** Even running your app once and hitting a few endpoints provides useful data.
+- **Tests don't need to pass.** Coverage records are what is executed. Irregardless of pass/fail status of your tests
+
 ## Including & Excluding Files
 
 ### Default Exclusions
@@ -751,6 +840,15 @@ A: Start with 60 (default) for safe cleanup. Use 30 for framework applications. 
 **Q: What does `--danger` check**?
 A: It flags common security problems. Refer to `DANGEROUS_CODE.md` for the full details
 
+**Q: What does `--coverage` do?**
+A: It runs `pytest` (or `unittest`) with coverage tracking before analysis. Functions that actually executed are marked as used with 100% confidence, eliminating false positives from dynamic dispatch patterns.
+
+**Q: Do I need 100% test coverage for `--coverage` to be useful?**
+A: No. However, we **STRONGLY** encourage you to have tests. Any coverage helps. If you have 30% test coverage, that's 30% of your code verified. The other 70% still uses static analysis. Coverage only removes false positives, it never adds them.
+
+**Q: My tests are failing. Can I still use `--coverage`?**
+A: Yes. Coverage tracks execution, not pass/fail. Even failing tests provide coverage data.
+
 ## Limitations
 
 - **Dynamic code**: `getattr()`, `globals()`, runtime imports are hard to detect
@@ -759,6 +857,7 @@ A: It flags common security problems. Refer to `DANGEROUS_CODE.md` for the full 
 - **False positives**: Always manually review before deleting code
 - **Secrets PoC**: May emit both a provider hit and a generic high-entropy hit for the same token. All tokens are detected only in py files (`.py`, `.pyi`, `.pyw`)
 - **Quality limitations**: The current `--quality` flag does not allow you to configure the cyclomatic complexity. 
+- **Coverage requires execution**: The `--coverage` flag only helps if you have tests or can run your application. Pure static analysis is still available without it.
 
 ## Troubleshooting
 
@@ -801,6 +900,8 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 - [x] Small integration with typescript
 - [ ] Expand and improve on capabilities of Skylos in various other languages
 - [ ] Expand the providers for LLMs
+- [x] Coverage integration for runtime verification
+- [x] Implicit reference detection (f-string patterns, framework decorators)
 
 ## License
 
