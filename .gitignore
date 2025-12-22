@@ -22,3 +22,4 @@ dist
 node_modules
 .pytest_cache
 .venv
+.coverage
