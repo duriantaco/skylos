@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/duriantaco/skylos
-    rev: v2.7.0
+    rev: v2.7.1
     hooks:
       - id: skylos-scan
         name: skylos report
