@@ -1,5 +1,3 @@
-# Skylos 🔍
-
 <div align="center">
    <img src="assets/dog.png" alt="Skylos Logo" width="300">
    <h1>Skylos: Guard the Logic</h1>
