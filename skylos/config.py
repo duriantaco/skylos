@@ -42,6 +42,9 @@ def load_config(start_path):
 
         user_cfg = data.get("tool", {}).get("skylos", {})
 
+        gate_cfg = data.get("tool", {}).get("skylos", {}).get("gate", {})
+        user_cfg["gate"] = gate_cfg
+
         final_cfg = DEFAULTS.copy()
         final_cfg.update(user_cfg)
         return final_cfg
