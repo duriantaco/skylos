@@ -4,7 +4,6 @@ import sys
 import json
 import logging
 import os
-import datetime
 from pathlib import Path
 from collections import defaultdict
 from skylos.visitor import Visitor
@@ -31,8 +30,11 @@ from skylos.rules.quality.logic import (
     MutableDefaultRule,
     BareExceptRule,
     DangerousComparisonRule,
+    TryBlockPatternsRule
+
 )
 from skylos.rules.quality.performance import PerformanceRule
+from skylos.rules.quality.unreachable import UnreachableCodeRule
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -197,14 +199,12 @@ class Skylos:
             if len(non_import_defs) == 1:
                 non_import_defs[0].references += 1
                 continue
-
-        for module_name in self.dynamic:
-            for def_name, def_obj in self.defs.items():
-                if def_obj.name.startswith(f"{module_name}."):
-                    if def_obj.type in (
-                        "function",
-                        "method",
-                    ) and not def_obj.simple_name.startswith("_"):
+        
+        if hasattr(self, 'pattern_trackers'):
+            for tracker in self.pattern_trackers.values():
+                for def_obj in self.defs.values():
+                    should_mark, conf, reason = tracker.should_mark_as_used(def_obj)
+                    if should_mark:
                         def_obj.references += 1
 
     def _get_base_classes(self, class_name):
@@ -418,10 +418,17 @@ class Skylos:
         for f in files:
             modmap[f] = self._module(root, f)
 
+        from skylos.implicit_refs import pattern_tracker
+        if Path(".coverage").exists():
+            if pattern_tracker.load_coverage():
+                logger.info(f"Loaded coverage data ({len(pattern_tracker.coverage_hits)} lines)")
+
         all_secrets = []
         all_dangers = []
         all_quality = []
         file_contexts = []
+        
+        pattern_trackers = {} 
 
         for file in files:
             mod = modmap[file]
@@ -435,7 +442,11 @@ class Skylos:
                 q_finds,
                 d_finds,
                 pro_finds,
+                pattern_tracker
             ) = proc_file(file, mod, extra_visitors)
+
+            if pattern_tracker:
+                pattern_trackers[mod] = pattern_tracker
 
             for definition in defs:
                 self.defs[definition.name] = definition
@@ -445,6 +456,7 @@ class Skylos:
             self.exports[mod].update(exports)
 
             file_contexts.append((defs, test_flags, framework_flags, file, mod))
+
 
             if enable_quality and q_finds:
                 all_quality.extend(q_finds)
@@ -466,6 +478,8 @@ class Skylos:
                         all_secrets.extend(findings)
                 except Exception:
                     pass
+        
+        self.pattern_trackers = pattern_trackers 
 
         for defs, test_flags, framework_flags, file, mod in file_contexts:
             for definition in defs:
@@ -505,20 +519,8 @@ class Skylos:
             ):
                 unused.append(definition.to_dict())
 
-        # result = {
-        #     "unused_functions": [],
-        #     "unused_imports": [],
-        #     "unused_classes": [],
-        #     "unused_variables": [],
-        #     "unused_parameters": [],
-        #     "analysis_summary": {
-        #         "total_files": len(files),
-        #         "excluded_folders": exclude_folders or [],
-        #     },
-
         context_map = {}
         for name, d in self.defs.items():
-            # Only export relevant types (classes, functions) to save tokens
             if d.type in ("class", "function", "method") and not name.startswith("_"):
                 context_map[name] = {
                     "name": d.name,
@@ -563,49 +565,6 @@ class Skylos:
             elif u["type"] == "parameter":
                 result["unused_parameters"].append(u)
 
-        # usage_map = {}
-        # if os.path.exists(".skylos_usage.json"):
-        #     with open(".skylos_usage.json", 'r') as f:
-        #         usage_map = json.load(f)
-
-        # cutoff_date = datetime.datetime.now() - datetime.timedelta(days=30)
-        # forgotten_functions = []
-
-        # for def_name, def_obj in self.defs.items():
-        #     if def_obj.type != "function" and def_obj.type != "method":
-        #         continue
-        #     try:
-        #         rel_path = os.path.relpath(def_obj.filename, os.getcwd())
-        #         key = f"{rel_path}::{def_obj.simple_name}"
-        #     except ValueError:
-        #         continue
-
-        #     last_seen = usage_map.get(key)
-
-        #     if not last_seen:
-        #         if usage_map: 
-        #             forgotten_functions.append({
-        #                 "name": def_obj.name,
-        #                 "file": str(def_obj.filename),
-        #                 "line": def_obj.line,
-        #                 "status": "NEVER_CALLED"
-        #             })
-
-        #     else:
-        #         try:
-        #             date_obj = datetime.datetime.strptime(last_seen, "%Y-%m-%d")
-        #             if date_obj < cutoff_date:
-        #                 forgotten_functions.append({
-        #                     "name": def_obj.name,
-        #                     "file": str(def_obj.filename),
-        #                     "line": def_obj.line,
-        #                     "status": f"EXPIRED (Last seen {last_seen})"
-        #                 })
-        #         except ValueError:
-        #             pass 
-
-        # result["forgotten"] = forgotten_functions
-
         return json.dumps(result, indent=2)
 
 
@@ -645,6 +604,11 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             q_rules.append(BareExceptRule())
         if "SKY-L003" not in cfg["ignore"]:
             q_rules.append(DangerousComparisonRule())
+        if "SKY-L004" not in cfg["ignore"]:
+            q_rules.append(TryBlockPatternsRule(max_lines=15))
+        
+        if "SKY-U001" not in cfg["ignore"]:
+            q_rules.append(UnreachableCodeRule())
 
         q_rules.append(PerformanceRule(ignore_list=cfg["ignore"]))
 
@@ -686,6 +650,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             quality_findings,
             danger_findings,
             pro_findings,
+            v.pattern_tracker
         )
 
     except Exception as e:
@@ -695,7 +660,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
         dummy_visitor = TestAwareVisitor(filename=file)
         dummy_visitor.ignore_lines = set()
         dummy_framework_visitor = FrameworkAwareVisitor(filename=file)
-        return [], [], set(), set(), dummy_visitor, dummy_framework_visitor, [], [], []
+        return [], [], set(), set(), dummy_visitor, dummy_framework_visitor, [], [], [], None
 
 
 def analyze(
