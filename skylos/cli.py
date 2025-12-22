@@ -17,7 +17,6 @@ from skylos.config import load_config
 from skylos.gatekeeper import run_gate_interaction
 from skylos.credentials import get_key, save_key
 from skylos.api import upload_report
-# from skylos.tracker import run_and_track
 
 import pathlib
 import skylos
@@ -302,7 +301,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
     console.print(
         " ".join(
             [
-                _pill("Unreachable", len(result.get("unused_functions", []))),
+                _pill("Unused functions", len(result.get("unused_functions", []))),
                 _pill("Unused imports", len(result.get("unused_imports", []))),
                 _pill("Unused params", len(result.get("unused_parameters", []))),
                 _pill("Unused vars", len(result.get("unused_variables", []))),
@@ -360,7 +359,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
             elif quality.get("kind") == "structure":
                 detail = f"Line count: {value}"
             else:
-                detail = f"Cyclomatic complexity: {value}"
+                detail = f"{value}"
             if thr is not None:
                 detail += f" (target ≤ {thr})"
             if length is not None:
@@ -480,7 +479,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
         render_tree(console, result, root_path=root_path)
     else:
         _render_unused(
-            "Unreachable Functions", result.get("unused_functions", []), name_key="name"
+            "Unused Functions", result.get("unused_functions", []), name_key="name"
         )
         _render_unused(
             "Unused Imports", result.get("unused_imports", []), name_key="name"
@@ -581,7 +580,6 @@ def estimate_cost(files):
 
 
 def main():
-
     # if len(sys.argv) > 2 and sys.argv[1] == "track":
     #     script = sys.argv[2]
     #     args = sys.argv[3:]
@@ -628,7 +626,7 @@ def main():
             sys.exit(1)
 
     parser = argparse.ArgumentParser(
-        description="Detect unreachable functions and unused imports in a Python project"
+        description="Detect unused functions and unused imports in a Python project"
     )
     parser.add_argument("path", help="Path to the Python project")
     parser.add_argument(
@@ -637,9 +635,15 @@ def main():
         help="Run as a quality gate (block deployment on failure)",
     )
     parser.add_argument(
-        "--force", "-f", 
-        action="store_true", 
-        help="Bypass the quality gate (exit 0 even if issues found)"
+        "--coverage",
+        action="store_true",
+        help="Run tests with coverage first, then analyze"
+    )
+    parser.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Bypass the quality gate (exit 0 even if issues found)",
     )
     parser.add_argument(
         "--fix", action="store_true", help="Attempt to auto-fix issues using AI"
@@ -767,6 +771,28 @@ def main():
         else:
             console.print("[good] No folders excluded[/good]")
 
+    if args.coverage:
+        if not args.json:
+            console.print("[brand]Running tests with coverage...[/brand]")
+        
+        pytest_result = subprocess.run(
+            ["coverage", "run", "-m", "pytest", "-q"],
+            cwd=project_root,
+            capture_output=True
+        )
+        
+        if pytest_result.returncode != 0:
+            if not args.json:
+                console.print("[warn]pytest failed, trying unittest...[/warn]")
+            subprocess.run(
+                ["coverage", "run", "-m", "unittest", "discover"],
+                cwd=project_root,
+                capture_output=True
+            )
+        
+        if not args.json:
+            console.print("[good]Coverage data collected[/good]")
+
     try:
         with Progress(
             SpinnerColumn(style="brand"),
@@ -793,6 +819,12 @@ def main():
     except Exception as e:
         logger.error(f"Error during analysis: {e}")
         sys.exit(1)
+
+    config = load_config(project_root)
+
+    if args.gate:
+        exit_code = run_gate_interaction(result, config, args.command or None)
+        sys.exit(exit_code)
 
     if args.fix:
         console.print("[brand]Auto-Fix Mode Enabled (GPT-5)[/brand]")
@@ -966,7 +998,7 @@ def main():
                     if f in git_files:
                         label = f"[CHANGED] {label}"
                     choices.append((label, f))
-                except:
+                except OSError:
                     pass
 
             defaults = [f for f in git_files]
@@ -1123,10 +1155,12 @@ def main():
 
     forgotten = result.get("forgotten", [])
     if forgotten:
-        console.print("\n[bold red]Forgotten / Dead Functions (Last 30 Days)[/bold red]")
+        console.print(
+            "\n[bold red]Forgotten / Dead Functions (Last 30 Days)[/bold red]"
+        )
         console.print("=====================================================")
         for item in forgotten:
-            status = item['status']
+            status = item["status"]
 
             if "EXPIRED" in status:
                 style = "dim"
@@ -1137,63 +1171,79 @@ def main():
             console.print(f"    └─ {item['file']}:{item['line']}")
 
     if not args.interactive and not args.json:
-        
         upload_resp = upload_report(result)
-        
+
         if not upload_resp.get("success"):
             if upload_resp.get("error") != "No token found":
-                 console.print(f"[warn]Upload failed: {upload_resp.get('error')}[/warn]")
+                console.print(f"[warn]Upload failed: {upload_resp.get('error')}[/warn]")
         else:
             qg = upload_resp.get("quality_gate", {})
             scan_id = upload_resp.get("scan_id")
             passed = qg.get("passed", True)
-            
+
             if passed:
-                console.print(f"[good]✓ Quality Gate Passed.[/good] {qg.get('message', '')}")
+                console.print(
+                    f"[good]✓ Quality Gate Passed.[/good] {qg.get('message', '')}"
+                )
             else:
                 console.print(Rule(style="bad"))
                 console.print(f"[bold red]QUALITY GATE FAILED[/bold red]")
                 console.print(f"   {qg.get('message', '')}")
 
                 if args.force:
-                    console.print("\n[bold yellow]WARNING: FORCED BYPASS ENABLED[/bold yellow]")
+                    console.print(
+                        "\n[bold yellow]WARNING: FORCED BYPASS ENABLED[/bold yellow]"
+                    )
                     console.print("[dim]Proceeding despite quality failures...[/dim]")
                 else:
-                    console.print(f"\n[bold yellow]Action Required:[/bold yellow] Override this scan to proceed.")
-                    console.print(f"   Link: [link]http://localhost:3000/dashboard/scans/{scan_id}[/link]")
+                    console.print(
+                        f"\n[bold yellow]Action Required:[/bold yellow] Override this scan to proceed."
+                    )
+                    console.print(
+                        f"   Link: [link]http://localhost:3000/dashboard/scans/{scan_id}[/link]"
+                    )
                     console.print(Rule(style="bad"))
 
                     if args.gate or args.command:
                         import time
                         from skylos.api import check_scan_status
-                        
+
                         resolved = False
                         try:
-                            with console.status("[bold yellow]Waiting for approval on Dashboard...[/bold yellow]", spinner="dots") as status:
+                            with console.status(
+                                "[bold yellow]Waiting for approval on Dashboard...[/bold yellow]",
+                                spinner="dots",
+                            ) as status:
                                 while True:
                                     time.sleep(2)
-                                    
+
                                     poll_res = check_scan_status(scan_id)
                                     if poll_res and poll_res.get("status") == "PASSED":
                                         resolved = True
-                                        reason = "Overridden" if poll_res.get("is_overridden") else "Fixed"
+                                        reason = (
+                                            "Overridden"
+                                            if poll_res.get("is_overridden")
+                                            else "Fixed"
+                                        )
                                         break
                         except KeyboardInterrupt:
                             console.print("\n[bad]Aborted by user.[/bad]")
                             sys.exit(1)
 
                         if resolved:
-                            console.print(f"\n[bold green]Approval Detected![/bold green] (Status: {reason})")
+                            console.print(
+                                f"\n[bold green]Approval Detected![/bold green] (Status: {reason})"
+                            )
                         else:
                             sys.exit(1)
                     else:
                         sys.exit(1)
 
-    if args.command:
+    if args.command and not args.gate:
         cmd_list = args.command
         if cmd_list[0] == "--":
             cmd_list = cmd_list[1:]
-        
+
         console.print(Rule(style="brand"))
         console.print(f"[brand]Executing Deployment:[/brand] {' '.join(cmd_list)}")
         
@@ -1202,36 +1252,39 @@ def main():
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 console=console,
-                transient=True
+                transient=True,
             ) as progress:
                 task = progress.add_task("[cyan]Initializing deployment...", total=None)
-                
+
                 process = subprocess.Popen(
-                    cmd_list, 
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.STDOUT, 
+                    cmd_list,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
                     text=True,
-                    bufsize=1
+                    bufsize=1,
                 )
-                
+
                 for line in process.stdout:
                     line = line.strip()
                     if line:
                         progress.update(task, description=f"[cyan]{line}")
                         console.print(f"[dim]{line}[/dim]")
-                
+
                 process.wait()
-                
+
             if process.returncode == 0:
                 console.print(f"[bold green]✓ Deployment Successful[/bold green]")
                 sys.exit(0)
             else:
-                console.print(f"[bold red]x Deployment Failed (Exit Code {process.returncode})[/bold red]")
+                console.print(
+                    f"[bold red]x Deployment Failed (Exit Code {process.returncode})[/bold red]"
+                )
                 sys.exit(process.returncode)
 
         except Exception as e:
             console.print(f"[bad]Failed to execute command: {e}[/bad]")
             sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
