@@ -11,7 +11,7 @@
 ![Security Policy](https://img.shields.io/badge/security-policy-brightgreen)
 ![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
 
-> Skylos is a static analysis tool for Python codebases written in Python that maps your code's structure to hunt down dead code, quality checks and security vulnerabilties before you push your code anywhere`.
+> Skylos is a static analysis tool for Python codebases which locates dead code, performs quality checks, and finds security vulnerabilties.
 
 ## Table of Contents
 
@@ -304,9 +304,7 @@ repos:
         pass_filenames: false
         require_serial: true
         entry: python scripts/skylos_gate.py
-```
-
-</details>
+</details>```
 
 <details>
 <summary><b>Option B: Self-contained local hook</b></summary>
@@ -345,9 +343,7 @@ repos:
 
           print(f'[skylos] findings: {count}');
           sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"
-```
-
-</details>
+</details>```
 
 
 For option A, you can put this in `scripts/sylos_gate.py`
