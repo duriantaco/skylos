@@ -587,15 +587,17 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "init":
         run_init()
         sys.exit(0)
-    
+
     if len(sys.argv) > 1 and sys.argv[1] == "run":
         try:
             from skylos.server import start_server
         except ImportError:
             Console().print("[bold red]Error: Flask is required[/bold red]")
-            Console().print("[bold yellow]Install with: pip install flask flask-cors[/bold yellow]")
+            Console().print(
+                "[bold yellow]Install with: pip install flask flask-cors[/bold yellow]"
+            )
             sys.exit(1)
-    
+
         run_exclude_folders = []
         run_include_folders = []
         no_defaults = False
@@ -642,7 +644,7 @@ def main():
     parser.add_argument(
         "--coverage",
         action="store_true",
-        help="Run tests with coverage first, then analyze"
+        help="Run tests with coverage first, then analyze",
     )
     parser.add_argument(
         "--force",
@@ -779,22 +781,22 @@ def main():
     if args.coverage:
         if not args.json:
             console.print("[brand]Running tests with coverage...[/brand]")
-        
+
         pytest_result = subprocess.run(
             ["coverage", "run", "-m", "pytest", "-q"],
             cwd=project_root,
-            capture_output=True
+            capture_output=True,
         )
-        
+
         if pytest_result.returncode != 0:
             if not args.json:
                 console.print("[warn]pytest failed, trying unittest...[/warn]")
             subprocess.run(
                 ["coverage", "run", "-m", "unittest", "discover"],
                 cwd=project_root,
-                capture_output=True
+                capture_output=True,
             )
-        
+
         if not args.json:
             console.print("[good]Coverage data collected[/good]")
 
@@ -1251,7 +1253,7 @@ def main():
 
         console.print(Rule(style="brand"))
         console.print(f"[brand]Executing Deployment:[/brand] {' '.join(cmd_list)}")
-        
+
         try:
             with Progress(
                 SpinnerColumn(),

@@ -59,6 +59,7 @@ DYNAMIC_PATTERNS = {"getattr", "globals", "eval", "exec"}
 
 ## "🥚" hi :)
 
+
 class Definition:
     def __init__(self, name, t, filename, line):
         self.name = name
@@ -189,7 +190,7 @@ class Visitor(ast.NodeVisitor):
     def visit_ImportFrom(self, node):
         if node.module is None:
             return
-        
+
         for a in node.names:
             if a.name == "*":
                 continue
@@ -208,10 +209,10 @@ class Visitor(ast.NodeVisitor):
             else:
                 self.alias[a.name] = full
                 self.add_def(full, "import", node.lineno)
-    
+
     def visit_If(self, node):
         condition = evaluate_static_condition(node.test)
-        
+
         self.visit(node.test)
 
         if condition is True:
@@ -277,19 +278,38 @@ class Visitor(ast.NodeVisitor):
         self.add_def(qualified_name, def_type, node.lineno)
 
         FRAMEWORK_DECORATORS = {
-            'route', '.get', '.post', '.put', '.delete', '.patch',
-            'fixture', 'pytest', 'task', 'celery', 'register',
-            'subscriber', 'listener', 'handler', 'receiver', 'command'
+            "route",
+            ".get",
+            ".post",
+            ".put",
+            ".delete",
+            ".patch",
+            "fixture",
+            "pytest",
+            "task",
+            "celery",
+            "register",
+            "subscriber",
+            "listener",
+            "handler",
+            "receiver",
+            "command",
         }
 
         for deco in node.decorator_list:
             deco_name = self._get_decorator_name(deco)
             if deco_name:
-                if deco_name in ("property", "cached_property", "functools.cached_property"):
+                if deco_name in (
+                    "property",
+                    "cached_property",
+                    "functools.cached_property",
+                ):
                     self.add_ref(qualified_name)
                 elif deco_name.endswith((".setter", ".deleter")):
                     self.add_ref(qualified_name)
-                elif any(keyword in deco_name.lower() for keyword in FRAMEWORK_DECORATORS):
+                elif any(
+                    keyword in deco_name.lower() for keyword in FRAMEWORK_DECORATORS
+                ):
                     self.add_ref(qualified_name)
 
             elif deco_name and deco_name.endswith((".setter", ".deleter")):
@@ -649,14 +669,13 @@ class Visitor(ast.NodeVisitor):
             self.instance_attr_types[attr_key] = qualified_class
 
     def visit_Assign(self, node):
-        
         const_val = extract_constant_string(node.value)
         if const_val is not None:
             if len(self.local_constants) > 0:
                 for t in node.targets:
                     if isinstance(t, ast.Name):
                         self.local_constants[-1][t.id] = const_val
-        
+
         if isinstance(node.value, ast.JoinedStr):
             pattern = self._extract_fstring_pattern(node.value)
             if pattern:
@@ -683,7 +702,7 @@ class Visitor(ast.NodeVisitor):
                 parts.append("*")
                 has_var = True
         return "".join(parts) if has_var else None
-    
+
     def visit_Call(self, node):
         self.generic_visit(node)
 
@@ -692,7 +711,6 @@ class Visitor(ast.NodeVisitor):
             and node.func.id in ("getattr", "hasattr")
             and len(node.args) >= 2
         ):
-            
             attr_name = None
 
             if isinstance(node.args[1], ast.Name) and self.local_constants:
@@ -700,7 +718,7 @@ class Visitor(ast.NodeVisitor):
 
             if not attr_name:
                 attr_name = extract_constant_string(node.args[1])
-            
+
             if attr_name:
                 self.add_ref(attr_name)
 
@@ -709,7 +727,7 @@ class Visitor(ast.NodeVisitor):
                     if module_name != "self":
                         qualified_name = f"{self.qual(module_name)}.{attr_name}"
                         self.add_ref(qualified_name)
-            
+
             # elif isinstance(node.args[0], ast.Name):
             #     target_name = node.args[0].id
             #     if target_name != "self":
@@ -726,7 +744,10 @@ class Visitor(ast.NodeVisitor):
                         if var_name in self.pattern_tracker.f_string_patterns:
                             pattern = self.pattern_tracker.f_string_patterns[var_name]
                             self.pattern_tracker.pattern_refs.append((pattern, 70))
-                        elif self.local_constants and var_name in self.local_constants[-1]:
+                        elif (
+                            self.local_constants
+                            and var_name in self.local_constants[-1]
+                        ):
                             val = self.local_constants[-1][var_name]
                             self.pattern_tracker.known_refs.add(val)
 

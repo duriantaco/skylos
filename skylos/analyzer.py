@@ -30,8 +30,7 @@ from skylos.rules.quality.logic import (
     MutableDefaultRule,
     BareExceptRule,
     DangerousComparisonRule,
-    TryBlockPatternsRule
-
+    TryBlockPatternsRule,
 )
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
@@ -199,8 +198,8 @@ class Skylos:
             if len(non_import_defs) == 1:
                 non_import_defs[0].references += 1
                 continue
-        
-        if hasattr(self, 'pattern_trackers'):
+
+        if hasattr(self, "pattern_trackers"):
             for tracker in self.pattern_trackers.values():
                 for def_obj in self.defs.values():
                     should_mark, conf, reason = tracker.should_mark_as_used(def_obj)
@@ -419,16 +418,19 @@ class Skylos:
             modmap[f] = self._module(root, f)
 
         from skylos.implicit_refs import pattern_tracker
+
         if Path(".coverage").exists():
             if pattern_tracker.load_coverage():
-                logger.info(f"Loaded coverage data ({len(pattern_tracker.coverage_hits)} lines)")
+                logger.info(
+                    f"Loaded coverage data ({len(pattern_tracker.coverage_hits)} lines)"
+                )
 
         all_secrets = []
         all_dangers = []
         all_quality = []
         file_contexts = []
-        
-        pattern_trackers = {} 
+
+        pattern_trackers = {}
 
         for file in files:
             mod = modmap[file]
@@ -442,7 +444,7 @@ class Skylos:
                 q_finds,
                 d_finds,
                 pro_finds,
-                pattern_tracker
+                pattern_tracker,
             ) = proc_file(file, mod, extra_visitors)
 
             if pattern_tracker:
@@ -456,7 +458,6 @@ class Skylos:
             self.exports[mod].update(exports)
 
             file_contexts.append((defs, test_flags, framework_flags, file, mod))
-
 
             if enable_quality and q_finds:
                 all_quality.extend(q_finds)
@@ -478,8 +479,8 @@ class Skylos:
                         all_secrets.extend(findings)
                 except Exception:
                     pass
-        
-        self.pattern_trackers = pattern_trackers 
+
+        self.pattern_trackers = pattern_trackers
 
         for defs, test_flags, framework_flags, file, mod in file_contexts:
             for definition in defs:
@@ -606,7 +607,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             q_rules.append(DangerousComparisonRule())
         if "SKY-L004" not in cfg["ignore"]:
             q_rules.append(TryBlockPatternsRule(max_lines=15))
-        
+
         if "SKY-U001" not in cfg["ignore"]:
             q_rules.append(UnreachableCodeRule())
 
@@ -650,7 +651,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             quality_findings,
             danger_findings,
             pro_findings,
-            v.pattern_tracker
+            v.pattern_tracker,
         )
 
     except Exception as e:
@@ -660,7 +661,18 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
         dummy_visitor = TestAwareVisitor(filename=file)
         dummy_visitor.ignore_lines = set()
         dummy_framework_visitor = FrameworkAwareVisitor(filename=file)
-        return [], [], set(), set(), dummy_visitor, dummy_framework_visitor, [], [], [], None
+        return (
+            [],
+            [],
+            set(),
+            set(),
+            dummy_visitor,
+            dummy_framework_visitor,
+            [],
+            [],
+            [],
+            None,
+        )
 
 
 def analyze(

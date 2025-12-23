@@ -12,16 +12,20 @@ _COMPLEX_NODES = (
     ast.IfExp,
 )
 
+
 def _func_complexity(fn_node: ast.AST) -> int:
     c = 1
 
     class Visitor(ast.NodeVisitor):
         def visit_FunctionDef(self, node):
             return
+
         def visit_AsyncFunctionDef(self, node):
             return
+
         def visit_ClassDef(self, node):
             return
+
         def visit_Lambda(self, node):
             return
 

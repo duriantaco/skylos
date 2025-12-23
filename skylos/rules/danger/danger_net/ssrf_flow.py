@@ -20,10 +20,9 @@ def _qualified_name_from_call(node):
 
 
 def _has_safe_base_url(node):
-
     if not node.values:
         return True
-    
+
     first = node.values[0]
 
     if isinstance(first, ast.Constant) and isinstance(first.value, str):
@@ -37,7 +36,7 @@ def _has_safe_base_url(node):
     if isinstance(first, ast.FormattedValue):
         if isinstance(first.value, ast.Name) and first.value.id.isupper():
             return True
-            
+
     return False
 
 

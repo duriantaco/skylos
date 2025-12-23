@@ -103,7 +103,8 @@ class DangerousComparisonRule(SkylosRule):
             return findings
         else:
             return None
-        
+
+
 class TryBlockPatternsRule(SkylosRule):
     rule_id = "SKY-L004"
     name = "Anti-Pattern Try Block"
@@ -117,20 +118,22 @@ class TryBlockPatternsRule(SkylosRule):
             return None
 
         findings = []
-  
+
         if node.body:
             start = node.body[0].lineno
             end = getattr(node.body[-1], "end_lineno", start)
             length = end - start + 1
 
             if length > self.max_lines:
-                findings.append(self._create_finding(
-                    node, context, 
-                    severity="LOW",
-                    value=length,
-                    msg=f"Try block covers {length} lines (limit: {self.max_lines}). Reduce scope to the risky operation only."
-                ))
-
+                findings.append(
+                    self._create_finding(
+                        node,
+                        context,
+                        severity="LOW",
+                        value=length,
+                        msg=f"Try block covers {length} lines (limit: {self.max_lines}). Reduce scope to the risky operation only.",
+                    )
+                )
 
         control_flow_count = 0
         has_nested_try = False
@@ -139,29 +142,35 @@ class TryBlockPatternsRule(SkylosRule):
             for child in ast.walk(stmt):
                 if isinstance(child, ast.Try):
                     has_nested_try = True
-                
+
                 if isinstance(child, (ast.If, ast.For, ast.While)):
                     control_flow_count += 1
 
         if has_nested_try:
-            findings.append(self._create_finding(
-                node, context,
-                severity="MEDIUM",
-                value="nested",
-                msg="Nested 'try' block detected. Flatten logic or move inner try to a helper function."
-            ))
+            findings.append(
+                self._create_finding(
+                    node,
+                    context,
+                    severity="MEDIUM",
+                    value="nested",
+                    msg="Nested 'try' block detected. Flatten logic or move inner try to a helper function.",
+                )
+            )
 
         if control_flow_count > self.max_control_flow:
-            findings.append(self._create_finding(
-                node, context,
-                severity="HIGH",
-                value=control_flow_count,
-                msg=f"Try block contains {control_flow_count} control flow statements. Don't wrap complex logic in error handling."
-            ))
+            findings.append(
+                self._create_finding(
+                    node,
+                    context,
+                    severity="HIGH",
+                    value=control_flow_count,
+                    msg=f"Try block contains {control_flow_count} control flow statements. Don't wrap complex logic in error handling.",
+                )
+            )
 
         if findings:
             return findings
-        else: 
+        else:
             return None
 
     def _create_finding(self, node, context, severity, value, msg):

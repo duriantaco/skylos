@@ -14,8 +14,8 @@ OPS = {
     ast.NotIn: lambda x, y: x not in y,
 }
 
-def evaluate_static_condition(node):
 
+def evaluate_static_condition(node):
     if isinstance(node, ast.Constant):
         return node.value
 
@@ -30,7 +30,7 @@ def evaluate_static_condition(node):
         values = []
         for v in node.values:
             values.append(evaluate_static_condition(v))
-        
+
         if isinstance(node.op, ast.And):
             for v in values:
                 if v is False:
@@ -66,6 +66,7 @@ def evaluate_static_condition(node):
                     return None
 
     return None
+
 
 def extract_constant_string(node):
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
