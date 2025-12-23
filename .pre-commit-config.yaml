@@ -4,7 +4,7 @@ repos:
       - id: skylos-scan
         name: skylos report
         entry: python -m skylos.cli
-        language: python
+        language: system
         pass_filenames: false
         require_serial: true
         args: [".", "--output", "report.json", "--confidence", "70", "--danger"]
@@ -13,8 +13,7 @@ repos:
         name: skylos
         env:
           SKYLOS_SOFT: "1"
-        language: python
-        language_version: python3
+        language: system
         pass_filenames: false
         require_serial: true
         entry: >
