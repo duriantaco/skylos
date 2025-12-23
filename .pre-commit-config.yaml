@@ -1,18 +1,14 @@
 repos:
-  - repo: https://github.com/duriantaco/skylos
-    rev: v2.7.1
+  - repo: local
     hooks:
       - id: skylos-scan
         name: skylos report
         entry: python -m skylos.cli
         language: python
-        types_or: [python]
         pass_filenames: false
         require_serial: true
         args: [".", "--output", "report.json", "--confidence", "70", "--danger"]
 
-  - repo: local
-    hooks:
       - id: skylos-fail-on-findings
         name: skylos
         env:
@@ -24,16 +20,10 @@ repos:
         entry: >
           python -c "import os, json, sys, pathlib;
           p=pathlib.Path('report.json');
-
-          if not p.exists(): 
-            sys.exit(0);
-
+          if not p.exists(): sys.exit(0);
           data=json.loads(p.read_text(encoding='utf-8'));
-
-          count = 0
+          count=0
           for v in data.values():
-            if isinstance(v, list):
-              count += len(v)
-
+            if isinstance(v, list): count += len(v)
           print(f'[skylos] findings: {count}');
           sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"
