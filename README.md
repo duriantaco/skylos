@@ -1,7 +1,6 @@
 <div align="center">
    <img src="assets/dog.png" alt="Skylos Logo" width="300">
-   <h1>Skylos: Guard the Logic</h1>
-   <h3>We keep your codebases secure day and night</h3>
+   <h1>Skylos: Guard your Code</h1>
 </div>
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
@@ -12,7 +11,7 @@
 ![Security Policy](https://img.shields.io/badge/security-policy-brightgreen)
 ![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
 
-> Skylos is **the watchdog** for your repository. It maps your code's structure to hunt down dead logic, trace tainted data, and kill security rot before you hit `git push`.
+> Skylos is a static analysis tool for Python codebases written in Python that maps your code's structure to hunt down dead code, quality checks and security vulnerabilties before you push your code anywhere`.
 
 ## Table of Contents
 
