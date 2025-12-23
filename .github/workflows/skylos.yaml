@@ -19,15 +19,20 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install Skylos
-        run: pip install skylos
+      - name: Use repo skylos (not PyPI)
+        run: |
+          python -m pip uninstall -y skylos || true
+          python -m pip install -U pip
+          python -m pip install -e .
+          python -c "import skylos; print('skylos from:', skylos.__file__)"
+          python -c "import skylos.visitors.languages; print('languages OK')"
 
       - name: Run Skylos
         env:
           REPORT: skylos_${{ github.run_number }}_${{ github.sha }}.json
         run: |
           echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
-          skylos . --json > "$REPORT"
+          python -m skylos.cli . --json > "$REPORT"
         id: scan
 
       - name: Fail if there are findings
