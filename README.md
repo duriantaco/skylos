@@ -283,8 +283,7 @@ jobs:
 
 Pick one approach:
 
-<details>
-<summary><b>Option A: Skylos hook repo</b></summary>
+<b>Option A: Skylos hook repo</b>
 ```yaml
 ## .pre-commit-config.yaml
 repos:
@@ -304,10 +303,10 @@ repos:
         pass_filenames: false
         require_serial: true
         entry: python scripts/skylos_gate.py
-</details>```
+```
 
-<details>
-<summary><b>Option B: Self-contained local hook</b></summary>
+
+<b>Option B: Self-contained local hook</b>
 ```yaml
 repos:
   - repo: local
@@ -330,23 +329,14 @@ repos:
         entry: >
           python -c "import os, json, sys, pathlib;
           p=pathlib.Path('report.json');
-
-          if not p.exists(): 
-            sys.exit(0);
-
+          if not p.exists(): sys.exit(0);
           data=json.loads(p.read_text(encoding='utf-8'));
-
-          count = 0
-          for v in data.values():
-            if isinstance(v, list):
-              count += len(v)
-
+          count = sum(len(v) for v in data.values() if isinstance(v, list));
           print(f'[skylos] findings: {count}');
           sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"
-</details>```
+```
 
-
-For option A, you can put this in `scripts/sylos_gate.py`
+If you chose option A, then do remember to put this script below in a folder `scripts/sylos_gate.py`
 
 ```python
 #!/usr/bin/env python3
