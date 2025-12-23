@@ -3,7 +3,10 @@
 ## [2.7.1] - 2025-12-23
 
 ### Fixed
-- Fixed `--version` bug. Language folder was missing an `__init__.py`
+- Fixed packaging bug where `skylos.visitors.languages` were missing from some installs, causing `ModuleNotFoundError: No module named 'skylos.visitors.languages'`
+- Fixed bug where running `skylos --version` could crash by importing optional language scanners too early
+- Fixed pre-commit integration issue where inline `python -c gate` scripts could fail with SyntaxError due to multi-statement if usage
+- Fixed pre-commit integration reliability by moving the "fail-on-findings" logic into `scripts/skylos_gate.py` entry
 
 ## [2.7.0] - 2025-12-19
 
