@@ -18,12 +18,11 @@ repos:
         pass_filenames: false
         require_serial: true
         entry: >
-          python -c "import os, json, sys, pathlib;
+          python -c "import os,json,sys,pathlib;
           p=pathlib.Path('report.json');
-          if not p.exists(): sys.exit(0);
+          (not p.exists()) and sys.exit(0);
           data=json.loads(p.read_text(encoding='utf-8'));
-          count=0
-          for v in data.values():
-            if isinstance(v, list): count += len(v)
+          vals=(data.values() if isinstance(data,dict) else data if isinstance(data,list) else []);
+          count=sum(len(v) for v in vals if isinstance(v,list));
           print(f'[skylos] findings: {count}');
           sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"

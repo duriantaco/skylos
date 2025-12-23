@@ -3,7 +3,6 @@ import json
 import sys
 import logging
 from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
-from skylos.server import start_server
 from skylos.fixer import Fixer
 from skylos.analyzer import analyze as run_analyze
 from skylos.codemods import (
@@ -588,8 +587,15 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "init":
         run_init()
         sys.exit(0)
-
+    
     if len(sys.argv) > 1 and sys.argv[1] == "run":
+        try:
+            from skylos.server import start_server
+        except ImportError:
+            Console().print("[bold red]Error: Flask is required[/bold red]")
+            Console().print("[bold yellow]Install with: pip install flask flask-cors[/bold yellow]")
+            sys.exit(1)
+    
         run_exclude_folders = []
         run_include_folders = []
         no_defaults = False
