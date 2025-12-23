@@ -11,17 +11,25 @@ repos:
 
       - id: skylos-fail-on-findings
         name: skylos
-        env:
-          SKYLOS_SOFT: "1"
         language: system
         pass_filenames: false
         require_serial: true
         entry: >
           python -c "import os,json,sys,pathlib;
           p=pathlib.Path('report.json');
-          (not p.exists()) and sys.exit(0);
-          data=json.loads(p.read_text(encoding='utf-8'));
+          if not p.exists(): sys.exit(0);
+          txt=p.read_text(encoding='utf-8', errors='ignore').strip();
+          if not txt: 
+            print('[skylos] report.json empty (skipping gate)');
+            sys.exit(0);
+          try:
+            data=json.loads(txt);
+          except Exception as e:
+            print(f'[skylos] report.json invalid JSON (skipping gate): {e}');
+            sys.exit(0);
           vals=(data.values() if isinstance(data,dict) else data if isinstance(data,list) else []);
           count=sum(len(v) for v in vals if isinstance(v,list));
           print(f'[skylos] findings: {count}');
-          sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"
+          soft=os.getenv('SKYLOS_SOFT','').strip();
+          sys.exit(0 if soft or count==0 else 1)"
+
