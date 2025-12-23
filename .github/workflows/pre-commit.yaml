@@ -1,17 +1,22 @@
 name: pre-commit
 on: [push, pull_request]
+
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: "pip" }
 
-      - name: Install skylos
+      - name: Use repo skylos (not PyPI)
         run: |
+          python -m pip uninstall -y skylos || true
           python -m pip install -U pip
-          pip install -e .
+          python -m pip install -e .
+          python -c "import skylos; print('skylos from:', skylos.__file__)"
+          python -c "import skylos.visitors.languages; print('languages OK')"
 
       - uses: pre-commit/action@v3.0.1
         with: { extra_args: --all-files }
