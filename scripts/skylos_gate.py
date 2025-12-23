@@ -6,6 +6,7 @@ from pathlib import Path
 
 REPORT = Path("report.json")
 
+
 def main() -> int:
     if not REPORT.exists():
         print("[skylos] report.json missing (skipping gate)")
@@ -41,6 +42,6 @@ def main() -> int:
     else:
         return 1
 
+
 if __name__ == "__main__":
     raise SystemExit(main())
-

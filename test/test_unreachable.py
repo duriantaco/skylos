@@ -2,6 +2,7 @@ import unittest
 import ast
 from skylos.rules.quality.unreachable import UnreachableCodeRule
 
+
 class TestUnreachableCodeRule(unittest.TestCase):
     def setUp(self):
         self.rule = UnreachableCodeRule()
@@ -37,8 +38,8 @@ def dead_code():
 """
         findings = self._analyze(code)
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]['line'], 4)
-        self.assertIn("follows a return", findings[0]['message'])
+        self.assertEqual(findings[0]["line"], 4)
+        self.assertIn("follows a return", findings[0]["message"])
 
     def test_raise_unreachable(self):
         code = """
@@ -48,7 +49,7 @@ def error_func():
 """
         findings = self._analyze(code)
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]['line'], 4)
+        self.assertEqual(findings[0]["line"], 4)
 
     def test_break_in_loop(self):
         code = """
@@ -61,10 +62,10 @@ def loop_func():
         tree = ast.parse(code)
         if_node = tree.body[0].body[0].body[1]
         findings = self.rule.visit_node(if_node, self.context)
-        
+
         self.assertIsNotNone(findings)
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]['line'], 6)
+        self.assertEqual(findings[0]["line"], 6)
 
     def test_continue_unreachable(self):
         code = """
@@ -74,11 +75,11 @@ def loop_func():
         print("unreachable")
 """
         tree = ast.parse(code)
-        for_node = tree.body[0].body[0] 
+        for_node = tree.body[0].body[0]
         findings = self.rule.visit_node(for_node, self.context)
-        
+
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]['line'], 5)
+        self.assertEqual(findings[0]["line"], 5)
 
     def test_if_else_both_return(self):
         code = """
@@ -92,7 +93,7 @@ def check_branches(x):
 """
         findings = self._analyze(code)
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]['line'], 7)
+        self.assertEqual(findings[0]["line"], 7)
 
     def test_if_else_partial_return(self):
         code = """
@@ -134,7 +135,7 @@ def complex_logic(x, y):
 """
         findings = self._analyze(code)
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]['line'], 10)
+        self.assertEqual(findings[0]["line"], 10)
 
     def test_flag_only_first_unreachable(self):
         code = """
@@ -146,7 +147,8 @@ def noise():
 """
         findings = self._analyze(code)
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]['line'], 4)
+        self.assertEqual(findings[0]["line"], 4)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
