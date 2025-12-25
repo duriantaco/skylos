@@ -306,6 +306,11 @@ class TestAnalyze:
             "line": 1,
         }
 
+        mock_def.line = 1
+        mock_def.filename = "test.py"
+        mock_def.simple_name = "unused_function"
+        mock_def.in_init = False
+
         mock_test_visitor = Mock(spec=TestAwareVisitor)
         mock_test_visitor.is_test_file = False
         mock_test_visitor.test_decorated_lines = set()
@@ -321,6 +326,11 @@ class TestAnalyze:
             set(),
             mock_test_visitor,
             mock_framework_visitor,
+            [],
+            [],
+            [],
+            None,
+            None,
         )
 
         result_json = analyze(str(temp_python_project), conf=60)
@@ -331,6 +341,7 @@ class TestAnalyze:
         assert "unused_classes" in result
         assert "unused_variables" in result
         assert "unused_parameters" in result
+        assert "unused_files" in result
         assert "analysis_summary" in result
 
     def test_analyze_with_exclusions(self, temp_python_project):
@@ -397,6 +408,11 @@ class TestAnalyze:
                     set(),
                     Mock(spec=TestAwareVisitor),
                     Mock(spec=FrameworkAwareVisitor),
+                    [],
+                    [],
+                    [],
+                    None,
+                    None,
                 )
 
                 result_json = skylos.analyze("/fake/path", thr=60)
@@ -435,6 +451,7 @@ class TestClass:
                     mock_visitor.refs = []
                     mock_visitor.dyn = set()
                     mock_visitor.exports = set()
+                    mock_visitor.pattern_tracker = None
                     mock_visitor_class.return_value = mock_visitor
 
                     mock_test_visitor = Mock(spec=TestAwareVisitor)
@@ -443,7 +460,7 @@ class TestClass:
                     mock_framework_visitor = Mock(spec=FrameworkAwareVisitor)
                     mock_framework_visitor_class.return_value = mock_framework_visitor
 
-                    defs, refs, dyn, exports, test_flags, framework_flags = proc_file(
+                    defs, refs, dyn, exports, test_flags, framework_flags, quality_findings, danger_findings, pro_findings, pattern_tracker, empty_file_finding = proc_file(
                         f.name, "test_module"
                     )
 
@@ -453,10 +470,14 @@ class TestClass:
                     assert defs == []
                     assert refs == []
                     assert dyn == set()
-                    ## added new test here for the new methods
                     assert exports == set()
                     assert test_flags == mock_test_visitor
                     assert framework_flags == mock_framework_visitor
+                    assert quality_findings == []
+                    assert danger_findings == []
+                    assert pro_findings == []
+                    assert pattern_tracker is None
+                    assert empty_file_finding is None
             finally:
                 Path(f.name).unlink()
 
@@ -466,7 +487,7 @@ class TestClass:
             f.flush()
 
             try:
-                defs, refs, dyn, exports, test_flags, framework_flags = proc_file(
+                defs, refs, dyn, exports, test_flags, framework_flags, quality_findings, danger_findings, pro_findings, pattern_tracker, empty_file_finding = proc_file(
                     f.name, "test_module"
                 )
 
@@ -474,6 +495,13 @@ class TestClass:
                 assert refs == []
                 assert dyn == set()
                 assert exports == set()
+                assert isinstance(test_flags, TestAwareVisitor)
+                assert isinstance(framework_flags, FrameworkAwareVisitor)
+                assert quality_findings == []
+                assert danger_findings == []
+                assert pro_findings == []
+                assert pattern_tracker is None
+                assert empty_file_finding is None
                 assert isinstance(test_flags, TestAwareVisitor)
                 assert isinstance(framework_flags, FrameworkAwareVisitor)
             finally:
@@ -499,6 +527,7 @@ class TestClass:
                     mock_visitor.refs = []
                     mock_visitor.dyn = set()
                     mock_visitor.exports = set()
+                    mock_visitor.pattern_tracker = None
                     mock_visitor_class.return_value = mock_visitor
 
                     mock_test_visitor = Mock(spec=TestAwareVisitor)
@@ -507,7 +536,7 @@ class TestClass:
                     mock_framework_visitor = Mock(spec=FrameworkAwareVisitor)
                     mock_framework_visitor_class.return_value = mock_framework_visitor
 
-                    defs, refs, dyn, exports, test_flags, framework_flags = proc_file(
+                    defs, refs, dyn, exports, test_flags, framework_flags, quality_findings, danger_findings, pro_findings, pattern_tracker, empty_file_finding = proc_file(
                         (f.name, "test_module")
                     )
 
@@ -515,6 +544,33 @@ class TestClass:
             finally:
                 Path(f.name).unlink()
 
+    def test_empty_file_reporting(self, tmp_path):
+        # should be reported
+        empty = tmp_path / "empty_module.py"
+        empty.write_text("")
+
+        # should be skipped
+        (tmp_path / "main.py").write_text("")  # skip main.py
+        pkg = tmp_path / "mypkg"
+        pkg.mkdir()
+        # skip __init__.py
+        (pkg / "__init__.py").write_text('"""package init docstring"""')
+
+        result_json = analyze(str(tmp_path), conf=0)
+        result = json.loads(result_json)
+
+        assert "unused_files" in result
+        files = result["unused_files"]
+
+        flagged = {Path(f["file"]).name for f in files}
+        assert "empty_module.py" in flagged
+        assert "main.py" not in flagged
+        assert "__init__.py" not in flagged
+
+        item = next(f for f in files if Path(f["file"]).name == "empty_module.py")
+        assert item["rule_id"] == "SKY-U002"
+        assert item["category"] == "DEAD_CODE"
+        assert item["severity"] == "LOW"
 
 class TestApplyPenalties:
     @patch("skylos.analyzer.detect_framework_usage")
