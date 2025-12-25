@@ -115,8 +115,10 @@ class Visitor(ast.NodeVisitor):
         self.first_read_lineno = {}
         self.instance_attr_types = {}
         self.local_constants = []
-
         self.pattern_tracker = pattern_tracker
+        self._param_stack = [] 
+        self._typed_dict_stack = []
+        self._shadowed_module_aliases = {}
 
     def add_def(self, name, t, line):
         found = False
@@ -131,8 +133,20 @@ class Visitor(ast.NodeVisitor):
         self.refs.append((name, self.file))
 
     def qual(self, name):
+        # if name in self.alias:
+        #     return self.alias[name]
+
+        ## local defs should shadow import aliases
         if name in self.alias:
+            if self.mod:
+                local_name = f"{self.mod}.{name}"
+                if any(d.name == local_name for d in self.defs):
+                    return local_name
+            else:
+                if any(d.name == name for d in self.defs):
+                    return name
             return self.alias[name]
+        
         if name in PYTHON_BUILTINS:
             if self.mod:
                 mod_candidate = f"{self.mod}.{name}"
@@ -169,8 +183,18 @@ class Visitor(ast.NodeVisitor):
             parsed = ast.parse(annotation_str, mode="eval")
             self.visit(parsed.body)
         except SyntaxError:
+            IGNORE_ANN_TOKENS = {
+                "Any", "Optional", "Union", "Literal", "Callable", "Iterable", "Iterator",
+                "Sequence", "Mapping", "MutableMapping", "Dict", "List", "Set", "Tuple",
+                "Type", "Protocol", "TypedDict", "Self", "Final", "ClassVar", "Annotated",
+                "Never", "NoReturn", "Required", "NotRequired",
+                "int", "str", "float", "bool", "bytes", "object",
+            }
+
             for tok in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", annotation_str):
-                self.add_ref(tok)
+                if tok in IGNORE_ANN_TOKENS:
+                    continue
+                self.add_ref(self.qual(tok))
 
     def visit_Import(self, node):
         for a in node.names:
@@ -277,6 +301,9 @@ class Visitor(ast.NodeVisitor):
             def_type = "function"
         self.add_def(qualified_name, def_type, node.lineno)
 
+        for d in node.decorator_list:
+            self.visit(d)
+
         FRAMEWORK_DECORATORS = {
             "route",
             ".get",
@@ -315,23 +342,40 @@ class Visitor(ast.NodeVisitor):
             elif deco_name and deco_name.endswith((".setter", ".deleter")):
                 self.add_ref(qualified_name)
 
+        if self.current_function_scope and self.local_var_maps:
+            self.local_var_maps[-1][node.name] = qualified_name
+
         self.current_function_scope.append(node.name)
         self.local_var_maps.append({})
         self.local_type_maps.append({})
-
         self.local_constants.append({})
 
         old_params = self.current_function_params
+        self._param_stack.append(old_params)
         self.current_function_params = []
 
-        for d_node in node.decorator_list:
-            self.visit(d_node)
+        all_args = []
+        all_args.extend(node.args.posonlyargs)
+        all_args.extend(node.args.args)
+        all_args.extend(node.args.kwonlyargs)
 
-        for arg in node.args.args:
+        for arg in all_args:
             param_name = f"{qualified_name}.{arg.arg}"
-            self.add_def(param_name, "parameter", node.lineno)
+            self.add_def(param_name, "parameter", getattr(arg, "lineno", node.lineno))
             self.current_function_params.append((arg.arg, param_name))
 
+        if node.args.vararg:
+            va = node.args.vararg
+            param_name = f"{qualified_name}.{va.arg}"
+            self.add_def(param_name, "parameter", getattr(va, "lineno", node.lineno))
+            self.current_function_params.append((va.arg, param_name))
+
+        if node.args.kwarg:
+            ka = node.args.kwarg
+            param_name = f"{qualified_name}.{ka.arg}"
+            self.add_def(param_name, "parameter", getattr(ka, "lineno", node.lineno))
+            self.current_function_params.append((ka.arg, param_name))
+            
         self.visit_arguments(node.args)
         self.visit_annotation(node.returns)
 
@@ -339,7 +383,7 @@ class Visitor(ast.NodeVisitor):
             self.visit(stmt)
 
         self.current_function_scope.pop()
-        self.current_function_params = old_params
+        self.current_function_params = self._param_stack.pop()
         self.local_var_maps.pop()
         self.local_type_maps.pop()
         self.local_constants.pop()
@@ -350,17 +394,33 @@ class Visitor(ast.NodeVisitor):
         cname = f"{self.mod}.{node.name}"
         self.add_def(cname, "class", node.lineno)
 
+        is_typed_dict = False
+        for base in node.bases:
+            base_path = ""
+
+            if isinstance(base, ast.Name):
+                base_path = base.id
+            elif isinstance(base, ast.Attribute):
+                base_path = self._get_decorator_name(base) or ""
+
+            if base_path:
+                last = base_path.split(".")[-1]
+                if last == "TypedDict":
+                    is_typed_dict = True
+                    break
+
+        self._typed_dict_stack.append(is_typed_dict)
+
         is_cst = False
         is_dc = False
 
         for base in node.bases:
             base_name = ""
-
             if isinstance(base, ast.Attribute):
                 base_name = base.attr
-
             elif isinstance(base, ast.Name):
                 base_name = base.id
+
             self.visit(base)
 
             if base_name in {"CSTTransformer", "CSTVisitor"}:
@@ -370,19 +430,12 @@ class Visitor(ast.NodeVisitor):
             self.visit(keyword.value)
 
         for decorator in node.decorator_list:
-
             def _is_dc(dec):
-                if isinstance(dec, ast.Call):
-                    target = dec.func
-                else:
-                    target = dec
-
+                target = dec.func if isinstance(dec, ast.Call) else dec
                 if isinstance(target, ast.Name):
                     return target.id == "dataclass"
-
                 if isinstance(target, ast.Attribute):
                     return target.attr == "dataclass"
-
                 return False
 
             if _is_dc(decorator):
@@ -395,11 +448,13 @@ class Visitor(ast.NodeVisitor):
 
         self.cls = node.name
         self._dataclass_stack.append(is_dc)
+
         for b in node.body:
             self.visit(b)
 
         self.cls = prev
         self._dataclass_stack.pop()
+        self._typed_dict_stack.pop()
 
         if is_cst:
             self.in_cst_class -= 1
@@ -423,6 +478,13 @@ class Visitor(ast.NodeVisitor):
                     var_name = f"{prefix}.{name_simple}"
                 else:
                     var_name = name_simple
+                
+                in_typeddict = bool(self._typed_dict_stack and self._typed_dict_stack[-1])
+                is_class_body = bool(self.cls and not self.current_function_scope)
+                is_annotation_only = node.value is None
+
+                if in_typeddict and is_class_body and is_annotation_only:
+                    return
 
                 self.add_def(var_name, "variable", t.lineno)
                 if (
@@ -535,12 +597,11 @@ class Visitor(ast.NodeVisitor):
             var_name = self._compute_variable_name(name_simple)
             self.add_def(var_name, "variable", target_node.lineno)
 
-            if (
-                self.current_function_scope
-                and self.local_var_maps
-                and name_simple not in self.local_var_maps[-1]
-            ):
+            if self.current_function_scope and self.local_var_maps:
                 self.local_var_maps[-1][name_simple] = var_name
+            
+            if (not self.current_function_scope) and (not self.cls) and (name_simple in self.alias):
+                self._shadowed_module_aliases[name_simple] = var_name
 
         elif isinstance(target_node, (ast.Tuple, ast.List)):
             for elt in target_node.elts:
@@ -783,28 +844,48 @@ class Visitor(ast.NodeVisitor):
                 self.add_ref(f"{owner}.{method_name}")
 
     def visit_Name(self, node):
-        if isinstance(node.ctx, ast.Load):
+        if not isinstance(node.ctx, ast.Load):
+            return
+
+        if self.current_function_params:
             for param_name, param_full_name in self.current_function_params:
                 if node.id == param_name:
                     self.first_read_lineno.setdefault(param_full_name, node.lineno)
                     self.add_ref(param_full_name)
                     return
 
-            if (
-                self.current_function_scope
-                and self.local_var_maps
-                and node.id in self.local_var_maps[-1]
-            ):
-                fq = self.local_var_maps[-1][node.id]
-                self.first_read_lineno.setdefault(fq, node.lineno)
-                self.add_ref(fq)
-                return
+        if self._param_stack:
+            for outer_params in reversed(self._param_stack):
+                for param_name, param_full_name in outer_params:
+                    if node.id == param_name:
+                        self.first_read_lineno.setdefault(param_full_name, node.lineno)
+                        self.add_ref(param_full_name)
+                        return
 
-            qualified = self.qual(node.id)
-            self.first_read_lineno.setdefault(qualified, node.lineno)
-            self.add_ref(qualified)
-            if node.id in DYNAMIC_PATTERNS:
-                self.dyn.add(self.mod.split(".")[0])
+        if self.current_function_scope and self.local_var_maps:
+            for scope_map in reversed(self.local_var_maps):
+                if node.id in scope_map:
+                    fq = scope_map[node.id]
+                    self.first_read_lineno.setdefault(fq, node.lineno)
+                    self.add_ref(fq)
+                    return
+
+        shadowed = self._shadowed_module_aliases.get(node.id)
+        if shadowed:
+            self.first_read_lineno.setdefault(shadowed, node.lineno)
+            self.add_ref(shadowed)
+
+            aliased = self.alias.get(node.id)
+            if aliased:
+                self.first_read_lineno.setdefault(aliased, node.lineno)
+                self.add_ref(aliased)
+            return
+
+        qualified = self.qual(node.id)
+        self.first_read_lineno.setdefault(qualified, node.lineno)
+        self.add_ref(qualified)
+        if node.id in DYNAMIC_PATTERNS:
+            self.dyn.add(self.mod.split(".")[0])
 
     def visit_Attribute(self, node):
         self.generic_visit(node)
@@ -816,10 +897,21 @@ class Visitor(ast.NodeVisitor):
             base = node.value.id
 
             param_hit = None
+
             for param_name, param_full in self.current_function_params:
                 if base == param_name:
                     param_hit = (param_name, param_full)
                     break
+
+            if not param_hit and self._param_stack:
+                for outer_params in reversed(self._param_stack):
+                    for param_name, param_full in outer_params:
+                        if base == param_name:
+                            param_hit = (param_name, param_full)
+                            break
+                    
+                    if param_hit:
+                        break
 
             if param_hit:
                 self.add_ref(param_hit[1])

@@ -149,7 +149,7 @@ class Skylos:
         for definition in self.defs.values():
             simple_name_lookup[definition.simple_name].append(definition)
 
-        for ref, _ in self.refs:
+        for ref, ref_file in self.refs:
             if ref in self.defs:
                 self.defs[ref].references += 1
                 if ref in import_to_original:
@@ -157,8 +157,10 @@ class Skylos:
                     self.defs[original].references += 1
                 continue
 
-            simple = ref.split(".")[-1]
-            ref_mod = ref.rsplit(".", 1)[0]
+            if "." in ref:
+                ref_mod, simple = ref.rsplit(".", 1)
+            else:
+                ref_mod, simple = "", ref
             candidates = simple_name_lookup.get(simple, [])
 
             if ref_mod:
@@ -185,6 +187,14 @@ class Skylos:
                     if d.type != "import":
                         filtered.append(d)
                 candidates = filtered
+
+            if len(candidates) > 1:
+                same_file = []
+                for d in candidates:
+                    if str(d.filename) == str(ref_file):
+                        same_file.append(d)
+                if len(same_file) == 1:
+                    candidates = same_file
 
             if len(candidates) == 1:
                 candidates[0].references += 1
@@ -404,6 +414,7 @@ class Skylos:
                     "unused_classes": [],
                     "unused_variables": [],
                     "unused_parameters": [],
+                    "unused_files": [],
                     "analysis_summary": {
                         "total_files": 0,
                         "excluded_folders": exclude_folders if exclude_folders else [],
@@ -428,6 +439,7 @@ class Skylos:
         all_secrets = []
         all_dangers = []
         all_quality = []
+        empty_files = []
         file_contexts = []
 
         pattern_trackers = {}
@@ -445,6 +457,7 @@ class Skylos:
                 d_finds,
                 pro_finds,
                 pattern_tracker,
+                empty_file_finding
             ) = proc_file(file, mod, extra_visitors)
 
             if pattern_tracker:
@@ -458,6 +471,9 @@ class Skylos:
             self.exports[mod].update(exports)
 
             file_contexts.append((defs, test_flags, framework_flags, file, mod))
+
+            if empty_file_finding:
+                empty_files.append(empty_file_finding)
 
             if enable_quality and q_finds:
                 all_quality.extend(q_finds)
@@ -536,6 +552,7 @@ class Skylos:
             "unused_classes": [],
             "unused_variables": [],
             "unused_parameters": [],
+            "unused_files": [],
             "analysis_summary": {
                 "total_files": len(files),
                 "excluded_folders": exclude_folders or [],
@@ -553,6 +570,10 @@ class Skylos:
         if enable_quality and all_quality:
             result["quality"] = all_quality
             result["analysis_summary"]["quality_count"] = len(all_quality)
+        
+        if empty_files:
+            result["unused_files"] = empty_files
+            result["analysis_summary"]["unused_files_count"] = len(empty_files)
 
         for u in unused:
             if u["type"] in ("function", "method"):
@@ -568,6 +589,23 @@ class Skylos:
 
         return json.dumps(result, indent=2)
 
+def _is_truly_empty_or_docstring_only(tree):
+
+    if not isinstance(tree, ast.Module):
+        return False
+
+    if not tree.body:
+        return True
+
+    if len(tree.body) != 1:
+        return False
+
+    only = tree.body[0]
+    return (
+        isinstance(only, ast.Expr)
+        and isinstance(only.value, ast.Constant)
+        and isinstance(only.value.value, str)
+    )
 
 def proc_file(file_or_args, mod=None, extra_visitors=None):
     if mod is None and isinstance(file_or_args, tuple):
@@ -578,7 +616,12 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
     cfg = load_config(file)
 
     if str(file).endswith((".ts", ".tsx")):
-        return scan_typescript_file(file)
+        ts_out = scan_typescript_file(file)
+        if isinstance(ts_out, tuple) and len(ts_out) == 10:
+            return (*ts_out, None)
+        if isinstance(ts_out, tuple) and len(ts_out) == 11:
+            return ts_out
+        return (*ts_out, None)
 
     try:
         source = Path(file).read_text(encoding="utf-8")
@@ -587,7 +630,36 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             for i, line in enumerate(source.splitlines(), start=1)
             if "pragma: no skylos" in line
         }
+
         tree = ast.parse(source)
+
+        empty_file_finding = None
+
+        basename = Path(file).name
+        skip_empty_report = basename in {"__init__.py", "__main__.py", "main.py"}
+
+        if (
+            _is_truly_empty_or_docstring_only(tree)
+            and not skip_empty_report
+            and "SKY-U002" not in cfg["ignore"]
+        ):
+            empty_file_finding = {
+                "rule_id": "SKY-U002",
+                "message": "Empty Python file (no code, or docstring-only)",
+                "file": str(file),
+                "line": 1,
+                "severity": "LOW",
+                "category": "DEAD_CODE",
+            }
+
+
+        from skylos.ast_mask import apply_body_mask, default_mask_spec_from_config
+
+        mask = default_mask_spec_from_config(cfg)
+        tree, masked = apply_body_mask(tree, mask)
+
+        if masked and os.getenv("SKYLOS_DEBUG"):
+            logger.info(f"{file}: masked {masked} bodies (skipped inner analysis)")
 
         q_rules = []
         if "SKY-Q301" not in cfg["ignore"]:
@@ -652,6 +724,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             danger_findings,
             pro_findings,
             v.pattern_tracker,
+            empty_file_finding
         )
 
     except Exception as e:
@@ -672,6 +745,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             [],
             [],
             None,
+            None
         )
 
 
@@ -743,6 +817,8 @@ if __name__ == "__main__":
         print(f" * Unused classes: {len(data['unused_classes'])}")
     if data["unused_variables"]:
         print(f" * Unused variables: {len(data['unused_variables'])}")
+    if data["unused_files"]:
+        print(f" * Empty files: {len(data['unused_files'])}")
     if enable_danger:
         print(f" * Security issues: {danger_count}")
     if enable_secrets:
@@ -775,6 +851,13 @@ if __name__ == "__main__":
         for i, var in enumerate(data["unused_variables"], 1):
             print(f" {i}. {var['name']}")
             print(f"    └─ {var['file']}:{var['line']}")
+    
+    if data["unused_files"]:
+        print("\n - Empty Files")
+        print("==============")
+        for i, f in enumerate(data["unused_files"], 1):
+            print(f" {i}. {f['file']}")
+            print(f"    └─ Line {f['line']}")
 
     if enable_danger and data.get("danger"):
         print("\n - Security Issues")
