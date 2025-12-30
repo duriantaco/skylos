@@ -1,5 +1,5 @@
 <div align="center">
-   <img src="assets/dog.png" alt="Skylos Logo" width="300">
+   <img src="assets/DOG_1.png" alt="Skylos Logo" width="300">
    <h1>Skylos: Guard your Code</h1>
 </div>
 
@@ -38,7 +38,7 @@
 | Objective | Command | Outcome | Remarks |
 | :--- | :--- | :--- | :--- |
 | **Hunt Dead Code** | `skylos .` | Prune unreachable functions and unused imports instantly. | |
-| **Precise Hunt** | `skylos . --coverage` | Cross-reference results with actual runtime data | Run `skylos . --coverage` first then run your actual scan `skylos . --danger` |
+| **Precise Hunt** | `skylos . --trace` | Cross-reference results with actual runtime data | Run `skylos . --trace` first then run your actual scan `skylos . --danger` |
 | **Audit Risk & Quality** | `skylos . --secrets --danger --quality` | Kill security leaks, tainted data, and architectural rot. | You can run one of the flags, or all 3 |
 | **Automated Repair** | `skylos . --audit --fix` | Let the watchdog handle the labor of cleaning your code. | |
 | **Secure the Gate** | `skylos --gate` | Block risky code from merging with hard-coded standards. | |
@@ -60,7 +60,7 @@
 
 ### Operational Governance & Runtime
 
-* **Coverage Integration**: Auto-detects `.coverage` files to verify dead code with runtime data
+* **Coverage Integration**: Auto-detects `.skylos-trace` files to verify dead code with runtime data
 * **Quality Gates**: Enforces hard thresholds for complexity, nesting, and security risk via `pyproject.toml` to block non-compliant PRs
 * **Interactive CLI**: Manually verify and remove/comment-out findings through an `inquirer`-based terminal interface
 * **Audit Mode**: Leverages an independent reasoning loop to identify "hallucinations" and broken dependencies
@@ -546,76 +546,74 @@ skylos . --danger --secrets --quality  # All static scans
 skylos . --danger --quality --audit --fix  # Full AI-assisted cleanup
 ```
 
-## Coverage Integration
+## Smart Tracing
 
 Static analysis can't see everything. Python's dynamic nature means patterns like `getattr()`, plugin registries, and string-based dispatch look like dead code—but they're not.
 
-**Coverage integration solves this.** If a function actually ran during tests or execution, it's definitely not dead.
+**Smart tracing solves this.** By running your tests with `sys.settrace()`, Skylos records every function that actually gets called.
 
 ### Quick Start
 ```bash
-# Step 1: 
-# Option 1: Let Skylos run your tests first
-skylos . --coverage
+# Run tests with call tracing, then analyze
+skylos . --trace
 
-# Option 2: Use existing coverage data
-coverage run -m pytest    # or: coverage run app.py
-skylos .                   # Auto-detects .coverage file
-
-# Step 2:
-# Run skylos as per usual
-skylos . --danger --quality 
+# Trace data is saved to .skylos_trace
+skylos .
 ```
 
 ### How It Works
 
-| Analysis Type | Confidence | What It Catches |
-|---------------|------------|-----------------|
-| Static only | 60-95% | Direct calls, imports, decorators |
-| + Coverage | 100% | Dynamic dispatch, plugins, registries |
+| Analysis Type | Accuracy | What It Catches |
+|---------------|----------|-----------------|
+| Static only | 70-85% | Direct calls, imports, decorators |
+| + Framework rules | 85-95% | Django/Flask routes, pytest fixtures |
+| + `--trace` | 95-99% | Dynamic dispatch, plugins, registries |
 
 ### Example
 ```python
-# Static analysis thinks this is dead (no direct call visible)
+# Static analysis will think this is dead because there's no direct call visible
 def handle_login():
     return "Login handler"
 
-# But it's called dynamically at runtime
+# But it is actually called dynamically at runtime
 action = request.args.get("action")  
 func = getattr(module, f"handle_{action}")
-func()  # Calls handle_login
+func()  # here  
 ```
 
-| Without Coverage | With Coverage |
-|------------------|---------------|
-| `handle_login` flagged as dead ❌ | `handle_login` marked as used ✅ |
+| Without Tracing | With `--trace` |
+|-----------------|----------------|
+| `handle_login` flagged as dead | `handle_login` marked as used |
 
 ### When To Use
 
 | Situation | Command |
 |-----------|---------|
-| Have pytest/unittest tests | `skylos . --coverage` |
-| No tests, but can run app | `coverage run app.py` then `skylos .` |
-| No tests, can't run app | `skylos .` (static only) |
+| Have pytest/unittest tests | `skylos . --trace` |
+| No tests | `skylos .` (static only) |
+| CI with cached trace | `skylos .` (reuses `.skylos_trace`) |
 
-### What Coverage Catches
+### What Tracing Catches
 
-These patterns are invisible to static analysis but caught with coverage:
+These patterns are invisible to static analysis but caught with `--trace`:
 ```python
+
 # 1. Dynamic dispatch
 func = getattr(module, f"handle_{action}")
 func()
 
-# 2. Plugin/registry patterns  
+# 2. Plugin or registry patterns  
 PLUGINS = []
-def register(f): PLUGINS.append(f); return f
+def register(f): 
+  PLUGINS.append(f)
+return f
 
 @register
-def my_plugin(): ...  # Called via: for p in PLUGINS: p()
+def my_plugin(): ...  
 
-# 3. Subclass discovery
-for cls in BasePlugin.__subclasses__():
-    cls().run()
+# 3. Visitor patterns
+class MyVisitor(ast.NodeVisitor):
+    def visit_FunctionDef(self, node): ...  # Called via getattr
 
 # 4. String-based access
 globals()["my_" + "func"]()
@@ -624,9 +622,9 @@ locals()[func_name]()
 
 ### Important Notes
 
-- **Coverage only adds information.** Low test coverage will not create false positives. It just means some dynamic patterns may still be flagged.
-- **Any execution helps.** Even running your app once and hitting a few endpoints provides useful data.
-- **Tests don't need to pass.** Coverage records are what is executed. Irregardless of pass/fail status of your tests
+- **Tracing only adds information.** Low test coverage won't create false positives. It just means some dynamic patterns **may** still be flagged.
+- **Commit `.skylos_trace`** to reuse trace data in CI without re-running tests.
+- **Tests don't need to pass.** Tracing records what executes, regardless of pass/fail status.
 
 ## Filtering
 
