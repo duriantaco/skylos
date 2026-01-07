@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 import tempfile
 
+import skylos.visitor as visitor_mod
 from skylos.visitor import Visitor, Definition, PYTHON_BUILTINS, DYNAMIC_PATTERNS
 
 
@@ -1240,3 +1241,241 @@ if __name__ == "__main__":
             print(f"  - {test}")
 
     print("=" * 50)
+
+
+def _visit(code: str, tmp_path, mod="test_module") -> Visitor:
+    p = tmp_path / "m.py"
+    p.write_text(code, encoding="utf-8")
+    v = Visitor(mod, str(p))
+    v.visit(ast.parse(code))
+    return v
+
+
+def _defs(v: Visitor, typ: str):
+    return [d for d in v.defs if d.type == typ]
+
+
+def _def_names(v: Visitor, typ: str):
+    return {d.name for d in _defs(v, typ)}
+
+
+def _ref_names(v: Visitor):
+    return {r[0] for r in v.refs}
+
+
+def test_local_def_shadows_import_alias_in_qual(tmp_path):
+    code = """
+import pkg
+
+def pkg():
+    return 1
+
+pkg()
+"""
+    v = _visit(code, tmp_path)
+    refs = _ref_names(v)
+
+    assert "test_module.pkg" in refs
+
+
+def test_typeddict_annotation_only_fields_are_not_variables(tmp_path):
+    code = """
+from typing import TypedDict
+
+class TD(TypedDict):
+    x: int
+    y: "str"
+"""
+    v = _visit(code, tmp_path)
+
+    var_defs = _def_names(v, "variable")
+    assert "test_module.TD.x" not in var_defs
+    assert "test_module.TD.y" not in var_defs
+
+
+def test_dataclass_fields_tracked_from_annassign(tmp_path):
+    code = """
+from dataclasses import dataclass
+
+@dataclass
+class A:
+    x: int
+    y: int = 1
+"""
+    v = _visit(code, tmp_path)
+
+    assert "test_module.A.x" in v.dataclass_fields
+    assert "test_module.A.y" in v.dataclass_fields
+
+
+def test_metadata_dependencies_skipped_inside_cst_transformer(tmp_path):
+    code = """
+import libcst as cst
+from libcst.metadata import PositionProvider
+
+class X(cst.CSTTransformer):
+    METADATA_DEPENDENCIES = (PositionProvider,)
+"""
+    v = _visit(code, tmp_path)
+
+    var_defs = _def_names(v, "variable")
+    assert "test_module.X.METADATA_DEPENDENCIES" not in var_defs
+
+
+def test_if_static_condition_true_visits_only_body(monkeypatch, tmp_path):
+    monkeypatch.setattr(visitor_mod, "evaluate_static_condition", lambda _test: True)
+
+    code = """
+FLAG = True
+
+if FLAG:
+    def a():
+        pass
+else:
+    def b():
+        pass
+"""
+    v = _visit(code, tmp_path)
+
+    fn_defs = _def_names(v, "function")
+    assert "test_module.a" in fn_defs
+    assert "test_module.b" not in fn_defs
+
+
+def test_if_static_condition_false_visits_only_orelse(monkeypatch, tmp_path):
+    monkeypatch.setattr(visitor_mod, "evaluate_static_condition", lambda _test: False)
+
+    code = """
+FLAG = False
+
+if FLAG:
+    def a():
+        pass
+else:
+    def b():
+        pass
+"""
+    v = _visit(code, tmp_path)
+
+    fn_defs = _def_names(v, "function")
+    assert "test_module.a" not in fn_defs
+    assert "test_module.b" in fn_defs
+
+
+def test_if_static_condition_unknown_visits_both(monkeypatch, tmp_path):
+    monkeypatch.setattr(visitor_mod, "evaluate_static_condition", lambda _test: None)
+
+    code = """
+FLAG = maybe()
+
+if FLAG:
+    def a():
+        pass
+else:
+    def b():
+        pass
+"""
+    v = _visit(code, tmp_path)
+
+    fn_defs = _def_names(v, "function")
+    assert "test_module.a" in fn_defs
+    assert "test_module.b" in fn_defs
+
+
+def test_globals_subscript_adds_function_refs(tmp_path):
+    code = """
+def f():
+    fn = globals()['some_function']
+    return fn
+"""
+    v = _visit(code, tmp_path)
+    refs = _ref_names(v)
+
+    assert "some_function" in refs
+    assert "test_module.some_function" in refs
+
+
+def test_getattr_uses_fstring_pattern_tracker(tmp_path):
+    pt = visitor_mod.pattern_tracker
+    old_f = dict(getattr(pt, "f_string_patterns", {}))
+    old_pr = list(getattr(pt, "pattern_refs", []))
+    old_known = set(getattr(pt, "known_refs", set()))
+    try:
+        # reset to clean slate for this test
+        pt.f_string_patterns = {}
+        pt.pattern_refs = []
+        pt.known_refs = set()
+
+        code = """
+x = "ignored"
+
+def run(obj):
+    name = f"handle_{x}"
+    return getattr(obj, name)
+"""
+        v = _visit(code, tmp_path)
+
+        assert ("handle_*", 70) in pt.pattern_refs
+        assert v is not None
+    finally:
+        pt.f_string_patterns = old_f
+        pt.pattern_refs = old_pr
+        pt.known_refs = old_known
+
+
+def test_local_type_inference_from_constructor_call(tmp_path):
+    code = """
+class Helper:
+    def run(self):
+        pass
+
+def f():
+    h = Helper()
+    h.run()
+"""
+    v = _visit(code, tmp_path)
+    refs = _ref_names(v)
+
+    assert "test_module.Helper.run" in refs
+
+
+def test_shadowed_module_alias_adds_refs_to_both_shadow_and_alias(tmp_path):
+    code = """
+import os
+
+os = 123
+print(os)
+"""
+    v = _visit(code, tmp_path)
+    refs = _ref_names(v)
+
+    assert "test_module.os" in refs
+    assert "os" in refs
+
+
+def test_global_statement_maps_to_module_variable(tmp_path):
+    code = """
+x = 0
+
+def f():
+    global x
+    x = 1
+    return x
+"""
+    v = _visit(code, tmp_path)
+
+    var_defs = _def_names(v, "variable")
+    assert "test_module.x" in var_defs
+
+    refs = _ref_names(v)
+    assert "test_module.x" in refs
+
+
+def test_eval_exec_mark_module_dynamic(tmp_path):
+    code = """
+def f():
+    return eval("1+1")
+"""
+    v = _visit(code, tmp_path)
+
+    assert "test_module" in v.dyn

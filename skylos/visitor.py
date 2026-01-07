@@ -116,7 +116,7 @@ class Visitor(ast.NodeVisitor):
         self.instance_attr_types = {}
         self.local_constants = []
         self.pattern_tracker = pattern_tracker
-        self._param_stack = [] 
+        self._param_stack = []
         self._typed_dict_stack = []
         self._shadowed_module_aliases = {}
 
@@ -146,7 +146,7 @@ class Visitor(ast.NodeVisitor):
                 if any(d.name == name for d in self.defs):
                     return name
             return self.alias[name]
-        
+
         if name in PYTHON_BUILTINS:
             if self.mod:
                 mod_candidate = f"{self.mod}.{name}"
@@ -184,11 +184,37 @@ class Visitor(ast.NodeVisitor):
             self.visit(parsed.body)
         except SyntaxError:
             IGNORE_ANN_TOKENS = {
-                "Any", "Optional", "Union", "Literal", "Callable", "Iterable", "Iterator",
-                "Sequence", "Mapping", "MutableMapping", "Dict", "List", "Set", "Tuple",
-                "Type", "Protocol", "TypedDict", "Self", "Final", "ClassVar", "Annotated",
-                "Never", "NoReturn", "Required", "NotRequired",
-                "int", "str", "float", "bool", "bytes", "object",
+                "Any",
+                "Optional",
+                "Union",
+                "Literal",
+                "Callable",
+                "Iterable",
+                "Iterator",
+                "Sequence",
+                "Mapping",
+                "MutableMapping",
+                "Dict",
+                "List",
+                "Set",
+                "Tuple",
+                "Type",
+                "Protocol",
+                "TypedDict",
+                "Self",
+                "Final",
+                "ClassVar",
+                "Annotated",
+                "Never",
+                "NoReturn",
+                "Required",
+                "NotRequired",
+                "int",
+                "str",
+                "float",
+                "bool",
+                "bytes",
+                "object",
             }
 
             for tok in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", annotation_str):
@@ -305,12 +331,12 @@ class Visitor(ast.NodeVisitor):
             self.visit(d)
 
         FRAMEWORK_DECORATORS = {
-            "route",
-            ".get",
-            ".post",
-            ".put",
-            ".delete",
-            ".patch",
+            # "route",
+            # ".get",
+            # ".post",
+            # ".put",
+            # ".delete",
+            # ".patch",
             "fixture",
             "pytest",
             "task",
@@ -375,7 +401,7 @@ class Visitor(ast.NodeVisitor):
             param_name = f"{qualified_name}.{ka.arg}"
             self.add_def(param_name, "parameter", getattr(ka, "lineno", node.lineno))
             self.current_function_params.append((ka.arg, param_name))
-            
+
         self.visit_arguments(node.args)
         self.visit_annotation(node.returns)
 
@@ -430,6 +456,7 @@ class Visitor(ast.NodeVisitor):
             self.visit(keyword.value)
 
         for decorator in node.decorator_list:
+
             def _is_dc(dec):
                 target = dec.func if isinstance(dec, ast.Call) else dec
                 if isinstance(target, ast.Name):
@@ -478,8 +505,10 @@ class Visitor(ast.NodeVisitor):
                     var_name = f"{prefix}.{name_simple}"
                 else:
                     var_name = name_simple
-                
-                in_typeddict = bool(self._typed_dict_stack and self._typed_dict_stack[-1])
+
+                in_typeddict = bool(
+                    self._typed_dict_stack and self._typed_dict_stack[-1]
+                )
                 is_class_body = bool(self.cls and not self.current_function_scope)
                 is_annotation_only = node.value is None
 
@@ -540,15 +569,24 @@ class Visitor(ast.NodeVisitor):
         self.visit(node.value)
 
     def visit_Subscript(self, node):
+
+        if isinstance(node.value, ast.AST):
+            node.value.parent = node
+        if isinstance(node.slice, ast.AST):
+            node.slice.parent = node
+
         self.visit(node.value)
         self.visit(node.slice)
 
     def visit_Slice(self, node):
-        if node.lower:
+        if node.lower and isinstance(node.lower, ast.AST):
+            node.lower.parent = node
             self.visit(node.lower)
-        if node.upper:
+        if node.upper and isinstance(node.upper, ast.AST):
+            node.upper.parent = node
             self.visit(node.upper)
-        if node.step:
+        if node.step and isinstance(node.step, ast.AST):
+            node.step.parent = node
             self.visit(node.step)
 
     def _should_skip_variable_def(self, name_simple):
@@ -599,8 +637,12 @@ class Visitor(ast.NodeVisitor):
 
             if self.current_function_scope and self.local_var_maps:
                 self.local_var_maps[-1][name_simple] = var_name
-            
-            if (not self.current_function_scope) and (not self.cls) and (name_simple in self.alias):
+
+            if (
+                (not self.current_function_scope)
+                and (not self.cls)
+                and (name_simple in self.alias)
+            ):
                 self._shadowed_module_aliases[name_simple] = var_name
 
         elif isinstance(target_node, (ast.Tuple, ast.List)):
@@ -909,7 +951,7 @@ class Visitor(ast.NodeVisitor):
                         if base == param_name:
                             param_hit = (param_name, param_full)
                             break
-                    
+
                     if param_hit:
                         break
 

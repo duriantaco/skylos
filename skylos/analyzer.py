@@ -17,10 +17,9 @@ from skylos.visitors.framework_aware import (
     FrameworkAwareVisitor,
     detect_framework_usage,
 )
-
+from skylos.config import is_whitelisted, get_all_ignore_lines, load_config
 from skylos.visitors.languages.typescript import scan_typescript_file
 
-from skylos.config import load_config
 from skylos.linter import LinterVisitor
 from skylos.rules.quality.complexity import ComplexityRule
 from skylos.rules.quality.nesting import NestingRule
@@ -31,6 +30,32 @@ from skylos.rules.quality.logic import (
     BareExceptRule,
     DangerousComparisonRule,
     TryBlockPatternsRule,
+)
+from skylos.known_patterns import (
+    HARD_ENTRYPOINTS,
+    PYTEST_HOOKS,
+    UNITTEST_METHODS,
+    DJANGO_MODEL_METHODS,
+    DJANGO_MODEL_BASES,
+    DJANGO_VIEW_METHODS,
+    DJANGO_VIEW_BASES,
+    DJANGO_ADMIN_METHODS,
+    DJANGO_ADMIN_BASES,
+    DJANGO_FORM_METHODS,
+    DJANGO_FORM_BASES,
+    DJANGO_COMMAND_METHODS,
+    DJANGO_COMMAND_BASES,
+    DJANGO_APPCONFIG_METHODS,
+    DJANGO_APPCONFIG_BASES,
+    DRF_VIEWSET_METHODS,
+    DRF_VIEWSET_BASES,
+    DRF_SERIALIZER_METHODS,
+    DRF_SERIALIZER_BASES,
+    DRF_PERMISSION_METHODS,
+    DRF_PERMISSION_BASES,
+    SOFT_PATTERNS,
+    matches_pattern,
+    has_base_class,
 )
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
@@ -150,6 +175,16 @@ class Skylos:
             simple_name_lookup[definition.simple_name].append(definition)
 
         for ref, ref_file in self.refs:
+            file_key = f"{ref_file}:{ref}"
+
+            if file_key in self.defs:
+                self.defs[file_key].references += 1
+                if file_key in import_to_original:
+                    original = import_to_original[file_key]
+                    if original in self.defs:
+                        self.defs[original].references += 1
+                continue
+
             if ref in self.defs:
                 self.defs[ref].references += 1
                 if ref in import_to_original:
@@ -209,12 +244,33 @@ class Skylos:
                 non_import_defs[0].references += 1
                 continue
 
+            if "." in ref:
+                ref_simple = ref.split(".")[-1]
+                same_file_methods = []
+                for d in self.defs.values():
+                    if d.type == "method" and d.simple_name == ref_simple:
+                        if str(d.filename) == str(ref_file):
+                            same_file_methods.append(d)
+
+                if same_file_methods:
+                    for m in same_file_methods:
+                        m.references += 1
+                    continue
+
         if hasattr(self, "pattern_trackers"):
             for tracker in self.pattern_trackers.values():
                 for def_obj in self.defs.values():
-                    should_mark, conf, reason = tracker.should_mark_as_used(def_obj)
+                    should_mark, _, _ = tracker.should_mark_as_used(def_obj)
                     if should_mark:
                         def_obj.references += 1
+
+        from skylos.implicit_refs import pattern_tracker as global_tracker
+
+        if global_tracker.traced_calls:
+            for def_obj in self.defs.values():
+                should_mark, _, reason = global_tracker.should_mark_as_used(def_obj)
+                if should_mark:
+                    def_obj.references += 1
 
     def _get_base_classes(self, class_name):
         if class_name not in self.defs:
@@ -227,15 +283,138 @@ class Skylos:
 
         return []
 
-    def _apply_penalties(self, def_obj, visitor, framework):
+    def _apply_penalties(self, def_obj, visitor, framework, cfg=None):
         confidence = 100
-
+        simple_name = def_obj.simple_name
         if (
             getattr(visitor, "ignore_lines", None)
             and def_obj.line in visitor.ignore_lines
         ):
             def_obj.confidence = 0
+            def_obj.skip_reason = "inline ignore comment"
             return
+
+        if cfg:
+            is_wl, reason, conf_reduction = is_whitelisted(
+                def_obj.simple_name, str(def_obj.filename), cfg
+            )
+
+            if is_wl:
+                def_obj.confidence = 0
+                def_obj.skip_reason = reason
+                return
+
+            if conf_reduction > 0:
+                confidence -= conf_reduction
+
+        if simple_name in HARD_ENTRYPOINTS:
+            def_obj.confidence = 0
+            return
+
+        if def_obj.line in getattr(framework, "framework_decorated_lines", set()):
+            def_obj.confidence = 0
+            return
+
+        detected = getattr(framework, "detected_frameworks", set())
+
+        if simple_name in PYTEST_HOOKS:
+            if "pytest" in detected or "conftest" in str(def_obj.filename):
+                def_obj.confidence = 0
+                return
+
+        if simple_name in UNITTEST_METHODS:
+            if has_base_class(def_obj, {"TestCase"}, framework):
+                def_obj.confidence = 0
+                return
+
+        if "django" in detected:
+            if simple_name in DJANGO_MODEL_METHODS and has_base_class(
+                def_obj, DJANGO_MODEL_BASES, framework
+            ):
+                def_obj.confidence = 0
+                return
+            if simple_name in DJANGO_VIEW_METHODS and has_base_class(
+                def_obj, DJANGO_VIEW_BASES, framework
+            ):
+                def_obj.confidence = 0
+                return
+            if simple_name in DJANGO_ADMIN_METHODS and has_base_class(
+                def_obj, DJANGO_ADMIN_BASES, framework
+            ):
+                def_obj.confidence = 0
+                return
+            if simple_name in DJANGO_FORM_METHODS and has_base_class(
+                def_obj, DJANGO_FORM_BASES, framework
+            ):
+                def_obj.confidence = 0
+                return
+            if simple_name in DJANGO_COMMAND_METHODS and has_base_class(
+                def_obj, DJANGO_COMMAND_BASES, framework
+            ):
+                def_obj.confidence = 0
+                return
+            if simple_name in DJANGO_APPCONFIG_METHODS and has_base_class(
+                def_obj, DJANGO_APPCONFIG_BASES, framework
+            ):
+                def_obj.confidence = 0
+                return
+
+        if "rest_framework" in detected:
+            if simple_name in DRF_VIEWSET_METHODS and has_base_class(
+                def_obj, DRF_VIEWSET_BASES, framework
+            ):
+                def_obj.confidence = 0
+                return
+            if simple_name in DRF_SERIALIZER_METHODS and has_base_class(
+                def_obj, DRF_SERIALIZER_BASES, framework
+            ):
+                def_obj.confidence = 0
+                return
+            if simple_name in DRF_PERMISSION_METHODS and has_base_class(
+                def_obj, DRF_PERMISSION_BASES, framework
+            ):
+                def_obj.confidence = 0
+                return
+
+        for pattern, reduction, context in SOFT_PATTERNS:
+            if not matches_pattern(simple_name, pattern):
+                continue
+
+            if context == "test_file" and not visitor.is_test_file:
+                reduction = reduction // 4
+            elif context == "django" and "django" not in detected:
+                reduction = reduction // 4
+
+            confidence -= reduction
+            break
+
+        PYTEST_HOOKS_LOCAL = {
+            "pytest_configure",
+            "pytest_unconfigure",
+            "pytest_addoption",
+        }
+
+        if simple_name in PYTEST_HOOKS_LOCAL:
+            def_obj.confidence = 0
+            return
+
+        if def_obj.type == "method" and "." in def_obj.name:
+            class_name = def_obj.name.rsplit(".", 1)[0].split(".")[-1]
+            if class_name.startswith("Base") or class_name.endswith(
+                ("Base", "ABC", "Interface", "Adapter")
+            ):
+                def_obj.confidence = 0
+                return
+
+        if def_obj.type == "parameter" and "." in def_obj.name:
+            parts = def_obj.name.split(".")
+            if len(parts) >= 2:
+                class_name = parts[-3] if len(parts) >= 3 else ""
+                if class_name.startswith("Base") or class_name.endswith(
+                    ("Base", "ABC", "Interface", "Adapter")
+                ):
+                    def_obj.confidence = 0
+                    return
 
         if "." in def_obj.name:
             owner, attr = def_obj.name.rsplit(".", 1)
@@ -251,16 +430,14 @@ class Skylos:
                     def_obj.confidence = 0
                     return
 
-        if def_obj.type == "variable" and def_obj.simple_name == "_":
+        if def_obj.type == "variable" and simple_name == "_":
             def_obj.confidence = 0
             return
 
-        if def_obj.simple_name.startswith("_") and not def_obj.simple_name.startswith(
-            "__"
-        ):
+        if simple_name.startswith("_") and not simple_name.startswith("__"):
             confidence -= PENALTIES["private_name"]
 
-        if def_obj.simple_name.startswith("__") and def_obj.simple_name.endswith("__"):
+        if simple_name.startswith("__") and simple_name.endswith("__"):
             confidence -= PENALTIES["dunder_or_magic"]
 
         if def_obj.in_init and def_obj.type in ("function", "class"):
@@ -338,11 +515,11 @@ class Skylos:
         if framework_confidence is not None:
             confidence = min(confidence, framework_confidence)
 
-        if def_obj.simple_name.startswith("__") and def_obj.simple_name.endswith("__"):
+        if simple_name.startswith("__") and simple_name.endswith("__"):
             confidence = 0
 
         if def_obj.type == "parameter":
-            if def_obj.simple_name in ("self", "cls"):
+            if simple_name in ("self", "cls"):
                 confidence = 0
             elif "." in def_obj.name:
                 method_name = def_obj.name.split(".")[-2]
@@ -355,7 +532,7 @@ class Skylos:
         if (
             def_obj.type == "import"
             and def_obj.name.startswith("__future__.")
-            and def_obj.simple_name
+            and simple_name
             in (
                 "annotations",
                 "absolute_import",
@@ -402,6 +579,7 @@ class Skylos:
         enable_danger=False,
         enable_quality=False,
         extra_visitors=None,
+        progress_callback=None,
     ):
         files, root = self._get_python_files(path, exclude_folders)
 
@@ -436,6 +614,12 @@ class Skylos:
                     f"Loaded coverage data ({len(pattern_tracker.coverage_hits)} lines)"
                 )
 
+        if Path(".skylos_trace").exists():
+            if pattern_tracker.load_trace():
+                logger.info(
+                    f"Loaded trace data ({len(pattern_tracker.traced_calls)} function calls)"
+                )
+
         all_secrets = []
         all_dangers = []
         all_quality = []
@@ -444,7 +628,9 @@ class Skylos:
 
         pattern_trackers = {}
 
-        for file in files:
+        for i, file in enumerate(files):
+            if progress_callback:
+                progress_callback(i + 1, len(files), file)
             mod = modmap[file]
             (
                 defs,
@@ -457,20 +643,25 @@ class Skylos:
                 d_finds,
                 pro_finds,
                 pattern_tracker,
-                empty_file_finding
+                empty_file_finding,
+                cfg,
             ) = proc_file(file, mod, extra_visitors)
 
             if pattern_tracker:
                 pattern_trackers[mod] = pattern_tracker
 
             for definition in defs:
-                self.defs[definition.name] = definition
+                if definition.type == "import":
+                    key = f"{definition.filename}:{definition.name}"
+                else:
+                    key = definition.name
+                self.defs[key] = definition
 
             self.refs.extend(refs)
             self.dynamic.update(dyn)
             self.exports[mod].update(exports)
 
-            file_contexts.append((defs, test_flags, framework_flags, file, mod))
+            file_contexts.append((defs, test_flags, framework_flags, file, mod, cfg))
 
             if empty_file_finding:
                 empty_files.append(empty_file_finding)
@@ -498,9 +689,9 @@ class Skylos:
 
         self.pattern_trackers = pattern_trackers
 
-        for defs, test_flags, framework_flags, file, mod in file_contexts:
+        for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
             for definition in defs:
-                self._apply_penalties(definition, test_flags, framework_flags)
+                self._apply_penalties(definition, test_flags, framework_flags, cfg)
 
             if enable_danger and scan_danger is not None:
                 try:
@@ -545,6 +736,20 @@ class Skylos:
                     "line": d.line,
                     "type": d.type,
                 }
+
+        whitelisted = []
+        for d in self.defs.values():
+            reason = getattr(d, "skip_reason", None)
+            if reason:
+                whitelisted.append(
+                    {
+                        "name": d.simple_name,
+                        "file": str(d.filename),
+                        "line": d.line,
+                        "reason": d.skip_reason,
+                    }
+                )
+
         result = {
             "definitions": context_map,
             "unused_functions": [],
@@ -553,6 +758,7 @@ class Skylos:
             "unused_variables": [],
             "unused_parameters": [],
             "unused_files": [],
+            "whitelisted": whitelisted,
             "analysis_summary": {
                 "total_files": len(files),
                 "excluded_folders": exclude_folders or [],
@@ -570,7 +776,7 @@ class Skylos:
         if enable_quality and all_quality:
             result["quality"] = all_quality
             result["analysis_summary"]["quality_count"] = len(all_quality)
-        
+
         if empty_files:
             result["unused_files"] = empty_files
             result["analysis_summary"]["unused_files_count"] = len(empty_files)
@@ -589,8 +795,8 @@ class Skylos:
 
         return json.dumps(result, indent=2)
 
-def _is_truly_empty_or_docstring_only(tree):
 
+def _is_truly_empty_or_docstring_only(tree):
     if not isinstance(tree, ast.Module):
         return False
 
@@ -607,6 +813,7 @@ def _is_truly_empty_or_docstring_only(tree):
         and isinstance(only.value.value, str)
     )
 
+
 def proc_file(file_or_args, mod=None, extra_visitors=None):
     if mod is None and isinstance(file_or_args, tuple):
         file, mod = file_or_args
@@ -618,18 +825,16 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
     if str(file).endswith((".ts", ".tsx")):
         ts_out = scan_typescript_file(file)
         if isinstance(ts_out, tuple) and len(ts_out) == 10:
-            return (*ts_out, None)
+            return (*ts_out, None, cfg)
         if isinstance(ts_out, tuple) and len(ts_out) == 11:
-            return ts_out
-        return (*ts_out, None)
+            return (*ts_out, cfg)
+        if isinstance(ts_out, tuple) and len(ts_out) >= 12:
+            return ts_out[:12]
+        return (*ts_out, None, cfg)
 
     try:
         source = Path(file).read_text(encoding="utf-8")
-        ignore_lines = {
-            i
-            for i, line in enumerate(source.splitlines(), start=1)
-            if "pragma: no skylos" in line
-        }
+        ignore_lines = get_all_ignore_lines(source)
 
         tree = ast.parse(source)
 
@@ -641,17 +846,16 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
         if (
             _is_truly_empty_or_docstring_only(tree)
             and not skip_empty_report
-            and "SKY-U002" not in cfg["ignore"]
+            and "SKY-E002" not in cfg["ignore"]
         ):
             empty_file_finding = {
-                "rule_id": "SKY-U002",
+                "rule_id": "SKY-E002",
                 "message": "Empty Python file (no code, or docstring-only)",
                 "file": str(file),
                 "line": 1,
                 "severity": "LOW",
                 "category": "DEAD_CODE",
             }
-
 
         from skylos.ast_mask import apply_body_mask, default_mask_spec_from_config
 
@@ -724,7 +928,8 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             danger_findings,
             pro_findings,
             v.pattern_tracker,
-            empty_file_finding
+            empty_file_finding,
+            cfg,
         )
 
     except Exception as e:
@@ -745,7 +950,8 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             [],
             [],
             None,
-            None
+            None,
+            cfg
         )
 
 
@@ -757,6 +963,7 @@ def analyze(
     enable_danger=False,
     enable_quality=False,
     extra_visitors=None,
+    progress_callback=None,
 ):
     return Skylos().analyze(
         path,
@@ -766,6 +973,7 @@ def analyze(
         enable_danger,
         enable_quality,
         extra_visitors,
+        progress_callback,
     )
 
 
@@ -851,7 +1059,7 @@ if __name__ == "__main__":
         for i, var in enumerate(data["unused_variables"], 1):
             print(f" {i}. {var['name']}")
             print(f"    └─ {var['file']}:{var['line']}")
-    
+
     if data["unused_files"]:
         print("\n - Empty Files")
         print("==============")
