@@ -5,6 +5,7 @@
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 ![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
+[![codecov](https://codecov.io/gh/duriantaco/skylos/branch/main/graph/badge.svg)](https://codecov.io/gh/OWNER/REPO)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 ![PyPI version](https://img.shields.io/pypi/v/skylos)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
@@ -42,6 +43,8 @@
 | **Audit Risk & Quality** | `skylos . --secrets --danger --quality` | Kill security leaks, tainted data, and architectural rot. | You can run one of the flags, or all 3 |
 | **Automated Repair** | `skylos . --audit --fix` | Let the watchdog handle the labor of cleaning your code. | |
 | **Secure the Gate** | `skylos --gate` | Block risky code from merging with hard-coded standards. | |
+| **Whitelist False Positives** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns from future scans. |
+
 
 ## Features
 
@@ -497,8 +500,9 @@ skylos . --quality
 | Pandas no chunk | SKY-P402 | `read_csv()` without `chunksize` |
 | Nested loop | SKY-P403 | O(N²) complexity |
 | **Unreachable** | | |
-| Dead branch | SKY-U001 | `if False:` or `else` after always-true |
-| Dead statement | SKY-U002 | Code after `return`/`raise`/`break` |
+| Unreachable Code | SKY-UC001 | `if False:` or `else` after always-true |
+| **Empty** | | |
+| Empty File | SKY-E002 | Empty File |
 
 To ignore a specific rule:
 ```toml
@@ -686,7 +690,81 @@ ignore = [
 | Include excluded folder | `--include-folder NAME` |
 | Scan everything | `--no-default-excludes` |
 
+## Whitelist Configuration
+
+Suppress false positives permanently without inline comments cluttering your code.
+
+### CLI Commands
+```bash
+# Add a pattern
+skylos whitelist 'handle_*'
+
+# Add with reason
+skylos whitelist dark_logic --reason "Called via globals() in dispatcher"
+
+# View current whitelist
+skylos whitelist --show
+```
+
+### Inline Ignores
+```python
+# Single line
+def dynamic_handler():  # skylos: ignore
+    pass
+
+# Also works
+def another():  # noqa: skylos
+    pass
+
+# Block ignore
+# skylos: ignore-start
+def block_one():
+    pass
+def block_two():
+    pass
+# skylos: ignore-end
+```
+
+### Config File (`pyproject.toml`)
+```toml
+[tool.skylos.whitelist]
+# Glob patterns
+names = [
+    "handle_*",
+    "visit_*",
+    "*Plugin",
+]
+
+# With reasons (shows in --show output)
+[tool.skylos.whitelist.documented]
+"dark_logic" = "Called via globals() string manipulation"
+"BasePlugin" = "Discovered via __subclasses__()"
+
+# Temporary (warns when expired)
+[tool.skylos.whitelist.temporary]
+"legacy_handler" = { reason = "Migration - JIRA-123", expires = "2026-03-01" }
+
+# Per-path overrides
+[tool.skylos.overrides."src/plugins/*"]
+whitelist = ["*Plugin", "*Handler"]
+```
+
+### Summary
+
+| Want to... | Do this |
+|------------|---------|
+| Whitelist one function | `skylos whitelist func_name` |
+| Whitelist a pattern | `skylos whitelist 'handle_*'` |
+| Document why | `skylos whitelist x --reason "why"` |
+| Temporary whitelist | Add to `[tool.skylos.whitelist.temporary]` with `expires` |
+| Per-folder rules | Add `[tool.skylos.overrides."path/*"]` |
+| View whitelist | `skylos whitelist --show` |
+| Inline ignore | `# skylos: ignore` or `# noqa: skylos` |
+| Block ignore | `# skylos: ignore-start` ... `# skylos: ignore-end` |
+
 ## CLI Options
+
+### Flags
 ```
 Usage: skylos [OPTIONS] PATH
 
@@ -719,6 +797,33 @@ Options:
   --gate                       Fail on threshold breach (for CI)
   --force                      Bypass quality gate (emergency override)
 ```
+
+### Commands 
+```
+Commands:
+  skylos PATH                  Analyze a project
+  skylos init                  Initialize pyproject.toml config
+  skylos whitelist PATTERN     Add pattern to whitelist
+  skylos whitelist --show      Display current whitelist
+  skylos run                   Start web UI at localhost:5090
+
+Whitelist Options:
+  skylos whitelist PATTERN           Add glob pattern (e.g., 'handle_*')
+  skylos whitelist NAME --reason X   Add with documentation
+  skylos whitelist --show            Display all whitelist entries
+```
+
+### CLI Output
+
+Skylos displays confidence for each finding:
+```
+────────────────── Unused Functions ──────────────────
+#   Name              Location        Conf
+1   handle_secret     app.py:16       70%
+2   totally_dead      app.py:50       90%
+```
+
+Higher confidence = more certain it's dead code.
 
 ### Interactive Mode
 
