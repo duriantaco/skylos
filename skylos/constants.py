@@ -5,7 +5,7 @@ PENALTIES = {
     "dunder_or_magic": 100,
     "underscored_var": 100,
     "in_init_file": 15,
-    "dynamic_module": 40,
+    "dynamic_module": 10,
     "test_related": 100,
     "framework_magic": 40,
 }
