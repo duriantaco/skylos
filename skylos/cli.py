@@ -11,10 +11,11 @@ from skylos.codemods import (
     comment_out_unused_import_cst,
     comment_out_unused_function_cst,
 )
-from skylos.config import load_config
+from skylos.config import load_config, suggest_pattern
 from skylos.gatekeeper import run_gate_interaction
 from skylos.credentials import get_key, save_key
 from skylos.api import upload_report
+from skylos.sarif_exporter import SarifExporter
 
 import pathlib
 import skylos
@@ -332,6 +333,39 @@ def render_results(console: Console, result, tree=False, root_path=None):
         console.print(table)
         console.print()
 
+    def _render_unused(title, items, name_key="name"):
+        if not items:
+            return
+
+        console.rule(f"[bold]{title}")
+
+        table = Table(expand=True)
+        table.add_column("#", style="muted", width=3)
+        table.add_column("Name", style="bold")
+        table.add_column("Location", style="muted", overflow="fold")
+        table.add_column("Conf", style="yellow", width=6, justify="right")
+
+        for i, item in enumerate(items, 1):
+            nm = item.get(name_key) or item.get("simple_name") or "<?>"
+            short = _shorten_path(item.get("file"), root_path)
+            loc = f"{short}:{item.get('line', '?')}"
+            conf = item.get("confidence", "?")
+
+            if isinstance(conf, int):
+                if conf >= 90:
+                    conf_str = f"[red]{conf}%[/red]"
+                elif conf >= 75:
+                    conf_str = f"[yellow]{conf}%[/yellow]"
+                else:
+                    conf_str = f"[dim]{conf}%[/dim]"
+            else:
+                conf_str = str(conf)
+
+            table.add_row(str(i), nm, loc, conf_str)
+
+        console.print(table)
+        console.print()
+
     def _render_quality(items):
         if not items:
             return
@@ -502,18 +536,25 @@ def run_init():
 
     template = """
 [tool.skylos]
-# 1. Global Defaults (Applies to all languages)
 complexity = 10
 nesting = 3
 max_args = 5
 max_lines = 50
-ignore = [] 
 model = "gpt-4.1"
+exclude = []
+ignore = []
 
-# 2. Language Overrides (Optional)
-[tool.skylos.languages.typescript]
-complexity = 15
-nesting = 4
+[tool.skylos.masking]
+names = []
+decorators = []
+bases = []
+
+[tool.skylos.whitelist]
+names = []
+
+[tool.skylos.whitelist.documented]
+
+[tool.skylos.whitelist.temporary]
 
 [tool.skylos.gate]
 fail_on_critical = true
@@ -524,24 +565,105 @@ strict = false
 
     if path.exists():
         content = path.read_text(encoding="utf-8")
-        if "[tool.skylos]" in content:
-            console.print(
-                "[warn]pyproject.toml already contains [tool.skylos] configuration.[/warn]"
-            )
-            return
+        if "[tool.skylos" in content:
+            import re
 
-        console.print(
-            "[brand]Appending Skylos configuration to existing pyproject.toml...[/brand]"
-        )
+            content = re.sub(r"\[tool\.skylos[^\]]*\](?:\n(?!\[).*)*\n*", "", content)
+            content = content.rstrip() + "\n"
+            path.write_text(content, encoding="utf-8")
+            console.print("[brand]Resetting Skylos configuration...[/brand]")
+
         with open(path, "a", encoding="utf-8") as f:
-            f.write("\n" + template)
+            f.write("\n" + template.strip() + "\n")
     else:
-        console.print("[brand]Creating new pyproject.toml...[/brand]")
         path.write_text(template.strip(), encoding="utf-8")
 
-    console.print(
-        "[good] ** Configuration initialized! You can now edit pyproject.toml[/good]"
-    )
+    console.print("[good]✓ Configuration initialized![/good]")
+
+
+def run_whitelist(pattern=None, reason=None, show=False):
+    console = Console()
+    path = pathlib.Path("pyproject.toml")
+
+    if not path.exists():
+        console.print("[bad]No pyproject.toml found. Run 'skylos init' first.[/bad]")
+        return
+
+    cfg = load_config(path)
+
+    if show:
+        console.print("[bold]Current whitelist:[/bold]\n")
+
+        names = cfg.get("whitelist", [])
+        if names:
+            console.print("[dim]names:[/dim]")
+            for name in names:
+                console.print(f"  • {name}")
+
+        documented = cfg.get("whitelist_documented", {})
+        if documented:
+            console.print("\n[dim]documented:[/dim]")
+            for name, r in documented.items():
+                console.print(f"  • {name} → {r}")
+
+        temporary = cfg.get("whitelist_temporary", {})
+        if temporary:
+            console.print("\n[dim]temporary:[/dim]")
+            for name, conf in temporary.items():
+                r = conf.get("reason", "")
+                e = conf.get("expires", "")
+                console.print(f"  • {name} → {r} (expires: {e})")
+
+        if not any([names, documented, temporary]):
+            console.print("[muted]No whitelist entries yet.[/muted]")
+        return
+
+    if not pattern:
+        console.print("[warn]Usage: skylos whitelist <pattern> [--reason 'why'][/warn]")
+        console.print("\nExamples:")
+        console.print("  skylos whitelist 'handle_*'")
+        console.print("  skylos whitelist dark_logic --reason 'Called via globals()'")
+        console.print("  skylos whitelist --show")
+        return
+
+    content = path.read_text(encoding="utf-8")
+
+    if reason:
+        if "[tool.skylos.whitelist.documented]" in content:
+            import re
+
+            content = re.sub(
+                r"(\[tool\.skylos\.whitelist\.documented\])",
+                f'\\1\n"{pattern}" = "{reason}"',
+                content,
+            )
+        else:
+            content += (
+                f'\n[tool.skylos.whitelist.documented]\n"{pattern}" = "{reason}"\n'
+            )
+        console.print(f"[good]✓ Added '{pattern}' to whitelist.documented[/good]")
+    else:
+        import re
+
+        match = re.search(
+            r"(\[tool\.skylos\.whitelist\][^\[]*?)(names\s*=\s*\[)", content, re.DOTALL
+        )
+        if match:
+            start = match.start(2)
+            end = match.end(2)
+            content = content[:end] + f'\n    "{pattern}",' + content[end:]
+        elif "[tool.skylos.whitelist]" in content:
+            content = re.sub(
+                r"(\[tool\.skylos\.whitelist\])",
+                f'\\1\nnames = [\n    "{pattern}",\n]',
+                content,
+            )
+        else:
+            content += f'\n[tool.skylos.whitelist]\nnames = [\n    "{pattern}",\n]\n'
+        console.print(f"[good]✓ Added '{pattern}' to whitelist.names[/good]")
+
+    path.write_text(content, encoding="utf-8")
+    console.print("[muted]Run 'skylos whitelist --show' to see all entries[/muted]")
 
 
 def get_git_changed_files(root_path):
@@ -578,14 +700,32 @@ def estimate_cost(files):
 
 
 def main():
-    # if len(sys.argv) > 2 and sys.argv[1] == "track":
-    #     script = sys.argv[2]
-    #     args = sys.argv[3:]
-    #     run_and_track(script, args)
-    #     sys.exit(0)
-
     if len(sys.argv) > 1 and sys.argv[1] == "init":
         run_init()
+        sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "whitelist":
+        pattern = None
+        reason = None
+        show = False
+        i = 2
+        while i < len(sys.argv):
+            arg = sys.argv[i]
+            if arg in ("--show", "-s"):
+                show = True
+            elif arg in ("--reason", "-r") and i + 1 < len(sys.argv):
+                reason = sys.argv[i + 1]
+                i += 1
+            elif not arg.startswith("-"):
+                pattern = arg
+            i += 1
+        run_whitelist(pattern=pattern, reason=reason, show=show)
+        sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "sync":
+        from skylos.sync import main as sync_main
+
+        sync_main(sys.argv[2:])
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] == "run":
@@ -645,6 +785,11 @@ def main():
         "--coverage",
         action="store_true",
         help="Run tests with coverage first, then analyze",
+    )
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Run tests with call tracing to capture dynamic dispatch (e.g., visitor patterns)",
     )
     parser.add_argument(
         "--force",
@@ -738,6 +883,14 @@ def main():
         help="Run code quality checks. Off by default.",
     )
 
+    parser.add_argument(
+        "--sarif",
+        nargs="?",
+        const="skylos.sarif.json",
+        default=None,
+        help="Write SARIF (2.1.0). Optional path. Example: --sarif or --sarif results.sarif.json",
+    )
+
     parser.add_argument("command", nargs="*", help="Command to run if gate passes")
 
     args = parser.parse_args()
@@ -800,14 +953,46 @@ def main():
         if not args.json:
             console.print("[good]Coverage data collected[/good]")
 
+    if args.trace:
+        if not args.json:
+            console.print("[brand]Running tests with call tracing...[/brand]")
+
+        trace_script = f'''
+    import sys
+    sys.path.insert(0, "{project_root}")
+    from skylos.tracer import CallTracer
+
+    tracer = CallTracer(exclude_patterns=["site-packages", "venv", ".venv", "pytest", "_pytest"])
+    tracer.start()
+
+    import pytest
+    pytest.main(["-q"])
+
+    tracer.stop()
+    tracer.save("{project_root}/.skylos_trace")
+    '''
+
+        subprocess.run(
+            [sys.executable, "-c", trace_script],
+            cwd=project_root,
+            capture_output=not args.json,
+        )
+
+        if not args.json:
+            console.print("[good]Trace data collected[/good]")
+
     try:
         with Progress(
             SpinnerColumn(style="brand"),
-            TextColumn("[brand]Skylos[/brand] analyzing your code…"),
+            TextColumn("[brand]Skylos[/brand] {task.description}"),
             transient=True,
             console=console,
         ) as progress:
-            progress.add_task("analyze", total=None)
+            task = progress.add_task("analyzing..", total=None)
+
+            def update_progress(current, total, file):
+                progress.update(task, description=f"[{current}/{total}] {file.name}")
+
             result_json = run_analyze(
                 args.path,
                 conf=args.confidence,
@@ -815,13 +1000,87 @@ def main():
                 enable_danger=bool(args.danger),
                 enable_quality=bool(args.quality),
                 exclude_folders=list(final_exclude_folders),
+                progress_callback=update_progress,
             )
+
+        result = json.loads(result_json)
+
+        if args.sarif:
+            all_findings = []
+
+            def _add(items, category, default_rule_id):
+                for item in items or []:
+                    f = dict(item)
+                    rid = (
+                        f.get("rule_id")
+                        or f.get("rule")
+                        or f.get("code")
+                        or f.get("id")
+                        or default_rule_id
+                        or "SKYLOS-UNKNOWN"
+                    )
+                    f["rule_id"] = str(rid)
+                    f["category"] = category
+                    f["file_path"] = f.get("file_path") or f.get("file") or "unknown"
+
+                    line_raw = f.get("line_number") or f.get("line") or 1
+                    try:
+                        line = int(line_raw)
+                    except Exception:
+                        line = 1
+
+                    f["line_number"] = max(1, line)
+
+                    f["file"] = f.get("file") or f.get("file_path") or "unknown"
+                    f["line"] = f.get("line") or f.get("line_number") or 1
+
+                    if not f.get("message"):
+                        name = (
+                            f.get("name") or f.get("symbol") or f.get("function") or ""
+                        )
+                        if category == "DEAD_CODE" and name:
+                            f["message"] = f"Dead code: {name}"
+                        else:
+                            f["message"] = f.get("detail") or f.get("msg") or "Issue"
+                    if not f.get("severity"):
+                        f["severity"] = "LOW"
+                    all_findings.append(f)
+
+            _add(result.get("danger", []), "SECURITY", None)
+            _add(result.get("quality", []), "QUALITY", None)
+            _add(result.get("secrets", []), "SECRET", None)
+
+            _add(
+                result.get("unused_functions", []),
+                "DEAD_CODE",
+                "SKYLOS-DEADCODE-UNUSED_FUNCTION",
+            )
+            _add(
+                result.get("unused_imports", []),
+                "DEAD_CODE",
+                "SKYLOS-DEADCODE-UNUSED_IMPORT",
+            )
+            _add(
+                result.get("unused_variables", []),
+                "DEAD_CODE",
+                "SKYLOS-DEADCODE-UNUSED_VARIABLE",
+            )
+            _add(
+                result.get("unused_classes", []),
+                "DEAD_CODE",
+                "SKYLOS-DEADCODE-UNUSED_CLASS",
+            )
+            _add(
+                result.get("unused_parameters", []),
+                "DEAD_CODE",
+                "SKYLOS-DEADCODE-UNUSED_PARAMETER",
+            )
+
+            SarifExporter(all_findings, tool_name="Skylos").write(args.sarif)
 
         if args.json:
             print(result_json)
             return
-
-        result = json.loads(result_json)
 
     except Exception as e:
         logger.error(f"Error during analysis: {e}")
