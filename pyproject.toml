@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "2.7.1"
+version = "3.0.0"
 requires-python = ">=3.9"
 description = "An analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
@@ -31,7 +31,8 @@ dependencies = [
     "keyring>=25.7.0",
     "requests",
     "tree-sitter>=0.25.2",
-    "tree-sitter-typescript>=0.23.2"
+    "tree-sitter-typescript>=0.23.2",
+    "pyyaml"
 ]
 
 [project.scripts]
@@ -41,17 +42,29 @@ skylos = "skylos.cli:main"
 where = ["."]
 include = ["skylos*"]
 namespaces = false
-
 [tool.skylos]
-# Analysis Settings
-complexity = 15
-nesting = 5
+complexity = 10
+nesting = 3
 max_args = 5
-max_lines = 100
-ignore = []  # e.g. ["SKY-L002", "SKY-C304"]
+max_lines = 50
+model = "gpt-4.1"
+exclude = []
+ignore = []
+
+[tool.skylos.masking]
+names = []
+decorators = []
+bases = []
+
+[tool.skylos.whitelist]
+names = [
+   ]
+
+[tool.skylos.whitelist.documented]
+
+[tool.skylos.whitelist.temporary]
 
 [tool.skylos.gate]
-# Gatekeeper Settings (skylos --gate)
 fail_on_critical = true
 max_security = 0
 max_quality = 10
