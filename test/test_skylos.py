@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, "/Users/oha/skylos")
 
-from skylos.analyzer import analyze, Skylos
+from skylos.analyzer import analyze
 
 
 class SkylosTest:

@@ -177,7 +177,7 @@ async def get_item(item_id: int):
         assert 3 in v.framework_decorated_lines
         assert 7 in v.framework_decorated_lines
 
-    @patch("skylos.framework_aware.Path")
+    @patch("skylos.visitors.framework_aware.Path")
     def test_file_content_framework_detection(self, mock_path):
         mock_file = Mock()
         mock_file.read_text.return_value = (

@@ -6,7 +6,7 @@ from textwrap import dedent
 
 import skylos
 from skylos.analyzer import Skylos
-from skylos.analyzer import DEFAULT_EXCLUDE_FOLDERS
+from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 
 
 class TestSkylosIntegration:
@@ -14,6 +14,9 @@ class TestSkylosIntegration:
     def temp_project(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_path = Path(temp_dir)
+
+            pyproject = project_path / "pyproject.toml"
+            pyproject.write_text("[tool.skylos]\n")
 
             main_py = project_path / "main.py"
             main_py.write_text(
