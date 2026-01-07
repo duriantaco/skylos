@@ -1,5 +1,80 @@
 ## Changelog
 
+## [3.0.0] - 2026-01-03
+
+New year new me, and a new release! Happy new year everyone! 
+
+### Added
+
+- Added `--trace` flag for runtime call tracing using `sys.settrace()` to capture dynamic dispatch patterns (visitor patterns, getattr, plugins)
+- Added `skylos/tracer.py` with `CallTracer` class to record function calls during test execution
+- Added pytest plugin hooks (`pytest_configure`, `pytest_unconfigure`, `pytest_addoption`) for `--skylos-trace` integration
+- Added `.skylos_trace` file generation containing JSON trace data with function calls, line numbers, and call counts
+- Added trace data x-referencing in analyzer to eliminate false positives for dynamic codes
+- Added progress callback support to `analyze()` for real-time file processing feedback
+- Added progress indicator in CLI showing `[current/total] filename` during analysis
+- Added dead code reporting for truly empty Python files (empty or docstring-only), tagged as SKY-U002 under unused_files
+- Added `unused_files_count` to analysis_summary when empty-file findings are present
+- Added unit test coverage for empty-file reporting
+- Added AST body masking feature via `skylos/ast_mask.py` to support masking by name, decorator, and base-class globs
+- Added `skylos/known_patterns.py` with framework pattern detection
+- Added class context-aware framework entrypoint detection (e.g., `save()` only skipped if inside `Model` subclass)
+- Added config-based dead code suppression
+  - Config file support in `pyproject.toml`:
+    - `[tool.skylos.whitelist].names` - Glob patterns (e.g., `"handle_*"`)
+    - `[tool.skylos.whitelist.documented]` - Patterns with reasons for team visibility
+    - `[tool.skylos.whitelist.temporary]` - Patterns with expiration dates to prevent whitelist rot
+    - `[tool.skylos.overrides."path/*"]` - Per-file/folder whitelist rules
+- Added new CLI commands. 1. `skylos whitelist <pattern>` 2. `skylos whitelist <pattern> --reason "why"` 3. `skylos whitelist --show`
+- Added new helper functions in `config.py`: `is_whitelisted()`, `get_all_ignore_lines()`, `get_expired_whitelists()`
+
+- **Confidence Display in CLI**: Added "Conf" column showing confidence percentage for each flagged item
+  - 100% = definitely dead, 60-80% = probably dead but check, <60% = not flagged
+
+- **Expanded SOFT_PATTERNS** in `known_patterns.py`:
+  - `visit_*`, `leave_*` (25) - AST visitor pattern dispatch
+  - `pytest_*` (30) - pytest hook functions
+  - `*Plugin` (20) - plugin discovery via `__subclasses__()`
+
+
+### Changed
+
+- Replaced `--coverage` flag with `--trace` for runtime analysis
+- Updated `implicit_refs.py` to store traced function lines as lists
+- Updated `should_mark_as_used()` to iterate over traced line lists with ~5 lines tolerance matching
+- Added automatic suppression for pytest hook functions (`pytest_configure`, `pytest_unconfigure`, `pytest_addoption`, etc.)
+- Added automatic suppression for abstract base class (abc) methods
+- `Skylos.analyze()` accepts `progress_callback` parameter for progress reporting
+- Updated the analyzer result schema to include `unused_files: []` in the top-level output 
+- Updated `_apply_penalties()` in analyzer to use new known patterns system. 1. Hard entrypoints where `confidence = 0`. 2. Framework entrypoints `confidence = 0` only with class context + framework evidence 3. Soft patterns that reduce confidence proportionally
+- Updated `visit_FunctionDef` in `framework_aware.py` to immediately add decorated lines to `framework_decorated_lines` (fixes Pydantic model detection in routes)
+- Framework decorator patterns now set `is_route = True` during visiting (not just in `finalize()`)
+- Reduced `dynamic_module` penalty from 40 to 10
+- Updated `skylos init` to properly reset ALL `[tool.skylos*]` sections (fixed regex)
+
+
+### Fixed
+
+- Fixed import path in cli.py: `from skylos.skylos_trace` → `from skylos.tracer`
+- Fixed false positives for dynamically dispatched methods (visitor patterns, plugin hooks)
+- Fixed analyzer output JSON serialization edge case in tests by ensuring mocked definitions provide concrete line / filename fields (prevents TypeError: Object of type Mock is not JSON serializable)
+- Fixed `proc_file()` tests to match the updated return signature
+- Fixed Flask route detection bug where `app = Flask(__name__)` routes were incorrectly marked as unused
+  - Root cause: `if is_passed or not is_created` evaluated to `False` when `is_created=True` and `is_passed=False`
+  - Fix: Removed conditional, all routes are now unconditionally added to `framework_decorated_lines`
+- Fixed `@login_required` and other framework decorators not adding functions to `framework_decorated_lines`
+- Fixed Pydantic models used as route type hints not being marked as used
+- Fixed `ComplexityRule` not counting complexity (visitor was returning early on FunctionDef)
+- Fixed Python 3.13 compatibility issue in `ComplexityRule` with nested class `super()` scope
+- Fixed test mock path: `skylos.framework_aware.Path` → `skylos.visitors.framework_aware.Path`
+- Fixed `skylos init` not removing duplicate config sections when run multiple times
+- Fixed `skylos whitelist` command writing to wrong section
+
+### Removed
+
+- Removed `--coverage` flag (replaced by `--trace`)
+
+
 ## [2.7.1] - 2025-12-23
 
 ### Fixed
