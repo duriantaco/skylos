@@ -31,6 +31,8 @@ def mock_definition():
         mock.confidence = confidence
         mock.in_init = in_init
         mock.line = line
+        mock.filename = Path("test.py")
+        mock.skip_reason = None
         mock.to_dict.return_value = {
             "name": name,
             "type": type,
@@ -310,6 +312,8 @@ class TestAnalyze:
         mock_def.filename = "test.py"
         mock_def.simple_name = "unused_function"
         mock_def.in_init = False
+        mock_def.skip_reason = None
+        mock_def.filename = Path("test.py")
 
         mock_test_visitor = Mock(spec=TestAwareVisitor)
         mock_test_visitor.is_test_file = False
@@ -329,6 +333,7 @@ class TestAnalyze:
             [],
             [],
             [],
+            None,
             None,
             None,
         )
@@ -413,6 +418,7 @@ class TestAnalyze:
                     [],
                     None,
                     None,
+                    None,
                 )
 
                 result_json = skylos.analyze("/fake/path", thr=60)
@@ -460,9 +466,20 @@ class TestClass:
                     mock_framework_visitor = Mock(spec=FrameworkAwareVisitor)
                     mock_framework_visitor_class.return_value = mock_framework_visitor
 
-                    defs, refs, dyn, exports, test_flags, framework_flags, quality_findings, danger_findings, pro_findings, pattern_tracker, empty_file_finding = proc_file(
-                        f.name, "test_module"
-                    )
+                    (
+                        defs,
+                        refs,
+                        dyn,
+                        exports,
+                        test_flags,
+                        framework_flags,
+                        quality_findings,
+                        danger_findings,
+                        pro_findings,
+                        pattern_tracker,
+                        empty_file_finding,
+                        cfg,
+                    ) = proc_file(f.name, "test_module")
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
                     mock_visitor.visit.assert_called_once()
@@ -487,9 +504,20 @@ class TestClass:
             f.flush()
 
             try:
-                defs, refs, dyn, exports, test_flags, framework_flags, quality_findings, danger_findings, pro_findings, pattern_tracker, empty_file_finding = proc_file(
-                    f.name, "test_module"
-                )
+                (
+                    defs,
+                    refs,
+                    dyn,
+                    exports,
+                    test_flags,
+                    framework_flags,
+                    quality_findings,
+                    danger_findings,
+                    pro_findings,
+                    pattern_tracker,
+                    empty_file_finding,
+                    cfg,
+                ) = proc_file(f.name, "test_module")
 
                 assert defs == []
                 assert refs == []
@@ -536,9 +564,20 @@ class TestClass:
                     mock_framework_visitor = Mock(spec=FrameworkAwareVisitor)
                     mock_framework_visitor_class.return_value = mock_framework_visitor
 
-                    defs, refs, dyn, exports, test_flags, framework_flags, quality_findings, danger_findings, pro_findings, pattern_tracker, empty_file_finding = proc_file(
-                        (f.name, "test_module")
-                    )
+                    (
+                        defs,
+                        refs,
+                        dyn,
+                        exports,
+                        test_flags,
+                        framework_flags,
+                        quality_findings,
+                        danger_findings,
+                        pro_findings,
+                        pattern_tracker,
+                        empty_file_finding,
+                        cfg,
+                    ) = proc_file((f.name, "test_module"))
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
             finally:
@@ -568,9 +607,10 @@ class TestClass:
         assert "__init__.py" not in flagged
 
         item = next(f for f in files if Path(f["file"]).name == "empty_module.py")
-        assert item["rule_id"] == "SKY-U002"
+        assert item["rule_id"] == "SKY-E002"
         assert item["category"] == "DEAD_CODE"
         assert item["severity"] == "LOW"
+
 
 class TestApplyPenalties:
     @patch("skylos.analyzer.detect_framework_usage")

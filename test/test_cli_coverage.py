@@ -1,12 +1,8 @@
-# tests/test_cli_coverage.py
-import pytest
 from unittest.mock import patch, MagicMock
-import subprocess
 import sys
 
 
 class TestCoverageFlag:
-    """Tests for the --coverage CLI flag."""
 
     @patch("skylos.cli.subprocess.run")
     @patch("skylos.cli.run_analyze")
@@ -14,7 +10,6 @@ class TestCoverageFlag:
         """--coverage should run pytest with coverage before analysis."""
         from skylos.cli import main
 
-        # Mock successful pytest run
         mock_run.return_value = MagicMock(returncode=0)
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'
 
@@ -24,17 +19,14 @@ class TestCoverageFlag:
             except SystemExit:
                 pass
 
-        # Verify coverage run was called
         calls = mock_run.call_args_list
         assert any("coverage" in str(call) and "pytest" in str(call) for call in calls)
 
     @patch("skylos.cli.subprocess.run")
     @patch("skylos.cli.run_analyze")
     def test_coverage_falls_back_to_unittest(self, mock_analyze, mock_run):
-        """If pytest fails, should fall back to unittest."""
         from skylos.cli import main
 
-        # First call (pytest) fails, second call (unittest) succeeds
         mock_run.side_effect = [
             MagicMock(returncode=1),  # pytest fails
             MagicMock(returncode=0),  # unittest succeeds
@@ -47,7 +39,6 @@ class TestCoverageFlag:
             except SystemExit:
                 pass
 
-        # Should have called both pytest and unittest
         assert mock_run.call_count == 2
 
         calls = [str(c) for c in mock_run.call_args_list]
@@ -79,7 +70,6 @@ class TestCoverageFlag:
             except SystemExit:
                 pass
 
-        # Coverage must come before analyze
         assert call_order.index("coverage") < call_order.index("analyze")
 
     @patch("skylos.cli.subprocess.run")
@@ -140,17 +130,13 @@ class TestCoverageFlag:
             except SystemExit:
                 pass
 
-        # Coverage should still run
         assert mock_run.called
-
-        # Analysis should include danger flag
         mock_analyze.assert_called_once()
         call_kwargs = mock_analyze.call_args[1]
         assert call_kwargs.get("enable_danger") is True
 
 
 class TestCoverageIntegration:
-    """Integration tests for coverage + analysis flow."""
 
     @patch("skylos.implicit_refs.pattern_tracker")
     @patch("skylos.cli.subprocess.run")
@@ -165,7 +151,6 @@ class TestCoverageIntegration:
         mock_run.return_value = MagicMock(returncode=0)
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'
 
-        # Simulate .coverage file existing after coverage run
         with patch.object(Path, "exists", return_value=True):
             with patch.object(sys, "argv", ["skylos", ".", "--coverage", "--json"]):
                 try:
@@ -173,5 +158,4 @@ class TestCoverageIntegration:
                 except SystemExit:
                     pass
 
-        # Analysis should have been called (which loads coverage internally)
         assert mock_analyze.called

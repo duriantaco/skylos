@@ -4,6 +4,7 @@ import textwrap
 
 from skylos.ast_mask import MaskSpec, apply_body_mask
 
+
 class TestBodyMasker(unittest.TestCase):
     def _get_masked_code(self, source, **spec_kwargs):
         tree = ast.parse(textwrap.dedent(source))
@@ -46,7 +47,9 @@ class TestBodyMasker(unittest.TestCase):
                     pass
         """
         result, count = self._get_masked_code(source, bases=["HiddenMixin"])
-        self.assertIn("class InternalService(BaseService, HiddenMixin):\n    pass", result)
+        self.assertIn(
+            "class InternalService(BaseService, HiddenMixin):\n    pass", result
+        )
         self.assertIn("def start(self):", result)
         self.assertEqual(count, 1)
 
@@ -56,7 +59,9 @@ class TestBodyMasker(unittest.TestCase):
                 \"\"\"Keep this docstring.\"\"\"
                 remove_this_logic()
         """
-        result, _ = self._get_masked_code(source, names=["documented"], keep_docstring=True)
+        result, _ = self._get_masked_code(
+            source, names=["documented"], keep_docstring=True
+        )
         expected = 'def documented():\n    """Keep this docstring."""\n    pass'
         self.assertEqual(result, expected)
 
@@ -66,7 +71,9 @@ class TestBodyMasker(unittest.TestCase):
                 \"\"\"Remove this docstring.\"\"\"
                 remove_this_logic()
         """
-        result, _ = self._get_masked_code(source, names=["documented"], keep_docstring=False)
+        result, _ = self._get_masked_code(
+            source, names=["documented"], keep_docstring=False
+        )
         self.assertEqual(result, "def documented():\n    pass")
 
     def test_async_function_masking(self):
@@ -77,6 +84,7 @@ class TestBodyMasker(unittest.TestCase):
         result, count = self._get_masked_code(source, names=["secret_async"])
         self.assertIn("async def secret_async():\n    pass", result)
         self.assertEqual(count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

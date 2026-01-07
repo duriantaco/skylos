@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 import pytest
 import json
-import sys
 import logging
-from unittest.mock import Mock, patch, mock_open
+from unittest.mock import Mock, patch
+import sys
+import types
+from rich.table import Table
+from rich.tree import Tree as RichTree
+import skylos.cli as cli
 
 from skylos.cli import (
-    Colors,
     CleanFormatter,
     setup_logger,
     remove_unused_import,
@@ -15,18 +18,6 @@ from skylos.cli import (
     print_badge,
     main,
 )
-
-
-class TestColors:
-    def test_colors_defined(self):
-        """Test that all color constants are defined."""
-        assert hasattr(Colors, "RED")
-        assert hasattr(Colors, "GREEN")
-        assert hasattr(Colors, "RESET")
-        assert hasattr(Colors, "BOLD")
-
-        assert Colors.RED.startswith("\033[")
-        assert Colors.RESET == "\033[0m"
 
 
 class TestCleanFormatter:
@@ -243,6 +234,16 @@ class TestInteractiveSelection:
                 mock_console, functions, imports
             )
 
+            assert selected_functions == [functions[0]]
+            assert selected_imports == [imports[1]]
+            assert mock_inquirer.prompt.call_count == 2
+            assert mock_console.print.call_count >= 1
+            printed_messages = [
+                str(call.args[0]) for call in mock_console.print.call_args_list
+            ]
+
+            assert any("Select" in msg for msg in printed_messages)
+
     @patch("skylos.cli.inquirer")
     def test_interactive_selection_no_selections(
         self, mock_inquirer, mock_console, sample_unused_items
@@ -373,6 +374,445 @@ class TestMainFunction:
                 "Error during analysis: Analysis failed"
             )
 
+
+def _progress_ctx():
+    cm = Mock()
+    cm.__enter__ = Mock(
+        return_value=Mock(add_task=Mock(return_value="t"), update=Mock())
+    )
+    cm.__exit__ = Mock(return_value=False)
+    return cm
+
+
+def test_shorten_path_non_pathlike_returns_str():
+    assert cli._shorten_path(123) == "123"
+
+
+def test_comment_out_unused_import_handles_exception_and_returns_false():
+    with (
+        patch("pathlib.Path.read_text", return_value="import os\n"),
+        patch("skylos.cli.comment_out_unused_import_cst", side_effect=RuntimeError("boom")),
+        patch("pathlib.Path.write_text") as w,
+        patch("skylos.cli.logging.error") as logerr,
+    ):
+        ok = cli.comment_out_unused_import("x.py", "os", 1, marker="M")
+
+    assert ok is False
+    w.assert_not_called()
+    assert logerr.called
+
+
+def test_comment_out_unused_function_handles_exception_and_returns_false():
+    with (
+        patch("pathlib.Path.read_text", return_value="def f():\n    pass\n"),
+        patch("skylos.cli.comment_out_unused_function_cst", side_effect=RuntimeError("boom")),
+        patch("pathlib.Path.write_text") as w,
+        patch("skylos.cli.logging.error") as logerr,
+    ):
+        ok = cli.comment_out_unused_function("x.py", "f", 1, marker="M")
+
+    assert ok is False
+    w.assert_not_called()
+    assert logerr.called
+
+
+def test_render_results_unused_table_includes_confidence_column_and_formats():
+    console = Mock()
+
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [
+            {"name": "hi", "file": "/root/a.py", "line": 10, "confidence": 95},  # red
+            {"name": "mid", "file": "/root/a.py", "line": 20, "confidence": 80},  # yellow
+            {"name": "lo", "file": "/root/a.py", "line": 30, "confidence": 50},  # dim
+        ],
+        "unused_imports": [],
+        "unused_parameters": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "quality": [],
+        "danger": [],
+        "secrets": [],
+    }
+
+    cli.render_results(console, result, tree=False, root_path="/root")
+
+    tables = []
+    for call in console.print.call_args_list:
+        if not call.args:
+            continue
+        arg0 = call.args[0]
+        if isinstance(arg0, Table):
+            tables.append(arg0)
+
+    assert tables, "Expected at least one Table printed by render_results()"
+
+    t = tables[0]
+
+    headers = []
+    for col in t.columns:
+        headers.append(col.header)
+
+    assert "Conf" in headers, "Expected a confidence column in unused table"
+
+    conf_col = None
+    for col in t.columns:
+        if col.header == "Conf":
+            conf_col = col
+            break
+
+    assert conf_col is not None, "Conf column not found"
+
+    conf_cells = list(conf_col._cells)
+
+    assert conf_cells[0] == "[red]95%[/red]"
+    assert conf_cells[1] == "[yellow]80%[/yellow]"
+    assert conf_cells[2] == "[dim]50%[/dim]"
+
+
+def test_render_results_tree_mode_groups_by_file_and_sorts_by_line():
+    console = Mock()
+
+    result = {
+        "analysis_summary": {"total_files": 2},
+        "unused_functions": [{"name": "u1", "file": "/p/a.py", "line": 20}],
+        "unused_imports": [{"name": "os", "file": "/p/a.py", "line": 5}],
+        "unused_parameters": [{"name": "p", "file": "/p/b.py", "line": 1}],
+        "unused_variables": [],
+        "unused_classes": [],
+        "danger": [
+            {
+                "rule_id": "SKY-D211",
+                "severity": "high",
+                "message": "SQLi",
+                "file": "/p/b.py",
+                "line": 9,
+            }
+        ],
+        "secrets": [],
+        "quality": [],
+    }
+
+    cli.render_results(console, result, tree=True, root_path="/p")
+
+    trees = []
+    for call in console.print.call_args_list:
+        if not call.args:
+            continue
+        arg0 = call.args[0]
+        if isinstance(arg0, RichTree):
+            trees.append(arg0)
+
+    assert trees, "Expected a Tree printed in tree mode"
+
+    tree = trees[0]
+    assert "/p" in str(tree.label)
+
+    child_labels = []
+    for ch in tree.children:
+        child_labels.append(str(ch.label))
+
+    has_a = False
+    has_b = False
+    for s in child_labels:
+        if "a.py" in s:
+            has_a = True
+        if "b.py" in s:
+            has_b = True
+
+    assert has_a is True
+    assert has_b is True
+
+    a_node = None
+    for ch in tree.children:
+        if "a.py" in str(ch.label):
+            a_node = ch
+            break
+
+    assert a_node is not None, "Expected a.py node in tree"
+
+    a_msgs = []
+    for gc in a_node.children:
+        a_msgs.append(str(gc.label))
+
+    idx5 = None
+    idx20 = None
+    for i, s in enumerate(a_msgs):
+        if idx5 is None and "L5" in s:
+            idx5 = i
+        if idx20 is None and "L20" in s:
+            idx20 = i
+
+    assert idx5 is not None, "Expected L5 entry under a.py"
+    assert idx20 is not None, "Expected L20 entry under a.py"
+    assert idx5 < idx20
+
+
+def test_main_init_subcommand_calls_run_init_and_exits(monkeypatch):
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", "init"])
+    with patch("skylos.cli.run_init") as r:
+        with pytest.raises(SystemExit) as e:
+            cli.main()
+    assert e.value.code == 0
+    r.assert_called_once()
+
+
+def test_main_whitelist_subcommand_calls_run_whitelist_and_exits(monkeypatch):
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", "whitelist", "handle_*", "--reason", "x"])
+    with patch("skylos.cli.run_whitelist") as w:
+        with pytest.raises(SystemExit) as e:
+            cli.main()
+    assert e.value.code == 0
+    w.assert_called_once()
+    kwargs = w.call_args.kwargs
+    assert kwargs["pattern"] == "handle_*"
+    assert kwargs["reason"] == "x"
+    assert kwargs["show"] is False
+
+
+def test_main_sync_subcommand_calls_sync_main_and_exits(monkeypatch):
+    fake_sync = types.SimpleNamespace(main=Mock())
+    monkeypatch.setitem(sys.modules, "skylos.sync", fake_sync)
+
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", "sync", "--pull"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 0
+    fake_sync.main.assert_called_once_with(["--pull"])
+
+
+def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "danger": [
+            {
+                "rule_id": "SKY-D211",
+                "file": "a.py",
+                "line": "7",
+                "message": "SQLi",
+                "severity": "HIGH",
+            }
+        ],
+        "quality": [
+            {
+                "kind": "nesting",
+                "file": "b.py",
+                "line": 0,
+                "value": 9,
+                "threshold": 3,
+            }
+        ],
+        "secrets": [{"provider": "generic", "file": "c.py", "line": None, "message": "Secret"}],
+        "unused_functions": [{"name": "u", "file": "d.py", "line": -5}],
+        "unused_imports": [{"name": "os", "file": "e.py", "line": "not-an-int"}],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+    }
+
+    sarif_path = tmp_path / "out.sarif.json"
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--sarif", str(sarif_path), "--json"])
+
+    captured = {}
+
+    def fake_exporter_ctor(findings, tool_name=None):
+        captured["findings"] = findings
+        exp = Mock()
+        exp.write = Mock()
+        return exp
+
+    with (
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.SarifExporter", side_effect=fake_exporter_ctor),
+        patch("builtins.print"),
+    ):
+        cli.main()
+
+    findings = captured.get("findings")
+    assert findings, "Expected SARIF exporter to receive findings"
+
+    cats = set()
+    for f in findings:
+        cats.add(f["category"])
+
+    assert "SECURITY" in cats
+    assert "QUALITY" in cats
+    assert "SECRET" in cats
+    assert "DEAD_CODE" in cats
+
+    dead_rules = set()
+    for f in findings:
+        if f["category"] == "DEAD_CODE":
+            dead_rules.add(f["rule_id"])
+
+    assert "SKYLOS-DEADCODE-UNUSED_FUNCTION" in dead_rules
+    assert "SKYLOS-DEADCODE-UNUSED_IMPORT" in dead_rules
+
+    for f in findings:
+        assert isinstance(f["line_number"], int)
+        assert f["line_number"] >= 1
+
+
+def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", "."])
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.render_results"),
+        patch("skylos.cli.print_badge"),
+        patch(
+            "skylos.cli.upload_report",
+            return_value={
+                "success": True,
+                "scan_id": "scan123",
+                "quality_gate": {"passed": False, "message": "Too many issues"},
+            },
+        ),
+    ):
+        with pytest.raises(SystemExit) as e:
+            cli.main()
+
+    assert e.value.code == 1
+
+
+def test_main_upload_gate_failed_does_not_exit_when_forced(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--force"])
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.render_results"),
+        patch("skylos.cli.print_badge"),
+        patch(
+            "skylos.cli.upload_report",
+            return_value={
+                "success": True,
+                "scan_id": "scan123",
+                "quality_gate": {"passed": False, "message": "Too many issues"},
+            },
+        ),
+        patch("skylos.cli.sys.exit") as sx,
+    ):
+        cli.main()
+
+    sx.assert_not_called()
+
+
+def test_main_command_exec_success_exits_zero(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--", "echo", "hi"])
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    proc = Mock()
+    proc.stdout = iter(["line1\n", "line2\n"])
+    proc.wait = Mock()
+    proc.returncode = 0
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.render_results"),
+        patch("skylos.cli.print_badge"),
+        patch("skylos.cli.upload_report", return_value={"success": False, "error": "No token found"}),
+        patch("skylos.cli.subprocess.Popen", return_value=proc) as popen,
+    ):
+        with pytest.raises(SystemExit) as e:
+            cli.main()
+
+    assert e.value.code == 0
+    popen.assert_called_once()
+    called_cmd = popen.call_args.args[0]
+    assert called_cmd == ["echo", "hi"]
+
+
+def test_main_command_exec_failure_exits_with_code(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--", "false"])
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    proc = Mock()
+    proc.stdout = iter(["oops\n"])
+    proc.wait = Mock()
+    proc.returncode = 7
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.render_results"),
+        patch("skylos.cli.print_badge"),
+        patch("skylos.cli.upload_report", return_value={"success": False, "error": "No token found"}),
+        patch("skylos.cli.subprocess.Popen", return_value=proc),
+    ):
+        with pytest.raises(SystemExit) as e:
+            cli.main()
+
+    assert e.value.code == 7
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -60,7 +60,7 @@ def loop_func():
             print("unreachable")     
 """
         tree = ast.parse(code)
-        if_node = tree.body[0].body[0].body[1]
+        if_node = tree.body[0].body[0].body[0]
         findings = self.rule.visit_node(if_node, self.context)
 
         self.assertIsNotNone(findings)
@@ -93,7 +93,7 @@ def check_branches(x):
 """
         findings = self._analyze(code)
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]["line"], 7)
+        self.assertEqual(findings[0]["line"], 8)
 
     def test_if_else_partial_return(self):
         code = """
@@ -129,8 +129,7 @@ def complex_logic(x, y):
         else:
             return 2
     else:
-        raise ValueError("Bad")
-        
+        raise ValueError("Bad")  
     print("unreachable")
 """
         findings = self._analyze(code)
