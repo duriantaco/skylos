@@ -2,6 +2,7 @@ import pytest
 import tempfile
 from pathlib import Path
 from textwrap import dedent
+from skylos.tracer import CallTracer
 
 
 @pytest.fixture(scope="session")
@@ -229,3 +230,53 @@ def mock_git_repo():
             pass
 
         yield repo_path
+
+
+_tracer = None
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--skylos-trace",
+        action="store_true",
+        default=False,
+        help="Enable Skylos call tracing to capture dynamic function calls",
+    )
+    parser.addoption(
+        "--skylos-trace-include",
+        action="store",
+        default=None,
+        help="Comma-separated path patterns to include (e.g., 'skylos/,myproject/')",
+    )
+    parser.addoption(
+        "--skylos-trace-output",
+        action="store",
+        default=".skylos_trace",
+        help="Output file for trace data (default: .skylos_trace)",
+    )
+
+
+def pytest_configure(config):
+    global _tracer
+
+    if config.getoption("--skylos-trace"):
+        include = config.getoption("--skylos-trace-include")
+        include_patterns = include.split(",") if include else None
+
+        _tracer = CallTracer(include_patterns=include_patterns)
+        _tracer.start()
+        print("\nSkylos call tracing enabled")
+
+
+def pytest_unconfigure(config):
+    global _tracer
+
+    if _tracer is not None:
+        _tracer.stop()
+        output_path = config.getoption("--skylos-trace-output", ".skylos_trace")
+        _tracer.save(output_path)
+
+        stats = _tracer.get_stats()
+        print(
+            f"\nSkylos trace: {stats['unique_functions']} functions across {stats['files_traced']} files"
+        )
