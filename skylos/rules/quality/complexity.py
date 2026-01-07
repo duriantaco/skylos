@@ -17,16 +17,16 @@ def _func_complexity(fn_node: ast.AST) -> int:
     c = 1
 
     class Visitor(ast.NodeVisitor):
-        def visit_FunctionDef(self, node):
+        def visit_FunctionDef(self, _):
             return
 
-        def visit_AsyncFunctionDef(self, node):
+        def visit_AsyncFunctionDef(self, _):
             return
 
-        def visit_ClassDef(self, node):
+        def visit_ClassDef(self, _):
             return
 
-        def visit_Lambda(self, node):
+        def visit_Lambda(self, _):
             return
 
         def generic_visit(self, node):
@@ -49,9 +49,12 @@ def _func_complexity(fn_node: ast.AST) -> int:
                 c += 1
                 c += len(node.ifs or [])
 
-            super().generic_visit(node)
+            for child in ast.iter_child_nodes(node):
+                self.visit(child)
 
-    Visitor().visit(fn_node)
+    v = Visitor()
+    for stmt in fn_node.body:
+        v.visit(stmt)
     return c
 
 
