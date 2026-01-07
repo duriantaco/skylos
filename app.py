@@ -311,5 +311,13 @@ def trigger_blindspots():
     return {"results": results}
 
 
+def visit_Name():
+    return "visiting Name node"
+
+
+def do_quit():
+    return "quit command"
+
+
 if __name__ == "__main__":
     main()
