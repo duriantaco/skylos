@@ -1,5 +1,6 @@
 import ast
 import fnmatch
+from collections import defaultdict
 from pathlib import Path
 
 FRAMEWORK_DECORATORS = [
@@ -93,6 +94,19 @@ FRAMEWORK_IMPORTS = {
     "uvicorn",
 }
 
+ROUTE_METHODS = {
+    "route",
+    "get",
+    "post",
+    "put",
+    "delete",
+    "patch",
+    "head",
+    "options",
+    "trace",
+    "websocket",
+}
+
 
 class FrameworkAwareVisitor:
     def __init__(self, filename=None):
@@ -108,6 +122,10 @@ class FrameworkAwareVisitor:
         self.declarative_classes = set()
         self._mark_cbv_http_methods = set()
         self._type_refs_in_routes = set()
+        self.objects_with_routes = defaultdict(list)
+        self.objects_passed_as_args = set()
+        self.objects_created_by_call = set()
+
         if filename:
             self._check_framework_imports_in_file(filename)
 
@@ -148,16 +166,26 @@ class FrameworkAwareVisitor:
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         self.func_defs.setdefault(node.name, node.lineno)
+        is_route = False
+
         for deco in node.decorator_list:
             d = self._normalize_decorator(deco)
 
-            if self._matches_framework_pattern(d, FRAMEWORK_DECORATORS):
-                self.framework_decorated_lines.add(node.lineno)
+            router_name = self._get_router_from_decorator(deco)
+            if router_name:
+                self.objects_with_routes[router_name].append(node.lineno)
                 self.is_framework_file = True
+                is_route = True
+
+            if self._matches_framework_pattern(d, FRAMEWORK_DECORATORS):
+                self.is_framework_file = True
+                self.framework_decorated_lines.add(node.lineno)
+                is_route = True
 
             if self._decorator_base_name_is(deco, "receiver"):
                 self.framework_decorated_lines.add(node.lineno)
                 self.is_framework_file = True
+                is_route = True
 
         defaults_to_scan = []
         if node.args.defaults:
@@ -167,10 +195,6 @@ class FrameworkAwareVisitor:
 
         for default in defaults_to_scan:
             self._scan_for_depends(default)
-
-        is_route = False
-        if node.lineno in self.framework_decorated_lines:
-            is_route = True
 
         if is_route:
             self._collect_annotation_type_refs(node)
@@ -219,6 +243,11 @@ class FrameworkAwareVisitor:
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign):
+        if isinstance(node.value, ast.Call):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.objects_created_by_call.add(target.id)
+
         targets = []
         for t in node.targets:
             if isinstance(t, ast.Name):
@@ -252,6 +281,14 @@ class FrameworkAwareVisitor:
             if func_name:
                 self._mark_functions.add(func_name)
                 self.is_framework_file = True
+
+        for arg in node.args:
+            if isinstance(arg, ast.Name):
+                self.objects_passed_as_args.add(arg.id)
+        for kw in node.keywords:
+            if isinstance(kw.value, ast.Name):
+                self.objects_passed_as_args.add(kw.value.id)
+
         self.generic_visit(node)
 
     def finalize(self):
@@ -282,6 +319,10 @@ class FrameworkAwareVisitor:
                 lino = self.class_method_lines.get((cname, meth))
                 if lino:
                     self.framework_decorated_lines.add(lino)
+
+        for obj_name, route_lines in self.objects_with_routes.items():
+            for line in route_lines:
+                self.framework_decorated_lines.add(line)
 
         typed_models = set()
         for t in self._type_refs_in_routes:
@@ -455,6 +496,16 @@ class FrameworkAwareVisitor:
 
         if fn.returns:
             collect(fn.returns)
+
+    def _get_router_from_decorator(self, deco):
+        if isinstance(deco, ast.Call):
+            deco = deco.func
+
+        if isinstance(deco, ast.Attribute):
+            if deco.attr in ROUTE_METHODS:
+                if isinstance(deco.value, ast.Name):
+                    return deco.value.id
+        return None
 
 
 def detect_framework_usage(definition, visitor=None):
