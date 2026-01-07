@@ -16,5 +16,6 @@
 | Pandas no chunk | SKY-P402 | `read_csv()` without `chunksize` |
 | Nested loop | SKY-P403 | O(N²) complexity |
 | **Unreachable** | | |
-| Dead branch | SKY-U001 | `if False:` or `else` after always-true |
-| Dead statement | SKY-U002 | Code after `return`/`raise`/`break` |
+| Unreachable Code | SKY-UC001 | `if False:` or `else` after always-true |
+| **Empty** | | |
+| Empty File | SKY-E002 | Empty File |
