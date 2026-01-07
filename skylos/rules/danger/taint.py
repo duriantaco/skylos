@@ -27,6 +27,26 @@ class TaintVisitor(ast.NodeVisitor):
                 return env[name]
         return False
 
+    def _taint_params(self, fn: ast.AST):
+        args = []
+        if hasattr(fn, "args") and fn.args:
+            args.extend(getattr(fn.args, "posonlyargs", []) or [])
+            args.extend(getattr(fn.args, "args", []) or [])
+            args.extend(getattr(fn.args, "kwonlyargs", []) or [])
+
+            if fn.args.vararg:
+                args.append(fn.args.vararg)
+            if fn.args.kwarg:
+                args.append(fn.args.kwarg)
+
+        for a in args:
+            name = getattr(a, "arg", None)
+            if not name:
+                continue
+            if name in ("self", "cls"):
+                continue
+            self._set(name, True)
+
     def is_tainted(self, node):
         if node is None:
             return False
@@ -87,11 +107,13 @@ class TaintVisitor(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node):
         self._push()
+        self._taint_params(node)
         self.generic_visit(node)
         self._pop()
 
     def visit_AsyncFunctionDef(self, node):
         self._push()
+        self._taint_params(node)
         self.generic_visit(node)
         self._pop()
 
