@@ -5,7 +5,7 @@
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 ![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
-[![codecov](https://codecov.io/gh/duriantaco/skylos/branch/main/graph/badge.svg)](https://codecov.io/gh/OWNER/REPO)
+[![codecov](https://codecov.io/gh/duriantaco/skylos/branch/main/graph/badge.svg)](https://codecov.io/gh/duriantaco/skylos)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 ![PyPI version](https://img.shields.io/pypi/v/skylos)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
