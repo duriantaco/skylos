@@ -21,7 +21,7 @@ def normalize_file_path_for_sarif(file_path=None):
     try:
         repo_root = os.getcwd().replace("\\", "/").rstrip("/") + "/"
         if cleaned_path.startswith(repo_root):
-            cleaned_path = cleaned_path[len(repo_root):]
+            cleaned_path = cleaned_path[len(repo_root) :]
     except Exception:
         pass
 
@@ -69,7 +69,9 @@ class SarifExporter:
             msg_text = str(finding.get("message") or "")
             fallback_title = msg_text.splitlines()[0] if msg_text.strip() else rule_id
 
-            title_raw = finding.get("title") or finding.get("rule_name") or fallback_title
+            title_raw = (
+                finding.get("title") or finding.get("rule_name") or fallback_title
+            )
             title = str(title_raw).strip()
             if len(title) > 120:
                 title = title[:117] + "..."
@@ -87,9 +89,7 @@ class SarifExporter:
                 "id": rule_id,
                 "shortDescription": {"text": title or rule_id},
                 "defaultConfiguration": {"level": level},
-                "properties": {
-                    "tags": tags
-                },
+                "properties": {"tags": tags},
                 "helpUri": f"https://docs.skylos.dev/rules/{rule_id}",
             }
 
@@ -125,9 +125,7 @@ class SarifExporter:
                 "ruleId": rule_id,
                 "level": level,
                 "message": {"text": message_text},
-                "properties": {
-                    "category": category
-                },
+                "properties": {"category": category},
                 "locations": [
                     {
                         "physicalLocation": {
