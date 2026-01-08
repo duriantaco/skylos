@@ -119,6 +119,21 @@ class Visitor(ast.NodeVisitor):
         self._param_stack = []
         self._typed_dict_stack = []
         self._shadowed_module_aliases = {}
+        self._in_protocol_class = False
+        self.protocol_classes = set()
+        self._in_overload = False
+        self._in_abstractmethod = False
+        self.namedtuple_classes = set()
+        self.enum_classes = set()
+        self.attrs_classes = set()
+        self.orm_model_classes = set()
+        self.type_alias_names = set()
+        self.all_exports = set() 
+        self.abc_classes = set()
+        self.abstract_methods = {}
+        self.abc_implementers = {}
+        self.protocol_implementers = {}
+        self.protocol_method_names = {}
 
     def add_def(self, name, t, line):
         found = False
@@ -133,10 +148,6 @@ class Visitor(ast.NodeVisitor):
         self.refs.append((name, self.file))
 
     def qual(self, name):
-        # if name in self.alias:
-        #     return self.alias[name]
-
-        ## local defs should shadow import aliases
         if name in self.alias:
             if self.mod:
                 local_name = f"{self.mod}.{name}"
@@ -294,6 +305,39 @@ class Visitor(ast.NodeVisitor):
         for default in args.kw_defaults:
             if default:
                 self.visit(default)
+    
+    def _process_textual_bindings(self, node):
+        for target in node.targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id != "BINDINGS":
+                continue
+            if not isinstance(node.value, (ast.List, ast.Tuple)):
+                continue
+            
+            for elt in node.value.elts:
+                action_name = None
+                
+                if isinstance(elt, ast.Call):
+                    if len(elt.args) >= 2:
+                        arg = elt.args[1]
+                        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                            action_name = arg.value
+                
+                elif isinstance(elt, (ast.Tuple, ast.List)):
+                    if len(elt.elts) >= 2:
+                        arg = elt.elts[1]
+                        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                            action_name = arg.value
+                
+                if action_name:
+                    method_name = f"action_{action_name}"
+                    if self.cls:
+                        qualified = f"{self.mod}.{self.cls}.{method_name}"
+                    else:
+                        qualified = f"{self.mod}.{method_name}"
+                    self.add_ref(qualified)
+                    self.add_ref(method_name)
 
     def _get_decorator_name(self, deco):
         if isinstance(deco, ast.Name):
@@ -331,12 +375,6 @@ class Visitor(ast.NodeVisitor):
             self.visit(d)
 
         FRAMEWORK_DECORATORS = {
-            # "route",
-            # ".get",
-            # ".post",
-            # ".put",
-            # ".delete",
-            # ".patch",
             "fixture",
             "pytest",
             "task",
@@ -348,6 +386,27 @@ class Visitor(ast.NodeVisitor):
             "receiver",
             "command",
         }
+
+        is_abstract_or_overload = False
+        for deco in node.decorator_list:
+            deco_name = self._get_decorator_name(deco)
+            if deco_name in ("abstractmethod", "abc.abstractmethod", "overload", "typing.overload", "typing_extensions.overload"):
+                is_abstract_or_overload = True
+                break
+        
+        if self.cls and self.cls in self.abc_classes and is_abstract_or_overload:
+            if self.cls not in self.abstract_methods:
+                self.abstract_methods[self.cls] = set()
+            self.abstract_methods[self.cls].add(node.name)
+        
+        if self.cls and self._in_protocol_class:
+            if self.cls not in self.protocol_method_names:
+                self.protocol_method_names[self.cls] = set()
+            self.protocol_method_names[self.cls].add(node.name)
+        
+        prev_abstract_overload = getattr(self, '_in_abstract_or_overload', False)
+
+        self._in_abstract_or_overload = is_abstract_or_overload
 
         for deco in node.decorator_list:
             deco_name = self._get_decorator_name(deco)
@@ -385,21 +444,26 @@ class Visitor(ast.NodeVisitor):
         all_args.extend(node.args.args)
         all_args.extend(node.args.kwonlyargs)
 
+        skip_params = self._in_protocol_class or getattr(self, '_in_abstract_or_overload', False)
+        
         for arg in all_args:
             param_name = f"{qualified_name}.{arg.arg}"
-            self.add_def(param_name, "parameter", getattr(arg, "lineno", node.lineno))
+            if not skip_params:
+                self.add_def(param_name, "parameter", getattr(arg, "lineno", node.lineno))
             self.current_function_params.append((arg.arg, param_name))
 
         if node.args.vararg:
             va = node.args.vararg
             param_name = f"{qualified_name}.{va.arg}"
-            self.add_def(param_name, "parameter", getattr(va, "lineno", node.lineno))
+            if not skip_params:
+                self.add_def(param_name, "parameter", getattr(va, "lineno", node.lineno))
             self.current_function_params.append((va.arg, param_name))
 
         if node.args.kwarg:
             ka = node.args.kwarg
             param_name = f"{qualified_name}.{ka.arg}"
-            self.add_def(param_name, "parameter", getattr(ka, "lineno", node.lineno))
+            if not skip_params:
+                self.add_def(param_name, "parameter", getattr(ka, "lineno", node.lineno))
             self.current_function_params.append((ka.arg, param_name))
 
         self.visit_arguments(node.args)
@@ -414,11 +478,82 @@ class Visitor(ast.NodeVisitor):
         self.local_type_maps.pop()
         self.local_constants.pop()
 
+        self._in_abstract_or_overload = prev_abstract_overload
+
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_ClassDef(self, node):
         cname = f"{self.mod}.{node.name}"
         self.add_def(cname, "class", node.lineno)
+
+        is_protocol = False
+        for base in node.bases:
+            if isinstance(base, ast.Name) and base.id == "Protocol":
+                is_protocol = True
+            elif isinstance(base, ast.Attribute) and base.attr == "Protocol":
+                is_protocol = True
+        
+        if is_protocol:
+            self.protocol_classes.add(node.name)
+
+        is_abc_class = False
+        for base in node.bases:
+            base_name = None
+            if isinstance(base, ast.Name):
+                base_name = base.id
+            elif isinstance(base, ast.Attribute):
+                base_name = base.attr
+            
+            if not base_name:
+                continue
+            
+            if base_name == "ABC":
+                is_abc_class = True
+                self.abc_classes.add(node.name)
+            
+            elif base_name in self.abc_classes:
+                if node.name not in self.abc_implementers:
+                    self.abc_implementers[node.name] = []
+                self.abc_implementers[node.name].append(base_name)
+            
+            elif base_name in self.protocol_classes:
+                if node.name not in self.protocol_implementers:
+                    self.protocol_implementers[node.name] = []
+                self.protocol_implementers[node.name].append(base_name)
+
+        is_namedtuple = False
+        is_enum = False
+        is_orm_model = False
+        
+        for base in node.bases:
+            base_name = ""
+            if isinstance(base, ast.Name):
+                base_name = base.id
+            elif isinstance(base, ast.Attribute):
+                base_name = base.attr
+            
+            if base_name == "NamedTuple":
+                is_namedtuple = True
+            if base_name in ("Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"):
+                is_enum = True
+            if base_name in ("Base", "Model", "DeclarativeBase", "SQLModel", "Document"):
+                is_orm_model = True
+        
+        if is_namedtuple:
+            self.namedtuple_classes.add(node.name)
+        if is_enum:
+            self.enum_classes.add(node.name)
+        if is_orm_model:
+            self.orm_model_classes.add(node.name)
+        
+        for deco in node.decorator_list:
+            deco_name = self._get_decorator_name(deco)
+            if deco_name in ("attr.s", "attr.attrs", "attrs", "define", "attr.define", "frozen", "attr.frozen"):
+                self.attrs_classes.add(node.name)
+                break
+        
+        prev_in_protocol = self._in_protocol_class
+        self._in_protocol_class = is_protocol
 
         is_typed_dict = False
         for base in node.bases:
@@ -472,7 +607,7 @@ class Visitor(ast.NodeVisitor):
         prev = self.cls
         if is_cst:
             self.in_cst_class += 1
-
+        
         self.cls = node.name
         self._dataclass_stack.append(is_dc)
 
@@ -486,8 +621,28 @@ class Visitor(ast.NodeVisitor):
         if is_cst:
             self.in_cst_class -= 1
 
+        self._in_protocol_class = prev_in_protocol
+
     def visit_AnnAssign(self, node):
         self.visit_annotation(node.annotation)
+
+        if isinstance(node.target, ast.Name):
+            ann = node.annotation
+            is_type_alias = False
+            if isinstance(ann, ast.Name) and ann.id == "TypeAlias":
+                is_type_alias = True
+            elif isinstance(ann, ast.Attribute) and ann.attr == "TypeAlias":
+                is_type_alias = True
+            elif isinstance(ann, ast.Subscript):
+                if isinstance(ann.value, ast.Attribute) and ann.value.attr == "TypeAlias":
+                    is_type_alias = True
+            
+            if is_type_alias:
+                self.type_alias_names.add(node.target.id)
+        
+        if node.value:
+            self.visit(node.value)
+
         if node.value:
             self.visit(node.value)
 
@@ -669,6 +824,9 @@ class Visitor(ast.NodeVisitor):
                 value = self._extract_string_value(elt)
                 if value is None:
                     continue
+                
+                self.all_exports.add(value)
+                self.exports.add(value)
 
                 if self.mod:
                     export_name = f"{self.mod}.{value}"
@@ -791,6 +949,7 @@ class Visitor(ast.NodeVisitor):
 
         self._process_dunder_all_exports(node)
         self._try_infer_types_from_call(node)
+        self._process_textual_bindings(node)
         self.generic_visit(node)
         self._track_instance_attr_types(node)
 
@@ -808,6 +967,10 @@ class Visitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         self.generic_visit(node)
+
+        if isinstance(node.func, ast.Name) and node.func.id == "NewType":
+            if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                self.type_alias_names.add(node.args[0].value)
 
         if (
             isinstance(node.func, ast.Name)
@@ -830,14 +993,6 @@ class Visitor(ast.NodeVisitor):
                     if module_name != "self":
                         qualified_name = f"{self.qual(module_name)}.{attr_name}"
                         self.add_ref(qualified_name)
-
-            # elif isinstance(node.args[0], ast.Name):
-            #     target_name = node.args[0].id
-            #     if target_name != "self":
-            #         if self.mod:
-            #             self.dyn.add(self.mod.split(".")[0])
-            #         else:
-            #             self.dyn.add("")
 
             elif isinstance(node.args[0], ast.Name):
                 target_name = node.args[0].id
