@@ -21,6 +21,7 @@ import pathlib
 import skylos
 from collections import defaultdict
 import subprocess
+import textwrap
 
 from rich.console import Console
 from rich.table import Table
@@ -322,7 +323,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
         table = Table(expand=True)
         table.add_column("#", style="muted", width=3)
         table.add_column("Name", style="bold")
-        table.add_column("Location", style="muted", overflow="fold")
+        table.add_column("Location", style="muted", no_wrap=True, overflow="fold")
 
         for i, item in enumerate(items, 1):
             nm = item.get(name_key) or item.get("simple_name") or "<?>"
@@ -957,28 +958,44 @@ def main():
         if not args.json:
             console.print("[brand]Running tests with call tracing...[/brand]")
 
-        trace_script = f'''
-    import sys
-    sys.path.insert(0, "{project_root}")
-    from skylos.tracer import CallTracer
 
-    tracer = CallTracer(exclude_patterns=["site-packages", "venv", ".venv", "pytest", "_pytest"])
-    tracer.start()
+        trace_script = textwrap.dedent(f"""\
+import sys
+sys.path.insert(0, {str(project_root)!r})
+from skylos.tracer import CallTracer
 
+tracer = CallTracer(exclude_patterns=["site-packages", "venv", ".venv", "pytest", "_pytest"])
+tracer.start()
+
+ret = 0
+try:
     import pytest
-    pytest.main(["-q"])
-
+    ret = pytest.main(["-q"])
+finally:
     tracer.stop()
-    tracer.save("{project_root}/.skylos_trace")
-    '''
+    tracer.save({str(project_root / ".skylos_trace")!r})
 
-        subprocess.run(
+sys.exit(ret)
+
+""")
+
+        r = subprocess.run(
             [sys.executable, "-c", trace_script],
             cwd=project_root,
             capture_output=not args.json,
+            text=True,
         )
 
-        if not args.json:
+        trace_file = project_root / ".skylos_trace"
+
+        if r.returncode != 0 and not args.json:
+            if trace_file.exists() and trace_file.stat().st_size > 0:
+                console.print("[warn]Tests had failures, but trace data was collected.[/warn]")
+            else:
+                console.print("[warn]Trace run failed; continuing without trace.[/warn]")
+                if r.stderr:
+                    console.print(r.stderr)
+        elif not args.json:
             console.print("[good]Trace data collected[/good]")
 
     try:
