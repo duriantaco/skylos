@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "3.0.0"
+version = "3.0.1"
 requires-python = ">=3.9"
 description = "An analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
@@ -21,9 +21,9 @@ classifiers = [
     "Topic :: Software Development :: Testing",
 ]
 dependencies = [
-    "inquirer>=3.0.0",
+    "inquirer>=3.0.1",
     "flask>=2.1.1",
-    "flask-cors>=3.0.0",
+    "flask-cors>=3.0.1",
     "libcst>=1.8.2",
     "rich>=14.0.0",
     "openai",
