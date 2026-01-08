@@ -7,11 +7,19 @@ class ImplicitRefTracker:
     def __init__(self):
         self.known_refs = set()
         self.pattern_refs = []
+        self._compiled_patterns = []
         self.f_string_patterns = {}
         self.coverage_hits = set()
         self.covered_files_lines = {}
         self.traced_calls = set()
-        self.traced_by_file = {}  # {filename: {func_name: [line1, line2, ...]}}
+        self.traced_by_file = {}
+        self._traced_by_basename = {}
+        self._coverage_by_basename = {}
+
+    def add_pattern_ref(self, pattern, confidence):
+        self.pattern_refs.append((pattern, confidence))
+        regex = re.compile("^" + pattern.replace("*", ".*") + "$")
+        self._compiled_patterns.append((regex, confidence, pattern))
 
     def should_mark_as_used(self, definition):
         simple_name = definition.simple_name
@@ -19,46 +27,39 @@ class ImplicitRefTracker:
         if simple_name in self.known_refs:
             return True, 95, "dynamic reference"
 
-        for pattern, confidence in self.pattern_refs:
-            regex = "^" + pattern.replace("*", ".*") + "$"
-            if re.match(regex, simple_name):
+        for regex, confidence, pattern in self._compiled_patterns:
+            if regex.match(simple_name):
                 return True, confidence, f"pattern '{pattern}'"
-
-        if self.traced_by_file:
-            def_file = str(definition.filename)
-            def_line = definition.line
-            func_name = simple_name
-
-            for traced_file, funcs in self.traced_by_file.items():
-                if Path(traced_file).name == Path(def_file).name:
-                    if func_name in funcs:
-                        traced_lines = funcs[func_name]
-                        for traced_line in traced_lines:
-                            if abs(traced_line - def_line) <= 5:
-                                return True, 100, "executed (call trace)"
 
         def_file = str(definition.filename)
         def_line = definition.line
+        def_basename = Path(def_file).name
 
+        if self._traced_by_basename:
+            func_name = simple_name
+            for traced_file in self._traced_by_basename.get(def_basename, []):
+                funcs = self.traced_by_file[traced_file]
+                if func_name in funcs:
+                    for traced_line in funcs[func_name]:
+                        if abs(traced_line - def_line) <= 5:
+                            return True, 100, "executed (call trace)"
+
+        # Direct coverage hit check - O(1)
         if (def_file, def_line) in self.coverage_hits:
             return True, 100, "executed (coverage)"
 
-        def_base = Path(def_file).name
-        for cov_file, cov_line in self.coverage_hits:
-            if cov_line == def_line and Path(str(cov_file)).name == def_base:
-                return True, 100, "executed (coverage)"
-
-        if self.covered_files_lines:
-            for cov_file, lines in self.covered_files_lines.items():
-                if Path(cov_file).name == def_base:
-                    def_type = getattr(definition, "type", None)
-                    if def_type in ("function", "method"):
-                        for offset in range(50):
-                            if (def_line + offset) in lines:
-                                return True, 100, "executed (coverage)"
-                    else:
-                        if def_line in lines:
-                            return True, 100, "executed (coverage)"
+        if self._coverage_by_basename:
+            for cov_file in self._coverage_by_basename.get(def_basename, []):
+                lines = self.covered_files_lines.get(cov_file, set())
+                
+                if def_line in lines:
+                    return True, 100, "executed (coverage)"
+                
+                def_type = getattr(definition, "type", None)
+                if def_type in ("function", "method"):
+                    check_range = set(range(def_line, def_line + 51))
+                    if lines & check_range:
+                        return True, 100, "executed (coverage)"
 
         return False, 0, None
 
@@ -83,11 +84,16 @@ class ImplicitRefTracker:
                     self.traced_by_file[filename][func_name] = []
                 self.traced_by_file[filename][func_name].append(line)
 
+            for traced_file in self.traced_by_file:
+                basename = Path(traced_file).name
+                if basename not in self._traced_by_basename:
+                    self._traced_by_basename[basename] = []
+                self._traced_by_basename[basename].append(traced_file)
+
             return len(self.traced_calls) > 0
 
         except Exception as e:
             import logging
-
             logging.getLogger("Skylos").warning(f"Failed to load trace data: {e}")
             return False
 
@@ -122,11 +128,17 @@ class ImplicitRefTracker:
                                 self.covered_files_lines[filename].add(line)
 
             conn.close()
+
+            for cov_file in self.covered_files_lines:
+                basename = Path(cov_file).name
+                if basename not in self._coverage_by_basename:
+                    self._coverage_by_basename[basename] = []
+                self._coverage_by_basename[basename].append(cov_file)
+
             return len(self.coverage_hits) > 0
 
         except Exception as e:
             import logging
-
             logging.getLogger("Skylos").warning(f"Failed to load coverage: {e}")
             return False
 
