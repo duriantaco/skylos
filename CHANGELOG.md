@@ -1,6 +1,6 @@
 ## Changelog
 
-## [3.0.0] - 2026-01-03
+## [3.0.1] - 2026-01-08
 
 New year new me, and a new release! Happy new year everyone! 
 
@@ -28,13 +28,19 @@ New year new me, and a new release! Happy new year everyone!
 - Added new CLI commands. 1. `skylos whitelist <pattern>` 2. `skylos whitelist <pattern> --reason "why"` 3. `skylos whitelist --show`
 - Added new helper functions in `config.py`: `is_whitelisted()`, `get_all_ignore_lines()`, `get_expired_whitelists()`
 
-- **Confidence Display in CLI**: Added "Conf" column showing confidence percentage for each flagged item
-  - 100% = definitely dead, 60-80% = probably dead but check, <60% = not flagged
-
+- Added "Conf" column showing confidence percentage for each flagged item. 100% = definitely dead, 60-80% = probably dead but check, <60% = not flagged
 - **Expanded SOFT_PATTERNS** in `known_patterns.py`:
   - `visit_*`, `leave_*` (25) - AST visitor pattern dispatch
   - `pytest_*` (30) - pytest hook functions
   - `*Plugin` (20) - plugin discovery via `__subclasses__()`
+
+- Added the following for reducing false positives:
+  - ABC class tracking. Detects classes inheriting from `ABC`
+  - Abstract method tracking. Records methods with `@abstractmethod` decorator
+  - ABC implementer detection. Tracks classes inheriting from ABC classes
+  - Protocol implementer detection. Tracks classes that are explicitly inheriting from Protocol classes
+  - Protocol method name tracking
+  - Duck-typed Protocol detection (≥70% method overlap with ≥3 methods)
 
 
 ### Changed
@@ -51,7 +57,11 @@ New year new me, and a new release! Happy new year everyone!
 - Framework decorator patterns now set `is_route = True` during visiting (not just in `finalize()`)
 - Reduced `dynamic_module` penalty from 40 to 10
 - Updated `skylos init` to properly reset ALL `[tool.skylos*]` sections (fixed regex)
-
+- Mixin method confidence penalty increased from -50 to -60
+- Protocol class definitions now get confidence = 0
+- Abstract method implementations now get confidence = 0 when parent ABC is tracked
+- Duck-typed Protocol implementations now get confidence = 0
+- Shifted `apply_penalties` function from `analyzer.py` into a separate script 
 
 ### Fixed
 
