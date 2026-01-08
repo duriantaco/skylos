@@ -7,17 +7,16 @@ import os
 from pathlib import Path
 from collections import defaultdict
 from skylos.visitor import Visitor
-from skylos.constants import PENALTIES, AUTO_CALLED
+from skylos.constants import AUTO_CALLED
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 from skylos.rules.danger.danger import scan_ctx as scan_danger
 import os
 import traceback
 from skylos.visitors.framework_aware import (
-    FrameworkAwareVisitor,
-    detect_framework_usage,
+    FrameworkAwareVisitor
 )
-from skylos.config import is_whitelisted, get_all_ignore_lines, load_config
+from skylos.config import get_all_ignore_lines, load_config
 from skylos.visitors.languages.typescript import scan_typescript_file
 
 from skylos.linter import LinterVisitor
@@ -31,32 +30,7 @@ from skylos.rules.quality.logic import (
     DangerousComparisonRule,
     TryBlockPatternsRule,
 )
-from skylos.known_patterns import (
-    HARD_ENTRYPOINTS,
-    PYTEST_HOOKS,
-    UNITTEST_METHODS,
-    DJANGO_MODEL_METHODS,
-    DJANGO_MODEL_BASES,
-    DJANGO_VIEW_METHODS,
-    DJANGO_VIEW_BASES,
-    DJANGO_ADMIN_METHODS,
-    DJANGO_ADMIN_BASES,
-    DJANGO_FORM_METHODS,
-    DJANGO_FORM_BASES,
-    DJANGO_COMMAND_METHODS,
-    DJANGO_COMMAND_BASES,
-    DJANGO_APPCONFIG_METHODS,
-    DJANGO_APPCONFIG_BASES,
-    DRF_VIEWSET_METHODS,
-    DRF_VIEWSET_BASES,
-    DRF_SERIALIZER_METHODS,
-    DRF_SERIALIZER_BASES,
-    DRF_PERMISSION_METHODS,
-    DRF_PERMISSION_BASES,
-    SOFT_PATTERNS,
-    matches_pattern,
-    has_base_class,
-)
+from skylos.penalties import apply_penalties
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
 
@@ -118,10 +92,15 @@ class Skylos:
         p = Path(path).resolve()
 
         if p.is_file():
+            if p.suffix == '.pyi':
+                return [], p.parent
             return [p], p.parent
 
         root = p
-        all_files = list(p.glob("**/*.py"))
+        all_files = []
+        for f in p.glob("**/*.py"):
+            if f.suffix == ".py":
+                all_files.append(f)
 
         if exclude_folders:
             filtered_files = []
@@ -144,6 +123,15 @@ class Skylos:
         for name, definition in self.defs.items():
             if definition.in_init and not definition.simple_name.startswith("_"):
                 definition.is_exported = True
+        
+        all_exported_names = set()
+        for mod, export_names in self.exports.items():
+            all_exported_names.update(export_names)
+
+        for def_name, def_obj in self.defs.items():
+            if def_obj.simple_name in all_exported_names:
+                def_obj.is_exported = True
+                def_obj.references += 1
 
         for mod, export_names in self.exports.items():
             for name in export_names:
@@ -155,7 +143,11 @@ class Skylos:
                     ):
                         def_obj.is_exported = True
 
-    def _mark_refs(self):
+    def _mark_refs(self, progress_callback=None):
+        total_refs = len(self.refs)
+        if progress_callback:
+            progress_callback(0, total_refs or 1, Path("PHASE: mark refs"))
+
         import_to_original = {}
         for name, def_obj in self.defs.items():
             if def_obj.type == "import":
@@ -174,7 +166,12 @@ class Skylos:
         for definition in self.defs.values():
             simple_name_lookup[definition.simple_name].append(definition)
 
-        for ref, ref_file in self.refs:
+        total_refs = len(self.refs)
+        tick_every = int(os.getenv("SKYLOS_MARKREFS_TICK", "5000"))
+
+        for i, (ref, ref_file) in enumerate(self.refs, 1):
+            if progress_callback and (i == 1 or i % tick_every == 0 or i == total_refs):
+                progress_callback(i, total_refs or 1, Path("PHASE: mark refs"))
             file_key = f"{ref_file}:{ref}"
 
             if file_key in self.defs:
@@ -235,6 +232,14 @@ class Skylos:
                 candidates[0].references += 1
                 continue
 
+            if len(candidates) > 1:
+                if not ref_mod or ref_mod in ("self", "cls"):
+                    for d in candidates:
+                        d.references += 1
+                    continue
+
+            non_import_defs = []
+
             non_import_defs = []
             for d in simple_name_lookup.get(simple, []):
                 if d.type != "import":
@@ -282,269 +287,6 @@ class Skylos:
             return class_def.base_classes
 
         return []
-
-    def _apply_penalties(self, def_obj, visitor, framework, cfg=None):
-        confidence = 100
-        simple_name = def_obj.simple_name
-        if (
-            getattr(visitor, "ignore_lines", None)
-            and def_obj.line in visitor.ignore_lines
-        ):
-            def_obj.confidence = 0
-            def_obj.skip_reason = "inline ignore comment"
-            return
-
-        if cfg:
-            is_wl, reason, conf_reduction = is_whitelisted(
-                def_obj.simple_name, str(def_obj.filename), cfg
-            )
-
-            if is_wl:
-                def_obj.confidence = 0
-                def_obj.skip_reason = reason
-                return
-
-            if conf_reduction > 0:
-                confidence -= conf_reduction
-
-        if simple_name in HARD_ENTRYPOINTS:
-            def_obj.confidence = 0
-            return
-
-        if def_obj.line in getattr(framework, "framework_decorated_lines", set()):
-            def_obj.confidence = 0
-            return
-
-        detected = getattr(framework, "detected_frameworks", set())
-
-        if simple_name in PYTEST_HOOKS:
-            if "pytest" in detected or "conftest" in str(def_obj.filename):
-                def_obj.confidence = 0
-                return
-
-        if simple_name in UNITTEST_METHODS:
-            if has_base_class(def_obj, {"TestCase"}, framework):
-                def_obj.confidence = 0
-                return
-
-        if "django" in detected:
-            if simple_name in DJANGO_MODEL_METHODS and has_base_class(
-                def_obj, DJANGO_MODEL_BASES, framework
-            ):
-                def_obj.confidence = 0
-                return
-            if simple_name in DJANGO_VIEW_METHODS and has_base_class(
-                def_obj, DJANGO_VIEW_BASES, framework
-            ):
-                def_obj.confidence = 0
-                return
-            if simple_name in DJANGO_ADMIN_METHODS and has_base_class(
-                def_obj, DJANGO_ADMIN_BASES, framework
-            ):
-                def_obj.confidence = 0
-                return
-            if simple_name in DJANGO_FORM_METHODS and has_base_class(
-                def_obj, DJANGO_FORM_BASES, framework
-            ):
-                def_obj.confidence = 0
-                return
-            if simple_name in DJANGO_COMMAND_METHODS and has_base_class(
-                def_obj, DJANGO_COMMAND_BASES, framework
-            ):
-                def_obj.confidence = 0
-                return
-            if simple_name in DJANGO_APPCONFIG_METHODS and has_base_class(
-                def_obj, DJANGO_APPCONFIG_BASES, framework
-            ):
-                def_obj.confidence = 0
-                return
-
-        if "rest_framework" in detected:
-            if simple_name in DRF_VIEWSET_METHODS and has_base_class(
-                def_obj, DRF_VIEWSET_BASES, framework
-            ):
-                def_obj.confidence = 0
-                return
-            if simple_name in DRF_SERIALIZER_METHODS and has_base_class(
-                def_obj, DRF_SERIALIZER_BASES, framework
-            ):
-                def_obj.confidence = 0
-                return
-            if simple_name in DRF_PERMISSION_METHODS and has_base_class(
-                def_obj, DRF_PERMISSION_BASES, framework
-            ):
-                def_obj.confidence = 0
-                return
-
-        for pattern, reduction, context in SOFT_PATTERNS:
-            if not matches_pattern(simple_name, pattern):
-                continue
-
-            if context == "test_file" and not visitor.is_test_file:
-                reduction = reduction // 4
-            elif context == "django" and "django" not in detected:
-                reduction = reduction // 4
-
-            confidence -= reduction
-            break
-
-        PYTEST_HOOKS_LOCAL = {
-            "pytest_configure",
-            "pytest_unconfigure",
-            "pytest_addoption",
-        }
-
-        if simple_name in PYTEST_HOOKS_LOCAL:
-            def_obj.confidence = 0
-            return
-
-        if def_obj.type == "method" and "." in def_obj.name:
-            class_name = def_obj.name.rsplit(".", 1)[0].split(".")[-1]
-            if class_name.startswith("Base") or class_name.endswith(
-                ("Base", "ABC", "Interface", "Adapter")
-            ):
-                def_obj.confidence = 0
-                return
-
-        if def_obj.type == "parameter" and "." in def_obj.name:
-            parts = def_obj.name.split(".")
-            if len(parts) >= 2:
-                class_name = parts[-3] if len(parts) >= 3 else ""
-                if class_name.startswith("Base") or class_name.endswith(
-                    ("Base", "ABC", "Interface", "Adapter")
-                ):
-                    def_obj.confidence = 0
-                    return
-
-        if "." in def_obj.name:
-            owner, attr = def_obj.name.rsplit(".", 1)
-            owner_simple = owner.split(".")[-1]
-
-            if (
-                owner_simple == "Settings"
-                or owner_simple == "Config"
-                or owner_simple.endswith("Settings")
-                or owner_simple.endswith("Config")
-            ):
-                if attr.isupper() or not attr.startswith("_"):
-                    def_obj.confidence = 0
-                    return
-
-        if def_obj.type == "variable" and simple_name == "_":
-            def_obj.confidence = 0
-            return
-
-        if simple_name.startswith("_") and not simple_name.startswith("__"):
-            confidence -= PENALTIES["private_name"]
-
-        if simple_name.startswith("__") and simple_name.endswith("__"):
-            confidence -= PENALTIES["dunder_or_magic"]
-
-        if def_obj.in_init and def_obj.type in ("function", "class"):
-            confidence -= PENALTIES["in_init_file"]
-
-        if def_obj.name.split(".")[0] in self.dynamic:
-            confidence -= PENALTIES["dynamic_module"]
-
-        if visitor.is_test_file or def_obj.line in visitor.test_decorated_lines:
-            confidence -= PENALTIES["test_related"]
-
-        if def_obj.type == "variable" and getattr(framework, "dataclass_fields", None):
-            if def_obj.name in framework.dataclass_fields:
-                def_obj.confidence = 0
-                return
-
-        if def_obj.type == "variable" and "." in def_obj.name:
-            prefix, _ = def_obj.name.rsplit(".", 1)
-
-            cls_def = self.defs.get(prefix)
-            if cls_def and cls_def.type == "class":
-                cls_simple = cls_def.simple_name
-
-                if (
-                    getattr(framework, "pydantic_models", None)
-                    and cls_simple in framework.pydantic_models
-                ):
-                    def_obj.confidence = 0
-                    return
-
-                cls_node = getattr(framework, "class_defs", {}).get(cls_simple)
-                if cls_node is not None:
-                    schema_like = False
-
-                    for base in cls_node.bases:
-                        if isinstance(base, ast.Name) and base.id.lower().endswith(
-                            ("schema", "model")
-                        ):
-                            schema_like = True
-                            break
-
-                        if isinstance(
-                            base, ast.Attribute
-                        ) and base.attr.lower().endswith(("schema", "model")):
-                            schema_like = True
-                            break
-
-                    if schema_like:
-                        def_obj.confidence = 0
-                        return
-
-        if def_obj.type == "variable":
-            fr = getattr(framework, "first_read_lineno", {}).get(def_obj.name)
-            if fr is not None and fr >= def_obj.line:
-                def_obj.confidence = 0
-                return
-
-        if def_obj.type == "variable" and "." in def_obj.name:
-            _, attr = def_obj.name.rsplit(".", 1)
-
-            for other in self.defs.values():
-                if other is def_obj:
-                    continue
-                if other.type != "variable":
-                    continue
-                if "." not in other.name:
-                    continue
-                if other.simple_name != attr:
-                    continue
-
-                def_obj.confidence = 0
-                return
-
-        framework_confidence = detect_framework_usage(def_obj, visitor=framework)
-        if framework_confidence is not None:
-            confidence = min(confidence, framework_confidence)
-
-        if simple_name.startswith("__") and simple_name.endswith("__"):
-            confidence = 0
-
-        if def_obj.type == "parameter":
-            if simple_name in ("self", "cls"):
-                confidence = 0
-            elif "." in def_obj.name:
-                method_name = def_obj.name.split(".")[-2]
-                if method_name.startswith("__") and method_name.endswith("__"):
-                    confidence = 0
-
-        if visitor.is_test_file or def_obj.line in visitor.test_decorated_lines:
-            confidence = 0
-
-        if (
-            def_obj.type == "import"
-            and def_obj.name.startswith("__future__.")
-            and simple_name
-            in (
-                "annotations",
-                "absolute_import",
-                "division",
-                "print_function",
-                "unicode_literals",
-                "generator_stop",
-            )
-        ):
-            confidence = 0
-
-        def_obj.confidence = max(confidence, 0)
 
     def _apply_heuristics(self):
         class_methods = defaultdict(list)
@@ -614,11 +356,16 @@ class Skylos:
                     f"Loaded coverage data ({len(pattern_tracker.coverage_hits)} lines)"
                 )
 
-        if Path(".skylos_trace").exists():
-            if pattern_tracker.load_trace():
-                logger.info(
-                    f"Loaded trace data ({len(pattern_tracker.traced_calls)} function calls)"
-                )
+        root = Path(path).resolve()
+        if root.is_dir():
+            project_root = root
+        else:
+            project_root = root.parent
+
+        trace_path = project_root / ".skylos_trace"
+        if trace_path.exists():
+            pattern_tracker.load_trace(str(trace_path))
+
 
         all_secrets = []
         all_dangers = []
@@ -686,12 +433,74 @@ class Skylos:
                         all_secrets.extend(findings)
                 except Exception:
                     pass
-
+      
         self.pattern_trackers = pattern_trackers
+
+        self._global_abc_classes = set()
+        self._global_protocol_classes = set()
+        self._global_abstract_methods = {}
+        self._global_abc_implementers = {}
+        self._global_protocol_implementers = {}
+        self._global_protocol_method_names = {}
+        
+        for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
+            self._global_abc_classes.update(getattr(framework_flags, "abc_classes", set()))
+            self._global_protocol_classes.update(getattr(framework_flags, "protocol_classes", set()))
+            
+            for cls, methods in getattr(framework_flags, "abstract_methods", {}).items():
+                if cls not in self._global_abstract_methods:
+                    self._global_abstract_methods[cls] = set()
+                self._global_abstract_methods[cls].update(methods)
+            
+            for cls, parents in getattr(framework_flags, "abc_implementers", {}).items():
+                if cls not in self._global_abc_implementers:
+                    self._global_abc_implementers[cls] = []
+                self._global_abc_implementers[cls].extend(parents)
+            
+            for cls, parents in getattr(framework_flags, "protocol_implementers", {}).items():
+                if cls not in self._global_protocol_implementers:
+                    self._global_protocol_implementers[cls] = []
+                self._global_protocol_implementers[cls].extend(parents)
+            
+            for cls, methods in getattr(framework_flags, "protocol_method_names", {}).items():
+                if cls not in self._global_protocol_method_names:
+                    self._global_protocol_method_names[cls] = set()
+                self._global_protocol_method_names[cls].update(methods)
+        
+        self._duck_typed_implementers = set()
+
+        class_methods = {}
+        for def_obj in self.defs.values():
+            if def_obj.type == "method" and "." in def_obj.name:
+                parts = def_obj.name.split(".")
+                if len(parts) >= 2:
+                    class_name = parts[-2]
+                    method_name = parts[-1]
+                    if class_name not in class_methods:
+                        class_methods[class_name] = set()
+                    class_methods[class_name].add(method_name)
+        
+        for class_name, methods in class_methods.items():
+            if class_name in self._global_protocol_classes:
+                continue
+
+            if class_name in self._global_protocol_implementers:
+                continue
+            
+            for protocol_name, protocol_methods in self._global_protocol_method_names.items():
+                if not protocol_methods or len(protocol_methods) < 3:
+                    continue
+                
+                matching = methods & protocol_methods
+                match_ratio = len(matching) / len(protocol_methods)
+                
+                if match_ratio >= 0.7 and len(matching) >= 3:
+                    self._duck_typed_implementers.add(class_name)
+                    break
 
         for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
             for definition in defs:
-                self._apply_penalties(definition, test_flags, framework_flags, cfg)
+                apply_penalties(self, definition, test_flags, framework_flags, cfg)
 
             if enable_danger and scan_danger is not None:
                 try:
@@ -703,8 +512,17 @@ class Skylos:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
 
-        self._mark_refs()
+        if progress_callback:
+            progress_callback(0, 1, Path("PHASE: mark refs"))
+        self._mark_refs(progress_callback=progress_callback)
+
+
+        if progress_callback:
+            progress_callback(0, 1, Path("PHASE: heuristics"))
         self._apply_heuristics()
+        
+        if progress_callback:
+            progress_callback(0, 1, Path("PHASE: exports"))
         self._mark_exports()
 
         shown = 0
@@ -916,6 +734,17 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
 
         fv.dataclass_fields = getattr(v, "dataclass_fields", set())
         fv.first_read_lineno = getattr(v, "first_read_lineno", {})
+        fv.protocol_classes = getattr(v, "protocol_classes", set())
+        fv.namedtuple_classes = getattr(v, "namedtuple_classes", set())
+        fv.enum_classes = getattr(v, "enum_classes", set())
+        fv.attrs_classes = getattr(v, "attrs_classes", set())
+        fv.orm_model_classes = getattr(v, "orm_model_classes", set())
+        fv.type_alias_names = getattr(v, "type_alias_names", set())
+        fv.abc_classes = getattr(v, "abc_classes", set())
+        fv.abstract_methods = getattr(v, "abstract_methods", {})
+        fv.abc_implementers = getattr(v, "abc_implementers", {})
+        fv.protocol_implementers = getattr(v, "protocol_implementers", {})
+        fv.protocol_method_names = getattr(v, "protocol_method_names", {})
 
         return (
             v.defs,
