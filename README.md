@@ -410,7 +410,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: "pip" }
-      - uses: pre-commit/action@v3.0.1
+      - uses: pre-commit/action@v3.0.2
         with: { extra_args: --all-files }
 ```
 
@@ -907,6 +907,7 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 - [x] Small integration with typescript
 - [ ] Expand and improve on capabilities of Skylos in various other languages
 - [ ] Expand the providers for LLMs
+- [ ] Expand the LLM portion for detecting dead/dangerous code 
 - [x] Coverage integration for runtime verification
 - [x] Implicit reference detection (f-string patterns, framework decorators)
 
