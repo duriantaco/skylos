@@ -264,7 +264,7 @@ class Skylos:
 
         if hasattr(self, "pattern_trackers"):
             seen_trackers = set()
-            for tracker in self.pattern_trackers.items():
+            for _, tracker in self.pattern_trackers.items():
                 if id(tracker) in seen_trackers:
                     continue
                 seen_trackers.add(id(tracker))
