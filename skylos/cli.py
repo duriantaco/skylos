@@ -11,7 +11,7 @@ from skylos.codemods import (
     comment_out_unused_import_cst,
     comment_out_unused_function_cst,
 )
-from skylos.config import load_config, suggest_pattern
+from skylos.config import load_config
 from skylos.gatekeeper import run_gate_interaction
 from skylos.credentials import get_key, save_key
 from skylos.api import upload_report
