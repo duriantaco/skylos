@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 from collections import defaultdict
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
+from skylos.penalties import apply_penalties
 
 from skylos.analyzer import Skylos, proc_file, analyze
 
@@ -212,6 +213,7 @@ class TestSkylos:
         mock_def.simple_name = "my_function"
         mock_def.type = "function"
         mock_def.is_exported = False
+        mock_def.references = 0
 
         skylos.defs = {"module.my_function": mock_def}
         skylos.exports = {"module": {"my_function"}}
@@ -613,7 +615,7 @@ class TestClass:
 
 
 class TestApplyPenalties:
-    @patch("skylos.analyzer.detect_framework_usage")
+    @patch("skylos.penalties.detect_framework_usage")
     def test_private_name_penalty(
         self,
         mock_detect_framework,
@@ -634,12 +636,12 @@ class TestApplyPenalties:
             confidence=100,
         )
 
-        skylos._apply_penalties(
-            mock_def, mock_test_aware_visitor, mock_framework_aware_visitor
+        apply_penalties(
+            skylos, mock_def, mock_test_aware_visitor, mock_framework_aware_visitor
         )
         assert mock_def.confidence < 100
 
-    @patch("skylos.analyzer.detect_framework_usage")
+    @patch("skylos.penalties.detect_framework_usage")
     def test_magic_methods_confidence_zero(
         self,
         mock_detect_framework,
@@ -654,12 +656,12 @@ class TestApplyPenalties:
             name="MyClass.__str__", simple_name="__str__", type="method", confidence=100
         )
 
-        skylos._apply_penalties(
-            mock_def, mock_test_aware_visitor, mock_framework_aware_visitor
+        apply_penalties(
+            skylos, mock_def, mock_test_aware_visitor, mock_framework_aware_visitor
         )
         assert mock_def.confidence == 0
 
-    @patch("skylos.analyzer.detect_framework_usage")
+    @patch("skylos.penalties.detect_framework_usage")
     def test_self_cls_parameters_confidence_zero(
         self,
         mock_detect_framework,
@@ -684,17 +686,17 @@ class TestApplyPenalties:
             confidence=100,
         )
 
-        skylos._apply_penalties(
-            mock_self, mock_test_aware_visitor, mock_framework_aware_visitor
+        apply_penalties(
+            skylos, mock_self, mock_test_aware_visitor, mock_framework_aware_visitor
         )
-        skylos._apply_penalties(
-            mock_cls, mock_test_aware_visitor, mock_framework_aware_visitor
+        apply_penalties(
+            skylos, mock_cls, mock_test_aware_visitor, mock_framework_aware_visitor
         )
 
         assert mock_self.confidence == 0
         assert mock_cls.confidence == 0
 
-    @patch("skylos.analyzer.detect_framework_usage")
+    @patch("skylos.penalties.detect_framework_usage")
     def test_test_methods_confidence_zero(
         self, mock_detect_framework, mock_definition, mock_framework_aware_visitor
     ):
@@ -714,10 +716,10 @@ class TestApplyPenalties:
             confidence=100,
         )
 
-        skylos._apply_penalties(mock_def, test_visitor, mock_framework_aware_visitor)
+        apply_penalties(skylos, mock_def, test_visitor, mock_framework_aware_visitor)
         assert mock_def.confidence == 0
 
-    @patch("skylos.analyzer.detect_framework_usage")
+    @patch("skylos.penalties.detect_framework_usage")
     def test_underscore_variable_confidence_zero(
         self,
         mock_detect_framework,
@@ -734,8 +736,8 @@ class TestApplyPenalties:
             name="_", simple_name="_", type="variable", confidence=100
         )
 
-        skylos._apply_penalties(
-            mock_def, mock_test_aware_visitor, mock_framework_aware_visitor
+        apply_penalties(
+            skylos, mock_def, mock_test_aware_visitor, mock_framework_aware_visitor
         )
         assert mock_def.confidence == 0
 

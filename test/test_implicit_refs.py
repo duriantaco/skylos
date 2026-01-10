@@ -53,7 +53,7 @@ class TestImplicitRefTracker:
 
     def test_pattern_match_prefix(self):
         tracker = ImplicitRefTracker()
-        tracker.pattern_refs.append(("handle_*", 70))
+        tracker.add_pattern_ref("handle_*", 70)
 
         defn = MockDefinition("handle_login")
         found, confidence, reason = tracker.should_mark_as_used(defn)
@@ -64,7 +64,7 @@ class TestImplicitRefTracker:
 
     def test_pattern_match_suffix(self):
         tracker = ImplicitRefTracker()
-        tracker.pattern_refs.append(("*_handler", 65))
+        tracker.add_pattern_ref("*_handler", 65)
 
         defn = MockDefinition("login_handler")
         found, confidence, reason = tracker.should_mark_as_used(defn)
@@ -74,7 +74,7 @@ class TestImplicitRefTracker:
 
     def test_pattern_match_middle(self):
         tracker = ImplicitRefTracker()
-        tracker.pattern_refs.append(("do_*_action", 60))
+        tracker.add_pattern_ref("do_*_action", 60)
 
         defn = MockDefinition("do_login_action")
         found, confidence, reason = tracker.should_mark_as_used(defn)
@@ -84,7 +84,7 @@ class TestImplicitRefTracker:
 
     def test_pattern_no_match(self):
         tracker = ImplicitRefTracker()
-        tracker.pattern_refs.append(("handle_*", 70))
+        tracker.add_pattern_ref("handle_*", 70)
 
         defn = MockDefinition("process_login")
         found, _, _ = tracker.should_mark_as_used(defn)
@@ -93,8 +93,8 @@ class TestImplicitRefTracker:
 
     def test_multiple_patterns_first_wins(self):
         tracker = ImplicitRefTracker()
-        tracker.pattern_refs.append(("handle_*", 70))
-        tracker.pattern_refs.append(("*_login", 80))
+        tracker.add_pattern_ref("handle_*", 70)
+        tracker.add_pattern_ref("*_login", 80)
 
         defn = MockDefinition("handle_login")
         found, confidence, reason = tracker.should_mark_as_used(defn)
@@ -115,7 +115,10 @@ class TestImplicitRefTracker:
 
     def test_coverage_hit_full_path(self):
         tracker = ImplicitRefTracker()
-        tracker.coverage_hits.add(("/home/user/project/app.py", 25))
+        full_path = "/home/user/project/app.py"
+        tracker.coverage_hits.add((full_path, 25))
+        tracker.covered_files_lines[full_path] = {25}
+        tracker._coverage_by_basename["app.py"] = [full_path]
 
         defn = MockDefinition("my_func", filename="app.py", line=25)
         found, confidence, _ = tracker.should_mark_as_used(defn)
@@ -154,7 +157,7 @@ class TestImplicitRefTracker:
 
     def test_patterns_checked_before_coverage(self):
         tracker = ImplicitRefTracker()
-        tracker.pattern_refs.append(("my_*", 70))
+        tracker.add_pattern_ref("my_*", 70)
         tracker.coverage_hits.add(("app.py", 10))
 
         defn = MockDefinition("my_func", filename="app.py", line=10)
