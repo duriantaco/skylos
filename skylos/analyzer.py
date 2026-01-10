@@ -263,7 +263,11 @@ class Skylos:
                     continue
 
         if hasattr(self, "pattern_trackers"):
-            for tracker in self.pattern_trackers.values():
+            seen_trackers = set()
+            for tracker in self.pattern_trackers.items():
+                if id(tracker) in seen_trackers:
+                    continue
+                seen_trackers.add(id(tracker))
                 for def_obj in self.defs.values():
                     should_mark, _, _ = tracker.should_mark_as_used(def_obj)
                     if should_mark:
@@ -350,8 +354,25 @@ class Skylos:
 
         from skylos.implicit_refs import pattern_tracker
 
-        if Path(".coverage").exists():
-            if pattern_tracker.load_coverage():
+        from skylos.implicit_refs import pattern_tracker as global_pattern_tracker
+
+        global_pattern_tracker.known_refs.clear()
+        global_pattern_tracker._compiled_patterns.clear()
+        global_pattern_tracker.f_string_patterns.clear()
+        global_pattern_tracker.coverage_hits.clear()
+        global_pattern_tracker.covered_files_lines.clear()
+        global_pattern_tracker._coverage_by_basename.clear()
+        global_pattern_tracker.traced_calls.clear()
+        global_pattern_tracker.traced_by_file.clear()
+        global_pattern_tracker._traced_by_basename.clear()
+
+        project_root = Path(path).resolve()
+        if not project_root.is_dir():
+            project_root = project_root.parent
+
+        coverage_path = project_root / ".coverage"
+        if coverage_path.exists():
+            if global_pattern_tracker.load_coverage():
                 logger.info(
                     f"Loaded coverage data ({len(pattern_tracker.coverage_hits)} lines)"
                 )
@@ -516,11 +537,10 @@ class Skylos:
             progress_callback(0, 1, Path("PHASE: mark refs"))
         self._mark_refs(progress_callback=progress_callback)
 
-
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: heuristics"))
         self._apply_heuristics()
-        
+
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: exports"))
         self._mark_exports()
