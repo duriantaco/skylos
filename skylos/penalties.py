@@ -254,12 +254,15 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
                 def_obj.confidence = 0
                 return
 
+    if def_obj.type == "variable" and simple_name == "_":
+        def_obj.confidence = 0
+        return
+    
     if def_obj.type == "variable" and "." in def_obj.name:
         parts = def_obj.name.split(".")
         var_name = parts[-1]
         if var_name.isupper() and len(var_name) > 1:
-            def_obj.confidence = 0
-            def_obj.skip_reason = "SCREAMING_CASE class constant"
+            confidence -= 40
             return
 
     if simple_name.startswith("_") and not simple_name.startswith("__"):
