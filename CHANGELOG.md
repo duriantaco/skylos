@@ -1,5 +1,25 @@
 ## Changelog
 
+## [3.0.2] - 2026-01-09
+
+### Added
+
+- Added protocol and ABC detection. Things include protocol class and member skipping. Classes inhering from `abc.ABC` or `ABC` classes are tracked. `@abstractmethod` decorators are also collected per ABC class. Methods implementing parent ABC's abstract methods as well as classes explicitly inheriting from Protocol classes will get a confidence of 0
+- Added `visit_ClassDef` tracking inside `visitor.py` for ABC/Protocol inheritance chains
+- Added auto duck typing recognition. Classes implementing >=70% of a Protocol's methods (with min 3 of matching) are detected
+- Added global tracking where all protocol method signatures are collected across codebase
+- Added `Mixin` class methods penalty. Methods in `*Mixin` classes get a -60% confidence penalty
+- Added base class skipping. Methods in `Base*`, `*Base`, `*ABC`, `*Interface`, `*Adapter` classes
+- Added framework lifecycle methods for `on_*`, `watch_*`, `compose` methods. They will face a -30%, -30% and -40% penalty respectively
+- Added data class field detection where `@dataclass` class attributes, `typing.NamedTuple` fields, `enum.Enum` class, `@attr.s`, Pydantic `BaseModel` fields all will get a confidence of 0
+- Added optional dependency imports. Imports inside `try` blocks with `except ImportError` + `HAS_*`/`HAVE_*` flags will be marked as used
+
+### Changes
+- Extended `config.py` to include `# noqa` comments where any line with `# noqa` will be ignored. Supports the following formats. `# noqa`, `# noqa: F401`, `# noqa: F401, F402`, `#noqa`, `# NOQA`
+
+### Fixed
+- Fixed `visit_Try` to correctly construct import references for optional dependencies
+
 ## [3.0.1] - 2026-01-08
 
 New year new me, and a new release! Happy new year everyone! 
