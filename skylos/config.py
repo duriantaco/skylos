@@ -207,6 +207,8 @@ def get_all_ignore_lines(source):
                 "#skylos:ignore",
                 "# noqa: skylos",
                 "pragma: no skylos",
+                "# noqa",
+                "#noqa"
             ]
         ):
             ignore_lines.add(i)
