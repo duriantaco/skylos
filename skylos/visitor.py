@@ -287,6 +287,42 @@ class Visitor(ast.NodeVisitor):
                 self.visit(statement)
             for statement in node.orelse:
                 self.visit(statement)
+    
+    def visit_Try(self, node):
+        is_import_error_handler = any(
+            isinstance(h.type, ast.Name) and h.type.id in ("ImportError", "ModuleNotFoundError")
+            for h in node.handlers
+        )
+        
+        if is_import_error_handler:
+            has_flag = False
+            for stmt in node.body:
+                if isinstance(stmt, ast.Assign):
+                    for t in stmt.targets:
+                        if isinstance(t, ast.Name) and (t.id.startswith("HAS_") or t.id.startswith("HAVE_")):
+                            has_flag = True
+                            break
+            
+            if has_flag:
+                for stmt in node.body:
+                    if isinstance(stmt, ast.Import):
+                        for alias in stmt.names:
+                            # "import pandas as pd" → definition is "pandas"
+                            if alias.asname:
+                                target = alias.name  # Full module name, NOT the alias
+                            else:
+                                target = alias.name.split(".", 1)[0]
+                            self.add_ref(target)
+                            
+                    elif isinstance(stmt, ast.ImportFrom) and stmt.module:
+                        for alias in stmt.names:
+                            if alias.name == "*":
+                                continue
+                            # "from pydantic import BaseModel" → definition is "pydantic.BaseModel"
+                            full_name = f"{stmt.module}.{alias.name}"
+                            self.add_ref(full_name)
+        
+        self.generic_visit(node)
 
     def visit_arguments(self, args):
         for arg in args.args:
