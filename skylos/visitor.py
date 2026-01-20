@@ -128,7 +128,7 @@ class Visitor(ast.NodeVisitor):
         self.attrs_classes = set()
         self.orm_model_classes = set()
         self.type_alias_names = set()
-        self.all_exports = set() 
+        self.all_exports = set()
         self.abc_classes = set()
         self.abstract_methods = {}
         self.abc_implementers = {}
@@ -145,7 +145,9 @@ class Visitor(ast.NodeVisitor):
             self.defs.append(Definition(name, t, self.file, line))
 
     def add_ref(self, name):
-        self.refs.append((name, self.file))
+        import sys
+
+        self.refs.append((sys.intern(str(name)), self.file))
 
     def qual(self, name):
         if name in self.alias:
@@ -287,41 +289,42 @@ class Visitor(ast.NodeVisitor):
                 self.visit(statement)
             for statement in node.orelse:
                 self.visit(statement)
-    
+
     def visit_Try(self, node):
         is_import_error_handler = any(
-            isinstance(h.type, ast.Name) and h.type.id in ("ImportError", "ModuleNotFoundError")
+            isinstance(h.type, ast.Name)
+            and h.type.id in ("ImportError", "ModuleNotFoundError")
             for h in node.handlers
         )
-        
+
         if is_import_error_handler:
             has_flag = False
             for stmt in node.body:
                 if isinstance(stmt, ast.Assign):
                     for t in stmt.targets:
-                        if isinstance(t, ast.Name) and (t.id.startswith("HAS_") or t.id.startswith("HAVE_")):
+                        if isinstance(t, ast.Name) and (
+                            t.id.startswith("HAS_") or t.id.startswith("HAVE_")
+                        ):
                             has_flag = True
                             break
-            
+
             if has_flag:
                 for stmt in node.body:
                     if isinstance(stmt, ast.Import):
                         for alias in stmt.names:
-                            # "import pandas as pd" → definition is "pandas"
                             if alias.asname:
-                                target = alias.name  # Full module name, NOT the alias
+                                target = alias.name
                             else:
                                 target = alias.name.split(".", 1)[0]
                             self.add_ref(target)
-                            
+
                     elif isinstance(stmt, ast.ImportFrom) and stmt.module:
                         for alias in stmt.names:
                             if alias.name == "*":
                                 continue
-                            # "from pydantic import BaseModel" → definition is "pydantic.BaseModel"
                             full_name = f"{stmt.module}.{alias.name}"
                             self.add_ref(full_name)
-        
+
         self.generic_visit(node)
 
     def visit_arguments(self, args):
@@ -341,7 +344,7 @@ class Visitor(ast.NodeVisitor):
         for default in args.kw_defaults:
             if default:
                 self.visit(default)
-    
+
     def _process_textual_bindings(self, node):
         for target in node.targets:
             if not isinstance(target, ast.Name):
@@ -350,22 +353,22 @@ class Visitor(ast.NodeVisitor):
                 continue
             if not isinstance(node.value, (ast.List, ast.Tuple)):
                 continue
-            
+
             for elt in node.value.elts:
                 action_name = None
-                
+
                 if isinstance(elt, ast.Call):
                     if len(elt.args) >= 2:
                         arg = elt.args[1]
                         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                             action_name = arg.value
-                
+
                 elif isinstance(elt, (ast.Tuple, ast.List)):
                     if len(elt.elts) >= 2:
                         arg = elt.elts[1]
                         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                             action_name = arg.value
-                
+
                 if action_name:
                     method_name = f"action_{action_name}"
                     if self.cls:
@@ -426,21 +429,27 @@ class Visitor(ast.NodeVisitor):
         is_abstract_or_overload = False
         for deco in node.decorator_list:
             deco_name = self._get_decorator_name(deco)
-            if deco_name in ("abstractmethod", "abc.abstractmethod", "overload", "typing.overload", "typing_extensions.overload"):
+            if deco_name in (
+                "abstractmethod",
+                "abc.abstractmethod",
+                "overload",
+                "typing.overload",
+                "typing_extensions.overload",
+            ):
                 is_abstract_or_overload = True
                 break
-        
+
         if self.cls and self.cls in self.abc_classes and is_abstract_or_overload:
             if self.cls not in self.abstract_methods:
                 self.abstract_methods[self.cls] = set()
             self.abstract_methods[self.cls].add(node.name)
-        
+
         if self.cls and self._in_protocol_class:
             if self.cls not in self.protocol_method_names:
                 self.protocol_method_names[self.cls] = set()
             self.protocol_method_names[self.cls].add(node.name)
-        
-        prev_abstract_overload = getattr(self, '_in_abstract_or_overload', False)
+
+        prev_abstract_overload = getattr(self, "_in_abstract_or_overload", False)
 
         self._in_abstract_or_overload = is_abstract_or_overload
 
@@ -480,26 +489,34 @@ class Visitor(ast.NodeVisitor):
         all_args.extend(node.args.args)
         all_args.extend(node.args.kwonlyargs)
 
-        skip_params = self._in_protocol_class or getattr(self, '_in_abstract_or_overload', False)
-        
+        skip_params = self._in_protocol_class or getattr(
+            self, "_in_abstract_or_overload", False
+        )
+
         for arg in all_args:
             param_name = f"{qualified_name}.{arg.arg}"
             if not skip_params:
-                self.add_def(param_name, "parameter", getattr(arg, "lineno", node.lineno))
+                self.add_def(
+                    param_name, "parameter", getattr(arg, "lineno", node.lineno)
+                )
             self.current_function_params.append((arg.arg, param_name))
 
         if node.args.vararg:
             va = node.args.vararg
             param_name = f"{qualified_name}.{va.arg}"
             if not skip_params:
-                self.add_def(param_name, "parameter", getattr(va, "lineno", node.lineno))
+                self.add_def(
+                    param_name, "parameter", getattr(va, "lineno", node.lineno)
+                )
             self.current_function_params.append((va.arg, param_name))
 
         if node.args.kwarg:
             ka = node.args.kwarg
             param_name = f"{qualified_name}.{ka.arg}"
             if not skip_params:
-                self.add_def(param_name, "parameter", getattr(ka, "lineno", node.lineno))
+                self.add_def(
+                    param_name, "parameter", getattr(ka, "lineno", node.lineno)
+                )
             self.current_function_params.append((ka.arg, param_name))
 
         self.visit_arguments(node.args)
@@ -528,7 +545,7 @@ class Visitor(ast.NodeVisitor):
                 is_protocol = True
             elif isinstance(base, ast.Attribute) and base.attr == "Protocol":
                 is_protocol = True
-        
+
         if is_protocol:
             self.protocol_classes.add(node.name)
 
@@ -539,19 +556,19 @@ class Visitor(ast.NodeVisitor):
                 base_name = base.id
             elif isinstance(base, ast.Attribute):
                 base_name = base.attr
-            
+
             if not base_name:
                 continue
-            
+
             if base_name == "ABC":
                 is_abc_class = True
                 self.abc_classes.add(node.name)
-            
+
             elif base_name in self.abc_classes:
                 if node.name not in self.abc_implementers:
                     self.abc_implementers[node.name] = []
                 self.abc_implementers[node.name].append(base_name)
-            
+
             elif base_name in self.protocol_classes:
                 if node.name not in self.protocol_implementers:
                     self.protocol_implementers[node.name] = []
@@ -560,34 +577,48 @@ class Visitor(ast.NodeVisitor):
         is_namedtuple = False
         is_enum = False
         is_orm_model = False
-        
+
         for base in node.bases:
             base_name = ""
             if isinstance(base, ast.Name):
                 base_name = base.id
             elif isinstance(base, ast.Attribute):
                 base_name = base.attr
-            
+
             if base_name == "NamedTuple":
                 is_namedtuple = True
             if base_name in ("Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"):
                 is_enum = True
-            if base_name in ("Base", "Model", "DeclarativeBase", "SQLModel", "Document"):
+            if base_name in (
+                "Base",
+                "Model",
+                "DeclarativeBase",
+                "SQLModel",
+                "Document",
+            ):
                 is_orm_model = True
-        
+
         if is_namedtuple:
             self.namedtuple_classes.add(node.name)
         if is_enum:
             self.enum_classes.add(node.name)
         if is_orm_model:
             self.orm_model_classes.add(node.name)
-        
+
         for deco in node.decorator_list:
             deco_name = self._get_decorator_name(deco)
-            if deco_name in ("attr.s", "attr.attrs", "attrs", "define", "attr.define", "frozen", "attr.frozen"):
+            if deco_name in (
+                "attr.s",
+                "attr.attrs",
+                "attrs",
+                "define",
+                "attr.define",
+                "frozen",
+                "attr.frozen",
+            ):
                 self.attrs_classes.add(node.name)
                 break
-        
+
         prev_in_protocol = self._in_protocol_class
         self._in_protocol_class = is_protocol
 
@@ -643,7 +674,7 @@ class Visitor(ast.NodeVisitor):
         prev = self.cls
         if is_cst:
             self.in_cst_class += 1
-        
+
         self.cls = node.name
         self._dataclass_stack.append(is_dc)
 
@@ -670,12 +701,15 @@ class Visitor(ast.NodeVisitor):
             elif isinstance(ann, ast.Attribute) and ann.attr == "TypeAlias":
                 is_type_alias = True
             elif isinstance(ann, ast.Subscript):
-                if isinstance(ann.value, ast.Attribute) and ann.value.attr == "TypeAlias":
+                if (
+                    isinstance(ann.value, ast.Attribute)
+                    and ann.value.attr == "TypeAlias"
+                ):
                     is_type_alias = True
-            
+
             if is_type_alias:
                 self.type_alias_names.add(node.target.id)
-        
+
         if node.value:
             self.visit(node.value)
 
@@ -760,7 +794,6 @@ class Visitor(ast.NodeVisitor):
         self.visit(node.value)
 
     def visit_Subscript(self, node):
-
         if isinstance(node.value, ast.AST):
             node.value.parent = node
         if isinstance(node.slice, ast.AST):
@@ -860,7 +893,7 @@ class Visitor(ast.NodeVisitor):
                 value = self._extract_string_value(elt)
                 if value is None:
                     continue
-                
+
                 self.all_exports.add(value)
                 self.exports.add(value)
 
@@ -1005,7 +1038,11 @@ class Visitor(ast.NodeVisitor):
         self.generic_visit(node)
 
         if isinstance(node.func, ast.Name) and node.func.id == "NewType":
-            if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+            if (
+                node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
                 self.type_alias_names.add(node.args[0].value)
 
         if (
