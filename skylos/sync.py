@@ -18,6 +18,7 @@ CONFIG_FILE = "config.yaml"
 SUPPRESSIONS_FILE = "suppressions.json"
 META_FILE = ".sync-meta.json"
 DEFAULT_API_URL = "https://skylos.dev"
+LOCAL_API_URL = "http://localhost:3000"
 
 GLOBAL_CREDS_DIR = Path.home() / ".skylos"
 GLOBAL_CREDS_FILE = GLOBAL_CREDS_DIR / "credentials.json"
@@ -25,6 +26,7 @@ GLOBAL_CREDS_FILE = GLOBAL_CREDS_DIR / "credentials.json"
 
 def get_api_url():
     return os.environ.get("SKYLOS_API_URL", DEFAULT_API_URL)
+    # return os.environ.get("SKYLOS_API_URL", LOCAL_API_URL)
 
 
 def get_token():
@@ -43,18 +45,17 @@ def get_token():
 
 
 def save_token(token, project_name=None, org_name=None, plan=None):
-    GLOBAL_CREDS_DIR.mkdir(exist_ok=True)
+    GLOBAL_CREDS_DIR.mkdir(parents=True, exist_ok=True)
 
     data = {
         "token": token,
         "saved_at": datetime.utcnow().isoformat() + "Z",
+        "plan": (plan or "free").lower(),
     }
     if project_name:
         data["project_name"] = project_name
     if org_name:
         data["org_name"] = org_name
-    if plan:
-        data["plan"] = plan
 
     GLOBAL_CREDS_FILE.write_text(json.dumps(data, indent=2))
     return str(GLOBAL_CREDS_FILE)
@@ -101,7 +102,21 @@ def api_get(endpoint, token):
 def cmd_connect(token_arg=None):
     print("\n Connect to Skylos Cloud\n")
 
-    token = token_arg or os.environ.get("SKYLOS_TOKEN", "").strip()
+    env_token = os.environ.get("SKYLOS_TOKEN", "").strip()
+    if env_token and not token_arg:
+        print(f"⚠️  Warning: SKYLOS_TOKEN environment variable is set!")
+        print(f"   Current value: {mask_token(env_token)}")
+        print(f"   To use a different token, either:")
+        print(f"   1. Run: unset SKYLOS_TOKEN")
+        print(f"   2. Pass token as argument: skylos sync connect <token>")
+        print()
+        response = input("Use existing env var token? (y/n): ").strip().lower()
+        if response != "y":
+            token = None
+        else:
+            token = env_token
+    else:
+        token = token_arg or env_token
 
     if not token:
         print("Enter your API token (from Dashboard → Settings):")
@@ -218,6 +233,334 @@ def cmd_pull():
         sys.exit(1)
 
 
+def create_precommit_config():
+    precommit_path = Path(".pre-commit-config.yaml")
+
+    if precommit_path.exists():
+        print("  ⚠️  .pre-commit-config.yaml already exists (skipping)")
+        return False
+
+    config_content = """# Skylos pre-commit configuration
+
+repos:
+  - repo: local
+    hooks:
+      - id: skylos-gate
+        name: Skylos Quality Gate
+        entry: python -m skylos.cli
+        language: system
+        pass_filenames: false
+        require_serial: true
+        args: [".", "--gate", "--danger"]
+"""
+
+    precommit_path.write_text(config_content)
+    print("  ✓ Created .pre-commit-config.yaml")
+    return True
+
+
+def cmd_setup(token_arg=None):
+    print("\n🐕 Skylos Setup\n")
+
+    token = token_arg
+    if not token:
+        print("Get your token from: https://skylos.dev/dashboard/settings\n")
+        try:
+            token = input("Paste token: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nCancelled.")
+            return
+
+    if not token:
+        print("Error: No token provided.")
+        return
+
+    print(f"\nConnecting...")
+    try:
+        info = api_get("/api/sync/whoami", token)
+    except AuthError as e:
+        print(f"\n✗ {e}")
+        return
+
+    project = info.get("project", {})
+    org = info.get("organization", {})
+    plan = info.get("plan", "free")
+
+    save_token(
+        token, project_name=project.get("name"), org_name=org.get("name"), plan=plan
+    )
+
+    print(f"✓ Connected!\n")
+    print(f"  Project: {project.get('name', 'Unknown')}")
+    print(f"  Plan: {plan.capitalize()}\n")
+
+    is_pro = plan in ["pro", "enterprise", "beta"]
+
+    git_dir = Path(".git")
+    has_git = git_dir.exists()
+    has_precommit_file = Path(".pre-commit-config.yaml").exists()
+    has_workflow = Path(".github/workflows/skylos.yml").exists()
+
+    if not is_pro:
+        print("=" * 60)
+        print("\n Pro Features Available (Upgrade to enable):\n")
+
+        if has_git:
+            print("  🔒 Git hooks - Block bad code on push")
+            print("  🔒 Pre-commit - Block bad code on commit")
+            print("  🔒 GitHub Actions - Block PRs automatically")
+        else:
+            print("  ⚠️  Initialize git first: git init")
+
+        print("\n" + "=" * 60)
+        print("\n✓ Setup complete!\n")
+        print(" What you can do now:\n")
+        print("  • Run local scans:")
+        print("    $ skylos .\n")
+        print("  • View results in dashboard:")
+        print("    https://skylos.dev/dashboard\n")
+        print("=" * 60 + "\n")
+        return
+
+    print("🎉 Pro plan detected!\n")
+    print("Let's set up your blocking features:\n")
+
+    if not has_git:
+        print("  ⚠️  Not a git repository")
+        print("     Run: git init\n")
+        return
+
+    print("  ✓ Git repository detected\n")
+
+    setup_hooks = False
+    setup_precommit = False
+    setup_ci = False
+
+    try:
+        response = (
+            input("  Install git hooks? (blocks 'git push') [Y/n]: ").strip().lower()
+        )
+        setup_hooks = response in ["", "y", "yes"]
+    except (KeyboardInterrupt, EOFError):
+        print("\nCancelled.")
+        return
+
+    if not has_precommit_file:
+        try:
+            response = (
+                input("  Create pre-commit config? (blocks 'git commit') [y/N]: ")
+                .strip()
+                .lower()
+            )
+            setup_precommit = response in ["y", "yes"]
+        except (KeyboardInterrupt, EOFError):
+            print("\nCancelled.")
+            return
+    else:
+        print(" * .pre-commit-config.yaml exists (skipping)")
+
+    if not has_workflow:
+        try:
+            response = (
+                input("  Create GitHub Actions? (blocks PR merges) [Y/n]: ")
+                .strip()
+                .lower()
+            )
+            setup_ci = response in ["", "y", "yes"]
+        except (KeyboardInterrupt, EOFError):
+            print("\nCancelled.")
+            return
+    else:
+        print("  *  .github/workflows/skylos.yml exists (skipping)")
+
+    print("\n" + "=" * 60)
+    print("\nInstalling selected features...\n")
+
+    if setup_hooks:
+        hooks_dir = git_dir / "hooks"
+        hooks_dir.mkdir(exist_ok=True)
+        hook_path = hooks_dir / "pre-push"
+        hook_content = r"""#!/bin/bash
+echo "Running Skylos quality gate..."
+skylos .
+exit $?
+"""
+        hook_path.write_text(hook_content)
+        hook_path.chmod(0o755)
+        print("  ✓ Installed git hooks (.git/hooks/pre-push)")
+    else:
+        print(" ✗ Skipped git hooks")
+
+    if setup_precommit:
+        created = create_precommit_config()
+        if created:
+            print("  ✓ Created pre-commit config (.pre-commit-config.yaml)")
+    elif not has_precommit_file:
+        print("  ✗ Skipped pre-commit config")
+
+    if setup_ci:
+        workflow_dir = Path(".github/workflows")
+        workflow_dir.mkdir(parents=True, exist_ok=True)
+        workflow_path = workflow_dir / "skylos.yml"
+
+        workflow_content = """name: Skylos Quality Gate
+
+on:
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  skylos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Skylos
+        run: pip install skylos
+      
+      - name: Run Skylos Scan
+        env:
+          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}
+        run: |
+          skylos . --danger --upload --sha ${{ github.event.pull_request.head.sha }}
+"""
+        workflow_path.write_text(workflow_content)
+        print("  ✓ Created GitHub Actions (.github/workflows/skylos.yml)")
+    else:
+        print("  ✗ Skipped GitHub Actions")
+
+    print("\n" + "=" * 60)
+
+    if setup_precommit or setup_ci:
+        print("\n Next Steps:\n")
+
+        if setup_precommit:
+            print("1. Install pre-commit:")
+            print("   $ pip install pre-commit")
+            print("   $ pre-commit install\n")
+
+        if setup_ci:
+            if setup_precommit:
+                step_num = "2"
+            else:
+                step_num = "1"
+            print(f"{step_num}. Add SKYLOS_TOKEN to GitHub:")
+            print("   Settings -> Secrets -> Actions -> New secret")
+            print("   Name: SKYLOS_TOKEN")
+            print(f"   Value: {mask_token(token)}\n")
+
+        final_step = (
+            "3"
+            if (setup_precommit and setup_ci)
+            else ("2" if (setup_precommit or setup_ci) else "1")
+        )
+        print(f"{final_step}. Commit and push:")
+        print("   $ git add .")
+        print("   $ git commit -m 'Add Skylos'")
+        print("   $ git push\n")
+
+        print("🎯 Your code is now protected!")
+    else:
+        print("\n✓ Setup complete!")
+        print("\nRun: skylos . to scan your code\n")
+
+    print("=" * 60 + "\n")
+
+
+def cmd_upgrade():
+    print("\n🐕 Skylos Upgrade\n")
+
+    token = get_token()
+    if not token:
+        print("✗ Not connected.")
+        print("Run: skylos sync connect <token>\n")
+        return
+
+    print("Checking plan...")
+    try:
+        info = api_get("/api/sync/whoami", token)
+        plan = info.get("plan", "free")
+    except AuthError as e:
+        print(f"✗ {e}")
+        return
+
+    if plan not in ["pro", "enterprise", "beta"]:
+        print(f"\nCurrent plan: {plan.capitalize()}")
+        print("Upgrade to Pro first!")
+        print("Visit: https://skylos.dev/pricing\n")
+        return
+
+    print(f"✓ Pro plan detected!\n")
+    print("Installing Pro features...\n")
+
+    git_dir = Path(".git")
+    if git_dir.exists():
+        hooks_dir = git_dir / "hooks"
+        hooks_dir.mkdir(exist_ok=True)
+        hook_path = hooks_dir / "pre-push"
+        hook_content = """#!/bin/bash
+echo "Running Skylos quality gate..."
+skylos . --gate
+exit $?
+"""
+        hook_path.write_text(hook_content)
+        hook_path.chmod(0o755)
+        print(" ✓ Installed git hooks")
+
+    workflow_dir = Path(".github/workflows")
+    workflow_dir.mkdir(parents=True, exist_ok=True)
+    workflow_path = workflow_dir / "skylos.yml"
+
+    if not workflow_path.exists():
+        workflow_content = """name: Skylos Quality Gate
+
+on:
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  skylos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Skylos
+        run: pip install skylos
+      
+      - name: Run Skylos Scan
+        env:
+          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}
+        run: skylos . --danger --gate
+"""
+        workflow_path.write_text(workflow_content)
+        print("  ✓ Created workflow\n")
+
+    print("=" * 60)
+    print("\n FINAL STEP: Add token to GitHub\n")
+    print("1. Repo -> Settings -> Secrets -> Actions")
+    print("2. Add: SKYLOS_TOKEN")
+    print(f"3. Value: {mask_token(token)}\n")
+    print("=" * 60 + "\n")
+    print("✅ Upgrade complete!")
+
+
 def main(args=None):
     if args is None:
         args = sys.argv[1:]
@@ -230,6 +573,8 @@ def main(args=None):
         print("  status           Show connection status")
         print("  disconnect       Remove saved credentials")
         print("  pull             Pull config and suppressions")
+        print("  setup [token]    One-command setup")
+        print("  upgrade          Add Pro features after upgrading")
         return
 
     cmd = args[0].lower()
@@ -242,6 +587,10 @@ def main(args=None):
         cmd_disconnect()
     elif cmd == "pull":
         cmd_pull()
+    elif cmd == "setup":
+        cmd_setup(args[1] if len(args) > 1 else None)
+    elif cmd == "upgrade":
+        cmd_upgrade()
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)
