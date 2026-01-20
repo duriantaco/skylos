@@ -33,11 +33,8 @@ from skylos.visitors.framework_aware import detect_framework_usage
 def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
     confidence = 100
     simple_name = def_obj.simple_name
-    
-    if (
-        getattr(visitor, "ignore_lines", None)
-        and def_obj.line in visitor.ignore_lines
-    ):
+
+    if getattr(visitor, "ignore_lines", None) and def_obj.line in visitor.ignore_lines:
         def_obj.confidence = 0
         def_obj.skip_reason = "inline ignore comment"
         return
@@ -153,28 +150,34 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
         ):
             def_obj.confidence = 0
             return
-    
+
     if def_obj.type == "class":
-        protocol_classes = getattr(framework, 'protocol_classes', set())
+        protocol_classes = getattr(framework, "protocol_classes", set())
         if def_obj.simple_name in protocol_classes:
             def_obj.confidence = 0
             def_obj.skip_reason = "Protocol class"
             return
-        
+
     if def_obj.type in ("method", "class") and "." in def_obj.name:
         parts = def_obj.name.split(".")
         for part in parts[:-1]:
-            if any(part.startswith(prefix) and len(part) > len(prefix) and part[len(prefix)].isupper()
-                   for prefix in ("InMemory", "Mock", "Fake", "Stub", "Dummy", "Fixed")):
+            if any(
+                part.startswith(prefix)
+                and len(part) > len(prefix)
+                and part[len(prefix)].isupper()
+                for prefix in ("InMemory", "Mock", "Fake", "Stub", "Dummy", "Fixed")
+            ):
                 confidence -= 40
                 break
-            if any(part.endswith(suffix) for suffix in ("Mock", "Stub", "Fake", "Double")):
+            if any(
+                part.endswith(suffix) for suffix in ("Mock", "Stub", "Fake", "Double")
+            ):
                 confidence -= 40
                 break
 
     if def_obj.type in ("method", "parameter") and "." in def_obj.name:
         parts = def_obj.name.split(".")
-        protocol_classes = getattr(framework, 'protocol_classes', set())
+        protocol_classes = getattr(framework, "protocol_classes", set())
         for part in parts[:-1]:
             if part in protocol_classes:
                 def_obj.confidence = 0
@@ -184,12 +187,16 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
     if def_obj.type == "method" and "." in def_obj.name:
         parts = def_obj.name.split(".")
         method_name = parts[-1]
-        
-        abc_implementers = {**getattr(analyzer, '_global_abc_implementers', {}), 
-                           **getattr(framework, 'abc_implementers', {})}
-        abstract_methods = {**getattr(analyzer, '_global_abstract_methods', {}), 
-                           **getattr(framework, 'abstract_methods', {})}
-        
+
+        abc_implementers = {
+            **getattr(analyzer, "_global_abc_implementers", {}),
+            **getattr(framework, "abc_implementers", {}),
+        }
+        abstract_methods = {
+            **getattr(analyzer, "_global_abstract_methods", {}),
+            **getattr(framework, "abstract_methods", {}),
+        }
+
         for part in parts[:-1]:
             if part in abc_implementers:
                 parent_abcs = abc_implementers[part]
@@ -197,19 +204,51 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
                     if parent_abc in abstract_methods:
                         if method_name in abstract_methods[parent_abc]:
                             def_obj.confidence = 0
-                            def_obj.skip_reason = f"Implements abstract method from {parent_abc}"
+                            def_obj.skip_reason = (
+                                f"Implements abstract method from {parent_abc}"
+                            )
                             return
 
     if def_obj.type == "method" and "." in def_obj.name:
         parts = def_obj.name.split(".")
-        protocol_implementers = {**getattr(analyzer, '_global_protocol_implementers', {}),
-                                 **getattr(framework, 'protocol_implementers', {})}
-        
+        protocol_implementers = {
+            **getattr(analyzer, "_global_protocol_implementers", {}),
+            **getattr(framework, "protocol_implementers", {}),
+        }
+
         for part in parts[:-1]:
             if part in protocol_implementers:
                 def_obj.confidence = 0
                 def_obj.skip_reason = "Protocol implementer method"
                 return
+
+    if def_obj.type == "method" and "." in def_obj.name:
+        parts = def_obj.name.split(".")
+        method_name = parts[-1]
+        class_name = None
+        if len(parts) >= 2:
+            class_name = parts[-2]
+
+        if class_name:
+            protocol_method_names = getattr(
+                analyzer, "_global_protocol_method_names", {}
+            )
+            if protocol_method_names:
+                class_methods = set()
+                for d in analyzer.defs.values():
+                    if d.type == "method" and "." in d.name:
+                        d_parts = d.name.split(".")
+                        if len(d_parts) >= 2 and d_parts[-2] == class_name:
+                            class_methods.add(d_parts[-1])
+
+                for protocol_class, protocol_methods in protocol_method_names.items():
+                    if protocol_methods and protocol_methods.issubset(class_methods):
+                        if method_name in protocol_methods:
+                            def_obj.confidence = 0
+                            def_obj.skip_reason = (
+                                f"Structural Protocol implementation ({protocol_class})"
+                            )
+                            return
 
     if def_obj.type == "method" and "." in def_obj.name:
         parts = def_obj.name.split(".")
@@ -257,7 +296,7 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
     if def_obj.type == "variable" and simple_name == "_":
         def_obj.confidence = 0
         return
-    
+
     if def_obj.type == "variable" and "." in def_obj.name:
         parts = def_obj.name.split(".")
         var_name = parts[-1]
@@ -322,7 +361,7 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
             def_obj.confidence = 0
             def_obj.skip_reason = "Type alias"
             return
-        
+
     if def_obj.type == "variable" and "." in def_obj.name:
         prefix, _ = def_obj.name.rsplit(".", 1)
 
@@ -348,9 +387,9 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
                         schema_like = True
                         break
 
-                    if isinstance(
-                        base, ast.Attribute
-                    ) and base.attr.lower().endswith(("schema", "model")):
+                    if isinstance(base, ast.Attribute) and base.attr.lower().endswith(
+                        ("schema", "model")
+                    ):
                         schema_like = True
                         break
 
@@ -415,17 +454,17 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
 
     if def_obj.type == "method" and confidence > 0:
         method_name = def_obj.simple_name
-        abstract_methods = getattr(analyzer, '_global_abstract_methods', {})
-        
+        abstract_methods = getattr(analyzer, "_global_abstract_methods", {})
+
         for abc_class, methods in abstract_methods.items():
             if method_name in methods:
                 confidence -= 40
                 break
-        
+
     if def_obj.type == "method" and "." in def_obj.name:
         parts = def_obj.name.split(".")
-        duck_typed = getattr(analyzer, '_duck_typed_implementers', set())
-        
+        duck_typed = getattr(analyzer, "_duck_typed_implementers", set())
+
         for part in parts[:-1]:
             if part in duck_typed:
                 def_obj.confidence = 0
