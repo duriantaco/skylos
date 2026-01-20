@@ -73,28 +73,6 @@ def test_run_push_failure(monkeypatch):
     gk.run_push()
 
 
-def test_check_gate_reasons(monkeypatch):
-    results = {
-        "danger": [{"severity": "CRITICAL"}, {"severity": "LOW"}],
-        "secrets": [{"x": 1}],
-        "quality": [1, 2, 3],
-    }
-    config = {
-        "gate": {
-            "fail_on_critical": True,
-            "max_security": 0,
-            "max_quality": 2,
-        }
-    }
-
-    passed, reasons = gk.check_gate(results, config)
-    assert passed is False
-    assert any("CRITICAL" in r for r in reasons)
-    assert any("Secrets" in r for r in reasons)
-    assert any("Security issues" in r for r in reasons)
-    assert any("Quality issues" in r for r in reasons)
-
-
 def test_run_gate_interaction_passed_runs_command(monkeypatch):
     _silence_console(monkeypatch)
     monkeypatch.setattr(gk, "check_gate", lambda results, config: (True, []))

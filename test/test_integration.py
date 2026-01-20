@@ -152,7 +152,9 @@ class TestSkylosIntegration:
         assert len(result["unused_imports"]) > 0
 
         unused_function_names = [f["name"] for f in result["unused_functions"]]
-        assert any("unused_function" in name for name in unused_function_names), f"Expected unused_function in {unused_function_names}"
+        assert any("unused_function" in name for name in unused_function_names), (
+            f"Expected unused_function in {unused_function_names}"
+        )
 
         assert "used_function" not in unused_function_names
         assert "main" not in unused_function_names

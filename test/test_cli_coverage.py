@@ -3,7 +3,6 @@ import sys
 
 
 class TestCoverageFlag:
-
     @patch("skylos.cli.subprocess.run")
     @patch("skylos.cli.run_analyze")
     def test_coverage_runs_pytest_first(self, mock_analyze, mock_run):
@@ -137,7 +136,6 @@ class TestCoverageFlag:
 
 
 class TestCoverageIntegration:
-
     @patch("skylos.implicit_refs.pattern_tracker")
     @patch("skylos.cli.subprocess.run")
     @patch("skylos.cli.run_analyze")

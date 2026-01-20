@@ -328,67 +328,79 @@ whitelist = ["special_*"]
         self.assertEqual(suggest_pattern("plain_name"), "plain_name")
 
     def test_get_all_ignore_lines_noqa_blanket(self):
-        source = "\n".join([
-            "import os  # noqa",
-            "import sys",
-        ])
-        
+        source = "\n".join(
+            [
+                "import os  # noqa",
+                "import sys",
+            ]
+        )
+
         ignore_lines = get_all_ignore_lines(source)
-        
+
         self.assertIn(1, ignore_lines)
         self.assertNotIn(2, ignore_lines)
 
     def test_get_all_ignore_lines_noqa_with_code(self):
-        source = "\n".join([
-            "import pandas  # noqa: F401",
-            "import sys",
-        ])
-        
+        source = "\n".join(
+            [
+                "import pandas  # noqa: F401",
+                "import sys",
+            ]
+        )
+
         ignore_lines = get_all_ignore_lines(source)
-        
+
         self.assertIn(1, ignore_lines)
         self.assertNotIn(2, ignore_lines)
 
     def test_get_all_ignore_lines_noqa_multiple_codes(self):
-        source = "\n".join([
-            "from pydantic import BaseModel, ValidationError  # noqa: F401, F402",
-            "import sys",
-        ])
-        
+        source = "\n".join(
+            [
+                "from pydantic import BaseModel, ValidationError  # noqa: F401, F402",
+                "import sys",
+            ]
+        )
+
         ignore_lines = get_all_ignore_lines(source)
-        
+
         self.assertIn(1, ignore_lines)
         self.assertNotIn(2, ignore_lines)
 
     def test_get_all_ignore_lines_noqa_no_space(self):
-        source = "\n".join([
-            "import os  #noqa",
-            "import sys",
-        ])
-        
+        source = "\n".join(
+            [
+                "import os  #noqa",
+                "import sys",
+            ]
+        )
+
         ignore_lines = get_all_ignore_lines(source)
-        
+
         self.assertIn(1, ignore_lines)
         self.assertNotIn(2, ignore_lines)
 
     def test_get_all_ignore_lines_noqa_uppercase(self):
-        source = "\n".join([
-            "import os  # NOQA",
-            "import sys",
-        ])
-        
+        source = "\n".join(
+            [
+                "import os  # NOQA",
+                "import sys",
+            ]
+        )
+
         ignore_lines = get_all_ignore_lines(source)
-        
+
         self.assertIn(1, ignore_lines)
         self.assertNotIn(2, ignore_lines)
 
     def test_get_all_ignore_lines_noqa_with_other_comment(self):
-        source = "\n".join([
-            "x = foo()  # type: ignore # noqa",
-            "y = bar()",
-        ])
-        
+        source = "\n".join(
+            [
+                "x = foo()  # type: ignore # noqa",
+                "y = bar()",
+            ]
+        )
+
         ignore_lines = get_all_ignore_lines(source)
-        
+
         self.assertIn(1, ignore_lines)
         self.assertNotIn(2, ignore_lines)
