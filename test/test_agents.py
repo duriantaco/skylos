@@ -233,7 +233,10 @@ def test_security_audit_agent_always_uses_complete_with_response_format(monkeypa
     assert out == []
 
     assert len(fake_adapter.complete_calls) == 1
-    assert fake_adapter.complete_calls[0]["response_format"] == agents.FINDINGS_RESPONSE_FORMAT
+    assert (
+        fake_adapter.complete_calls[0]["response_format"]
+        == agents.FINDINGS_RESPONSE_FORMAT
+    )
     assert called["include_examples"] is True
 
     assert len(fake_adapter.stream_calls) == 0

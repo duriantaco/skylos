@@ -78,7 +78,9 @@ def test_analyze_file_small_uses_whole_file_path(tmp_path, monkeypatch):
 
     calls = {"count": 0}
 
-    def fake_analyze_whole(source, file_path, defs_map=None, chunk_start_line=1, **kwargs):
+    def fake_analyze_whole(
+        source, file_path, defs_map=None, chunk_start_line=1, **kwargs
+    ):
         calls["count"] += 1
         return [mk_finding(file=file_path, line=1, severity=Severity.HIGH)]
 
@@ -230,7 +232,9 @@ def test_analyze_files_builds_analysis_result_and_summary(tmp_path, monkeypatch)
     cfg = AnalyzerConfig(quiet=True, parallel=False)
     s = SkylosLLM(cfg)
 
-    def fake_analyze_file(file_path, defs_map=None, static_findings=None, issue_types=None, **kwargs):
+    def fake_analyze_file(
+        file_path, defs_map=None, static_findings=None, issue_types=None, **kwargs
+    ):
         fp = str(file_path)
         return [
             mk_finding(file=fp, line=1, severity=Severity.HIGH),
