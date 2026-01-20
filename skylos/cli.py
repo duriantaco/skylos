@@ -2,6 +2,7 @@ import argparse
 import json
 import sys
 import logging
+import os
 from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
 from skylos.fixer import Fixer
 from skylos.analyzer import analyze as run_analyze
@@ -38,6 +39,16 @@ try:
     INTERACTIVE_AVAILABLE = True
 except ImportError:
     INTERACTIVE_AVAILABLE = False
+
+
+try:
+    from skylos.llm.analyzer import SkylosLLM, AnalyzerConfig
+    from skylos.llm.schemas import Confidence
+    from skylos.llm.ui import SkylosUI, estimate_cost as llm_estimate_cost
+
+    LLM_AVAILABLE = True
+except ImportError:
+    LLM_AVAILABLE = False
 
 
 class CleanFormatter(logging.Formatter):
@@ -496,6 +507,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
         table.add_column("Severity", width=10)
         table.add_column("Message", overflow="fold")
         table.add_column("Location", style="muted", width=36, overflow="fold")
+        table.add_column("Verified", width=10)
+        table.add_column("Proof", overflow="fold")
 
         for i, d in enumerate(items[:100], 1):
             rule = d.get("rule_id") or "UNKNOWN"
@@ -503,7 +516,29 @@ def render_results(console: Console, result, tree=False, root_path=None):
             msg = d.get("message") or "Issue detected"
             short = _shorten_path(d.get("file"), root_path)
             loc = f"{short}:{d.get('line', '?')}"
-            table.add_row(str(i), rule, sev, msg, loc)
+
+            ver = (d.get("verification") or {}).get("verdict")
+            ver = (d.get("verification") or {}).get("verdict")
+            if ver == "VERIFIED":
+                ver_str = "[good]VERIFIED[/good]"
+            elif ver == "REFUTED":
+                ver_str = "[muted]REFUTED[/muted]"
+            elif ver == "UNKNOWN":
+                ver_str = "[warn]UNKNOWN[/warn]"
+            else:
+                ver_str = "-"
+
+            proof = ""
+            evidence = (d.get("verification") or {}).get("evidence") or {}
+            chain = evidence.get("chain")
+            if isinstance(chain, list) and len(chain) > 0:
+                proof = " -> ".join([x.get("fn", "?") for x in chain[:6]])
+            elif evidence.get("entrypoints"):
+                proof = f"{len(evidence['entrypoints'])} entrypoints scanned"
+            elif ver:
+                proof = "No evidence attached"
+
+            table.add_row(str(i), rule, sev, msg, loc, ver_str, proof)
 
         console.print(table)
         console.print()
@@ -559,6 +594,8 @@ names = []
 
 [tool.skylos.gate]
 fail_on_critical = true
+max_critical = 0 
+max_high = 5
 max_security = 0
 max_quality = 10
 strict = false
@@ -700,6 +737,53 @@ def estimate_cost(files):
     return est_tokens, est_cost_usd
 
 
+def run_static_on_files(
+    files, *, conf=60, enable_secrets=True, enable_danger=True, enable_quality=True
+):
+    merged = {
+        "definitions": {},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_parameters": [],
+        "unused_classes": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+
+    for f in files:
+        try:
+            result_json = run_analyze(
+                str(f),
+                conf=conf,
+                enable_secrets=enable_secrets,
+                enable_danger=enable_danger,
+                enable_quality=enable_quality,
+            )
+            one = json.loads(result_json)
+
+            defs_map = one.get("definitions", {}) or {}
+            merged["definitions"].update(defs_map)
+
+            for key in [
+                "unused_functions",
+                "unused_imports",
+                "unused_variables",
+                "unused_parameters",
+                "unused_classes",
+                "danger",
+                "quality",
+                "secrets",
+            ]:
+                merged[key].extend(one.get(key, []) or [])
+
+        except Exception:
+            continue
+
+    return merged
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "init":
         run_init()
@@ -728,6 +812,613 @@ def main():
 
         sync_main(sys.argv[2:])
         sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "agent":
+        if not LLM_AVAILABLE:
+            Console().print("[bold red]Agent module not available[/bold red]")
+            Console().print("Install dependencies: pip install openai anthropic")
+            sys.exit(1)
+
+        import argparse as agent_argparse
+        from skylos.llm.merger import merge_findings
+
+        agent_parser = agent_argparse.ArgumentParser(prog="skylos agent")
+        agent_sub = agent_parser.add_subparsers(dest="agent_cmd", required=True)
+
+        p_analyze = agent_sub.add_parser(
+            "analyze", help="Hybrid analysis (static + LLM)"
+        )
+        p_analyze.add_argument("path", help="File or directory to analyze")
+        p_analyze.add_argument("--model", default="gpt-4.1")
+        p_analyze.add_argument(
+            "--format", choices=["table", "tree", "json", "sarif"], default="table"
+        )
+        p_analyze.add_argument("--output", "-o", help="Output file")
+        p_analyze.add_argument(
+            "--min-confidence", choices=["high", "medium", "low"], default="low"
+        )
+        p_analyze.add_argument(
+            "--llm-only", action="store_true", help="Skip static, run LLM only"
+        )
+        p_analyze.add_argument(
+            "--fix", action="store_true", help="Generate fix proposals for findings"
+        )
+        p_analyze.add_argument(
+            "--apply", action="store_true", help="Apply approved fixes to files"
+        )
+        p_analyze.add_argument(
+            "--yes", action="store_true", help="Auto-approve prompts (use with --apply)"
+        )
+        p_analyze.add_argument("--quiet", "-q", action="store_true")
+        p_analyze.add_argument(
+            "--provider",
+            choices=["openai", "anthropic"],
+            default=None,
+            help="Force LLM provider",
+        )
+        p_analyze.add_argument(
+            "--base-url",
+            default=None,
+            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
+        )
+
+        p_sec_audit = agent_sub.add_parser(
+            "security-audit", help="Security audit with LLM"
+        )
+        p_sec_audit.add_argument("path", help="File or directory")
+        p_sec_audit.add_argument("--model", default="gpt-4.1")
+        p_sec_audit.add_argument(
+            "--format", choices=["table", "tree", "json", "sarif"], default="tree"
+        )
+        p_sec_audit.add_argument("--output", "-o")
+        p_sec_audit.add_argument("--quiet", "-q", action="store_true")
+        p_sec_audit.add_argument("--interactive", "-i", action="store_true")
+        p_sec_audit.add_argument(
+            "--provider",
+            choices=["openai", "anthropic"],
+            default=None,
+            help="Force LLM provider",
+        )
+        p_sec_audit.add_argument(
+            "--base-url",
+            default=None,
+            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
+        )
+
+        p_fix = agent_sub.add_parser("fix", help="Generate fix for issue")
+        p_fix.add_argument("path", help="File path")
+        p_fix.add_argument("--line", "-l", type=int, required=False)
+        p_fix.add_argument("--message", "-m", required=False)
+        p_fix.add_argument("--model", default="gpt-4.1")
+        p_fix.add_argument(
+            "--provider",
+            choices=["openai", "anthropic"],
+            default=None,
+            help="Force LLM provider",
+        )
+        p_fix.add_argument(
+            "--base-url",
+            default=None,
+            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
+        )
+
+        p_review = agent_sub.add_parser("review", help="Review git-changed files")
+        p_review.add_argument("path", nargs="?", default=".")
+        p_review.add_argument("--model", default="gpt-4.1")
+        p_review.add_argument(
+            "--format", choices=["table", "tree", "json", "sarif"], default="table"
+        )
+        p_review.add_argument("--output", "-o")
+        p_review.add_argument("--quiet", "-q", action="store_true")
+        p_review.add_argument(
+            "--provider",
+            choices=["openai", "anthropic"],
+            default=None,
+            help="Force LLM provider",
+        )
+        p_review.add_argument(
+            "--base-url",
+            default=None,
+            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
+        )
+
+        agent_args = agent_parser.parse_args(sys.argv[2:])
+        console = Console()
+
+        model = agent_args.model
+        provider = (
+            getattr(agent_args, "provider", None)
+            or os.getenv("SKYLOS_LLM_PROVIDER")
+            or ("anthropic" if "claude" in model.lower() else "openai")
+        )
+
+        base_url = (
+            getattr(agent_args, "base_url", None)
+            or os.getenv("SKYLOS_LLM_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+        )
+        if base_url:
+            os.environ["OPENAI_BASE_URL"] = base_url
+
+        if provider == "anthropic":
+            key_name = "ANTHROPIC_API_KEY"
+        else:
+            key_name = "OPENAI_API_KEY"
+
+        api_key = os.getenv(key_name) or get_key(provider)
+
+        local_hosts = ["localhost", "127.0.0.1", "0.0.0.0"]
+        is_local_host = False
+        if base_url:
+            for h in local_hosts:
+                if h in base_url:
+                    is_local_host = True
+                    break
+
+        if not api_key and is_local_host:
+            api_key = ""
+
+        if not api_key:
+            console.print(f"[warn]No {key_name} found.[/warn]")
+            try:
+                api_key = console.input(
+                    f"[bold yellow]Paste {provider.title()} API Key:[/bold yellow] ",
+                    password=True,
+                )
+                if api_key:
+                    save_key(provider, api_key)
+            except KeyboardInterrupt:
+                sys.exit(1)
+
+        if not api_key:
+            console.print("[bad]No API key provided.[/bad]")
+            sys.exit(1)
+
+        cmd = agent_args.agent_cmd
+
+        if cmd == "analyze":
+            path = pathlib.Path(agent_args.path)
+            if not path.exists():
+                console.print(f"[bad]Path not found: {path}[/bad]")
+                sys.exit(1)
+
+            static_findings = []
+            llm_findings = []
+            defs_map = {}
+
+            if not agent_args.llm_only:
+                console.print("[brand]Phase 1:[/brand] Running static analysis...")
+                try:
+                    with Progress(
+                        SpinnerColumn(style="brand"),
+                        TextColumn("[brand]Skylos[/brand] {task.description}"),
+                        transient=True,
+                        console=console,
+                    ) as progress:
+                        task = progress.add_task("static analysis...", total=None)
+
+                        result_json = run_analyze(
+                            str(path),
+                            conf=60,
+                            enable_secrets=True,
+                            enable_danger=True,
+                            enable_quality=True,
+                        )
+
+                    static_result = json.loads(result_json)
+                    defs_map = static_result.get("definitions", {})
+
+                    for item in static_result.get("danger", []) or []:
+                        item["_source"] = "static"
+                        item["_category"] = "security"
+                        static_findings.append(item)
+
+                    for item in static_result.get("quality", []) or []:
+                        item["_source"] = "static"
+                        item["_category"] = "quality"
+                        static_findings.append(item)
+
+                    for item in static_result.get("secrets", []) or []:
+                        item["_source"] = "static"
+                        item["_category"] = "secret"
+                        static_findings.append(item)
+
+                    for key in [
+                        "unused_functions",
+                        "unused_imports",
+                        "unused_variables",
+                        "unused_classes",
+                    ]:
+                        for item in static_result.get(key, []) or []:
+                            item["_source"] = "static"
+                            item["_category"] = "dead_code"
+                            item["message"] = (
+                                item.get("message")
+                                or f"Unused {key.replace('unused_', '')}: {item.get('name')}"
+                            )
+                            static_findings.append(item)
+
+                    console.print(
+                        f"[good]✓ Static:[/good] {len(defs_map)} definitions, {len(static_findings)} findings"
+                    )
+
+                except Exception as e:
+                    console.print(f"[warn]Static analysis failed: {e}[/warn]")
+
+            console.print(
+                "[brand]Phase 2:[/brand] Running LLM analysis with project context..."
+            )
+
+            min_conf_map = {
+                "high": Confidence.HIGH,
+                "medium": Confidence.MEDIUM,
+                "low": Confidence.LOW,
+            }
+            config = AnalyzerConfig(
+                model=model,
+                api_key=api_key,
+                quiet=getattr(agent_args, "quiet", False),
+                min_confidence=min_conf_map.get(
+                    getattr(agent_args, "min_confidence", "low"), Confidence.LOW
+                ),
+            )
+            analyzer = SkylosLLM(config)
+
+            try:
+                if path.is_file():
+                    files = [path]
+                else:
+                    files = [
+                        f
+                        for f in path.rglob("*.py")
+                        if not any(
+                            ex in f.parts
+                            for ex in ["__pycache__", ".git", "venv", ".venv"]
+                        )
+                    ]
+
+                if files:
+                    llm_result = analyzer.analyze_files(files, defs_map=defs_map)
+
+                    for finding in llm_result.findings:
+                        llm_findings.append(
+                            {
+                                "file": finding.location.file,
+                                "line": finding.location.line,
+                                "message": finding.message,
+                                "rule_id": finding.rule_id,
+                                "severity": finding.severity.value
+                                if hasattr(finding.severity, "value")
+                                else str(finding.severity),
+                                "confidence": finding.confidence.value
+                                if hasattr(finding.confidence, "value")
+                                else str(finding.confidence),
+                                "_source": "llm",
+                                "_category": finding.issue_type.value
+                                if hasattr(finding.issue_type, "value")
+                                else str(finding.issue_type),
+                            }
+                        )
+
+                    console.print(f"[good]✓ LLM:[/good] {len(llm_findings)} findings")
+
+            except Exception as e:
+                console.print(f"[warn]LLM analysis failed: {e}[/warn]")
+
+            console.print(
+                "[brand]Phase 3:[/brand] Merging findings with confidence scoring..."
+            )
+
+            seen = set()
+            deduped_static = []
+            for f in static_findings:
+                key = (
+                    f.get("file", ""),
+                    f.get("line", 0),
+                    f.get("message", "")[:50].lower(),
+                )
+                if key not in seen:
+                    seen.add(key)
+                    deduped_static.append(f)
+            static_findings = deduped_static
+
+            merged_findings = merge_findings(static_findings, llm_findings)
+
+            static_only = 0
+            llm_only = 0
+            both = 0
+
+            for f in merged_findings:
+                source = f.get("_source")
+                if source == "static":
+                    static_only += 1
+                elif source == "llm":
+                    llm_only += 1
+                elif source == "static+llm":
+                    both += 1
+
+            console.print(f"\n[brand]Results:[/brand]")
+            console.print(f"  Total findings: {len(merged_findings)}")
+            console.print(f"  [green]HIGH confidence (both agree):[/green] {both}")
+            console.print(f"  [yellow]MEDIUM (static only):[/yellow] {static_only}")
+            console.print(
+                f"  [yellow]MEDIUM (LLM only, needs review):[/yellow] {llm_only}"
+            )
+
+            if agent_args.format == "json":
+                output = json.dumps(merged_findings, indent=2, default=str)
+                if agent_args.output:
+                    pathlib.Path(agent_args.output).write_text(output)
+                else:
+                    print(output)
+            else:
+                if merged_findings:
+                    table = Table(title="Hybrid Analysis Results", expand=True)
+                    table.add_column("#", style="dim", width=3)
+                    table.add_column("Conf", width=6)
+                    table.add_column("Source", width=10)
+                    table.add_column("Category", width=10)
+                    table.add_column("Message", overflow="fold")
+                    table.add_column("Location", style="dim", width=30)
+
+                    for i, f in enumerate(merged_findings[:100], 1):
+                        conf = f.get("_confidence", "?")
+                        if conf == "high":
+                            conf_style = "[green]HIGH[/green]"
+                        else:
+                            conf_style = "[yellow]MED[/yellow]"
+
+                        source = f.get("_source", "?")
+                        cat = f.get("_category", "?")
+                        msg = f.get("message", "?")[:80]
+                        loc = f"{pathlib.Path(f.get('file', '?')).name}:{f.get('line', '?')}"
+
+                        table.add_row(str(i), conf_style, source, cat, msg, loc)
+
+                    console.print(table)
+                else:
+                    console.print("[good]No issues found![/good]")
+
+            sys.exit(1 if merged_findings else 0)
+
+        elif cmd == "security-audit":
+            path = pathlib.Path(agent_args.path)
+            if not path.exists():
+                console.print(f"[bad]Path not found: {path}[/bad]")
+                sys.exit(1)
+
+            if path.is_file():
+                files = [path]
+            else:
+                files = [
+                    f
+                    for f in path.rglob("*.py")
+                    if not any(
+                        ex in f.parts for ex in ["__pycache__", ".git", "venv", ".venv"]
+                    )
+                ]
+
+            if not files:
+                console.print("[warn]No Python files found[/warn]")
+                sys.exit(0)
+
+            if (
+                INTERACTIVE_AVAILABLE
+                and getattr(agent_args, "interactive", False)
+                and len(files) > 1
+            ):
+                choices = [
+                    (f"{f.name} ({f.stat().st_size / 1024:.1f}KB)", f) for f in files
+                ]
+                questions = [
+                    inquirer.Checkbox("files", message="Select files", choices=choices)
+                ]
+                answers = inquirer.prompt(questions)
+                if not answers or not answers["files"]:
+                    sys.exit(0)
+                files = answers["files"]
+
+            tokens, cost = llm_estimate_cost(files, model)
+            console.print(
+                f"\n[brand]Audit:[/brand] {len(files)} files, ~{tokens:,} tokens, ~${cost:.4f}"
+            )
+
+            if INTERACTIVE_AVAILABLE and not inquirer.confirm("Proceed?", default=True):
+                sys.exit(0)
+
+            config = AnalyzerConfig(
+                model=model,
+                api_key=api_key,
+                quiet=getattr(agent_args, "quiet", False),
+            )
+            analyzer = SkylosLLM(config)
+            llm_result = analyzer.analyze_files(files, issue_types=["security_audit"])
+            analyzer.print_results(
+                llm_result, format=agent_args.format, output_file=agent_args.output
+            )
+            sys.exit(1 if llm_result.has_blockers else 0)
+
+        elif cmd == "fix":
+            path = pathlib.Path(agent_args.path)
+            if not path.exists():
+                console.print(f"[bad]File not found: {path}[/bad]")
+                sys.exit(1)
+
+            config = AnalyzerConfig(model=model, api_key=api_key, quiet=False)
+            analyzer = SkylosLLM(config)
+            if agent_args.line and agent_args.message:
+                fix_result = analyzer.fix_issue(
+                    path, agent_args.line, agent_args.message
+                )
+                if fix_result:
+                    analyzer.ui.print_fix(fix_result)
+                    sys.exit(0)
+                console.print("[bad]Could not generate fix[/bad]")
+                sys.exit(1)
+
+            llm_result = analyzer.analyze_files(
+                [path], issue_types=["security", "quality", "dead_code"]
+            )
+
+            if not llm_result or not llm_result.findings:
+                console.print("[good]No issues found to fix.[/good]")
+                sys.exit(0)
+
+            analyzer.fix_all(llm_result.findings)
+            sys.exit(0)
+
+        elif cmd == "review":
+            path = pathlib.Path(agent_args.path)
+            console.print("[brand]Finding git-changed files...[/brand]")
+            files = get_git_changed_files(path)
+
+            if not files:
+                console.print("[dim]No changed Python files[/dim]")
+                sys.exit(0)
+
+            console.print(f"Found {len(files)} changed files")
+            if INTERACTIVE_AVAILABLE and not inquirer.confirm(
+                "Run hybrid review (static + LLM)?", default=True
+            ):
+                sys.exit(0)
+
+            console.print(
+                "[brand]Phase 1:[/brand] Running static analysis on changed files..."
+            )
+            static_findings = []
+            defs_map = {}
+
+            try:
+                static_result = run_static_on_files(
+                    files,
+                    conf=60,
+                    enable_secrets=True,
+                    enable_danger=True,
+                    enable_quality=True,
+                )
+                defs_map = static_result.get("definitions", {}) or {}
+
+                for item in static_result.get("danger", []) or []:
+                    item["_source"] = "static"
+                    item["_category"] = "security"
+                    static_findings.append(item)
+
+                for item in static_result.get("quality", []) or []:
+                    item["_source"] = "static"
+                    item["_category"] = "quality"
+                    static_findings.append(item)
+
+                for item in static_result.get("secrets", []) or []:
+                    item["_source"] = "static"
+                    item["_category"] = "secret"
+                    static_findings.append(item)
+
+                for key in [
+                    "unused_functions",
+                    "unused_imports",
+                    "unused_variables",
+                    "unused_classes",
+                    "unused_parameters",
+                ]:
+                    for item in static_result.get(key, []) or []:
+                        item["_source"] = "static"
+                        item["_category"] = "dead_code"
+                        item["message"] = (
+                            item.get("message")
+                            or f"Unused {key.replace('unused_', '')}: {item.get('name')}"
+                        )
+                        static_findings.append(item)
+
+                console.print(
+                    f"[good]✓ Static:[/good] {len(defs_map)} definitions, {len(static_findings)} findings"
+                )
+
+            except Exception as e:
+                console.print(f"[warn]Static phase failed: {e}[/warn]")
+
+            console.print(
+                "[brand]Phase 2:[/brand] Running LLM review on changed files..."
+            )
+            llm_findings = []
+
+            try:
+                config = AnalyzerConfig(
+                    model=model,
+                    api_key=api_key,
+                    quiet=getattr(agent_args, "quiet", False),
+                )
+                analyzer = SkylosLLM(config)
+
+                llm_result = analyzer.analyze_files(files, defs_map=defs_map)
+
+                for finding in llm_result.findings:
+                    llm_findings.append(
+                        {
+                            "file": finding.location.file,
+                            "line": finding.location.line,
+                            "message": finding.message,
+                            "rule_id": finding.rule_id,
+                            "severity": finding.severity.value
+                            if hasattr(finding.severity, "value")
+                            else str(finding.severity),
+                            "confidence": finding.confidence.value
+                            if hasattr(finding.confidence, "value")
+                            else str(finding.confidence),
+                            "_source": "llm",
+                            "_category": finding.issue_type.value
+                            if hasattr(finding.issue_type, "value")
+                            else str(finding.issue_type),
+                        }
+                    )
+
+                console.print(f"[good]✓ LLM:[/good] {len(llm_findings)} findings")
+
+            except Exception as e:
+                console.print(f"[warn]LLM phase failed: {e}[/warn]")
+
+            console.print("[brand]Phase 3:[/brand] Merging findings...")
+            merged_findings = merge_findings(static_findings, llm_findings)
+
+            if agent_args.format == "json":
+                output = json.dumps(merged_findings, indent=2, default=str)
+                if agent_args.output:
+                    pathlib.Path(agent_args.output).write_text(output)
+                else:
+                    print(output)
+                sys.exit(1 if merged_findings else 0)
+
+            if merged_findings:
+                table = Table(
+                    title="Hybrid Review Results (Changed Files)", expand=True
+                )
+                table.add_column("#", style="dim", width=3)
+                table.add_column("Conf", width=6)
+                table.add_column("Source", width=10)
+                table.add_column("Category", width=10)
+                table.add_column("Message", overflow="fold")
+                table.add_column("Location", style="dim", width=30)
+
+                for i, f in enumerate(merged_findings[:100], 1):
+                    conf = f.get("_confidence", "?")
+                    if conf == "high":
+                        conf_style = "[green]HIGH[/green]"
+                    else:
+                        conf_style = "[yellow]MED[/yellow]"
+
+                    source = f.get("_source", "?")
+                    cat = f.get("_category", "?")
+                    msg = (f.get("message", "?") or "?")[:120]
+                    loc = (
+                        f"{pathlib.Path(f.get('file', '?')).name}:{f.get('line', '?')}"
+                    )
+
+                    table.add_row(str(i), conf_style, source, cat, msg, loc)
+
+                console.print(table)
+                sys.exit(1)
+
+            console.print("[good]No issues found in changed files![/good]")
+            sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] == "run":
         try:
@@ -783,9 +1474,9 @@ def main():
         help="Run as a quality gate (block deployment on failure)",
     )
     parser.add_argument(
-        "--coverage",
+        "--verify",
         action="store_true",
-        help="Run tests with coverage first, then analyze",
+        help="(PRO) Verify findings with neuro-symbolic prover. Requires paid plan.",
     )
     parser.add_argument(
         "--trace",
@@ -793,10 +1484,20 @@ def main():
         help="Run tests with call tracing to capture dynamic dispatch (e.g., visitor patterns)",
     )
     parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Run tests with coverage before analysis",
+    )
+    parser.add_argument(
         "--force",
         "-f",
         action="store_true",
         help="Bypass the quality gate (exit 0 even if issues found)",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Strict gate: fail if ANY issue is found",
     )
     parser.add_argument(
         "--fix", action="store_true", help="Attempt to auto-fix issues using AI"
@@ -836,10 +1537,6 @@ def main():
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be removed"
-    )
-
-    parser.add_argument(
-        "--audit", action="store_true", help="Deep scan logic using AI (Interactive)"
     )
 
     parser.add_argument(
@@ -958,7 +1655,6 @@ def main():
         if not args.json:
             console.print("[brand]Running tests with call tracing...[/brand]")
 
-
         trace_script = textwrap.dedent(f"""\
 import sys
 sys.path.insert(0, {str(project_root)!r})
@@ -990,9 +1686,13 @@ sys.exit(ret)
 
         if r.returncode != 0 and not args.json:
             if trace_file.exists() and trace_file.stat().st_size > 0:
-                console.print("[warn]Tests had failures, but trace data was collected.[/warn]")
+                console.print(
+                    "[warn]Tests had failures, but trace data was collected.[/warn]"
+                )
             else:
-                console.print("[warn]Trace run failed; continuing without trace.[/warn]")
+                console.print(
+                    "[warn]Trace run failed; continuing without trace.[/warn]"
+                )
                 if r.stderr:
                     console.print(r.stderr)
         elif not args.json:
@@ -1021,6 +1721,21 @@ sys.exit(ret)
             )
 
         result = json.loads(result_json)
+
+        if args.verify and (not args.json):
+            try:
+                from skylos.api import verify_report
+
+                vresp = verify_report(result, quiet=False)
+                if vresp.get("success"):
+                    console.print(
+                        "[good]✓ Verified evidence attached (Skylos Pro)[/good]"
+                    )
+                else:
+                    msg = vresp.get("error") or "Verification unavailable."
+                    console.print(f"[warn]{msg}[/warn]")
+            except Exception as e:
+                console.print(f"[warn]Verification failed: {e}[/warn]")
 
         if args.sarif:
             all_findings = []
@@ -1106,7 +1821,11 @@ sys.exit(ret)
     config = load_config(project_root)
 
     if args.gate:
-        exit_code = run_gate_interaction(result, config, args.command or None)
+        upload_report(result, is_forced=args.force)
+
+        exit_code = run_gate_interaction(
+            result, config, strict=bool(args.strict), force=bool(args.force)
+        )
         sys.exit(exit_code)
 
     if args.fix:
@@ -1211,137 +1930,6 @@ sys.exit(ret)
 
                 except Exception as e:
                     console.print(f"[bad]Failed to fix: {e}[/bad]")
-
-    if args.audit:
-        console.print("[brand]Audit Mode Enabled[/brand]")
-
-        if "claude" in args.model.lower():
-            provider = "anthropic"
-            key_name = "ANTHROPIC_API_KEY"
-        else:
-            provider = "openai"
-            key_name = "OPENAI_API_KEY"
-
-        api_key = get_key(provider)
-
-        if not api_key:
-            console.print(
-                f"[warn]No {key_name} found in environment or keychain.[/warn]"
-            )
-            try:
-                api_key = console.input(
-                    f"[bold yellow]Please paste your {provider.title()} API Key:[/bold yellow] ",
-                    password=True,
-                )
-                if not api_key:
-                    console.print("[bad]No key provided. Exiting.[/bad]")
-                    sys.exit(1)
-
-                save_key(provider, api_key)
-                console.print(f"[good]Key saved[/good]")
-
-            except KeyboardInterrupt:
-                sys.exit(0)
-
-        fixer = Fixer(api_key=api_key, model=args.model)
-        defs_map = result.get("definitions", {})
-
-        p_arg = pathlib.Path(args.path)
-        candidates = []
-
-        if p_arg.is_file():
-            candidates.append(p_arg)
-        else:
-            git_files = get_git_changed_files(p_arg)
-            all_files = list(p_arg.glob("**/*.py"))
-
-            valid_files = []
-            for f in all_files:
-                is_excluded = False
-                for ex in final_exclude_folders:
-                    if ex in f.parts:
-                        is_excluded = True
-                        break
-                if not is_excluded:
-                    valid_files.append(f)
-
-            candidates = git_files + [f for f in valid_files if f not in git_files]
-
-        if not candidates:
-            console.print("[bad]No valid Python files found to audit.[/bad]")
-            sys.exit(0)
-
-        selected_files = []
-        if INTERACTIVE_AVAILABLE and len(candidates) > 1:
-            choices = []
-            for f in candidates:
-                try:
-                    size_kb = f.stat().st_size / 1024
-                    label = f"{f.name} ({size_kb:.1f} KB)"
-                    if f in git_files:
-                        label = f"[CHANGED] {label}"
-                    choices.append((label, f))
-                except OSError:
-                    pass
-
-            defaults = [f for f in git_files]
-
-            questions = [
-                inquirer.Checkbox(
-                    "files",
-                    message="Select files to audit (Space to select)",
-                    choices=choices,
-                    default=defaults,
-                )
-            ]
-            answers = inquirer.prompt(questions)
-            if not answers:
-                sys.exit(0)
-            selected_files = answers["files"]
-        else:
-            selected_files = candidates
-
-        if not selected_files:
-            console.print("[muted]No files selected.[/muted]")
-            sys.exit(0)
-
-        _, cost = estimate_cost(selected_files)
-        console.print(Rule(style="muted"))
-        console.print(f"Files:   [bold]{len(selected_files)}[/bold]")
-        console.print(f"Cost:    [bold green]~${cost:.4f}[/bold green]")
-
-        if len(selected_files) > 10:
-            console.print(
-                "[bold red]WARNING: You are auditing >10 files. This will be slow and costly.[/bold red]"
-            )
-
-        if not inquirer.confirm("Proceed?", default=True):
-            sys.exit(0)
-
-        for target_file in selected_files:
-            try:
-                if target_file.stat().st_size > 100 * 1024:
-                    console.print(
-                        f"[warn]Skipping {target_file.name} (Too large: >100KB). AI works best on smaller modules.[/warn]"
-                    )
-                    continue
-
-                src = target_file.read_text(encoding="utf-8")
-
-                with console.status(
-                    f"[cyan]Auditing {target_file.name}...[/cyan]", spinner="dots"
-                ):
-                    audit_report = fixer.audit_file(src, defs_map)
-
-                console.print(
-                    Panel(
-                        audit_report,
-                        title=f"Audit: {target_file.name}",
-                        border_style="magenta",
-                    )
-                )
-            except Exception as e:
-                console.print(f"[bad]Error: {e}[/bad]")
 
     if args.interactive:
         unused_functions = result.get("unused_functions", [])
@@ -1454,73 +2042,23 @@ sys.exit(ret)
             console.print(f"    └─ {item['file']}:{item['line']}")
 
     if not args.interactive and not args.json:
-        upload_resp = upload_report(result)
+        upload_resp = upload_report(result, is_forced=args.force)
 
         if not upload_resp.get("success"):
-            if upload_resp.get("error") != "No token found":
-                console.print(f"[warn]Upload failed: {upload_resp.get('error')}[/warn]")
+            err = upload_resp.get("error")
+            if (
+                err
+                and err
+                != "No token found. Run 'skylos sync connect' or set SKYLOS_TOKEN."
+            ):
+                console.print(f"[warn]Upload failed: {err}[/warn]")
         else:
-            qg = upload_resp.get("quality_gate", {})
-            scan_id = upload_resp.get("scan_id")
-            passed = qg.get("passed", True)
+            passed = upload_resp.get("quality_gate_passed")
+            if passed is None:
+                passed = (upload_resp.get("quality_gate") or {}).get("passed", True)
 
-            if passed:
-                console.print(
-                    f"[good]✓ Quality Gate Passed.[/good] {qg.get('message', '')}"
-                )
-            else:
-                console.print(Rule(style="bad"))
-                console.print(f"[bold red]QUALITY GATE FAILED[/bold red]")
-                console.print(f"   {qg.get('message', '')}")
-
-                if args.force:
-                    console.print(
-                        "\n[bold yellow]WARNING: FORCED BYPASS ENABLED[/bold yellow]"
-                    )
-                    console.print("[dim]Proceeding despite quality failures...[/dim]")
-                else:
-                    console.print(
-                        f"\n[bold yellow]Action Required:[/bold yellow] Override this scan to proceed."
-                    )
-                    console.print(
-                        f"   Link: [link]http://localhost:3000/dashboard/scans/{scan_id}[/link]"
-                    )
-                    console.print(Rule(style="bad"))
-
-                    if args.gate or args.command:
-                        import time
-                        from skylos.api import check_scan_status
-
-                        resolved = False
-                        try:
-                            with console.status(
-                                "[bold yellow]Waiting for approval on Dashboard...[/bold yellow]",
-                                spinner="dots",
-                            ) as status:
-                                while True:
-                                    time.sleep(2)
-
-                                    poll_res = check_scan_status(scan_id)
-                                    if poll_res and poll_res.get("status") == "PASSED":
-                                        resolved = True
-                                        reason = (
-                                            "Overridden"
-                                            if poll_res.get("is_overridden")
-                                            else "Fixed"
-                                        )
-                                        break
-                        except KeyboardInterrupt:
-                            console.print("\n[bad]Aborted by user.[/bad]")
-                            sys.exit(1)
-
-                        if resolved:
-                            console.print(
-                                f"\n[bold green]Approval Detected![/bold green] (Status: {reason})"
-                            )
-                        else:
-                            sys.exit(1)
-                    else:
-                        sys.exit(1)
+            if passed is False and not args.force:
+                raise SystemExit(1)
 
     if args.command and not args.gate:
         cmd_list = args.command
