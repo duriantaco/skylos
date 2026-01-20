@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "skylos"
 version = "3.1.0"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 description = "An analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
 classifiers = [
@@ -14,7 +14,6 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Topic :: Software Development :: Quality Assurance",
