@@ -69,13 +69,9 @@ def test_trace_records_calls_and_counts_increment(tmp_path):
 
 
 def test_include_overrides_exclude_patterns(tmp_path):
-
     src = tmp_path / "pytest_of_fake.py"
     src.write_text(
-        "def foo():\n"
-        "    return 123\n"
-        "\n"
-        "foo()\n",
+        "def foo():\n    return 123\n\nfoo()\n",
         encoding="utf-8",
     )
 
@@ -100,13 +96,11 @@ def test_context_manager_restores_previous_profiles(monkeypatch):
 
     tracer = CallTracer(include_patterns=["/definitely/not/used"])
 
-
     with tracer:
         pass
 
     assert sys.getprofile() is dummy_prof
     assert threading.getprofile() is dummy_prof
-
 
 
 def test_save_writes_expected_json_and_counts(tmp_path):
@@ -178,6 +172,7 @@ def test_global_start_and_stop_tracing_creates_file_and_returns_tracer(tmp_path)
     assert out.exists()
     assert p.called is True
 
+
 def _has_traced(tracer, filename: str, func: str) -> bool:
     for f, fn, _line in tracer.called_functions:
         if Path(f).name == filename and fn == func:
@@ -230,13 +225,7 @@ def test_traces_calls_inside_new_thread(tmp_path):
 def test_exclude_patterns_prevent_tracing_when_no_include(tmp_path):
     src = tmp_path / "no_trace_mod.py"
     src.write_text(
-        "def a():\n"
-        "    return 1\n"
-        "\n"
-        "def run():\n"
-        "    return a()\n"
-        "\n"
-        "run()\n",
+        "def a():\n    return 1\n\ndef run():\n    return a()\n\nrun()\n",
         encoding="utf-8",
     )
 
@@ -269,7 +258,6 @@ def test_start_stop_restore_previous_traces(monkeypatch):
 
     def fake_thread_setprofile(fn):
         calls["thread_set"].append(fn)
-
 
     monkeypatch.setattr(sys, "getprofile", fake_sys_getprofile)
     monkeypatch.setattr(threading, "getprofile", fake_thread_getprofile)

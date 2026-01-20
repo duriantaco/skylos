@@ -6,6 +6,7 @@ from skylos.codemods import (
     comment_out_unused_function_cst,
 )
 
+
 def _line_no(code: str, startswith: str) -> int:
     for i, line in enumerate(code.splitlines(), start=1):
         if line.lstrip().startswith(startswith):
@@ -151,7 +152,6 @@ def test_function_idempotency():
     assert new2 == new
 
 
-
 def test_comment_out_simple_function_block_wraps_lines():
     code = textwrap.dedent(
         """\
@@ -197,7 +197,6 @@ def test_comment_out_async_function_block():
     assert _has_commented_line(new, "async def coro():") is True
 
 
-
 def test_comment_out_function_custom_marker_is_used():
     code = "def f():\n    return 1\n"
     ln = _line_no(code, "def f")
@@ -206,7 +205,6 @@ def test_comment_out_function_custom_marker_is_used():
     assert changed is True
     assert "MYMARK START" in new
     assert "MYMARK END" in new
-
 
 
 def test_comment_out_function_wrong_line_noop():
@@ -245,7 +243,6 @@ def test_comment_out_one_name_from_multi_import_keeps_other_and_adds_comment_lin
     assert _has_commented_line(new, "import os") is True
 
 
-
 def test_comment_out_from_import_keeps_other_names_and_adds_comment_line():
     code = "from a import b, c\n"
     ln = _line_no(code, "from a import")
@@ -257,7 +254,6 @@ def test_comment_out_from_import_keeps_other_names_and_adds_comment_line():
 
     assert "# SKYLOS DEADCODE:" in new
     assert _has_commented_line(new, "from a import b") is True
-
 
 
 def test_comment_out_from_import_with_alias_matches_bound_name():
@@ -358,6 +354,7 @@ def test_comment_out_idempotency_function():
     new2, changed2 = comment_out_unused_function_cst(new, "f", ln)
     assert changed2 is False
     assert new2 == new
+
 
 def _has_uncommented_line(code: str, startswith: str) -> bool:
     for line in code.splitlines():

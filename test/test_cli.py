@@ -341,12 +341,14 @@ class TestMainFunction:
             patch("skylos.cli.run_analyze") as mock_analyze,
             patch("skylos.cli.setup_logger") as mock_setup_logger,
             patch("skylos.cli.Progress") as mock_progress,
+            patch("skylos.cli.upload_report") as mock_upload,
         ):
             mock_logger = Mock()
             mock_logger.console = Mock()
             mock_setup_logger.return_value = mock_logger
             mock_analyze.return_value = json.dumps(mock_skylos_result)
             mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
+            mock_upload.return_value = {"success": True, "quality_gate_passed": True}
 
             main()
 
@@ -391,7 +393,9 @@ def test_shorten_path_non_pathlike_returns_str():
 def test_comment_out_unused_import_handles_exception_and_returns_false():
     with (
         patch("pathlib.Path.read_text", return_value="import os\n"),
-        patch("skylos.cli.comment_out_unused_import_cst", side_effect=RuntimeError("boom")),
+        patch(
+            "skylos.cli.comment_out_unused_import_cst", side_effect=RuntimeError("boom")
+        ),
         patch("pathlib.Path.write_text") as w,
         patch("skylos.cli.logging.error") as logerr,
     ):
@@ -405,7 +409,10 @@ def test_comment_out_unused_import_handles_exception_and_returns_false():
 def test_comment_out_unused_function_handles_exception_and_returns_false():
     with (
         patch("pathlib.Path.read_text", return_value="def f():\n    pass\n"),
-        patch("skylos.cli.comment_out_unused_function_cst", side_effect=RuntimeError("boom")),
+        patch(
+            "skylos.cli.comment_out_unused_function_cst",
+            side_effect=RuntimeError("boom"),
+        ),
         patch("pathlib.Path.write_text") as w,
         patch("skylos.cli.logging.error") as logerr,
     ):
@@ -423,7 +430,12 @@ def test_render_results_unused_table_includes_confidence_column_and_formats():
         "analysis_summary": {"total_files": 1},
         "unused_functions": [
             {"name": "hi", "file": "/root/a.py", "line": 10, "confidence": 95},  # red
-            {"name": "mid", "file": "/root/a.py", "line": 20, "confidence": 80},  # yellow
+            {
+                "name": "mid",
+                "file": "/root/a.py",
+                "line": 20,
+                "confidence": 80,
+            },  # yellow
             {"name": "lo", "file": "/root/a.py", "line": 30, "confidence": 50},  # dim
         ],
         "unused_imports": [],
@@ -558,7 +570,9 @@ def test_main_init_subcommand_calls_run_init_and_exits(monkeypatch):
 
 
 def test_main_whitelist_subcommand_calls_run_whitelist_and_exits(monkeypatch):
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", "whitelist", "handle_*", "--reason", "x"])
+    monkeypatch.setattr(
+        cli.sys, "argv", ["skylos", "whitelist", "handle_*", "--reason", "x"]
+    )
     with patch("skylos.cli.run_whitelist") as w:
         with pytest.raises(SystemExit) as e:
             cli.main()
@@ -602,7 +616,9 @@ def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
                 "threshold": 3,
             }
         ],
-        "secrets": [{"provider": "generic", "file": "c.py", "line": None, "message": "Secret"}],
+        "secrets": [
+            {"provider": "generic", "file": "c.py", "line": None, "message": "Secret"}
+        ],
         "unused_functions": [{"name": "u", "file": "d.py", "line": -5}],
         "unused_imports": [{"name": "os", "file": "e.py", "line": "not-an-int"}],
         "unused_variables": [],
@@ -611,7 +627,9 @@ def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
     }
 
     sarif_path = tmp_path / "out.sarif.json"
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--sarif", str(sarif_path), "--json"])
+    monkeypatch.setattr(
+        cli.sys, "argv", ["skylos", ".", "--sarif", str(sarif_path), "--json"]
+    )
 
     captured = {}
 
@@ -764,7 +782,10 @@ def test_main_command_exec_success_exits_zero(monkeypatch):
         patch("skylos.cli.load_config", return_value={}),
         patch("skylos.cli.render_results"),
         patch("skylos.cli.print_badge"),
-        patch("skylos.cli.upload_report", return_value={"success": False, "error": "No token found"}),
+        patch(
+            "skylos.cli.upload_report",
+            return_value={"success": False, "error": "No token found"},
+        ),
         patch("skylos.cli.subprocess.Popen", return_value=proc) as popen,
     ):
         with pytest.raises(SystemExit) as e:
@@ -806,13 +827,17 @@ def test_main_command_exec_failure_exits_with_code(monkeypatch):
         patch("skylos.cli.load_config", return_value={}),
         patch("skylos.cli.render_results"),
         patch("skylos.cli.print_badge"),
-        patch("skylos.cli.upload_report", return_value={"success": False, "error": "No token found"}),
+        patch(
+            "skylos.cli.upload_report",
+            return_value={"success": False, "error": "No token found"},
+        ),
         patch("skylos.cli.subprocess.Popen", return_value=proc),
     ):
         with pytest.raises(SystemExit) as e:
             cli.main()
 
     assert e.value.code == 7
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
