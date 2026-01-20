@@ -1,5 +1,29 @@
 ## Changelog
 
+## [3.1.0] - 202-01-20
+
+### Added
+
+- Added new `--provider` flag to force `openai` or `anthropic` provider
+- New `--base-url` flag for OpenAI compatible endpoints (eg. Ollama etc)
+- env variable support: `SKYLOS_LLM_PROVIDER`, `SKYLOS_LLM_BASE_URL`, `OPENAI_BASE_URL`
+- Auto API key bypass for local endpoints (localhost, 127.0.0.1, 0.0.0.0)
+- Added agent for LLM assisted detection 
+- Added new cache and parallel processing functionalities
+- More unit tests for LLM agents, cache and parallel processing
+
+### Fixed
+- `--gate` flag now uploads scan results before exiting, enabling GitHub App check updates for Pro users
+- Pre-commit hook now correctly returns exit code 1 when issues are found (use `skylos . --gate`)
+- False positives for methods called via Protocol interface
+- Fixed gatekeeper check_gate(..., strict=False) support so strict mode can be driven from config
+- Fixed gatekeeper mismatch with tests
+- Progress callback bug. Wrong variable name (progress vs progress_callback) fixed
+
+### Changed
+- `OpenAIAdapter` now uses Chat Completions API (`chat.completions.create`) instead of Responses API
+- Provider resolution now follows priority chain: CLI flag -> env variable -> model name inference
+
 ## [3.0.3] - 2026-01-10
 
 ### Added
@@ -149,10 +173,10 @@ New year new me, and a new release! Happy new year everyone!
 - Modular structure for languages for better separation of concerns
 - Added support for language-specific config overrides in `pyproject.toml` (e.g., [tool.skylos.languages.typescript])
 - Added `DummyVisitor` adapter to prevent the analyzer from crashing when it expects Python-specific attributes on non-Python files
-- Added `OpenAIAdapter` and `AnthropicAdapter` to support multi-provider AI fixes and auditing (you can call it using `skylos . --quality --danger --audit --model claude-haiku-4-5-20251001`)
+- Added `OpenAIAdapter` and `AnthropicAdapter` to support multi-provider AI fixes and auditing (you can call it using `skylos . --quality --danger --security-audit --model claude-haiku-4-5-20251001`)
 - Added secure credential storage using keyring to persist API keys locally
-- Added "Vibe Coding" detection in audit mode to identify hallucinated function calls not present in the repo context
-- Added `Fixer` engine for AI-powered code repair (you can call it using `skylos . --quality --danger --audit --fix --model claude-haiku-4-5-20251001`)
+- Added security detection in security-audit mode to identify dangerous functions
+- Added `Fixer` engine for AI-powered code repair (you can call it using `skylos . --quality --danger --security-audit --fix --model claude-haiku-4-5-20251001`)
 
 ### Changed
 
