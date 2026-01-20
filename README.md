@@ -12,7 +12,7 @@
 ![Security Policy](https://img.shields.io/badge/security-policy-brightgreen)
 ![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
 
-> Skylos is a static analysis tool for Python codebases which locates dead code, performs quality checks, and finds security vulnerabilties.
+> Skylos is a static analysis tool for Python codebases which locates dead code, performs quality checks, and finds security vulnerabilities.
 
 ## Table of Contents
 
@@ -21,6 +21,7 @@
 - [Installation](#installation)
 - [Performance](#performance)
 - [How It Works](#how-it-works)
+- [AI-Powered Analysis](#ai-powered-analysis)
 - [Gating](#gating)
 - [Integration and Ecosystem](#integration-and-ecosystem)
 - [Auditing and Precision](#auditing-and-precision)
@@ -36,14 +37,18 @@
 
 ## Quick Start
 
-| Objective | Command | Outcome | Remarks |
-| :--- | :--- | :--- | :--- |
-| **Hunt Dead Code** | `skylos .` | Prune unreachable functions and unused imports instantly. | |
-| **Precise Hunt** | `skylos . --trace` | Cross-reference results with actual runtime data | Run `skylos . --trace` first then run your actual scan `skylos . --danger` |
-| **Audit Risk & Quality** | `skylos . --secrets --danger --quality` | Kill security leaks, tainted data, and architectural rot. | You can run one of the flags, or all 3 |
-| **Automated Repair** | `skylos . --audit --fix` | Let the watchdog handle the labor of cleaning your code. | |
-| **Secure the Gate** | `skylos --gate` | Block risky code from merging with hard-coded standards. | |
-| **Whitelist False Positives** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns from future scans. |
+| Objective | Command | Outcome |
+| :--- | :--- | :--- |
+| **Hunt Dead Code** | `skylos .` | Prune unreachable functions and unused imports |
+| **Precise Hunt** | `skylos . --trace` | Cross-reference with runtime data |
+| **Audit Risk & Quality** | `skylos . --secrets --danger --quality` | Security leaks, taint tracking, code rot |
+| **AI-Powered Analysis** | `skylos agent analyze .` | Hybrid static + LLM analysis with project context |
+| **AI Audit** | `skylos agent security-audit .` | Deep LLM review with interactive file selection |
+| **Automated Repair** | `skylos agent analyze . --fix` | Let the LLM fix what it found |
+| **PR Review** | `skylos agent review` | Analyze only git-changed files |
+| **Local LLM** | `skylos agent analyze . --base-url http://localhost:11434/v1 --model codellama` | Use Ollama/LM Studio (no API key needed) |
+| **Secure the Gate** | `skylos --gate` | Block risky code from merging |
+| **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
 
 
 ## Features
@@ -54,6 +59,14 @@
 * **Credentials Detection**: Detects API keys & secrets (GitHub, GitLab, AWS, Google, SendGrid, private key blocks)
 * **Vulnerability Detection**: Flags dangerous patterns including eval/exec, unsafe yaml/pickle loads, and weak cryptographic hashes
 * **Implicit Reference Detection**: Catches dynamic patterns like `getattr(mod, f"handle_{x}")`, framework decorators (`@app.route`, `@pytest.fixture`), and f-string dispatch patterns
+
+### AI-Powered Analysis
+
+* **Hybrid Architecture**: Combines static analysis with LLM reasoning for best-of-both-worlds detection
+* **Multi-Provider Support**: OpenAI, Anthropic, and local LLMs (Ollama, LM Studio, vLLM)
+* **Hallucination Detection**: Finds calls to functions that don't exist in your codebase
+* **Logic Bug Detection**: Catches issues that static analysis misses (off-by-one, missing edge cases)
+* **Confidence Scoring**: Findings validated by both engines get HIGH confidence
 
 ### Codebase Optimization
 
@@ -66,7 +79,7 @@
 * **Coverage Integration**: Auto-detects `.skylos-trace` files to verify dead code with runtime data
 * **Quality Gates**: Enforces hard thresholds for complexity, nesting, and security risk via `pyproject.toml` to block non-compliant PRs
 * **Interactive CLI**: Manually verify and remove/comment-out findings through an `inquirer`-based terminal interface
-* **Audit Mode**: Leverages an independent reasoning loop to identify "hallucinations" and broken dependencies
+* **Security-Audit Mode**: Leverages an independent reasoning loop to identify security vulnerabilities
 
 ### Multi-Language Support
 
@@ -165,11 +178,102 @@ Want test files included? Use `--include-folder tests`.
 
 Framework endpoints are called externally (HTTP, signals). Name resolution handles aliases. When things get unclear, we err on the side of caution.
 
+## AI-Powered Analysis
+
+Skylos uses a **hybrid architecture** that combines static analysis with LLM reasoning:
+
+### Why Hybrid?
+
+| Approach | Recall | Precision | Logic Bugs |
+|----------|--------|-----------|------------|
+| Static only | Low | High | ❌ |
+| LLM only | High | Medium | ✅ |
+| **Hybrid** | **Highest** | **High** | ✅ |
+
+Research shows LLMs find vulnerabilities that static analysis misses, while static analysis validates LLM suggestions. However, LLM is extremely prone to false positives in dead code because it doesn't actually do real symbol resolution. 
+
+**Note**: Take dead code output from LLM solely with caution
+
+### Agent Commands
+
+| Command | Description |
+|---------|-------------|
+| `skylos agent analyze PATH` | Hybrid analysis with full project context |
+| `skylos agent security-audit PATH` | Security audit with interactive file selection |
+| `skylos agent fix PATH` | Generate fix for specific issue |
+| `skylos agent review` | Analyze only git-changed files |
+
+### Provider Configuration
+
+Skylos supports cloud and local LLM providers:
+
+```bash
+# Cloud - OpenAI (auto-detected from model name)
+skylos agent analyze . --model gpt-4.1
+
+# Cloud - Anthropic (auto-detected from model name)
+skylos agent analyze . --model claude-sonnet-4-20250514
+
+# Local - Ollama (no API key needed)
+skylos agent analyze . \
+  --provider openai \
+  --base-url http://localhost:11434/v1 \
+  --model qwen2.5-coder:7b
+```
+
+### Environment Variables
+
+Set defaults to avoid repeating flags:
+
+```bash
+# API Keys
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Default to local Ollama
+export SKYLOS_LLM_PROVIDER=openai
+export SKYLOS_LLM_BASE_URL=http://localhost:11434/v1
+```
+
+### What LLM Analysis Detects
+
+| Category | Examples |
+|----------|----------|
+| **Hallucinations** | Calls to functions that don't exist |
+| **Logic bugs** | Off-by-one, incorrect conditions, missing edge cases |
+| **Business logic** | Auth bypasses, broken access control |
+| **Context issues** | Problems requiring understanding of intent |
+
+### Local LLM Setup (Ollama)
+
+```bash
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Pull a code model
+ollama pull qwen2.5-coder:7b
+
+# Use with Skylos
+skylos agent analyze ./src \
+  --provider openai \
+  --base-url http://localhost:11434/v1 \
+  --model qwen2.5-coder:7b
+```
+
+### Recommended Models
+
+| Model | Provider | Use Case |
+|-------|----------|----------|
+| `gpt-4.1` | OpenAI | Best accuracy |
+| `claude-sonnet-4-20250514` | Anthropic | Best reasoning |
+| `qwen2.5-coder:7b` | Ollama | Fast local analysis |
+| `codellama:13b` | Ollama | Better local accuracy |
+
 ## Gating
 
 Block bad code before it merges. Configure thresholds, run locally, then automate in CI.
 
-### 1. Initialize Configuration
+### Initialize Configuration
 ```bash
 skylos init
 ```
@@ -198,225 +302,86 @@ max_quality = 10      # Allow up to 10 warnings
 strict = false
 ```
 
-### 2. Run the Gate
+### Free Tier
+
+Run scans locally with exit codes:
+
 ```bash
-skylos . --quality --danger --gate
+skylos . --danger --gate
 ```
 
-If thresholds exceeded, Skylos exits non-zero (blocking CI/CD or git push). You'll be prompted to select files manually or push all at once.
+- Exit code `0` = passed
+- Exit code `1` = failed
 
-Use `--force` to bypass in emergencies.
+Use in any CI system:
 
-### 3. GitHub Actions
-
-<details>
-<summary><b>Full workflow (click to expand)</b></summary>
-
-Create `.github/workflows/skylos.yml`:
 ```yaml
-name: Skylos Deadcode Scan
+# .github/workflows/skylos.yml
+name: Skylos Quality Gate
 
 on:
   pull_request:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+    branches: [main, master]
 
 jobs:
-  scan:
+  skylos:
     runs-on: ubuntu-latest
-    env:
-      SKYLOS_STRICT: ${{ vars.SKYLOS_STRICT || 'false' }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Skylos
-        run: pip install skylos
-
-      - name: Run Skylos
-        env:
-          REPORT: skylos_${{ github.run_number }}_${{ github.sha }}.json
-        run: |
-          echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
-          skylos . --json > "$REPORT"
-        id: scan
-
-      - name: Fail if there are findings
-        continue-on-error: ${{ env.SKYLOS_STRICT != 'true' }}
-        env:
-          REPORT: ${{ steps.scan.outputs.REPORT }}
-        run: |
-            python - << 'PY'
-            import json, sys, os
-            report = os.environ["REPORT"]
-            data = json.load(open(report, "r", encoding="utf-8"))
-            count = 0
-            for value in data.values():
-                if isinstance(value, list):
-                    count += len(value)
-            print(f"Findings: {count}")
-            if count > 0:
-              print(f"::warning title=Skylos findings::{count} potential issues found. See {report}")
-            sys.exit(1 if count > 0 else 0)
-            PY
-
-      - name: Upload report artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.scan.outputs.REPORT }}
-          path: ${{ steps.scan.outputs.REPORT }}
-
-      - name: Summarize in job log
-        if: always()
-        run: |
-          echo "Skylos report: ${{ steps.scan.outputs.REPORT }}" >> $GITHUB_STEP_SUMMARY
+      - run: pip install skylos
+      - run: skylos . --danger --gate
 ```
 
-</details>
+> **Limitation:** Anyone with repo access can delete or modify this workflow.
 
-**Strict mode:** Go to GitHub → Settings → Secrets and variables → Actions → Variables → Add `SKYLOS_STRICT` with value `true`.
+---
 
-### 4. Pre-commit
+### Pro Tier
 
-Pick one approach:
+Server-controlled GitHub checks that **cannot be bypassed** by developers.
 
-<b>Option A: Skylos hook repo</b>
-```yaml
-## .pre-commit-config.yaml
-repos:
-  - repo: local
-    hooks:
-      - id: skylos-scan
-        name: skylos report
-        entry: python -m skylos.cli
-        language: system
-        pass_filenames: false
-        require_serial: true
-        args: [".", "--output", "report.json", "--confidence", "70", "--danger"]
+### Quick Setup
 
-      - id: skylos-fail-on-findings
-        name: skylos gate
-        language: system
-        pass_filenames: false
-        require_serial: true
-        entry: python scripts/skylos_gate.py
-```
-
-
-<b>Option B: Self-contained local hook</b>
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: skylos-scan
-        name: skylos report
-        language: python
-        entry: python -m skylos.cli
-        pass_filenames: false
-        require_serial: true
-        additional_dependencies: [skylos==2.8.0]
-        args: [".", "--output", "report.json", "--confidence", "70"]
-
-      - id: skylos-fail-on-findings
-        name: skylos (soft)
-        language: python
-        language_version: python3
-        pass_filenames: false
-        require_serial: true
-        entry: >
-          python -c "import os, json, sys, pathlib;
-          p=pathlib.Path('report.json');
-          if not p.exists(): sys.exit(0);
-          data=json.loads(p.read_text(encoding='utf-8'));
-          count = sum(len(v) for v in data.values() if isinstance(v, list));
-          print(f'[skylos] findings: {count}');
-          sys.exit(0 if os.getenv('SKYLOS_SOFT') or count==0 else 1)"
-```
-
-If you chose option A, then do remember to put this script below in a folder `scripts/sylos_gate.py`
-
-```python
-#!/usr/bin/env python3
-import json
-import os
-import sys
-from pathlib import Path
-
-REPORT = Path("report.json")
-
-def main() -> int:
-    if not REPORT.exists():
-        print("[skylos] report.json missing (skipping gate)")
-        return 0
-
-    txt = REPORT.read_text(encoding="utf-8", errors="ignore").strip()
-    if not txt:
-        print("[skylos] report.json empty (skipping gate)")
-        return 0
-
-    try:
-        data = json.loads(txt)
-    except Exception as e:
-        print(f"[skylos] report.json invalid JSON (skipping gate): {e}")
-        return 0
-
-    if isinstance(data, dict):
-        vals = data.values()
-    elif isinstance(data, list):
-        vals = data
-    else:
-        vals = []
-
-    count = 0
-    for v in vals:
-        if isinstance(v, list):
-            count += len(v)
-
-    print(f"[skylos] findings: {count}")
-    soft = os.getenv("SKYLOS_SOFT", "").strip()
-    if soft or count == 0:
-        return 0
-    else:
-        return 1
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-```
-
-**Install:**
 ```bash
-pip install pre-commit
-pre-commit install
-pre-commit run --all-files
+pip install skylos
+skylos sync setup
 ```
 
-<details>
-<summary><b>Run pre-commit in CI</b></summary>
+### How It Works
 
-Create `.github/workflows/pre-commit.yml`:
-```yaml
-name: pre-commit
-on: [push, pull_request]
-jobs:
-  run:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11", cache: "pip" }
-      - uses: pre-commit/action@v3.0.3
-        with: { extra_args: --all-files }
-```
+1. Developer opens PR → GitHub App creates required check ("Queued")
+2. Scan runs → Results upload to Skylos server
+3. Server updates check → Pass ✅ or Fail ❌
+4. Developer **cannot merge** until check passes
 
-</details>
+### Free vs Pro
 
-**Note:** The second hook is soft by default (`SKYLOS_SOFT=1`) - prints findings but passes. Remove the env to block commits on findings. 
+| Feature | Free | Pro |
+|---------|------|-----|
+| Local scans | ✅ | ✅ |
+| `--gate` exit codes | ✅ | ✅ |
+| GitHub Actions | ✅ (DIY) | ✅ (auto) |
+| Developer can bypass? | Yes | **No** |
+| Server-controlled check | ❌ | ✅ |
+| Slack/Discord alerts | ❌ | ✅ |
+
+### GitHub App Setup
+
+1. **Dashboard -> Settings -> Install GitHub App**
+2. Select your repository
+3. In GitHub repo settings:
+   - Settings -> Branches -> Add rule -> `main`
+   - Require status checks
+   - Select "Skylos Quality Gate"
+
+### Add Token to GitHub
+
+Repo **Settings → Secrets → Actions → New secret**
+- Name: `SKYLOS_TOKEN`  
+- Value: *(from Dashboard → Settings)*
 
 ## Integration and Ecosystem
 
@@ -440,6 +405,7 @@ Control how you consume the watchdog's findings.
 | `--table` | Rich Table | Default human-readable CLI summary. |
 | `--tree` | Logic Tree | Visualizes code hierarchy and structural dependencies. |
 | `--json` | Machine Raw | Piping results to `jq`, custom scripts, or log aggregators. |
+| `--sarif` | SARIF | GitHub Code Scanning, IDE integration |
 | `-o, --output` | File Export | Save the audit report directly to a file instead of `stdout`. |
 
 
@@ -521,33 +487,27 @@ max_args = 7           # Default: 5
 max_lines = 80  
 ```
 
-### AI Auditing (`--audit`)
+### Legacy AI Flags (These will be deprecated in the next updated)
 
-LLM-powered logic review.
+These flags work on the main `skylos` command for quick operations:
+
 ```bash
+# LLM-powered audit (single file)
 skylos . --audit
+
+# Auto-fix with LLM
+skylos . --fix
+
+# Specify model
 skylos . --audit --model claude-haiku-4-5-20251001
 ```
 
-Finds:
-  - Hallucination Detection: Finds calls to functions that don't actually exist in your repo.
-  - Logic Flaws: Detects "confident but wrong" logic, bare exceptions, and architectural rot.
-  - Using a specific model: `--model claude-haiku-4-5-20251001`
-
-
-### Autonomous Fix (`--fix`)
-
-Let the LLM fix what it found.
-```bash
-skylos . --fix
-```
-
-API keys stored in your system keychain (macOS Keychain, Windows Credential Locker). Never plaintext.
+> **Note:** For full project context and better results, use `skylos agent analyze` instead.
 
 ### Combine Everything
 ```bash
 skylos . --danger --secrets --quality  # All static scans
-skylos . --danger --quality --audit --fix  # Full AI-assisted cleanup
+skylos agent analyze . --fix           # Full AI-assisted cleanup
 ```
 
 ## Smart Tracing
@@ -764,7 +724,7 @@ whitelist = ["*Plugin", "*Handler"]
 
 ## CLI Options
 
-### Flags
+### Main Command Flags
 ```
 Usage: skylos [OPTIONS] PATH
 
@@ -776,6 +736,7 @@ Options:
   --json                       Output raw JSON instead of formatted text  
   --tree                       Output results in tree format
   --table                      Output results in table format via the CLI
+  --sarif                      Output SARIF format for GitHub/IDE integration
   -c, --confidence LEVEL       Confidence threshold 0-100 (default: 60)
   --comment-out                Comment out code instead of deleting
   -o, --output FILE            Write output to file instead of stdout
@@ -786,22 +747,54 @@ Options:
   --exclude-folder FOLDER      Exclude a folder from analysis (can be used multiple times)
   --include-folder FOLDER      Force include a folder that would otherwise be excluded
   --no-default-excludes        Don't exclude default folders (__pycache__, .git, venv, etc.)
-  --list-default-excludes      List the default excluded folders and
+  --list-default-excludes      List the default excluded folders
   --secrets                    Scan for api keys/secrets
   --danger                     Scan for dangerous code
   --quality                    Code complexity and maintainability
-  --coverage                   Run tests with coverage first
-  --audit                      LLM-powered logic review
-  --fix                        LLM auto-repair
+  --trace                      Run tests with coverage first
+  --audit                      LLM-powered logic review (legacy-will be deprecated)
+  --fix                        LLM auto-repair (legacy-will be deprecated)
   --model MODEL                LLM model (default: gpt-4.1)
   --gate                       Fail on threshold breach (for CI)
   --force                      Bypass quality gate (emergency override)
 ```
 
+### Agent Command Flags
+```
+Usage: skylos agent <command> [OPTIONS] PATH
+
+Commands:
+  analyze             Hybrid static + LLM analysis with project context
+  security-audit      Deep LLM security audit
+  fix                 Generate fix for specific issue
+  review              Analyze only git-changed files
+
+Options (all agent commands):
+  --model MODEL                LLM model to use (default: gpt-4.1)
+  --provider PROVIDER          Force provider: openai or anthropic
+  --base-url URL               Custom endpoint for local LLMs
+  --format FORMAT              Output: table, tree, json, sarif
+  -o, --output FILE            Write output to file
+
+Agent analyze options:
+  --min-confidence LEVEL       Filter: high, medium, low
+  --fix                        Generate fix proposals
+  --apply                      Apply fixes to files
+  --yes                        Auto-approve prompts
+
+Agent fix options:
+  --line, -l LINE              Line number of issue (required)
+  --message, -m MSG            Description of issue (required)
+```
+
 ### Commands 
 ```
 Commands:
-  skylos PATH                  Analyze a project
+  skylos PATH                  Analyze a project (static analysis)
+  skylos agent analyze PATH    Hybrid static + LLM analysis
+  aud PATH      Deep LLM audit with file selection
+  skylos agent fix PATH        Fix specific issue
+  skylos agent review          Review git-changed files only
   skylos init                  Initialize pyproject.toml config
   skylos whitelist PATTERN     Add pattern to whitelist
   skylos whitelist --show      Display current whitelist
@@ -847,14 +840,20 @@ A: Web framework routes are given low confidence (20) because they might be call
 **Q: What confidence level should I use?**
 A: Start with 60 (default) for safe cleanup. Use 30 for framework applications. Use 20 for more comprehensive auditing.
 
-**Q: What does `--coverage` do?**
+**Q: What does `--trace` do?**
 A: It runs `pytest` (or `unittest`) with coverage tracking before analysis. Functions that actually executed are marked as used with 100% confidence, eliminating false positives from dynamic dispatch patterns.
 
-**Q: Do I need 100% test coverage for `--coverage` to be useful?**
+**Q: Do I need 100% test coverage for `--trace` to be useful?**
 A: No. However, we **STRONGLY** encourage you to have tests. Any coverage helps. If you have 30% test coverage, that's 30% of your code verified. The other 70% still uses static analysis. Coverage only removes false positives, it never adds them.
 
-**Q: My tests are failing. Can I still use `--coverage`?**
+**Q: My tests are failing. Can I still use `--trace`?**
 A: Yes. Coverage tracks execution, not pass/fail. Even failing tests provide coverage data.
+
+**Q: What's the difference between `skylos . --audit` and `skylos agent audit`?**
+A: `skylos agent audit` uses the new hybrid architecture with full project context (`defs_map`), enabling detection of hallucinations and cross-file issues. The `--audit` flag is legacy and lacks project context.
+
+**Q: Can I use local LLMs instead of OpenAI/Anthropic?**
+A: Yes! Use `--base-url` to point to Ollama, LM Studio, or any OpenAI-compatible endpoint. No API key needed for localhost.
 
 ## Limitations and Troubleshooting
 
@@ -866,7 +865,8 @@ A: Yes. Coverage tracks execution, not pass/fail. Even failing tests provide cov
 - **False positives**: Always manually review before deleting code
 - **Secrets PoC**: May emit both a provider hit and a generic high-entropy hit for the same token. All tokens are detected only in py files (`.py`, `.pyi`, `.pyw`)
 - **Quality limitations**: The current `--quality` flag does not allow you to configure the cyclomatic complexity. 
-- **Coverage requires execution**: The `--coverage` flag only helps if you have tests or can run your application. Pure static analysis is still available without it.
+- **Coverage requires execution**: The `--trace` flag only helps if you have tests or can run your application. Pure static analysis is still available without it.
+- **LLM limitations**: AI analysis requires API access (cloud) or local setup (Ollama). Results depend on model quality.
 
 ### Troubleshooting
 
@@ -881,6 +881,25 @@ A: Yes. Coverage tracks execution, not pass/fail. Even failing tests provide cov
    Interactive mode requires 'inquirer' package
    ```
    Install with: `pip install skylos[interactive]`
+
+3. **No API Key Found**
+   ```bash
+   # For cloud providers
+   export OPENAI_API_KEY="sk-..."
+   export ANTHROPIC_API_KEY="sk-ant-..."
+   
+   # For local LLMs (no key needed)
+   skylos agent analyze . --base-url http://localhost:11434/v1 --model codellama
+   ```
+
+4. **Local LLM Connection Refused**
+   ```bash
+   # Verify Ollama is running
+   curl http://localhost:11434/v1/models
+   
+   # Check LM Studio
+   curl http://localhost:1234/v1/models
+   ```
 
 ## Contributing
 
@@ -906,8 +925,8 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 - [x] Porting to uv
 - [x] Small integration with typescript
 - [ ] Expand and improve on capabilities of Skylos in various other languages
-- [ ] Expand the providers for LLMs
-- [ ] Expand the LLM portion for detecting dead/dangerous code 
+- [x] Expand the providers for LLMs (OpenAI, Anthropic, Ollama, LM Studio, vLLM)
+- [x] Expand the LLM portion for detecting dead/dangerous code (hybrid architecture)
 - [x] Coverage integration for runtime verification
 - [x] Implicit reference detection (f-string patterns, framework decorators)
 
