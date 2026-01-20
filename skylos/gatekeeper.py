@@ -1,7 +1,7 @@
-import sys
 import subprocess
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
+import sys
 
 try:
     import inquirer
@@ -103,68 +103,136 @@ def start_deployment_wizard():
         run_push()
 
 
-def check_gate(results, config):
-    gate_cfg = config.get("gate", {})
-
-    danger = results.get("danger", [])
-    secrets = results.get("secrets", [])
-    quality = results.get("quality", [])
+def check_gate(results, config, strict=False):
+    results = results or {}
+    config = config or {}
 
     reasons = []
+    passed = True
 
-    criticals = []
-    for f in danger:
-        if f.get("severity") == "CRITICAL":
-            criticals.append(f)
+    total_findings = sum(
+        len(results.get(k, []))
+        for k in (
+            "unused_functions",
+            "unused_imports",
+            "unused_variables",
+            "unused_classes",
+            "unused_parameters",
+        )
+    )
 
-    if gate_cfg.get("fail_on_critical") and (criticals or secrets):
-        if criticals:
-            reasons.append(f"Found {len(criticals)} CRITICAL security issues")
-        if secrets:
-            reasons.append(f"Found {len(secrets)} Secrets")
+    danger = results.get("danger", []) or []
+    quality = results.get("quality", []) or []
+    secrets = results.get("secrets", []) or []
 
-    total_sec = len(danger)
-    limit_sec = gate_cfg.get("max_security", 0)
-    if total_sec > limit_sec:
-        reasons.append(f"Security issues ({total_sec}) exceed limit ({limit_sec})")
+    critical_issues = []
+    high_issues = []
 
-    total_qual = len(quality)
-    limit_qual = gate_cfg.get("max_quality", 10)
-    if total_qual > limit_qual:
-        reasons.append(f"Quality issues ({total_qual}) exceed limit ({limit_qual})")
+    for issue in danger:
+        sev = str(issue.get("severity", "")).lower()
+        if sev == "critical":
+            critical_issues.append(issue)
+        elif sev == "high":
+            high_issues.append(issue)
 
-    return (len(reasons) == 0), reasons
+    gate_config = config.get("gate", {}) if config else {}
+
+    if strict:
+        total_issues = total_findings + len(danger) + len(quality) + len(secrets)
+        if total_issues > 0:
+            return False, [f"Strict mode: {total_issues} issue(s) found"]
+        return True, []
+
+    fail_on_critical = gate_config.get("fail_on_critical", True)
+    max_critical = gate_config.get("max_critical", 0)
+    max_high = gate_config.get("max_high", 5)
+    max_security = gate_config.get("max_security", 10)
+    max_quality = gate_config.get("max_quality", 10)
+    max_secrets = gate_config.get("max_secrets", None)
+    max_dead_code = gate_config.get("max_dead_code", None)
+
+    if fail_on_critical and len(critical_issues) > 0:
+        passed = False
+        reasons.append(f"{len(critical_issues)} critical security issue(s)")
+
+    elif isinstance(max_critical, int) and len(critical_issues) > max_critical:
+        passed = False
+        reasons.append(f"{len(critical_issues)} critical issues (max: {max_critical})")
+
+    if isinstance(max_high, int) and len(high_issues) > max_high:
+        passed = False
+        reasons.append(f"{len(high_issues)} high severity issues (max: {max_high})")
+
+    if isinstance(max_security, int) and len(danger) > max_security:
+        passed = False
+        reasons.append(f"{len(danger)} total security issues (max: {max_security})")
+
+    if isinstance(max_quality, int) and len(quality) > max_quality:
+        passed = False
+        reasons.append(f"{len(quality)} quality issues (max: {max_quality})")
+
+    if isinstance(max_secrets, int) and len(secrets) > max_secrets:
+        passed = False
+        reasons.append(f"{len(secrets)} secrets issues (max: {max_secrets})")
+
+    if isinstance(max_dead_code, int) and total_findings > max_dead_code:
+        passed = False
+        reasons.append(f"{total_findings} dead code issue(s) (max: {max_dead_code})")
+
+    return passed, reasons
 
 
-def run_gate_interaction(results, config, command_to_run):
-    passed, reasons = check_gate(results, config)
+def run_gate_interaction(
+    *,
+    results=None,
+    result=None,
+    config=None,
+    strict=False,
+    force=False,
+    command_to_run=None,
+):
+    console = Console()
+
+    if results is None:
+        results = result or {}
+
+    config = config or {}
+    gate_cfg = config.get("gate") or {}
+
+    strict = bool(strict or gate_cfg.get("strict", False))
+
+    try:
+        passed, reasons = check_gate(results, config, strict=strict)
+    except TypeError:
+        passed, reasons = check_gate(results, config)
 
     if passed:
-        console.print("\n[bold green] Skylos Gate Passed.[/bold green]")
+        console.print("\n[bold green]✅ Quality Gate: PASSED[/bold green]")
+
         if command_to_run:
-            console.print(f"[dim]Running: {' '.join(command_to_run)}[/dim]")
-            subprocess.run(command_to_run)
-        else:
-            start_deployment_wizard()
+            proc = subprocess.run(command_to_run)
+            return getattr(proc, "returncode", 0)
+
         return 0
 
-    console.print("\n[bold red] Skylos Gate Failed![/bold red]")
-    for reason in reasons:
-        console.print(f" - {reason}")
+    console.print("\n[bold red] Quality Gate: FAILED[/bold red]")
+    for r in reasons or []:
+        console.print(f"   • {r}")
 
-    if config.get("gate", {}).get("strict"):
-        console.print("[bold red]Strict mode enabled. Cannot bypass.[/bold red]")
+    if force:
+        console.print("[yellow] Forced pass (local only)[/yellow]")
+        return 0
+
+    if strict:
         return 1
 
-    if sys.stdout.isatty():
-        if Confirm.ask(
-            "\n[bold yellow]Do you want to bypass checks and proceed anyway?[/bold yellow]"
-        ):
-            console.print("[yellow]⚠ Bypassing Gate...[/yellow]")
-            if command_to_run:
-                subprocess.run(command_to_run)
-            else:
+    try:
+        if sys.stdout.isatty():
+            if Confirm.ask("Quality gate failed. Continue anyway?"):
                 start_deployment_wizard()
-            return 0
+                return 0
+            return 1
+    except Exception:
+        pass
 
     return 1
