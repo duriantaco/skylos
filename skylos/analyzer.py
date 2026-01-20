@@ -4,25 +4,29 @@ import sys
 import json
 import logging
 import os
+import traceback
 from pathlib import Path
 from collections import defaultdict
+
 from skylos.visitor import Visitor
+
 from skylos.constants import AUTO_CALLED
+
+from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
-from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
-from skylos.rules.danger.danger import scan_ctx as scan_danger
-import os
-import traceback
-from skylos.visitors.framework_aware import (
-    FrameworkAwareVisitor
-)
-from skylos.config import get_all_ignore_lines, load_config
 from skylos.visitors.languages.typescript import scan_typescript_file
 
+from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
+
+from skylos.rules.danger.calls import DangerousCallsRule
+from skylos.rules.danger.danger import scan_ctx as scan_danger
+
+from skylos.config import get_all_ignore_lines, load_config
+
 from skylos.linter import LinterVisitor
+
 from skylos.rules.quality.complexity import ComplexityRule
 from skylos.rules.quality.nesting import NestingRule
-from skylos.rules.danger.calls import DangerousCallsRule
 from skylos.rules.quality.structure import ArgCountRule, FunctionLengthRule
 from skylos.rules.quality.logic import (
     MutableDefaultRule,
@@ -30,9 +34,14 @@ from skylos.rules.quality.logic import (
     DangerousComparisonRule,
     TryBlockPatternsRule,
 )
-from skylos.penalties import apply_penalties
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
+
+from skylos.penalties import apply_penalties
+
+from skylos.scale.parallel_static import run_proc_file_parallel
+from skylos.scale.cache import SkylosProcCache
+
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -92,7 +101,7 @@ class Skylos:
         p = Path(path).resolve()
 
         if p.is_file():
-            if p.suffix == '.pyi':
+            if p.suffix == ".pyi":
                 return [], p.parent
             return [p], p.parent
 
@@ -123,7 +132,7 @@ class Skylos:
         for name, definition in self.defs.items():
             if definition.in_init and not definition.simple_name.startswith("_"):
                 definition.is_exported = True
-        
+
         all_exported_names = set()
         for mod, export_names in self.exports.items():
             all_exported_names.update(export_names)
@@ -387,7 +396,6 @@ class Skylos:
         if trace_path.exists():
             pattern_tracker.load_trace(str(trace_path))
 
-
         all_secrets = []
         all_dangers = []
         all_quality = []
@@ -396,65 +404,107 @@ class Skylos:
 
         pattern_trackers = {}
 
-        for i, file in enumerate(files):
-            if progress_callback:
-                progress_callback(i + 1, len(files), file)
-            mod = modmap[file]
-            (
-                defs,
-                refs,
-                dyn,
-                exports,
-                test_flags,
-                framework_flags,
-                q_finds,
-                d_finds,
-                pro_finds,
-                pattern_tracker,
-                empty_file_finding,
-                cfg,
-            ) = proc_file(file, mod, extra_visitors)
+        # for i, file in enumerate(files):
+        #     if progress_callback:
+        #         progress_callback(i + 1, len(files), file)
+        #     mod = modmap[file]
+        #     (
+        #         defs,
+        #         refs,
+        #         dyn,
+        #         exports,
+        #         test_flags,
+        #         framework_flags,
+        #         q_finds,
+        #         d_finds,
+        #         pro_finds,
+        #         pattern_tracker,
+        #         empty_file_finding,
+        #         cfg,
+        #     ) = proc_file(file, mod, extra_visitors)
 
-            if pattern_tracker:
-                pattern_trackers[mod] = pattern_tracker
+        cache = None
+        if os.getenv("SKYLOS_CACHE", "1") == "1":
+            try:
+                cache_path = project_root / ".skylos" / "cache.sqlite"
+                cache = SkylosProcCache(cache_path)
+            except OSError:
+                cache = None
 
-            for definition in defs:
-                if definition.type == "import":
-                    key = f"{definition.filename}:{definition.name}"
-                else:
-                    key = definition.name
-                self.defs[key] = definition
+        try:
+            outs = run_proc_file_parallel(
+                files,
+                modmap,
+                extra_visitors=extra_visitors,
+                jobs=int(os.getenv("SKYLOS_JOBS", "0")),
+                cache=cache,
+                progress_callback=progress_callback,
+            )
 
-            self.refs.extend(refs)
-            self.dynamic.update(dyn)
-            self.exports[mod].update(exports)
+            for file, out in zip(files, outs):
+                mod = modmap[file]
 
-            file_contexts.append((defs, test_flags, framework_flags, file, mod, cfg))
+                (
+                    defs,
+                    refs,
+                    dyn,
+                    exports,
+                    test_flags,
+                    framework_flags,
+                    q_finds,
+                    d_finds,
+                    pro_finds,
+                    pattern_tracker_obj,
+                    empty_file_finding,
+                    cfg,
+                ) = out
 
-            if empty_file_finding:
-                empty_files.append(empty_file_finding)
+                if pattern_tracker_obj:
+                    pattern_trackers[mod] = pattern_tracker_obj
 
-            if enable_quality and q_finds:
-                all_quality.extend(q_finds)
+                for definition in defs:
+                    if definition.type == "import":
+                        key = f"{definition.filename}:{definition.name}"
+                    else:
+                        key = definition.name
+                    self.defs[key] = definition
 
-            if enable_danger and d_finds:
-                all_dangers.extend(d_finds)
+                self.refs.extend(refs)
+                self.dynamic.update(dyn)
+                self.exports[mod].update(exports)
 
-            if pro_finds:
-                all_dangers.extend(pro_finds)
+                file_contexts.append(
+                    (defs, test_flags, framework_flags, file, mod, cfg)
+                )
 
-            if enable_secrets and _secrets_scan_ctx is not None:
-                try:
-                    src = Path(file).read_text(encoding="utf-8", errors="ignore")
-                    src_lines = src.splitlines(True)
-                    rel = str(Path(file).relative_to(root))
-                    ctx = {"relpath": rel, "lines": src_lines, "tree": None}
-                    findings = list(_secrets_scan_ctx(ctx))
-                    if findings:
-                        all_secrets.extend(findings)
-                except Exception:
-                    pass
-      
+                if empty_file_finding:
+                    empty_files.append(empty_file_finding)
+
+                if enable_quality and q_finds:
+                    all_quality.extend(q_finds)
+
+                if enable_danger and d_finds:
+                    all_dangers.extend(d_finds)
+
+                if pro_finds:
+                    all_dangers.extend(pro_finds)
+
+                if enable_secrets and _secrets_scan_ctx is not None:
+                    try:
+                        src = Path(file).read_text(encoding="utf-8", errors="ignore")
+                        src_lines = src.splitlines(True)
+                        rel = str(Path(file).relative_to(root))
+                        ctx = {"relpath": rel, "lines": src_lines, "tree": None}
+                        findings = list(_secrets_scan_ctx(ctx))
+                        if findings:
+                            all_secrets.extend(findings)
+                    except Exception:
+                        pass
+
+        finally:
+            if cache:
+                cache.close()
+
         self.pattern_trackers = pattern_trackers
 
         self._global_abc_classes = set()
@@ -463,31 +513,43 @@ class Skylos:
         self._global_abc_implementers = {}
         self._global_protocol_implementers = {}
         self._global_protocol_method_names = {}
-        
+
         for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
-            self._global_abc_classes.update(getattr(framework_flags, "abc_classes", set()))
-            self._global_protocol_classes.update(getattr(framework_flags, "protocol_classes", set()))
-            
-            for cls, methods in getattr(framework_flags, "abstract_methods", {}).items():
+            self._global_abc_classes.update(
+                getattr(framework_flags, "abc_classes", set())
+            )
+            self._global_protocol_classes.update(
+                getattr(framework_flags, "protocol_classes", set())
+            )
+
+            for cls, methods in getattr(
+                framework_flags, "abstract_methods", {}
+            ).items():
                 if cls not in self._global_abstract_methods:
                     self._global_abstract_methods[cls] = set()
                 self._global_abstract_methods[cls].update(methods)
-            
-            for cls, parents in getattr(framework_flags, "abc_implementers", {}).items():
+
+            for cls, parents in getattr(
+                framework_flags, "abc_implementers", {}
+            ).items():
                 if cls not in self._global_abc_implementers:
                     self._global_abc_implementers[cls] = []
                 self._global_abc_implementers[cls].extend(parents)
-            
-            for cls, parents in getattr(framework_flags, "protocol_implementers", {}).items():
+
+            for cls, parents in getattr(
+                framework_flags, "protocol_implementers", {}
+            ).items():
                 if cls not in self._global_protocol_implementers:
                     self._global_protocol_implementers[cls] = []
                 self._global_protocol_implementers[cls].extend(parents)
-            
-            for cls, methods in getattr(framework_flags, "protocol_method_names", {}).items():
+
+            for cls, methods in getattr(
+                framework_flags, "protocol_method_names", {}
+            ).items():
                 if cls not in self._global_protocol_method_names:
                     self._global_protocol_method_names[cls] = set()
                 self._global_protocol_method_names[cls].update(methods)
-        
+
         self._duck_typed_implementers = set()
 
         class_methods = {}
@@ -500,21 +562,24 @@ class Skylos:
                     if class_name not in class_methods:
                         class_methods[class_name] = set()
                     class_methods[class_name].add(method_name)
-        
+
         for class_name, methods in class_methods.items():
             if class_name in self._global_protocol_classes:
                 continue
 
             if class_name in self._global_protocol_implementers:
                 continue
-            
-            for protocol_name, protocol_methods in self._global_protocol_method_names.items():
+
+            for (
+                protocol_name,
+                protocol_methods,
+            ) in self._global_protocol_method_names.items():
                 if not protocol_methods or len(protocol_methods) < 3:
                     continue
-                
+
                 matching = methods & protocol_methods
                 match_ratio = len(matching) / len(protocol_methods)
-                
+
                 if match_ratio >= 0.7 and len(matching) >= 3:
                     self._duck_typed_implementers.add(class_name)
                     break
@@ -800,7 +865,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             [],
             None,
             None,
-            cfg
+            cfg,
         )
 
 
