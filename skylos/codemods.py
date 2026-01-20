@@ -4,6 +4,7 @@ import libcst as cst
 from libcst.helpers import get_full_name_for_node
 from libcst.metadata import PositionProvider
 
+
 class _CommentOutBlock(cst.CSTTransformer):
     METADATA_DEPENDENCIES = (PositionProvider,)
 
@@ -32,7 +33,6 @@ class _CommentOutBlock(cst.CSTTransformer):
     def _replace_statement_with_comment_block(
         self, orig_stmt: cst.SimpleStatementLine
     ) -> cst.SimpleStatementLine:
-      
         pos = self.get_metadata(PositionProvider, orig_stmt)
         leading = self._comment_block(pos.start.line, pos.end.line)
 
@@ -124,7 +124,9 @@ class _CommentOutImportAtLine(_CommentOutBlock):
 
             if self.target_name in match_keys:
                 self.changed = True
-                removed_for_comment.append(self._render_single_alias_text(head, alias, is_from))
+                removed_for_comment.append(
+                    self._render_single_alias_text(head, alias, is_from)
+                )
             else:
                 kept.append(alias)
 
@@ -161,7 +163,9 @@ class _CommentOutImportAtLine(_CommentOutBlock):
             new_line = updated.with_changes(body=[new_import])
 
             removed_txt = "; ".join(removed)
-            return self._add_leading_comment_line(new_line, f"{self.marker}: {removed_txt}")
+            return self._add_leading_comment_line(
+                new_line, f"{self.marker}: {removed_txt}"
+            )
 
         if isinstance(stmt, cst.ImportFrom):
             if isinstance(stmt.names, cst.ImportStar):
@@ -189,19 +193,25 @@ class _CommentOutImportAtLine(_CommentOutBlock):
             new_line = updated.with_changes(body=[new_from])
 
             removed_txt = "; ".join(removed)
-            return self._add_leading_comment_line(new_line, f"{self.marker}: {removed_txt}")
+            return self._add_leading_comment_line(
+                new_line, f"{self.marker}: {removed_txt}"
+            )
 
         return updated
 
 
-def comment_out_unused_function_cst(code, func_name, line_number, marker = "SKYLOS DEADCODE"):
+def comment_out_unused_function_cst(
+    code, func_name, line_number, marker="SKYLOS DEADCODE"
+):
     wrapper = cst.MetadataWrapper(cst.parse_module(code))
     tx = _CommentOutFunctionAtLine(func_name, line_number, code, marker)
     new_mod = wrapper.visit(tx)
     return new_mod.code, tx.changed
 
 
-def comment_out_unused_import_cst(code, import_name, line_number, marker = "SKYLOS DEADCODE"):
+def comment_out_unused_import_cst(
+    code, import_name, line_number, marker="SKYLOS DEADCODE"
+):
     wrapper = cst.MetadataWrapper(cst.parse_module(code))
     tx = _CommentOutImportAtLine(import_name, line_number, code, marker)
     new_mod = wrapper.visit(tx)

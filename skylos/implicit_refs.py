@@ -44,7 +44,6 @@ class ImplicitRefTracker:
                         if abs(traced_line - def_line) <= 5:
                             return True, 100, "executed (call trace)"
 
-        # Direct coverage hit check - O(1)
         if (def_file, def_line) in self.coverage_hits:
             return True, 100, "executed (coverage)"
 
