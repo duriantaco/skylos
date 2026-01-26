@@ -21,6 +21,7 @@ from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 from skylos.rules.danger.calls import DangerousCallsRule
 from skylos.rules.danger.danger import scan_ctx as scan_danger
 
+
 from skylos.config import get_all_ignore_lines, load_config
 
 from skylos.linter import LinterVisitor
@@ -40,8 +41,7 @@ from skylos.rules.quality.unreachable import UnreachableCodeRule
 from skylos.penalties import apply_penalties
 
 from skylos.scale.parallel_static import run_proc_file_parallel
-from skylos.scale.cache import SkylosProcCache
-
+from skylos.rules.custom import load_custom_rules
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -284,7 +284,12 @@ class Skylos:
 
         from skylos.implicit_refs import pattern_tracker as global_tracker
 
-        if global_tracker.traced_calls:
+        if (
+            global_tracker.traced_calls
+            or global_tracker.coverage_hits
+            or global_tracker.known_refs
+            or getattr(global_tracker, "known_qualified_refs", None)
+        ):
             for def_obj in self.defs.values():
                 should_mark, _, reason = global_tracker.should_mark_as_used(def_obj)
                 if should_mark:
@@ -335,6 +340,7 @@ class Skylos:
         enable_quality=False,
         extra_visitors=None,
         progress_callback=None,
+        custom_rules_data=None,
     ):
         files, root = self._get_python_files(path, exclude_folders)
 
@@ -366,6 +372,7 @@ class Skylos:
         from skylos.implicit_refs import pattern_tracker as global_pattern_tracker
 
         global_pattern_tracker.known_refs.clear()
+        global_pattern_tracker.known_qualified_refs.clear()
         global_pattern_tracker._compiled_patterns.clear()
         global_pattern_tracker.f_string_patterns.clear()
         global_pattern_tracker.coverage_hits.clear()
@@ -378,6 +385,14 @@ class Skylos:
         project_root = Path(path).resolve()
         if not project_root.is_dir():
             project_root = project_root.parent
+
+        try:
+            from skylos.pyproject_entrypoints import extract_entrypoints
+
+            for qname in extract_entrypoints(project_root):
+                global_pattern_tracker.known_qualified_refs.add(qname)
+        except Exception:
+            pass
 
         coverage_path = project_root / ".coverage"
         if coverage_path.exists():
@@ -423,23 +438,35 @@ class Skylos:
         #         cfg,
         #     ) = proc_file(file, mod, extra_visitors)
 
-        cache = None
-        if os.getenv("SKYLOS_CACHE", "1") == "1":
-            try:
-                cache_path = project_root / ".skylos" / "cache.sqlite"
-                cache = SkylosProcCache(cache_path)
-            except OSError:
-                cache = None
-
+        injected = False
+        if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
+            os.environ["SKYLOS_CUSTOM_RULES"] = json.dumps(custom_rules_data)
+            injected = True
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.info(
+                    f"[DBG] Injected SKYLOS_CUSTOM_RULES (count={len(custom_rules_data)})"
+                )
+        else:
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.info(
+                    f"[DBG] Did NOT inject SKYLOS_CUSTOM_RULES "
+                    f"(custom_rules_data={bool(custom_rules_data)}, env_already_set={bool(os.getenv('SKYLOS_CUSTOM_RULES'))})"
+                )
         try:
             outs = run_proc_file_parallel(
                 files,
                 modmap,
                 extra_visitors=extra_visitors,
                 jobs=int(os.getenv("SKYLOS_JOBS", "0")),
-                cache=cache,
                 progress_callback=progress_callback,
+                custom_rules_data=custom_rules_data,
             )
+
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.info(f"[DBG] run_proc_file_parallel returned outs={len(outs)}")
+
+            for file, out in zip(files, outs):
+                mod = modmap[file]
 
             for file, out in zip(files, outs):
                 mod = modmap[file]
@@ -502,10 +529,14 @@ class Skylos:
                         pass
 
         finally:
-            if cache:
-                cache.close()
+            if injected:
+                os.environ.pop("SKYLOS_CUSTOM_RULES", None)
 
         self.pattern_trackers = pattern_trackers
+
+        for tracker in pattern_trackers.values():
+            if hasattr(tracker, "known_qualified_refs"):
+                tracker.known_qualified_refs.clear()
 
         self._global_abc_classes = set()
         self._global_protocol_classes = set()
@@ -677,12 +708,32 @@ class Skylos:
             result["analysis_summary"]["danger_count"] = len(all_dangers)
 
         if enable_quality and all_quality:
-            result["quality"] = all_quality
-            result["analysis_summary"]["quality_count"] = len(all_quality)
+            custom_hits = []
+            core_quality = []
+
+            for f in all_quality:
+                rid = str(f.get("rule_id", ""))
+                if rid.startswith("CUSTOM-"):
+                    custom_hits.append(f)
+                else:
+                    core_quality.append(f)
+
+            if core_quality:
+                result["quality"] = core_quality
+                result["analysis_summary"]["quality_count"] = len(core_quality)
+
+            if custom_hits:
+                result["custom_rules"] = custom_hits
+                result["analysis_summary"]["custom_rules_count"] = len(custom_hits)
 
         if empty_files:
             result["unused_files"] = empty_files
             result["analysis_summary"]["unused_files_count"] = len(empty_files)
+
+        if enable_danger and result.get("danger"):
+            from skylos.compliance import enrich_findings_with_compliance
+
+            result["danger"] = enrich_findings_with_compliance(result["danger"])
 
         for u in unused:
             if u["type"] in ("function", "method"):
@@ -792,9 +843,47 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
 
         q_rules.append(PerformanceRule(ignore_list=cfg["ignore"]))
 
+        custom_rules = []
+        custom_rules_json = os.getenv("SKYLOS_CUSTOM_RULES")
+        if os.getenv("SKYLOS_DEBUG"):
+            logger.info(
+                f"[DBG] {file}: SKYLOS_CUSTOM_RULES present={bool(custom_rules_json)} "
+                f"size={len(custom_rules_json) if custom_rules_json else 0}"
+            )
+
+        if custom_rules_json:
+            try:
+                custom_rules_data = json.loads(custom_rules_json)
+                custom_rules = load_custom_rules(custom_rules_data)
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.info(
+                        f"[DBG] {file}: load_custom_rules -> {len(custom_rules)} rules"
+                    )
+                    if custom_rules:
+                        logger.info(
+                            f"[DBG] {file}: custom rule ids = {[r.rule_id for r in custom_rules]}"
+                        )
+                q_rules.extend(custom_rules)
+            except Exception as e:
+                logger.error(f"[DBG] {file}: FAILED to load custom rules: {e}")
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error(traceback.format_exc())
+
         linter_q = LinterVisitor(q_rules, str(file))
         linter_q.visit(tree)
         quality_findings = linter_q.findings
+
+        if os.getenv("SKYLOS_DEBUG"):
+            custom_hits = [
+                f
+                for f in quality_findings
+                if str(f.get("rule_id", "")).startswith("CUSTOM-")
+            ]
+            logger.info(
+                f"[DBG] {file}: quality_findings={len(quality_findings)} custom_hits={len(custom_hits)}"
+            )
+            if custom_hits:
+                logger.info(f"[DBG] {file}: first_custom_hit={custom_hits[0]}")
 
         d_rules = [DangerousCallsRule()]
         linter_d = LinterVisitor(d_rules, str(file))
@@ -878,6 +967,7 @@ def analyze(
     enable_quality=False,
     extra_visitors=None,
     progress_callback=None,
+    custom_rules_data=None,
 ):
     return Skylos().analyze(
         path,
@@ -888,6 +978,7 @@ def analyze(
         enable_quality,
         extra_visitors,
         progress_callback,
+        custom_rules_data,
     )
 
 
@@ -988,6 +1079,11 @@ if __name__ == "__main__":
             print(
                 f" {i}. {f['message']} [{f['rule_id']}] ({f['file']}:{f['line']}) Severity: {f['severity']}"
             )
+
+            if f.get("compliance_display"):
+                ## just show 3 first
+                tags = ", ".join(f["compliance_display"][:3])
+                print(f"    └─ Compliance: {tags}")
 
     if enable_secrets and data.get("secrets"):
         print("\n - Secrets")
