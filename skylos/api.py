@@ -21,7 +21,23 @@ else:
 
 
 def get_project_token():
-    return os.getenv("SKYLOS_TOKEN") or get_key("skylos_token")
+    token = os.getenv("SKYLOS_TOKEN")
+    if token:
+        return token
+    
+    creds_file = os.path.expanduser("~/.skylos/credentials.json")
+    if os.path.exists(creds_file):
+        try:
+            import json
+            with open(creds_file, "r") as f:
+                creds = json.load(f)
+            token = creds.get("token")
+            if token:
+                return token
+        except Exception:
+            pass
+    
+    return get_key("skylos_token")
 
 
 def get_project_info(token):

@@ -596,5 +596,17 @@ def main(args=None):
         sys.exit(1)
 
 
+def get_custom_rules():
+    token = get_token()
+    if not token:
+        return []
+
+    try:
+        data = api_get("/api/sync/rules", token)
+        return data.get("rules", [])
+    except Exception:
+        return []
+
+
 if __name__ == "__main__":
     main()
