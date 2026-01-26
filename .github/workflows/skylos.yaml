@@ -3,7 +3,7 @@ name: Skylos Deadcode Scan
 on:
   pull_request:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
@@ -16,43 +16,43 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: "3.11"
+
+      - uses: astral-sh/setup-uv@v4
 
       - name: Use repo skylos (not PyPI)
         run: |
-          python -m pip uninstall -y skylos || true
-          python -m pip install -U pip
-          python -m pip install -e .
+          uv venv --python 3.11
+          uv pip install --python .venv/bin/python -e .
           python -c "import skylos; print('skylos from:', skylos.__file__)"
           python -c "import skylos.visitors.languages; print('languages OK')"
 
       - name: Run Skylos
+        id: scan
         env:
           REPORT: skylos_${{ github.run_number }}_${{ github.sha }}.json
         run: |
           echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
-          python -m skylos.cli . --json > "$REPORT"
-        id: scan
+          .venv/bin/python -m skylos.cli . --json > "$REPORT"
 
       - name: Fail if there are findings
         continue-on-error: ${{ env.SKYLOS_STRICT != 'true' }}
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
         run: |
-            python - << 'PY'
-            import json, sys, os
-            report = os.environ["REPORT"]
-            data = json.load(open(report, "r", encoding="utf-8"))
-            count = 0
-            for value in data.values():
-                if isinstance(value, list):
-                    count += len(value)
-            print(f"Findings: {count}")
-            if count > 0:
+          .venv/bin/python - << 'PY'
+          import json, sys, os
+          report = os.environ["REPORT"]
+          data = json.load(open(report, "r", encoding="utf-8"))
+          count = 0
+          for value in data.values():
+              if isinstance(value, list):
+                  count += len(value)
+          print(f"Findings: {count}")
+          if count > 0:
               print(f"::warning title=Skylos findings::{count} potential issues found. See {report}")
-            sys.exit(1 if count > 0 else 0)
-            PY
+          sys.exit(1 if count > 0 else 0)
+          PY
 
       - name: Upload report artifact
         if: always()
