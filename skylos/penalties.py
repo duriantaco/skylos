@@ -28,6 +28,7 @@ from skylos.known_patterns import (
     has_base_class,
 )
 from skylos.visitors.framework_aware import detect_framework_usage
+from pathlib import Path
 
 
 def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
@@ -53,8 +54,10 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
             confidence -= conf_reduction
 
     if simple_name in HARD_ENTRYPOINTS:
-        def_obj.confidence = 0
-        return
+        if Path(str(def_obj.filename)).name == "__main__.py":
+            def_obj.confidence = 0
+            def_obj.skip_reason = "__main__ entrypoint"
+            return
 
     if def_obj.line in getattr(framework, "framework_decorated_lines", set()):
         def_obj.confidence = 0
