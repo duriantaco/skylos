@@ -199,6 +199,16 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "slow: mark test as slow running")
     config.addinivalue_line("markers", "cli: mark test as CLI interface test")
 
+    global _tracer
+
+    if config.getoption("--skylos-trace"):
+        include = config.getoption("--skylos-trace-include")
+        include_patterns = include.split(",") if include else None
+
+        _tracer = CallTracer(include_patterns=include_patterns)
+        _tracer.start()
+        print("\nSkylos call tracing enabled")
+
 
 @pytest.fixture
 def mock_git_repo():
@@ -254,18 +264,6 @@ def pytest_addoption(parser):
         default=".skylos_trace",
         help="Output file for trace data (default: .skylos_trace)",
     )
-
-
-def pytest_configure(config):
-    global _tracer
-
-    if config.getoption("--skylos-trace"):
-        include = config.getoption("--skylos-trace-include")
-        include_patterns = include.split(",") if include else None
-
-        _tracer = CallTracer(include_patterns=include_patterns)
-        _tracer.start()
-        print("\nSkylos call tracing enabled")
 
 
 def pytest_unconfigure(config):

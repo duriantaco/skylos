@@ -2,6 +2,7 @@ import json
 import pytest
 
 import skylos.llm.agents as agents
+from skylos.adapters.litellm_adapter import LiteLLMAdapter
 
 
 class FakeAdapter:
@@ -61,42 +62,20 @@ def test_create_agent_invalid_type_raises():
         agents.create_agent("not_real")
 
 
-def test_create_llm_adapter_openai_uses_env_if_missing_api_key(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "OPENAI_ENV_KEY")
-
-    cfg = agents.AgentConfig(model="gpt-4.1", api_key=None)
+def test_create_llm_adapter_returns_litellm_adapter(monkeypatch):
+    cfg = agents.AgentConfig(model="gpt-4o-mini", api_key="X")
     adapter = agents.create_llm_adapter(cfg)
 
-    assert isinstance(adapter, agents.OpenAILLM)
-    assert adapter.api_key == "OPENAI_ENV_KEY"
+    assert isinstance(adapter, LiteLLMAdapter)
 
 
-def test_create_llm_adapter_openai_missing_env_raises(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_create_llm_adapter_litellm_sets_api_base_from_env(monkeypatch):
+    monkeypatch.setenv("SKYLOS_LLM_BASE_URL", "http://localhost:11434/v1")
 
-    cfg = agents.AgentConfig(model="gpt-4.1", api_key=None)
-    with pytest.raises(ValueError) as e:
-        agents.create_llm_adapter(cfg)
-    assert "OPENAI_API_KEY" in str(e.value)
-
-
-def test_create_llm_adapter_anthropic_uses_env_if_missing_api_key(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "ANTHROPIC_ENV_KEY")
-
-    cfg = agents.AgentConfig(model="claude-3-5-sonnet", api_key=None)
+    cfg = agents.AgentConfig(model="gpt-4o-mini", api_key="X")
     adapter = agents.create_llm_adapter(cfg)
 
-    assert isinstance(adapter, agents.AnthropicLLM)
-    assert adapter.api_key == "ANTHROPIC_ENV_KEY"
-
-
-def test_create_llm_adapter_anthropic_missing_env_raises(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-
-    cfg = agents.AgentConfig(model="claude-3-5-sonnet", api_key=None)
-    with pytest.raises(ValueError) as e:
-        agents.create_llm_adapter(cfg)
-    assert "ANTHROPIC_API_KEY" in str(e.value)
+    assert adapter.api_base == "http://localhost:11434/v1"
 
 
 def test_security_agent_include_examples_true_for_small_context(monkeypatch):
