@@ -20,25 +20,26 @@ def test_shorten_path_none():
     assert cli._shorten_path(None) == "?"
 
 
-def test_shorten_path_relative_to_root(tmp_path):
+def test_shorten_path_relative_to_cwd(tmp_path, monkeypatch):
     root = tmp_path / "proj"
     (root / "a").mkdir(parents=True)
     f = root / "a" / "b.py"
     f.write_text("x=1", encoding="utf-8")
+    monkeypatch.chdir(root)
 
-    out = cli._shorten_path(str(f), root_path=str(root))
+    out = cli._shorten_path(str(f))
     assert out.replace("\\", "/") == "a/b.py"
 
 
-def test_shorten_path_root_is_file(tmp_path):
-    root_file = tmp_path / "pyproject.toml"
-    root_file.write_text("x", encoding="utf-8")
-    f = tmp_path / "src" / "m.py"
-    f.parent.mkdir(parents=True)
+def test_shorten_path_from_parent_dir(tmp_path, monkeypatch):
+    root = tmp_path / "proj"
+    (root / "src").mkdir(parents=True)
+    f = root / "src" / "m.py"
     f.write_text("x=1", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
 
-    out = cli._shorten_path(str(f), root_path=str(root_file))
-    assert out.replace("\\", "/") == "src/m.py"
+    out = cli._shorten_path(str(f))
+    assert out.replace("\\", "/") == "proj/src/m.py"
 
 
 def test_run_init_creates_pyproject_when_missing(tmp_path, monkeypatch):
@@ -292,6 +293,20 @@ def test_main_writes_sarif_and_prints_json(tmp_path, monkeypatch):
 
         exp.write.assert_called_once_with(str(sarif_path))
         p.assert_called_once_with(json.dumps(result))
+
+
+def test_shorten_path_returns_absolute_when_outside_cwd(tmp_path, monkeypatch):
+    cwd_dir = tmp_path / "cwd"
+    cwd_dir.mkdir()
+
+    outside = tmp_path / "other" / "file.py"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("x=1", encoding="utf-8")
+
+    monkeypatch.chdir(cwd_dir)
+
+    out = cli._shorten_path(str(outside))
+    assert out == str(outside.resolve())
 
 
 def test_main_coverage_runs_pytest_then_unittest_on_failure(tmp_path, monkeypatch):
