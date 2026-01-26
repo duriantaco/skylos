@@ -2,7 +2,7 @@ name: Tests + Coverage
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
   workflow_dispatch:
 
@@ -13,21 +13,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
+      - uses: astral-sh/setup-uv@v4
 
-      - name: Install (repo skylos, not PyPI)
+      - name: Create venv + install deps
         run: |
-          python -m pip uninstall -y skylos || true
-          python -m pip install -U pip
-          python -m pip install -e .
-          python -m pip install pytest pytest-cov
+          uv venv
+          uv pip install -e .
+          uv pip install pytest pytest-cov
 
-      - name: Run tests with coverage (generate coverage.xml)
+      - name: Run tests with coverage
         run: |
-          pytest -q --cov=skylos --cov-report=term-missing --cov-report=xml
+          uv run pytest -q --cov=skylos --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
