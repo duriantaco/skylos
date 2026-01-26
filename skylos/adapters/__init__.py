@@ -1,12 +1,8 @@
 from .base import BaseAdapter
-from .openai_adapter import OpenAIAdapter
-from .anthropic_adapter import AnthropicAdapter
+from .litellm_adapter import LiteLLMAdapter
+
+__all__ = ["BaseAdapter", "get_adapter", "LiteLLMAdapter"]
 
 
-def get_adapter(model, api_key=None):
-    model_lower = model.lower()
-
-    if "claude" in model_lower:
-        return AnthropicAdapter(model, api_key)
-
-    return OpenAIAdapter(model, api_key)
+def get_adapter(model, api_key=None, api_base=None):
+    return LiteLLMAdapter(model, api_key, api_base)

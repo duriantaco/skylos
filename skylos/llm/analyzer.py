@@ -28,7 +28,7 @@ class AnalyzerConfig:
         stream=True,
         parallel=False,
         max_workers=1,
-        max_chunk_tokens=2000,
+        max_chunk_tokens=1000,
     ):
         self.model = model
         self.api_key = api_key
@@ -220,7 +220,10 @@ class SkylosLLM:
                 issue_types=issue_types,
             )
         else:
-            chunks = self._chunk_by_size(source, str(file_path), max_chars)
+            chunks = self.context_builder.chunk_file(source, str(file_path))
+            chunks = [
+                {"start_line": c.start_line, "content": c.content} for c in chunks
+            ]
             all_findings = []
             for chunk in chunks:
                 all_findings.extend(
@@ -232,6 +235,7 @@ class SkylosLLM:
                         issue_types=issue_types,
                     )
                 )
+            time.sleep(2)
 
         validated, _ = self.validator.validate(all_findings, source, str(file_path))
 
