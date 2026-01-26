@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "3.1.1"
+version = "3.1.2"
 requires-python = ">=3.10"
 description = "An analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
@@ -25,13 +25,12 @@ dependencies = [
     "flask-cors>=3.0.3",
     "libcst>=1.8.2",
     "rich>=14.0.0",
-    "openai",
-    "anthropic",
     "keyring>=25.7.0",
     "requests",
     "tree-sitter>=0.25.2",
     "tree-sitter-typescript>=0.23.2",
-    "pyyaml"
+    "pyyaml",
+    "litellm"
 ]
 
 [project.scripts]
