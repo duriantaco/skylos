@@ -1,5 +1,44 @@
 ## Changelog
 
+## [3.1.2] - 202-01-25
+
+### Added
+
+- Parse pyproject.toml for console entrypoints via `[project.scripts]` (and optionally `[tool.poetry.scripts]`) and treat them as implicit usage
+- Added `--pytest-fixtures` flag which should be run in the test directory. This will allow Skylos to detect pytest fixtures that are defined but never used
+- Added dependency hallucination to catch packages that do not exist
+- Allow customrules and compliance from main webapp (beta)
+
+### Fixed
+- Fixed tests that were breaking because of cache
+- Fixed `conftest.py` that had duplicate function
+- Fixed `--strict` flag for gating in CLI
+
+### Changed
+- Changed CLI to display paths relative to CWD, not project root. Example: 
+
+```
+## Users run app.py from 
+/Users/duriantaco/skylos
+
+## Displayed
+app.py:16
+
+## Users run from
+/Users/duriantaco/
+
+## Displayed
+skylos/app.py:16
+```
+
+- Upgraded yaml files in `.github` folder to use `uv` instead of `pip`
+- Changed agents to use `litellm_adapter.py` instead of our independent wrapper 
+- Changed upload to be optional instead of automatic everytime a check is being run
+
+### Removed
+- Removed `cache.py` due to unstable outputs. If changes are made to the structure of objects returned by `proc_file()` then users with old cached results will get errors or wrong data. Dropped it, not worth the trouble
+- Removed anthropic and openai adapter. Switched to `litellm`
+
 ## [3.1.1] - 202-01-20
 
 ### Added
@@ -12,6 +51,7 @@
 - Added new cache and parallel processing functionalities
 - More unit tests for LLM agents, cache and parallel processing
 
+
 ### Fixed
 - `--gate` flag now uploads scan results before exiting, enabling GitHub App check updates for Pro users
 - Pre-commit hook now correctly returns exit code 1 when issues are found (use `skylos . --gate`)
@@ -23,7 +63,11 @@
 ### Changed
 - `OpenAIAdapter` now uses Chat Completions API (`chat.completions.create`) instead of Responses API
 - Provider resolution now follows priority chain: CLI flag -> env variable -> model name inference
+- Changed CLI to use left truncate instead of right truncate to display paths
 
+### Removed
+- Removed `cache.py` due to unstable outputs. If changes are made to the structure of objects returned by `proc_file()` then users with old cached results will get errors or wrong data. Dropped it, not worth the trouble
+ 
 ## [3.0.3] - 2026-01-10
 
 ### Added
