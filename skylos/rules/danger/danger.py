@@ -1,5 +1,6 @@
 from __future__ import annotations
 import ast
+import os
 import sys
 from pathlib import Path
 from .danger_sql.sql_flow import scan as scan_sql
@@ -8,6 +9,10 @@ from .danger_sql.sql_raw_flow import scan as scan_sql_raw
 from .danger_net.ssrf_flow import scan as scan_ssrf
 from .danger_fs.path_flow import scan as scan_path
 from .danger_web.xss_flow import scan as scan_xss
+from .danger_hallucination.dependency_hallucination import (
+    scan_python_dependency_hallucinations,
+)
+
 
 ALLOWED_SUFFIXES = (".py", ".pyi", ".pyw")
 
@@ -151,14 +156,31 @@ def _scan_file(file_path: Path, findings):
 
 def scan_ctx(_, files):
     findings = []
+    py_files = []
 
     for file_path in files:
         if file_path.suffix.lower() not in ALLOWED_SUFFIXES:
             continue
 
+        py_files.append(file_path)
+
         try:
             _scan_file(file_path, findings)
         except Exception as e:
             print(f"Scan failed for {file_path}: {e}", file=sys.stderr)
+
+    try:
+        if py_files:
+            repo_root = Path(os.path.commonpath([str(p.resolve()) for p in py_files]))
+
+            if repo_root.is_file():
+                repo_root = repo_root.parent
+
+            dep_findings = scan_python_dependency_hallucinations(repo_root, py_files)
+            if dep_findings:
+                findings.extend(dep_findings)
+
+    except Exception as e:
+        print(f"Dependency hallucination scan failed: {e}", file=sys.stderr)
 
     return findings

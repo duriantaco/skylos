@@ -6,6 +6,7 @@ from pathlib import Path
 class ImplicitRefTracker:
     def __init__(self):
         self.known_refs = set()
+        self.known_qualified_refs = set()
         self.pattern_refs = []
         self._compiled_patterns = []
         self.f_string_patterns = {}
@@ -16,12 +17,23 @@ class ImplicitRefTracker:
         self._traced_by_basename = {}
         self._coverage_by_basename = {}
 
+    def __getattr__(self, name):
+        if name == "known_qualified_refs":
+            self.known_qualified_refs = set()
+            return self.known_qualified_refs
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        )
+
     def add_pattern_ref(self, pattern, confidence):
         self.pattern_refs.append((pattern, confidence))
         regex = re.compile("^" + pattern.replace("*", ".*") + "$")
         self._compiled_patterns.append((regex, confidence, pattern))
 
     def should_mark_as_used(self, definition):
+        if getattr(definition, "name", None) in self.known_qualified_refs:
+            return True, 100, "entrypoint (pyproject.scripts)"
+
         simple_name = definition.simple_name
 
         if simple_name in self.known_refs:
@@ -50,10 +62,10 @@ class ImplicitRefTracker:
         if self._coverage_by_basename:
             for cov_file in self._coverage_by_basename.get(def_basename, []):
                 lines = self.covered_files_lines.get(cov_file, set())
-                
+
                 if def_line in lines:
                     return True, 100, "executed (coverage)"
-                
+
                 def_type = getattr(definition, "type", None)
                 if def_type in ("function", "method"):
                     check_range = set(range(def_line, def_line + 51))
@@ -93,6 +105,7 @@ class ImplicitRefTracker:
 
         except Exception as e:
             import logging
+
             logging.getLogger("Skylos").warning(f"Failed to load trace data: {e}")
             return False
 
@@ -138,6 +151,7 @@ class ImplicitRefTracker:
 
         except Exception as e:
             import logging
+
             logging.getLogger("Skylos").warning(f"Failed to load coverage: {e}")
             return False
 

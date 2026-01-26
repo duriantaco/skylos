@@ -24,4 +24,4 @@ node_modules
 .venv
 .coverage
 .skylos_trace
-.skylos/cache.sqlite
+.skylos
