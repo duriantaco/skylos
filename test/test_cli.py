@@ -685,7 +685,8 @@ def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
         "secrets": [],
     }
 
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", "."])
+    # Add --upload and --strict flags
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--upload", "--strict"])
 
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -702,14 +703,14 @@ def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
             return_value={
                 "success": True,
                 "scan_id": "scan123",
-                "quality_gate": {"passed": False, "message": "Too many issues"},
+                "quality_gate_passed": False,
             },
         ),
     ):
         with pytest.raises(SystemExit) as e:
             cli.main()
 
-    assert e.value.code == 1
+        assert e.value.code == 1
 
 
 def test_main_upload_gate_failed_does_not_exit_when_forced(monkeypatch):
