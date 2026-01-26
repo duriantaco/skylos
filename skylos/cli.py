@@ -17,6 +17,7 @@ from skylos.gatekeeper import run_gate_interaction
 from skylos.credentials import get_key, save_key
 from skylos.api import upload_report
 from skylos.sarif_exporter import SarifExporter
+from pathlib import Path
 
 import pathlib
 import skylos
@@ -44,7 +45,7 @@ except ImportError:
 try:
     from skylos.llm.analyzer import SkylosLLM, AnalyzerConfig
     from skylos.llm.schemas import Confidence
-    from skylos.llm.ui import SkylosUI, estimate_cost as llm_estimate_cost
+    from skylos.llm.ui import estimate_cost as llm_estimate_cost
 
     LLM_AVAILABLE = True
 except ImportError:
@@ -167,28 +168,46 @@ def comment_out_unused_function(
         return False
 
 
-def _shorten_path(file_path, root_path=None):
-    if not file_path:
+def _shorten_path(path, root_path=None, keep_parts=3):
+    if not path:
         return "?"
 
     try:
-        p = pathlib.Path(file_path)
-    except TypeError:
-        return str(file_path)
+        p = Path(path).resolve()
+        cwd = Path.cwd().resolve()
 
-    if root_path is not None:
-        try:
-            root = pathlib.Path(root_path)
-            if root.is_file():
-                root = root.parent
-            p = p.resolve()
-            root = root.resolve()
-            rel = p.relative_to(root)
-            return str(rel)
-        except Exception:
-            return p.name
+        rel = p.relative_to(cwd)
+        return str(rel)
 
-    return str(p)
+    except ValueError:
+        return str(p)
+    except Exception:
+        return str(path)
+
+
+def find_project_root(path):
+    try:
+        p = Path(path).resolve()
+    except Exception:
+        return Path.cwd().resolve()
+
+    if p.is_file():
+        cur = p.parent
+    else:
+        cur = p
+
+    while True:
+        if (cur / "pyproject.toml").exists():
+            return cur
+        if (cur / ".git").exists():
+            return cur
+
+        parent = cur.parent
+        if parent == cur:
+            break
+        cur = parent
+
+    return Path.cwd().resolve()
 
 
 def interactive_selection(
@@ -320,30 +339,15 @@ def render_results(console: Console, result, tree=False, root_path=None):
                 _pill(
                     "Quality", len(result.get("quality", []) or []), bad_style="warn"
                 ),
+                _pill(
+                    "Custom",
+                    len(result.get("custom_rules", []) or []),
+                    bad_style="warn",
+                ),
             ]
         )
     )
     console.print()
-
-    def _render_unused(title, items, name_key="name"):
-        if not items:
-            return
-
-        console.rule(f"[bold]{title}")
-
-        table = Table(expand=True)
-        table.add_column("#", style="muted", width=3)
-        table.add_column("Name", style="bold")
-        table.add_column("Location", style="muted", no_wrap=True, overflow="fold")
-
-        for i, item in enumerate(items, 1):
-            nm = item.get(name_key) or item.get("simple_name") or "<?>"
-            short = _shorten_path(item.get("file"), root_path)
-            loc = f"{short}:{item.get('line', item.get('lineno', '?'))}"
-            table.add_row(str(i), nm, loc)
-
-        console.print(table)
-        console.print()
 
     def _render_unused(title, items, name_key="name"):
         if not items:
@@ -374,6 +378,26 @@ def render_results(console: Console, result, tree=False, root_path=None):
                 conf_str = str(conf)
 
             table.add_row(str(i), nm, loc, conf_str)
+
+        console.print(table)
+        console.print()
+
+    def _render_unused_simple(title, items, name_key="name"):
+        if not items:
+            return
+
+        console.rule(f"[bold]{title}")
+
+        table = Table(expand=True)
+        table.add_column("#", style="muted", width=3)
+        table.add_column("Name", style="bold")
+        table.add_column("Location", style="muted", overflow="fold")
+
+        for i, item in enumerate(items, 1):
+            nm = item.get(name_key) or item.get("simple_name") or "<?>"
+            short = _shorten_path(item.get("file"), root_path)
+            loc = f"{short}:{item.get('line', '?')}"
+            table.add_row(str(i), nm, loc)
 
         console.print(table)
         console.print()
@@ -414,6 +438,32 @@ def render_results(console: Console, result, tree=False, root_path=None):
         console.print(
             "[muted]Tip: split helpers, add early returns, flatten branches.[/muted]\n"
         )
+
+    def _render_custom_rules(items):
+        custom = [
+            i for i in (items or []) if str(i.get("rule_id", "")).startswith("CUSTOM-")
+        ]
+        if not custom:
+            return
+
+        console.rule("[bold magenta]Custom Rules")
+        table = Table(expand=True)
+        table.add_column("#", style="muted", width=3)
+        table.add_column("Rule", style="magenta", width=18)
+        table.add_column("Severity", width=10)
+        table.add_column("Message", overflow="fold")
+        table.add_column("Location", style="muted", width=36)
+
+        for i, d in enumerate(custom, 1):
+            rule = d.get("rule_id") or "CUSTOM"
+            sev = d.get("severity") or "MEDIUM"
+            msg = d.get("message") or "Custom rule violation"
+            short = _shorten_path(d.get("file"), root_path)
+            loc = f"{short}:{d.get('line', '?')}"
+            table.add_row(str(i), rule, sev, msg, loc)
+
+        console.print(table)
+        console.print()
 
     def _render_secrets(items):
         if not items:
@@ -496,49 +546,103 @@ def render_results(console: Console, result, tree=False, root_path=None):
 
         console.print(tree)
 
+    def _display_rule_name(rule_id):
+        RULE_TITLES = {
+            "SKY-D201": "Dynamic code execution (eval)",
+            "SKY-D202": "Dynamic code execution (exec)",
+            "SKY-D203": "OS command execution (os.system)",
+            "SKY-D204": "Unsafe deserialization (pickle.load)",
+            "SKY-D205": "Unsafe deserialization (pickle.loads)",
+            "SKY-D206": "Unsafe YAML load (no SafeLoader)",
+            "SKY-D207": "Weak hash (MD5)",
+            "SKY-D208": "Weak hash (SHA1)",
+            "SKY-D209": "Shell execution (subprocess shell=True)",
+            "SKY-D210": "TLS verification disabled (requests verify=False)",
+            "SKY-D212": "Dependency hallucination / slopsquatting",
+            "SKY-D213": "Undeclared third-party dependency",
+        }
+        return RULE_TITLES.get(rule_id, "Security issue")
+
     def _render_danger(items):
         if not items:
             return
 
         console.rule("[bold red]Security Issues")
+
+        has_verification = any(
+            isinstance(d.get("verification"), dict) and d["verification"].get("verdict")
+            for d in (items or [])
+        )
+
         table = Table(expand=True)
         table.add_column("#", style="muted", width=3)
-        table.add_column("Rule", style="yellow", width=18)
-        table.add_column("Severity", width=10)
+        table.add_column("Issue", style="yellow", width=20)
+        table.add_column("Severity", width=9)
         table.add_column("Message", overflow="fold")
-        table.add_column("Location", style="muted", width=36, overflow="fold")
-        table.add_column("Verified", width=10)
-        table.add_column("Proof", overflow="fold")
+        table.add_column("Location", style="muted", width=24, overflow="fold")
+
+        if has_verification:
+            table.add_column("Verified", width=9)
+            table.add_column("Proof", overflow="fold")
 
         for i, d in enumerate(items[:100], 1):
-            rule = d.get("rule_id") or "UNKNOWN"
+            rule_id = d.get("rule_id") or "UNKNOWN"
+
+            issue_name = _display_rule_name(rule_id)
+            issue_cell = f"{issue_name}\n[dim]{rule_id}[/dim]"
+
             sev = (d.get("severity") or "UNKNOWN").title()
             msg = d.get("message") or "Issue detected"
+
             short = _shorten_path(d.get("file"), root_path)
             loc = f"{short}:{d.get('line', '?')}"
 
-            ver = (d.get("verification") or {}).get("verdict")
-            ver = (d.get("verification") or {}).get("verdict")
-            if ver == "VERIFIED":
-                ver_str = "[good]VERIFIED[/good]"
-            elif ver == "REFUTED":
-                ver_str = "[muted]REFUTED[/muted]"
-            elif ver == "UNKNOWN":
-                ver_str = "[warn]UNKNOWN[/warn]"
+            if has_verification:
+                ver = (d.get("verification") or {}).get("verdict")
+                if ver == "VERIFIED":
+                    ver_str = "[good]VERIFIED[/good]"
+                elif ver == "REFUTED":
+                    ver_str = "[muted]REFUTED[/muted]"
+                elif ver == "UNKNOWN":
+                    ver_str = "[warn]UNKNOWN[/warn]"
+                else:
+                    ver_str = "-"
+
+                proof = ""
+                verification = d.get("verification")
+                if verification is None:
+                    verification = {}
+
+                evidence = verification.get("evidence")
+                if evidence is None:
+                    evidence = {}
+
+                chain = evidence.get("chain")
+
+                if isinstance(chain, list) and len(chain) > 0:
+                    names = []
+                    for x in chain[:6]:
+                        fn = None
+                        if isinstance(x, dict):
+                            fn = x.get("fn")
+                        if not fn:
+                            fn = "?"
+                        names.append(fn)
+
+                    proof = " -> ".join(names)
+
+                else:
+                    entrypoints = evidence.get("entrypoints")
+
+                    if entrypoints:
+                        proof = str(len(entrypoints)) + " entrypoints scanned"
+                    else:
+                        if ver:
+                            proof = "No evidence attached"
+
+                table.add_row(str(i), issue_cell, sev, msg, loc, ver_str, proof)
             else:
-                ver_str = "-"
-
-            proof = ""
-            evidence = (d.get("verification") or {}).get("evidence") or {}
-            chain = evidence.get("chain")
-            if isinstance(chain, list) and len(chain) > 0:
-                proof = " -> ".join([x.get("fn", "?") for x in chain[:6]])
-            elif evidence.get("entrypoints"):
-                proof = f"{len(evidence['entrypoints'])} entrypoints scanned"
-            elif ver:
-                proof = "No evidence attached"
-
-            table.add_row(str(i), rule, sev, msg, loc, ver_str, proof)
+                table.add_row(str(i), issue_cell, sev, msg, loc)
 
         console.print(table)
         console.print()
@@ -561,9 +665,13 @@ def render_results(console: Console, result, tree=False, root_path=None):
         _render_unused(
             "Unused Classes", result.get("unused_classes", []), name_key="name"
         )
+        _render_unused_simple(
+            "Unused Fixtures", result.get("unused_fixtures", []), name_key="name"
+        )
         _render_secrets(result.get("secrets", []) or [])
         _render_danger(result.get("danger", []) or [])
         _render_quality(result.get("quality", []) or [])
+        _render_custom_rules(result.get("custom_rules", []) or [])
 
 
 def run_init():
@@ -752,6 +860,16 @@ def run_static_on_files(
         "secrets": [],
     }
 
+    try:
+        from skylos.sync import get_custom_rules
+
+        custom_rules_data = get_custom_rules()
+        if custom_rules_data:
+            os.environ["SKYLOS_CUSTOM_RULES"] = json.dumps(custom_rules_data)
+
+    except Exception:
+        pass
+
     for f in files:
         try:
             result_json = run_analyze(
@@ -816,7 +934,6 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "agent":
         if not LLM_AVAILABLE:
             Console().print("[bold red]Agent module not available[/bold red]")
-            Console().print("Install dependencies: pip install openai anthropic")
             sys.exit(1)
 
         import argparse as agent_argparse
@@ -926,10 +1043,27 @@ def main():
         console = Console()
 
         model = agent_args.model
+
+        def _detect_provider(model):
+            m = model.lower()
+            if m.startswith("ollama/"):
+                return "ollama"
+            if "claude" in m:
+                return "anthropic"
+            if m.startswith("gemini/"):
+                return "google"
+            if m.startswith("mistral/"):
+                return "mistral"
+            if m.startswith("groq/"):
+                return "groq"
+            if m.startswith("xai/"):
+                return "xai"
+            return "openai"
+
         provider = (
             getattr(agent_args, "provider", None)
             or os.getenv("SKYLOS_LLM_PROVIDER")
-            or ("anthropic" if "claude" in model.lower() else "openai")
+            or _detect_provider(model)
         )
 
         base_url = (
@@ -1474,6 +1608,11 @@ def main():
         help="Run as a quality gate (block deployment on failure)",
     )
     parser.add_argument(
+        "--upload",
+        action="store_true",
+        help="Upload results to skylos.dev dashboard",
+    )
+    parser.add_argument(
         "--verify",
         action="store_true",
         help="(PRO) Verify findings with neuro-symbolic prover. Requires paid plan.",
@@ -1487,6 +1626,11 @@ def main():
         "--coverage",
         action="store_true",
         help="Run tests with coverage before analysis",
+    )
+    parser.add_argument(
+        "--pytest-fixtures",
+        action="store_true",
+        help="Run pytest runtime fixture tracker and report unused fixtures",
     )
     parser.add_argument(
         "--force",
@@ -1509,7 +1653,16 @@ def main():
         "--tree", action="store_true", help="Show findings in tree format"
     )
     parser.add_argument(
-        "--model", default="gpt-4.1", help="OpenAI Model to use (default: gpt-4.1)"
+        "--model",
+        type=str,
+        default=None,
+        help="LLM model. Examples: gpt-4o-mini, claude-sonnet-4-20250514, groq/llama3-70b-8192. Full list: https://docs.litellm.ai/docs/providers",
+    )
+    parser.add_argument(
+        "--api-base",
+        type=str,
+        default=None,
+        help="Custom API URL for self-hosted models",
     )
     parser.add_argument(
         "--version",
@@ -1633,10 +1786,20 @@ def main():
         if not args.json:
             console.print("[brand]Running tests with coverage...[/brand]")
 
+        cmd = ["coverage", "run", "-m", "pytest", "-q"]
+        env = os.environ.copy()
+
+        if args.pytest_fixtures:
+            env["SKYLOS_UNUSED_FIXTURES_OUT"] = str(
+                project_root / ".skylos_unused_fixtures.json"
+            )
+            cmd += ["-p", "skylos.pytest_unused_fixtures"]
+
         pytest_result = subprocess.run(
-            ["coverage", "run", "-m", "pytest", "-q"],
+            cmd,
             cwd=project_root,
             capture_output=True,
+            env=env,
         )
 
         if pytest_result.returncode != 0:
@@ -1656,6 +1819,7 @@ def main():
             console.print("[brand]Running tests with call tracing...[/brand]")
 
         trace_script = textwrap.dedent(f"""\
+import os
 import sys
 sys.path.insert(0, {str(project_root)!r})
 from skylos.tracer import CallTracer
@@ -1666,7 +1830,14 @@ tracer.start()
 ret = 0
 try:
     import pytest
-    ret = pytest.main(["-q"])
+
+    pytest_args = ["-q"]
+    if {bool(args.pytest_fixtures)!r}:
+        os.environ["SKYLOS_UNUSED_FIXTURES_OUT"] = {str(project_root / ".skylos_unused_fixtures.json")!r}
+        pytest_args += ["-p", "skylos.pytest_unused_fixtures"]
+
+    ret = pytest.main(pytest_args)
+
 finally:
     tracer.stop()
     tracer.save({str(project_root / ".skylos_trace")!r})
@@ -1698,6 +1869,58 @@ sys.exit(ret)
         elif not args.json:
             console.print("[good]Trace data collected[/good]")
 
+    pytest_fixtures_ok = None
+
+    if args.pytest_fixtures and (not args.coverage) and (not args.trace):
+        if not args.json:
+            console.print(
+                "[brand]Running tests to detect unused pytest fixtures...[/brand]"
+            )
+
+        env = os.environ.copy()
+        env["SKYLOS_UNUSED_FIXTURES_OUT"] = str(
+            project_root / ".skylos_unused_fixtures.json"
+        )
+
+        pytest_targets = []
+        p = pathlib.Path(args.path).resolve()
+        if p.is_file():
+            pytest_targets = [str(p)]
+
+        r = subprocess.run(
+            ["pytest", "-q", *pytest_targets, "-p", "skylos.pytest_unused_fixtures"],
+            cwd=project_root,
+            capture_output=not args.json,
+            text=True,
+            env=env,
+        )
+
+        pytest_fixtures_ok = r.returncode == 0
+
+        if not args.json:
+            if pytest_fixtures_ok:
+                console.print("[good]Unused fixture report collected[/good]")
+            else:
+                console.print(
+                    "[warn]pytest had failures; unused fixture report may be partial[/warn]"
+                )
+
+    custom_rules_data = None
+    if not args.json:
+        try:
+            from skylos.sync import get_custom_rules, get_token
+
+            token = get_token()
+            if token:
+                custom_rules_data = get_custom_rules()
+                if custom_rules_data:
+                    console.print(
+                        f"[brand]Loaded {len(custom_rules_data)} custom rules from cloud[/brand]"
+                    )
+        except Exception as e:
+            if args.verbose:
+                console.print(f"[warn]Could not load custom rules: {e}[/warn]")
+
     try:
         with Progress(
             SpinnerColumn(style="brand"),
@@ -1718,9 +1941,47 @@ sys.exit(ret)
                 enable_quality=bool(args.quality),
                 exclude_folders=list(final_exclude_folders),
                 progress_callback=update_progress,
+                custom_rules_data=custom_rules_data,
             )
 
         result = json.loads(result_json)
+
+        if args.pytest_fixtures:
+            report_path = project_root / ".skylos_unused_fixtures.json"
+
+            if pytest_fixtures_ok is False:
+                result["unused_fixtures"] = []
+                result["unused_fixtures_counts"] = {}
+            elif report_path.exists():
+                try:
+                    data = json.loads(report_path.read_text(encoding="utf-8"))
+                    fixtures = data.get("unused_fixtures", []) or []
+                    counts = data.get("counts", {}) or {}
+
+                    p = pathlib.Path(args.path).resolve()
+                    if p.is_file():
+                        allowed = {str(p)}
+                        allowed.add(str(p.parent / "conftest.py"))
+                        fixtures = [
+                            f for f in fixtures if str(f.get("file")) in allowed
+                        ]
+
+                    for f in fixtures:
+                        f.setdefault("confidence", 100)
+
+                    result["unused_fixtures"] = fixtures
+                    result["unused_fixtures_counts"] = counts
+
+                except Exception as e:
+                    result["unused_fixtures"] = []
+                    result["unused_fixtures_counts"] = {}
+                    if args.verbose and not args.json:
+                        console.print(
+                            f"[warn]Could not read unused fixture report: {e}[/warn]"
+                        )
+            else:
+                result["unused_fixtures"] = []
+                result["unused_fixtures_counts"] = {}
 
         if args.verify and (not args.json):
             try:
@@ -1781,6 +2042,7 @@ sys.exit(ret)
             _add(result.get("danger", []), "SECURITY", None)
             _add(result.get("quality", []), "QUALITY", None)
             _add(result.get("secrets", []), "SECRET", None)
+            _add(result.get("custom_rules", []), "CUSTOM", None)
 
             _add(
                 result.get("unused_functions", []),
@@ -2041,8 +2303,20 @@ sys.exit(ret)
             console.print(f" [{style}]{status}[/{style}] {item['name']}")
             console.print(f"    └─ {item['file']}:{item['line']}")
 
-    if not args.interactive and not args.json:
-        upload_resp = upload_report(result, is_forced=args.force)
+    if args.upload and not args.json:
+        upload_resp = upload_report(result, is_forced=args.force, strict=args.strict)
+
+        if not upload_resp.get("success"):
+            err = upload_resp.get("error")
+            if err:
+                console.print(f"[warn]Upload failed: {err}[/warn]")
+        else:
+            passed = upload_resp.get("quality_gate_passed")
+            if passed is None:
+                passed = (upload_resp.get("quality_gate") or {}).get("passed", True)
+
+            if passed is False and not args.force:
+                raise SystemExit(1)
 
         if not upload_resp.get("success"):
             err = upload_resp.get("error")
