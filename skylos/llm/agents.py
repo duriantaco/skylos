@@ -1,4 +1,3 @@
-import os
 import json
 import time
 import random
@@ -69,6 +68,13 @@ FIX_RESPONSE_FORMAT = {
 
 
 class AgentConfig:
+    RATE_LIMITED_PREFIXES = [
+        "groq/",
+        "gemini/",
+        "ollama/",
+        "mistral/",
+    ]
+
     def __init__(
         self,
         model="gpt-4.1",
@@ -84,6 +90,15 @@ class AgentConfig:
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.stream = stream
+
+    def is_rate_limited_model(self):
+        m = (self.model or "").strip().lower()
+
+        for prefix in self.RATE_LIMITED_PREFIXES:
+            if m.startswith(prefix):
+                return True
+
+        return False
 
 
 class OpenAILLM:
@@ -254,28 +269,9 @@ class AnthropicLLM:
 
 
 def create_llm_adapter(config):
-    model = config.model.lower()
-    api_key = config.api_key
+    from skylos.adapters.litellm_adapter import LiteLLMAdapter
 
-    if "claude" in model or "anthropic" in model:
-        if api_key is None:
-            api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "No ANTHROPIC_API_KEY found. "
-                "Set env var ANTHROPIC_API_KEY or save it via Skylos credentials."
-            )
-        return AnthropicLLM(model=config.model, api_key=api_key, config=config)
-
-    else:
-        if api_key is None:
-            api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "No OPENAI_API_KEY found. "
-                "Set env var OPENAI_API_KEY or save it via Skylos credentials."
-            )
-        return OpenAILLM(model=config.model, api_key=api_key, config=config)
+    return LiteLLMAdapter(model=config.model, api_key=config.api_key)
 
 
 class SecurityAgent:
@@ -297,7 +293,9 @@ class SecurityAgent:
                 source, file_path=file_path, defs_map=defs_map
             )
 
-        include_examples = len(context) < 20_000
+        include_examples = (
+            not self.config.is_rate_limited_model() and len(context) < 10_000
+        )
         system, user = build_security_prompt(context, include_examples=include_examples)
 
         if self.config.stream:
@@ -332,7 +330,9 @@ class DeadCodeAgent:
                 source, file_path=file_path, defs_map=defs_map
             )
 
-        include_examples = len(context) < 20_000
+        include_examples = (
+            not self.config.is_rate_limited_model() and len(context) < 10_000
+        )
         system, user = build_dead_code_prompt(
             context, include_examples=include_examples
         )
@@ -369,7 +369,9 @@ class QualityAgent:
                 source, file_path=file_path, defs_map=defs_map
             )
 
-        include_examples = len(context) < 20_000
+        include_examples = (
+            not self.config.is_rate_limited_model() and len(context) < 10_000
+        )
         system, user = build_quality_prompt(context, include_examples=include_examples)
 
         if self.config.stream:
@@ -404,7 +406,9 @@ class SecurityAuditAgent:
                 source, file_path=file_path, defs_map=defs_map
             )
 
-        include_examples = len(context) < 20_000
+        include_examples = (
+            not self.config.is_rate_limited_model() and len(context) < 10_000
+        )
         system, user = build_security_audit_prompt(
             context, include_examples=include_examples
         )
