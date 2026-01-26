@@ -13,7 +13,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v4
 
-      - name: Install deps (venv)
+      - name: Install deps
         run: |
           uv venv --python 3.11
           uv pip install --python .venv/bin/python -e .
@@ -21,4 +21,5 @@ jobs:
 
       - name: Run pre-commit
         run: |
-          .venv/bin/pre-commit run --all-files
+          source .venv/bin/activate
+          pre-commit run --all-files
