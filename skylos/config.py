@@ -237,3 +237,15 @@ def suggest_pattern(name):
     if name.endswith("Factory"):
         return "*Factory"
     return name
+
+
+def load_llm_config(config=None):
+    if config is None:
+        config = load_config()
+
+    llm_config = config.get("llm", {})
+
+    return {
+        "model": llm_config.get("model"),
+        "api_base": llm_config.get("api_base"),
+    }
