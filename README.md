@@ -42,6 +42,7 @@
 | **Hunt Dead Code** | `skylos .` | Prune unreachable functions and unused imports |
 | **Precise Hunt** | `skylos . --trace` | Cross-reference with runtime data |
 | **Audit Risk & Quality** | `skylos . --secrets --danger --quality` | Security leaks, taint tracking, code rot |
+| **Detect Unused Pytest Fixtures** | `skylos . --pytest-fixtures` | Find unused `@pytest.fixture` across tests + conftest |
 | **AI-Powered Analysis** | `skylos agent analyze .` | Hybrid static + LLM analysis with project context |
 | **AI Audit** | `skylos agent security-audit .` | Deep LLM review with interactive file selection |
 | **Automated Repair** | `skylos agent analyze . --fix` | Let the LLM fix what it found |
@@ -80,6 +81,11 @@
 * **Quality Gates**: Enforces hard thresholds for complexity, nesting, and security risk via `pyproject.toml` to block non-compliant PRs
 * **Interactive CLI**: Manually verify and remove/comment-out findings through an `inquirer`-based terminal interface
 * **Security-Audit Mode**: Leverages an independent reasoning loop to identify security vulnerabilities
+
+### Pytest Hygiene
+
+* **Unused Fixture Detection**: Finds unused `@pytest.fixture` definitions in `test_*.py` and `conftest.py`
+* **Cross-file Resolution**: Tracks fixtures used across modules, not just within the same file
 
 ### Multi-Language Support
 
@@ -146,7 +152,8 @@ When Skylos sees Flask, Django, or FastAPI imports, it adjusts scoring automatic
 | Pattern | Handling |
 |---------|----------|
 | `@app.route`, `@router.get` | Entry point → marked as used |
-| `@pytest.fixture`, `@celery.task` | Entry point → marked as used |
+| `@pytest.fixture` | Treated as a pytest entrypoint, but can be reported as unused if never referenced |
+| `@celery.task` | Entry point → marked as used |
 | `getattr(mod, "func")` | Tracks dynamic reference |
 | `getattr(mod, f"handle_{x}")` | Tracks pattern `handle_*` |
 
@@ -177,6 +184,17 @@ Want test files included? Use `--include-folder tests`.
 > When ambiguous, we'd rather miss dead code than flag live code as dead.
 
 Framework endpoints are called externally (HTTP, signals). Name resolution handles aliases. When things get unclear, we err on the side of caution.
+
+## Unused Pytest Fixtures
+
+Skylos can detect pytest fixtures that are defined but never used.
+
+```bash
+skylos . --pytest-fixtures
+```
+
+This includes fixtures inside conftest.py, since conftest.py is the standard place to store shared test fixtures.
+
 
 ## AI-Powered Analysis
 
@@ -316,7 +334,6 @@ skylos . --danger --gate
 Use in any CI system:
 
 ```yaml
-# .github/workflows/skylos.yml
 name: Skylos Quality Gate
 
 on:
@@ -845,6 +862,9 @@ A: It runs `pytest` (or `unittest`) with coverage tracking before analysis. Func
 
 **Q: Do I need 100% test coverage for `--trace` to be useful?**
 A: No. However, we **STRONGLY** encourage you to have tests. Any coverage helps. If you have 30% test coverage, that's 30% of your code verified. The other 70% still uses static analysis. Coverage only removes false positives, it never adds them.
+
+**Q: Why are fixtures in `conftest.py` showing up as unused?**
+A: `conftest.py` is the standard place for shared fixtures. If a fixture is defined there but never referenced by any test, Skylos will report it as unused. This is normal and safe to review.
 
 **Q: My tests are failing. Can I still use `--trace`?**
 A: Yes. Coverage tracks execution, not pass/fail. Even failing tests provide coverage data.
