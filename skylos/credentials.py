@@ -51,13 +51,19 @@ def get_key(provider):
 
 
 def delete_key(provider):
-    if KEYRING_AVAILABLE:
-        try:
-            keyring.delete_password(SERVICE_NAME, provider)
-            return True
-        except Exception:
-            pass
-    return False
+    try:
+        import keyring
+    except Exception:
+        return False
+
+    service = "skylos"
+    username = str(provider)
+
+    try:
+        keyring.delete_password(service, username)
+        return True
+    except Exception:
+        return False
 
 
 def list_providers():
