@@ -127,6 +127,7 @@ class _XSSFlowChecker(TaintVisitor):
                             "file": str(self.file_path),
                             "line": node.lineno,
                             "col": node.col_offset,
+                            "symbol": self._current_symbol(),
                         }
                     )
 
@@ -141,6 +142,7 @@ class _XSSFlowChecker(TaintVisitor):
                         "file": str(self.file_path),
                         "line": node.lineno,
                         "col": node.col_offset,
+                        "symbol": self._current_symbol(),
                     }
                 )
 
@@ -157,6 +159,7 @@ class _XSSFlowChecker(TaintVisitor):
                         "file": str(self.file_path),
                         "line": node.lineno,
                         "col": node.col_offset,
+                        "symbol": self._current_symbol(),
                     }
                 )
         self.generic_visit(node)

@@ -98,18 +98,73 @@ def _yaml_load_without_safeloader(node: ast.Call):
     return True
 
 
-def _add_finding(findings, file_path: Path, node: ast.AST, rule_id, severity, message):
-    findings.append(
-        {
-            "rule_id": rule_id,
-            "severity": severity,
-            "message": message,
-            "file": str(file_path),
-            "line": getattr(node, "lineno", 1),
-            "col": getattr(node, "col_offset", 0),
-        }
-    )
+class _DangerousCallsChecker(ast.NodeVisitor):
+    def __init__(self, file_path, findings):
+        self.file_path = file_path
+        self.findings = findings
+        self._symbol_stack = ["<module>"]
 
+    def _current_symbol(self):
+        if self._symbol_stack:
+            return self._symbol_stack[-1]
+        else:
+            return "<module>"
+
+    def generic_visit(self, node):
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        self.visit(item)
+            elif isinstance(value, ast.AST):
+                self.visit(value)
+
+    def visit_FunctionDef(self, node):
+        self._symbol_stack.append(node.name)
+        self.generic_visit(node)
+        self._symbol_stack.pop()
+
+    def visit_AsyncFunctionDef(self, node):
+        self._symbol_stack.append(node.name)
+        self.generic_visit(node)
+        self._symbol_stack.pop()
+
+    def visit_ClassDef(self, node):
+        self._symbol_stack.append(node.name)
+        self.generic_visit(node)
+        self._symbol_stack.pop()
+
+    def visit_Call(self, node):
+        name = qualified_name_from_call(node)
+        if name:
+            for rule_key, tup in DANGEROUS_CALLS.items():
+                rule_id, severity, message = tup[0], tup[1], tup[2]
+                if len(tup) > 3:
+                    opts = tup[3]
+                else:
+                    opts = None
+
+                if not _matches_rule(name, rule_key):
+                    continue
+
+                if rule_key == "yaml.load" and not _yaml_load_without_safeloader(node):
+                    continue
+
+                if opts and "kw_equals" in opts and not _kw_equals(node, opts["kw_equals"]):
+                    continue
+
+                self.findings.append({
+                    "rule_id": rule_id,
+                    "severity": severity,
+                    "message": message,
+                    "file": str(self.file_path),
+                    "line": node.lineno,
+                    "col": node.col_offset,
+                    "symbol": self._current_symbol(),
+                })
+                break
+
+        self.generic_visit(node)
 
 def _scan_file(file_path: Path, findings):
     src = file_path.read_text(encoding="utf-8", errors="ignore")
@@ -122,38 +177,10 @@ def _scan_file(file_path: Path, findings):
     scan_path(tree, file_path, findings)
     scan_xss(tree, file_path, findings)
 
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
+    checker = _DangerousCallsChecker(file_path, findings)
+    checker.visit(tree)
 
-        name = qualified_name_from_call(node)
-        if not name:
-            continue
-
-        for rule_key, tup in DANGEROUS_CALLS.items():
-            rule_id = tup[0]
-            severity = tup[1]
-            message = tup[2]
-
-            if len(tup) > 3:
-                opts = tup[3]
-            else:
-                opts = None
-
-            if not _matches_rule(name, rule_key):
-                continue
-
-            if rule_key == "yaml.load":
-                if not _yaml_load_without_safeloader(node):
-                    continue
-            if opts and "kw_equals" in opts:
-                if not _kw_equals(node, opts["kw_equals"]):
-                    continue
-
-            _add_finding(findings, file_path, node, rule_id, severity, message)
-            break
-
-
+   
 def scan_ctx(_, files):
     findings = []
     py_files = []

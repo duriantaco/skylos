@@ -155,6 +155,7 @@ class _SQLFlowChecker(TaintVisitor):
                             "file": str(self.file_path),
                             "line": node.lineno,
                             "col": node.col_offset,
+                            "symbol": self._current_symbol(),
                         }
                     )
                 else:
@@ -170,6 +171,7 @@ class _SQLFlowChecker(TaintVisitor):
                                 "file": str(self.file_path),
                                 "line": node.lineno,
                                 "col": node.col_offset,
+                                "symbol": self._current_symbol(),
                             }
                         )
 
@@ -192,6 +194,7 @@ class _SQLFlowChecker(TaintVisitor):
                         "file": str(self.file_path),
                         "line": node.lineno,
                         "col": node.col_offset,
+                        "symbol": self._current_symbol(),
                     }
                 )
             self.generic_visit(node)
@@ -213,6 +216,7 @@ class _SQLFlowChecker(TaintVisitor):
                             "file": str(self.file_path),
                             "line": node.lineno,
                             "col": node.col_offset,
+                            "symbol": self._current_symbol(),
                         }
                     )
 
@@ -230,6 +234,7 @@ class _SQLFlowChecker(TaintVisitor):
                             "file": str(self.file_path),
                             "line": node.lineno,
                             "col": node.col_offset,
+                            "symbol": self._current_symbol(),
                         }
                     )
                     break

@@ -1,29 +1,19 @@
 from __future__ import annotations
 
+import json
 import os
 import re
+import site
+import urllib.request
+import urllib.error
+from pathlib import Path
 
 
-RULE_ID_HALLUCINATION = "SKY-D212"
-RULE_ID_UNDECLARED = "SKY-D213"
+RULE_ID_HALLUCINATION = "SKY-D222"
+RULE_ID_UNDECLARED = "SKY-D223"
 
 SEV_CRITICAL = "CRITICAL"
 SEV_MEDIUM = "MEDIUM"
-
-try:
-    from importlib.metadata import packages_distributions
-
-    IMPORT_TO_PACKAGES = packages_distributions()
-except ImportError:
-    IMPORT_TO_PACKAGES = {}
-
-
-def _get_possible_packages(import_name):
-    result = {import_name, _normalize_name(import_name)}
-    for pkg in IMPORT_TO_PACKAGES.get(import_name, []):
-        result.add(_normalize_name(pkg))
-    return result
-
 
 IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z_][\w\.]*)", re.MULTILINE)
 FROM_RE = re.compile(r"^\s*from\s+([A-Za-z_][\w\.]*)\s+import\b", re.MULTILINE)
@@ -82,6 +72,112 @@ def _get_stdlib_modules():
         "dataclasses",
         "statistics",
     }
+
+
+def _build_installed_module_mapping():
+
+    mapping = {}
+    
+    try:
+        from importlib.metadata import packages_distributions
+        pkg_dist = packages_distributions()
+        for module, dists in pkg_dist.items():
+            if module not in mapping:
+                mapping[module] = set()
+            for d in dists:
+                mapping[module].add(_normalize_name(d))
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    
+    site_packages_dirs = []
+    
+    try:
+        site_packages_dirs.extend(site.getsitepackages())
+    except Exception:
+        pass
+    
+    try:
+        user_site = site.getusersitepackages()
+        if user_site:
+            site_packages_dirs.append(user_site)
+    except Exception:
+        pass
+    
+    try:
+        import sys
+        if hasattr(sys, 'prefix') and sys.prefix != sys.base_prefix:
+            venv_site = Path(sys.prefix) / 'lib'
+            for pydir in venv_site.glob('python*/site-packages'):
+                site_packages_dirs.append(str(pydir))
+    except Exception:
+        pass
+    
+    for sp_dir in site_packages_dirs:
+        sp_path = Path(sp_dir)
+        if not sp_path.exists():
+            continue
+        
+        for dist_info in sp_path.glob('*.dist-info'):
+            dist_name = dist_info.name.rsplit('-', 1)[0]
+            normalized_dist = _normalize_name(dist_name)
+            
+            top_level_file = dist_info / 'top_level.txt'
+            if top_level_file.exists():
+                try:
+                    content = top_level_file.read_text(encoding='utf-8', errors='ignore')
+                    for line in content.strip().splitlines():
+                        module = line.strip()
+                        if module:
+                            if module not in mapping:
+                                mapping[module] = set()
+                            mapping[module].add(normalized_dist)
+                except Exception:
+                    pass
+                continue  # If top_level.txt exists, trust it
+            
+            record_file = dist_info / 'RECORD'
+            if record_file.exists():
+                try:
+                    content = record_file.read_text(encoding='utf-8', errors='ignore')
+                    top_levels = set()
+                    for line in content.splitlines():
+                        if not line.strip():
+                            continue
+                        file_path = line.split(',')[0]
+                        parts = file_path.split('/')
+                        if len(parts) >= 1:
+                            first = parts[0]
+                            if first.endswith('.dist-info'):
+                                continue
+                            if first.startswith('__'):
+                                continue
+                            if first.endswith('.py'):
+                                mod_name = first[:-3]
+                                if mod_name and not mod_name.startswith('_'):
+                                    top_levels.add(mod_name)
+                            elif '/' in file_path or len(parts) > 1:
+                                if not first.startswith('_') and first not in ('bin', 'scripts'):
+                                    top_levels.add(first)
+                    
+                    for module in top_levels:
+                        if module not in mapping:
+                            mapping[module] = set()
+                        mapping[module].add(normalized_dist)
+                except Exception:
+                    pass
+    
+    return mapping
+
+
+def _get_possible_packages(import_name, installed_mapping):
+    result = {import_name, _normalize_name(import_name)}
+    
+    if import_name in installed_mapping:
+        result.update(installed_mapping[import_name])
+    
+    return result
 
 
 def _extract_imports(src):
@@ -300,6 +396,82 @@ def _load_private_allowlist():
     return allow
 
 
+def _load_pypi_cache(cache_path):
+    cache = {}
+    try:
+        if cache_path.exists():
+            txt = cache_path.read_text(encoding="utf-8")
+            cache = json.loads(txt)
+    except Exception:
+        pass
+    return cache
+
+
+def _save_pypi_cache(cache_path, cache):
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _check_pypi_status(package_name, cache):
+    normalized = _normalize_name(package_name)
+
+    if normalized in cache:
+        return cache[normalized]
+
+    names_to_try = [normalized]
+    if package_name and _normalize_name(package_name) != normalized:
+        names_to_try.append(_normalize_name(package_name))
+    if package_name:
+        names_to_try.append(package_name)
+        if "_" in package_name:
+            names_to_try.append(package_name.replace("_", "-"))
+
+    for name in names_to_try:
+        name = str(name or "").strip()
+        if not name:
+            continue
+
+        url = f"https://pypi.org/simple/{name}/"
+        try:
+            req = urllib.request.Request(url, method="GET")
+            req.add_header("User-Agent", "skylos-dep-scanner/1.0")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if getattr(resp, "status", 200) == 200:
+                    cache[normalized] = "exists"
+                    return "exists"
+
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                continue
+            cache[normalized] = "unknown"
+            return "unknown"
+
+        except Exception:
+            cache[normalized] = "unknown"
+            return "unknown"
+
+    cache[normalized] = "missing"
+    return "missing"
+
+
+
+def _is_confident_hallucination_candidate(name):
+
+    if not name:
+        return False
+
+    if name.isupper():
+        return False
+    
+    if len(name) <= 2:
+        return False
+    
+    return True
+
+
 def scan_python_dependency_hallucinations(repo_root, py_files):
     findings = []
 
@@ -310,8 +482,13 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
     local_modules = _collect_local_modules(repo_root)
     declared_deps = _collect_declared_deps(repo_root)
     private_allow = _load_private_allowlist()
+    
+    installed_mapping = _build_installed_module_mapping()
+    has_env_metadata = len(installed_mapping) > 0
 
     cache_path = repo_root / ".skylos" / "cache" / "pypi_exists.json"
+    pypi_cache = _load_pypi_cache(cache_path)
+    cache_modified = False
 
     for file_path in py_files:
         try:
@@ -334,8 +511,28 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
             if mod in local_modules:
                 continue
 
-            possible_packages = _get_possible_packages(mod)
+            if mod in installed_mapping:
+                known_dists = installed_mapping[mod]
+                if known_dists & declared_deps:
+                    continue
+                
+                line = _find_import_line(src, mod)
+                dist_hint = ', '.join(sorted(known_dists))
+                findings.append(
+                    {
+                        "rule_id": RULE_ID_UNDECLARED,
+                        "severity": SEV_MEDIUM,
+                        "message": f"Undeclared import '{mod}' (provided by: {dist_hint}). Add to requirements.txt/pyproject.toml/setup.py.",
+                        "file": str(file_path),
+                        "line": line,
+                        "col": 0,
+                        "symbol": mod,
+                    }
+                )
+                continue
 
+            possible_packages = _get_possible_packages(mod, installed_mapping)
+            
             if possible_packages & declared_deps:
                 continue
 
@@ -349,15 +546,80 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
 
             line = _find_import_line(src, mod)
 
-            findings.append(
-                {
-                    "rule_id": RULE_ID_UNDECLARED,
-                    "severity": SEV_MEDIUM,
-                    "message": f"Undeclared import '{mod}'. Not found in requirements.txt/pyproject.toml/setup.py.",
-                    "file": str(file_path),
-                    "line": line,
-                    "col": 0,
-                }
-            )
+            if has_env_metadata and _is_confident_hallucination_candidate(mod):
+                original_cache_size = len(pypi_cache)
+                exists_on_pypi = _check_pypi_status(mod, pypi_cache)
+                if len(pypi_cache) != original_cache_size:
+                    cache_modified = True
+
+                if not exists_on_pypi:
+                    findings.append(
+                        {
+                            "rule_id": RULE_ID_HALLUCINATION,
+                            "severity": SEV_CRITICAL,
+                            "message": f"Hallucinated dependency '{mod}'. Package does not exist on PyPI.",
+                            "file": str(file_path),
+                            "line": line,
+                            "col": 0,
+                            "symbol": mod,
+                        }
+                    )
+                else:
+                    findings.append(
+                        {
+                            "rule_id": RULE_ID_UNDECLARED,
+                            "severity": SEV_MEDIUM,
+                            "message": f"Undeclared import '{mod}'. Not found in requirements.txt/pyproject.toml/setup.py.",
+                            "file": str(file_path),
+                            "line": line,
+                            "col": 0,
+                            "symbol": mod,
+                        }
+                    )
+            elif not has_env_metadata:
+                original_cache_size = len(pypi_cache)
+                exists_on_pypi = _check_pypi_status(mod, pypi_cache)
+                if len(pypi_cache) != original_cache_size:
+                    cache_modified = True
+
+                if not exists_on_pypi and _is_confident_hallucination_candidate(mod):
+                    findings.append(
+                        {
+                            "rule_id": RULE_ID_HALLUCINATION,
+                            "severity": SEV_CRITICAL,
+                            "message": f"Hallucinated dependency '{mod}'. Package does not exist on PyPI.",
+                            "file": str(file_path),
+                            "line": line,
+                            "col": 0,
+                            "symbol": mod,
+                        }
+                    )
+                else:
+                    findings.append(
+                        {
+                            "rule_id": RULE_ID_UNDECLARED,
+                            "severity": SEV_MEDIUM,
+                            "message": f"Undeclared import '{mod}'. Not found in requirements.txt/pyproject.toml/setup.py.",
+                            "file": str(file_path),
+                            "line": line,
+                            "col": 0,
+                            "symbol": mod,
+                        }
+                    )
+            else:
+                findings.append(
+                    {
+                        "rule_id": RULE_ID_UNDECLARED,
+                        "severity": SEV_MEDIUM,
+                        "message": f"Undeclared import '{mod}'. Not found in requirements.txt/pyproject.toml/setup.py (possible import/dist name mismatch).",
+                        "file": str(file_path),
+                        "line": line,
+                        "col": 0,
+                        "symbol": mod,
+                    }
+                )
+
+    if cache_modified:
+        _save_pypi_cache(cache_path, pypi_cache)
 
     return findings

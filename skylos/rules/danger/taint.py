@@ -8,6 +8,13 @@ class TaintVisitor(ast.NodeVisitor):
         self.env_stack = [{}]
         self.sources = {"input", "request"}
         self.request_obj = "request"
+        self._symbol_stack = ["<module>"] 
+    
+    def _current_symbol(self):
+        if self._symbol_stack:
+            return self._symbol_stack[-1]
+        else:
+            return "<module>"
 
     def _push(self):
         self.env_stack.append({})
@@ -107,15 +114,24 @@ class TaintVisitor(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node):
         self._push()
+        self._symbol_stack.append(node.name) 
         self._taint_params(node)
         self.generic_visit(node)
+        self._symbol_stack.pop()
         self._pop()
 
     def visit_AsyncFunctionDef(self, node):
         self._push()
+        self._symbol_stack.append(node.name)
         self._taint_params(node)
         self.generic_visit(node)
+        self._symbol_stack.pop() 
         self._pop()
+
+    def visit_ClassDef(self, node):
+        self._symbol_stack.append(node.name)
+        self.generic_visit(node)
+        self._symbol_stack.pop()
 
     def visit_Assign(self, node):
         t = self.is_tainted(node.value)
