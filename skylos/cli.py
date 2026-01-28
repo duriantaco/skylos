@@ -15,7 +15,6 @@ from skylos.codemods import (
 from skylos.llm.runtime import resolve_llm_runtime
 from skylos.config import load_config
 from skylos.gatekeeper import run_gate_interaction
-from skylos.credentials import get_key, save_key
 from skylos.api import upload_report
 from skylos.sarif_exporter import SarifExporter
 from pathlib import Path
