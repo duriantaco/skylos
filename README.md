@@ -43,7 +43,7 @@
 | **Precise Hunt** | `skylos . --trace` | Cross-reference with runtime data |
 | **Audit Risk & Quality** | `skylos . --secrets --danger --quality` | Security leaks, taint tracking, code rot |
 | **Detect Unused Pytest Fixtures** | `skylos . --pytest-fixtures` | Find unused `@pytest.fixture` across tests + conftest |
-| **AI-Powered Analysis** | `skylos agent analyze .` | Hybrid static + LLM analysis with project context |
+| **AI-Powered Analysis** | `skylos agent analyze . --model gpt-4.1` | Hybrid static + LLM analysis with project context |
 | **AI Audit** | `skylos agent security-audit .` | Deep LLM review with interactive file selection |
 | **Automated Repair** | `skylos agent analyze . --fix` | Let the LLM fix what it found |
 | **PR Review** | `skylos agent review` | Analyze only git-changed files |
@@ -61,7 +61,7 @@
 * **Vulnerability Detection**: Flags dangerous patterns including eval/exec, unsafe yaml/pickle loads, and weak cryptographic hashes
 * **Implicit Reference Detection**: Catches dynamic patterns like `getattr(mod, f"handle_{x}")`, framework decorators (`@app.route`, `@pytest.fixture`), and f-string dispatch patterns
 
-### AI-Powered Analysis
+## AI-Powered Analysis
 
 * **Hybrid Architecture**: Combines static analysis with LLM reasoning for best-of-both-worlds detection
 * **Multi-Provider Support**: OpenAI, Anthropic, and local LLMs (Ollama, LM Studio, vLLM)
@@ -232,11 +232,26 @@ skylos agent analyze . --model gpt-4.1
 # Cloud - Anthropic (auto-detected from model name)
 skylos agent analyze . --model claude-sonnet-4-20250514
 
-# Local - Ollama (no API key needed)
+# Local - Ollama
 skylos agent analyze . \
   --provider openai \
   --base-url http://localhost:11434/v1 \
   --model qwen2.5-coder:7b
+```
+
+**Note**: You can use the `--model` flag to specify the model that you want. We support Gemini, Groq, Anthropic, ChatGPT and Mistral.
+
+### Keys and configuration
+
+Skylos can use API keys from **(1) `skylos key`**, or **(2) environment variables**.
+
+#### Recommended (interactive)
+```bash
+skylos key
+# opens a menu:
+# - list keys
+# - add key (openai / anthropic / google / groq / mistral / ...)
+# - remove key
 ```
 
 ### Environment Variables
