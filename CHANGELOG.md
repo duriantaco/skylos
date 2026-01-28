@@ -1,5 +1,27 @@
 ## Changelog
 
+## [3.1.3] - 202-01-27
+
+## Added 
+
+- Added a centralized LLM runtime resolver that auto-detects provider from `--model`
+- Added `_symbol_stack` and `_current_symbol()` to `TaintVisitor` for tracking function/class context
+- Added `"symbol": self._current_symbol()` to all findings in sql_flow.py, sql_raw_flow.py, cmd_flow.py, ssrf_flow.py, path_flow.py, xss_flow.py
+- Added test for dependency hallucination
+- Added `skylos key` command and route skylos key (no args) to open the interactive menu.
+
+## Removed
+
+- Removed keyring/API-key resolution from `LiteLLMAdapter`. Adapters now only consume the resolved api_key/base_url passed in.
+- Deprecated `skylos login` to stop it from running analysis.
+
+## Changes
+- Updated skylos agent commands to use the centralized resolver so normal runs automatically prompt+store credentials when needed.
+- Two levels detection logic for dependency hallucination:
+  - SKY-D222 (CRITICAL): Now raised when high confidence that package is hallucinated
+  - SKY-D223 (MEDIUM): Raised for packages that exist but not declared in requirements
+
+
 ## [3.1.2] - 202-01-25
 
 ### Added
