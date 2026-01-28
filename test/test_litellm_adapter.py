@@ -70,7 +70,7 @@ def test_init_raises_if_litellm_missing(monkeypatch):
     with pytest.raises(ImportError) as e:
         LiteLLMAdapter(model="gpt-4o-mini", api_key="abc")
 
-    assert "pip install skylos[llm]" in str(e.value)
+    assert "LiteLLM is required" in str(e.value)
 
 
 def test_init_sets_litellm_drop_params_true(monkeypatch):
@@ -169,8 +169,6 @@ def test_complete_returns_error_string_on_exception(monkeypatch):
 
     assert out.startswith("Error:")
     assert "boom" in out
-    assert "skylos login" in out
-    assert "anthropic" in out
 
 
 def test_stream_success_yields_delta_chunks(monkeypatch):
@@ -194,5 +192,24 @@ def test_stream_error_yields_single_error_message(monkeypatch):
     assert len(parts) == 1
     assert parts[0].startswith("Error:")
     assert "explode" in parts[0]
-    assert "skylos login" in parts[0]
-    assert "google" in parts[0]
+
+def test_complete_auth_error_suggests_login(monkeypatch):
+    fake = _FakeLiteLLMModule(should_raise=RuntimeError("401 Unauthorized"))
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+
+    ad = LiteLLMAdapter(model="claude-3-5-sonnet", api_key="K")
+    out = ad.complete("SYS", "USER")
+
+    assert out.startswith("Error:")
+    assert "skylos key" in out
+    assert "anthropic" in out
+
+def test_complete_connection_error_mentions_base_url(monkeypatch):
+    fake = _FakeLiteLLMModule(should_raise=RuntimeError("connection refused"))
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+
+    ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K", api_base="http://localhost:11434/v1")
+    out = ad.complete("SYS", "USER")
+
+    assert out.startswith("Error:")
+    assert "SKYLOS_LLM_BASE_URL" in out or "--base-url" in out
