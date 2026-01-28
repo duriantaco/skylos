@@ -12,6 +12,7 @@ from skylos.codemods import (
     comment_out_unused_import_cst,
     comment_out_unused_function_cst,
 )
+from skylos.llm.runtime import resolve_llm_runtime
 from skylos.config import load_config
 from skylos.gatekeeper import run_gate_interaction
 from skylos.credentials import get_key, save_key
@@ -558,8 +559,10 @@ def render_results(console: Console, result, tree=False, root_path=None):
             "SKY-D208": "Weak hash (SHA1)",
             "SKY-D209": "Shell execution (subprocess shell=True)",
             "SKY-D210": "TLS verification disabled (requests verify=False)",
-            "SKY-D212": "Dependency hallucination / slopsquatting",
-            "SKY-D213": "Undeclared third-party dependency",
+            "SKY-D211": "SQL injection (cursor)",
+            "SKY-D212": "Possible command injection (os.system): tainted input",
+            "SKY-D222": "Dependency hallucination",
+            "SKY-D223": "Undeclared third-party dependency",
         }
         return RULE_TITLES.get(rule_id, "Security issue")
 
@@ -579,7 +582,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
         table.add_column("Issue", style="yellow", width=20)
         table.add_column("Severity", width=9)
         table.add_column("Message", overflow="fold")
-        table.add_column("Location", style="muted", width=24, overflow="fold")
+        table.add_column("Location", style="muted", width=20, overflow="fold")
+        table.add_column("Symbol", style="muted", width=10, overflow="fold")
 
         if has_verification:
             table.add_column("Verified", width=9)
@@ -596,6 +600,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
 
             short = _shorten_path(d.get("file"), root_path)
             loc = f"{short}:{d.get('line', '?')}"
+
+            symbol = d.get("symbol") or "<module>" 
 
             if has_verification:
                 ver = (d.get("verification") or {}).get("verdict")
@@ -640,9 +646,9 @@ def render_results(console: Console, result, tree=False, root_path=None):
                         if ver:
                             proof = "No evidence attached"
 
-                table.add_row(str(i), issue_cell, sev, msg, loc, ver_str, proof)
+                table.add_row(str(i), issue_cell, sev, msg, loc, symbol, ver_str, proof)
             else:
-                table.add_row(str(i), issue_cell, sev, msg, loc)
+                table.add_row(str(i), issue_cell, sev, msg, loc, symbol)
 
         console.print(table)
         console.print()
@@ -903,6 +909,17 @@ def run_static_on_files(
 
 
 def main():
+
+    if len(sys.argv) > 1 and sys.argv[1] == "key":
+        from skylos.commands.key_cmd import run_key_command
+
+        args = sys.argv[2:]
+
+        if len(args) == 0:
+            sys.exit(run_key_command(["menu"]))
+
+        sys.exit(run_key_command(args))
+
     if len(sys.argv) > 1 and sys.argv[1] == "init":
         run_init()
         sys.exit(0)
@@ -969,7 +986,7 @@ def main():
         p_analyze.add_argument("--quiet", "-q", action="store_true")
         p_analyze.add_argument(
             "--provider",
-            choices=["openai", "anthropic"],
+            choices=["openai", "anthropic", "google", "mistral", "groq", "xai", "together", "deepseek", "ollama"],
             default=None,
             help="Force LLM provider",
         )
@@ -992,7 +1009,7 @@ def main():
         p_sec_audit.add_argument("--interactive", "-i", action="store_true")
         p_sec_audit.add_argument(
             "--provider",
-            choices=["openai", "anthropic"],
+            choices=["openai", "anthropic", "google", "mistral", "groq", "xai", "together", "deepseek", "ollama"],
             default=None,
             help="Force LLM provider",
         )
@@ -1009,7 +1026,7 @@ def main():
         p_fix.add_argument("--model", default="gpt-4.1")
         p_fix.add_argument(
             "--provider",
-            choices=["openai", "anthropic"],
+            choices=["openai", "anthropic", "google", "mistral", "groq", "xai", "together", "deepseek", "ollama"],
             default=None,
             help="Force LLM provider",
         )
@@ -1029,7 +1046,7 @@ def main():
         p_review.add_argument("--quiet", "-q", action="store_true")
         p_review.add_argument(
             "--provider",
-            choices=["openai", "anthropic"],
+            choices=["openai", "anthropic", "google", "mistral", "groq", "xai", "together", "deepseek", "ollama"],
             default=None,
             help="Force LLM provider",
         )
@@ -1044,69 +1061,25 @@ def main():
 
         model = agent_args.model
 
-        def _detect_provider(model):
-            m = model.lower()
-            if m.startswith("ollama/"):
-                return "ollama"
-            if "claude" in m:
-                return "anthropic"
-            if m.startswith("gemini/"):
-                return "google"
-            if m.startswith("mistral/"):
-                return "mistral"
-            if m.startswith("groq/"):
-                return "groq"
-            if m.startswith("xai/"):
-                return "xai"
-            return "openai"
-
-        provider = (
-            getattr(agent_args, "provider", None)
-            or os.getenv("SKYLOS_LLM_PROVIDER")
-            or _detect_provider(model)
+        provider, api_key, base_url, _is_local = resolve_llm_runtime(
+            model=model,
+            provider_override=getattr(agent_args, "provider", None),
+            base_url_override=getattr(agent_args, "base_url", None),
+            console=console,
+            allow_prompt=True,
         )
 
-        base_url = (
-            getattr(agent_args, "base_url", None)
-            or os.getenv("SKYLOS_LLM_BASE_URL")
-            or os.getenv("OPENAI_BASE_URL")
-        )
         if base_url:
             os.environ["OPENAI_BASE_URL"] = base_url
+            os.environ["SKYLOS_LLM_BASE_URL"] = base_url
 
-        if provider == "anthropic":
-            key_name = "ANTHROPIC_API_KEY"
-        else:
-            key_name = "OPENAI_API_KEY"
-
-        api_key = os.getenv(key_name) or get_key(provider)
-
-        local_hosts = ["localhost", "127.0.0.1", "0.0.0.0"]
-        is_local_host = False
-        if base_url:
-            for h in local_hosts:
-                if h in base_url:
-                    is_local_host = True
-                    break
-
-        if not api_key and is_local_host:
-            api_key = ""
-
-        if not api_key:
-            console.print(f"[warn]No {key_name} found.[/warn]")
-            try:
-                api_key = console.input(
-                    f"[bold yellow]Paste {provider.title()} API Key:[/bold yellow] ",
-                    password=True,
-                )
-                if api_key:
-                    save_key(provider, api_key)
-            except KeyboardInterrupt:
-                sys.exit(1)
-
-        if not api_key:
-            console.print("[bad]No API key provided.[/bad]")
+        if api_key is None:
             sys.exit(1)
+
+        if api_key is None or api_key == "":
+            if not _is_local:
+                console.print("[bad]No API key provided.[/bad]")
+                sys.exit(1)
 
         cmd = agent_args.agent_cmd
 
@@ -2093,33 +2066,21 @@ sys.exit(ret)
     if args.fix:
         console.print("[brand]Auto-Fix Mode Enabled (GPT-5)[/brand]")
 
-        if "claude" in args.model.lower():
-            provider = "anthropic"
-            key_name = "ANTHROPIC_API_KEY"
-        else:
-            provider = "openai"
-            key_name = "OPENAI_API_KEY"
+        provider, api_key, base_url, _is_local = resolve_llm_runtime(
+            model=args.model or "gpt-4.1",
+            provider_override=None,
+            base_url_override=getattr(args, "api_base", None),
+            console=console,
+            allow_prompt=True,
+        )
 
-        api_key = get_key(provider)
+        if base_url:
+            os.environ["OPENAI_BASE_URL"] = base_url
+            os.environ["SKYLOS_LLM_BASE_URL"] = base_url
 
-        if not api_key:
-            console.print(
-                f"[warn]No {key_name} found in environment or keychain.[/warn]"
-            )
-            try:
-                api_key = console.input(
-                    f"[bold yellow]Please paste your {provider.title()} API Key:[/bold yellow] ",
-                    password=True,
-                )
-                if not api_key:
-                    console.print("[bad]No key provided. Exiting.[/bad]")
-                    sys.exit(1)
-
-                save_key(provider, api_key)
-                console.print(f"[good]Key saved[/good]")
-
-            except KeyboardInterrupt:
-                sys.exit(0)
+        if api_key is None or (api_key == "" and not _is_local):
+            console.print("[bad]No API key provided. Exiting.[/bad]")
+            sys.exit(1)
 
         fixer = Fixer(api_key=api_key, model=args.model)
 
