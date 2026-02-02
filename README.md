@@ -302,6 +302,72 @@ skylos agent analyze ./src \
 | `qwen2.5-coder:7b` | Ollama | Fast local analysis |
 | `codellama:13b` | Ollama | Better local accuracy |
 
+
+## VS Code Extension
+
+Real-time AI-powered code analysis directly in your editor.
+
+<img src="assets/screenshot1.png" alt="Skylos VS Code Extension" width="700" />
+
+### Installation
+
+1. Search "Skylos" in VS Code marketplace or run:
+```bash
+   ext install oha.skylos-vscode-extension
+```
+
+2. Make sure the CLI is installed:
+```bash
+   pip install skylos
+```
+
+3. (Optional) Add your API key for AI features in VS Code Settings → `skylos.openaiApiKey` or `skylos.anthropicApiKey`
+
+### How It Works
+
+| Layer | Trigger | What It Does |
+|-------|---------|--------------|
+| **Static Analysis** | On save | Runs Skylos CLI for dead code, secrets, dangerous patterns |
+| **AI Watcher** | On idle (2s) | Sends changed functions to GPT-4/Claude for bug detection |
+
+### Features
+
+- **Real-time Analysis**: Detects bugs as you type — no save required
+- **CodeLens Buttons**: "Fix with AI" and "Dismiss" appear inline on error lines
+- **Streaming Fixes**: See fix progress in real-time
+- **Smart Caching**: Only re-analyzes functions that actually changed
+- **Multi-Provider**: Choose between OpenAI and Anthropic
+
+### Extension Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `skylos.aiProvider` | `"openai"` | `"openai"` or `"anthropic"` |
+| `skylos.openaiApiKey` | `""` | Your OpenAI API key |
+| `skylos.anthropicApiKey` | `""` | Your Anthropic API key |
+| `skylos.idleMs` | `2000` | Wait time before AI analysis (ms) |
+| `skylos.runOnSave` | `true` | Run Skylos CLI on save |
+| `skylos.enableSecrets` | `true` | Scan for hardcoded secrets |
+| `skylos.enableDanger` | `true` | Flag dangerous patterns |
+
+### Usage
+
+| Action | Result |
+|--------|--------|
+| Save a Python file | Skylos CLI scans the workspace |
+| Type and pause | AI analyzes changed functions |
+| Click "Fix with AI" | Generates fix with diff preview |
+| `Cmd+Shift+P` -> "Skylos: Scan Workspace" | Full project scan |
+
+### Privacy
+
+- Static analysis runs 100% locally
+- AI features send only changed function code to your configured provider
+- We DO NOT collect any telemetry or data
+
+**[Install from VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension)**
+
+
 ## Gating
 
 Block bad code before it merges. Configure thresholds, run locally, then automate in CI.
