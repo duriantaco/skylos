@@ -1,5 +1,17 @@
 ## Changelog
 
+## [0.3.0] - 2025-02-01
+
+### Added
+- Real-time analysis. Detects bugs as you type, no save required
+- Choose between OpenAI and Anthropic
+- CodeLens buttons. "Fix with AI" and "Dismiss" appear inline on error lines
+- See fix progress in status bar as AI generates code
+- Function caching. It only re-analyzes functions that changed
+- Popup alerts for critical issues with configurable cooldown
+- New settings: `aiProvider`, `openaiApiKey`, `anthropicApiKey`, `openaiModel`, `anthropicModel`, `idleMs`, `popupCooldownMs`
+
+
 ## [0.2.0] - 2025-11-16
 
 ### Added 
