@@ -2,20 +2,23 @@
   "name": "skylos-vscode-extension",
   "displayName": "Skylos",
   "description": "Inline dead code + optional secrets/dangerous findings powered by skylos --json.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "oha",
   "icon": "icon.png",
-  "repository": { "type": "git", "url": "https://github.com/oha/skylos" },
+  "repository": { "type": "git", "url": "https://github.com/duriantaco/skylos" },
   "license": "Apache-2.0",
   "engines": { "vscode": "^1.87.0" },
   "categories": ["Linters"],
   "activationEvents": [
-    "onStartupFinished", "onLanguage:python", "onCommand:skylos.scan"
+    "onStartupFinished",
+    "onLanguage:python",
+    "onCommand:skylos.scan"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "skylos.scan", "title": "Skylos: Scan Workspace" }
+      { "command": "skylos.scan", "title": "Skylos: Scan Workspace" },
+      { "command": "skylos.fix", "title": "Skylos: Fix Issue" }
     ],
     "configuration": {
       "title": "Skylos",
@@ -46,17 +49,44 @@
         "skylos.enableDanger": {
           "type": "boolean",
           "default": true,
-          "description": "Dangerous pattern checks when supported by your Skylos build"
+          "description": "Dangerous pattern checks"
+        },
+        "skylos.enableQuality": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include code quality checks"
         },
         "skylos.runOnSave": {
           "type": "boolean",
           "default": true,
-          "description": "Auto run skylos when you save the python file."
+          "description": "Auto run skylos when you save a Python file"
         },
         "skylos.showPopup": {
           "type": "boolean",
           "default": true,
           "description": "Show a toast after scans"
+        },
+        "skylos.idleMs": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 200,
+          "description": "Milliseconds of idle time before auto-scanning"
+        },
+        "skylos.popupCooldownMs": {
+          "type": "number",
+          "default": 8000,
+          "minimum": 1000,
+          "description": "Cooldown between popup alerts (ms)"
+        },
+        "skylos.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API key for auto-fix feature"
+        },
+        "skylos.openaiModel": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "OpenAI model to use for fixes"
         }
       }
     }

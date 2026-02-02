@@ -5,7 +5,9 @@ exports.deactivate = deactivate;
 const vscode = require("vscode");
 const child_process_1 = require("child_process");
 const path = require("path");
+const crypto = require("crypto");
 const collection = vscode.languages.createDiagnosticCollection("skylos");
+const aiCollection = vscode.languages.createDiagnosticCollection("skylos-ai");
 const out = vscode.window.createOutputChannel("skylos");
 const skylosDecorationType = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
@@ -20,27 +22,55 @@ const skylosDecorationType = vscode.window.createTextEditorDecorationType({
 });
 let statusBarItem;
 let latestByFile = null;
+let aiDebounceTimer;
+let aiAnalysisInFlight = false;
+const findingsCache = new Map();
+const shownPopups = new Set();
+let lastPopupTime = 0;
+const prevDocState = new Map();
 function activate(context) {
     context.subscriptions.push(collection);
+    context.subscriptions.push(aiCollection);
     context.subscriptions.push(skylosDecorationType);
     out.appendLine("Skylos extension activated");
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = "skylos.scan";
-    // statusBarItem.text = "$(shield) Skylos";
-    statusBarItem.text = "$(shield) Skylos-TEST";
+    statusBarItem.text = "$(shield) Skylos";
     statusBarItem.tooltip = "Click to scan with Skylos";
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
     context.subscriptions.push(vscode.commands.registerCommand("skylos.scan", runSkylos));
+    context.subscriptions.push(vscode.commands.registerCommand("skylos.fix", fixIssueWithAI));
     if (vscode.workspace.getConfiguration().get("skylos.runOnSave")) {
         context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(doc => {
             if (doc.languageId === "python")
                 runSkylos();
         }));
     }
+    context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor)
+            return;
+        if (event.document !== editor.document)
+            return;
+        if (event.document.languageId !== "python")
+            return;
+        if (event.contentChanges.length === 0)
+            return;
+        const cfg = vscode.workspace.getConfiguration("skylos");
+        const idleMs = cfg.get("idleMs", 2000);
+        if (aiDebounceTimer)
+            clearTimeout(aiDebounceTimer);
+        aiDebounceTimer = setTimeout(() => aiMaybeAnalyze(event.document), idleMs);
+    }));
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
         if (editor && latestByFile) {
             applyDecorations(latestByFile);
+        }
+        if (editor?.document.languageId === "python") {
+            if (aiDebounceTimer)
+                clearTimeout(aiDebounceTimer);
+            aiDebounceTimer = setTimeout(() => aiMaybeAnalyze(editor.document), 1000);
         }
     }));
     context.subscriptions.push(vscode.languages.registerCodeActionsProvider({ language: "python" }, new IgnoreLineQuickFix(), { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }));
@@ -48,6 +78,8 @@ function activate(context) {
 function deactivate() {
     collection.clear();
     collection.dispose();
+    aiCollection.clear();
+    aiCollection.dispose();
     skylosDecorationType.dispose();
 }
 async function runSkylos() {
@@ -75,8 +107,6 @@ async function runSkylos() {
         args.push("--danger");
     if (enableQuality)
         args.push("--quality");
-    // console.log(`Running skylos with args: ${args.join(" ")}`);
-    // console.log(`Working directory: ${ws.uri.fsPath}`);
     let stdout;
     try {
         const result = await runCommand(bin, args, { cwd: ws.uri.fsPath, encoding: "utf8" });
@@ -90,14 +120,12 @@ async function runSkylos() {
     let report;
     try {
         report = JSON.parse(stdout || "{}");
-        // console.log("Parsed report keys:", Object.keys(report));
     }
     catch {
         vscode.window.showErrorMessage("Skylos returned invalid JSON.");
         return;
     }
     const byFile = toDiagnostics(report);
-    // console.log(`Processing diagnostics for ${byFile.size} files`);
     const absMap = new Map();
     for (const [reportedPath, diags] of byFile) {
         const filePath = path.isAbsolute(reportedPath)
@@ -125,6 +153,259 @@ async function runSkylos() {
         statusBarItem.backgroundColor = undefined;
         vscode.window.setStatusBarMessage("Skylos: no issues", 5000);
         vscode.window.showInformationMessage("Skylos found no issues.");
+    }
+}
+async function aiMaybeAnalyze(document) {
+    const cfg = vscode.workspace.getConfiguration("skylos");
+    const apiKey = cfg.get("openaiApiKey");
+    if (!apiKey) {
+        return;
+    }
+    const currentContent = document.getText();
+    const filePath = document.uri.fsPath;
+    const prevContent = prevDocState.get(filePath);
+    if (prevContent === currentContent) {
+        return;
+    }
+    prevDocState.set(filePath, currentContent);
+    const functions = extractFunctions(currentContent);
+    const changedFunctions = functions.filter(fn => {
+        const cached = findingsCache.get(fn.hash);
+        return !cached || (Date.now() - cached.timestamp > 60000);
+    });
+    if (changedFunctions.length === 0) {
+        return;
+    }
+    await aiAnalyzeChangedFunctions(document, changedFunctions);
+}
+function extractFunctions(code) {
+    const lines = code.split("\n");
+    const functions = [];
+    let i = 0;
+    while (i < lines.length) {
+        const line = lines[i];
+        const match = line.match(/^(\s*)(async\s+)?def\s+(\w+)\s*\(/);
+        if (match) {
+            const indent = match[1].length;
+            const name = match[3];
+            const startLine = i;
+            let endLine = i;
+            for (let j = i + 1; j < lines.length; j++) {
+                const nextLine = lines[j];
+                if (nextLine.trim() === "") {
+                    endLine = j;
+                    continue;
+                }
+                const nextIndent = nextLine.match(/^(\s*)/)?.[1].length ?? 0;
+                if (nextIndent <= indent && nextLine.trim() !== "" && !nextLine.trim().startsWith("#")) {
+                    break;
+                }
+                endLine = j;
+            }
+            const content = lines.slice(startLine, endLine + 1).join("\n");
+            const hash = crypto.createHash("md5").update(content).digest("hex");
+            functions.push({ name, startLine, endLine, content, hash });
+            i = endLine + 1;
+        }
+        else {
+            i++;
+        }
+    }
+    return functions;
+}
+async function aiAnalyzeChangedFunctions(document, functions) {
+    if (aiAnalysisInFlight)
+        return;
+    if (functions.length === 0)
+        return;
+    const cfg = vscode.workspace.getConfiguration("skylos");
+    const apiKey = cfg.get("openaiApiKey");
+    if (!apiKey)
+        return;
+    aiAnalysisInFlight = true;
+    const prevText = statusBarItem.text;
+    statusBarItem.text = "$(eye~spin) Skylos AI...";
+    try {
+        const codeToAnalyze = functions
+            .map(fn => `# Function: ${fn.name} (line ${fn.startLine + 1})\n${fn.content}`)
+            .join("\n\n---\n\n");
+        const issues = await callLLMForIssues(apiKey, codeToAnalyze);
+        const now = Date.now();
+        for (const fn of functions) {
+            const fnIssues = issues.filter(i => i.line >= fn.startLine + 1 && i.line <= fn.endLine + 1);
+            findingsCache.set(fn.hash, { issues: fnIssues, timestamp: now });
+        }
+        const diagnostics = issues.map(issue => {
+            const line = Math.max(0, issue.line - 1);
+            const range = new vscode.Range(line, 0, line, 1000);
+            const severity = issue.severity === "error"
+                ? vscode.DiagnosticSeverity.Error
+                : vscode.DiagnosticSeverity.Warning;
+            const diag = new vscode.Diagnostic(range, `[AI] ${issue.message}`, severity);
+            diag.source = "skylos-ai";
+            return diag;
+        });
+        aiCollection.set(document.uri, diagnostics);
+        if (issues.length > 0) {
+            statusBarItem.text = `$(eye) AI: ${issues.length}`;
+            const critical = issues.find(i => i.severity === "error");
+            if (critical) {
+                aiMaybeShowPopup(document, critical);
+            }
+        }
+        else {
+            statusBarItem.text = prevText.includes("Skylos:") ? prevText : "$(eye) Skylos";
+        }
+    }
+    catch (err) {
+        out.appendLine(`AI Error: ${err}`);
+        statusBarItem.text = prevText;
+    }
+    finally {
+        aiAnalysisInFlight = false;
+    }
+}
+function aiMaybeShowPopup(document, issue) {
+    const cfg = vscode.workspace.getConfiguration("skylos");
+    const cooldown = cfg.get("popupCooldownMs", 15000);
+    const now = Date.now();
+    out.appendLine(`[AI] aiMaybeShowPopup called for: ${issue.message}`);
+    out.appendLine(`[AI] Time since last popup: ${now - lastPopupTime}ms, cooldown: ${cooldown}ms`);
+    if (now - lastPopupTime < cooldown) {
+        out.appendLine(`[AI] Popup blocked by cooldown`);
+        return;
+    }
+    const fingerprint = `${document.uri.fsPath}:${issue.line}:${issue.message.slice(0, 50)}`;
+    if (shownPopups.has(fingerprint)) {
+        out.appendLine(`[AI] Popup blocked by fingerprint (already shown)`);
+        return;
+    }
+    out.appendLine(`[AI] Showing popup!`);
+    shownPopups.add(fingerprint);
+    lastPopupTime = now;
+    vscode.window.showWarningMessage(`🚨 AI: ${issue.message}`, "Fix it", "Show me", "Dismiss").then(action => {
+        if (action === "Show me") {
+            const line = Math.max(0, issue.line - 1);
+            const editor = vscode.window.activeTextEditor;
+            if (editor) {
+                editor.selection = new vscode.Selection(line, 0, line, 0);
+                editor.revealRange(new vscode.Range(line, 0, line, 0));
+            }
+        }
+        else if (action === "Fix it") {
+            const line = Math.max(0, issue.line - 1);
+            vscode.commands.executeCommand("skylos.fix", document.uri.fsPath, new vscode.Range(line, 0, line, 0), issue.message, false);
+        }
+    });
+}
+async function callLLMForIssues(apiKey, code) {
+    const cfg = vscode.workspace.getConfiguration("skylos");
+    const model = cfg.get("openaiModel", "gpt-4o-mini");
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+            model,
+            messages: [
+                {
+                    role: "system",
+                    content: `You analyze Python code for bugs. Return ONLY a JSON array.
+
+Each issue: {"line": <number>, "message": "<brief>", "severity": "error"|"warning"}
+If no issues: []
+
+Only report REAL bugs:
+- Crashes / exceptions
+- Security issues  
+- Logic errors
+- Undefined variables
+- Type errors
+
+Do NOT report: style, missing docs, naming conventions.`
+                },
+                { role: "user", content: code }
+            ],
+            temperature: 0,
+            max_tokens: 1000,
+        }),
+    });
+    if (!resp.ok) {
+        throw new Error(`API error: ${resp.status}`);
+    }
+    const data = await resp.json();
+    const content = data.choices?.[0]?.message?.content ?? "[]";
+    try {
+        const cleaned = content.replace(/```json?/g, "").replace(/```/g, "").trim();
+        return JSON.parse(cleaned);
+    }
+    catch {
+        return [];
+    }
+}
+async function fixIssueWithAI(filePath, range, errorMsg, previewOnly) {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    const editor = await vscode.window.showTextDocument(doc, { preview: false });
+    const content = doc.getText();
+    const functions = extractFunctions(content);
+    const targetFn = functions.find(fn => range.start.line >= fn.startLine && range.start.line <= fn.endLine);
+    if (!targetFn) {
+        vscode.window.showErrorMessage("Could not find function to fix.");
+        return;
+    }
+    const cfg = vscode.workspace.getConfiguration("skylos");
+    const apiKey = cfg.get("openaiApiKey");
+    const model = cfg.get("openaiModel", "gpt-4o");
+    if (!apiKey) {
+        vscode.window.showErrorMessage("Set skylos.openaiApiKey first.");
+        return;
+    }
+    statusBarItem.text = "$(sync~spin) Fixing...";
+    try {
+        const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    {
+                        role: "user",
+                        content: `Fix this Python function.\nProblem: ${errorMsg}\n\nReturn ONLY the fixed function. No markdown.\n\n${targetFn.content}`
+                    }
+                ],
+                temperature: 0,
+            }),
+        });
+        const data = await resp.json();
+        let fixed = data.choices?.[0]?.message?.content ?? "";
+        fixed = fixed.replace(/```python/g, "").replace(/```/g, "").trim();
+        if (!fixed) {
+            vscode.window.showErrorMessage("No fix returned.");
+            return;
+        }
+        // Show diff
+        const fixedDoc = await vscode.workspace.openTextDocument({ language: "python", content: fixed });
+        await vscode.commands.executeCommand("vscode.diff", doc.uri, fixedDoc.uri, "Fix Preview");
+        if (previewOnly)
+            return;
+        const confirm = await vscode.window.showWarningMessage("Apply fix?", "Apply", "Cancel");
+        if (confirm !== "Apply")
+            return;
+        const blockRange = new vscode.Range(targetFn.startLine, 0, targetFn.endLine, doc.lineAt(targetFn.endLine).text.length);
+        await editor.edit(eb => eb.replace(blockRange, fixed));
+        vscode.window.showInformationMessage("Fix applied!");
+        findingsCache.delete(targetFn.hash);
+    }
+    catch (e) {
+        vscode.window.showErrorMessage(`Fix failed: ${e}`);
+    }
+    finally {
+        statusBarItem.text = "$(shield) Skylos";
     }
 }
 function toDiagnostics(report) {
@@ -265,11 +546,8 @@ function printDetailedReport(report, workspaceRoot) {
 }
 function applyDecorations(byFileAbs) {
     const editors = vscode.window.visibleTextEditors;
-    out.appendLine(`Skylos: applyDecorations called, visible editors = ${editors.length}`);
     for (const editor of editors) {
-        const fsPath = editor.document.uri.fsPath;
-        const diags = byFileAbs.get(fsPath) || [];
-        out.appendLine(`Skylos: editor=${fsPath}, diags=${diags.length}`);
+        const diags = byFileAbs.get(editor.document.uri.fsPath) || [];
         const decorations = [];
         for (const d of diags) {
             const line = d.range.start.line;
@@ -284,7 +562,6 @@ function applyDecorations(byFileAbs) {
                 },
             });
         }
-        out.appendLine(`Skylos: setting ${decorations.length} decoration(s) on ${fsPath}`);
         editor.setDecorations(skylosDecorationType, decorations);
     }
 }
@@ -292,7 +569,7 @@ class IgnoreLineQuickFix {
     provideCodeActions(doc, _range, ctx) {
         const actions = [];
         for (const d of ctx.diagnostics) {
-            if (d.source !== "skylos")
+            if (d.source !== "skylos" && d.source !== "skylos-ai")
                 continue;
             const action = new vscode.CodeAction("Skylos: ignore on this line", vscode.CodeActionKind.QuickFix);
             const line = d.range.start.line;
@@ -303,7 +580,6 @@ class IgnoreLineQuickFix {
             action.edit.replace(doc.uri, new vscode.Range(line, 0, line, text.length), updated);
             action.diagnostics = [d];
             actions.push(action);
-            // kiv .. add "ignore entire file" action
         }
         return actions;
     }
