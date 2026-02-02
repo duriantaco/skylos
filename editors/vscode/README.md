@@ -2,7 +2,7 @@
 
 > A static analysis tool for Python codebases written in Python that detects unreachable functions and unused imports, aka dead code. Faster and better results than many alternatives like Flake8 and Pylint, and finding more dead code than Vulture in our tests with comparable speed.
 
-<img src="assets/screenshot1.png" alt="Skylos VS Code Extension showing AI-detected issue with Fix and Dismiss buttons" width="800" />
+<img src="screenshot1.png" alt="Skylos VS Code Extension showing AI-detected issue with Fix and Dismiss buttons" width="800" />
 
 ## Features
 
