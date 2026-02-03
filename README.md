@@ -12,6 +12,10 @@
 ![Security Policy](https://img.shields.io/badge/security-policy-brightgreen)
 ![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
 
+⭐ If Skylos saves you time (or has helped you in any way), please star the repo — it helps a lot.
+
+💬 Join the Discord (support + contributors): https://discord.gg/Ftn9t9tErf
+
 > Skylos is a static analysis tool for Python codebases which locates dead code, performs quality checks, and finds security vulnerabilities.
 
 ## Table of Contents
@@ -1042,3 +1046,4 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 - **Author**: oha
 - **Email**: aaronoh2015@gmail.com
 - **GitHub**: [@duriantaco](https://github.com/duriantaco)
+- **Discord**: https://discord.gg/Ftn9t9tErf
