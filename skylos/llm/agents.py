@@ -1,6 +1,4 @@
 import json
-import time
-import random
 
 from .schemas import (
     Finding,
@@ -15,7 +13,6 @@ from .schemas import (
 from .context import ContextBuilder
 from .prompts import (
     build_security_prompt,
-    build_dead_code_prompt,
     build_quality_prompt,
     build_fix_prompt,
     build_security_audit_prompt,
@@ -66,6 +63,25 @@ FIX_RESPONSE_FORMAT = {
     },
 }
 
+FP_FILTER_RESPONSE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["verdict", "reason"],
+    "properties": {
+        "verdict": {"type": "string", "enum": ["TRUE_POSITIVE", "FALSE_POSITIVE"]},
+        "reason": {"type": "string"},
+    },
+}
+
+FP_FILTER_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "skylos_fp_filter",
+        "schema": FP_FILTER_RESPONSE_SCHEMA,
+        "strict": True,
+    },
+}
+
 
 class AgentConfig:
     RATE_LIMITED_PREFIXES = [
@@ -83,6 +99,7 @@ class AgentConfig:
         max_tokens=2048,
         timeout=240,
         stream=True,
+        enable_cache=True,
     ):
         self.model = model
         self.api_key = api_key
@@ -90,6 +107,7 @@ class AgentConfig:
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.stream = stream
+        self.enable_cache = enable_cache
 
     def is_rate_limited_model(self):
         m = (self.model or "").strip().lower()
@@ -101,177 +119,12 @@ class AgentConfig:
         return False
 
 
-class OpenAILLM:
-    def __init__(self, model, api_key, config):
-        self.model = model
-        self.api_key = api_key
-        self.config = config
-        self._client = None
-
-    def get_client(self):
-        if self._client is not None:
-            return self._client
-
-        try:
-            import openai
-        except ImportError:
-            raise ImportError("OpenAI not installed. Run: pip install openai")
-
-        self._client = openai.OpenAI(
-            api_key=self.api_key,
-            max_retries=0,
-            timeout=self.config.timeout,
-        )
-        return self._client
-
-    def complete(self, system, user, response_format=None):
-        try:
-            import openai
-        except ImportError:
-            return "Error: OpenAI not installed. Run: pip install openai"
-
-        delay = 1.0
-        max_delay = 12.0
-        attempts = 8
-        last_err = None
-
-        for _ in range(attempts):
-            try:
-                kwargs = dict(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    temperature=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
-                )
-
-                if response_format is not None:
-                    kwargs["response_format"] = response_format
-
-                response = self.get_client().chat.completions.create(**kwargs)
-
-                content = response.choices[0].message.content
-                return content or ""
-
-            except openai.RateLimitError as e:
-                last_err = e
-                time.sleep(delay + random.random() * 0.5)
-                delay = min(delay * 2, max_delay)
-                continue
-
-            except openai.APIStatusError as e:
-                last_err = e
-                status_code = getattr(e, "status_code", None)
-                if status_code == 429:
-                    time.sleep(delay + random.random() * 0.5)
-                    delay = min(delay * 2, max_delay)
-                    continue
-                return f"Error: {e}"
-
-            except Exception as e:
-                return f"Error: {e}"
-
-        return f"Error: 429 rate-limited after {attempts} retries: {last_err}"
-
-    def stream(self, system, user):
-        delay = 1.0
-        max_delay = 12.0
-        attempts = 6
-        last_err = None
-
-        for _ in range(attempts):
-            try:
-                response = self.get_client().chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    temperature=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
-                    stream=True,
-                )
-
-                for chunk in response:
-                    delta = chunk.choices[0].delta
-                    if delta and delta.content:
-                        yield delta.content
-                return
-
-            except Exception as e:
-                last_err = e
-                msg = str(e)
-
-                is_rate_limit = (
-                    "429" in msg
-                    or "Too Many Requests" in msg
-                    or "Rate limit" in msg
-                    or "rate_limit" in msg
-                )
-
-                if not is_rate_limit:
-                    yield f"Error: {msg}"
-                    return
-
-                time.sleep(delay + random.random() * 0.5)
-                delay = min(delay * 2, max_delay)
-
-        yield f"Error: 429 rate-limited after {attempts} retries: {last_err}"
-
-
-class AnthropicLLM:
-    def __init__(self, model, api_key, config):
-        self.model = model
-        self.api_key = api_key
-        self.config = config
-        self._client = None
-
-    def get_client(self):
-        if self._client is not None:
-            return self._client
-
-        try:
-            import anthropic
-        except ImportError:
-            raise ImportError("Anthropic not installed. Run: pip install anthropic")
-
-        self._client = anthropic.Anthropic(api_key=self.api_key)
-        return self._client
-
-    def complete(self, system, user, response_format=None):
-        try:
-            response = self.get_client().messages.create(
-                model=self.model,
-                max_tokens=self.config.max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-                temperature=self.config.temperature,
-            )
-            return response.content[0].text
-        except Exception as e:
-            return f"Error: {str(e)}"
-
-    def stream(self, system, user):
-        try:
-            with self.get_client().messages.stream(
-                model=self.model,
-                max_tokens=self.config.max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-                temperature=self.config.temperature,
-            ) as stream:
-                for text in stream.text_stream:
-                    yield text
-        except Exception as e:
-            yield f"Error: {str(e)}"
-
-
 def create_llm_adapter(config):
     from skylos.adapters.litellm_adapter import LiteLLMAdapter
 
-    return LiteLLMAdapter(model=config.model, api_key=config.api_key)
+    return LiteLLMAdapter(
+        model=config.model, api_key=config.api_key, enable_cache=config.enable_cache
+    )
 
 
 class SecurityAgent:
@@ -297,45 +150,6 @@ class SecurityAgent:
             not self.config.is_rate_limited_model() and len(context) < 10_000
         )
         system, user = build_security_prompt(context, include_examples=include_examples)
-
-        if self.config.stream:
-            full = ""
-            for chunk in self.get_adapter().stream(system, user):
-                full += chunk
-            response = full
-        else:
-            response = self.get_adapter().complete(
-                system, user, response_format=FINDINGS_RESPONSE_FORMAT
-            )
-
-        return parse_llm_response(response, file_path)
-
-
-class DeadCodeAgent:
-    def __init__(self, config=None):
-        if config is None:
-            config = AgentConfig()
-        self.config = config
-        self.context_builder = ContextBuilder()
-        self._adapter = None
-
-    def get_adapter(self):
-        if self._adapter is None:
-            self._adapter = create_llm_adapter(self.config)
-        return self._adapter
-
-    def analyze(self, source, file_path, defs_map=None, context=None):
-        if context is None:
-            context = self.context_builder.build_analysis_context(
-                source, file_path=file_path, defs_map=defs_map
-            )
-
-        include_examples = (
-            not self.config.is_rate_limited_model() and len(context) < 10_000
-        )
-        system, user = build_dead_code_prompt(
-            context, include_examples=include_examples
-        )
 
         if self.config.stream:
             full = ""
@@ -504,12 +318,202 @@ class FixerAgent:
             return None
 
 
+class FalsePositiveFilterAgent:
+    def __init__(self, config=None):
+        if config is None:
+            config = AgentConfig()
+        self.config = config
+        self._adapter = None
+
+    def get_adapter(self):
+        if self._adapter is None:
+            self._adapter = create_llm_adapter(self.config)
+        return self._adapter
+
+    def _extract_finding_info(self, finding):
+        if isinstance(finding, dict):
+            return {
+                "line": finding.get("line") or finding.get("lineno") or 1,
+                "rule_id": finding.get("rule_id", "unknown"),
+                "severity": finding.get("severity", "medium"),
+                "message": finding.get("message", ""),
+            }
+        else:
+            return {
+                "line": finding.location.line,
+                "rule_id": finding.rule_id,
+                "severity": finding.severity.value
+                if hasattr(finding.severity, "value")
+                else str(finding.severity),
+                "message": finding.message,
+            }
+
+    def _mark_as_verified(self, finding):
+        if isinstance(finding, dict):
+            finding["_confidence"] = "high"
+            finding["_verified_by_llm"] = True
+        else:
+            finding.confidence = Confidence.HIGH
+            finding._verified_by_llm = True
+
+    def filter(self, findings, source, file_path):
+        if not findings:
+            return []
+
+        lines = source.splitlines()
+        filtered = []
+
+        for finding in findings:
+            verdict = self._review_finding(finding, lines, file_path)
+            if verdict == "TRUE_POSITIVE":
+                self._mark_as_verified(finding)
+                filtered.append(finding)
+
+        return filtered
+
+    def _review_finding(self, finding, lines, file_path):
+        info = self._extract_finding_info(finding)
+        line_num = info["line"]
+
+        start = max(0, line_num - 10)
+        end = min(len(lines), line_num + 10)
+
+        context_lines = []
+        for i in range(start, end):
+            marker = " >>> " if i == line_num - 1 else "     "
+            if i < len(lines):
+                context_lines.append(f"{i + 1:4d}{marker}{lines[i]}")
+
+        context = "\n".join(context_lines)
+
+        system = """You are a security code reviewer. Your job is to verify if a static analysis finding is a TRUE vulnerability or a FALSE POSITIVE.
+
+Be rigorous but fair:
+- TRUE_POSITIVE: The vulnerability is real and exploitable
+- FALSE_POSITIVE: The code is safe due to sanitization, validation, or the flagged pattern isn't actually dangerous
+
+Respond with JSON only."""
+
+        user = f"""## Static Analysis Finding
+- Rule: {info["rule_id"]}
+- Severity: {info["severity"]}
+- Message: {info["message"]}
+- Line: {line_num}
+
+## Code Context (>>> marks the flagged line)
+{context}
+
+## Your Analysis
+Analyze if this is a TRUE_POSITIVE (real vulnerability) or FALSE_POSITIVE (safe code).
+
+Respond with JSON:
+{{"verdict": "TRUE_POSITIVE" or "FALSE_POSITIVE", "reason": "brief explanation"}}"""
+
+        try:
+            response = self.get_adapter().complete(
+                system, user, response_format=FP_FILTER_RESPONSE_FORMAT
+            )
+            data = json.loads(response)
+            return data.get("verdict", "TRUE_POSITIVE")
+        except Exception:
+            return "TRUE_POSITIVE"
+
+    def filter_batch(self, findings, source, file_path, batch_size=5):
+        if not findings:
+            return []
+
+        if len(findings) <= 1:
+            return self.filter(findings, source, file_path)
+
+        lines = source.splitlines()
+        filtered = []
+
+        for i in range(0, len(findings), batch_size):
+            batch = findings[i : i + batch_size]
+            batch_results = self._review_batch(batch, lines, file_path)
+
+            for finding, verdict in zip(batch, batch_results):
+                if verdict == "TRUE_POSITIVE":
+                    self._mark_as_verified(finding)
+                    filtered.append(finding)
+
+        return filtered
+
+    def _review_batch(self, findings, lines, file_path):
+        findings_text = []
+
+        for idx, finding in enumerate(findings):
+            info = self._extract_finding_info(finding)
+            line_num = info["line"]
+
+            start = max(0, line_num - 5)
+            end = min(len(lines), line_num + 5)
+
+            context_parts = []
+            for i in range(start, end):
+                if i < len(lines):
+                    context_parts.append(f"{i + 1:4d} | {lines[i]}")
+            context = "\n".join(context_parts)
+
+            findings_text.append(f"""
+### Finding {idx + 1}
+- Rule: {info["rule_id"]}
+- Severity: {info["severity"]}
+- Line: {line_num}
+- Message: {info["message"]}
+
+Context:
+{context}
+-------------------
+""")
+
+        system = """You are a security code reviewer verifying static analysis findings.
+For each finding, determine if it's TRUE_POSITIVE (real vulnerability) or FALSE_POSITIVE (safe).
+
+Respond with a JSON array containing one object per finding, in order.
+Example: [{"id": 1, "verdict": "TRUE_POSITIVE"}, {"id": 2, "verdict": "FALSE_POSITIVE"}]"""
+
+        user = f"""Review these {len(findings)} findings from {file_path}:
+
+{"".join(findings_text)}
+
+Respond with JSON array."""
+
+        try:
+            response = self.get_adapter().complete(system, user)
+
+            response = response.strip()
+            if response.startswith("```"):
+                response = response.split("```")[1]
+                if response.startswith("json"):
+                    response = response[4:]
+
+            data = json.loads(response)
+
+            if isinstance(data, list):
+                verdicts = []
+                for i in range(len(findings)):
+                    match = next((d for d in data if d.get("id") == i + 1), None)
+                    if match:
+                        verdicts.append(match.get("verdict", "TRUE_POSITIVE"))
+                    elif i < len(data):
+                        verdicts.append(data[i].get("verdict", "TRUE_POSITIVE"))
+                    else:
+                        verdicts.append("TRUE_POSITIVE")
+                return verdicts
+
+        except Exception:
+            pass
+
+        return ["TRUE_POSITIVE"] * len(findings)
+
+
 AGENT_REGISTRY = {
     "security": SecurityAgent,
-    "dead_code": DeadCodeAgent,
     "quality": QualityAgent,
     "security_audit": SecurityAuditAgent,
     "fixer": FixerAgent,
+    "false_positive_filter": FalsePositiveFilterAgent,
 }
 
 
