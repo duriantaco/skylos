@@ -1,21 +1,23 @@
 import ast
+from pathlib import Path
+from typing import Any
 from skylos.constants import TEST_IMPORT_RE, TEST_DECOR_RE, TEST_FILE_RE
 
 
 class TestAwareVisitor:
-    def __init__(self, filename=None):
+    def __init__(self, filename: str | Path | None = None) -> None:
         self.is_test_file = False
         self.test_decorated_lines = set()
 
         if filename and TEST_FILE_RE.search(str(filename)):
             self.is_test_file = True
 
-    def visit(self, node):
+    def visit(self, node: ast.AST) -> Any:
         method = "visit_" + node.__class__.__name__
         visitor = getattr(self, method, self.generic_visit)
         return visitor(node)
 
-    def generic_visit(self, node):
+    def generic_visit(self, node: ast.AST) -> None:
         for field, value in ast.iter_fields(node):
             if isinstance(value, list):
                 for item in value:
@@ -24,20 +26,20 @@ class TestAwareVisitor:
             elif isinstance(value, ast.AST):
                 self.visit(value)
 
-    def visit_Import(self, node):
+    def visit_Import(self, node: ast.Import) -> None:
         if self.is_test_file:
             for alias in node.names:
                 if TEST_IMPORT_RE.match(alias.name):
                     pass
         self.generic_visit(node)
 
-    def visit_ImportFrom(self, node):
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if self.is_test_file:
             if node.module and TEST_IMPORT_RE.match(node.module):
                 pass
         self.generic_visit(node)
 
-    def visit_FunctionDef(self, node):
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         if (
             node.name.startswith("test_")
             or node.name.endswith("_test")
@@ -62,10 +64,10 @@ class TestAwareVisitor:
                 self.test_decorated_lines.add(node.lineno)
         self.generic_visit(node)
 
-    def visit_AsyncFunctionDef(self, node):
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self.visit_FunctionDef(node)
 
-    def _decorator_name(self, deco):
+    def _decorator_name(self, deco: ast.AST) -> str:
         if isinstance(deco, ast.Name):
             return deco.id
         if isinstance(deco, ast.Attribute):

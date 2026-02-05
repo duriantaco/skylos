@@ -1,5 +1,6 @@
 from enum import Enum
 import json
+from typing import Any
 
 
 class Severity(str, Enum):
@@ -28,14 +29,21 @@ class Confidence(str, Enum):
 
 
 class CodeLocation:
-    def __init__(self, file, line, end_line=None, column=None, end_column=None):
+    def __init__(
+        self,
+        file: str,
+        line: int,
+        end_line: int | None = None,
+        column: int | None = None,
+        end_column: int | None = None,
+    ) -> None:
         self.file = file
         self.line = line
         self.end_line = end_line
         self.column = column
         self.end_column = end_column
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         result = {"file": self.file, "line": self.line}
         if self.end_line:
             result["end_line"] = self.end_line
@@ -49,17 +57,17 @@ class CodeLocation:
 class Finding:
     def __init__(
         self,
-        rule_id,
-        issue_type,
-        severity,
-        message,
-        location,
-        confidence=None,
-        explanation=None,
-        suggestion=None,
-        code_snippet=None,
-        references=None,
-    ):
+        rule_id: str,
+        issue_type: IssueType,
+        severity: Severity,
+        message: str,
+        location: CodeLocation,
+        confidence: Confidence | None = None,
+        explanation: str | None = None,
+        suggestion: str | None = None,
+        code_snippet: str | None = None,
+        references: list[str] | None = None,
+    ) -> None:
         self.rule_id = rule_id
         self.issue_type = issue_type
         self.severity = severity
@@ -71,7 +79,7 @@ class Finding:
         self.code_snippet = code_snippet
         self.references = references or []
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return {
             "rule_id": self.rule_id,
             "issue_type": self.issue_type.value,
@@ -85,7 +93,7 @@ class Finding:
             "references": self.references,
         }
 
-    def to_sarif_result(self):
+    def to_sarif_result(self) -> dict[str, Any]:
         return {
             "ruleId": self.rule_id,
             "level": self._severity_to_sarif_level(),
@@ -107,7 +115,7 @@ class Finding:
             },
         }
 
-    def _severity_to_sarif_level(self):
+    def _severity_to_sarif_level(self) -> str:
         mapping = {
             Severity.CRITICAL: "error",
             Severity.HIGH: "error",
@@ -121,13 +129,13 @@ class Finding:
 class CodeFix:
     def __init__(
         self,
-        finding,
-        original_code,
-        fixed_code,
-        description,
-        confidence=None,
-        side_effects=None,
-    ):
+        finding: Finding,
+        original_code: str,
+        fixed_code: str,
+        description: str,
+        confidence: Confidence | None = None,
+        side_effects: list[str] | None = None,
+    ) -> None:
         self.finding = finding
         self.original_code = original_code
         self.fixed_code = fixed_code
@@ -135,7 +143,7 @@ class CodeFix:
         self.confidence = confidence or Confidence.MEDIUM
         self.side_effects = side_effects or []
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return {
             "finding": self.finding.to_dict(),
             "original_code": self.original_code,
@@ -149,14 +157,14 @@ class CodeFix:
 class AnalysisResult:
     def __init__(
         self,
-        findings=None,
-        summary="",
-        files_analyzed=0,
-        total_lines=0,
-        analysis_time_ms=0,
-        model_used="",
-        tokens_used=0,
-    ):
+        findings: list[Finding] | None = None,
+        summary: str = "",
+        files_analyzed: int = 0,
+        total_lines: int = 0,
+        analysis_time_ms: int = 0,
+        model_used: str = "",
+        tokens_used: int = 0,
+    ) -> None:
         self.findings = findings or []
         self.summary = summary
         self.files_analyzed = files_analyzed
@@ -165,7 +173,7 @@ class AnalysisResult:
         self.model_used = model_used
         self.tokens_used = tokens_used
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         out_findings = []
         for f in self.findings:
             out_findings.append(f.to_dict())
@@ -182,7 +190,9 @@ class AnalysisResult:
             },
         }
 
-    def to_sarif(self, tool_name="Skylos-LLM", version="1.0.0"):
+    def to_sarif(
+        self, tool_name: str = "Skylos-LLM", version: str = "1.0.0"
+    ) -> dict[str, Any]:
         rules = {}
         for f in self.findings:
             if f.rule_id not in rules:
@@ -211,21 +221,21 @@ class AnalysisResult:
             ],
         }
 
-    def get_critical_count(self):
+    def get_critical_count(self) -> int:
         count = 0
         for f in self.findings:
             if f.severity == Severity.CRITICAL:
                 count += 1
         return count
 
-    def get_high_count(self):
+    def get_high_count(self) -> int:
         count = 0
         for f in self.findings:
             if f.severity == Severity.HIGH:
                 count += 1
         return count
 
-    def has_blockers(self):
+    def has_blockers(self) -> bool:
         if self.get_critical_count() > 0:
             return True
         if self.get_high_count() > 0:
@@ -279,7 +289,7 @@ FINDING_SCHEMA = {
 }
 
 
-def parse_llm_finding(data, file_path):
+def parse_llm_finding(data: dict[str, Any], file_path: str) -> Finding | None:
     try:
         rule_id = data.get("rule_id", "SKY-L000")
         issue_type_raw = data.get("issue_type") or data.get("type") or "quality"
@@ -311,7 +321,7 @@ def parse_llm_finding(data, file_path):
         return None
 
 
-def parse_llm_response(response_text, file_path):
+def parse_llm_response(response_text: str | None, file_path: str) -> list[Finding]:
     if not response_text:
         return []
 

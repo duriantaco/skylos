@@ -2,15 +2,18 @@ import re
 from pathlib import Path
 from difflib import SequenceMatcher
 from functools import partial
+from typing import Any
+
+Finding = dict[str, Any]
 
 
-def normalize_path(p):
+def normalize_path(p: str | Path | None) -> str:
     if not p:
         return ""
     return str(Path(p).resolve())
 
 
-def normalize_message(msg):
+def normalize_message(msg: str | None) -> str:
     if not msg:
         return ""
     msg = msg.lower().strip()
@@ -20,13 +23,13 @@ def normalize_message(msg):
     return msg
 
 
-def similar(a, b, threshold=0.6):
+def similar(a: str, b: str, threshold: float = 0.6) -> bool:
     if not a or not b:
         return False
     return SequenceMatcher(None, a, b).ratio() >= threshold
 
 
-def findings_match(f1, f2, line_tolerance=5):
+def findings_match(f1: Finding, f2: Finding, line_tolerance: int = 5) -> bool:
     file1 = normalize_path(f1.get("file"))
     file2 = normalize_path(f2.get("file"))
 
@@ -68,7 +71,7 @@ def findings_match(f1, f2, line_tolerance=5):
     return False
 
 
-def deduplicate_input_findings(findings):
+def deduplicate_input_findings(findings: list[Finding]) -> list[Finding]:
     if not findings:
         return []
 
@@ -95,7 +98,9 @@ def deduplicate_input_findings(findings):
     return unique
 
 
-def merge_findings(static_findings, llm_findings):
+def merge_findings(
+    static_findings: list[Finding], llm_findings: list[Finding]
+) -> list[Finding]:
     static_findings = deduplicate_input_findings(static_findings)
     llm_findings = deduplicate_input_findings(llm_findings)
 
@@ -144,7 +149,7 @@ def merge_findings(static_findings, llm_findings):
 
     merged = deduplicate_merged_findings(merged)
 
-    def sort_key(f):
+    def sort_key(f: Finding) -> tuple[int, str, int]:
         confidence = f.get("_confidence")
         if confidence == "high":
             priority = 0
@@ -161,7 +166,7 @@ def merge_findings(static_findings, llm_findings):
     return merged
 
 
-def deduplicate_merged_findings(findings):
+def deduplicate_merged_findings(findings: list[Finding]) -> list[Finding]:
     if not findings:
         return []
 
@@ -189,7 +194,9 @@ def deduplicate_merged_findings(findings):
     unique = []
     confidence_order = {"high": 0, "medium": 1, "low": 2}
 
-    def finding_sort_key(f, confidence_order):
+    def finding_sort_key(
+        f: Finding, confidence_order: dict[str, int]
+    ) -> tuple[int, int]:
         conf_rank = confidence_order.get(f.get("_confidence", "medium"), 1)
         if f.get("_source") == "static+llm":
             source_rank = 0
@@ -207,7 +214,7 @@ def deduplicate_merged_findings(findings):
     return unique
 
 
-def classify_confidence(finding):
+def classify_confidence(finding: Finding) -> str:
     conf = finding.get("_confidence", "medium")
     source = finding.get("_source", "unknown")
 
