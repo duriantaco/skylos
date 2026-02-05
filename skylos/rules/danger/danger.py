@@ -150,21 +150,28 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 if rule_key == "yaml.load" and not _yaml_load_without_safeloader(node):
                     continue
 
-                if opts and "kw_equals" in opts and not _kw_equals(node, opts["kw_equals"]):
+                if (
+                    opts
+                    and "kw_equals" in opts
+                    and not _kw_equals(node, opts["kw_equals"])
+                ):
                     continue
 
-                self.findings.append({
-                    "rule_id": rule_id,
-                    "severity": severity,
-                    "message": message,
-                    "file": str(self.file_path),
-                    "line": node.lineno,
-                    "col": node.col_offset,
-                    "symbol": self._current_symbol(),
-                })
+                self.findings.append(
+                    {
+                        "rule_id": rule_id,
+                        "severity": severity,
+                        "message": message,
+                        "file": str(self.file_path),
+                        "line": node.lineno,
+                        "col": node.col_offset,
+                        "symbol": self._current_symbol(),
+                    }
+                )
                 break
 
         self.generic_visit(node)
+
 
 def _scan_file(file_path: Path, findings):
     src = file_path.read_text(encoding="utf-8", errors="ignore")
@@ -180,7 +187,7 @@ def _scan_file(file_path: Path, findings):
     checker = _DangerousCallsChecker(file_path, findings)
     checker.visit(tree)
 
-   
+
 def scan_ctx(_, files):
     findings = []
     py_files = []

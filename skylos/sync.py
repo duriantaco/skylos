@@ -3,6 +3,7 @@ import sys
 import json
 from pathlib import Path
 from datetime import datetime
+import subprocess
 
 try:
     import requests
@@ -16,12 +17,99 @@ except ImportError as e:
 SKYLOS_DIR = ".skylos"
 CONFIG_FILE = "config.yaml"
 SUPPRESSIONS_FILE = "suppressions.json"
-META_FILE = ".sync-meta.json"
 DEFAULT_API_URL = "https://skylos.dev"
 LOCAL_API_URL = "http://localhost:3000"
 
 GLOBAL_CREDS_DIR = Path.home() / ".skylos"
 GLOBAL_CREDS_FILE = GLOBAL_CREDS_DIR / "credentials.json"
+
+
+LINK_FILE = "link.json"
+
+
+def _load_creds():
+    if not GLOBAL_CREDS_FILE.exists():
+        return {}
+    try:
+        return json.loads(GLOBAL_CREDS_FILE.read_text() or "{}")
+    except Exception:
+        return {}
+
+
+def _write_creds(data):
+    GLOBAL_CREDS_DIR.mkdir(parents=True, exist_ok=True)
+    GLOBAL_CREDS_FILE.write_text(json.dumps(data, indent=2))
+
+
+def _find_repo_root():
+    try:
+        out = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL
+            )
+            .decode()
+            .strip()
+        )
+        if out:
+            return Path(out)
+    except Exception:
+        pass
+    return Path.cwd()
+
+
+def _linked_project_id(repo_root: Path):
+    p = repo_root / SKYLOS_DIR / LINK_FILE
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text() or "{}")
+        return data.get("project_id")
+    except Exception:
+        return None
+
+
+# def _read_link(repo_root: Path):
+#     p = repo_root / SKYLOS_DIR / LINK_FILE
+#     if not p.exists():
+#         return {}
+#     try:
+#         return json.loads(p.read_text() or "{}")
+#     except Exception:
+#         return {}
+
+
+def _write_link(
+    repo_root: Path,
+    project_id,
+    project_name=None,
+    org_name=None,
+    plan=None,
+    *,
+    base_url=None,
+):
+    skylos_dir = repo_root / SKYLOS_DIR
+    skylos_dir.mkdir(parents=True, exist_ok=True)
+
+    link_path = skylos_dir / LINK_FILE
+    payload = {
+        "project_id": str(project_id),
+        "linked_at": datetime.utcnow().isoformat() + "Z",
+    }
+    if base_url:
+        payload["base_url"] = str(base_url).rstrip("/")
+    if project_name:
+        payload["project_name"] = project_name
+    if org_name:
+        payload["org_name"] = org_name
+    if plan:
+        payload["plan"] = str(plan).lower()
+    # if folder_id:
+    #     payload["folder_id"] = str(folder_id)
+    # if folder_name:
+    #     payload["folder_name"] = str(folder_name)
+
+    link_path.write_text(json.dumps(payload, indent=2))
+    return str(link_path)
 
 
 def get_api_url():
@@ -34,30 +122,49 @@ def get_token():
     if env_token:
         return env_token
 
-    if GLOBAL_CREDS_FILE.exists():
-        try:
-            data = json.loads(GLOBAL_CREDS_FILE.read_text())
-            return data.get("token")
-        except:
-            pass
+    repo_root = _find_repo_root()
+    linked_pid = _linked_project_id(repo_root)
+
+    data = _load_creds()
+
+    tokens = data.get("tokens") or {}
+    if linked_pid and linked_pid in tokens:
+        t = (tokens.get(linked_pid) or {}).get("token")
+        if t:
+            return t
+
+    t = data.get("token")
+    if t:
+        return t
 
     return None
 
 
-def save_token(token, project_name=None, org_name=None, plan=None):
-    GLOBAL_CREDS_DIR.mkdir(parents=True, exist_ok=True)
+def save_token(token, project_id=None, project_name=None, org_name=None, plan=None):
+    data = _load_creds()
+    now = datetime.utcnow().isoformat() + "Z"
 
-    data = {
-        "token": token,
-        "saved_at": datetime.utcnow().isoformat() + "Z",
-        "plan": (plan or "free").lower(),
-    }
-    if project_name:
-        data["project_name"] = project_name
-    if org_name:
-        data["org_name"] = org_name
+    data["token"] = token
+    data["saved_at"] = now
+    data["plan"] = (plan or data.get("plan") or "free").lower()
 
-    GLOBAL_CREDS_FILE.write_text(json.dumps(data, indent=2))
+    if project_id:
+        tokens = data.get("tokens") or {}
+        pid = str(project_id)
+
+        tokens[pid] = {
+            "token": token,
+            "saved_at": now,
+            "plan": (plan or "free").lower(),
+        }
+        if project_name:
+            tokens[pid]["project_name"] = project_name
+        if org_name:
+            tokens[pid]["org_name"] = org_name
+
+        data["tokens"] = tokens
+
+    _write_creds(data)
     return str(GLOBAL_CREDS_FILE)
 
 
@@ -119,7 +226,11 @@ def cmd_connect(token_arg=None):
         token = token_arg or env_token
 
     if not token:
-        print("Enter your API token (from Dashboard → Settings):")
+        print("API token required. To get one:")
+        print("  1. Get one at: https://skylos.dev/settings/api-keys")
+        print("  2. Create a project and copy the API key")
+        print()
+        print("Enter your API token:")
         try:
             token = input("> ").strip()
         except (KeyboardInterrupt, EOFError):
@@ -147,10 +258,32 @@ def cmd_connect(token_arg=None):
     print(f"  Organization: {org.get('name', 'Unknown')}")
     print(f"  Plan:         {plan.capitalize()}")
 
-    creds_path = save_token(
-        token, project_name=project.get("name"), org_name=org.get("name"), plan=plan
+    project_id = project.get("id") or project.get("project_id")
+    if not project_id:
+        print("\n✗ Server did not return project id (expected project.id).")
+        sys.exit(1)
+
+    repo_root = _find_repo_root()
+
+    link_path = _write_link(
+        repo_root,
+        project_id,
+        project_name=project.get("name"),
+        org_name=org.get("name"),
+        plan=plan,
+        base_url=get_api_url(),
     )
 
+    creds_path = save_token(
+        token,
+        project_id=project_id,
+        project_name=project.get("name"),
+        org_name=org.get("name"),
+        plan=plan,
+    )
+
+    print(f"\nLinked repo: {repo_root}")
+    print(f"Link file:   {link_path}")
     print(f"\nToken saved to {creds_path}")
     print("\nYou can now run:")
     print("  skylos .           # Scan locally")
@@ -199,8 +332,9 @@ def cmd_pull():
         print("Run 'skylos sync connect' first.")
         sys.exit(1)
 
-    skylos_dir = Path(SKYLOS_DIR)
-    skylos_dir.mkdir(exist_ok=True)
+    repo_root = _find_repo_root()
+    skylos_dir = repo_root / SKYLOS_DIR
+    skylos_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         info = api_get("/api/sync/whoami", token)
@@ -286,8 +420,28 @@ def cmd_setup(token_arg=None):
     org = info.get("organization", {})
     plan = info.get("plan", "free")
 
+    project_id = project.get("id") or project.get("project_id")
+    if not project_id:
+        print("\n✗ Server did not return project id (expected project.id).")
+        return
+
+    repo_root = _find_repo_root()
+
+    _write_link(
+        repo_root,
+        project_id,
+        project_name=project.get("name"),
+        org_name=org.get("name"),
+        plan=plan,
+        base_url=get_api_url(),
+    )
+
     save_token(
-        token, project_name=project.get("name"), org_name=org.get("name"), plan=plan
+        token,
+        project_id=project_id,
+        project_name=project.get("name"),
+        org_name=org.get("name"),
+        plan=plan,
     )
 
     print(f"✓ Connected!\n")

@@ -13,6 +13,8 @@ DEFAULTS = {
     "whitelist_temporary": {},
     "lower_confidence": [],
     "overrides": {},
+    "check_circular": True,
+    "max_circular_deps": -1,
     "masking": {
         "names": [],
         "decorators": [],
