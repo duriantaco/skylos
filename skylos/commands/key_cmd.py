@@ -28,7 +28,12 @@ def run_key_command(argv):
             provider = str(argv[1]).strip().lower()
         return _add_key(console, provider)
 
-    if subcommand == "remove" or subcommand == "rm" or subcommand == "delete" or subcommand == "del":
+    if (
+        subcommand == "remove"
+        or subcommand == "rm"
+        or subcommand == "delete"
+        or subcommand == "del"
+    ):
         provider = ""
         if len(argv) > 1:
             provider = str(argv[1]).strip().lower()
@@ -101,7 +106,12 @@ def _render_key_list(console):
 def _menu(console):
     while True:
         console.print()
-        console.print(Panel.fit("[bold]Skylos Login[/bold]\nManage your provider keys.", border_style="cyan"))
+        console.print(
+            Panel.fit(
+                "[bold]Skylos Login[/bold]\nManage your provider keys.",
+                border_style="cyan",
+            )
+        )
         console.print("1) List key status")
         console.print("2) Add / update a key")
         console.print("3) Remove a stored key")
@@ -169,7 +179,9 @@ def _add_key(console, provider):
 
     if _is_env_set(env_var):
         console.print("[yellow]" + env_var + " is set in your environment.[/yellow]")
-        console.print("[dim]Unset it if you want Skylos to use the keyring instead.[/dim]")
+        console.print(
+            "[dim]Unset it if you want Skylos to use the keyring instead.[/dim]"
+        )
         return 0
 
     console.print()
@@ -180,7 +192,9 @@ def _add_key(console, provider):
         return 1
 
     save_key(provider, key_value)
-    console.print("[green]✓ Saved key for '" + provider + "' to system keyring.[/green]")
+    console.print(
+        "[green]✓ Saved key for '" + provider + "' to system keyring.[/green]"
+    )
     return 0
 
 
