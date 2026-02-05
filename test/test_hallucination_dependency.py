@@ -196,7 +196,9 @@ def test_scan_installed_but_undeclared_emits_dist_hint(monkeypatch, tmp_path):
     assert "other" in one["message"]
 
 
-@pytest.mark.xfail(reason="Current code treats PyPI status as truthy string; 'missing' won't trigger hallucination until fixed.")
+@pytest.mark.xfail(
+    reason="Current code treats PyPI status as truthy string; 'missing' won't trigger hallucination until fixed."
+)
 def test_scan_pypi_missing_should_emit_hallucination(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -233,7 +235,7 @@ def test_scan_cache_is_written_when_modified(monkeypatch, tmp_path):
     monkeypatch.setattr(dep, "_collect_local_modules", lambda root: set())
     monkeypatch.setattr(dep, "_collect_declared_deps", lambda root: set())
     monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
-    monkeypatch.setattr(dep, "_build_installed_module_mapping", lambda: {}) 
+    monkeypatch.setattr(dep, "_build_installed_module_mapping", lambda: {})
 
     def fake_check(name, cache):
         cache[dep._normalize_name(name)] = "exists"
@@ -262,8 +264,8 @@ def test_scan_does_not_write_cache_when_not_modified(monkeypatch, tmp_path):
     monkeypatch.setattr(dep, "_collect_local_modules", lambda root: set())
     monkeypatch.setattr(dep, "_collect_declared_deps", lambda root: set())
     monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
-    monkeypatch.setattr(dep, "_build_installed_module_mapping", lambda: {}) 
-    
+    monkeypatch.setattr(dep, "_build_installed_module_mapping", lambda: {})
+
     def fake_check(name, cache):
         return "exists"
 
