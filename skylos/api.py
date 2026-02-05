@@ -4,6 +4,132 @@ import subprocess
 from skylos.credentials import get_key
 from skylos.sarif_exporter import SarifExporter
 import sys
+from pathlib import Path
+import json
+
+LINK_FILE = ".skylos/link.json"
+GLOBAL_CREDS_FILE = Path.home() / ".skylos" / "credentials.json"
+
+
+def _detect_ci():
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        return "github_actions", {
+            "run_id": os.getenv("GITHUB_RUN_ID"),
+            "run_attempt": os.getenv("GITHUB_RUN_ATTEMPT"),
+            "workflow": os.getenv("GITHUB_WORKFLOW"),
+            "actor": os.getenv("GITHUB_ACTOR"),
+            "repo": os.getenv("GITHUB_REPOSITORY"),
+            "ref": os.getenv("GITHUB_REF"),
+            "sha": os.getenv("GITHUB_SHA"),
+        }
+
+    if os.getenv("JENKINS_URL") or os.getenv("BUILD_NUMBER"):
+        return "jenkins", {
+            "build_number": os.getenv("BUILD_NUMBER"),
+            "build_url": os.getenv("BUILD_URL"),
+            "job_name": os.getenv("JOB_NAME"),
+            "change_id": os.getenv("CHANGE_ID"),
+            "change_branch": os.getenv("CHANGE_BRANCH"),
+            "change_target": os.getenv("CHANGE_TARGET"),
+            "git_branch": os.getenv("GIT_BRANCH"),
+            "git_commit": os.getenv("GIT_COMMIT"),
+        }
+
+    if os.getenv("CIRCLECI") == "true":
+        return "circleci", {
+            "build_num": os.getenv("CIRCLE_BUILD_NUM"),
+            "workflow_id": os.getenv("CIRCLE_WORKFLOW_ID"),
+            "username": os.getenv("CIRCLE_USERNAME"),
+            "branch": os.getenv("CIRCLE_BRANCH"),
+            "sha1": os.getenv("CIRCLE_SHA1"),
+            "pr_url": os.getenv("CIRCLE_PULL_REQUEST"),
+        }
+
+    if os.getenv("GITLAB_CI") == "true":
+        return "gitlab", {
+            "pipeline_id": os.getenv("CI_PIPELINE_ID"),
+            "job_id": os.getenv("CI_JOB_ID"),
+            "commit_sha": os.getenv("CI_COMMIT_SHA"),
+            "commit_branch": os.getenv("CI_COMMIT_BRANCH"),
+            "merge_request_iid": os.getenv("CI_MERGE_REQUEST_IID"),
+            "user_login": os.getenv("GITLAB_USER_LOGIN"),
+        }
+
+    return None, {}
+
+
+def _extract_pr_number(provider, meta):
+    env_pr = os.getenv("SKYLOS_PR_NUMBER")
+    if env_pr:
+        try:
+            return int(env_pr)
+        except ValueError:
+            pass
+
+    if provider == "github_actions":
+        ref = os.getenv("GITHUB_REF", "")
+        if ref.startswith("refs/pull/"):
+            try:
+                return int(ref.split("/")[2])
+            except (IndexError, ValueError):
+                pass
+
+    if provider == "jenkins":
+        change_id = meta.get("change_id")
+        if change_id:
+            try:
+                return int(change_id)
+            except ValueError:
+                pass
+
+    if provider == "circleci":
+        pr_url = meta.get("pr_url") or ""
+        if "/pull/" in pr_url:
+            try:
+                return int(pr_url.split("/pull/")[-1].strip().rstrip("/"))
+            except ValueError:
+                pass
+
+    if provider == "gitlab":
+        mr_iid = meta.get("merge_request_iid")
+        if mr_iid:
+            try:
+                return int(mr_iid)
+            except ValueError:
+                pass
+
+    return None
+
+
+def _normalize_branch(branch):
+    if not branch or not isinstance(branch, str):
+        return branch
+    branch = branch.removeprefix("refs/heads/")
+    branch = branch.removeprefix("origin/")
+    return branch
+
+
+def _read_json(path: Path):
+    try:
+        if path and path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return None
+
+
+def _get_repo_root_for_link():
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL
+        )
+        p = out.decode().strip()
+        if p:
+            return Path(p)
+    except Exception:
+        pass
+    return Path.cwd()
+
 
 BASE_URL = os.getenv("SKYLOS_API_URL", "https://skylos.dev").rstrip("/")
 
@@ -24,19 +150,25 @@ def get_project_token():
     token = os.getenv("SKYLOS_TOKEN")
     if token:
         return token
-    
-    creds_file = os.path.expanduser("~/.skylos/credentials.json")
-    if os.path.exists(creds_file):
-        try:
-            import json
-            with open(creds_file, "r") as f:
-                creds = json.load(f)
-            token = creds.get("token")
-            if token:
-                return token
-        except Exception:
-            pass
-    
+
+    repo_root = _get_repo_root_for_link()
+    link_path = repo_root / LINK_FILE
+    link = _read_json(link_path) or {}
+    linked_project_id = link.get("project_id") or link.get("projectId")
+
+    creds = _read_json(GLOBAL_CREDS_FILE) or {}
+
+    if linked_project_id:
+        tokens_map = creds.get("tokens") or {}
+        entry = tokens_map.get(linked_project_id) or {}
+        t = entry.get("token")
+        if t:
+            return t
+
+    legacy = creds.get("token")
+    if legacy:
+        return legacy
+
     return get_key("skylos_token")
 
 
@@ -69,26 +201,94 @@ def get_git_root():
         return None
 
 
-def get_git_info():
+def _load_repo_link(git_root):
     try:
-        commit = (
-            subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
-            )
-            .decode()
-            .strip()
-        )
-        branch = (
-            subprocess.check_output(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"], stderr=subprocess.DEVNULL
-            )
-            .decode()
-            .strip()
-        )
-        actor = os.getenv("GITHUB_ACTOR") or os.getenv("USER") or "unknown"
-        return commit, branch, actor
+        if not git_root:
+            return {}
+        p = os.path.join(git_root, ".skylos", "link.json")
+        if not os.path.exists(p):
+            return {}
+        import json
+
+        return json.loads(open(p, "r", encoding="utf-8").read() or "{}")
     except Exception:
-        return "unknown", "unknown", "unknown"
+        return {}
+
+
+def get_git_info():
+    override_sha = os.getenv("SKYLOS_COMMIT")
+    override_branch = os.getenv("SKYLOS_BRANCH")
+    override_actor = os.getenv("SKYLOS_ACTOR")
+
+    provider, meta = _detect_ci()
+
+    commit = (
+        override_sha
+        or meta.get("sha")
+        or meta.get("git_commit")
+        or meta.get("sha1")
+        or meta.get("commit_sha")
+    )
+
+    branch = (
+        override_branch
+        or meta.get("change_branch")
+        or meta.get("git_branch")
+        or meta.get("branch")
+        or meta.get("commit_branch")
+    )
+    if not branch and provider == "github_actions":
+        ref = meta.get("ref") or ""
+        if ref.startswith("refs/heads/"):
+            branch = ref
+
+    actor = (
+        override_actor
+        or meta.get("actor")
+        or meta.get("username")
+        or meta.get("user_login")
+        or os.getenv("USER")
+        or "unknown"
+    )
+
+    if not commit or not branch:
+        try:
+            git_commit = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
+                )
+                .decode()
+                .strip()
+            )
+            git_branch = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    stderr=subprocess.DEVNULL,
+                )
+                .decode()
+                .strip()
+            )
+            commit = commit or git_commit
+            branch = branch or git_branch
+        except Exception:
+            commit = commit or "unknown"
+            branch = branch or "unknown"
+
+    branch = _normalize_branch(branch)
+
+    pr_number = _extract_pr_number(provider, meta)
+    ci = {}
+    if provider:
+        ci["provider"] = provider
+
+    for key, value in meta.items():
+        if value:
+            ci[key] = value
+
+    if pr_number:
+        ci["pr_number"] = pr_number
+
+    return commit, branch, actor, ci
 
 
 def extract_snippet(file_abs, line_number, context=3):
@@ -118,7 +318,7 @@ def upload_report(result_json, is_forced=False, quiet=False, strict=False):
             project_name = info.get("project", {}).get("name", "Unknown")
             print(f"Uploading to: {project_name}")
 
-    commit, branch, actor = get_git_info()
+    commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
 
     def prepare_for_sarif(items, category, default_rule_id=None):
@@ -235,8 +435,13 @@ def upload_report(result_json, is_forced=False, quiet=False, strict=False):
             "branch": branch,
             "actor": actor,
             "is_forced": bool(is_forced),
+            "ci": ci,
         }
     )
+
+    link = _load_repo_link(git_root)
+    if link.get("project_id"):
+        payload["project_id"] = link["project_id"]
 
     last_err = None
     for _ in range(3):
@@ -366,7 +571,7 @@ def verify_report(result_json, quiet=False):
             "error": "Verification requires Skylos Pro. Upgrade to enable --verify.",
         }
 
-    commit, branch, actor = get_git_info()
+    commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
 
     def _norm_findings(items, category, default_rule_id=None):
