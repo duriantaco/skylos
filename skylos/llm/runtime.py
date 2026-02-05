@@ -54,7 +54,6 @@ def resolve_llm_runtime(
     console=None,
     allow_prompt=True,
 ):
-
     provider = (
         (provider_override or "").strip().lower()
         or (os.getenv("SKYLOS_LLM_PROVIDER") or "").strip().lower()

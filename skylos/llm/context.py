@@ -1,6 +1,7 @@
 import ast
 import re
 from pathlib import Path
+from skylos.llm.graph import CodeGraph
 
 
 class CodeChunk:
@@ -347,6 +348,14 @@ class ContextBuilder:
             file_path=file_path,
         )
         return self._build_chunk_context(chunk, defs_map)
+
+    def build_smart_slice(self, full_source, function_name):
+        graph = CodeGraph()
+        graph.build(full_source)
+        sliced = graph.get_slice(function_name)
+        if sliced:
+            return f"=== CONTEXT SLICE (Focus: {function_name}) ===\n{sliced}"
+        return None
 
     def _extract_imports_str(self, source):
         try:
