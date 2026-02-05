@@ -193,6 +193,7 @@ def test_stream_error_yields_single_error_message(monkeypatch):
     assert parts[0].startswith("Error:")
     assert "explode" in parts[0]
 
+
 def test_complete_auth_error_suggests_login(monkeypatch):
     fake = _FakeLiteLLMModule(should_raise=RuntimeError("401 Unauthorized"))
     _install_fake_litellm(monkeypatch, fake_module=fake)
@@ -204,11 +205,14 @@ def test_complete_auth_error_suggests_login(monkeypatch):
     assert "skylos key" in out
     assert "anthropic" in out
 
+
 def test_complete_connection_error_mentions_base_url(monkeypatch):
     fake = _FakeLiteLLMModule(should_raise=RuntimeError("connection refused"))
     _install_fake_litellm(monkeypatch, fake_module=fake)
 
-    ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K", api_base="http://localhost:11434/v1")
+    ad = LiteLLMAdapter(
+        model="gpt-4o-mini", api_key="K", api_base="http://localhost:11434/v1"
+    )
     out = ad.complete("SYS", "USER")
 
     assert out.startswith("Error:")
