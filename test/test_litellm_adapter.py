@@ -123,7 +123,16 @@ def test_complete_success_calls_litellm_completion(monkeypatch):
     assert fake.last_kwargs == {
         "model": "claude-3-5-sonnet",
         "messages": [
-            {"role": "system", "content": "SYS"},
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "SYS",
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            },
             {"role": "user", "content": "USER"},
         ],
         "temperature": 0.2,

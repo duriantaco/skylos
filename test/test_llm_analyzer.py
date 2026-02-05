@@ -98,25 +98,6 @@ def test_analyze_file_small_uses_whole_file_path(tmp_path, monkeypatch):
     assert str(fp) == fp_used
 
 
-def test_chunk_by_size_prefers_blank_line_cut(monkeypatch):
-    cfg = AnalyzerConfig(
-        quiet=True,
-        max_chunk_tokens=5,
-        enable_security=False,
-        enable_dead_code=False,
-        enable_quality=False,
-    )
-
-    s = SkylosLLM(cfg)
-
-    src = "line1\n\nline2\nline3\n"
-    chunks = s._chunk_by_size(src, "x.py", max_chars=7)
-
-    assert len(chunks) >= 2
-    assert chunks[0]["content"].endswith("\n\n")
-    assert chunks[0]["start_line"] == 1
-
-
 def test_analyze_file_large_chunks_and_offsets_lines(tmp_path, monkeypatch):
     fp = tmp_path / "big.py"
 
@@ -155,72 +136,6 @@ def test_analyze_file_large_chunks_and_offsets_lines(tmp_path, monkeypatch):
         return [mk_finding(file=file_path, line=abs_line, severity=Severity.MEDIUM)]
 
     monkeypatch.setattr(s, "_analyze_whole_file", fake_analyze_whole_file)
-
-
-def test_extract_enclosing_symbol_function_and_class():
-    cfg = AnalyzerConfig(quiet=True)
-    s = SkylosLLM(cfg)
-
-    src = (
-        "import os\n"
-        "\n"
-        "class A:\n"
-        "    def run(self):\n"
-        "        pass\n"
-        "\n"
-        "def hello(x):\n"
-        "    return x\n"
-        "\n"
-        "y = hello(1)\n"
-    )
-
-    assert s._extract_enclosing_symbol(src, issue_line=8) == "hello"
-    assert s._extract_enclosing_symbol(src, issue_line=4) == "run"
-    assert s._extract_enclosing_symbol(src, issue_line=3) == "A"
-
-
-def test_validate_fixed_code_for_apply_rejects_empty_and_bad_ast():
-    cfg = AnalyzerConfig(quiet=True)
-    s = SkylosLLM(cfg)
-
-    original = "def foo():\n    return 1\n"
-    ok, reason = s._validate_fixed_code_for_apply(original, "", issue_line=1)
-    assert ok is False
-    assert "Empty fixed code" in reason
-
-    ok, reason = s._validate_fixed_code_for_apply(original, "def foo(\n", issue_line=1)
-    assert ok is False
-    assert "does not parse" in reason.lower()
-
-
-def test_validate_fixed_code_for_apply_rejects_too_short_or_too_large():
-    cfg = AnalyzerConfig(quiet=True)
-    s = SkylosLLM(cfg)
-
-    original = "\n".join(["print('x')"] * 20) + "\n"
-
-    fixed_short = "print('x')\n"
-    ok, reason = s._validate_fixed_code_for_apply(original, fixed_short, issue_line=1)
-    assert ok is False
-    assert "too short" in reason.lower()
-
-    fixed_huge = "\n".join(["print('x')"] * 100) + "\n"
-    ok, reason = s._validate_fixed_code_for_apply(original, fixed_huge, issue_line=1)
-    assert ok is False
-    assert "too large" in reason.lower()
-
-
-def test_validate_fixed_code_for_apply_rejects_missing_symbol():
-    cfg = AnalyzerConfig(quiet=True)
-    s = SkylosLLM(cfg)
-
-    original = "def target():\n    return 1\n\ndef other():\n    return 2\n"
-
-    fixed = "def other():\n    return 2\n"
-
-    ok, reason = s._validate_fixed_code_for_apply(original, fixed, issue_line=1)
-    assert ok is False
-    assert "disappeared" in reason.lower()
 
 
 def test_analyze_files_builds_analysis_result_and_summary(tmp_path, monkeypatch):

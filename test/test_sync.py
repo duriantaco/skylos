@@ -79,6 +79,7 @@ def test_save_token_writes_file(isolated_creds):
 
     out_path = syncmod.save_token(
         "TOK_123",
+        project_id="proj_abc",
         project_name="Proj",
         org_name="Org",
         plan="pro",
@@ -88,10 +89,10 @@ def test_save_token_writes_file(isolated_creds):
     assert creds_file.exists()
     data = json.loads(creds_file.read_text())
     assert data["token"] == "TOK_123"
-    assert data["project_name"] == "Proj"
-    assert data["org_name"] == "Org"
     assert data["plan"] == "pro"
     assert data["saved_at"].endswith("Z")
+    assert data["tokens"]["proj_abc"]["project_name"] == "Proj"
+    assert data["tokens"]["proj_abc"]["org_name"] == "Org"
 
 
 def test_clear_token(isolated_creds):
@@ -195,7 +196,7 @@ def test_cmd_connect_with_token_arg_saves_creds(isolated_creds, monkeypatch, cap
         assert endpoint == "/api/sync/whoami"
         assert token == "TOK_ARG"
         return {
-            "project": {"name": "Proj"},
+            "project": {"id": "proj_123", "name": "Proj"},
             "organization": {"name": "Org"},
             "plan": "pro",
         }
@@ -215,9 +216,9 @@ def test_cmd_connect_with_token_arg_saves_creds(isolated_creds, monkeypatch, cap
     assert creds_file.exists()
     data = json.loads(creds_file.read_text())
     assert data["token"] == "TOK_ARG"
-    assert data["project_name"] == "Proj"
-    assert data["org_name"] == "Org"
     assert data["plan"] == "pro"
+    assert data["tokens"]["proj_123"]["project_name"] == "Proj"
+    assert data["tokens"]["proj_123"]["org_name"] == "Org"
 
 
 def test_cmd_connect_cancel_input(monkeypatch):

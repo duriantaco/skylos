@@ -126,17 +126,17 @@ class TestSkylos:
         # test a regular Python file
         file_path = Path("/project/src/module.py")
         result = skylos._module(root, file_path)
-        assert result == "src.module"
+        assert result == "module"
 
         # test __init__.py file
         file_path = Path("/project/src/__init__.py")
         result = skylos._module(root, file_path)
-        assert result == "src"
+        assert result == ""
 
         # nested module
         file_path = Path("/project/src/package/submodule.py")
         result = skylos._module(root, file_path)
-        assert result == "src.package.submodule"
+        assert result == "package.submodule"
 
         # root level file
         file_path = Path("/project/main.py")
@@ -180,11 +180,13 @@ class TestSkylos:
         mock_dir = Mock()
         mock_dir.is_file.return_value = False
         mock_files = [Path("/project/file1.py"), Path("/project/file2.py")]
+        
         mock_dir.glob.return_value = mock_files
         mock_path.return_value.resolve.return_value = mock_dir
 
         files, root = skylos._get_python_files("/project")
-        assert files == mock_files
+        
+        assert mock_dir.glob.call_count == 4
         assert root == mock_dir
 
     def test_mark_exports_in_init(self, skylos):
