@@ -75,11 +75,11 @@ def _get_stdlib_modules():
 
 
 def _build_installed_module_mapping():
-
     mapping = {}
-    
+
     try:
         from importlib.metadata import packages_distributions
+
         pkg_dist = packages_distributions()
         for module, dists in pkg_dist.items():
             if module not in mapping:
@@ -90,43 +90,72 @@ def _build_installed_module_mapping():
         pass
     except Exception:
         pass
-    
+
     site_packages_dirs = []
-    
+
     try:
         site_packages_dirs.extend(site.getsitepackages())
     except Exception:
         pass
-    
+
     try:
         user_site = site.getusersitepackages()
         if user_site:
             site_packages_dirs.append(user_site)
     except Exception:
         pass
-    
+
     try:
         import sys
-        if hasattr(sys, 'prefix') and sys.prefix != sys.base_prefix:
-            venv_site = Path(sys.prefix) / 'lib'
-            for pydir in venv_site.glob('python*/site-packages'):
+
+        if hasattr(sys, "prefix") and sys.prefix != sys.base_prefix:
+            venv_site = Path(sys.prefix) / "lib"
+            for pydir in venv_site.glob("python*/site-packages"):
                 site_packages_dirs.append(str(pydir))
     except Exception:
         pass
-    
+
     for sp_dir in site_packages_dirs:
         sp_path = Path(sp_dir)
         if not sp_path.exists():
             continue
-        
-        for dist_info in sp_path.glob('*.dist-info'):
-            dist_name = dist_info.name.rsplit('-', 1)[0]
+
+        for dist_info in sp_path.glob("*.dist-info"):
+            metadata_file = dist_info / "METADATA"
+            dist_name = None
+            if metadata_file.exists():
+                try:
+                    for line in metadata_file.read_text(
+                        encoding="utf-8", errors="ignore"
+                    ).splitlines():
+                        if line.startswith("Name:"):
+                            dist_name = line.split(":", 1)[1].strip()
+                            break
+                except Exception:
+                    pass
+
+            if not dist_name:
+                base_name = dist_info.name.replace(".dist-info", "")
+                parts = base_name.split("-")
+                name_parts = []
+                for p in parts:
+                    if p and p[0].isdigit():
+                        break
+                    name_parts.append(p)
+
+                if name_parts:
+                    dist_name = "-".join(name_parts)
+                else:
+                    dist_name = base_name
+
             normalized_dist = _normalize_name(dist_name)
-            
-            top_level_file = dist_info / 'top_level.txt'
+
+            top_level_file = dist_info / "top_level.txt"
             if top_level_file.exists():
                 try:
-                    content = top_level_file.read_text(encoding='utf-8', errors='ignore')
+                    content = top_level_file.read_text(
+                        encoding="utf-8", errors="ignore"
+                    )
                     for line in content.strip().splitlines():
                         module = line.strip()
                         if module:
@@ -135,48 +164,51 @@ def _build_installed_module_mapping():
                             mapping[module].add(normalized_dist)
                 except Exception:
                     pass
-                continue  # If top_level.txt exists, trust it
-            
-            record_file = dist_info / 'RECORD'
+                continue
+
+            record_file = dist_info / "RECORD"
             if record_file.exists():
                 try:
-                    content = record_file.read_text(encoding='utf-8', errors='ignore')
+                    content = record_file.read_text(encoding="utf-8", errors="ignore")
                     top_levels = set()
                     for line in content.splitlines():
                         if not line.strip():
                             continue
-                        file_path = line.split(',')[0]
-                        parts = file_path.split('/')
+                        file_path = line.split(",")[0]
+                        parts = file_path.split("/")
                         if len(parts) >= 1:
                             first = parts[0]
-                            if first.endswith('.dist-info'):
+                            if first.endswith(".dist-info"):
                                 continue
-                            if first.startswith('__'):
+                            if first.startswith("__"):
                                 continue
-                            if first.endswith('.py'):
+                            if first.endswith(".py"):
                                 mod_name = first[:-3]
-                                if mod_name and not mod_name.startswith('_'):
+                                if mod_name and not mod_name.startswith("_"):
                                     top_levels.add(mod_name)
-                            elif '/' in file_path or len(parts) > 1:
-                                if not first.startswith('_') and first not in ('bin', 'scripts'):
+                            elif "/" in file_path or len(parts) > 1:
+                                if not first.startswith("_") and first not in (
+                                    "bin",
+                                    "scripts",
+                                ):
                                     top_levels.add(first)
-                    
+
                     for module in top_levels:
                         if module not in mapping:
                             mapping[module] = set()
                         mapping[module].add(normalized_dist)
                 except Exception:
                     pass
-    
+
     return mapping
 
 
 def _get_possible_packages(import_name, installed_mapping):
     result = {import_name, _normalize_name(import_name)}
-    
+
     if import_name in installed_mapping:
         result.update(installed_mapping[import_name])
-    
+
     return result
 
 
@@ -340,22 +372,32 @@ def _parse_setup_py(path):
 def _collect_declared_deps(repo_root):
     deps = set()
 
-    req_path = repo_root / "requirements.txt"
-    if req_path.exists():
-        deps |= _parse_requirements_txt(req_path)
+    current = repo_root
+    for _ in range(5):
+        req_path = current / "requirements.txt"
+        if req_path.exists():
+            deps |= _parse_requirements_txt(req_path)
 
-    pyproj_path = repo_root / "pyproject.toml"
-    if pyproj_path.exists():
-        deps |= _parse_pyproject_toml(pyproj_path)
+        pyproj_path = current / "pyproject.toml"
+        if pyproj_path.exists():
+            deps |= _parse_pyproject_toml(pyproj_path)
 
-    setup_path = repo_root / "setup.py"
-    if setup_path.exists():
-        deps |= _parse_setup_py(setup_path)
+        setup_path = current / "setup.py"
+        if setup_path.exists():
+            deps |= _parse_setup_py(setup_path)
 
-    req_dir = repo_root / "requirements"
-    if req_dir.exists() and req_dir.is_dir():
-        for req_file in req_dir.glob("*.txt"):
-            deps |= _parse_requirements_txt(req_file)
+        req_dir = current / "requirements"
+        if req_dir.exists() and req_dir.is_dir():
+            for req_file in req_dir.glob("*.txt"):
+                deps |= _parse_requirements_txt(req_file)
+
+        if deps:
+            break
+
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
 
     return deps
 
@@ -457,18 +499,16 @@ def _check_pypi_status(package_name, cache):
     return "missing"
 
 
-
 def _is_confident_hallucination_candidate(name):
-
     if not name:
         return False
 
     if name.isupper():
         return False
-    
+
     if len(name) <= 2:
         return False
-    
+
     return True
 
 
@@ -482,7 +522,7 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
     local_modules = _collect_local_modules(repo_root)
     declared_deps = _collect_declared_deps(repo_root)
     private_allow = _load_private_allowlist()
-    
+
     installed_mapping = _build_installed_module_mapping()
     has_env_metadata = len(installed_mapping) > 0
 
@@ -515,9 +555,9 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                 known_dists = installed_mapping[mod]
                 if known_dists & declared_deps:
                     continue
-                
+
                 line = _find_import_line(src, mod)
-                dist_hint = ', '.join(sorted(known_dists))
+                dist_hint = ", ".join(sorted(known_dists))
                 findings.append(
                     {
                         "rule_id": RULE_ID_UNDECLARED,
@@ -532,7 +572,7 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                 continue
 
             possible_packages = _get_possible_packages(mod, installed_mapping)
-            
+
             if possible_packages & declared_deps:
                 continue
 
