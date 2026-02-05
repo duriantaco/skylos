@@ -191,6 +191,7 @@ class Definition:
         "is_dunder",
         "decorators",
         "complexity",
+        "skip_reason",
     )
 
     def __init__(

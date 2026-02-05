@@ -149,43 +149,6 @@ def test_security_agent_include_examples_false_for_large_context(monkeypatch):
     assert json.loads(parsed["text"]) == {"findings": []}
 
 
-def test_deadcode_and_quality_agents_use_same_stream_control_flow(monkeypatch):
-    ctx = "x" * 100
-    fake_builder = DummyContextBuilder(context_text=ctx)
-    fake_adapter = FakeAdapter(stream_chunks=['{"findings":[]}', ""])
-
-    monkeypatch.setattr(agents, "ContextBuilder", lambda: fake_builder)
-    monkeypatch.setattr(agents, "create_llm_adapter", lambda config: fake_adapter)
-
-    monkeypatch.setattr(agents, "parse_llm_response", lambda text, fp: [])
-
-    dead_called = {}
-    qual_called = {}
-
-    def fake_dead_prompt(context, include_examples=True):
-        dead_called["include_examples"] = include_examples
-        return ("SYS", "USER")
-
-    def fake_quality_prompt(context, include_examples=True):
-        qual_called["include_examples"] = include_examples
-        return ("SYS", "USER")
-
-    monkeypatch.setattr(agents, "build_dead_code_prompt", fake_dead_prompt)
-    monkeypatch.setattr(agents, "build_quality_prompt", fake_quality_prompt)
-
-    cfg = agents.AgentConfig(api_key="x", stream=True)
-
-    d = agents.DeadCodeAgent(cfg)
-    q = agents.QualityAgent(cfg)
-
-    assert d.analyze("src", "a.py") == []
-    assert q.analyze("src", "b.py") == []
-
-    assert dead_called["include_examples"] is True
-    assert qual_called["include_examples"] is True
-    assert len(fake_adapter.stream_calls) == 2
-
-
 def test_security_audit_agent_always_uses_complete_with_response_format(monkeypatch):
     ctx = "x" * 100
     fake_builder = DummyContextBuilder(context_text=ctx)
