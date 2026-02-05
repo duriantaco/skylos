@@ -2,6 +2,8 @@ import ast
 import fnmatch
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
+from collections.abc import Iterator
 
 FRAMEWORK_DECORATORS = [
     "@*.route",
@@ -34,6 +36,12 @@ FRAMEWORK_DECORATORS = [
     "@field_serializer",
     "@model_serializer",
     "@computed_field",
+    "@*.command",
+    "@*.default",
+    "@*.callback",
+    "@*.group",
+    "@*.subcommand",
+    "@*.main",
 ]
 
 FRAMEWORK_FUNCTIONS = [
@@ -109,7 +117,7 @@ ROUTE_METHODS = {
 
 
 class FrameworkAwareVisitor:
-    def __init__(self, filename=None):
+    def __init__(self, filename: str | Path | None = None) -> None:
         self.is_framework_file = False
         self.detected_frameworks = set()
         self.framework_decorated_lines = set()
@@ -129,12 +137,12 @@ class FrameworkAwareVisitor:
         if filename:
             self._check_framework_imports_in_file(filename)
 
-    def visit(self, node):
+    def visit(self, node: ast.AST) -> Any:
         method = "visit_" + node.__class__.__name__
         visitor = getattr(self, method, self.generic_visit)
         return visitor(node)
 
-    def generic_visit(self, node):
+    def generic_visit(self, node: ast.AST) -> None:
         for field, value in ast.iter_fields(node):
             if isinstance(value, list):
                 for item in value:
@@ -143,7 +151,7 @@ class FrameworkAwareVisitor:
             elif isinstance(value, ast.AST):
                 self.visit(value)
 
-    def visit_Import(self, node: ast.Import):
+    def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             name = alias.name.lower()
 
@@ -156,7 +164,7 @@ class FrameworkAwareVisitor:
 
         self.generic_visit(node)
 
-    def visit_ImportFrom(self, node: ast.ImportFrom):
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.module:
             module_name = node.module.split(".")[0].lower()
             if module_name in FRAMEWORK_IMPORTS:
@@ -164,7 +172,7 @@ class FrameworkAwareVisitor:
                 self.detected_frameworks.add(module_name)
         self.generic_visit(node)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef):
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self.func_defs.setdefault(node.name, node.lineno)
         is_route = False
 
@@ -202,7 +210,7 @@ class FrameworkAwareVisitor:
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
-    def visit_ClassDef(self, node: ast.ClassDef):
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self.class_defs[node.name] = node
         for item in node.body:
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -242,7 +250,7 @@ class FrameworkAwareVisitor:
 
         self.generic_visit(node)
 
-    def visit_Assign(self, node: ast.Assign):
+    def visit_Assign(self, node: ast.Assign) -> None:
         if isinstance(node.value, ast.Call):
             for target in node.targets:
                 if isinstance(target, ast.Name):
@@ -263,7 +271,7 @@ class FrameworkAwareVisitor:
                     self._mark_view_from_url_pattern(view_expr)
         self.generic_visit(node)
 
-    def visit_Call(self, node: ast.Call):
+    def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Attribute) and node.func.attr == "register":
             if len(node.args) >= 2:
                 vs = node.args[1]
@@ -291,7 +299,7 @@ class FrameworkAwareVisitor:
 
         self.generic_visit(node)
 
-    def finalize(self):
+    def finalize(self) -> None:
         for fname in self._mark_functions:
             if fname in self.func_defs:
                 self.framework_decorated_lines.add(self.func_defs[fname])
@@ -335,7 +343,7 @@ class FrameworkAwareVisitor:
             if cls_node is not None:
                 self.framework_decorated_lines.add(cls_node.lineno)
 
-    def _check_framework_imports_in_file(self, filename):
+    def _check_framework_imports_in_file(self, filename: str | Path) -> None:
         try:
             content = Path(filename).read_text(encoding="utf-8")
 
@@ -354,7 +362,7 @@ class FrameworkAwareVisitor:
         except Exception:
             pass
 
-    def _normalize_decorator(self, dec: ast.AST):
+    def _normalize_decorator(self, dec: ast.AST) -> str:
         if isinstance(dec, ast.Call):
             return self._normalize_decorator(dec.func)
         if isinstance(dec, ast.Name):
@@ -363,7 +371,7 @@ class FrameworkAwareVisitor:
             return f"@{self._attr_to_str(dec)}"
         return "@unknown"
 
-    def _matches_framework_pattern(self, text, patterns):
+    def _matches_framework_pattern(self, text: str, patterns: list[str]) -> bool:
         text_clean = text.lstrip("@")
 
         for pattern in patterns:
@@ -373,7 +381,7 @@ class FrameworkAwareVisitor:
 
         return False
 
-    def _decorator_base_name_is(self, dec: ast.AST, name):
+    def _decorator_base_name_is(self, dec: ast.AST, name: str) -> bool:
         if isinstance(dec, ast.Call):
             dec = dec.func
         if isinstance(dec, ast.Name):
@@ -382,7 +390,7 @@ class FrameworkAwareVisitor:
             return dec.attr == name or self._attr_to_str(dec).endswith("." + name)
         return False
 
-    def _attr_to_str(self, node: ast.Attribute):
+    def _attr_to_str(self, node: ast.Attribute) -> str:
         parts = []
         cur = node
         while isinstance(cur, ast.Attribute):
@@ -394,7 +402,7 @@ class FrameworkAwareVisitor:
         parts.reverse()
         return ".".join(parts)
 
-    def _base_names(self, node: ast.ClassDef):
+    def _base_names(self, node: ast.ClassDef) -> list[str]:
         out = []
         for b in node.bases:
             if isinstance(b, ast.Name):
@@ -403,29 +411,29 @@ class FrameworkAwareVisitor:
                 out.append(self._attr_to_str(b).lower())
         return out
 
-    def _iter_list_elts(self, node: ast.AST):
+    def _iter_list_elts(self, node: ast.AST) -> Iterator[ast.expr]:
         if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
             for elt in node.elts:
                 yield elt
 
-    def _call_name_endswith(self, call: ast.Call, names):
+    def _call_name_endswith(self, call: ast.Call, names: set[str]) -> bool:
         if isinstance(call.func, ast.Name):
             return call.func.id in names
         if isinstance(call.func, ast.Attribute):
             return call.func.attr in names
         return False
 
-    def _get_posarg(self, call: ast.Call, idx):
+    def _get_posarg(self, call: ast.Call, idx: int) -> ast.expr | None:
         return call.args[idx] if len(call.args) > idx else None
 
-    def _simple_name(self, node: ast.AST):
+    def _simple_name(self, node: ast.AST) -> str | None:
         if isinstance(node, ast.Name):
             return node.id
         if isinstance(node, ast.Attribute):
             return node.attr
         return None
 
-    def _mark_view_from_url_pattern(self, view_expr):
+    def _mark_view_from_url_pattern(self, view_expr: ast.AST | None) -> None:
         if view_expr is None:
             return
         if (
@@ -442,7 +450,7 @@ class FrameworkAwareVisitor:
             if fname:
                 self._mark_functions.add(fname)
 
-    def _scan_for_depends(self, node):
+    def _scan_for_depends(self, node) -> None:
         if not isinstance(node, ast.Call):
             return
         is_depends = False
@@ -459,7 +467,7 @@ class FrameworkAwareVisitor:
                 self._mark_functions.add(dep_name)
                 self.is_framework_file = True
 
-    def _collect_annotation_type_refs(self, fn: ast.FunctionDef):
+    def _collect_annotation_type_refs(self, fn: ast.FunctionDef) -> None:
         def collect(t):
             if t is None:
                 return
@@ -497,7 +505,7 @@ class FrameworkAwareVisitor:
         if fn.returns:
             collect(fn.returns)
 
-    def _get_router_from_decorator(self, deco):
+    def _get_router_from_decorator(self, deco: ast.AST) -> str | None:
         if isinstance(deco, ast.Call):
             deco = deco.func
 
@@ -508,7 +516,9 @@ class FrameworkAwareVisitor:
         return None
 
 
-def detect_framework_usage(definition, visitor=None):
+def detect_framework_usage(
+    definition: Any, visitor: FrameworkAwareVisitor | None = None
+) -> int | None:
     if not visitor:
         return None
     if definition.line in visitor.framework_decorated_lines:
