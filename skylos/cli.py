@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+import re
 import logging
 import os
 from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
@@ -183,6 +184,136 @@ def _shorten_path(path, root_path=None, keep_parts=3):
         return str(p)
     except Exception:
         return str(path)
+
+
+def find_project_root(path):
+    try:
+        p = Path(path).resolve()
+    except Exception:
+        return Path.cwd().resolve()
+
+    if p.is_file():
+        cur = p.parent
+    else:
+        cur = p
+
+    while True:
+        if (cur / "pyproject.toml").exists():
+            return cur
+        if (cur / ".git").exists():
+            return cur
+
+        parent = cur.parent
+        if parent == cur:
+            break
+        cur = parent
+
+    return Path.cwd().resolve()
+
+
+def _is_tty():
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except Exception:
+        return False
+
+
+def _has_high_intent_findings(result: dict) -> bool:
+    secrets = result.get("secrets") or []
+    if len(secrets) > 0:
+        return True
+
+    def _is_highish(item: dict) -> bool:
+        sev = str(item.get("severity", "")).strip().lower()
+        return sev in ("high", "critical")
+
+    for item in result.get("danger") or []:
+        if _is_highish(item):
+            return True
+
+    for item in result.get("custom_rules") or []:
+        if _is_highish(item):
+            return True
+
+    return False
+
+
+def _set_no_upload_prompt(project_root: Path, value: bool) -> bool:
+    pyproject = project_root / "pyproject.toml"
+    if not pyproject.exists():
+        return False
+
+    content = pyproject.read_text(encoding="utf-8", errors="ignore")
+
+    key_line = f"no_upload_prompt = {'true' if value else 'false'}"
+
+    if "[tool.skylos]" not in content:
+        content = content.rstrip() + "\n\n[tool.skylos]\n" + key_line + "\n"
+        pyproject.write_text(content, encoding="utf-8")
+        return True
+
+    if re.search(r"(?m)^\s*no_upload_prompt\s*=\s*(true|false)\s*$", content):
+        content = re.sub(
+            r"(?m)^\s*no_upload_prompt\s*=\s*(true|false)\s*$",
+            key_line,
+            content,
+        )
+        pyproject.write_text(content, encoding="utf-8")
+        return True
+
+    content = re.sub(
+        r"(?m)^\[tool\.skylos\]\s*$",
+        "[tool.skylos]\n" + key_line,
+        content,
+        count=1,
+    )
+    pyproject.write_text(content, encoding="utf-8")
+    return True
+
+
+def _detect_link_file(project_root: Path) -> Path | None:
+    p = project_root / ".skylos" / "link.json"
+
+    if p.exists():
+        return p
+    else:
+        return None
+
+
+def _print_upload_destination(console: Console, project_root: Path):
+    using_env = bool(os.getenv("SKYLOS_TOKEN"))
+    link_path = _detect_link_file(project_root)
+    has_link = link_path is not None
+
+    if using_env:
+        console.print("[brand]Upload destination:[/brand] SKYLOS_TOKEN override")
+    elif has_link:
+        console.print(
+            f"[brand]Upload destination:[/brand] linked project ([muted]{link_path}[/muted])"
+        )
+    else:
+        console.print(
+            "[warn]Upload destination:[/warn] default token (no repo link found)"
+        )
+
+    return has_link, using_env
+
+
+def _print_upload_cta(console: Console, project_root: Path):
+    has_link = _detect_link_file(project_root) is not None
+    has_env = bool(os.getenv("SKYLOS_TOKEN"))
+    connected = has_link or has_env
+
+    console.print(Rule(style="muted"))
+    console.print(
+        "[brand]Next:[/brand] Save this scan to Skylos Cloud (history, suppressions, PR gate)"
+    )
+    if connected:
+        console.print("  [bold]skylos . --upload[/bold]")
+    else:
+        console.print("  [bold]skylos sync connect[/bold]")
+        console.print("  [bold]skylos . --upload[/bold]")
+    console.print("  [muted]Dashboard:[/muted] https://skylos.dev/dashboard")
 
 
 def find_project_root(path):
@@ -439,6 +570,32 @@ def render_results(console: Console, result, tree=False, root_path=None):
             "[muted]Tip: split helpers, add early returns, flatten branches.[/muted]\n"
         )
 
+    def _render_circular_deps(items):
+        if not items:
+            return
+
+        console.rule("[bold yellow]Circular Dependencies")
+        table = Table(expand=True)
+        table.add_column("#", style="muted", width=3)
+        table.add_column("Cycle", style="bold")
+        table.add_column("Length", width=6)
+        table.add_column("Severity", width=8)
+        table.add_column("Suggested Break", style="cyan")
+
+        for i, cd in enumerate(items, 1):
+            cycle = cd.get("cycle", [])
+            cycle_str = " → ".join(cycle) + f" → {cycle[0]}" if cycle else "?"
+            length = str(cd.get("cycle_length", len(cycle)))
+            sev = cd.get("severity", "MEDIUM")
+            suggested = cd.get("suggested_break", "?")
+
+            table.add_row(str(i), cycle_str, length, sev, suggested)
+
+        console.print(table)
+        console.print(
+            "[muted]Tip: Break the cycle by refactoring the suggested module.[/muted]\n"
+        )
+
     def _render_custom_rules(items):
         custom = [
             i for i in (items or []) if str(i.get("rule_id", "")).startswith("CUSTOM-")
@@ -600,7 +757,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
             short = _shorten_path(d.get("file"), root_path)
             loc = f"{short}:{d.get('line', '?')}"
 
-            symbol = d.get("symbol") or "<module>" 
+            symbol = d.get("symbol") or "<module>"
 
             if has_verification:
                 ver = (d.get("verification") or {}).get("verdict")
@@ -676,6 +833,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
         _render_secrets(result.get("secrets", []) or [])
         _render_danger(result.get("danger", []) or [])
         _render_quality(result.get("quality", []) or [])
+        _render_circular_deps(result.get("circular_dependencies", []) or [])
         _render_custom_rules(result.get("custom_rules", []) or [])
 
 
@@ -908,7 +1066,6 @@ def run_static_on_files(
 
 
 def main():
-
     if len(sys.argv) > 1 and sys.argv[1] == "key":
         from skylos.commands.key_cmd import run_key_command
 
@@ -985,7 +1142,17 @@ def main():
         p_analyze.add_argument("--quiet", "-q", action="store_true")
         p_analyze.add_argument(
             "--provider",
-            choices=["openai", "anthropic", "google", "mistral", "groq", "xai", "together", "deepseek", "ollama"],
+            choices=[
+                "openai",
+                "anthropic",
+                "google",
+                "mistral",
+                "groq",
+                "xai",
+                "together",
+                "deepseek",
+                "ollama",
+            ],
             default=None,
             help="Force LLM provider",
         )
@@ -1008,7 +1175,17 @@ def main():
         p_sec_audit.add_argument("--interactive", "-i", action="store_true")
         p_sec_audit.add_argument(
             "--provider",
-            choices=["openai", "anthropic", "google", "mistral", "groq", "xai", "together", "deepseek", "ollama"],
+            choices=[
+                "openai",
+                "anthropic",
+                "google",
+                "mistral",
+                "groq",
+                "xai",
+                "together",
+                "deepseek",
+                "ollama",
+            ],
             default=None,
             help="Force LLM provider",
         )
@@ -1025,7 +1202,17 @@ def main():
         p_fix.add_argument("--model", default="gpt-4.1")
         p_fix.add_argument(
             "--provider",
-            choices=["openai", "anthropic", "google", "mistral", "groq", "xai", "together", "deepseek", "ollama"],
+            choices=[
+                "openai",
+                "anthropic",
+                "google",
+                "mistral",
+                "groq",
+                "xai",
+                "together",
+                "deepseek",
+                "ollama",
+            ],
             default=None,
             help="Force LLM provider",
         )
@@ -1045,7 +1232,17 @@ def main():
         p_review.add_argument("--quiet", "-q", action="store_true")
         p_review.add_argument(
             "--provider",
-            choices=["openai", "anthropic", "google", "mistral", "groq", "xai", "together", "deepseek", "ollama"],
+            choices=[
+                "openai",
+                "anthropic",
+                "google",
+                "mistral",
+                "groq",
+                "xai",
+                "together",
+                "deepseek",
+                "ollama",
+            ],
             default=None,
             help="Force LLM provider",
         )
@@ -2055,7 +2252,10 @@ sys.exit(ret)
     config = load_config(project_root)
 
     if args.gate:
-        upload_report(result, is_forced=args.force)
+        if not args.json:
+            _print_upload_destination(console, project_root)
+
+        upload_report(result, is_forced=args.force, strict=args.strict)
 
         exit_code = run_gate_interaction(
             result, config, strict=bool(args.strict), force=bool(args.force)
@@ -2246,6 +2446,56 @@ sys.exit(ret)
         quality_count=quality_count,
     )
 
+    if (not args.json) and _is_tty() and (not args.upload):
+        total_findings = 0
+        for k in (
+            "unused_functions",
+            "unused_imports",
+            "unused_variables",
+            "unused_classes",
+            "unused_parameters",
+            "danger",
+            "quality",
+            "secrets",
+            "custom_rules",
+        ):
+            total_findings += len(result.get(k, []) or [])
+
+        if total_findings > 0:
+            _print_upload_cta(console, project_root)
+
+            no_prompt = bool(config.get("no_upload_prompt"))
+            if (
+                (not no_prompt)
+                and _has_high_intent_findings(result)
+                and INTERACTIVE_AVAILABLE
+            ):
+                ans = inquirer.prompt(
+                    [
+                        inquirer.List(
+                            "choice",
+                            message="Upload this scan to Skylos Cloud now?",
+                            choices=[
+                                ("Upload now", "upload"),
+                                ("Not now", "later"),
+                                ("Don't remind me again", "never"),
+                            ],
+                        )
+                    ]
+                )
+                choice = (ans or {}).get("choice")
+
+                if choice == "upload":
+                    args.upload = True
+                elif choice == "never":
+                    ok = _set_no_upload_prompt(project_root, True)
+                    if ok:
+                        console.print("[muted]Okay — I won't ask again.[/muted]")
+                    else:
+                        console.print(
+                            "[warn]Could not persist preference (no pyproject.toml).[/warn]"
+                        )
+
     forgotten = result.get("forgotten", [])
     if forgotten:
         console.print(
@@ -2264,19 +2514,28 @@ sys.exit(ret)
             console.print(f"    └─ {item['file']}:{item['line']}")
 
     if args.upload and not args.json:
+        has_link, using_env = _print_upload_destination(console, project_root)
+
+        if (not has_link) and (not using_env) and _is_tty():
+            if INTERACTIVE_AVAILABLE:
+                proceed = inquirer.confirm(
+                    "No repo link found. You may upload to the wrong project. Continue?",
+                    default=False,
+                )
+                if not proceed:
+                    raise SystemExit(1)
+            else:
+                ans = (
+                    input(
+                        "No repo link found. You may upload to the wrong project. Continue? (y/N): "
+                    )
+                    .strip()
+                    .lower()
+                )
+                if ans not in ("y", "yes"):
+                    raise SystemExit(1)
+
         upload_resp = upload_report(result, is_forced=args.force, strict=args.strict)
-
-        if not upload_resp.get("success"):
-            err = upload_resp.get("error")
-            if err:
-                console.print(f"[warn]Upload failed: {err}[/warn]")
-        else:
-            passed = upload_resp.get("quality_gate_passed")
-            if passed is None:
-                passed = (upload_resp.get("quality_gate") or {}).get("passed", True)
-
-            if passed is False and not args.force:
-                raise SystemExit(1)
 
         if not upload_resp.get("success"):
             err = upload_resp.get("error")

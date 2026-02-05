@@ -10,6 +10,8 @@ from collections import defaultdict
 
 from skylos.visitor import Visitor
 
+from skylos.circular_deps import CircularDependencyRule
+
 from skylos.constants import AUTO_CALLED
 
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
@@ -37,6 +39,15 @@ from skylos.rules.quality.logic import (
 )
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
+from skylos.rules.quality.async_blocking import AsyncBlockingRule
+from skylos.rules.quality.clones import (
+    CloneConfig,
+    GroupingMode,
+    CloneType,
+    extract_fragments,
+    detect_pairs,
+    group_pairs,
+)
 
 from skylos.penalties import apply_penalties
 
@@ -58,6 +69,13 @@ class Skylos:
 
     def _module(self, root, f):
         p = list(f.relative_to(root).parts)
+
+        if "src" in p:
+            src_idx = p.index("src")
+            src_path = root / "/".join(p[: src_idx + 1])
+            if not (src_path / "__init__.py").exists():
+                p = p[src_idx + 1 :]
+
         if p[-1].endswith(".py"):
             p[-1] = p[-1][:-3]
         if p[-1] == "__init__":
@@ -107,8 +125,14 @@ class Skylos:
 
         root = p
         all_files = []
-        for f in p.glob("**/*.py"):
-            if f.suffix == ".py":
+        # for f in p.glob("**/*.py"):
+        #     if f.suffix == ".py":
+        #         all_files.append(f)
+
+        extensions = {".py", ".go", ".ts", ".tsx"}
+
+        for ext in extensions:
+            for f in p.glob(f"**/*{ext}"):
                 all_files.append(f)
 
         if exclude_folders:
@@ -368,7 +392,6 @@ class Skylos:
             modmap[f] = self._module(root, f)
 
         from skylos.implicit_refs import pattern_tracker
-
         from skylos.implicit_refs import pattern_tracker as global_pattern_tracker
 
         global_pattern_tracker.known_refs.clear()
@@ -468,9 +491,6 @@ class Skylos:
             for file, out in zip(files, outs):
                 mod = modmap[file]
 
-            for file, out in zip(files, outs):
-                mod = modmap[file]
-
                 (
                     defs,
                     refs,
@@ -531,6 +551,78 @@ class Skylos:
         finally:
             if injected:
                 os.environ.pop("SKYLOS_CUSTOM_RULES", None)
+
+        if enable_quality:
+            RULE_ID = "SKY-C401"
+
+            cfg_by_file = {str(file): cfg for (_, _, _, file, _, cfg) in file_contexts}
+
+            clone_cfg = CloneConfig(
+                grouping_mode=GroupingMode.CONNECTED,
+                grouping_threshold=0.80,
+                k_core_k=2,
+                similarity_threshold=0.90,
+                ignore_identifiers=True,
+                ignore_literals=True,
+                skip_docstrings=True,
+            )
+
+            py_files = [Path(f) for f in files if str(f).endswith(".py")]
+
+            frags = []
+            for f in py_files:
+                fcfg = cfg_by_file.get(str(f))
+                if fcfg and RULE_ID in fcfg.get("ignore", []):
+                    continue
+
+                src = f.read_text(encoding="utf-8", errors="ignore")
+                file_frags = extract_fragments(f, src, clone_cfg)
+                frags.extend(file_frags)
+
+            pairs = detect_pairs(frags, clone_cfg)
+            groups = group_pairs(pairs, clone_cfg)
+
+            for g in groups:
+                if len(g.fragments) < 2:
+                    continue
+
+                g.fragments.sort(key=lambda x: (x.file_path, x.start_line))
+                top = g.fragments[0]
+
+                members_preview = []
+                for frag in g.fragments[:4]:
+                    members_preview.append(
+                        f"{Path(frag.file_path).name}:{frag.start_line}-{frag.end_line} ({frag.kind} {frag.name})"
+                    )
+
+                if (
+                    g.clone_type in (CloneType.TYPE1, CloneType.TYPE2)
+                    and g.similarity >= 0.95
+                ):
+                    severity = "MEDIUM"
+                elif g.similarity >= 0.90:
+                    severity = "LOW"
+                else:
+                    severity = "LOW"
+
+                all_quality.append(
+                    {
+                        "rule_id": RULE_ID,
+                        "kind": "clone",
+                        "name": top.name,
+                        "simple_name": top.name,
+                        "basename": Path(top.file_path).name,
+                        "value": f"{g.clone_type.value} {g.similarity:.2f}",
+                        "message": (
+                            f"Clone group detected ({g.clone_type.value}, sim={g.similarity:.3f}, members={len(g.fragments)}) "
+                            f"examples: {', '.join(members_preview)}"
+                        ),
+                        "file": top.file_path,
+                        "line": top.start_line,
+                        "severity": severity,
+                        "category": "QUALITY",
+                    }
+                )
 
         self.pattern_trackers = pattern_trackers
 
@@ -747,6 +839,30 @@ class Skylos:
             elif u["type"] == "parameter":
                 result["unused_parameters"].append(u)
 
+        project_cfg = load_config(path)
+        if project_cfg.get("check_circular", True):
+            circular_rule = CircularDependencyRule()
+
+            for file in files:
+                try:
+                    source = Path(file).read_text(encoding="utf-8", errors="ignore")
+                    tree = ast.parse(source)
+                    mod = modmap.get(file, "")
+                    circular_rule.add_file(tree, str(file), mod)
+                except Exception as e:
+                    import traceback
+
+                    traceback.print_exc()
+            try:
+                circular_findings = circular_rule.analyze()
+                if circular_findings:
+                    result["circular_dependencies"] = circular_findings
+
+            except Exception as e:
+                import traceback
+
+                traceback.print_exc()
+
         return json.dumps(result, indent=2)
 
 
@@ -786,6 +902,11 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             return ts_out[:12]
         return (*ts_out, None, cfg)
 
+    if str(file).endswith(".go"):
+        from skylos.visitors.languages.go.go import scan_go_file
+
+        return scan_go_file(file, cfg)
+
     try:
         source = Path(file).read_text(encoding="utf-8")
         ignore_lines = get_all_ignore_lines(source)
@@ -824,6 +945,8 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             q_rules.append(ComplexityRule(threshold=cfg["complexity"]))
         if "SKY-Q302" not in cfg["ignore"]:
             q_rules.append(NestingRule(threshold=cfg["nesting"]))
+        if "SKY-Q401" not in cfg["ignore"]:
+            q_rules.append(AsyncBlockingRule())
         if "SKY-C303" not in cfg["ignore"]:
             q_rules.append(ArgCountRule(max_args=cfg["max_args"]))
         if "SKY-C304" not in cfg["ignore"]:
@@ -905,6 +1028,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
         fv.finalize()
         v = Visitor(mod, file)
         v.visit(tree)
+        v.finalize()
 
         fv.dataclass_fields = getattr(v, "dataclass_fields", set())
         fv.first_read_lineno = getattr(v, "first_read_lineno", {})

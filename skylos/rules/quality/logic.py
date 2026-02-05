@@ -3,6 +3,18 @@ from pathlib import Path
 from skylos.rules.base import SkylosRule
 
 
+MUTABLE_CONSTRUCTORS = {
+    "list",
+    "dict",
+    "set",
+    "defaultdict",
+    "OrderedDict",
+    "Counter",
+    "deque",
+    "array",
+}
+
+
 class MutableDefaultRule(SkylosRule):
     rule_id = "SKY-L001"
     name = "Mutable Default Argument"
@@ -10,6 +22,7 @@ class MutableDefaultRule(SkylosRule):
     def visit_node(self, node, context):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return None
+
         findings = []
 
         kw_defaults_filtered = []
@@ -18,7 +31,20 @@ class MutableDefaultRule(SkylosRule):
                 kw_defaults_filtered.append(d)
 
         for default in node.args.defaults + kw_defaults_filtered:
+            is_mutable = False
+
             if isinstance(default, (ast.List, ast.Dict, ast.Set)):
+                is_mutable = True
+
+            elif isinstance(default, (ast.ListComp, ast.DictComp, ast.SetComp)):
+                is_mutable = True
+
+            elif isinstance(default, ast.Call):
+                if isinstance(default.func, ast.Name):
+                    if default.func.id in MUTABLE_CONSTRUCTORS:
+                        is_mutable = True
+
+            if is_mutable:
                 findings.append(
                     {
                         "rule_id": self.rule_id,
@@ -29,17 +55,17 @@ class MutableDefaultRule(SkylosRule):
                         "simple_name": node.name,
                         "value": "mutable",
                         "threshold": 0,
-                        "message": "Mutable default argument detected (List/Dict/Set). This causes state leaks.",
+                        "message": "Mutable default argument detected. This causes state leaks between calls.",
                         "file": context.get("filename"),
                         "basename": Path(context.get("filename", "")).name,
                         "line": default.lineno,
                         "col": default.col_offset,
                     }
                 )
+
         if findings:
             return findings
-        else:
-            return None
+        return None
 
 
 class BareExceptRule(SkylosRule):
@@ -99,10 +125,10 @@ class DangerousComparisonRule(SkylosRule):
                                 "col": node.col_offset,
                             }
                         )
+
         if findings:
             return findings
-        else:
-            return None
+        return None
 
 
 class TryBlockPatternsRule(SkylosRule):
@@ -170,8 +196,7 @@ class TryBlockPatternsRule(SkylosRule):
 
         if findings:
             return findings
-        else:
-            return None
+        return None
 
     def _create_finding(self, node, context, severity, value, msg):
         return {
