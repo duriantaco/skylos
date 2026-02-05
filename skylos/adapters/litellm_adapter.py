@@ -4,11 +4,13 @@ from skylos.credentials import get_key, PROVIDERS
 
 
 class LiteLLMAdapter(BaseAdapter):
-    def __init__(self, model, api_key=None, api_base=None):
+    def __init__(self, model, api_key=None, api_base=None, enable_cache=True):
         super().__init__(model, api_key)
+        self.enable_cache = enable_cache
 
         try:
             import litellm
+
             self.litellm = litellm
             self.litellm.drop_params = True
         except ImportError:
@@ -106,8 +108,7 @@ class LiteLLMAdapter(BaseAdapter):
             ).format(provider, env_var, provider)
 
         return (
-            "No API key found for provider '{}'.\n"
-            "Run 'skylos key' and select '{}'."
+            "No API key found for provider '{}'.\nRun 'skylos key' and select '{}'."
         ).format(provider, provider)
 
     def _looks_like_auth_error(self, message):
@@ -158,11 +159,15 @@ class LiteLLMAdapter(BaseAdapter):
 
         if self._looks_like_auth_error(text):
             provider = self._detect_provider()
-            return "Error: {}\n\nRun 'skylos key' and select '{}'.".format(text, provider)
+            return "Error: {}\n\nRun 'skylos key' and select '{}'.".format(
+                text, provider
+            )
 
         if self._looks_like_connection_error(text):
             if self.api_base:
-                return "Error: {}\n\nCheck SKYLOS_LLM_BASE_URL / --base-url: {}".format(text, self.api_base)
+                return "Error: {}\n\nCheck SKYLOS_LLM_BASE_URL / --base-url: {}".format(
+                    text, self.api_base
+                )
             return (
                 "Error: {}\n\n"
                 "If you're using a local LLM, set SKYLOS_LLM_BASE_URL "
@@ -178,12 +183,29 @@ class LiteLLMAdapter(BaseAdapter):
             if (not self._is_local()) and (not self.api_key):
                 return self._missing_key_message()
 
-            kwargs = {
-                "model": self.model,
-                "messages": [
+            if self.enable_cache and self._is_anthropic():
+                messages = [
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": system_prompt,
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ],
+                    },
+                    {"role": "user", "content": user_prompt},
+                ]
+            else:
+                messages = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
-                ],
+                ]
+
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
                 "temperature": 0.2,
                 "api_key": self.api_key,
             }
@@ -208,12 +230,29 @@ class LiteLLMAdapter(BaseAdapter):
                 yield self._missing_key_message()
                 return
 
-            kwargs = {
-                "model": self.model,
-                "messages": [
+            if self.enable_cache and self._is_anthropic():
+                messages = [
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": system_prompt,
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ],
+                    },
+                    {"role": "user", "content": user_prompt},
+                ]
+            else:
+                messages = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
-                ],
+                ]
+
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
                 "temperature": 0.2,
                 "stream": True,
                 "api_key": self.api_key,

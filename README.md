@@ -4,6 +4,7 @@
 </div>
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
+![Skylos](https://img.shields.io/badge/Skylos-PR%20Guard-2f80ed?style=flat&logo=github&logoColor=white)
 ![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
 [![codecov](https://codecov.io/gh/duriantaco/skylos/branch/main/graph/badge.svg)](https://codecov.io/gh/duriantaco/skylos)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
@@ -11,6 +12,7 @@
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
 ![Security Policy](https://img.shields.io/badge/security-policy-brightgreen)
 ![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
 
 ⭐ If Skylos saves you time (or has helped you in any way), please star the repo — it helps a lot.
 
