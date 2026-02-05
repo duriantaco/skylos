@@ -1,5 +1,43 @@
 ## Changelog
 
+## [3.2.0] - 202-02-05
+
+## Added 
+
+- Added `graph.py` to handle taint analysis, data flow, and context slicing for the LLM.
+- Added `FalsePositiveFilterAgent` in `agents.py` to verify static findings using the LLM
+- Added typing for `visitor.py`, `base.py`, `merger.py`, `schemas.py`, `framework_aware.py`, and `test_aware.py` 
+- Added CI auto-detection for GitHub Actions, Jenkins, CircleCI, and GitLab CI in `api.py`
+- Added automatic PR/MR number extraction from CI environments
+- Added environment variable overrides: `SKYLOS_COMMIT`, `SKYLOS_BRANCH`, `SKYLOS_ACTOR`, `SKYLOS_PR_NUMBER`
+- Added comprehensive tests for CI detection, PR extraction, and branch normalization in `test_api.py`
+- Added Type2 bucket to detect clones with different variable names. Clone type now displays in Quality Issues table (type1, type2, type3)
+- Added CLI display table for circular dependency findings
+- Functions decorated with `@*.command`, `@*.default`, `@*.callback`, `@*.group`, `@*.subcommand` no longer flagged as unused
+- Added generic decorator patterns to detect CLI entrypoints regardless of framework
+- Added tests for monorepo layout, framework aware and circular dep
+- Added a post scan upload CTA footer that prints the exact commands to upload results to Skylos Cloud and view the dashboard
+- Added a security-only "upload now?" prompt that triggers only when secrets are detected 
+- Added a "Don’t remind me again" preference (no_upload_prompt) stored in pyproject.toml under [tool.skylos]
+- Added `async_blocking.py` SKY-Q401 as well as new tests
+
+## Changes
+
+- Changed static `visitor.py` with call graph construction, lambda tracking and dynamic string reference detection
+- Changed `analyzer.py` to use the new `CodeGraph` for deep security audits instead of dumb chunking.
+- Changed `get_git_info()` to return CI metadata alongside commit, branch, and actor
+- Changed `upload_report()` to include CI metadata in payload for better Jenkins/CircleCI/GitLab support
+- Changed module name computation for `src-layout` projects in `analyzer.py`
+- Hardened `MutableDefaultRule` (SKY-L001). Now catches `list()`, `dict()`, `set()` constructor calls. List comprehensions, Dict comprehensions etc
+- Improved CLI API token prompt with clearer instructions
+
+## Fixed
+- Fixed parent dir search for pyproject.toml/requirements.txt
+- Fixed dist-info name parsing by reading METADATA file instead of folder name
+- Fixed Python 3.13 AST compatibility in `circular_deps.py`
+
+Note: Formalized a dual pipeline architecture that keeps the static analyzer separate from the LLM
+
 ## [3.1.3] - 202-01-27
 
 ## Added 
@@ -25,7 +63,6 @@
 ## [3.1.2] - 202-01-25
 
 ### Added
-
 - Parse pyproject.toml for console entrypoints via `[project.scripts]` (and optionally `[tool.poetry.scripts]`) and treat them as implicit usage
 - Added `--pytest-fixtures` flag which should be run in the test directory. This will allow Skylos to detect pytest fixtures that are defined but never used
 - Added dependency hallucination to catch packages that do not exist
