@@ -239,6 +239,7 @@ class TestSkylos:
         mock_import = Mock()
         mock_import.type = "import"
         mock_import.simple_name = "imported_func"
+        mock_import.name = "other_module.imported_func"
         mock_import.references = 0
 
         mock_original = Mock()
@@ -256,7 +257,6 @@ class TestSkylos:
 
         assert mock_import.references == 1
         assert mock_original.references == 1
-
 
 class TestHeuristics:
     @pytest.fixture
