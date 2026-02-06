@@ -396,28 +396,48 @@ class Visitor(ast.NodeVisitor):
             self.add_def(target, "import", node.lineno)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        if node.module is None:
-            return
+        module = node.module
+
+        mod_str = self.mod or ""
+        is_init = Path(str(self.file)).name == "__init__.py"
+        cur_pkg = mod_str if is_init else (mod_str.rsplit(".", 1)[0] if "." in mod_str else mod_str)
+
+        if node.level and node.level > 0:
+            if cur_pkg:
+                parts = cur_pkg.split(".")
+            else:
+                parts = []
+            up = node.level - 1
+
+            if up > len(parts):
+                base = ""
+            else:
+                base = ".".join(parts[: len(parts) - up])
+
+            if module:
+                base = f"{base}.{module}" if base else module
+        else:
+            base = module or ""
 
         for a in node.names:
             if a.name == "*":
-                self.dyn.add(node.module.split(".")[0] if node.module else "")
+                root = (base.split(".")[0] if base else "") or (module.split(".")[0] if module else "")
+                self.dyn.add(root)
                 continue
 
-            base = node.module
-            if node.level:
-                parts = self.mod.split(".")
-                base = ".".join(parts[: -node.level]) + (
-                    f".{node.module}" if node.module else ""
-                )
-
-            full = f"{base}.{a.name}"
             if a.asname:
-                self.alias[a.asname] = full
-                self.add_def(full, "import", node.lineno)
+                alias_name = a.asname
+            else: 
+                alias_name = a.name
+
+            if base:
+                full = f"{base}.{a.name}"
             else:
-                self.alias[a.name] = full
-                self.add_def(full, "import", node.lineno)
+                full = a.name
+
+            self.alias[alias_name] = full
+            self.add_def(full, "import", node.lineno)
+
 
     def visit_If(self, node: ast.If) -> None:
         condition = evaluate_static_condition(node.test)
