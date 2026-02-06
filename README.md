@@ -1,6 +1,7 @@
 <div align="center">
-   <img src="assets/DOG_1.png" alt="Skylos Logo" width="300">
-   <h1>Skylos: Guard your Code</h1>
+    <img src="assets/DOG_1.png" alt="Skylos - Python SAST and Dead Code Detection Tool" width="300">
+    <h1>Skylos: Python SAST, Dead Code Detection & Security Auditor</h1>
+    <h3>The hybrid static analysis tool for Python. Finds dead code, security leaks, and quality rot with agentic AI options.</h3>
 </div>
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
@@ -18,16 +19,22 @@
 
 💬 Join the Discord (support + contributors): https://discord.gg/Ftn9t9tErf
 
-> Skylos is a static analysis tool for Python codebases which locates dead code, performs quality checks, and finds security vulnerabilities.
+> Skylos is a privacy-first Python SAST tool that bridges the gap between traditional static analysis and AI agents. It detects dead code, security vulnerabilities (SQLi, SSRF, Secrets), and code quality issues with high precision.
+
+Unlike standard linters (like Vulture or Bandit) that struggle with dynamic Python patterns, Skylos uses a **hybrid engine** (AST + optional Local/Cloud LLM). This allows it to:
+
+1.  **Eliminate False Positives:** Distinguishes between truly dead code and framework magic (e.g., `pytest.fixture`, `FastAPI` routes).
+2.  **Verify via Runtime:** Optional `--trace` mode validates findings against actual runtime execution.
+3.  **Find Logic Bugs:** Goes beyond linting to find deep logic errors that regex-based tools miss.
 
 ## Table of Contents
 
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Installation](#installation)
-- [Performance](#performance)
+- [Skylos vs Vulture](#skylos-vs-vulture-benchmark)
 - [How It Works](#how-it-works)
-- [AI-Powered Analysis](#ai-powered-analysis)
+- [Agent Analysis](#agent-analysis)
 - [Gating](#gating)
 - [Integration and Ecosystem](#integration-and-ecosystem)
 - [Auditing and Precision](#auditing-and-precision)
@@ -58,22 +65,22 @@
 | **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
 
 
-## Features
+## Key Capabilities
 
-### Security & Vulnerability Audit
+### Python Security Scanner (SAST)
+* **Taint Analysis:** Traces untrusted input from API endpoints to databases to prevent SQL Injection and XSS.
+* **Secrets Detection:** Hunts down hardcoded API keys (AWS, Stripe, OpenAI) and private credentials before commit.
+* **Vulnerability Checks:** Flags dangerous patterns like `eval()`, unsafe `pickle`, and weak cryptography.
 
-* **Taint-Flow Tracking**: Follows untrusted input from the API edge to your database to stop SQLi, SSRF, and Path Traversal
-* **Credentials Detection**: Detects API keys & secrets (GitHub, GitLab, AWS, Google, SendGrid, private key blocks)
-* **Vulnerability Detection**: Flags dangerous patterns including eval/exec, unsafe yaml/pickle loads, and weak cryptographic hashes
-* **Implicit Reference Detection**: Catches dynamic patterns like `getattr(mod, f"handle_{x}")`, framework decorators (`@app.route`, `@pytest.fixture`), and f-string dispatch patterns
+### Dead Code Detection & Cleanup
+* **Find Unused Code:** Identifies unreachable functions, orphan classes, and unused imports with confidence scoring.
+* **Smart Tracing:** Distinguishes between truly dead code and dynamic frameworks (Flask/Django routes, Pytest fixtures).
+* **Safe Pruning:** Uses LibCST to safely remove dead code without breaking syntax.
 
-## AI-Powered Analysis
-
-* **Hybrid Architecture**: Combines static analysis with LLM reasoning for best-of-both-worlds detection
-* **Multi-Provider Support**: OpenAI, Anthropic, and local LLMs (Ollama, LM Studio, vLLM)
-* **Hallucination Detection**: Finds calls to functions that don't exist in your codebase
-* **Logic Bug Detection**: Catches issues that static analysis misses (off-by-one, missing edge cases)
-* **Confidence Scoring**: Findings validated by both engines get HIGH confidence
+### Agentic AI & Hybrid Analysis
+* **Context-Aware Audits:** Combines static analysis speed with LLM reasoning to validate findings and filter noise.
+* **Automated Fixes:** `skylos agent fix` autonomously patches security flaws and removes dead code.
+* **100% Local Privacy:** Supports Ollama and Local LLMs so your code never leaves your machine.
 
 ### Codebase Optimization
 
@@ -117,12 +124,22 @@ cd skylos
 pip install .
 ```
 
-## Performance
+## Skylos vs. Vulture Benchmark
 
-For dead code detection benchmarks vs Vulture, Flake8, Ruff, see [BENCHMARK.md](BENCHMARK.md).
+We benchmarked Skylos against Vulture (the standard for dead code detection) on a realistic FastAPI application containing dynamic patterns, framework wiring, and hidden dependencies.
 
-To run the benchmark:
-`python compare_tools.py /path/to/sample_repo`
+**The Results (Confidence Level 20 / Aggressive Mode):**
+
+| Feature | Skylos | Vulture | Impact |
+| :--- | :--- | :--- | :--- |
+| **Recall** | **100%** | 82.8% | Skylos found *all* dead code; Vulture missed ~17%. |
+| **Precision** | **76.3%** | 55.8% | Vulture flagged 2x more false positives (noise). |
+| **True Positives** | **29** | 24 | Skylos detected 5 more actual dead functions. |
+| **False Negatives** | **0** | 5 | Skylos missed nothing. |
+
+> **Key Takeaway:** Skylos provides significantly higher coverage (Recall) with far less noise (Precision) than traditional tools.
+>
+> *See the full methodology and breakdown in [BENCHMARK.md](BENCHMARK.md).*
 
 
 ## How it works
@@ -133,9 +150,12 @@ Skylos builds a reference graph of your entire codebase - who defines what, who 
 Parse all files -> Build definition map -> Track references -> Find orphans (zero refs = dead)
 ```
 
-### Confidence Scoring
+### High Precision & Confidence Scoring
+Static analysis often struggles with Python's dynamic nature (e.g., `getattr`, `pytest.fixture`). Skylos minimizes false positives through:
 
-Not all dead code is equally dead. Skylos assigns confidence scores to handle ambiguity:
+1.  **Confidence Scoring:** Grades findings (High/Medium/Low) so you only see what matters.
+2.  **Hybrid Verification:** Uses LLM reasoning to double-check static findings before reporting.
+3.  **Runtime Tracing:** Optional `--trace` mode validates "dead" code against actual runtime execution.
 
 | Confidence | Meaning | Action |
 |------------|---------|--------|
@@ -202,7 +222,7 @@ skylos . --pytest-fixtures
 This includes fixtures inside conftest.py, since conftest.py is the standard place to store shared test fixtures.
 
 
-## AI-Powered Analysis
+## Agent Analysis
 
 Skylos uses a **hybrid architecture** that combines static analysis with LLM reasoning:
 
@@ -313,7 +333,7 @@ skylos agent analyze ./src \
 
 Real-time AI-powered code analysis directly in your editor.
 
-<img src="assets/screenshot1.png" alt="Skylos VS Code Extension" width="700" />
+<img src="assets/python-security-scan-vscode.png" alt="Skylos VS Code Extension" width="700" />
 
 ### Installation
 
@@ -557,6 +577,7 @@ skylos . --quality
 | **Complexity** | | |
 | Cyclomatic complexity | SKY-Q301 | Too many branches/loops (default: >10) |
 | Deep nesting | SKY-Q302 | Too many nested levels (default: >3) |
+| Async Blocking | SKY-Q401 | Detects blocking calls inside async functions that kill server throughput |
 | **Structure** | | |
 | Too many arguments | SKY-C303 | Functions with >5 args |
 | Function too long | SKY-C304 | Functions >50 lines |
