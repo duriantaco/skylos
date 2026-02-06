@@ -181,19 +181,51 @@ class Skylos:
         if progress_callback:
             progress_callback(0, total_refs or 1, Path("PHASE: mark refs"))
 
-        import_to_original = {}
-        for name, def_obj in self.defs.items():
-            if def_obj.type == "import":
-                import_name = name.split(".")[-1]
+        # import_to_original = {}
+        # for name, def_obj in self.defs.items():
+        #     if def_obj.type == "import":
+        #         import_name = name.split(".")[-1]
 
-                for def_name, orig_def in self.defs.items():
-                    if (
-                        orig_def.type != "import"
-                        and orig_def.simple_name == import_name
-                        and def_name != name
-                    ):
-                        import_to_original[name] = def_name
-                        break
+        #         for def_name, orig_def in self.defs.items():
+        #             if (
+        #                 orig_def.type != "import"
+        #                 and orig_def.simple_name == import_name
+        #                 and def_name != name
+        #             ):
+        #                 import_to_original[name] = def_name
+        #                 break
+
+        import_to_original = {}
+
+        non_import_defs = {k: v for k, v in self.defs.items() if v.type != "import"}
+
+        simple_to_keys = defaultdict(list)
+        for k, d in non_import_defs.items():
+            simple_to_keys[d.simple_name].append(k)
+
+        def _resolve_import_target(import_def_key: str, import_def_obj) -> str | None:
+     
+            target_fqn = import_def_obj.name
+            if not target_fqn:
+                return None
+
+            if target_fqn in non_import_defs:
+                return target_fqn
+
+            simple = target_fqn.split(".")[-1]
+            cands = simple_to_keys.get(simple, [])
+            if len(cands) == 1:
+                return cands[0]
+
+            return None
+
+        for def_key, def_obj in self.defs.items():
+            if def_obj.type != "import":
+                continue
+            resolved = _resolve_import_target(def_key, def_obj)
+            if resolved:
+                import_to_original[def_key] = resolved
+
 
         simple_name_lookup = defaultdict(list)
         for definition in self.defs.values():
