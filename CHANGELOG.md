@@ -1,9 +1,13 @@
 ## Changelog
 
-## [3.2.0] - 202-02-05
+## [3.2.1] - 2026-02-05
+
+## Fixed 
+- Fix import usage counting by mapping imports to the correct original def using the full qualified import target. We matched ref keys so aliases don’t mark the wrong mod as used.
+
+## [3.2.0] - 2026-02-05
 
 ## Added 
-
 - Added `graph.py` to handle taint analysis, data flow, and context slicing for the LLM.
 - Added `FalsePositiveFilterAgent` in `agents.py` to verify static findings using the LLM
 - Added typing for `visitor.py`, `base.py`, `merger.py`, `schemas.py`, `framework_aware.py`, and `test_aware.py` 
@@ -22,7 +26,6 @@
 - Added `async_blocking.py` SKY-Q401 as well as new tests
 
 ## Changes
-
 - Changed static `visitor.py` with call graph construction, lambda tracking and dynamic string reference detection
 - Changed `analyzer.py` to use the new `CodeGraph` for deep security audits instead of dumb chunking.
 - Changed `get_git_info()` to return CI metadata alongside commit, branch, and actor
@@ -38,10 +41,9 @@
 
 Note: Formalized a dual pipeline architecture that keeps the static analyzer separate from the LLM
 
-## [3.1.3] - 202-01-27
+## [3.1.3] - 2026-01-27
 
 ## Added 
-
 - Added a centralized LLM runtime resolver that auto-detects provider from `--model`
 - Added `_symbol_stack` and `_current_symbol()` to `TaintVisitor` for tracking function/class context
 - Added `"symbol": self._current_symbol()` to all findings in sql_flow.py, sql_raw_flow.py, cmd_flow.py, ssrf_flow.py, path_flow.py, xss_flow.py
@@ -49,7 +51,6 @@ Note: Formalized a dual pipeline architecture that keeps the static analyzer sep
 - Added `skylos key` command and route skylos key (no args) to open the interactive menu.
 
 ## Removed
-
 - Removed keyring/API-key resolution from `LiteLLMAdapter`. Adapters now only consume the resolved api_key/base_url passed in.
 - Deprecated `skylos login` to stop it from running analysis.
 
@@ -60,7 +61,7 @@ Note: Formalized a dual pipeline architecture that keeps the static analyzer sep
   - SKY-D223 (MEDIUM): Raised for packages that exist but not declared in requirements
 
 
-## [3.1.2] - 202-01-25
+## [3.1.2] - 2026-01-25
 
 ### Added
 - Parse pyproject.toml for console entrypoints via `[project.scripts]` (and optionally `[tool.poetry.scripts]`) and treat them as implicit usage
@@ -98,10 +99,9 @@ skylos/app.py:16
 - Removed `cache.py` due to unstable outputs. If changes are made to the structure of objects returned by `proc_file()` then users with old cached results will get errors or wrong data. Dropped it, not worth the trouble
 - Removed anthropic and openai adapter. Switched to `litellm`
 
-## [3.1.1] - 202-01-20
+## [3.1.1] - 2026-01-20
 
 ### Added
-
 - Added new `--provider` flag to force `openai` or `anthropic` provider
 - New `--base-url` flag for OpenAI compatible endpoints (eg. Ollama etc)
 - env variable support: `SKYLOS_LLM_PROVIDER`, `SKYLOS_LLM_BASE_URL`, `OPENAI_BASE_URL`
@@ -152,7 +152,6 @@ skylos/app.py:16
 New year new me, and a new release! Happy new year everyone! 
 
 ### Added
-
 - Added `--trace` flag for runtime call tracing using `sys.settrace()` to capture dynamic dispatch patterns (visitor patterns, getattr, plugins)
 - Added `skylos/tracer.py` with `CallTracer` class to record function calls during test execution
 - Added pytest plugin hooks (`pytest_configure`, `pytest_unconfigure`, `pytest_addoption`) for `--skylos-trace` integration
@@ -191,7 +190,6 @@ New year new me, and a new release! Happy new year everyone!
 
 
 ### Changed
-
 - Replaced `--coverage` flag with `--trace` for runtime analysis
 - Updated `implicit_refs.py` to store traced function lines as lists
 - Updated `should_mark_as_used()` to iterate over traced line lists with ~5 lines tolerance matching
@@ -211,7 +209,6 @@ New year new me, and a new release! Happy new year everyone!
 - Shifted `apply_penalties` function from `analyzer.py` into a separate script 
 
 ### Fixed
-
 - Fixed import path in cli.py: `from skylos.skylos_trace` → `from skylos.tracer`
 - Fixed false positives for dynamically dispatched methods (visitor patterns, plugin hooks)
 - Fixed analyzer output JSON serialization edge case in tests by ensuring mocked definitions provide concrete line / filename fields (prevents TypeError: Object of type Mock is not JSON serializable)
@@ -228,7 +225,6 @@ New year new me, and a new release! Happy new year everyone!
 - Fixed `skylos whitelist` command writing to wrong section
 
 ### Removed
-
 - Removed `--coverage` flag (replaced by `--trace`)
 
 
@@ -241,7 +237,6 @@ New year new me, and a new release! Happy new year everyone!
 - Fixed pre-commit integration reliability by moving the "fail-on-findings" logic into `scripts/skylos_gate.py` entry
 
 ## [2.7.0] - 2025-12-19
-
 ### Fixed
 - Fixed bug where `Class(1).method()` patterns were incorrectly flagged
 - Fixed bug where `self.attr.method()` patterns were flagged as dead code when `self.attr` was assigned a class instance (e.g., `self.helper = Helper()`)
@@ -341,11 +336,9 @@ New year new me, and a new release! Happy new year everyone!
 - Added uv.lock for frozen dependency snapshot
 
 ### Changed
-
 - CLI ui/ux polish
 
 ### Fixed 
-
 - Fixed dataframely schema class reports class variables marked as unused
 - Fixed multi-part module imports not detected correctly
 
@@ -371,7 +364,6 @@ Quality rules live under:
 ## [2.3.0] - 2025-09-22
 
 ### Added
-
 - You can now download the plugin via marketplace VSC
 - Added dangerous patterns scanner (from SKY-D201 -> D210). Results appear in JSON under dangerous
 - Danger flag for cli to trigger the dangerous pattern scanning `--danger`
@@ -379,7 +371,6 @@ Quality rules live under:
 - `--table` flag to output results in table format
 
 ### Fixed
-
 - Removed non JSON prints which was causing some CICD pipeline failures
 - Fixed the REGEX for secrets which was causing a lot of false positives
 - Analyzer now emits separate secrets and dangerous buckets
@@ -387,13 +378,11 @@ Quality rules live under:
 ## [2.2.3] - 2025-09-18
 
 ### Fix
-
 Interactive remove and comment out works for dotted imports (e.g. import pkg.subpkg.mod) and class/async methods (Class.method). There was a name mismatch in `codemods.py` script
 
 ## [2.2.2] - 2025-09-17
 
 ### Added
-
 - Secrets scanning PoC (SKY-S101): provider patterns + generic high entropy
 - `--secrets` CLI flag. Results shown in JSON output. To trigger secrets scanning run with `--secrets` flag
 - Unit tests covering secrets
@@ -417,13 +406,11 @@ Interactive remove and comment out works for dotted imports (e.g. import pkg.sub
 - `visit_Global` to bind global names to module-level FQNs
 
 ### Changed
-
 - Report `ALL_CAPS` constants. Previously we had a blanket mute which caused quite a bit of problems 
 - `_apply_penalties` mute dataclass fields
 - In `Definition` class, add `lineno` alias to `.line` for back-compat.
 
 ### Fixed
-
 - Crash: missing `_dataclass_stack` init in `Visitor.__init__`
 - False positives fixes. dataclass fields, `global` singletons (e.g., PROCESS_POOL)
 - no “All variables…” when an “Unused Variables” section exists inside `cli.py`
@@ -457,25 +444,19 @@ Interactive remove and comment out works for dotted imports (e.g. import pkg.sub
 ## [2.0.1] - 2025-08-11
 
 ### Fixed 
-
 - Patched framework aware pass now finalized and applied early. Route-decorated endpoints were clamped to very low confidence.. helpers/models require they're actually reference
-
 - Improved matching
-
 - `_mark_refs()` rewritten for more clarity. Lesser magic 
-
 - Updated the manual test cases for frameworks
 
 ## [2.0.0] - 2025-07-14
 
 ### Added
-
 - Front end integration! 
 
 ## [1.2.2] - 2025-07-03
 
 ### Fixed
-
 - Patched bug because down in the loop accidentally overwrote `self.ignored_lines` so it never fires lmao
 
 ## [1.2.1] - 2025-07-03
@@ -507,7 +488,6 @@ Interactive remove and comment out works for dotted imports (e.g. import pkg.sub
 ## [1.2.0] - 2025-06-12
 
 ### Added
-
 - Detection for web frameworks (Flask, Django, FastAPI) 
 - Framework-specific patterns: `@app.route`, `@router.get`, `@task`, etc.
 - More granular dead code detection using confidence. Eg, 0, 20, 40, 60, 100% confidence
@@ -515,7 +495,6 @@ Interactive remove and comment out works for dotted imports (e.g. import pkg.sub
 - Added new confidence flag in the CLI
 
 ### Fixed
-
 - Fixed issue where Flask/Django routes were incorrectly flagged as unused
 - Fixed regression where some test files weren't properly excluded
 - Files in `/test/` directories now better detected and excluded
@@ -523,7 +502,6 @@ Interactive remove and comment out works for dotted imports (e.g. import pkg.sub
 - Improved CLI argument parsing for confidence values
 
 ### Technical Details
-
 - `framework_aware.py`: `FrameworkAwareVisitor` now should have better decorator detection
 - `analyzer.py`: `_apply_penalties()` method for framework confidence scoring
 - `cli.py`: Added confidence threshold validation
@@ -532,7 +510,6 @@ Interactive remove and comment out works for dotted imports (e.g. import pkg.sub
 ## [1.1.12] - 2025-06-10
 
 ### Added
-
 - Auto identifies test files in `/tests/`, `/test/`, `test_*.py` patterns
 - Detects test files by test library imports (unittest.mock, pytest, responses, etc.)
 - Decorator detection
@@ -542,29 +519,24 @@ Interactive remove and comment out works for dotted imports (e.g. import pkg.sub
 - Test decorators: `@patch`, `@pytest.fixture`, `@pytest.mark`, `@responses.activate`
 
 ### Fixed
-
 - Fixed false positives where private items starting with `_` were wrongly reported as unused
 - Fixed false positives where from `__future__import annotations`
 - Missing detection of test_* method patterns that were not being excluded from unused reports
 
 ### Changed
-
 - Refactored constants into separate module
 - Pattern matching for test classes eg. TestExample, ExampleTest, ExampleTestCase 
 
 ## [1.1.11] - 2025-06-08
 
 ### Added
-
 - Folder Management: Control over folder exclusions/inclusions
-
 `--exclude-folder`: Add custom folder exclusions to defaults
 `--include-folder`: Include specific folders
 `--no-default-excludes`: Disable default exclusions
 `--list-default-excludes`: Display all default excluded folders
 
 ### Fixed
-
 - Improved accuracy for test method identification
 - Fixed false positives where classes containing "Test" were incorrectly identified as test classes
 - Resolved issue where `NotATestClass` was incorrectly identified as test class
@@ -572,7 +544,6 @@ Interactive remove and comment out works for dotted imports (e.g. import pkg.sub
 - Fixed module import issues in CLI components
 
 ### Changed
-
 - Standardized default folder exclusions across all components
 
 ### Technical Details
@@ -607,7 +578,6 @@ Interactive remove and comment out works for dotted imports (e.g. import pkg.sub
 ## [1.0.10] - 2025-05-24
 
 ### Fixed
-
 Major Changes: Changed from Rust to Python. Surprisingly it's faster!
 Accuracy Improvements: Constructed 2 full tests with ground truths
 Technical Improvements: Benchmark infrastructure, confidence system, AST enhancements. Please read `BENCHMARK.md` for more
