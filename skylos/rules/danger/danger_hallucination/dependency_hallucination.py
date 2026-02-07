@@ -295,18 +295,60 @@ def _parse_requirements_txt(path):
     return deps
 
 
+def _extract_toml_array(txt, key):
+    pattern = re.compile(r"(?m)^\s*" + re.escape(key) + r"\s*=\s*\[")
+    match = pattern.search(txt)
+    if not match:
+        return None
+
+    start = match.end()
+    depth = 1
+    pos = start
+    while pos < len(txt) and depth > 0:
+        ch = txt[pos]
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        elif ch == '"':
+            pos += 1
+            while pos < len(txt) and txt[pos] != '"':
+                if txt[pos] == "\\":
+                    pos += 1
+                pos += 1
+        elif ch == "'":
+            pos += 1
+            while pos < len(txt) and txt[pos] != "'":
+                if txt[pos] == "\\":
+                    pos += 1
+                pos += 1
+        pos += 1
+
+    if depth != 0:
+        return None
+
+    return txt[start : pos - 1]
+
+
 def _parse_pyproject_toml(path):
     deps = set()
+    project_name = None
 
     try:
         txt = path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
-        return deps
+        return deps, project_name
 
-    dep_blocks = re.finditer(r"(?m)^\s*dependencies\s*=\s*\[(.*?)\]", txt, re.DOTALL)
-    for block_match in dep_blocks:
-        block = block_match.group(1)
+    name_match = re.search(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']', txt)
+    if name_match:
+        project_name = name_match.group(1)
+
+    for key in ("dependencies",):
+        block = _extract_toml_array(txt, key)
+        if block is None:
+            continue
         raw_items = re.findall(r'"([^"]+)"', block)
+        raw_items += re.findall(r"'([^']+)'", block)
 
         for item in raw_items:
             item = item.strip()
@@ -315,6 +357,37 @@ def _parse_pyproject_toml(path):
                 continue
 
             deps.add(_normalize_name(m.group(1)))
+
+    for section_re in (
+        r"\[project\.optional-dependencies\]",
+        r"\[tool\.poetry\.extras\]",
+    ):
+        section_match = re.search(section_re, txt)
+        if not section_match:
+            continue
+        rest = txt[section_match.end() :]
+        next_section = re.search(r"(?m)^\s*\[", rest)
+
+        if next_section:
+            section_body = rest[: next_section.start()]
+        else:
+            section_body = rest
+
+        for arr_match in re.finditer(r"(\w+)\s*=\s*\[", section_body):
+            arr_key = arr_match.group(1)
+            block = _extract_toml_array(
+                section_body, arr_key
+            )
+            if block is None:
+                continue
+            
+            raw_items = re.findall(r'"([^"]+)"', block)
+            raw_items += re.findall(r"'([^']+)'", block)
+            for item in raw_items:
+                item = item.strip()
+                m = REQ_LINE_RE.match(item)
+                if m:
+                    deps.add(_normalize_name(m.group(1)))
 
     in_poetry = False
 
@@ -346,31 +419,69 @@ def _parse_pyproject_toml(path):
 
         deps.add(_normalize_name(key))
 
-    return deps
+    if not project_name:
+        poetry_name = re.search(
+            r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']', txt
+        )
+        if poetry_name:
+            project_name = poetry_name.group(1)
+
+    return deps, project_name
 
 
 def _parse_setup_py(path):
     deps = set()
+    project_name = None
 
     try:
         txt = path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
-        return deps
+        return deps, project_name
 
-    match = re.search(r"install_requires\s*=\s*\[(.*?)\]", txt, re.DOTALL)
-    if match:
-        block = match.group(1)
+    name_match = re.search(r"""name\s*=\s*['"]([^'"]+)['"]""", txt)
+    if name_match:
+        project_name = name_match.group(1)
+
+    for key in ("install_requires", "setup_requires"):
+        pattern = re.compile(re.escape(key) + r"\s*=\s*\[")
+        m = pattern.search(txt)
+        if not m:
+            continue
+
+        start = m.end()
+        depth = 1
+        pos = start
+        while pos < len(txt) and depth > 0:
+            ch = txt[pos]
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+            elif ch in ('"', "'"):
+                quote = ch
+                pos += 1
+                while pos < len(txt) and txt[pos] != quote:
+                    if txt[pos] == "\\":
+                        pos += 1
+                    pos += 1
+            pos += 1
+
+        if depth != 0:
+            continue
+
+        block = txt[start : pos - 1]
         raw_items = re.findall(r"['\"]([^'\"]+)['\"]", block)
         for item in raw_items:
-            m = REQ_LINE_RE.match(item.strip())
-            if m:
-                deps.add(_normalize_name(m.group(1)))
+            rm = REQ_LINE_RE.match(item.strip())
+            if rm:
+                deps.add(_normalize_name(rm.group(1)))
 
-    return deps
+    return deps, project_name
 
 
 def _collect_declared_deps(repo_root):
     deps = set()
+    project_name = None
 
     current = repo_root
     for _ in range(5):
@@ -380,11 +491,17 @@ def _collect_declared_deps(repo_root):
 
         pyproj_path = current / "pyproject.toml"
         if pyproj_path.exists():
-            deps |= _parse_pyproject_toml(pyproj_path)
+            pyproj_deps, pyproj_name = _parse_pyproject_toml(pyproj_path)
+            deps |= pyproj_deps
+            if pyproj_name and not project_name:
+                project_name = pyproj_name
 
         setup_path = current / "setup.py"
         if setup_path.exists():
-            deps |= _parse_setup_py(setup_path)
+            setup_deps, setup_name = _parse_setup_py(setup_path)
+            deps |= setup_deps
+            if setup_name and not project_name:
+                project_name = setup_name
 
         req_dir = current / "requirements"
         if req_dir.exists() and req_dir.is_dir():
@@ -398,6 +515,9 @@ def _collect_declared_deps(repo_root):
         if parent == current:
             break
         current = parent
+
+    if project_name:
+        deps.add(_normalize_name(project_name))
 
     return deps
 
