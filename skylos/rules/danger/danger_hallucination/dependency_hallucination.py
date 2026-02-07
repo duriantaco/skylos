@@ -708,11 +708,11 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
 
             if has_env_metadata and _is_confident_hallucination_candidate(mod):
                 original_cache_size = len(pypi_cache)
-                exists_on_pypi = _check_pypi_status(mod, pypi_cache)
+                pypi_status = _check_pypi_status(mod, pypi_cache)
                 if len(pypi_cache) != original_cache_size:
                     cache_modified = True
 
-                if not exists_on_pypi:
+                if pypi_status == "missing":
                     findings.append(
                         {
                             "rule_id": RULE_ID_HALLUCINATION,
@@ -738,11 +738,11 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                     )
             elif not has_env_metadata:
                 original_cache_size = len(pypi_cache)
-                exists_on_pypi = _check_pypi_status(mod, pypi_cache)
+                pypi_status = _check_pypi_status(mod, pypi_cache)
                 if len(pypi_cache) != original_cache_size:
                     cache_modified = True
 
-                if not exists_on_pypi and _is_confident_hallucination_candidate(mod):
+                if pypi_status == "missing"  and _is_confident_hallucination_candidate(mod):
                     findings.append(
                         {
                             "rule_id": RULE_ID_HALLUCINATION,

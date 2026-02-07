@@ -1,6 +1,6 @@
 ## Changelog
 
-## [3.2.2] - 2026-02-07
+## [3.2.3] - 2026-02-07
 
 ## Fixed
 - Fixed hallucination detection by making PyPI "missing" status behave correctly
