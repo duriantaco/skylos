@@ -1,5 +1,13 @@
 ## Changelog
 
+## [3.2.2] - 2026-02-07
+
+## Fixed
+- Fixed hallucination detection by making PyPI "missing" status behave correctly
+- Improved dependency parsing for pyproject.toml and setup.py, including extras like pkg[extra], and updated parsers to return (deps, name)
+- Ensured the project's own package name is included in declared dependencies
+- Fixed tests to reflect above changes
+
 ## [3.2.1] - 2026-02-05
 
 ## Fixed 
