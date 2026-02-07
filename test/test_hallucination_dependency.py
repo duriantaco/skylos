@@ -73,7 +73,7 @@ dependencies = [
 """.strip(),
         encoding="utf-8",
     )
-    deps = dep._parse_pyproject_toml(py)
+    deps, _name = dep._parse_pyproject_toml(py)
     assert "requests" in deps
     assert "google-genai" in deps
 
@@ -89,7 +89,7 @@ pydantic = "^2.0"
 """.strip(),
         encoding="utf-8",
     )
-    deps = dep._parse_pyproject_toml(py)
+    deps, _name = dep._parse_pyproject_toml(py)
     assert "requests" in deps
     assert "pydantic" in deps
     assert "python" not in deps
@@ -110,7 +110,7 @@ setup(
 """.strip(),
         encoding="utf-8",
     )
-    deps = dep._parse_setup_py(sp)
+    deps, _name = dep._parse_setup_py(sp)
     assert "requests" in deps
     assert "google-genai" in deps
 
@@ -274,3 +274,130 @@ def test_scan_does_not_write_cache_when_not_modified(monkeypatch, tmp_path):
     cache_path = repo / ".skylos" / "cache" / "pypi_exists.json"
     _ = dep.scan_python_dependency_hallucinations(repo, [f])
     assert not cache_path.exists()
+
+def test_pyproject_extras_brackets(tmp_path):
+    py = tmp_path / "pyproject.toml"
+    py.write_text(
+        '[project]\nname = "skylos-demo"\n'
+        'dependencies = [\n'
+        '  "fastapi>=0.110",\n'
+        '  "uvicorn[standard]>=0.27",\n'
+        '  "sqlalchemy>=2.0",\n'
+        '  "pydantic>=2.5",\n'
+        '  "pydantic-settings>=2.0",\n'
+        '  "httpx>=0.27",\n'
+        ']\n',
+        encoding="utf-8",
+    )
+    deps, name = dep._parse_pyproject_toml(py)
+    assert name == "skylos-demo"
+    for expected in ("fastapi", "uvicorn", "sqlalchemy", "pydantic", "pydantic-settings", "httpx"):
+        assert expected in deps, f"{expected} missing from {deps}"
+
+
+def test_pyproject_multiple_extras(tmp_path):
+    py = tmp_path / "pyproject.toml"
+    py.write_text(
+        '[project]\ndependencies = ["boto3[crt,s3]>=1.26", "click>=8.0"]',
+        encoding="utf-8",
+    )
+    deps, _ = dep._parse_pyproject_toml(py)
+    assert "boto3" in deps
+    assert "click" in deps
+
+
+def test_pyproject_inline_array(tmp_path):
+    py = tmp_path / "pyproject.toml"
+    py.write_text(
+        '[project]\ndependencies = ["requests>=2", "flask>=3"]',
+        encoding="utf-8",
+    )
+    deps, _ = dep._parse_pyproject_toml(py)
+    assert "requests" in deps
+    assert "flask" in deps
+
+
+def test_pyproject_empty_deps(tmp_path):
+    py = tmp_path / "pyproject.toml"
+    py.write_text('[project]\nname = "x"\ndependencies = []', encoding="utf-8")
+    deps, name = dep._parse_pyproject_toml(py)
+    assert len(deps) == 0
+    assert name == "x"
+
+
+def test_pyproject_optional_deps_with_extras(tmp_path):
+    py = tmp_path / "pyproject.toml"
+    py.write_text(
+        '[project]\ndependencies = ["requests>=2"]\n\n'
+        "[project.optional-dependencies]\n"
+        'dev = [\n  "pytest>=8.0",\n  "coverage[toml]>=7.0",\n]\n',
+        encoding="utf-8",
+    )
+    deps, _ = dep._parse_pyproject_toml(py)
+    assert "requests" in deps
+    assert "pytest" in deps
+    assert "coverage" in deps
+
+
+def test_setup_py_extras_brackets(tmp_path):
+    sp = tmp_path / "setup.py"
+    sp.write_text(
+        "from setuptools import setup\nsetup(\n"
+        "  name='myapp',\n"
+        "  install_requires=[\n"
+        "    'uvicorn[standard]>=0.27',\n"
+        "    'sqlalchemy>=2.0',\n"
+        "  ],\n)\n",
+        encoding="utf-8",
+    )
+    deps, name = dep._parse_setup_py(sp)
+    assert name == "myapp"
+    assert "uvicorn" in deps
+    assert "sqlalchemy" in deps
+
+
+def test_self_package_in_declared_deps(tmp_path):
+    py = tmp_path / "pyproject.toml"
+    py.write_text(
+        '[project]\nname = "skylos-demo"\ndependencies = ["requests>=2"]',
+        encoding="utf-8",
+    )
+    deps = dep._collect_declared_deps(tmp_path)
+    assert "skylos-demo" in deps
+    assert "requests" in deps
+
+
+def test_self_package_not_flagged_end_to_end(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app").mkdir()
+    (repo / "app" / "__init__.py").write_text("")
+    f = _write_py(repo / "app" / "main.py", "from app.config import Settings\n")
+
+    finds = dep.scan_python_dependency_hallucinations(repo, [f])
+    app_findings = [f for f in finds if f["symbol"] == "app"]
+    assert len(app_findings) == 0, f"Self-import 'app' should not be flagged: {app_findings}"
+
+
+def test_pypi_missing_no_env_metadata(monkeypatch, tmp_path):
+    """Hallucination detected even without installed env metadata."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    f = _write_py(repo / "x.py", "import fakepkg123\n")
+
+    monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: set())
+    monkeypatch.setattr(dep, "_collect_local_modules", lambda root: set())
+    monkeypatch.setattr(dep, "_collect_declared_deps", lambda root: set())
+    monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
+    monkeypatch.setattr(dep, "_build_installed_module_mapping", lambda: {})
+
+    def fake_check(name, cache):
+        cache[dep._normalize_name(name)] = "missing"
+        return "missing"
+
+    monkeypatch.setattr(dep, "_check_pypi_status", fake_check)
+
+    finds = dep.scan_python_dependency_hallucinations(repo, [f])
+    halluc = _extract_single(finds, dep.RULE_ID_HALLUCINATION)
+    assert len(halluc) == 1
+    assert halluc[0]["severity"] == dep.SEV_CRITICAL
