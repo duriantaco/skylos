@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "3.2.3"
+version = "3.2.4"
 requires-python = ">=3.10"
 description = "An analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
@@ -31,7 +31,8 @@ dependencies = [
     "tree-sitter-typescript>=0.23.2",
     "pyyaml",
     "litellm>=1.81.3",
-    "networkx"
+    "networkx",
+    "pytest>=9.0.2",
 ]
 
 [project.scripts]

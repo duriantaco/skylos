@@ -1,5 +1,27 @@
 ## Changelog
 
+## [3.2.4] - 2026-02-08
+
+### Changed
+- Refactored agent analyze and review commands from parallel execution to a pipeline architecture where static analysis is source of truth and LLM verifies
+- Extracted orchestration logic from `cli.py` into `pipeline.py`
+- Static analysis now indexes the full project even when reviewing changed files, fixing FP dead code in the review command
+- LLM no longer independently discovers dead code. Only confirms static findings
+- LLM-only findings are now always marked as needs_review and never block CI
+- Removed dependency on line-proximity merger for combining static and LLM results
+- Added `node_modules` to default exclude folders
+
+### Added
+- New `DeadCodeVerifierAgent` that reviews static findings with call graph evidence and defs_map context
+- New `pipeline.py` containing `run_pipeline` and `run_static_on_files`
+- Added unit tests for `pipeline.py` covering static analysis categorisation, LLM dead-code verification, LLM-native analysis, deduplication, sorting, and fallback behaviour
+- Added unit tests for `dead_code_verifier.py` covering verdict application, confidence parsing, context building, single and batch verification, annotation, and agent initialisation
+
+### Fixed
+- Fixed `run_gate_interaction` because it uses `*` to enforce keyword only args
+- Fixed circular dependency checker feeding `.ts`/`.go` files to `ast.parse()`
+- Fixed undefined task variable in run_pipeline progress spinner
+
 ## [3.2.3] - 2026-02-07
 
 ## Fixed
@@ -68,7 +90,6 @@ Note: Formalized a dual pipeline architecture that keeps the static analyzer sep
   - SKY-D222 (CRITICAL): Now raised when high confidence that package is hallucinated
   - SKY-D223 (MEDIUM): Raised for packages that exist but not declared in requirements
 
-
 ## [3.1.2] - 2026-01-25
 
 ### Added
@@ -117,7 +138,6 @@ skylos/app.py:16
 - Added agent for LLM assisted detection 
 - Added new cache and parallel processing functionalities
 - More unit tests for LLM agents, cache and parallel processing
-
 
 ### Fixed
 - `--gate` flag now uploads scan results before exiting, enabling GitHub App check updates for Pro users
@@ -234,7 +254,6 @@ New year new me, and a new release! Happy new year everyone!
 
 ### Removed
 - Removed `--coverage` flag (replaced by `--trace`)
-
 
 ## [2.7.1] - 2025-12-23
 
@@ -397,18 +416,15 @@ Interactive remove and comment out works for dotted imports (e.g. import pkg.sub
 - GitHub Actions CI. Skylos Deadcode Scan workflow (.github/workflows/skylos.yml)
 
 ### Changed
-
 - Lazy imports to avoid cycles
 
 ### Fixed
-
 - Circular import causing scan_ctx import errors.
 - Minor preview/test stability issues
 
 ## [2.1.2] - 2025-08-27
 
 ### Added
-
 - `Dataclass` field detection in `visitor.py`. When a class has `@dataclass`, its annotated class attributes are tagged as dataclass fields
 - `first_read_lineno` tracking. Record the first line where each variable is read.
 - `visit_Global` to bind global names to module-level FQNs
@@ -555,7 +571,6 @@ Interactive remove and comment out works for dotted imports (e.g. import pkg.sub
 - Standardized default folder exclusions across all components
 
 ### Technical Details
-
 `analyzer.py`: Updated _`apply_heuristics()` with better test class detection logic
 `cli.py`: Folder management update
 `analyzer.py`: Added `parse_exclude_folders()` function for more flexible folder handling
