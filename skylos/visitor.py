@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+from __future__ import annotations
+
 import ast
 import re
 import sys
@@ -400,7 +401,11 @@ class Visitor(ast.NodeVisitor):
 
         mod_str = self.mod or ""
         is_init = Path(str(self.file)).name == "__init__.py"
-        cur_pkg = mod_str if is_init else (mod_str.rsplit(".", 1)[0] if "." in mod_str else mod_str)
+        cur_pkg = (
+            mod_str
+            if is_init
+            else (mod_str.rsplit(".", 1)[0] if "." in mod_str else mod_str)
+        )
 
         if node.level and node.level > 0:
             if cur_pkg:
@@ -421,13 +426,15 @@ class Visitor(ast.NodeVisitor):
 
         for a in node.names:
             if a.name == "*":
-                root = (base.split(".")[0] if base else "") or (module.split(".")[0] if module else "")
+                root = (base.split(".")[0] if base else "") or (
+                    module.split(".")[0] if module else ""
+                )
                 self.dyn.add(root)
                 continue
 
             if a.asname:
                 alias_name = a.asname
-            else: 
+            else:
                 alias_name = a.name
 
             if base:
@@ -437,7 +444,6 @@ class Visitor(ast.NodeVisitor):
 
             self.alias[alias_name] = full
             self.add_def(full, "import", node.lineno)
-
 
     def visit_If(self, node: ast.If) -> None:
         condition = evaluate_static_condition(node.test)

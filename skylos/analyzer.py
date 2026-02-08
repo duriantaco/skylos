@@ -125,9 +125,6 @@ class Skylos:
 
         root = p
         all_files = []
-        # for f in p.glob("**/*.py"):
-        #     if f.suffix == ".py":
-        #         all_files.append(f)
 
         extensions = {".py", ".go", ".ts", ".tsx"}
 
@@ -181,20 +178,6 @@ class Skylos:
         if progress_callback:
             progress_callback(0, total_refs or 1, Path("PHASE: mark refs"))
 
-        # import_to_original = {}
-        # for name, def_obj in self.defs.items():
-        #     if def_obj.type == "import":
-        #         import_name = name.split(".")[-1]
-
-        #         for def_name, orig_def in self.defs.items():
-        #             if (
-        #                 orig_def.type != "import"
-        #                 and orig_def.simple_name == import_name
-        #                 and def_name != name
-        #             ):
-        #                 import_to_original[name] = def_name
-        #                 break
-
         import_to_original = {}
 
         non_import_defs = {k: v for k, v in self.defs.items() if v.type != "import"}
@@ -204,7 +187,6 @@ class Skylos:
             simple_to_keys[d.simple_name].append(k)
 
         def _resolve_import_target(import_def_key: str, import_def_obj) -> str | None:
-     
             target_fqn = import_def_obj.name
             if not target_fqn:
                 return None
@@ -225,7 +207,6 @@ class Skylos:
             resolved = _resolve_import_target(def_key, def_obj)
             if resolved:
                 import_to_original[def_key] = resolved
-
 
         simple_name_lookup = defaultdict(list)
         for definition in self.defs.values():
@@ -473,25 +454,6 @@ class Skylos:
         file_contexts = []
 
         pattern_trackers = {}
-
-        # for i, file in enumerate(files):
-        #     if progress_callback:
-        #         progress_callback(i + 1, len(files), file)
-        #     mod = modmap[file]
-        #     (
-        #         defs,
-        #         refs,
-        #         dyn,
-        #         exports,
-        #         test_flags,
-        #         framework_flags,
-        #         q_finds,
-        #         d_finds,
-        #         pro_finds,
-        #         pattern_tracker,
-        #         empty_file_finding,
-        #         cfg,
-        #     ) = proc_file(file, mod, extra_visitors)
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -855,7 +817,7 @@ class Skylos:
             result["analysis_summary"]["unused_files_count"] = len(empty_files)
 
         if enable_danger and result.get("danger"):
-            from skylos.compliance import enrich_findings_with_compliance
+            from skylos.rules.compliance import enrich_findings_with_compliance
 
             result["danger"] = enrich_findings_with_compliance(result["danger"])
 
@@ -876,15 +838,19 @@ class Skylos:
             circular_rule = CircularDependencyRule()
 
             for file in files:
+                if not str(file).endswith(".py"):
+                    continue
                 try:
                     source = Path(file).read_text(encoding="utf-8", errors="ignore")
                     tree = ast.parse(source)
                     mod = modmap.get(file, "")
                     circular_rule.add_file(tree, str(file), mod)
+                except SyntaxError:
+                    pass
                 except Exception as e:
-                    import traceback
+                    if os.getenv("SKYLOS_DEBUG"):
+                        traceback.print_exc()
 
-                    traceback.print_exc()
             try:
                 circular_findings = circular_rule.analyze()
                 if circular_findings:
