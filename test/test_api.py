@@ -16,10 +16,15 @@ from skylos.api import (
 
 class TestSkylosApi(unittest.TestCase):
     @patch("skylos.api.get_git_root", return_value="/mock/git/root")
-    @patch("skylos.api.get_git_info", return_value=("mock_commit_hash", "main", "mock_actor", {}))
+    @patch(
+        "skylos.api.get_git_info",
+        return_value=("mock_commit_hash", "main", "mock_actor", {}),
+    )
     @patch("skylos.api.get_project_token")
     @patch("requests.post")
-    def test_upload_report_success(self, mock_post, mock_token, mock_git_info, mock_git_root):
+    def test_upload_report_success(
+        self, mock_post, mock_token, mock_git_info, mock_git_root
+    ):
         mock_token.return_value = "test_token_123"
 
         mock_response = MagicMock()

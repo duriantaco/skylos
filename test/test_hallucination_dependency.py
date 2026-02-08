@@ -275,23 +275,31 @@ def test_scan_does_not_write_cache_when_not_modified(monkeypatch, tmp_path):
     _ = dep.scan_python_dependency_hallucinations(repo, [f])
     assert not cache_path.exists()
 
+
 def test_pyproject_extras_brackets(tmp_path):
     py = tmp_path / "pyproject.toml"
     py.write_text(
         '[project]\nname = "skylos-demo"\n'
-        'dependencies = [\n'
+        "dependencies = [\n"
         '  "fastapi>=0.110",\n'
         '  "uvicorn[standard]>=0.27",\n'
         '  "sqlalchemy>=2.0",\n'
         '  "pydantic>=2.5",\n'
         '  "pydantic-settings>=2.0",\n'
         '  "httpx>=0.27",\n'
-        ']\n',
+        "]\n",
         encoding="utf-8",
     )
     deps, name = dep._parse_pyproject_toml(py)
     assert name == "skylos-demo"
-    for expected in ("fastapi", "uvicorn", "sqlalchemy", "pydantic", "pydantic-settings", "httpx"):
+    for expected in (
+        "fastapi",
+        "uvicorn",
+        "sqlalchemy",
+        "pydantic",
+        "pydantic-settings",
+        "httpx",
+    ):
         assert expected in deps, f"{expected} missing from {deps}"
 
 
@@ -376,7 +384,9 @@ def test_self_package_not_flagged_end_to_end(tmp_path):
 
     finds = dep.scan_python_dependency_hallucinations(repo, [f])
     app_findings = [f for f in finds if f["symbol"] == "app"]
-    assert len(app_findings) == 0, f"Self-import 'app' should not be flagged: {app_findings}"
+    assert len(app_findings) == 0, (
+        f"Self-import 'app' should not be flagged: {app_findings}"
+    )
 
 
 def test_pypi_missing_no_env_metadata(monkeypatch, tmp_path):

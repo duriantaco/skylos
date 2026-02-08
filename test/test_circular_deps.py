@@ -7,6 +7,7 @@ from skylos.circular_deps import (
     analyze_circular_dependencies,
 )
 
+
 class TestDependencyGraphBuilder:
     """Test the AST visitor that extracts imports."""
 
@@ -14,10 +15,10 @@ class TestDependencyGraphBuilder:
         code = "import foo"
         tree = ast.parse(code)
         known = {"foo"}
-        
+
         builder = DependencyGraphBuilder("mymodule", "mymodule.py", known)
         builder.visit(tree)
-        
+
         assert len(builder.dependencies) == 1
         assert builder.dependencies[0].to_module == "foo"
         assert builder.dependencies[0].import_type == "import"
@@ -26,10 +27,10 @@ class TestDependencyGraphBuilder:
         code = "from foo import bar, baz"
         tree = ast.parse(code)
         known = {"foo"}
-        
+
         builder = DependencyGraphBuilder("mymodule", "mymodule.py", known)
         builder.visit(tree)
-        
+
         assert len(builder.dependencies) == 1
         assert builder.dependencies[0].to_module == "foo"
         assert builder.dependencies[0].import_type == "from_import"
@@ -45,10 +46,10 @@ import myproject
 """
         tree = ast.parse(code)
         known = {"myproject"}
-        
+
         builder = DependencyGraphBuilder("main", "main.py", known)
         builder.visit(tree)
-        
+
         assert len(builder.dependencies) == 1
         assert builder.dependencies[0].to_module == "myproject"
 
@@ -56,10 +57,10 @@ import myproject
         code = "from myproject.submodule import thing"
         tree = ast.parse(code)
         known = {"myproject", "myproject.submodule"}
-        
+
         builder = DependencyGraphBuilder("main", "main.py", known)
         builder.visit(tree)
-        
+
         assert len(builder.dependencies) == 1
 
     def test_tracks_line_number(self):
@@ -69,11 +70,12 @@ import foo
 """
         tree = ast.parse(code)
         known = {"foo"}
-        
+
         builder = DependencyGraphBuilder("main", "main.py", known)
         builder.visit(tree)
-        
+
         assert builder.dependencies[0].import_line == 3
+
 
 class TestCircularDependencyAnalyzer:
     def test_no_cycles_linear(self):
@@ -85,7 +87,7 @@ class TestCircularDependencyAnalyzer:
             "b": {"c"},
             "c": set(),
         }
-        
+
         cycles = analyzer.find_simple_cycles()
         assert len(cycles) == 0
 
@@ -97,7 +99,7 @@ class TestCircularDependencyAnalyzer:
             "a": {"b"},
             "b": {"a"},
         }
-        
+
         cycles = analyzer.find_simple_cycles()
         assert len(cycles) == 1
         assert set(cycles[0]) == {"a", "b"}
@@ -111,7 +113,7 @@ class TestCircularDependencyAnalyzer:
             "b": {"c"},
             "c": {"a"},
         }
-        
+
         cycles = analyzer.find_simple_cycles()
         assert len(cycles) == 1
         assert set(cycles[0]) == {"a", "b", "c"}
@@ -126,7 +128,7 @@ class TestCircularDependencyAnalyzer:
             "c": {"d"},
             "d": {"c"},
         }
-        
+
         cycles = analyzer.find_simple_cycles()
         assert len(cycles) == 2
 
@@ -134,7 +136,7 @@ class TestCircularDependencyAnalyzer:
         analyzer = CircularDependencyAnalyzer()
         analyzer.modules = {"a": "a.py"}
         analyzer.dependencies = {"a": {"a"}}
-        
+
         cycles = analyzer.find_simple_cycles()
         assert isinstance(cycles, list)
 
@@ -146,10 +148,10 @@ class TestCircularDependencyAnalyzer:
             "b": {"a"},
             "c": set(),
         }
-        
+
         cycle = ["a", "b"]
         suggestion = analyzer.suggest_break_point(cycle)
-        
+
         assert suggestion in cycle
 
     def test_get_core_infrastructure(self):
@@ -161,9 +163,10 @@ class TestCircularDependencyAnalyzer:
             "b": {"a"},
             "c": {"a"},
         }
-        
+
         core = analyzer.get_core_infrastructure()
         assert "a" in core
+
 
 class TestCircularDependencyRule:
     """Test the Skylos rule interface."""
@@ -183,20 +186,20 @@ def main():
 """
         rule = CircularDependencyRule()
         rule.add_file(ast.parse(code), "main.py", "main")
-        
+
         findings = rule.analyze()
         assert len(findings) == 0
 
     def test_detects_two_file_cycle(self):
         code_a = "from b import something"
         code_b = "from a import something_else"
-        
+
         rule = CircularDependencyRule()
         rule.add_file(ast.parse(code_a), "a.py", "a")
         rule.add_file(ast.parse(code_b), "b.py", "b")
-        
+
         findings = rule.analyze()
-        
+
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-CIRC"
         assert findings[0]["kind"] == "circular_dependency"
@@ -205,41 +208,40 @@ def main():
     def test_check_fails_when_exceeds_max(self):
         code_a = "from b import x"
         code_b = "from a import y"
-        
+
         rule = CircularDependencyRule(max_cycles=0)
         rule.add_file(ast.parse(code_a), "a.py", "a")
         rule.add_file(ast.parse(code_b), "b.py", "b")
-        
+
         passed, message = rule.check()
-        
+
         assert passed is False
 
     def test_warning_mode_always_passes(self):
         code_a = "from b import x"
         code_b = "from a import y"
-        
+
         rule = CircularDependencyRule(max_cycles=-1)
         rule.add_file(ast.parse(code_a), "a.py", "a")
         rule.add_file(ast.parse(code_b), "b.py", "b")
-        
+
         passed, message = rule.check()
-        
+
         assert passed is True
 
 
 class TestConvenienceFunction:
-    
     def test_analyze_circular_dependencies(self):
         code_a = "from b import x"
         code_b = "from a import y"
-        
+
         pairs = [
             ("a.py", "a", ast.parse(code_a)),
             ("b.py", "b", ast.parse(code_b)),
         ]
-        
+
         findings = analyze_circular_dependencies(pairs)
-        
+
         assert len(findings) == 1
         assert findings[0]["cycle_length"] == 2
 
@@ -248,13 +250,13 @@ class TestConvenienceFunction:
 # UNIT TESTS - Severity
 # =============================================================================
 
-class TestSeverity:
 
+class TestSeverity:
     def test_2_node_cycle_low_severity(self):
         analyzer = CircularDependencyAnalyzer()
         analyzer.modules = {"a": "a.py", "b": "b.py"}
         analyzer.dependencies = {"a": {"b"}, "b": {"a"}}
-        
+
         findings = analyzer.analyze()
         assert findings[0].severity in ("LOW", "MEDIUM")
 
@@ -262,25 +264,20 @@ class TestSeverity:
         analyzer = CircularDependencyAnalyzer()
         analyzer.modules = {"a": "a.py", "b": "b.py", "c": "c.py"}
         analyzer.dependencies = {"a": {"b"}, "b": {"c"}, "c": {"a"}}
-        
+
         findings = analyzer.analyze()
         assert findings[0].severity == "MEDIUM"
 
     def test_4_plus_node_cycle_high_severity(self):
         analyzer = CircularDependencyAnalyzer()
-        analyzer.modules = {
-            "a": "a.py", "b": "b.py", "c": "c.py", "d": "d.py"
-        }
-        analyzer.dependencies = {
-            "a": {"b"}, "b": {"c"}, "c": {"d"}, "d": {"a"}
-        }
-        
+        analyzer.modules = {"a": "a.py", "b": "b.py", "c": "c.py", "d": "d.py"}
+        analyzer.dependencies = {"a": {"b"}, "b": {"c"}, "c": {"d"}, "d": {"a"}}
+
         findings = analyzer.analyze()
         assert findings[0].severity == "HIGH"
 
 
 class TestRealWorldPatterns:
-
     def test_service_repository_cycle(self):
         """Service imports Repository, Repository imports Service."""
         service = """
@@ -297,11 +294,11 @@ class UserRepository:
     def get_service(self):
         return UserService()
 """
-        
+
         rule = CircularDependencyRule()
         rule.add_file(ast.parse(service), "service.py", "service")
         rule.add_file(ast.parse(repo), "repository.py", "repository")
-        
+
         findings = rule.analyze()
         assert len(findings) == 1
 
@@ -315,13 +312,13 @@ class UserRepository:
         code_b = "from d import D"
         code_c = "from d import D"
         code_d = "class D: pass"
-        
+
         rule = CircularDependencyRule()
         rule.add_file(ast.parse(code_a), "a.py", "a")
         rule.add_file(ast.parse(code_b), "b.py", "b")
         rule.add_file(ast.parse(code_c), "c.py", "c")
         rule.add_file(ast.parse(code_d), "d.py", "d")
-        
+
         findings = rule.analyze()
         assert len(findings) == 0
 
@@ -333,16 +330,15 @@ import sys
 from pathlib import Path
 from typing import Optional
 """
-        
+
         rule = CircularDependencyRule()
         rule.add_file(ast.parse(code), "main.py", "main")
-        
+
         findings = rule.analyze()
         assert len(findings) == 0
 
 
 class TestEdgeCases:
-
     def test_empty_file(self):
         rule = CircularDependencyRule()
         rule.add_file(ast.parse(""), "empty.py", "empty")
@@ -365,10 +361,10 @@ class Bar:
     def test_import_star(self):
         code = "from foo import *"
         known = {"foo"}
-        
+
         builder = DependencyGraphBuilder("main", "main.py", known)
         builder.visit(ast.parse(code))
-        
+
         assert len(builder.dependencies) == 1
 
     def test_conditional_import_detected(self):
@@ -378,7 +374,7 @@ if TYPE_CHECKING:
 """
         builder = DependencyGraphBuilder("main", "main.py", {"other"})
         builder.visit(ast.parse(code))
-        
+
         assert len(builder.dependencies) == 1
 
     def test_try_except_imports_detected(self):
@@ -390,8 +386,9 @@ except ImportError:
 """
         builder = DependencyGraphBuilder("main", "main.py", {"fast", "slow"})
         builder.visit(ast.parse(code))
-        
+
         assert len(builder.dependencies) == 2
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

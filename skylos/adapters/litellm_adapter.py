@@ -51,7 +51,7 @@ class LiteLLMAdapter(BaseAdapter):
                 return True
 
         return False
-    
+
     def _is_anthropic(self):
         return self._detect_provider() == "anthropic"
 

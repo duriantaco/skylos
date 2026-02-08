@@ -180,12 +180,12 @@ class TestSkylos:
         mock_dir = Mock()
         mock_dir.is_file.return_value = False
         mock_files = [Path("/project/file1.py"), Path("/project/file2.py")]
-        
+
         mock_dir.glob.return_value = mock_files
         mock_path.return_value.resolve.return_value = mock_dir
 
         files, root = skylos._get_python_files("/project")
-        
+
         assert mock_dir.glob.call_count == 4
         assert root == mock_dir
 
@@ -257,6 +257,7 @@ class TestSkylos:
 
         assert mock_import.references == 1
         assert mock_original.references == 1
+
 
 class TestHeuristics:
     @pytest.fixture
