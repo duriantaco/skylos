@@ -375,12 +375,10 @@ def _parse_pyproject_toml(path):
 
         for arr_match in re.finditer(r"(\w+)\s*=\s*\[", section_body):
             arr_key = arr_match.group(1)
-            block = _extract_toml_array(
-                section_body, arr_key
-            )
+            block = _extract_toml_array(section_body, arr_key)
             if block is None:
                 continue
-            
+
             raw_items = re.findall(r'"([^"]+)"', block)
             raw_items += re.findall(r"'([^']+)'", block)
             for item in raw_items:
@@ -420,9 +418,7 @@ def _parse_pyproject_toml(path):
         deps.add(_normalize_name(key))
 
     if not project_name:
-        poetry_name = re.search(
-            r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']', txt
-        )
+        poetry_name = re.search(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']', txt)
         if poetry_name:
             project_name = poetry_name.group(1)
 
@@ -742,7 +738,9 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                 if len(pypi_cache) != original_cache_size:
                     cache_modified = True
 
-                if pypi_status == "missing"  and _is_confident_hallucination_candidate(mod):
+                if pypi_status == "missing" and _is_confident_hallucination_candidate(
+                    mod
+                ):
                     findings.append(
                         {
                             "rule_id": RULE_ID_HALLUCINATION,

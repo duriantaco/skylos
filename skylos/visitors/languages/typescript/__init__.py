@@ -22,7 +22,20 @@ def scan_typescript_file(file_path, config=None):
         with open(file_path, "rb") as f:
             source = f.read()
     except Exception:
-        return ([], [], set(), set(), DummyVisitor(), DummyVisitor(), [], [], [], None, None, config)
+        return (
+            [],
+            [],
+            set(),
+            set(),
+            DummyVisitor(),
+            DummyVisitor(),
+            [],
+            [],
+            [],
+            None,
+            None,
+            config,
+        )
 
     complexity_limit = config.get("complexity", 10)
 

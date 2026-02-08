@@ -793,7 +793,7 @@ def test_main_command_exec_success_exits_zero(monkeypatch):
             cli.main()
 
     assert e.value.code == 0
-    
+
     echo_calls = [c for c in popen.call_args_list if c.args[0] == ["echo", "hi"]]
     assert len(echo_calls) == 1
 
