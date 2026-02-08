@@ -18,8 +18,9 @@ from skylos.config import load_config
 from skylos.gatekeeper import run_gate_interaction
 from skylos.api import upload_report
 from skylos.sarif_exporter import SarifExporter
-from pathlib import Path
+from skylos.pipeline import run_pipeline
 
+from pathlib import Path
 import pathlib
 import skylos
 from collections import defaultdict
@@ -314,31 +315,6 @@ def _print_upload_cta(console: Console, project_root: Path):
         console.print("  [bold]skylos sync connect[/bold]")
         console.print("  [bold]skylos . --upload[/bold]")
     console.print("  [muted]Dashboard:[/muted] https://skylos.dev/dashboard")
-
-
-def find_project_root(path):
-    try:
-        p = Path(path).resolve()
-    except Exception:
-        return Path.cwd().resolve()
-
-    if p.is_file():
-        cur = p.parent
-    else:
-        cur = p
-
-    while True:
-        if (cur / "pyproject.toml").exists():
-            return cur
-        if (cur / ".git").exists():
-            return cur
-
-        parent = cur.parent
-        if parent == cur:
-            break
-        cur = parent
-
-    return Path.cwd().resolve()
 
 
 def interactive_selection(
@@ -1008,63 +984,6 @@ def estimate_cost(files):
     return est_tokens, est_cost_usd
 
 
-def run_static_on_files(
-    files, *, conf=60, enable_secrets=True, enable_danger=True, enable_quality=True
-):
-    merged = {
-        "definitions": {},
-        "unused_functions": [],
-        "unused_imports": [],
-        "unused_variables": [],
-        "unused_parameters": [],
-        "unused_classes": [],
-        "danger": [],
-        "quality": [],
-        "secrets": [],
-    }
-
-    try:
-        from skylos.sync import get_custom_rules
-
-        custom_rules_data = get_custom_rules()
-        if custom_rules_data:
-            os.environ["SKYLOS_CUSTOM_RULES"] = json.dumps(custom_rules_data)
-
-    except Exception:
-        pass
-
-    for f in files:
-        try:
-            result_json = run_analyze(
-                str(f),
-                conf=conf,
-                enable_secrets=enable_secrets,
-                enable_danger=enable_danger,
-                enable_quality=enable_quality,
-            )
-            one = json.loads(result_json)
-
-            defs_map = one.get("definitions", {}) or {}
-            merged["definitions"].update(defs_map)
-
-            for key in [
-                "unused_functions",
-                "unused_imports",
-                "unused_variables",
-                "unused_parameters",
-                "unused_classes",
-                "danger",
-                "quality",
-                "secrets",
-            ]:
-                merged[key].extend(one.get(key, []) or [])
-
-        except Exception:
-            continue
-
-    return merged
-
-
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "key":
         from skylos.commands.key_cmd import run_key_command
@@ -1110,7 +1029,7 @@ def main():
             sys.exit(1)
 
         import argparse as agent_argparse
-        from skylos.llm.merger import merge_findings
+        # from skylos.llm.merger import merge_findings
 
         agent_parser = agent_argparse.ArgumentParser(prog="skylos agent")
         agent_sub = agent_parser.add_subparsers(dest="agent_cmd", required=True)
@@ -1278,6 +1197,7 @@ def main():
                 sys.exit(1)
 
         cmd = agent_args.agent_cmd
+        agent_exclude_folders = list(parse_exclude_folders(use_defaults=True))
 
         if cmd == "analyze":
             path = pathlib.Path(agent_args.path)
@@ -1285,147 +1205,14 @@ def main():
                 console.print(f"[bad]Path not found: {path}[/bad]")
                 sys.exit(1)
 
-            static_findings = []
-            llm_findings = []
-            defs_map = {}
-
-            if not agent_args.llm_only:
-                console.print("[brand]Phase 1:[/brand] Running static analysis...")
-                try:
-                    with Progress(
-                        SpinnerColumn(style="brand"),
-                        TextColumn("[brand]Skylos[/brand] {task.description}"),
-                        transient=True,
-                        console=console,
-                    ) as progress:
-                        task = progress.add_task("static analysis...", total=None)
-
-                        result_json = run_analyze(
-                            str(path),
-                            conf=60,
-                            enable_secrets=True,
-                            enable_danger=True,
-                            enable_quality=True,
-                        )
-
-                    static_result = json.loads(result_json)
-                    defs_map = static_result.get("definitions", {})
-
-                    for item in static_result.get("danger", []) or []:
-                        item["_source"] = "static"
-                        item["_category"] = "security"
-                        static_findings.append(item)
-
-                    for item in static_result.get("quality", []) or []:
-                        item["_source"] = "static"
-                        item["_category"] = "quality"
-                        static_findings.append(item)
-
-                    for item in static_result.get("secrets", []) or []:
-                        item["_source"] = "static"
-                        item["_category"] = "secret"
-                        static_findings.append(item)
-
-                    for key in [
-                        "unused_functions",
-                        "unused_imports",
-                        "unused_variables",
-                        "unused_classes",
-                    ]:
-                        for item in static_result.get(key, []) or []:
-                            item["_source"] = "static"
-                            item["_category"] = "dead_code"
-                            item["message"] = (
-                                item.get("message")
-                                or f"Unused {key.replace('unused_', '')}: {item.get('name')}"
-                            )
-                            static_findings.append(item)
-
-                    console.print(
-                        f"[good]✓ Static:[/good] {len(defs_map)} definitions, {len(static_findings)} findings"
-                    )
-
-                except Exception as e:
-                    console.print(f"[warn]Static analysis failed: {e}[/warn]")
-
-            console.print(
-                "[brand]Phase 2:[/brand] Running LLM analysis with project context..."
-            )
-
-            min_conf_map = {
-                "high": Confidence.HIGH,
-                "medium": Confidence.MEDIUM,
-                "low": Confidence.LOW,
-            }
-            config = AnalyzerConfig(
+            merged_findings = run_pipeline(
+                path=str(path),
                 model=model,
                 api_key=api_key,
-                quiet=getattr(agent_args, "quiet", False),
-                min_confidence=min_conf_map.get(
-                    getattr(agent_args, "min_confidence", "low"), Confidence.LOW
-                ),
+                agent_args=agent_args,
+                console=console,
+                exclude_folders=agent_exclude_folders,
             )
-            analyzer = SkylosLLM(config)
-
-            try:
-                if path.is_file():
-                    files = [path]
-                else:
-                    files = [
-                        f
-                        for f in path.rglob("*.py")
-                        if not any(
-                            ex in f.parts
-                            for ex in ["__pycache__", ".git", "venv", ".venv"]
-                        )
-                    ]
-
-                if files:
-                    llm_result = analyzer.analyze_files(files, defs_map=defs_map)
-
-                    for finding in llm_result.findings:
-                        llm_findings.append(
-                            {
-                                "file": finding.location.file,
-                                "line": finding.location.line,
-                                "message": finding.message,
-                                "rule_id": finding.rule_id,
-                                "severity": finding.severity.value
-                                if hasattr(finding.severity, "value")
-                                else str(finding.severity),
-                                "confidence": finding.confidence.value
-                                if hasattr(finding.confidence, "value")
-                                else str(finding.confidence),
-                                "_source": "llm",
-                                "_category": finding.issue_type.value
-                                if hasattr(finding.issue_type, "value")
-                                else str(finding.issue_type),
-                            }
-                        )
-
-                    console.print(f"[good]✓ LLM:[/good] {len(llm_findings)} findings")
-
-            except Exception as e:
-                console.print(f"[warn]LLM analysis failed: {e}[/warn]")
-
-            console.print(
-                "[brand]Phase 3:[/brand] Merging findings with confidence scoring..."
-            )
-
-            seen = set()
-            deduped_static = []
-            for f in static_findings:
-                key = (
-                    f.get("file", ""),
-                    f.get("line", 0),
-                    f.get("message", "")[:50].lower(),
-                )
-                if key not in seen:
-                    seen.add(key)
-                    deduped_static.append(f)
-            static_findings = deduped_static
-
-            merged_findings = merge_findings(static_findings, llm_findings)
 
             static_only = 0
             llm_only = 0
@@ -1496,9 +1283,7 @@ def main():
                 files = [
                     f
                     for f in path.rglob("*.py")
-                    if not any(
-                        ex in f.parts for ex in ["__pycache__", ".git", "venv", ".venv"]
-                    )
+                    if not any(ex in f.parts for ex in agent_exclude_folders)
                 ]
 
             if not files:
@@ -1585,102 +1370,15 @@ def main():
             ):
                 sys.exit(0)
 
-            console.print(
-                "[brand]Phase 1:[/brand] Running static analysis on changed files..."
+            merged_findings = run_pipeline(
+                path=str(path),
+                model=model,
+                api_key=api_key,
+                agent_args=agent_args,
+                console=console,
+                changed_files=files,
+                exclude_folders=agent_exclude_folders,
             )
-            static_findings = []
-            defs_map = {}
-
-            try:
-                static_result = run_static_on_files(
-                    files,
-                    conf=60,
-                    enable_secrets=True,
-                    enable_danger=True,
-                    enable_quality=True,
-                )
-                defs_map = static_result.get("definitions", {}) or {}
-
-                for item in static_result.get("danger", []) or []:
-                    item["_source"] = "static"
-                    item["_category"] = "security"
-                    static_findings.append(item)
-
-                for item in static_result.get("quality", []) or []:
-                    item["_source"] = "static"
-                    item["_category"] = "quality"
-                    static_findings.append(item)
-
-                for item in static_result.get("secrets", []) or []:
-                    item["_source"] = "static"
-                    item["_category"] = "secret"
-                    static_findings.append(item)
-
-                for key in [
-                    "unused_functions",
-                    "unused_imports",
-                    "unused_variables",
-                    "unused_classes",
-                    "unused_parameters",
-                ]:
-                    for item in static_result.get(key, []) or []:
-                        item["_source"] = "static"
-                        item["_category"] = "dead_code"
-                        item["message"] = (
-                            item.get("message")
-                            or f"Unused {key.replace('unused_', '')}: {item.get('name')}"
-                        )
-                        static_findings.append(item)
-
-                console.print(
-                    f"[good]✓ Static:[/good] {len(defs_map)} definitions, {len(static_findings)} findings"
-                )
-
-            except Exception as e:
-                console.print(f"[warn]Static phase failed: {e}[/warn]")
-
-            console.print(
-                "[brand]Phase 2:[/brand] Running LLM review on changed files..."
-            )
-            llm_findings = []
-
-            try:
-                config = AnalyzerConfig(
-                    model=model,
-                    api_key=api_key,
-                    quiet=getattr(agent_args, "quiet", False),
-                )
-                analyzer = SkylosLLM(config)
-
-                llm_result = analyzer.analyze_files(files, defs_map=defs_map)
-
-                for finding in llm_result.findings:
-                    llm_findings.append(
-                        {
-                            "file": finding.location.file,
-                            "line": finding.location.line,
-                            "message": finding.message,
-                            "rule_id": finding.rule_id,
-                            "severity": finding.severity.value
-                            if hasattr(finding.severity, "value")
-                            else str(finding.severity),
-                            "confidence": finding.confidence.value
-                            if hasattr(finding.confidence, "value")
-                            else str(finding.confidence),
-                            "_source": "llm",
-                            "_category": finding.issue_type.value
-                            if hasattr(finding.issue_type, "value")
-                            else str(finding.issue_type),
-                        }
-                    )
-
-                console.print(f"[good]✓ LLM:[/good] {len(llm_findings)} findings")
-
-            except Exception as e:
-                console.print(f"[warn]LLM phase failed: {e}[/warn]")
-
-            console.print("[brand]Phase 3:[/brand] Merging findings...")
-            merged_findings = merge_findings(static_findings, llm_findings)
 
             if agent_args.format == "json":
                 output = json.dumps(merged_findings, indent=2, default=str)
@@ -2258,7 +1956,10 @@ sys.exit(ret)
         upload_report(result, is_forced=args.force, strict=args.strict)
 
         exit_code = run_gate_interaction(
-            result, config, strict=bool(args.strict), force=bool(args.force)
+            result=result,
+            config=config,
+            strict=bool(args.strict),
+            force=bool(args.force),
         )
         sys.exit(exit_code)
 
@@ -2281,7 +1982,8 @@ sys.exit(ret)
             console.print("[bad]No API key provided. Exiting.[/bad]")
             sys.exit(1)
 
-        fixer = Fixer(api_key=api_key, model=args.model)
+        fixer_model = args.model or "gpt-4.1"
+        fixer = Fixer(api_key=api_key, model=fixer_model)
 
         defs_map = result.get("definitions", {})
 

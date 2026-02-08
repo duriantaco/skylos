@@ -77,6 +77,7 @@ DEFAULT_EXCLUDE_FOLDERS = {
     "*.egg-info",
     "venv",
     ".venv",
+    "node_modules",
 }
 
 
