@@ -64,6 +64,10 @@ Unlike standard linters (like Vulture or Bandit) that struggle with dynamic Pyth
 | **Secure the Gate** | `skylos --gate` | Block risky code from merging |
 | **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
 
+### Demo
+[![Skylos demo](https://img.youtube.com/vi/BjMdSP2zZl8/0.jpg)](https://www.youtube.com/watch?v=BjMdSP2zZl8)
+
+Backup (GitHub): https://github.com/duriantaco/skylos/discussions/82
 
 ## Key Capabilities
 
