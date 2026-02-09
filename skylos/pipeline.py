@@ -52,6 +52,7 @@ def run_static_on_files(
     enable_secrets=True,
     enable_danger=True,
     enable_quality=True,
+    exclude_folders=None
 ):
     import os
 
@@ -83,7 +84,7 @@ def run_static_on_files(
             enable_secrets=enable_secrets,
             enable_danger=enable_danger,
             enable_quality=enable_quality,
-            exclude_folders=list(parse_exclude_folders()),
+            exclude_folders=list(exclude_folders or parse_exclude_folders()),
         )
         full_result = json.loads(result_json)
     except Exception:
@@ -124,6 +125,7 @@ def run_pipeline(
     console,
     *,
     changed_files=None,
+    exclude_folders=None
 ):
     import sys
     from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -169,6 +171,7 @@ def run_pipeline(
                         enable_secrets=True,
                         enable_danger=True,
                         enable_quality=True,
+                        exclude_folders=exclude_folders
                     )
                 else:
                     from skylos.constants import parse_exclude_folders
@@ -179,7 +182,7 @@ def run_pipeline(
                         enable_secrets=True,
                         enable_danger=True,
                         enable_quality=True,
-                        exclude_folders=list(parse_exclude_folders()),
+                        exclude_folders=list(exclude_folders or parse_exclude_folders()),
                         progress_callback=lambda cur, tot, f: progress.update(
                             task, description=f"[{cur}/{tot}] {f.name}"
                         ),
@@ -234,10 +237,11 @@ def run_pipeline(
     if path.is_file():
         files = [path]
     else:
+        _exc = set(exclude_folders) if exclude_folders else {"__pycache__", ".git", "venv", ".venv"}
         files = [
             f
             for f in path.rglob("*.py")
-            if not any(ex in f.parts for ex in ["__pycache__", ".git", "venv", ".venv"])
+                if not any(ex in f.parts for ex in _exc)
         ]
 
     if changed_files:
