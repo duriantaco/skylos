@@ -1,5 +1,11 @@
 ## Changelog
 
+## [3.2.5] - 2026-02-09
+
+### Fixed
+- Wired `exclude_folders` parameter through `run_pipeline` and `run_static_on_files`
+- `run_analyze` call inside run_pipeline now uses the passed `exclude_folders` instead of always calling `parse_exclude_folders()`
+
 ## [3.2.4] - 2026-02-08
 
 ### Changed
