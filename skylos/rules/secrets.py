@@ -4,7 +4,24 @@ from math import log2
 
 __all__ = ["scan_ctx"]
 
-ALLOWED_FILE_SUFFIXES = (".py", ".pyi", ".pyw")
+ALLOWED_FILE_SUFFIXES = (
+    ".py",
+    ".pyi",
+    ".pyw",
+    ".env",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".go",
+)
 
 PROVIDER_PATTERNS = [
     ("github", re.compile(r"(ghp|gho|ghu|ghs|ghr|gpat)_[A-Za-z0-9]{36,}")),

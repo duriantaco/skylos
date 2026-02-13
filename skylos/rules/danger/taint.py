@@ -1,14 +1,53 @@
 import ast
 
+XSS_SANITIZERS = {
+    "html.escape",
+    "markupsafe.escape",
+    "markupsafe.Markup.escape",
+    "Markup.escape",
+    "bleach.clean",
+    "bleach.linkify",
+    "cgi.escape",
+}
+
+CMD_SANITIZERS = {
+    "shlex.quote",
+    "shlex.join",
+}
+
+URL_SANITIZERS = {
+    "urllib.parse.quote",
+    "urllib.parse.quote_plus",
+}
+
+PATH_SANITIZERS = {
+    "os.path.basename",
+    "pathlib.PurePath.name",
+}
+
+
+def _resolve_call_name(node: ast.Call):
+    func = node.func
+    parts = []
+    while isinstance(func, ast.Attribute):
+        parts.append(func.attr)
+        func = func.value
+    if isinstance(func, ast.Name):
+        parts.append(func.id)
+        parts.reverse()
+        return ".".join(parts)
+    return None
+
 
 class TaintVisitor(ast.NodeVisitor):
-    def __init__(self, file_path, findings):
+    def __init__(self, file_path, findings, sanitizers=None):
         self.file_path = file_path
         self.findings = findings
         self.env_stack = [{}]
         self.sources = {"input", "request"}
         self.request_obj = "request"
         self._symbol_stack = ["<module>"]
+        self.sanitizers = sanitizers or set()
 
     def _current_symbol(self):
         if self._symbol_stack:
@@ -91,6 +130,11 @@ class TaintVisitor(ast.NodeVisitor):
             return self._get(node.id)
 
         if isinstance(node, ast.Call):
+            if self.sanitizers:
+                call_name = _resolve_call_name(node)
+                if call_name and call_name in self.sanitizers:
+                    return False
+
             if isinstance(node.func, ast.Attribute):
                 if self.is_tainted(node.func.value):
                     return True

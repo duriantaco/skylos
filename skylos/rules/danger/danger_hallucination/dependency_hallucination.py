@@ -8,6 +8,70 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# The mapping file uses the pipreqs format: "import_name:dist_name" per line.
+# Source: https://github.com/bndr/pipreqs/blob/master/pipreqs/mapping
+# License: Apache-2.0
+#
+# We look for it in the same directory as this source file.
+# ---------------------------------------------------------------------------
+
+_IMPORT_TO_DIST_MAPPING: dict[str, str] | None = None
+_MAPPING_FILENAME = "pipreqs_import_mapping.txt"
+
+
+def _load_import_to_dist_mapping() -> dict[str, str]:
+    global _IMPORT_TO_DIST_MAPPING
+    if _IMPORT_TO_DIST_MAPPING is not None:
+        return _IMPORT_TO_DIST_MAPPING
+
+    mapping: dict[str, str] = {}
+    mapping_path = Path(__file__).with_name(_MAPPING_FILENAME)
+
+    if mapping_path.exists():
+        try:
+            for line in mapping_path.read_text(
+                encoding="utf-8", errors="ignore"
+            ).splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if ":" not in line:
+                    continue
+                import_name, dist_name = line.split(":", 1)
+                import_name = import_name.strip()
+                dist_name = dist_name.strip()
+                if import_name and dist_name:
+                    mapping[import_name] = dist_name
+        except Exception:
+            pass
+
+    _SUPPLEMENT = {
+        "cv2": "opencv-python",
+        "cv": "opencv-python",
+        "docx": "python-docx",
+        "pptx": "python-pptx",
+        "skimage": "scikit-image",
+        "attr": "attrs",
+        "attrs": "attrs",
+        "jose": "python-jose",
+        "wx": "wxPython",
+        "pkg_resources": "setuptools",
+        "lxml": "lxml",
+        "webdriver": "selenium",
+        "gi": "PyGObject",
+        "nacl": "PyNaCl",
+        "ldap": "python-ldap",
+        "bson": "pymongo",
+        "gridfs": "pymongo",
+    }
+    for imp, dist in _SUPPLEMENT.items():
+        if imp not in mapping:
+            mapping[imp] = dist
+
+    _IMPORT_TO_DIST_MAPPING = mapping
+    return _IMPORT_TO_DIST_MAPPING
+
 
 RULE_ID_HALLUCINATION = "SKY-D222"
 RULE_ID_UNDECLARED = "SKY-D223"
@@ -580,8 +644,6 @@ def _check_pypi_status(package_name, cache):
         return cache[normalized]
 
     names_to_try = [normalized]
-    if package_name and _normalize_name(package_name) != normalized:
-        names_to_try.append(_normalize_name(package_name))
     if package_name:
         names_to_try.append(package_name)
         if "_" in package_name:
@@ -640,7 +702,7 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
     private_allow = _load_private_allowlist()
 
     installed_mapping = _build_installed_module_mapping()
-    has_env_metadata = len(installed_mapping) > 0
+    import_to_dist = _load_import_to_dist_mapping()
 
     cache_path = repo_root / ".skylos" / "cache" / "pypi_exists.json"
     pypi_cache = _load_pypi_cache(cache_path)
@@ -700,76 +762,85 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
             if normalized_mod in private_allow:
                 continue
 
+            if mod in import_to_dist:
+                mapped_dist = import_to_dist[mod]
+                mapped_normalized = _normalize_name(mapped_dist)
+
+                if mapped_normalized in declared_deps:
+                    continue
+
+                line = _find_import_line(src, mod)
+
+                old_size = len(pypi_cache)
+                mapped_status = _check_pypi_status(mapped_dist, pypi_cache)
+                if len(pypi_cache) != old_size:
+                    cache_modified = True
+
+                if mapped_status == "exists":
+                    findings.append(
+                        {
+                            "rule_id": RULE_ID_UNDECLARED,
+                            "severity": SEV_MEDIUM,
+                            "message": (
+                                f"Undeclared import '{mod}' (provided by: "
+                                f"{mapped_dist}). Add to "
+                                f"requirements.txt/pyproject.toml/setup.py."
+                            ),
+                            "file": str(file_path),
+                            "line": line,
+                            "col": 0,
+                            "symbol": mod,
+                        }
+                    )
+                    continue
+
             line = _find_import_line(src, mod)
 
-            if has_env_metadata and _is_confident_hallucination_candidate(mod):
-                original_cache_size = len(pypi_cache)
-                pypi_status = _check_pypi_status(mod, pypi_cache)
-                if len(pypi_cache) != original_cache_size:
-                    cache_modified = True
+            original_cache_size = len(pypi_cache)
+            pypi_status = _check_pypi_status(mod, pypi_cache)
+            if len(pypi_cache) != original_cache_size:
+                cache_modified = True
 
-                if pypi_status == "missing":
-                    findings.append(
-                        {
-                            "rule_id": RULE_ID_HALLUCINATION,
-                            "severity": SEV_CRITICAL,
-                            "message": f"Hallucinated dependency '{mod}'. Package does not exist on PyPI.",
-                            "file": str(file_path),
-                            "line": line,
-                            "col": 0,
-                            "symbol": mod,
-                        }
-                    )
-                else:
-                    findings.append(
-                        {
-                            "rule_id": RULE_ID_UNDECLARED,
-                            "severity": SEV_MEDIUM,
-                            "message": f"Undeclared import '{mod}'. Not found in requirements.txt/pyproject.toml/setup.py.",
-                            "file": str(file_path),
-                            "line": line,
-                            "col": 0,
-                            "symbol": mod,
-                        }
-                    )
-            elif not has_env_metadata:
-                original_cache_size = len(pypi_cache)
-                pypi_status = _check_pypi_status(mod, pypi_cache)
-                if len(pypi_cache) != original_cache_size:
-                    cache_modified = True
-
-                if pypi_status == "missing" and _is_confident_hallucination_candidate(
-                    mod
-                ):
-                    findings.append(
-                        {
-                            "rule_id": RULE_ID_HALLUCINATION,
-                            "severity": SEV_CRITICAL,
-                            "message": f"Hallucinated dependency '{mod}'. Package does not exist on PyPI.",
-                            "file": str(file_path),
-                            "line": line,
-                            "col": 0,
-                            "symbol": mod,
-                        }
-                    )
-                else:
-                    findings.append(
-                        {
-                            "rule_id": RULE_ID_UNDECLARED,
-                            "severity": SEV_MEDIUM,
-                            "message": f"Undeclared import '{mod}'. Not found in requirements.txt/pyproject.toml/setup.py.",
-                            "file": str(file_path),
-                            "line": line,
-                            "col": 0,
-                            "symbol": mod,
-                        }
-                    )
+            if pypi_status == "missing" and _is_confident_hallucination_candidate(mod):
+                findings.append(
+                    {
+                        "rule_id": RULE_ID_HALLUCINATION,
+                        "severity": SEV_CRITICAL,
+                        "message": (
+                            f"Hallucinated dependency '{mod}'. "
+                            f"Package does not exist on PyPI."
+                        ),
+                        "file": str(file_path),
+                        "line": line,
+                        "col": 0,
+                        "symbol": mod,
+                    }
+                )
+            elif pypi_status == "exists":
+                findings.append(
+                    {
+                        "rule_id": RULE_ID_UNDECLARED,
+                        "severity": SEV_MEDIUM,
+                        "message": (
+                            f"Undeclared import '{mod}'. Not found in "
+                            f"requirements.txt/pyproject.toml/setup.py."
+                        ),
+                        "file": str(file_path),
+                        "line": line,
+                        "col": 0,
+                        "symbol": mod,
+                    }
+                )
             else:
                 findings.append(
                     {
                         "rule_id": RULE_ID_UNDECLARED,
                         "severity": SEV_MEDIUM,
-                        "message": f"Undeclared import '{mod}'. Not found in requirements.txt/pyproject.toml/setup.py (possible import/dist name mismatch).",
+                        "message": (
+                            f"Undeclared import '{mod}'. Not found in "
+                            f"requirements.txt/pyproject.toml/setup.py "
+                            f"(possible import/dist name mismatch)."
+                        ),
                         "file": str(file_path),
                         "line": line,
                         "col": 0,

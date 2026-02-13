@@ -30,6 +30,31 @@ DANGEROUS_CALLS = {
         "requests call with verify=False",
         {"kw_equals": {"verify": False}},
     ),
+    "marshal.loads": (
+        "SKY-D233",
+        "CRITICAL",
+        "Untrusted deserialization via marshal.loads",
+    ),
+    "shelve.open": (
+        "SKY-D233",
+        "HIGH",
+        "Untrusted deserialization via shelve.open",
+    ),
+    "jsonpickle.decode": (
+        "SKY-D233",
+        "CRITICAL",
+        "Untrusted deserialization via jsonpickle.decode",
+    ),
+    "dill.loads": (
+        "SKY-D233",
+        "CRITICAL",
+        "Untrusted deserialization via dill.loads",
+    ),
+    "dill.load": (
+        "SKY-D233",
+        "CRITICAL",
+        "Untrusted deserialization via dill.load",
+    ),
 }
 
 
@@ -60,10 +85,8 @@ def _kw_equals(node: ast.Call, requirements):
     kw_map = {}
     for kw in node.keywords or []:
         if kw.arg:
-            if isinstance(kw.value, (ast.Constant, ast.NameConstant)):
+            if isinstance(kw.value, ast.Constant):
                 kw_map[kw.arg] = kw.value.value
-            elif isinstance(kw.value, ast.Name) and kw.value.id in ("True", "False"):
-                kw_map[kw.arg] = kw.value.id == "True"
 
     for key, expected in requirements.items():
         val = kw_map.get(key)

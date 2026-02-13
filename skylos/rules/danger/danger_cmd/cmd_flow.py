@@ -1,7 +1,7 @@
 from __future__ import annotations
 import ast
 import sys
-from skylos.rules.danger.taint import TaintVisitor
+from skylos.rules.danger.taint import TaintVisitor, CMD_SANITIZERS
 
 
 def _qualified_name(node):
@@ -70,7 +70,7 @@ class _CmdFlowChecker(TaintVisitor):
 
 def scan(tree, file_path, findings):
     try:
-        checker = _CmdFlowChecker(file_path, findings)
+        checker = _CmdFlowChecker(file_path, findings, sanitizers=CMD_SANITIZERS)
         checker.visit(tree)
     except Exception as e:
         print(f"CMD flow failed for {file_path}: {e}", file=sys.stderr)
