@@ -35,7 +35,9 @@ Unlike standard linters (like Vulture or Bandit) that struggle with dynamic Pyth
 - [Skylos vs Vulture](#skylos-vs-vulture-benchmark)
 - [How It Works](#how-it-works)
 - [Agent Analysis](#agent-analysis)
+- [CI/CD] (#cicd)
 - [Gating](#gating)
+- [VS Code Extension](#vsc-extension)
 - [Integration and Ecosystem](#integration-and-ecosystem)
 - [Auditing and Precision](#auditing-and-precision)
 - [Coverage Integration](#coverage-integration)
@@ -59,6 +61,7 @@ Unlike standard linters (like Vulture or Bandit) that struggle with dynamic Pyth
 | **AI-Powered Analysis** | `skylos agent analyze . --model gpt-4.1` | Hybrid static + LLM analysis with project context |
 | **AI Audit** | `skylos agent security-audit .` | Deep LLM review with interactive file selection |
 | **Automated Repair** | `skylos agent analyze . --fix` | Let the LLM fix what it found |
+| **Auto-Remediate** | `skylos agent remediate . --auto-pr` | Scan, fix, test, and open a PR — end to end |
 | **PR Review** | `skylos agent review` | Analyze only git-changed files |
 | **Local LLM** | `skylos agent analyze . --base-url http://localhost:11434/v1 --model codellama` | Use Ollama/LM Studio (no API key needed) |
 | **Secure the Gate** | `skylos --gate` | Block risky code from merging |
@@ -84,6 +87,7 @@ Backup (GitHub): https://github.com/duriantaco/skylos/discussions/82
 ### Agentic AI & Hybrid Analysis
 * **Context-Aware Audits:** Combines static analysis speed with LLM reasoning to validate findings and filter noise.
 * **Automated Fixes:** `skylos agent fix` autonomously patches security flaws and removes dead code.
+* **End-to-End Remediation:** `skylos agent remediate` scans, fixes, tests, and opens PRs — fully autonomous DevOps agent.
 * **100% Local Privacy:** Supports Ollama and Local LLMs so your code never leaves your machine.
 
 ### Codebase Optimization
@@ -250,6 +254,7 @@ Research shows LLMs find vulnerabilities that static analysis misses, while stat
 | `skylos agent security-audit PATH` | Security audit with interactive file selection |
 | `skylos agent fix PATH` | Generate fix for specific issue |
 | `skylos agent review` | Analyze only git-changed files |
+| `skylos agent remediate PATH` | End-to-end: scan, fix, test, and create PR |
 
 ### Provider Configuration
 
@@ -323,6 +328,32 @@ skylos agent analyze ./src \
   --model qwen2.5-coder:7b
 ```
 
+### Remediation Agent
+
+The remediation agent automates the full fix lifecycle. It scans your project, prioritizes findings, generates fixes via the LLM, validates each fix by running your test suite, and optionally opens a PR.
+
+```bash
+# Preview what would be fixed (safe, no changes)
+skylos agent remediate . --dry-run
+
+# Fix up to 5 critical/high issues, validate with tests
+skylos agent remediate . --max-fixes 5 --severity high
+
+# Full auto: fix, test, create PR
+skylos agent remediate . --auto-pr --model gpt-4.1
+
+# Use a custom test command
+skylos agent remediate . --test-cmd "pytest test/ -x"
+```
+
+**Safety guardrails:**
+- Dry run by default — use `--dry-run` to preview without touching files
+- Fixes that break tests are automatically reverted
+- Low-confidence fixes are skipped
+- After applying a fix, Skylos re-scans to confirm the finding is actually gone
+- `--auto-pr` always works on a new branch, never touches main
+- `--max-fixes` prevents runaway changes (default 10)
+
 ### Recommended Models
 
 | Model | Provider | Use Case |
@@ -331,6 +362,106 @@ skylos agent analyze ./src \
 | `claude-sonnet-4-20250514` | Anthropic | Best reasoning |
 | `qwen2.5-coder:7b` | Ollama | Fast local analysis |
 | `codellama:13b` | Ollama | Better local accuracy |
+
+# CI/CD
+
+Run Skylos in your CI pipeline with quality gates, GitHub annotations, and PR review comments.
+
+## Quick Start
+
+```bash
+skylos cicd init
+git add .github/workflows/skylos.yml && git push
+```
+
+That's it. Skylos will now run on every PR and push to `main`.
+
+## Commands
+
+### `skylos cicd init`
+
+Generates a ready-to-use GitHub Actions workflow.
+
+```bash
+skylos cicd init
+skylos cicd init --triggers pull_request schedule
+skylos cicd init --analysis security quality
+skylos cicd init --python-version 3.11
+skylos cicd init --llm --model gpt-4.1 
+skylos cicd init --no-baseline
+skylos cicd init -o .github/workflows/security.yml
+```
+
+### `skylos cicd gate`
+
+Checks findings against your quality gate. Exits `0` (pass) or `1` (fail). Uses the same `check_gate()` as `skylos . --gate`.
+
+```bash
+skylos . --danger --quality --secrets --json -o results.json
+skylos cicd gate --input results.json
+skylos cicd gate --input results.json --strict
+skylos cicd gate --input results.json --summary
+```
+
+You can also use the main CLI directly:
+
+```bash
+skylos . --gate --summary
+```
+
+Configure thresholds in `pyproject.toml`:
+
+```toml
+[tool.skylos.gate]
+fail_on_critical = true
+max_critical = 0
+max_high = 5
+max_security = 10
+max_quality = 10
+```
+
+### `skylos cicd annotate`
+
+Emits GitHub Actions annotations (`::error`, `::warning`, `::notice`). Uses the same `_emit_github_annotations()` as `skylos . --github`, with sorting and a 50-annotation cap.
+
+```bash
+skylos cicd annotate --input results.json
+skylos cicd annotate --input results.json --severity high
+skylos cicd annotate --input results.json --max 30
+
+skylos . --github
+```
+
+### `skylos cicd review`
+
+Posts inline PR review comments and a summary via `gh` CLI. Only comments on lines changed in the PR.
+
+```bash
+skylos cicd review --input results.json
+skylos cicd review --input results.json --pr 20
+skylos cicd review --input results.json --summary-only
+skylos cicd review --input results.json --max-comments 10
+skylos cicd review --input results.json --diff-base origin/develop
+```
+
+In GitHub Actions, PR number and repo are auto-detected. Requires `GH_TOKEN`.
+
+## How It Fits Together
+
+The gate and annotation logic lives in the core Skylos modules (`gatekeeper.py` and `cli.py`). The `cicd` commands are convenience wrappers that read from a JSON file and call the same functions:
+
+| `skylos cicd` command | Calls |
+|-----------------------|-------|
+| `gate` | `gatekeeper.run_gate_interaction(summary=True)` |
+| `annotate` | `cli._emit_github_annotations(max_annotations=50)` |
+| `review` | New — `cicd/review.py` (PR comments via `gh api`) |
+| `init` | New — `cicd/workflow.py` (YAML generation) |
+
+## Tips
+
+- **Run analysis once, consume many times** — use `--json -o results.json` then pass `--input results.json` to each subcommand.
+- **Baseline** — run `skylos baseline .` to snapshot existing findings, then `--baseline` in CI to only flag new issues.
+- **Local testing** — all commands work locally. `gate` and `annotate` print to stdout. `review` requires `gh` CLI.
 
 
 ## VS Code Extension
@@ -914,6 +1045,14 @@ Agent analyze options:
 Agent fix options:
   --line, -l LINE              Line number of issue (required)
   --message, -m MSG            Description of issue (required)
+
+Agent remediate options:
+  --dry-run                    Show plan without applying fixes (safe preview)
+  --max-fixes N                Max findings to fix per run (default: 10)
+  --auto-pr                    Create branch, commit, push, and open PR
+  --branch-prefix PREFIX       Git branch prefix (default: skylos/fix)
+  --test-cmd CMD               Custom test command (default: auto-detect)
+  --severity LEVEL             Min severity filter: critical, high, medium, low
 ```
 
 ### Commands 
@@ -921,9 +1060,10 @@ Agent fix options:
 Commands:
   skylos PATH                  Analyze a project (static analysis)
   skylos agent analyze PATH    Hybrid static + LLM analysis
-  aud PATH      Deep LLM audit with file selection
+  skylos agent security-audit PATH  Deep LLM audit with file selection
   skylos agent fix PATH        Fix specific issue
   skylos agent review          Review git-changed files only
+  skylos agent remediate PATH  End-to-end scan, fix, test, and PR
   skylos init                  Initialize pyproject.toml config
   skylos whitelist PATTERN     Add pattern to whitelist
   skylos whitelist --show      Display current whitelist
