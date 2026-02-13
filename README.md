@@ -1,7 +1,7 @@
 <div align="center">
     <img src="assets/DOG_1.png" alt="Skylos - Python SAST and Dead Code Detection Tool" width="300">
     <h1>Skylos: Python SAST, Dead Code Detection & Security Auditor</h1>
-    <h3>The hybrid static analysis tool for Python. Finds dead code, security leaks, and quality rot with agentic AI options.</h3>
+    <h3>The hybrid static analysis tool for Python. Finds dead code, security leaks, quality rot with agentic AI options and MCP integration.</h3>
 </div>
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
@@ -19,6 +19,8 @@
 
 💬 Join the Discord (support + contributors): https://discord.gg/Ftn9t9tErf
 
+# What is Skylos? 
+
 > Skylos is a privacy-first Python SAST tool that bridges the gap between traditional static analysis and AI agents. It detects dead code, security vulnerabilities (SQLi, SSRF, Secrets), and code quality issues with high precision.
 
 Unlike standard linters (like Vulture or Bandit) that struggle with dynamic Python patterns, Skylos uses a **hybrid engine** (AST + optional Local/Cloud LLM). This allows it to:
@@ -35,7 +37,9 @@ Unlike standard linters (like Vulture or Bandit) that struggle with dynamic Pyth
 - [Skylos vs Vulture](#skylos-vs-vulture-benchmark)
 - [How It Works](#how-it-works)
 - [Agent Analysis](#agent-analysis)
-- [CI/CD] (#cicd)
+- [CI/CD](#cicd)
+- [MCP Server](#mcp-server)
+- [Baseline Tracking](#baseline-tracking)
 - [Gating](#gating)
 - [VS Code Extension](#vsc-extension)
 - [Integration and Ecosystem](#integration-and-ecosystem)
@@ -113,9 +117,27 @@ Backup (GitHub): https://github.com/duriantaco/skylos/discussions/82
 | Language | Parser | Dead Code | Security | Quality |
 |----------|--------|-----------|----------|---------|
 | Python | AST | ✅ | ✅ | ✅ |
-| TypeScript | Tree-sitter | Limited | Limited | Limited |
+| TypeScript | Tree-sitter | ✅ | ✅ | ✅ |
 
-No Node.js required - parser is built-in.
+No Node.js required — TypeScript parser is built-in via Tree-sitter.
+
+#### TypeScript Rules
+
+| Rule | ID | What It Catches |
+|------|-----|-----------------|
+| **Security** | | |
+| eval() | SKY-D501 | `eval()` usage |
+| innerHTML | SKY-D502 | Unsafe `innerHTML` assignment |
+| document.write | SKY-D503 | XSS via `document.write()` |
+| new Function() | SKY-D504 | Equivalent to `eval()` |
+| setTimeout string | SKY-D505 | `setTimeout`/`setInterval` with string argument |
+| child_process.exec | SKY-D506 | Command injection via `child_process.exec()` |
+| outerHTML | SKY-D507 | Unsafe `outerHTML` assignment |
+| **Quality** | | |
+| Complexity | SKY-Q601 | Cyclomatic complexity exceeds threshold |
+| Nesting depth | SKY-Q602 | Too many nested levels |
+| Function length | SKY-Q603 | Function exceeds line limit |
+| Too many params | SKY-Q604 | Function has too many parameters |
 
 ## Installation
 
@@ -397,7 +419,7 @@ skylos cicd init -o .github/workflows/security.yml
 Checks findings against your quality gate. Exits `0` (pass) or `1` (fail). Uses the same `check_gate()` as `skylos . --gate`.
 
 ```bash
-skylos . --danger --quality --secrets --json -o results.json
+skylos . --danger --quality --secrets --json > results.json 2>/dev/null
 skylos cicd gate --input results.json
 skylos cicd gate --input results.json --strict
 skylos cicd gate --input results.json --summary
@@ -459,10 +481,76 @@ The gate and annotation logic lives in the core Skylos modules (`gatekeeper.py` 
 
 ## Tips
 
-- **Run analysis once, consume many times** — use `--json -o results.json` then pass `--input results.json` to each subcommand.
+- **Run analysis once, consume many times** — use `--json > results.json 2>/dev/null` then pass `--input results.json` to each subcommand.
 - **Baseline** — run `skylos baseline .` to snapshot existing findings, then `--baseline` in CI to only flag new issues.
 - **Local testing** — all commands work locally. `gate` and `annotate` print to stdout. `review` requires `gh` CLI.
 
+## MCP Server
+
+Skylos exposes its analysis capabilities as an MCP (Model Context Protocol) server, allowing AI assistants like Claude Desktop to scan your codebase directly.
+
+### Setup
+
+```bash
+pip install skylos
+```
+
+Add to your Claude Desktop config (`~/.config/claude/claude_desktop_config.json` on Linux, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "skylos": {
+      "command": "python",
+      "args": ["-m", "skylos_mcp.server"]
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `analyze` | Dead code detection (unused functions, imports, classes, variables) |
+| `security_scan` | Security vulnerability scan (`--danger` equivalent) |
+| `quality_check` | Code quality and complexity analysis (`--quality` equivalent) |
+| `secrets_scan` | Hardcoded secrets detection (`--secrets` equivalent) |
+| `remediate` | End-to-end: scan, generate LLM fixes, validate with tests |
+
+### Available Resources
+
+| Resource | URI | Description |
+|----------|-----|-------------|
+| Latest result | `skylos://results/latest` | Most recent analysis run |
+| Result by ID | `skylos://results/{run_id}` | Specific analysis run |
+| List results | `skylos://results` | All stored analysis runs |
+
+### Usage in Claude Desktop
+
+Once configured, you can ask Claude:
+
+- "Scan my project for security issues" → calls `security_scan`
+- "Check code quality in src/" → calls `quality_check`
+- "Find hardcoded secrets" → calls `secrets_scan`
+- "Fix security issues in my project" → calls `remediate`
+
+## Baseline Tracking
+
+Baseline tracking lets you snapshot existing findings so CI only flags **new** issues introduced by a PR.
+
+```bash
+# Create baseline from current state
+skylos baseline .
+
+# Run analysis, only show findings NOT in the baseline
+skylos . --danger --secrets --quality --baseline
+
+# In CI: compare against baseline
+skylos . --danger --baseline --gate
+```
+
+The baseline is stored in `.skylos/baseline.json`. Commit this file to your repo so CI can use it.
 
 ## VS Code Extension
 
@@ -498,6 +586,11 @@ Real-time AI-powered code analysis directly in your editor.
 - **Streaming Fixes**: See fix progress in real-time
 - **Smart Caching**: Only re-analyzes functions that actually changed
 - **Multi-Provider**: Choose between OpenAI and Anthropic
+
+#### New Features
+- **MCP Server Support**: Connect Skylos directly to Claude Desktop or any MCP client to chat with your codebase.
+- **CI/CD Agents**: Autonomous bots that scan, fix, test, and open PRs automatically in your pipeline.
+- **Hybrid Verification**: Eliminates false positives by verifying static findings with LLM reasoning.
 
 ### Extension Settings
 
@@ -680,14 +773,42 @@ Tracks tainted data from user input to dangerous sinks.
 skylos . --danger
 ```
 
-| Catches | Example |
-|---------|---------|
-| SQL injection | `cur.execute(f"SELECT * FROM users WHERE name='{name}'")` |
-| Command injection | `os.system("zip -r out.zip " + folder)` |
-| SSRF | `requests.get(request.args["url"])` |
-| Path traversal | `open(request.args.get("p"))` |
-| Unsafe deserialize | `pickle.load()`, `yaml.load()` without SafeLoader |
-| Weak crypto | `hashlib.md5()`, `hashlib.sha1()` |
+| Rule | ID | What It Catches |
+|------|-----|-----------------|
+| **Injection** | | |
+| SQL injection | SKY-D211 | `cur.execute(f"SELECT * FROM users WHERE name='{name}'")` |
+| SQL raw query | SKY-D217 | `sqlalchemy.text()`, `pandas.read_sql()`, Django `.raw()` with tainted input |
+| Command injection | SKY-D212 | `os.system()`, `subprocess(shell=True)` with tainted input |
+| SSRF | SKY-D216 | `requests.get(request.args["url"])` |
+| Path traversal | SKY-D215 | `open(request.args.get("p"))` |
+| XSS (mark_safe) | SKY-D226 | Untrusted content passed to `mark_safe()` / `Markup()` |
+| XSS (template) | SKY-D227 | Inline template with autoescape disabled |
+| XSS (HTML build) | SKY-D228 | HTML built from unescaped user input |
+| Open redirect | SKY-D230 | User-controlled URL passed to `redirect()` |
+| **Dangerous Calls** | | |
+| eval() | SKY-D201 | Dynamic code execution via `eval()` |
+| exec() | SKY-D202 | Dynamic code execution via `exec()` |
+| os.system() | SKY-D203 | OS command execution |
+| pickle.load | SKY-D204 | Unsafe deserialization |
+| yaml.load | SKY-D206 | `yaml.load()` without SafeLoader |
+| Weak hash (MD5) | SKY-D207 | `hashlib.md5()` |
+| Weak hash (SHA1) | SKY-D208 | `hashlib.sha1()` |
+| shell=True | SKY-D209 | `subprocess` with `shell=True` |
+| TLS disabled | SKY-D210 | `requests` with `verify=False` |
+| Unsafe deserialization | SKY-D233 | `marshal.loads`, `shelve.open`, `jsonpickle.decode`, `dill` |
+| **Web Security** | | |
+| CORS misconfiguration | SKY-D231 | Wildcard origins, credential leaks, overly permissive headers |
+| JWT vulnerabilities | SKY-D232 | `algorithms=['none']`, missing verification, weak secrets |
+| Mass assignment | SKY-D234 | Django `Meta.fields = '__all__'` exposes all model fields |
+| **Supply Chain** | | |
+| Hallucinated dependency | SKY-D222 | Imported package doesn't exist on PyPI (CRITICAL) |
+| Undeclared dependency | SKY-D223 | Import not declared in requirements.txt / pyproject.toml |
+| **MCP Security** | | |
+| Tool description poisoning | SKY-D240 | Prompt injection in MCP tool metadata |
+| Unauthenticated transport | SKY-D241 | SSE/HTTP MCP server without auth middleware |
+| Permissive resource URI | SKY-D242 | Path traversal via MCP resource URI template |
+| Network-exposed MCP | SKY-D243 | MCP server bound to `0.0.0.0` without auth |
+| Hardcoded secrets in MCP | SKY-D244 | Secrets in MCP tool parameter defaults |
 
 Full list in `DANGEROUS_CODE.md`.
 
@@ -713,6 +834,7 @@ skylos . --quality
 | Cyclomatic complexity | SKY-Q301 | Too many branches/loops (default: >10) |
 | Deep nesting | SKY-Q302 | Too many nested levels (default: >3) |
 | Async Blocking | SKY-Q401 | Detects blocking calls inside async functions that kill server throughput |
+| God class | SKY-Q501 | Class has too many methods/attributes |
 | **Structure** | | |
 | Too many arguments | SKY-C303 | Functions with >5 args |
 | Function too long | SKY-C304 | Functions >50 lines |
@@ -721,6 +843,8 @@ skylos . --quality
 | Bare except | SKY-L002 | `except:` swallows SystemExit |
 | Dangerous comparison | SKY-L003 | `x == None` instead of `x is None` |
 | Anti-pattern try block | SKY-L004 | Nested try, or try wrapping too much logic |
+| Unused exception var | SKY-L005 | `except Error as e:` where `e` is never referenced |
+| Inconsistent return | SKY-L006 | Function returns both values and `None` |
 | **Performance** | | |
 | Memory load | SKY-P401 | `.read()` / `.readlines()` loads entire file |
 | Pandas no chunk | SKY-P402 | `read_csv()` without `chunksize` |
@@ -1055,7 +1179,7 @@ Agent remediate options:
   --severity LEVEL             Min severity filter: critical, high, medium, low
 ```
 
-### Commands 
+### Commands
 ```
 Commands:
   skylos PATH                  Analyze a project (static analysis)
@@ -1064,7 +1188,13 @@ Commands:
   skylos agent fix PATH        Fix specific issue
   skylos agent review          Review git-changed files only
   skylos agent remediate PATH  End-to-end scan, fix, test, and PR
+  skylos baseline PATH         Snapshot current findings for CI baselining
+  skylos cicd init             Generate GitHub Actions workflow
+  skylos cicd gate             Check findings against quality gate
+  skylos cicd annotate         Emit GitHub Actions annotations
+  skylos cicd review           Post inline PR review comments
   skylos init                  Initialize pyproject.toml config
+  skylos key                   Manage API keys (add/remove/list)
   skylos whitelist PATTERN     Add pattern to whitelist
   skylos whitelist --show      Display current whitelist
   skylos run                   Start web UI at localhost:5090
@@ -1135,7 +1265,7 @@ A: Yes! Use `--base-url` to point to Ollama, LM Studio, or any OpenAI-compatible
 - **Frameworks**: Django models, Flask, FastAPI routes may appear unused but aren't
 - **Test data**: Limited scenarios, your mileage may vary
 - **False positives**: Always manually review before deleting code
-- **Secrets PoC**: May emit both a provider hit and a generic high-entropy hit for the same token. All tokens are detected only in py files (`.py`, `.pyi`, `.pyw`)
+- **Secrets PoC**: May emit both a provider hit and a generic high-entropy hit for the same token. Supported file types: `.py`, `.pyi`, `.pyw`, `.env`, `.yaml`, `.yml`, `.json`, `.toml`, `.ini`, `.cfg`, `.conf`, `.ts`, `.tsx`, `.js`, `.jsx`, `.go`
 - **Quality limitations**: The current `--quality` flag does not allow you to configure the cyclomatic complexity. 
 - **Coverage requires execution**: The `--trace` flag only helps if you have tests or can run your application. Pure static analysis is still available without it.
 - **LLM limitations**: AI analysis requires API access (cloud) or local setup (Ollama). Results depend on model quality.
