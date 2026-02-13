@@ -212,6 +212,38 @@ def find_project_root(path):
     return Path.cwd().resolve()
 
 
+def _rel_to_project_root(file_path: str, project_root: Path) -> str:
+    if not file_path:
+        return "?"
+    try:
+        p = Path(file_path).resolve()
+        root = Path(project_root).resolve()
+        return str(p.relative_to(root)).replace("\\", "/")
+    except Exception:
+        return str(file_path).replace("\\", "/")
+
+
+def _normalize_agent_findings(payload, project_root: Path):
+    if isinstance(payload, dict):
+        items = payload.get("findings") or payload.get("merged_findings") or []
+        payload = dict(payload)
+        payload["findings"] = _normalize_agent_findings(items, project_root)
+        return payload
+
+    out = []
+    for f in payload or []:
+        if not isinstance(f, dict):
+            continue
+        ff = dict(f)
+        ff["file"] = _rel_to_project_root(ff.get("file", ""), project_root)
+        try:
+            ff["line"] = int(ff.get("line") or 1)
+        except Exception:
+            ff["line"] = 1
+        out.append(ff)
+    return out
+
+
 def _is_tty():
     try:
         return sys.stdin.isatty() and sys.stdout.isatty()
@@ -417,6 +449,81 @@ def print_badge(
         f"![Dead Code: {dead_code_count}](https://img.shields.io/badge/Dead_Code-{dead_code_count}_detected-orange?logo=codacy&logoColor=red)"
     )
     console.print("```")
+
+
+def _emit_github_annotations(result, *, max_annotations=50, severity_filter=None):
+    severity_map = {
+        "CRITICAL": "error",
+        "HIGH": "error",
+        "MEDIUM": "warning",
+        "LOW": "notice",
+    }
+    severity_priority = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    severity_thresholds = {
+        "critical": {"CRITICAL"},
+        "high": {"CRITICAL", "HIGH"},
+        "medium": {"CRITICAL", "HIGH", "MEDIUM"},
+        "low": {"CRITICAL", "HIGH", "MEDIUM", "LOW"},
+    }
+
+    annotations = []
+
+    for category in ("danger", "quality", "secrets", "custom_rules"):
+        for finding in result.get(category, []) or []:
+            file = finding.get("file") or finding.get("file_path") or ""
+            line = finding.get("line") or finding.get("line_number") or 1
+            msg = (
+                finding.get("message")
+                or finding.get("msg")
+                or finding.get("detail")
+                or "Issue detected"
+            )
+            rule_id = finding.get("rule_id") or ""
+            severity = finding.get("severity", "MEDIUM").upper()
+            title = f"Skylos {rule_id}" if rule_id else "Skylos"
+            annotations.append(
+                {
+                    "file": file,
+                    "line": line,
+                    "msg": msg,
+                    "title": title,
+                    "severity": severity,
+                }
+            )
+
+    for category, label in (
+        ("unused_functions", "Unused function"),
+        ("unused_imports", "Unused import"),
+        ("unused_classes", "Unused class"),
+        ("unused_variables", "Unused variable"),
+        ("unused_parameters", "Unused parameter"),
+    ):
+        for item in result.get(category, []) or []:
+            name = item.get("name", "") if isinstance(item, dict) else str(item)
+            file = item.get("file", "") if isinstance(item, dict) else ""
+            line = item.get("line", 1) if isinstance(item, dict) else 1
+            annotations.append(
+                {
+                    "file": file,
+                    "line": line,
+                    "msg": f"{label}: {name}",
+                    "title": "Skylos Dead Code",
+                    "severity": "MEDIUM",
+                }
+            )
+
+    if severity_filter:
+        allowed = severity_thresholds.get(severity_filter, set())
+        annotations = [a for a in annotations if a["severity"] in allowed]
+
+    annotations.sort(key=lambda a: severity_priority.get(a["severity"], 99))
+    annotations = annotations[:max_annotations]
+
+    for ann in annotations:
+        level = severity_map.get(ann["severity"], "warning")
+        print(
+            f"::{level} file={ann['file']},line={ann['line']},title={ann['title']}::{ann['msg']}"
+        )
 
 
 def render_results(console: Console, result, tree=False, root_path=None):
@@ -995,6 +1102,35 @@ def main():
 
         sys.exit(run_key_command(args))
 
+    if len(sys.argv) > 1 and sys.argv[1] == "baseline":
+        from skylos.baseline import save_baseline
+        from skylos import analyze as _baseline_analyze
+
+        path = sys.argv[2] if len(sys.argv) > 2 else "."
+        console = Console()
+        console.print(f"[bold]Creating baseline for {path}...[/bold]")
+        result = json.loads(_baseline_analyze(path))
+        bp = save_baseline(path, result)
+        total = sum(
+            len(result.get(k, []))
+            for k in [
+                "unused_functions",
+                "unused_imports",
+                "unused_classes",
+                "unused_variables",
+                "danger",
+                "quality",
+                "secrets",
+            ]
+        )
+        console.print(
+            f"[good]Baseline saved to {bp} ({total} existing findings captured)[/good]"
+        )
+        console.print(
+            "[muted]Future runs with --baseline will only report new findings[/muted]"
+        )
+        sys.exit(0)
+
     if len(sys.argv) > 1 and sys.argv[1] == "init":
         run_init()
         sys.exit(0)
@@ -1021,6 +1157,154 @@ def main():
         from skylos.sync import main as sync_main
 
         sync_main(sys.argv[2:])
+        sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "cicd":
+        import argparse as cicd_argparse
+
+        cicd_parser = cicd_argparse.ArgumentParser(
+            prog="skylos cicd", description="CI/CD integration for Skylos"
+        )
+        cicd_sub = cicd_parser.add_subparsers(dest="cicd_cmd")
+
+        p_ci_init = cicd_sub.add_parser("init", help="Generate GitHub Actions workflow")
+        p_ci_init.add_argument("--python-version", default="3.12")
+        p_ci_init.add_argument(
+            "--triggers",
+            nargs="+",
+            default=["pull_request", "push"],
+            help="GitHub Actions triggers",
+        )
+        p_ci_init.add_argument(
+            "--analysis",
+            nargs="+",
+            default=["dead-code", "security", "quality", "secrets"],
+            help="Analysis types to run",
+        )
+        p_ci_init.add_argument("--no-baseline", action="store_true")
+        p_ci_init.add_argument(
+            "--llm", action="store_true", help="Include LLM-enhanced analysis"
+        )
+        p_ci_init.add_argument("--model", default=None, help="LLM model for agent mode")
+        p_ci_init.add_argument(
+            "--output", "-o", default=".github/workflows/skylos.yml", help="Output path"
+        )
+
+        p_ci_gate = cicd_sub.add_parser(
+            "gate", help="Check quality gate (CI exit code)"
+        )
+        p_ci_gate.add_argument("path", nargs="?", default=".")
+        p_ci_gate.add_argument(
+            "--input", "-i", dest="input_file", help="Read results from JSON file"
+        )
+        p_ci_gate.add_argument("--strict", action="store_true")
+        p_ci_gate.add_argument(
+            "--summary",
+            action="store_true",
+            help="Write markdown to $GITHUB_STEP_SUMMARY",
+        )
+
+        p_ci_ann = cicd_sub.add_parser(
+            "annotate", help="Emit GitHub Actions annotations"
+        )
+        p_ci_ann.add_argument("path", nargs="?", default=".")
+        p_ci_ann.add_argument(
+            "--input", "-i", dest="input_file", help="Read results from JSON file"
+        )
+        p_ci_ann.add_argument("--max", type=int, default=50, dest="max_annotations")
+        p_ci_ann.add_argument(
+            "--severity",
+            choices=["critical", "high", "medium", "low"],
+            help="Minimum severity filter",
+        )
+
+        p_ci_rev = cicd_sub.add_parser(
+            "review", help="Post PR review comments via gh CLI"
+        )
+        p_ci_rev.add_argument("path", nargs="?", default=".")
+        p_ci_rev.add_argument(
+            "--input", "-i", dest="input_file", help="Read results from JSON file"
+        )
+        p_ci_rev.add_argument("--pr", type=int, help="PR number (auto-detect in CI)")
+        p_ci_rev.add_argument("--repo", help="owner/repo (auto-detect in CI)")
+        p_ci_rev.add_argument("--summary-only", action="store_true")
+        p_ci_rev.add_argument("--max-comments", type=int, default=25)
+        p_ci_rev.add_argument("--diff-base", default="origin/main")
+
+        cicd_argv = sys.argv[2:]
+        if not cicd_argv:
+            cicd_parser.print_help()
+            sys.exit(0)
+
+        cicd_args = cicd_parser.parse_args(cicd_argv)
+
+        def _cicd_load_results(a):
+            if getattr(a, "input_file", None):
+                try:
+                    with open(a.input_file) as f:
+                        return json.load(f)
+                except (FileNotFoundError, json.JSONDecodeError) as e:
+                    Console().print(
+                        f"[bold red]Error reading {a.input_file}: {e}[/bold red]"
+                    )
+                    sys.exit(1)
+            p = getattr(a, "path", ".")
+            try:
+                from skylos import analyze
+
+                return json.loads(analyze(p))
+            except Exception as e:
+                Console().print(f"[bold red]Analysis failed: {e}[/bold red]")
+                sys.exit(1)
+
+        if cicd_args.cicd_cmd == "init":
+            from skylos.cicd.workflow import generate_workflow, write_workflow
+
+            yaml_content = generate_workflow(
+                triggers=cicd_args.triggers,
+                analysis_types=cicd_args.analysis,
+                python_version=cicd_args.python_version,
+                use_baseline=not cicd_args.no_baseline,
+                use_llm=cicd_args.llm,
+                model=cicd_args.model,
+            )
+            write_workflow(yaml_content, cicd_args.output)
+
+        elif cicd_args.cicd_cmd == "gate":
+            results = _cicd_load_results(cicd_args)
+            config = load_config(results.get("project_root", "."))
+            exit_code = run_gate_interaction(
+                result=results,
+                config=config,
+                strict=cicd_args.strict,
+                summary=cicd_args.summary,
+            )
+            sys.exit(exit_code)
+
+        elif cicd_args.cicd_cmd == "annotate":
+            results = _cicd_load_results(cicd_args)
+            _emit_github_annotations(
+                results,
+                max_annotations=cicd_args.max_annotations,
+                severity_filter=cicd_args.severity,
+            )
+
+        elif cicd_args.cicd_cmd == "review":
+            from skylos.cicd.review import run_pr_review
+
+            results = _cicd_load_results(cicd_args)
+            run_pr_review(
+                results,
+                pr_number=cicd_args.pr,
+                repo=cicd_args.repo,
+                summary_only=cicd_args.summary_only,
+                max_comments=cicd_args.max_comments,
+                diff_base=cicd_args.diff_base,
+            )
+
+        else:
+            cicd_parser.print_help()
+
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] == "agent":
@@ -1171,6 +1455,65 @@ def main():
             help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
         )
 
+        p_remediate = agent_sub.add_parser(
+            "remediate",
+            help="Scan, fix, test, and create PR for security/quality issues",
+        )
+        p_remediate.add_argument("path", nargs="?", default=".")
+        p_remediate.add_argument("--model", default="gpt-4.1")
+        p_remediate.add_argument(
+            "--max-fixes",
+            type=int,
+            default=10,
+            help="Maximum number of findings to fix (default: 10)",
+        )
+        p_remediate.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Show what would be fixed without applying changes",
+        )
+        p_remediate.add_argument(
+            "--auto-pr",
+            action="store_true",
+            help="Automatically create a PR with fixes",
+        )
+        p_remediate.add_argument(
+            "--branch-prefix", default="skylos/fix", help="Git branch prefix"
+        )
+        p_remediate.add_argument(
+            "--test-cmd",
+            default=None,
+            help="Custom test command (default: auto-detect)",
+        )
+        p_remediate.add_argument(
+            "--severity",
+            choices=["critical", "high", "medium", "low"],
+            default=None,
+            help="Only fix findings at or above this severity",
+        )
+        p_remediate.add_argument("--quiet", "-q", action="store_true")
+        p_remediate.add_argument(
+            "--provider",
+            choices=[
+                "openai",
+                "anthropic",
+                "google",
+                "mistral",
+                "groq",
+                "xai",
+                "together",
+                "deepseek",
+                "ollama",
+            ],
+            default=None,
+            help="Force LLM provider",
+        )
+        p_remediate.add_argument(
+            "--base-url",
+            default=None,
+            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
+        )
+
         agent_args = agent_parser.parse_args(sys.argv[2:])
         console = Console()
 
@@ -1205,6 +1548,8 @@ def main():
                 console.print(f"[bad]Path not found: {path}[/bad]")
                 sys.exit(1)
 
+            project_root = find_project_root(path)
+
             merged_findings = run_pipeline(
                 path=str(path),
                 model=model,
@@ -1213,6 +1558,8 @@ def main():
                 console=console,
                 exclude_folders=agent_exclude_folders,
             )
+
+            merged_findings = _normalize_agent_findings(merged_findings, project_root)
 
             static_only = 0
             llm_only = 0
@@ -1260,8 +1607,9 @@ def main():
 
                         source = f.get("_source", "?")
                         cat = f.get("_category", "?")
-                        msg = f.get("message", "?")[:80]
-                        loc = f"{pathlib.Path(f.get('file', '?')).name}:{f.get('line', '?')}"
+                        msg = f.get("message", "?")[:120]
+                        file_rel = f.get("file", "?")
+                        loc = f"{file_rel}:{f.get('line', '?')}"
 
                         table.add_row(str(i), conf_style, source, cat, msg, loc)
 
@@ -1370,6 +1718,8 @@ def main():
             ):
                 sys.exit(0)
 
+            project_root = find_project_root(path)
+
             merged_findings = run_pipeline(
                 path=str(path),
                 model=model,
@@ -1379,6 +1729,8 @@ def main():
                 changed_files=files,
                 exclude_folders=agent_exclude_folders,
             )
+
+            merged_findings = _normalize_agent_findings(merged_findings, project_root)
 
             if agent_args.format == "json":
                 output = json.dumps(merged_findings, indent=2, default=str)
@@ -1409,9 +1761,8 @@ def main():
                     source = f.get("_source", "?")
                     cat = f.get("_category", "?")
                     msg = (f.get("message", "?") or "?")[:120]
-                    loc = (
-                        f"{pathlib.Path(f.get('file', '?')).name}:{f.get('line', '?')}"
-                    )
+                    file_rel = f.get("file", "?")
+                    loc = f"{file_rel}:{f.get('line', '?')}"
 
                     table.add_row(str(i), conf_style, source, cat, msg, loc)
 
@@ -1420,6 +1771,38 @@ def main():
 
             console.print("[good]No issues found in changed files![/good]")
             sys.exit(0)
+
+        if cmd == "remediate":
+            from skylos.llm.orchestrator import RemediationAgent
+
+            agent = RemediationAgent(
+                model=model,
+                api_key=api_key,
+                test_cmd=getattr(agent_args, "test_cmd", None),
+                severity_filter=getattr(agent_args, "severity", None),
+                provider=provider,
+                base_url=base_url,
+            )
+
+            summary = agent.run(
+                agent_args.path,
+                dry_run=getattr(agent_args, "dry_run", False),
+                max_fixes=getattr(agent_args, "max_fixes", 10),
+                auto_pr=getattr(agent_args, "auto_pr", False),
+                branch_prefix=getattr(agent_args, "branch_prefix", "skylos/fix"),
+                quiet=getattr(agent_args, "quiet", False),
+            )
+
+            if getattr(agent_args, "quiet", False):
+                import json as _json_mod
+
+                print(_json_mod.dumps(summary, indent=2))
+
+            sys.exit(
+                0
+                if summary.get("fixed", 0) > 0 or summary.get("total_findings", 0) == 0
+                else 1
+            )
 
     if len(sys.argv) > 1 and sys.argv[1] == "run":
         try:
@@ -1608,6 +1991,30 @@ def main():
         default=None,
         help="Write SARIF (2.1.0). Optional path. Example: --sarif or --sarif results.sarif.json",
     )
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="Only report findings not in the baseline. Run 'skylos baseline .' first.",
+    )
+    parser.add_argument(
+        "--diff-base",
+        type=str,
+        default=None,
+        metavar="REF",
+        help="Only report findings in files changed since REF (e.g. origin/main). "
+        "Unchanged files are still parsed for cross-file dead code accuracy, "
+        "but quality/danger/secrets rules are skipped on them.",
+    )
+    parser.add_argument(
+        "--github",
+        action="store_true",
+        help="Output GitHub Actions annotations (::warning / ::error) for inline PR comments.",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Write markdown summary to $GITHUB_STEP_SUMMARY (use with --gate)",
+    )
 
     parser.add_argument("command", nargs="*", help="Command to run if gate passes")
 
@@ -1788,6 +2195,34 @@ sys.exit(ret)
             if args.verbose:
                 console.print(f"[warn]Could not load custom rules: {e}[/warn]")
 
+    changed_files = None
+    if getattr(args, "diff_base", None):
+        try:
+            diff_result = subprocess.run(
+                ["git", "diff", "--name-only", f"{args.diff_base}...HEAD"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+            )
+            if diff_result.returncode == 0:
+                changed_files = set()
+                for line in diff_result.stdout.strip().splitlines():
+                    changed_files.add(str((project_root / line).resolve()))
+                if not args.json:
+                    console.print(
+                        f"[brand]--diff-base:[/brand] {len(changed_files)} changed files "
+                        f"(full scan on changed, defs/refs-only on rest)"
+                    )
+            else:
+                if not args.json:
+                    console.print(
+                        f"[warn]git diff failed: {diff_result.stderr.strip()}. "
+                        f"Running full analysis.[/warn]"
+                    )
+        except FileNotFoundError:
+            if not args.json:
+                console.print("[warn]git not found. Running full analysis.[/warn]")
+
     try:
         with Progress(
             SpinnerColumn(style="brand"),
@@ -1809,9 +2244,44 @@ sys.exit(ret)
                 exclude_folders=list(final_exclude_folders),
                 progress_callback=update_progress,
                 custom_rules_data=custom_rules_data,
+                changed_files=changed_files,
             )
 
         result = json.loads(result_json)
+
+        if args.baseline:
+            from skylos.baseline import load_baseline, filter_new_findings
+
+            baseline = load_baseline(project_root)
+            if baseline is None:
+                console.print(
+                    "[warn]No baseline found. Run 'skylos baseline .' first.[/warn]"
+                )
+            else:
+                result = filter_new_findings(result, baseline)
+                result_json = json.dumps(result)
+
+        if changed_files is not None:
+            for category in [
+                "unused_functions",
+                "unused_imports",
+                "unused_classes",
+                "unused_variables",
+                "unused_parameters",
+                "unused_files",
+                "danger",
+                "quality",
+                "secrets",
+                "custom_rules",
+            ]:
+                items = result.get(category, [])
+                if items:
+                    result[category] = [
+                        item
+                        for item in items
+                        if str((project_root / item.get("file", "")).resolve())
+                        in changed_files
+                    ]
 
         if args.pytest_fixtures:
             report_path = project_root / ".skylos_unused_fixtures.json"
@@ -1943,6 +2413,10 @@ sys.exit(ret)
             print(result_json)
             return
 
+        if args.github:
+            _emit_github_annotations(result)
+            return
+
     except Exception as e:
         logger.error(f"Error during analysis: {e}")
         sys.exit(1)
@@ -1960,6 +2434,7 @@ sys.exit(ret)
             config=config,
             strict=bool(args.strict),
             force=bool(args.force),
+            summary=bool(getattr(args, "summary", False)),
         )
         sys.exit(exit_code)
 

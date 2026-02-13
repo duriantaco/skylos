@@ -52,7 +52,7 @@ def run_static_on_files(
     enable_secrets=True,
     enable_danger=True,
     enable_quality=True,
-    exclude_folders=None
+    exclude_folders=None,
 ):
     import os
 
@@ -125,7 +125,7 @@ def run_pipeline(
     console,
     *,
     changed_files=None,
-    exclude_folders=None
+    exclude_folders=None,
 ):
     import sys
     from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -171,7 +171,7 @@ def run_pipeline(
                         enable_secrets=True,
                         enable_danger=True,
                         enable_quality=True,
-                        exclude_folders=exclude_folders
+                        exclude_folders=exclude_folders,
                     )
                 else:
                     from skylos.constants import parse_exclude_folders
@@ -182,7 +182,9 @@ def run_pipeline(
                         enable_secrets=True,
                         enable_danger=True,
                         enable_quality=True,
-                        exclude_folders=list(exclude_folders or parse_exclude_folders()),
+                        exclude_folders=list(
+                            exclude_folders or parse_exclude_folders()
+                        ),
                         progress_callback=lambda cur, tot, f: progress.update(
                             task, description=f"[{cur}/{tot}] {f.name}"
                         ),
@@ -237,12 +239,12 @@ def run_pipeline(
     if path.is_file():
         files = [path]
     else:
-        _exc = set(exclude_folders) if exclude_folders else {"__pycache__", ".git", "venv", ".venv"}
-        files = [
-            f
-            for f in path.rglob("*.py")
-                if not any(ex in f.parts for ex in _exc)
-        ]
+        _exc = (
+            set(exclude_folders)
+            if exclude_folders
+            else {"__pycache__", ".git", "venv", ".venv"}
+        )
+        files = [f for f in path.rglob("*.py") if not any(ex in f.parts for ex in _exc)]
 
     if changed_files:
         files = changed_files
@@ -390,12 +392,15 @@ def _is_duplicate(new_finding, existing_findings, line_tolerance=3):
     new_file = _norm(new_finding.get("file", ""))
     new_line = new_finding.get("line", 0)
     new_msg = new_finding.get("message", "")[:40].lower()
+    new_rule = new_finding.get("rule_id", "")
 
     for existing in existing_findings:
         if _norm(existing.get("file", "")) != new_file:
             continue
         if abs(existing.get("line", 0) - new_line) > line_tolerance:
             continue
+        if new_rule and new_rule == existing.get("rule_id", ""):
+            return True
         if new_msg and new_msg in existing.get("message", "").lower():
             return True
 

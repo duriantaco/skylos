@@ -21,7 +21,6 @@ from skylos.visitors.languages.typescript import scan_typescript_file
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 
 from skylos.rules.danger.calls import DangerousCallsRule
-from skylos.rules.danger.danger import scan_ctx as scan_danger
 
 
 from skylos.config import get_all_ignore_lines, load_config
@@ -36,10 +35,13 @@ from skylos.rules.quality.logic import (
     BareExceptRule,
     DangerousComparisonRule,
     TryBlockPatternsRule,
+    UnusedExceptVarRule,
+    ReturnConsistencyRule,
 )
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
 from skylos.rules.quality.async_blocking import AsyncBlockingRule
+from skylos.rules.quality.class_size import GodClassRule
 from skylos.rules.quality.clones import (
     CloneConfig,
     GroupingMode,
@@ -378,6 +380,7 @@ class Skylos:
         extra_visitors=None,
         progress_callback=None,
         custom_rules_data=None,
+        changed_files=None,
     ):
         files, root = self._get_python_files(path, exclude_folders)
 
@@ -442,6 +445,7 @@ class Skylos:
             project_root = root
         else:
             project_root = root.parent
+            root = project_root
 
         trace_path = project_root / ".skylos_trace"
         if trace_path.exists():
@@ -454,6 +458,7 @@ class Skylos:
         file_contexts = []
 
         pattern_trackers = {}
+        all_raw_imports = {}
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -477,14 +482,19 @@ class Skylos:
                 jobs=int(os.getenv("SKYLOS_JOBS", "0")),
                 progress_callback=progress_callback,
                 custom_rules_data=custom_rules_data,
+                changed_files=changed_files,
             )
 
             if os.getenv("SKYLOS_DEBUG"):
                 logger.info(f"[DBG] run_proc_file_parallel returned outs={len(outs)}")
 
             for file, out in zip(files, outs):
+                if out is None:
+                    continue
+
                 mod = modmap[file]
 
+                file_raw_imports = out[12] if len(out) > 12 else []
                 (
                     defs,
                     refs,
@@ -498,7 +508,10 @@ class Skylos:
                     pattern_tracker_obj,
                     empty_file_finding,
                     cfg,
-                ) = out
+                ) = out[:12]
+
+                if file_raw_imports and str(file).endswith(".py"):
+                    all_raw_imports[file] = file_raw_imports
 
                 if pattern_tracker_obj:
                     pattern_trackers[mod] = pattern_tracker_obj
@@ -531,10 +544,43 @@ class Skylos:
                     all_dangers.extend(pro_finds)
 
                 if enable_secrets and _secrets_scan_ctx is not None:
+                    if changed_files is None or str(file) in changed_files:
+                        try:
+                            src = Path(file).read_text(
+                                encoding="utf-8", errors="ignore"
+                            )
+                            src_lines = src.splitlines(True)
+                            rel = str(Path(file).relative_to(root))
+                            ctx = {"relpath": rel, "lines": src_lines, "tree": None}
+                            findings = list(_secrets_scan_ctx(ctx))
+                            if findings:
+                                all_secrets.extend(findings)
+                        except Exception:
+                            pass
+
+            if enable_secrets and _secrets_scan_ctx is not None:
+                _CONFIG_SUFFIXES = {
+                    ".env",
+                    ".yaml",
+                    ".yml",
+                    ".json",
+                    ".toml",
+                    ".ini",
+                    ".cfg",
+                    ".conf",
+                }
+                scanned = {str(f) for f in files}
+                for cfg_file in root.rglob("*"):
+                    if cfg_file.suffix.lower() not in _CONFIG_SUFFIXES:
+                        continue
+                    if str(cfg_file) in scanned:
+                        continue
+                    if any(ex in cfg_file.parts for ex in (exclude_folders or [])):
+                        continue
                     try:
-                        src = Path(file).read_text(encoding="utf-8", errors="ignore")
+                        src = cfg_file.read_text(encoding="utf-8", errors="ignore")
                         src_lines = src.splitlines(True)
-                        rel = str(Path(file).relative_to(root))
+                        rel = str(cfg_file.relative_to(root))
                         ctx = {"relpath": rel, "lines": src_lines, "tree": None}
                         findings = list(_secrets_scan_ctx(ctx))
                         if findings:
@@ -705,15 +751,29 @@ class Skylos:
             for definition in defs:
                 apply_penalties(self, definition, test_flags, framework_flags, cfg)
 
-            if enable_danger and scan_danger is not None:
-                try:
-                    findings = scan_danger(root, [file])
-                    if findings:
-                        all_dangers.extend(findings)
-                except Exception as e:
-                    logger.error(f"Error scanning {file} for dangerous code: {e}")
-                    if os.getenv("SKYLOS_DEBUG"):
-                        logger.error(traceback.format_exc())
+        if enable_danger:
+            try:
+                from skylos.rules.danger.danger_hallucination.dependency_hallucination import (
+                    scan_python_dependency_hallucinations,
+                )
+
+                py_files = [
+                    f for f in files if str(f).endswith((".py", ".pyi", ".pyw"))
+                ]
+                if py_files:
+                    dep_root = Path(
+                        os.path.commonpath([str(p.resolve()) for p in py_files])
+                    )
+                    if dep_root.is_file():
+                        dep_root = dep_root.parent
+                    dep_findings = scan_python_dependency_hallucinations(
+                        dep_root, py_files
+                    )
+                    if dep_findings:
+                        all_dangers.extend(dep_findings)
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error(traceback.format_exc())
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
@@ -840,26 +900,18 @@ class Skylos:
             for file in files:
                 if not str(file).endswith(".py"):
                     continue
-                try:
-                    source = Path(file).read_text(encoding="utf-8", errors="ignore")
-                    tree = ast.parse(source)
-                    mod = modmap.get(file, "")
-                    circular_rule.add_file(tree, str(file), mod)
-                except SyntaxError:
-                    pass
-                except Exception as e:
-                    if os.getenv("SKYLOS_DEBUG"):
-                        traceback.print_exc()
+                mod = modmap.get(file, "")
+                raw_imp = all_raw_imports.get(file, [])
+                circular_rule.add_file_imports(str(file), mod, raw_imp)
 
             try:
                 circular_findings = circular_rule.analyze()
                 if circular_findings:
                     result["circular_dependencies"] = circular_findings
 
-            except Exception as e:
-                import traceback
-
-                traceback.print_exc()
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    traceback.print_exc()
 
         return json.dumps(result, indent=2)
 
@@ -882,7 +934,7 @@ def _is_truly_empty_or_docstring_only(tree):
     )
 
 
-def proc_file(file_or_args, mod=None, extra_visitors=None):
+def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
     if mod is None and isinstance(file_or_args, tuple):
         file, mod = file_or_args
     else:
@@ -893,23 +945,44 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
     if str(file).endswith((".ts", ".tsx")):
         ts_out = scan_typescript_file(file)
         if isinstance(ts_out, tuple) and len(ts_out) == 10:
-            return (*ts_out, None, cfg)
+            return (*ts_out, None, cfg, [])
         if isinstance(ts_out, tuple) and len(ts_out) == 11:
-            return (*ts_out, cfg)
-        if isinstance(ts_out, tuple) and len(ts_out) >= 12:
-            return ts_out[:12]
-        return (*ts_out, None, cfg)
+            return (*ts_out, cfg, [])
+        if isinstance(ts_out, tuple) and len(ts_out) >= 13:
+            return ts_out[:13]
+        if isinstance(ts_out, tuple) and len(ts_out) == 12:
+            return (*ts_out, [])
+        return (*ts_out, None, cfg, [])
 
     if str(file).endswith(".go"):
         from skylos.visitors.languages.go.go import scan_go_file
 
-        return scan_go_file(file, cfg)
+        go_out = scan_go_file(file, cfg)
+        if isinstance(go_out, tuple) and len(go_out) < 13:
+            return (*go_out, *([None] * (12 - len(go_out))), [])
+        return go_out
 
     try:
         source = Path(file).read_text(encoding="utf-8")
         ignore_lines = get_all_ignore_lines(source)
 
         tree = ast.parse(source)
+
+        raw_imports = []
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    raw_imports.append(
+                        (
+                            alias.name,
+                            node.lineno,
+                            "import",
+                            [alias.asname or alias.name],
+                        )
+                    )
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                names = [a.name for a in node.names if a.name != "*"]
+                raw_imports.append((node.module, node.lineno, "from_import", names))
 
         empty_file_finding = None
 
@@ -938,78 +1011,98 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
         if masked and os.getenv("SKYLOS_DEBUG"):
             logger.info(f"{file}: masked {masked} bodies (skipped inner analysis)")
 
-        q_rules = []
-        if "SKY-Q301" not in cfg["ignore"]:
-            q_rules.append(ComplexityRule(threshold=cfg["complexity"]))
-        if "SKY-Q302" not in cfg["ignore"]:
-            q_rules.append(NestingRule(threshold=cfg["nesting"]))
-        if "SKY-Q401" not in cfg["ignore"]:
-            q_rules.append(AsyncBlockingRule())
-        if "SKY-C303" not in cfg["ignore"]:
-            q_rules.append(ArgCountRule(max_args=cfg["max_args"]))
-        if "SKY-C304" not in cfg["ignore"]:
-            q_rules.append(FunctionLengthRule(max_lines=cfg["max_lines"]))
+        quality_findings = []
+        danger_findings = []
 
-        if "SKY-L001" not in cfg["ignore"]:
-            q_rules.append(MutableDefaultRule())
-        if "SKY-L002" not in cfg["ignore"]:
-            q_rules.append(BareExceptRule())
-        if "SKY-L003" not in cfg["ignore"]:
-            q_rules.append(DangerousComparisonRule())
-        if "SKY-L004" not in cfg["ignore"]:
-            q_rules.append(TryBlockPatternsRule(max_lines=15))
+        if full_scan:
+            q_rules = []
+            if "SKY-Q301" not in cfg["ignore"]:
+                q_rules.append(ComplexityRule(threshold=cfg["complexity"]))
+            if "SKY-Q302" not in cfg["ignore"]:
+                q_rules.append(NestingRule(threshold=cfg["nesting"]))
+            if "SKY-Q401" not in cfg["ignore"]:
+                q_rules.append(AsyncBlockingRule())
+            if "SKY-C303" not in cfg["ignore"]:
+                q_rules.append(ArgCountRule(max_args=cfg["max_args"]))
+            if "SKY-C304" not in cfg["ignore"]:
+                q_rules.append(FunctionLengthRule(max_lines=cfg["max_lines"]))
 
-        if "SKY-U001" not in cfg["ignore"]:
-            q_rules.append(UnreachableCodeRule())
+            if "SKY-L001" not in cfg["ignore"]:
+                q_rules.append(MutableDefaultRule())
+            if "SKY-L002" not in cfg["ignore"]:
+                q_rules.append(BareExceptRule())
+            if "SKY-L003" not in cfg["ignore"]:
+                q_rules.append(DangerousComparisonRule())
+            if "SKY-L004" not in cfg["ignore"]:
+                q_rules.append(TryBlockPatternsRule(max_lines=15))
+            if "SKY-L005" not in cfg["ignore"]:
+                q_rules.append(UnusedExceptVarRule())
+            if "SKY-L006" not in cfg["ignore"]:
+                q_rules.append(ReturnConsistencyRule())
+            if "SKY-Q501" not in cfg["ignore"]:
+                q_rules.append(GodClassRule())
 
-        q_rules.append(PerformanceRule(ignore_list=cfg["ignore"]))
+            if "SKY-U001" not in cfg["ignore"]:
+                q_rules.append(UnreachableCodeRule())
 
-        custom_rules = []
-        custom_rules_json = os.getenv("SKYLOS_CUSTOM_RULES")
-        if os.getenv("SKYLOS_DEBUG"):
-            logger.info(
-                f"[DBG] {file}: SKYLOS_CUSTOM_RULES present={bool(custom_rules_json)} "
-                f"size={len(custom_rules_json) if custom_rules_json else 0}"
-            )
+            q_rules.append(PerformanceRule(ignore_list=cfg["ignore"]))
 
-        if custom_rules_json:
-            try:
-                custom_rules_data = json.loads(custom_rules_json)
-                custom_rules = load_custom_rules(custom_rules_data)
-                if os.getenv("SKYLOS_DEBUG"):
-                    logger.info(
-                        f"[DBG] {file}: load_custom_rules -> {len(custom_rules)} rules"
-                    )
-                    if custom_rules:
+            custom_rules = []
+            custom_rules_json = os.getenv("SKYLOS_CUSTOM_RULES")
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.info(
+                    f"[DBG] {file}: SKYLOS_CUSTOM_RULES present={bool(custom_rules_json)} "
+                    f"size={len(custom_rules_json) if custom_rules_json else 0}"
+                )
+
+            if custom_rules_json:
+                try:
+                    custom_rules_data = json.loads(custom_rules_json)
+                    custom_rules = load_custom_rules(custom_rules_data)
+                    if os.getenv("SKYLOS_DEBUG"):
                         logger.info(
-                            f"[DBG] {file}: custom rule ids = {[r.rule_id for r in custom_rules]}"
+                            f"[DBG] {file}: load_custom_rules -> {len(custom_rules)} rules"
                         )
-                q_rules.extend(custom_rules)
-            except Exception as e:
-                logger.error(f"[DBG] {file}: FAILED to load custom rules: {e}")
-                if os.getenv("SKYLOS_DEBUG"):
-                    logger.error(traceback.format_exc())
+                        if custom_rules:
+                            logger.info(
+                                f"[DBG] {file}: custom rule ids = {[r.rule_id for r in custom_rules]}"
+                            )
+                    q_rules.extend(custom_rules)
+                except Exception as e:
+                    logger.error(f"[DBG] {file}: FAILED to load custom rules: {e}")
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error(traceback.format_exc())
 
-        linter_q = LinterVisitor(q_rules, str(file))
-        linter_q.visit(tree)
-        quality_findings = linter_q.findings
+            linter_q = LinterVisitor(q_rules, str(file))
+            linter_q.visit(tree)
+            quality_findings = linter_q.findings
 
-        if os.getenv("SKYLOS_DEBUG"):
-            custom_hits = [
-                f
-                for f in quality_findings
-                if str(f.get("rule_id", "")).startswith("CUSTOM-")
-            ]
-            logger.info(
-                f"[DBG] {file}: quality_findings={len(quality_findings)} custom_hits={len(custom_hits)}"
-            )
-            if custom_hits:
-                logger.info(f"[DBG] {file}: first_custom_hit={custom_hits[0]}")
+            if os.getenv("SKYLOS_DEBUG"):
+                custom_hits = [
+                    f
+                    for f in quality_findings
+                    if str(f.get("rule_id", "")).startswith("CUSTOM-")
+                ]
+                logger.info(
+                    f"[DBG] {file}: quality_findings={len(quality_findings)} custom_hits={len(custom_hits)}"
+                )
+                if custom_hits:
+                    logger.info(f"[DBG] {file}: first_custom_hit={custom_hits[0]}")
 
-        d_rules = [DangerousCallsRule()]
-        linter_d = LinterVisitor(d_rules, str(file))
-        linter_d.visit(tree)
-        danger_findings = linter_d.findings
+            d_rules = [DangerousCallsRule()]
+            linter_d = LinterVisitor(d_rules, str(file))
+            linter_d.visit(tree)
+            danger_findings = linter_d.findings
+
+            from skylos.rules.danger.danger import scan_file_with_tree
+
+            taint_findings = []
+            try:
+                scan_file_with_tree(tree, Path(file), taint_findings)
+            except Exception:
+                pass
+            if taint_findings:
+                danger_findings.extend(taint_findings)
 
         pro_findings = []
         if extra_visitors:
@@ -1055,6 +1148,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             v.pattern_tracker,
             empty_file_finding,
             cfg,
+            raw_imports,
         )
 
     except Exception as e:
@@ -1077,6 +1171,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None):
             None,
             None,
             cfg,
+            [],
         )
 
 
@@ -1090,6 +1185,7 @@ def analyze(
     extra_visitors=None,
     progress_callback=None,
     custom_rules_data=None,
+    changed_files=None,
 ):
     return Skylos().analyze(
         path,
@@ -1101,6 +1197,7 @@ def analyze(
         extra_visitors,
         progress_callback,
         custom_rules_data,
+        changed_files,
     )
 
 

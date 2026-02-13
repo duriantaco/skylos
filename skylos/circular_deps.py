@@ -94,6 +94,26 @@ class CircularDependencyAnalyzer:
         root_module = module_name.split(".")[0]
         self.known_modules.add(root_module)
 
+    def build_graph_from_raw_imports(self, raw_imports_by_module: Dict[str, list]):
+        for module_name in self.modules:
+            root = module_name.split(".")[0]
+            self.known_modules.add(root)
+
+        for module_name, raw_imports in raw_imports_by_module.items():
+            file_path = self.modules.get(module_name, "")
+            for import_module, line, import_type, names in raw_imports:
+                root = import_module.split(".")[0]
+                if root in self.known_modules:
+                    dep = ModuleDependency(
+                        from_module=module_name,
+                        to_module=root,
+                        import_line=line,
+                        import_type=import_type,
+                        imported_names=names,
+                    )
+                    self.dependencies[dep.from_module].add(dep.to_module)
+                    self.all_deps.append(dep)
+
     def build_graph(self, trees: Dict[str, ast.AST]):
         for module_name in self.modules:
             root = module_name.split(".")[0]
@@ -278,13 +298,21 @@ class CircularDependencyRule:
         self.max_cycles = max_cycles
         self._analyzer = CircularDependencyAnalyzer()
         self._trees: Dict[str, ast.AST] = {}
+        self._raw_imports: Dict[str, list] = {}
 
     def add_file(self, tree: ast.AST, file_path: str, module_name: str):
         self._analyzer.add_file(tree, file_path, module_name)
         self._trees[module_name] = tree
 
+    def add_file_imports(self, file_path: str, module_name: str, raw_imports: list):
+        self._analyzer.add_file(None, file_path, module_name)
+        self._raw_imports[module_name] = raw_imports
+
     def analyze(self) -> List[Dict[str, Any]]:
-        self._analyzer.build_graph(self._trees)
+        if self._raw_imports:
+            self._analyzer.build_graph_from_raw_imports(self._raw_imports)
+        else:
+            self._analyzer.build_graph(self._trees)
         return self._analyzer.get_findings()
 
     def check(self) -> Tuple[bool, str]:
