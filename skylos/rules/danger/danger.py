@@ -9,93 +9,24 @@ from .danger_sql.sql_raw_flow import scan as scan_sql_raw
 from .danger_net.ssrf_flow import scan as scan_ssrf
 from .danger_fs.path_flow import scan as scan_path
 from .danger_web.xss_flow import scan as scan_xss
+from .danger_redirect.redirect_flow import scan as scan_redirect
+from .danger_cors.cors_flow import scan as scan_cors
+from .danger_jwt.jwt_flow import scan as scan_jwt
+from .danger_access.access_flow import scan as scan_access
+from .danger_mcp.mcp_flow import scan as scan_mcp
 from .danger_hallucination.dependency_hallucination import (
     scan_python_dependency_hallucinations,
+)
+from .calls import (
+    DANGEROUS_CALLS,
+    _matches_rule,
+    _kw_equals,
+    _qualified_name_from_call as qualified_name_from_call,
+    _yaml_load_without_safeloader,
 )
 
 
 ALLOWED_SUFFIXES = (".py", ".pyi", ".pyw")
-
-DANGEROUS_CALLS = {
-    "eval": ("SKY-D201", "HIGH", "Use of eval()"),
-    "exec": ("SKY-D202", "HIGH", "Use of exec()"),
-    "os.system": ("SKY-D203", "CRITICAL", "Use of os.system()"),
-    "pickle.load": (
-        "SKY-D204",
-        "CRITICAL",
-        "Untrusted deserialization via pickle.load",
-    ),
-    "pickle.loads": (
-        "SKY-D205",
-        "CRITICAL",
-        "Untrusted deserialization via pickle.loads",
-    ),
-    "yaml.load": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
-    "hashlib.md5": ("SKY-D207", "MEDIUM", "Weak hash (MD5)"),
-    "hashlib.sha1": ("SKY-D208", "MEDIUM", "Weak hash (SHA1)"),
-    "subprocess.*": (
-        "SKY-D209",
-        "HIGH",
-        "subprocess call with shell=True",
-        {"kw_equals": {"shell": True}},
-    ),
-    "requests.*": (
-        "SKY-D210",
-        "HIGH",
-        "requests call with verify=False",
-        {"kw_equals": {"verify": False}},
-    ),
-}
-
-
-def _matches_rule(name, rule_key):
-    if not name:
-        return False
-    if rule_key.endswith(".*"):
-        return name.startswith(rule_key[:-2] + ".")
-    return name == rule_key
-
-
-def _kw_equals(node: ast.Call, requirements):
-    if not requirements:
-        return True
-    kw_map = {}
-    for kw in node.keywords or []:
-        if kw.arg:
-            kw_map[kw.arg] = kw.value
-
-    for key, expected in requirements.items():
-        val = kw_map.get(key)
-        if not isinstance(val, ast.Constant):
-            return False
-        if val.value != expected:
-            return False
-    return True
-
-
-def qualified_name_from_call(node: ast.Call):
-    func = node.func
-    parts = []
-    while isinstance(func, ast.Attribute):
-        parts.append(func.attr)
-        func = func.value
-    if isinstance(func, ast.Name):
-        parts.append(func.id)
-        parts.reverse()
-        return ".".join(parts)
-    return None
-
-
-def _yaml_load_without_safeloader(node: ast.Call):
-    name = qualified_name_from_call(node)
-    if name != "yaml.load":
-        return False
-
-    for kw in node.keywords or []:
-        if kw.arg == "Loader":
-            text = ast.unparse(kw.value)
-            return "SafeLoader" not in text
-    return True
 
 
 class _DangerousCallsChecker(ast.NodeVisitor):
@@ -173,16 +104,26 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def _scan_file(file_path: Path, findings):
-    src = file_path.read_text(encoding="utf-8", errors="ignore")
-    tree = ast.parse(src)
-
+def scan_file_with_tree(tree, file_path, findings):
+    """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
     scan_sql(tree, file_path, findings)
     scan_cmd(tree, file_path, findings)
     scan_sql_raw(tree, file_path, findings)
     scan_ssrf(tree, file_path, findings)
     scan_path(tree, file_path, findings)
     scan_xss(tree, file_path, findings)
+    scan_redirect(tree, file_path, findings)
+    scan_cors(tree, file_path, findings)
+    scan_jwt(tree, file_path, findings)
+    scan_access(tree, file_path, findings)
+    scan_mcp(tree, file_path, findings)
+
+
+def _scan_file(file_path: Path, findings):
+    src = file_path.read_text(encoding="utf-8", errors="ignore")
+    tree = ast.parse(src)
+
+    scan_file_with_tree(tree, file_path, findings)
 
     checker = _DangerousCallsChecker(file_path, findings)
     checker.visit(tree)

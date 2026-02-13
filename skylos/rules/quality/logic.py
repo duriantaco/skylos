@@ -214,3 +214,86 @@ class TryBlockPatternsRule(SkylosRule):
             "line": node.lineno,
             "col": node.col_offset,
         }
+
+
+class UnusedExceptVarRule(SkylosRule):
+    rule_id = "SKY-L005"
+    name = "Unused Exception Variable"
+
+    def visit_node(self, node, context):
+        if not isinstance(node, ast.ExceptHandler):
+            return None
+        if not node.name:
+            return None
+
+        use_count = 0
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and child.id == node.name:
+                use_count += 1
+
+        if use_count == 0:
+            return [
+                {
+                    "rule_id": self.rule_id,
+                    "kind": "logic",
+                    "severity": "LOW",
+                    "type": "variable",
+                    "name": node.name,
+                    "simple_name": node.name,
+                    "value": "unused",
+                    "threshold": 0,
+                    "message": f"Exception variable '{node.name}' is captured but never used. Use '_' or remove it.",
+                    "file": context.get("filename"),
+                    "basename": Path(context.get("filename", "")).name,
+                    "line": node.lineno,
+                    "col": node.col_offset,
+                }
+            ]
+        return None
+
+
+class ReturnConsistencyRule(SkylosRule):
+    rule_id = "SKY-L006"
+    name = "Inconsistent Return"
+
+    def visit_node(self, node, context):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+
+        returns_value = False
+        returns_none = False
+
+        for child in ast.walk(node):
+            if child is node:
+                continue
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if isinstance(child, ast.Return):
+                if child.value is None:
+                    returns_none = True
+                elif (
+                    isinstance(child.value, ast.Constant) and child.value.value is None
+                ):
+                    returns_none = True
+                else:
+                    returns_value = True
+
+        if returns_value and returns_none:
+            return [
+                {
+                    "rule_id": self.rule_id,
+                    "kind": "logic",
+                    "severity": "MEDIUM",
+                    "type": "function",
+                    "name": node.name,
+                    "simple_name": node.name,
+                    "value": "inconsistent",
+                    "threshold": 0,
+                    "message": f"Function '{node.name}' has inconsistent returns: some paths return a value, others return None.",
+                    "file": context.get("filename"),
+                    "basename": Path(context.get("filename", "")).name,
+                    "line": node.lineno,
+                    "col": node.col_offset,
+                }
+            ]
+        return None

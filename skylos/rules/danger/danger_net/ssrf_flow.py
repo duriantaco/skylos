@@ -1,7 +1,7 @@
 from __future__ import annotations
 import ast
 import sys
-from skylos.rules.danger.taint import TaintVisitor
+from skylos.rules.danger.taint import TaintVisitor, URL_SANITIZERS
 
 
 def _qualified_name_from_call(node):
@@ -101,7 +101,7 @@ class _SSRFFlowChecker(TaintVisitor):
 
 def scan(tree, file_path, findings):
     try:
-        checker = _SSRFFlowChecker(file_path, findings)
+        checker = _SSRFFlowChecker(file_path, findings, sanitizers=URL_SANITIZERS)
         checker.visit(tree)
     except Exception as e:
         print(f"SSRF flow analysis failed for {file_path}: {e}", file=sys.stderr)
