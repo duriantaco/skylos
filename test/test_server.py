@@ -1,4 +1,3 @@
-import unittest
 import json
 import sys
 import os
@@ -9,6 +8,13 @@ mock_constants.DEFAULT_EXCLUDE_FOLDERS = [".git", "__pycache__"]
 sys.modules["skylos.constants"] = mock_constants
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+try:
+    import flask  # noqa: F401
+except ImportError:
+    import unittest
+    raise unittest.SkipTest("Flask not installed — skipping server tests")
+
 
 from skylos.server import app, start_server
 
