@@ -144,33 +144,68 @@ def build_verification_context(
         parts.append(f"- `{name}` not found in defs_map")
     parts.append("")
 
-    parts.append("## Potential Alive Reasons to Consider")
-    parts.append("- Dynamic dispatch: getattr(), globals(), __import__, importlib")
-    parts.append("- Framework magic: Django signals, pytest fixtures, Flask routes")
-    parts.append("- Plugin/registry: entry_points, plugin registries, click commands")
-    parts.append("- Metaprogramming: metaclasses, __init_subclass__, type()")
-    parts.append("- String refs: f-strings, format(), eval/exec")
-    parts.append("- Public API: __all__, re-exported in __init__.py")
-    parts.append("- Callback/handler: registered via string name elsewhere")
+    parts.append("## Dynamic Patterns to Check Against Code Context")
+    parts.append("The static analyzer already searched the ENTIRE project for:")
+    parts.append("- All direct calls and references (found 0)")
+    parts.append("- __all__ exports, re-exports in __init__.py")
+    parts.append("- Decorator registrations visible in the AST")
+    parts.append("")
+    parts.append("Only mark FALSE_POSITIVE if the CODE CONTEXT ABOVE contains")
+    parts.append("concrete evidence of one of these dynamic mechanisms:")
+    parts.append(
+        "- getattr(), globals()[], __import__, importlib usage that resolves to this name"
+    )
+    parts.append(
+        "- Framework registration: @app.route, @pytest.fixture, Django signal, click.command"
+    )
+    parts.append("- Plugin/entry_point registration in pyproject.toml or setup.cfg")
+    parts.append("- Metaclass or __init_subclass__ that auto-registers this symbol")
+    parts.append(
+        "- String-based reference: f-string, format(), eval/exec that constructs this name"
+    )
+    parts.append("")
+    parts.append("NOT valid reasons for FALSE_POSITIVE:")
+    parts.append(
+        "- The name starts with `_` (underscore prefix means private, not dynamically used)"
+    )
+    parts.append(
+        "- It 'could theoretically' be called dynamically (speculation without evidence)"
+    )
+    parts.append(
+        "- It 'might be' a test helper or utility (check the actual code context)"
+    )
+    parts.append(
+        "- It 'looks like' a framework hook (verify against the actual decorators/imports)"
+    )
 
     return "\n".join(parts)
 
 
-SYSTEM_PROMPT = """You are a dead-code verification expert. Your job is NOT to find dead code — \
+SYSTEM_PROMPT = """\
+You are a dead-code verification expert. Your job is NOT to find dead code — \
 static analysis has already done that. Your job is to VERIFY or CHALLENGE the static verdict.
 
 Static analysis confirmed zero references and zero callers for this code across the entire project. \
 Your task: determine if there is a plausible dynamic/framework/metaprogramming reason \
 this code might still be reachable despite zero static references.
 
-Be rigorous:
-- TRUE_POSITIVE means you agree it's dead. Zero references, no dynamic escape hatch.
+RULES:
+- TRUE_POSITIVE means you agree it's dead. Zero references, no dynamic escape hatch visible in the code.
 - FALSE_POSITIVE means you believe it's alive despite zero static refs. \
-  You MUST cite a specific mechanism (e.g., "registered via entry_points in pyproject.toml", \
-  "accessed via getattr in base class __init__", "decorator @app.route registers it").
-- UNCERTAIN means you can't tell.
+  You MUST cite a SPECIFIC line number or mechanism FROM THE CODE CONTEXT provided. \
+  Vague speculation is not sufficient.
+- UNCERTAIN means you genuinely can't tell (use sparingly).
 
-Respond with JSON only: {"verdict": "...", "rationale": "..."}"""
+CRITICAL — do NOT fall for these traps:
+- A leading underscore (_name) means PRIVATE. It does NOT imply dynamic dispatch. \
+  Treat _-prefixed symbols the same as any other symbol.
+- "Could theoretically be called via getattr" is NOT evidence. \
+  You need to SEE an actual getattr/globals/importlib call in the code context.
+- The static analyzer already checked the ENTIRE project. If it found 0 references, \
+  there are 0 references in the codebase. Do not assume hidden callers exist.
+
+Respond with JSON only: {"verdict": "...", "rationale": "..."}\
+"""
 
 USER_PROMPT_TEMPLATE = """{context}
 
@@ -178,7 +213,8 @@ USER_PROMPT_TEMPLATE = """{context}
 Based on the evidence above, is this truly dead code?
 
 Respond with JSON:
-{{"verdict": "TRUE_POSITIVE" or "FALSE_POSITIVE" or "UNCERTAIN", "rationale": "1-2 sentence explanation citing specific mechanism if FALSE_POSITIVE"}}"""
+{{"verdict": "TRUE_POSITIVE" or "FALSE_POSITIVE" or "UNCERTAIN", "rationale": "1-2 sentence explanation. If FALSE_POSITIVE, cite the specific line number or mechanism from the code context."}}\
+"""
 
 
 class DeadCodeVerifierAgent:
@@ -320,7 +356,8 @@ class DeadCodeVerifierAgent:
             f["_llm_verdict"] = r.verdict.value
             f["_llm_rationale"] = r.rationale
             f["_verified_by_llm"] = r.verdict != Verdict.UNCERTAIN
-            f["_confidence_adjusted"] = r.adjusted_confidence
+            f["_original_confidence"] = r.original_confidence
+            f["_adjusted_confidence"] = r.adjusted_confidence
 
             if r.verdict == Verdict.FALSE_POSITIVE:
                 f["_suppressed"] = True
