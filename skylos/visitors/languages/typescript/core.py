@@ -19,6 +19,7 @@ class TypeScriptCore:
         self.source = source_bytes
         self.defs = []
         self.refs = []
+        self.imports = []
 
         if TS_LANG:
             self.parser = Parser(TS_LANG)
@@ -85,6 +86,8 @@ class TypeScriptCore:
                 name = self._get_text(node)
                 self.refs.append((name, self.file_path))
 
+        self._scan_imports()
+
     def _add_def(self, node, type_name):
         name = self._get_text(node)
         line = node.start_point[0] + 1
@@ -100,3 +103,23 @@ class TypeScriptCore:
         d = Definition(name, type_name, self.file_path, line)
         d.is_exported = is_exported
         self.defs.append(d)
+
+    def _scan_imports(self):
+        import_patterns = [
+            # import { foo, bar } from 'module'
+            "(import_clause (named_imports (import_specifier name: (identifier) @name)))",
+            # import defaultExport from 'module'
+            "(import_clause (identifier) @name)",
+            # import * as ns from 'module'
+            "(import_clause (namespace_import (identifier) @name))",
+        ]
+
+        for pattern in import_patterns:
+            for node in self._run_query(pattern, "name"):
+                name = self._get_text(node)
+                line = node.start_point[0] + 1
+                d = Definition(name, "import", self.file_path, line)
+                self.defs.append(d)
+                self.imports.append(
+                    {"name": name, "file": str(self.file_path), "line": line}
+                )
