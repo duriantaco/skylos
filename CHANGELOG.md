@@ -1,5 +1,97 @@
 ## Changelog
 
+## [3.4.0] - 2026-02-11
+
+### Added
+
+**DevOps Remediation Agent**
+- New `skylos agent remediate` command — end-to-end security & quality remediation agent that scans, prioritizes, fixes, tests, and creates PRs autonomously
+  - `--dry-run` shows remediation plan without touching files (default safe)
+  - `--max-fixes N` caps the number of fixes per run (default 10)
+  - `--auto-pr` creates a git branch, commits fixes, pushes, and opens a PR via `gh`
+  - `--test-cmd CMD` overrides test suite auto-detection (supports pytest, unittest, tox, Makefile)
+  - `--severity LEVEL` filters findings to fix (critical, high, medium, low)
+  - `--branch-prefix PREFIX` customizes the git branch name (default `skylos/fix`)
+- `skylos/llm/planner.py` — `RemediationPlanner` that prioritizes findings by severity, groups by file, sorts auto-fixable rules first, and caps at `max_fixes`
+- `skylos/llm/executor.py` — `RemediationExecutor` that applies fixes to disk with backup/revert, auto-detects test suites, runs tests, verifies fixes via re-scan, and handles git branch/commit/push/PR creation
+- `skylos/llm/orchestrator.py` — `RemediationAgent` that orchestrates the full 5-step lifecycle: Scan → Plan → Fix loop → Create PR → Report
+- Added `build_pr_description()` to `skylos/llm/prompts.py` for generating structured PR bodies with fix/failure/skip tables
+- Added `remediate` MCP tool to `skylos_mcp/server.py` — AI assistants can invoke the full remediation loop via MCP
+
+**MCP Server Security Rules**
+- SKY-D240 (HIGH): Tool poisoning — detects hidden instructions in MCP tool descriptions
+- SKY-D241 (HIGH): Unauthenticated transport — MCP servers using `sse` or `streamable-http` without authentication middleware
+- SKY-D242 (HIGH): Permissive resource URI — `file://` or wildcard `{path}` patterns in MCP resource URIs
+- SKY-D243 (HIGH): Network-exposed MCP — `host="0.0.0.0"` without binding to localhost
+- SKY-D244 (CRITICAL): Secrets in tool defaults — hardcoded API keys, tokens, or passwords in MCP tool parameter defaults
+- OWASP Top 10 and PCI DSS 4.0 compliance mappings for all MCP rules
+
+**Tests**
+- 24 tests for the remediation agent (planner, executor, orchestrator, PR description)
+- 32 tests for MCP server security rules
+
+### Fixed
+- Fixed `import json` inside `main()` shadowing the module-level `json` import, causing `UnboundLocalError` in all CLI paths that call `json.loads()` after the agent remediate block
+
+## [3.3.0] - 2026-02-10
+
+### Added
+
+**CI/CD Integration**
+- New `skylos cicd` command group for CI/CD integration
+  - `skylos cicd init` generates GitHub Actions workflow (`.github/workflows/skylos.yml`) with configurable triggers, analysis types, and optional LLM review
+  - `skylos cicd gate` runs quality gate checks from a JSON results file
+  - `skylos cicd annotate` emits GitHub Actions annotations from a JSON results file
+  - `skylos cicd review` posts inline PR review comments and a summary via `gh` CLI, filtered to changed lines only
+- `--summary` flag on `skylos . --gate` to write a markdown results table to `$GITHUB_STEP_SUMMARY`
+- Added MCP server (`skylos_mcp/`) exposing `analyze`, `security_scan`, `quality_check`, and `secrets_scan` as tools via FastMCP
+
+**New Security Rules**
+- SKY-D230 (HIGH): Open redirect detection — taint-flow from user input to `redirect()`, `HttpResponseRedirect()`, `HttpResponsePermanentRedirect()`
+- SKY-D231 (HIGH): CORS misconfiguration — detects `CORS_ALLOW_ALL_ORIGINS = True`, `Access-Control-Allow-Origin: *`, `CORS()` without explicit origins
+- SKY-D232 (CRITICAL): JWT security issues — `algorithms=['none']`, `verify=False`, disabled signature verification
+- SKY-D233 (CRITICAL): Untrusted deserialization — `marshal.loads`, `shelve.open`, `jsonpickle.decode`, `dill.loads`, `dill.load`
+- SKY-D234 (HIGH): Mass assignment — `Meta.fields = '__all__'` in Django ModelForms and DRF serializers
+- Sanitizer framework for taint analysis: XSS (`html.escape`, `bleach.clean`), CMD (`shlex.quote`), URL (`urllib.parse.quote`), PATH (`os.path.basename`) sanitizers clear taint contextually
+- OWASP Top 10 and PCI DSS 4.0 compliance mappings for all new rules
+
+**New TypeScript Security Rules**
+- SKY-D503 (HIGH): `document.write()` — XSS risk
+- SKY-D504 (CRITICAL): `new Function()` — equivalent to eval
+- SKY-D505 (HIGH): `setTimeout`/`setInterval` with string argument — eval equivalent
+- SKY-D506 (HIGH): `child_process.exec()` — command injection, suggests `execFile()`
+- SKY-D507 (HIGH): `outerHTML` assignment — XSS risk
+
+**New Quality Rules**
+- SKY-L005 (LOW): Unused exception variable — `except ValueError as e` where `e` is never used
+- SKY-L006 (MEDIUM): Inconsistent return — functions with mixed explicit returns and bare returns
+- SKY-Q501 (MEDIUM): God class detection — classes exceeding configurable method count (20) or attribute count (15)
+
+**New TypeScript Quality Rules**
+- SKY-Q601: Cyclomatic complexity (threshold: 10)
+- SKY-Q602: Nesting depth (threshold: 4)
+- SKY-Q603: Function length (threshold: 50 lines)
+- SKY-Q604: Parameter count (threshold: 5)
+
+**Language Support**
+- Go language support via pluggable engine architecture (`skylos/engines/`)
+- TypeScript import tracking (named, default, and namespace imports) with unused import detection
+- Secrets scanning expanded to `.env`, `.yaml`, `.yml`, `.json`, `.toml`, `.ini`, `.cfg`, `.conf`, `.ts`, `.tsx`, `.js`, `.jsx`, `.go`
+
+**Tests**
+- Added tests for CORS, JWT, open redirect, mass assignment, deserialization, sanitizers, TypeScript expanded rules, new quality rules, and non-Python secrets
+
+### Changed
+- `_emit_github_annotations()` now sorts annotations by severity and caps output at 50 (GitHub's limit), with optional `severity_filter` and `max_annotations` params
+- `run_gate_interaction()` accepts a new `summary` keyword arg to write markdown to `$GITHUB_STEP_SUMMARY`
+- SYSTEM_PROMPT requires citing a specific line for FP verdicts and explicitly states underscore prefix != dynamic usage
+- Taint-flow scanners (cmd, fs, net, xss) now accept context-specific sanitizer sets
+- `danger.py` refactored to share parsed AST tree across all scanners instead of re-parsing per scanner
+
+### Fixed
+- LLM marked all `_`-prefixed dead code as alive by speculating about dynamic dispatch without evidence in the code context
+- Removed deprecated `ast.NameConstant` compatibility in `calls.py` — now uses `ast.Constant` only
+
 ## [3.2.5] - 2026-02-09
 
 ### Fixed
