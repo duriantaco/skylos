@@ -1,5 +1,10 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+try:
+    from flask import Flask, request, jsonify
+    from flask_cors import CORS
+except ImportError:
+    raise ImportError(
+        "Flask is required for the web server. Install it with: pip install skylos[web]"
+    )
 import skylos
 import json
 import os

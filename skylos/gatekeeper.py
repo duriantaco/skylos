@@ -1,7 +1,9 @@
+import os
 import subprocess
+import sys
+
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
-import sys
 
 try:
     import inquirer
@@ -182,6 +184,69 @@ def check_gate(results, config, strict=False):
     return passed, reasons
 
 
+def build_summary_markdown(results, passed, reasons):
+    results = results or {}
+
+    danger = results.get("danger", []) or []
+    quality = results.get("quality", []) or []
+    secrets = results.get("secrets", []) or []
+
+    critical_count = sum(
+        1 for d in danger if str(d.get("severity", "")).lower() == "critical"
+    )
+    high_count = sum(1 for d in danger if str(d.get("severity", "")).lower() == "high")
+    dead_code_count = sum(
+        len(results.get(k, []) or [])
+        for k in (
+            "unused_functions",
+            "unused_imports",
+            "unused_classes",
+            "unused_variables",
+            "unused_parameters",
+        )
+    )
+
+    status = "PASSED" if passed else "FAILED"
+    icon = "✅" if passed else "❌"
+
+    lines = [
+        "## Skylos Analysis Results",
+        "",
+        "| Category | Count | Status |",
+        "|----------|-------|--------|",
+        f"| Security (critical) | {critical_count} | {'✅' if critical_count == 0 else '❌'} |",
+        f"| Security (high) | {high_count} | {'✅' if high_count <= 5 else '⚠️'} |",
+        f"| Security (total) | {len(danger)} | {'✅' if len(danger) <= 10 else '⚠️'} |",
+        f"| Quality | {len(quality)} | {'✅' if len(quality) <= 10 else '⚠️'} |",
+        f"| Secrets | {len(secrets)} | {'✅' if len(secrets) == 0 else '❌'} |",
+        f"| Dead Code | {dead_code_count} | ℹ️ |",
+        "",
+        f"**Result: {icon} {status}**",
+    ]
+
+    if reasons:
+        lines.append("")
+        lines.append("### Failure Reasons")
+        for r in reasons:
+            lines.append(f"- {r}")
+
+    return "\n".join(lines)
+
+
+def write_github_summary(markdown):
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        try:
+            with open(summary_path, "a") as f:
+                f.write(markdown + "\n")
+        except OSError as e:
+            console.print(
+                f"[yellow]Could not write to GITHUB_STEP_SUMMARY: {e}[/yellow]"
+            )
+    else:
+        console.print(markdown)
+
+
 def run_gate_interaction(
     *,
     results=None,
@@ -190,6 +255,7 @@ def run_gate_interaction(
     strict=False,
     force=False,
     command_to_run=None,
+    summary=False,
 ):
     console = Console()
 
@@ -205,6 +271,10 @@ def run_gate_interaction(
         passed, reasons = check_gate(results, config, strict=strict)
     except TypeError:
         passed, reasons = check_gate(results, config)
+
+    if summary:
+        md = build_summary_markdown(results, passed, reasons)
+        write_github_summary(md)
 
     if passed:
         console.print("\n[bold green]✅ Quality Gate: PASSED[/bold green]")
