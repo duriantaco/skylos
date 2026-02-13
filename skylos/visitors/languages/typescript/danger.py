@@ -50,4 +50,50 @@ def scan_danger(root_node, file_path):
         "Unsafe innerHTML assignment",
     )
 
+    # document.write
+    check(
+        '(call_expression function: (member_expression property: (property_identifier) @dw (#eq? @dw "write") object: (identifier) @obj (#eq? @obj "document")))',
+        "dw",
+        "SKY-D503",
+        "HIGH",
+        "document.write() can lead to XSS vulnerabilities",
+    )
+
+    # new Function()
+    check(
+        '(new_expression constructor: (identifier) @fn (#eq? @fn "Function"))',
+        "fn",
+        "SKY-D504",
+        "CRITICAL",
+        "new Function() is equivalent to eval()",
+    )
+
+    # setTimeout/setInterval with string argument
+    for fn_name in ("setTimeout", "setInterval"):
+        check(
+            f'(call_expression function: (identifier) @timer (#eq? @timer "{fn_name}") arguments: (arguments (string) @str))',
+            "str",
+            "SKY-D505",
+            "HIGH",
+            f"{fn_name}() with string argument is equivalent to eval()",
+        )
+
+    # child_process.exec (Node.js command injection)
+    check(
+        '(call_expression function: (member_expression property: (property_identifier) @exec (#eq? @exec "exec")))',
+        "exec",
+        "SKY-D506",
+        "HIGH",
+        "child_process.exec() can lead to command injection. Use execFile() instead.",
+    )
+
+    # outerHTML assignment (similar to innerHTML)
+    check(
+        '(assignment_expression left: (member_expression property: (property_identifier) @oh (#eq? @oh "outerHTML")))',
+        "oh",
+        "SKY-D507",
+        "HIGH",
+        "Unsafe outerHTML assignment",
+    )
+
     return findings
