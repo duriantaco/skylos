@@ -196,9 +196,6 @@ def test_scan_installed_but_undeclared_emits_dist_hint(monkeypatch, tmp_path):
     assert "other" in one["message"]
 
 
-@pytest.mark.xfail(
-    reason="Current code treats PyPI status as truthy string; 'missing' won't trigger hallucination until fixed."
-)
 def test_scan_pypi_missing_should_emit_hallucination(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
