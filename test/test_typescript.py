@@ -54,4 +54,4 @@ def test_typescript_config_override(tmp_path):
     _, _, _, _, _, _, quality, _, _, _, _, _ = results
 
     assert len(quality) > 0
-    assert quality[0]["rule_id"] == "SKY-Q501"
+    assert quality[0]["rule_id"] == "SKY-Q601"

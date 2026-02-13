@@ -484,6 +484,7 @@ class TestClass:
                         pattern_tracker,
                         empty_file_finding,
                         cfg,
+                        raw_imports,
                     ) = proc_file(f.name, "test_module")
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
@@ -522,6 +523,7 @@ class TestClass:
                     pattern_tracker,
                     empty_file_finding,
                     cfg,
+                    raw_imports,
                 ) = proc_file(f.name, "test_module")
 
                 assert defs == []
@@ -582,6 +584,7 @@ class TestClass:
                         pattern_tracker,
                         empty_file_finding,
                         cfg,
+                        raw_imports,
                     ) = proc_file((f.name, "test_module"))
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)

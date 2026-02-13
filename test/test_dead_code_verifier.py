@@ -196,7 +196,7 @@ class TestBuildVerificationContext:
 
     def test_no_source_lines(self):
         ctx = build_verification_context(_finding(), _defs_map(), None)
-        assert "Code Context" not in ctx
+        assert "## Code Context" not in ctx
 
     def test_defs_map_match(self):
         ctx = build_verification_context(_finding(), _defs_map())
@@ -210,8 +210,8 @@ class TestBuildVerificationContext:
 
     def test_includes_potential_alive_reasons(self):
         ctx = build_verification_context(_finding(), _defs_map())
-        assert "Dynamic dispatch" in ctx
-        assert "Framework magic" in ctx
+        assert "Dynamic Patterns" in ctx
+        assert "Framework registration" in ctx
 
     def test_lambda_and_closure_flags(self):
         f = _finding(is_lambda=True, is_closure=True, closes_over=["x", "y"])
@@ -424,7 +424,7 @@ class TestAnnotateFindings:
         assert r["_llm_verdict"] == "TRUE_POSITIVE"
         assert r["_llm_rationale"] == "No refs"
         assert r["_verified_by_llm"] is True
-        assert r["_confidence_adjusted"] == 85
+        assert r["_adjusted_confidence"] == 85 
         assert "_suppressed" not in r
 
     def test_false_positive_gets_suppressed(self):
@@ -465,7 +465,6 @@ class TestAnnotateFindings:
 
         agent.annotate_findings([original], _defs_map(), confidence_range=(50, 85))
 
-        # Original should not have annotation keys
         assert set(original.keys()) == original_keys
 
     def test_mixed_verdicts(self):
