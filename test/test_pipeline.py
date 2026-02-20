@@ -417,6 +417,7 @@ class TestPipelinePhase2a:
         (proj / "a.py").write_text("def dead_func(): pass")
 
         mock_verifier = MagicMock()
+        mock_verifier.test_api_connection.return_value = (True, "OK")
         mock_verifier.annotate_findings.return_value = verified_results
 
         with (
@@ -458,7 +459,7 @@ class TestPipelinePhase2a:
         assert dead[0]["_source"] == "static+llm"
         assert dead[0]["_confidence"] == "high"
 
-    def test_false_positive_suppressed(self, tmp_path):
+    def test_false_positive_demoted_not_dropped(self, tmp_path):
         verified = [
             {
                 "name": "dead_func",
@@ -466,15 +467,17 @@ class TestPipelinePhase2a:
                 "line": 20,
                 "_category": "dead_code",
                 "_llm_verdict": "FALSE_POSITIVE",
-                "_suppressed": True,
+                "_llm_challenged": True,
             },
         ]
         findings, _ = self._run_with_verifier(verified, tmp_path)
 
         dead = [f for f in findings if f.get("_category") == "dead_code"]
-        assert len(dead) == 0
+        assert len(dead) == 1
+        assert dead[0]["_confidence"] == "low"
+        assert dead[0]["_llm_challenged"] is True
 
-    def test_uncertain_gets_medium_confidence(self, tmp_path):
+    def test_uncertain_treated_as_static_only(self, tmp_path):
         verified = [
             {
                 "name": "dead_func",
@@ -488,7 +491,9 @@ class TestPipelinePhase2a:
 
         dead = [f for f in findings if f.get("_category") == "dead_code"]
         assert len(dead) == 1
+        # UNCERTAIN = LLM couldn't verify → keep as static-only medium confidence
         assert dead[0]["_confidence"] == "medium"
+        assert dead[0]["_source"] == "static"
 
     def test_verifier_receives_defs_map_and_source_cache(self, tmp_path):
         _, mock_verifier = self._run_with_verifier([], tmp_path)
@@ -496,7 +501,7 @@ class TestPipelinePhase2a:
         kwargs = mock_verifier.annotate_findings.call_args[1]
         assert "defs_map" in kwargs
         assert "source_cache" in kwargs
-        assert kwargs["confidence_range"] == (50, 85)
+        assert kwargs["confidence_range"] == (10, 100)
 
     def test_skip_verification_passes_through(self, tmp_path):
         proj = tmp_path / "proj"
@@ -529,6 +534,7 @@ class TestPipelinePhase2a:
         (proj / "a.py").write_text("x = 1")
 
         mock_verifier = MagicMock()
+        mock_verifier.test_api_connection.return_value = (True, "OK")
         mock_verifier.annotate_findings.side_effect = Exception("LLM down")
 
         with (
@@ -591,20 +597,20 @@ class TestPipelinePhase2b:
         assert llm[0]["_needs_review"] is True
         assert llm[0]["_ci_blocking"] is False
 
-    def test_llm_dead_code_discoveries_dropped(self, tmp_path):
+    def test_llm_dead_code_discoveries_included(self, tmp_path):
         findings = self._run_with_llm_findings(
             [
-                _llm_finding(issue_type="dead_code"),
-                _llm_finding(issue_type="unused"),
-                _llm_finding(issue_type="unreachable"),
-                _llm_finding(issue_type="security"),
+                _llm_finding(issue_type="dead_code", line=10, rule_id="DC-001", message="unused func a"),
+                _llm_finding(issue_type="unused", line=20, rule_id="DC-002", message="unused func b"),
+                _llm_finding(issue_type="unreachable", line=30, rule_id="DC-003", message="unreachable code"),
+                _llm_finding(issue_type="security", line=40, rule_id="SEC-001", message="SQL injection"),
             ],
             tmp_path,
         )
 
         llm = [f for f in findings if f["_source"] == "llm"]
-        assert len(llm) == 1
-        assert llm[0]["_category"] == "security"
+        # All 4 findings should now be included (dead code no longer dropped)
+        assert len(llm) == 4
 
     def test_deduplicates_against_static(self, tmp_path):
         llm_dup = _llm_finding(
@@ -723,6 +729,7 @@ class TestPipelineOutput:
         (proj / "a.py").write_text("x = 1")
 
         mock_verifier = MagicMock()
+        mock_verifier.test_api_connection.return_value = (True, "OK")
         mock_verifier.annotate_findings.return_value = verified
 
         with (
@@ -828,12 +835,13 @@ class TestPipelineIntegration:
                 "_category": "dead_code",
                 "_source": "static",
                 "_llm_verdict": "FALSE_POSITIVE",
-                "_suppressed": True,
+                "_llm_challenged": True,
                 "message": "Unused import: os",
             },
         ]
 
         mock_verifier = MagicMock()
+        mock_verifier.test_api_connection.return_value = (True, "OK")
         mock_verifier.annotate_findings.return_value = verified
 
         llm_sec = _llm_finding(
@@ -872,10 +880,13 @@ class TestPipelineIntegration:
         assert all(f["_needs_review"] is True for f in llm_only)
         assert all(f["_ci_blocking"] is False for f in llm_only)
 
-        dead_names = [
-            f.get("name") for f in findings if f.get("_category") == "dead_code"
-        ]
-        assert "os" not in dead_names
+        dead = [f for f in findings if f.get("_category") == "dead_code"]
+        dead_names = [f.get("name") for f in dead]
+        # "os" is now kept (demoted to low confidence, not dropped)
+        assert "os" in dead_names
+        os_finding = [f for f in dead if f.get("name") == "os"][0]
+        assert os_finding["_confidence"] == "low"
+        assert os_finding["_llm_challenged"] is True
 
     def test_review_mode_calls_run_static_on_files(self, tmp_path):
         proj = tmp_path / "proj"
