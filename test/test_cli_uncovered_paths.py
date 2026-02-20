@@ -285,13 +285,15 @@ def test_main_writes_sarif_and_prints_json(tmp_path, monkeypatch):
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
         patch("skylos.cli.SarifExporter") as SarifExporter,
         patch("builtins.print") as p,
+        patch("builtins.open", create=True) as mock_open,
     ):
         exp = Mock()
+        exp.generate = Mock(return_value={"runs": [{}]})
         SarifExporter.return_value = exp
 
         cli.main()
 
-        exp.write.assert_called_once_with(str(sarif_path))
+        exp.generate.assert_called_once()
         p.assert_called_once_with(json.dumps(result))
 
 
@@ -585,7 +587,7 @@ def test_main_interactive_dry_run_does_not_modify(monkeypatch):
         "secrets": [],
     }
 
-    test_args = ["skylos", ".", "--interactive", "--dry-run"]
+    test_args = ["skylos", ".", "--interactive", "--dry-run", "--table"]
     monkeypatch.setattr(cli.sys, "argv", test_args)
 
     fake_logger = Mock()
@@ -596,6 +598,8 @@ def test_main_interactive_dry_run_does_not_modify(monkeypatch):
         patch("skylos.cli.Progress", return_value=_progress_ctx()),
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
         patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.render_results"),
+        patch("skylos.cli.print_badge"),
         patch(
             "skylos.cli.interactive_selection",
             return_value=(result["unused_functions"], result["unused_imports"]),
@@ -627,7 +631,7 @@ def test_main_interactive_comment_out_uses_comment_functions(monkeypatch):
         "secrets": [],
     }
 
-    test_args = ["skylos", ".", "--interactive", "--comment-out"]
+    test_args = ["skylos", ".", "--interactive", "--comment-out", "--table"]
     monkeypatch.setattr(cli.sys, "argv", test_args)
 
     fake_logger = Mock()

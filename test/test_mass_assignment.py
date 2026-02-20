@@ -50,9 +50,6 @@ def test_django_form_fields_all():
 
 
 def test_non_meta_class_safe():
-    code = (
-        "class Config:\n"
-        "    fields = '__all__'\n"
-    )
+    code = "class Config:\n    fields = '__all__'\n"
     findings = _scan_code(code)
     assert "SKY-D234" not in _rule_ids(findings)

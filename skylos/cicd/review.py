@@ -55,8 +55,12 @@ def run_pr_review(
         _post_pr_review(findings[:max_comments], pr_number, repo)
 
     _post_summary_comment(
-        all_findings, findings, pr_number, repo,
-        grade=grade, previous_grade=previous_grade,
+        all_findings,
+        findings,
+        pr_number,
+        repo,
+        grade=grade,
+        previous_grade=previous_grade,
     )
 
     console.print(
@@ -278,11 +282,13 @@ def _post_summary_comment(
         else:
             lines.append(f"**Overall: {overall['letter']} ({overall['score']}/100)**")
 
-        lines.extend([
-            "",
-            "| Category | Score | Grade | Key Issue |",
-            "|----------|-------|-------|-----------|",
-        ])
+        lines.extend(
+            [
+                "",
+                "| Category | Score | Grade | Key Issue |",
+                "|----------|-------|-------|-----------|",
+            ]
+        )
 
         for cat_name in ("security", "quality", "dead_code", "dependencies", "secrets"):
             cat = cats[cat_name]

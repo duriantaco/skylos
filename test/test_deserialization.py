@@ -1,4 +1,5 @@
 """Tests for extended insecure deserialization rules (SKY-D233 / DANGEROUS_CALLS)."""
+
 from pathlib import Path
 from skylos.rules.danger.danger import scan_ctx
 
@@ -33,7 +34,11 @@ def test_shelve_open_flags(tmp_path):
 def test_dill_loads_flags(tmp_path):
     code = "import dill\nobj = dill.loads(b'\\x00')\n"
     out = _scan_one(tmp_path, "deser_dill.py", code)
-    assert any("dill" in f.get("message", "").lower() or "deseri" in f.get("message", "").lower() for f in out)
+    assert any(
+        "dill" in f.get("message", "").lower()
+        or "deseri" in f.get("message", "").lower()
+        for f in out
+    )
 
 
 def test_pickle_loads_still_flags(tmp_path):

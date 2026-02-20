@@ -1323,7 +1323,9 @@ class X(cst.CSTTransformer):
 
 
 def test_if_static_condition_true_visits_only_body(monkeypatch, tmp_path):
-    monkeypatch.setattr(visitor_mod, "evaluate_static_condition", lambda _test, file_path=None: True)
+    monkeypatch.setattr(
+        visitor_mod, "evaluate_static_condition", lambda _test, file_path=None: True
+    )
 
     code = """
 FLAG = True
@@ -1343,7 +1345,9 @@ else:
 
 
 def test_if_static_condition_false_visits_only_orelse(monkeypatch, tmp_path):
-    monkeypatch.setattr(visitor_mod, "evaluate_static_condition", lambda _test, file_path=None: False)
+    monkeypatch.setattr(
+        visitor_mod, "evaluate_static_condition", lambda _test, file_path=None: False
+    )
 
     code = """
 FLAG = False
@@ -1363,7 +1367,9 @@ else:
 
 
 def test_if_static_condition_unknown_visits_both(monkeypatch, tmp_path):
-    monkeypatch.setattr(visitor_mod, "evaluate_static_condition", lambda _test, file_path=None: None)
+    monkeypatch.setattr(
+        visitor_mod, "evaluate_static_condition", lambda _test, file_path=None: None
+    )
 
     code = """
 FLAG = maybe()

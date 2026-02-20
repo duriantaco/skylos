@@ -94,7 +94,10 @@ def _compute_abstractness(tree: ast.AST) -> dict[str, Any]:
                     for dec in item.decorator_list:
                         if isinstance(dec, ast.Name) and dec.id == "abstractmethod":
                             abstract_methods += 1
-                        elif isinstance(dec, ast.Attribute) and dec.attr == "abstractmethod":
+                        elif (
+                            isinstance(dec, ast.Attribute)
+                            and dec.attr == "abstractmethod"
+                        ):
                             abstract_methods += 1
 
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -102,15 +105,24 @@ def _compute_abstractness(tree: ast.AST) -> dict[str, Any]:
 
         elif isinstance(node, ast.Assign):
             if isinstance(node.value, ast.Call):
-                if isinstance(node.value.func, ast.Name) and node.value.func.id == "TypeVar":
+                if (
+                    isinstance(node.value.func, ast.Name)
+                    and node.value.func.id == "TypeVar"
+                ):
                     type_vars += 1
-                elif isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "TypeVar":
+                elif (
+                    isinstance(node.value.func, ast.Attribute)
+                    and node.value.func.attr == "TypeVar"
+                ):
                     type_vars += 1
 
         elif isinstance(node, ast.If):
             if isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING":
                 has_type_checking = True
-            elif isinstance(node.test, ast.Attribute) and node.test.attr == "TYPE_CHECKING":
+            elif (
+                isinstance(node.test, ast.Attribute)
+                and node.test.attr == "TYPE_CHECKING"
+            ):
                 has_type_checking = True
 
     total_elements = total_classes + total_functions
@@ -159,7 +171,6 @@ def analyze_architecture(
     module_files: dict[str, str],
     module_trees: dict[str, ast.AST] | None = None,
 ) -> ArchitectureResult:
-    
     result = ArchitectureResult()
 
     all_modules = set(module_files.keys())
@@ -204,7 +215,8 @@ def analyze_architecture(
             try:
                 text = Path(file_path).read_text(errors="replace")
                 metrics.loc = sum(
-                    1 for line in text.splitlines()
+                    1
+                    for line in text.splitlines()
                     if line.strip() and not line.strip().startswith("#")
                 )
             except (OSError, UnicodeDecodeError):
@@ -215,7 +227,7 @@ def analyze_architecture(
     # "stable" means instability < 0.3
     instability_threshold = 0.3
     # "unstable" means instability > 0.7
-    unstable_threshold = 0.7 
+    unstable_threshold = 0.7
 
     for module, deps in efferent.items():
         m_metrics = result.modules.get(module)
@@ -262,11 +274,13 @@ def analyze_architecture(
 
         avg_abstractness = (
             sum(m.abstractness for m in member_metrics) / len(member_metrics)
-            if member_metrics else 0.0
+            if member_metrics
+            else 0.0
         )
         avg_distance = (
             sum(m.distance for m in member_metrics) / len(member_metrics)
-            if member_metrics else 0.0
+            if member_metrics
+            else 0.0
         )
 
         result.packages[package] = {
@@ -295,9 +309,13 @@ def analyze_architecture(
 
         instabilities = [m.instability for m in all_metrics if m.total_coupling > 0]
         instability_variance = (
-            sum((i - sum(instabilities) / len(instabilities)) ** 2 for i in instabilities)
+            sum(
+                (i - sum(instabilities) / len(instabilities)) ** 2
+                for i in instabilities
+            )
             / len(instabilities)
-            if instabilities else 0.0
+            if instabilities
+            else 0.0
         )
 
         distances = []
@@ -322,10 +340,14 @@ def analyze_architecture(
             "coupling_health": round(1.0 - min(1.0, instability_variance * 10), 3),
             "dip_violations": len(result.dip_violations),
             "zone_distribution": {
-                "main_sequence": sum(1 for m in all_metrics if m.zone == "main_sequence"),
+                "main_sequence": sum(
+                    1 for m in all_metrics if m.zone == "main_sequence"
+                ),
                 "healthy": sum(1 for m in all_metrics if m.zone == "healthy"),
                 "zone_of_pain": sum(1 for m in all_metrics if m.zone == "zone_of_pain"),
-                "zone_of_uselessness": sum(1 for m in all_metrics if m.zone == "zone_of_uselessness"),
+                "zone_of_uselessness": sum(
+                    1 for m in all_metrics if m.zone == "zone_of_uselessness"
+                ),
             },
         }
     else:
@@ -351,32 +373,33 @@ def _generate_findings(result: ArchitectureResult):
     for name, m in result.modules.items():
         # SKY-Q802: High distance from main sequence
         if m.distance > 0.5 and m.total_coupling > 0:
-
             if m.distance > 0.7:
                 severity = "HIGH"
             else:
                 severity = "MEDIUM"
 
-            result.findings.append({
-                "rule_id": "SKY-Q802",
-                "kind": "architecture",
-                "severity": severity,
-                "type": "module",
-                "name": name,
-                "simple_name": name.split(".")[-1],
-                "value": round(m.distance, 3),
-                "threshold": 0.5,
-                "instability": round(m.instability, 3),
-                "abstractness": round(m.abstractness, 3),
-                "message": (
-                    f"Module '{name}' is far from the Main Sequence "
-                    f"(D={m.distance:.2f}, I={m.instability:.2f}, A={m.abstractness:.2f}). "
-                    f"Zone: {m.zone.replace('_', ' ')}."
-                ),
-                "file": m.file_path,
-                "basename": Path(m.file_path).name if m.file_path else name,
-                "line": 1,
-            })
+            result.findings.append(
+                {
+                    "rule_id": "SKY-Q802",
+                    "kind": "architecture",
+                    "severity": severity,
+                    "type": "module",
+                    "name": name,
+                    "simple_name": name.split(".")[-1],
+                    "value": round(m.distance, 3),
+                    "threshold": 0.5,
+                    "instability": round(m.instability, 3),
+                    "abstractness": round(m.abstractness, 3),
+                    "message": (
+                        f"Module '{name}' is far from the Main Sequence "
+                        f"(D={m.distance:.2f}, I={m.instability:.2f}, A={m.abstractness:.2f}). "
+                        f"Zone: {m.zone.replace('_', ' ')}."
+                    ),
+                    "file": m.file_path,
+                    "basename": Path(m.file_path).name if m.file_path else name,
+                    "line": 1,
+                }
+            )
 
         # SKY-Q803: Zone warnings
         if m.zone in ("zone_of_pain", "zone_of_uselessness") and m.total_coupling > 0:
@@ -393,44 +416,50 @@ def _generate_findings(result: ArchitectureResult):
                     f"Nobody depends on it. Consider abstracting its interface or removing if unused."
                 )
 
-            result.findings.append({
-                "rule_id": "SKY-Q803",
-                "kind": "architecture",
-                "severity": "MEDIUM",
-                "type": "module",
-                "name": name,
-                "simple_name": name.split(".")[-1],
-                "value": m.zone,
-                "instability": round(m.instability, 3),
-                "abstractness": round(m.abstractness, 3),
-                "distance": round(m.distance, 3),
-                "message": zone_msg,
-                "file": m.file_path,
-                "basename": Path(m.file_path).name if m.file_path else name,
-                "line": 1,
-            })
+            result.findings.append(
+                {
+                    "rule_id": "SKY-Q803",
+                    "kind": "architecture",
+                    "severity": "MEDIUM",
+                    "type": "module",
+                    "name": name,
+                    "simple_name": name.split(".")[-1],
+                    "value": m.zone,
+                    "instability": round(m.instability, 3),
+                    "abstractness": round(m.abstractness, 3),
+                    "distance": round(m.distance, 3),
+                    "message": zone_msg,
+                    "file": m.file_path,
+                    "basename": Path(m.file_path).name if m.file_path else name,
+                    "line": 1,
+                }
+            )
 
     # SKY-Q804: DIP violations
     for v in result.dip_violations:
         stable_file = result.modules.get(v.stable_module)
-        result.findings.append({
-            "rule_id": "SKY-Q804",
-            "kind": "architecture",
-            "severity": v.severity,
-            "type": "module",
-            "name": v.stable_module,
-            "simple_name": v.stable_module.split(".")[-1],
-            "value": f"{v.stable_module} -> {v.unstable_module}",
-            "message": (
-                f"Dependency Inversion violation: stable module '{v.stable_module}' "
-                f"(I={v.stable_instability:.2f}) depends on unstable module "
-                f"'{v.unstable_module}' (I={v.unstable_instability:.2f}). "
-                f"Consider introducing an abstraction layer."
-            ),
-            "file": stable_file.file_path if stable_file else "",
-            "basename": Path(stable_file.file_path).name if stable_file and stable_file.file_path else v.stable_module,
-            "line": 1,
-        })
+        result.findings.append(
+            {
+                "rule_id": "SKY-Q804",
+                "kind": "architecture",
+                "severity": v.severity,
+                "type": "module",
+                "name": v.stable_module,
+                "simple_name": v.stable_module.split(".")[-1],
+                "value": f"{v.stable_module} -> {v.unstable_module}",
+                "message": (
+                    f"Dependency Inversion violation: stable module '{v.stable_module}' "
+                    f"(I={v.stable_instability:.2f}) depends on unstable module "
+                    f"'{v.unstable_module}' (I={v.unstable_instability:.2f}). "
+                    f"Consider introducing an abstraction layer."
+                ),
+                "file": stable_file.file_path if stable_file else "",
+                "basename": Path(stable_file.file_path).name
+                if stable_file and stable_file.file_path
+                else v.stable_module,
+                "line": 1,
+            }
+        )
 
 
 def get_architecture_findings(
@@ -438,7 +467,6 @@ def get_architecture_findings(
     module_files: dict[str, str],
     module_trees: dict[str, ast.AST] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-
     result = analyze_architecture(
         dependency_graph=dependency_graph,
         module_files=module_files,

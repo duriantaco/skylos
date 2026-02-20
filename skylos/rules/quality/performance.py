@@ -46,9 +46,19 @@ def _is_file_read_context(node: ast.Call) -> bool:
         name = receiver.id.lower()
 
         non_file_hints = (
-            "response", "resp", "reply", "buf", "buffer",
-            "stringio", "bytesio", "stream", "bio", "sio",
-            "stdin", "stdout", "stderr",
+            "response",
+            "resp",
+            "reply",
+            "buf",
+            "buffer",
+            "stringio",
+            "bytesio",
+            "stream",
+            "bio",
+            "sio",
+            "stdin",
+            "stdout",
+            "stderr",
         )
         if any(hint in name for hint in non_file_hints):
             return False
@@ -87,7 +97,9 @@ class PerformanceRule(SkylosRule):
                 if child.orelse:
                     findings_list.extend(self._find_nested_loops(outer, child.orelse))
                 if child.finalbody:
-                    findings_list.extend(self._find_nested_loops(outer, child.finalbody))
+                    findings_list.extend(
+                        self._find_nested_loops(outer, child.finalbody)
+                    )
         return findings_list
 
     def visit_node(self, node, context):

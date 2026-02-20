@@ -152,33 +152,25 @@ class TestScoreDeadCode:
         assert score == 100
 
     def test_moderate_density(self):
-        result = _empty_result(
-            unused_functions=[{"name": f"f{i}"} for i in range(10)]
-        )
+        result = _empty_result(unused_functions=[{"name": f"f{i}"} for i in range(10)])
         # 10 dead in 2000 LOC = 5/1K = score 85
         score, _ = score_dead_code(result, 2000)
         assert score == 85
 
     def test_high_density_low_score(self):
-        result = _empty_result(
-            unused_functions=[{"name": f"f{i}"} for i in range(50)]
-        )
+        result = _empty_result(unused_functions=[{"name": f"f{i}"} for i in range(50)])
         # 50 dead in 1000 LOC = 50/1K
         score, _ = score_dead_code(result, 1000)
         assert score == 0
 
     def test_key_issue_format(self):
-        result = _empty_result(
-            unused_functions=[{"name": f"f{i}"} for i in range(5)]
-        )
+        result = _empty_result(unused_functions=[{"name": f"f{i}"} for i in range(5)])
         _, issue = score_dead_code(result, 5000)
         assert "5 dead symbols" in issue
         assert "/1K LOC" in issue
 
     def test_zero_loc_uses_raw_count(self):
-        result = _empty_result(
-            unused_functions=[{"name": f"f{i}"} for i in range(3)]
-        )
+        result = _empty_result(unused_functions=[{"name": f"f{i}"} for i in range(3)])
         score, _ = score_dead_code(result, 0)
         assert score < 100
 
@@ -253,9 +245,7 @@ class TestComputeGrade:
         assert grade["overall"]["score"] == 100
 
     def test_critical_security_caps_overall(self):
-        result = _empty_result(
-            danger=[{"severity": "CRITICAL", "message": "RCE"}]
-        )
+        result = _empty_result(danger=[{"severity": "CRITICAL", "message": "RCE"}])
         grade = compute_grade(result, 10000)
         assert grade["overall"]["score"] <= 79
         assert grade["overall"]["letter"][0] in ("C", "D", "F")
@@ -278,9 +268,7 @@ class TestComputeGrade:
         assert grade["total_loc"] == 42000
 
     def test_secrets_subgrade_capped(self):
-        result = _empty_result(
-            secrets=[{"message": "API key"}]
-        )
+        result = _empty_result(secrets=[{"message": "API key"}])
         grade = compute_grade(result, 10000)
         assert grade["categories"]["secrets"]["score"] <= 69
 

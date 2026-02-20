@@ -1,4 +1,5 @@
 """Tests for GitHub Actions annotation output format (--github flag)."""
+
 from skylos.cli import _emit_github_annotations
 import io
 import sys
@@ -27,13 +28,28 @@ class TestGitHubAnnotations:
         }
         lines = _capture_annotations(result)
         assert len(lines) == 1
-        assert lines[0] == "::error file=app.py,line=10,title=Skylos SKY-D211::SQL injection detected"
+        assert (
+            lines[0]
+            == "::error file=app.py,line=10,title=Skylos SKY-D211::SQL injection detected"
+        )
 
     def test_severity_mapping(self):
         result = {
             "quality": [
-                {"rule_id": "SKY-Q301", "severity": "MEDIUM", "file": "a.py", "line": 5, "message": "Complex"},
-                {"rule_id": "SKY-Q302", "severity": "LOW", "file": "b.py", "line": 8, "message": "Long func"},
+                {
+                    "rule_id": "SKY-Q301",
+                    "severity": "MEDIUM",
+                    "file": "a.py",
+                    "line": 5,
+                    "message": "Complex",
+                },
+                {
+                    "rule_id": "SKY-Q302",
+                    "severity": "LOW",
+                    "file": "b.py",
+                    "line": 8,
+                    "message": "Long func",
+                },
             ],
         }
         lines = _capture_annotations(result)
@@ -63,10 +79,22 @@ class TestGitHubAnnotations:
     def test_mixed_categories(self):
         result = {
             "danger": [
-                {"rule_id": "SKY-D501", "severity": "CRITICAL", "file": "x.py", "line": 1, "message": "eval"},
+                {
+                    "rule_id": "SKY-D501",
+                    "severity": "CRITICAL",
+                    "file": "x.py",
+                    "line": 1,
+                    "message": "eval",
+                },
             ],
             "secrets": [
-                {"rule_id": "SKY-S101", "severity": "HIGH", "file": "y.py", "line": 2, "message": "API key"},
+                {
+                    "rule_id": "SKY-S101",
+                    "severity": "HIGH",
+                    "file": "y.py",
+                    "line": 2,
+                    "message": "API key",
+                },
             ],
             "unused_classes": [
                 {"name": "OldClass", "file": "z.py", "line": 3},

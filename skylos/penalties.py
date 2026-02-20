@@ -34,7 +34,13 @@ from skylos.visitors.framework_aware import detect_framework_usage
 from pathlib import Path
 
 
-def apply_penalties(analyzer: Any, def_obj: Any, visitor: Any, framework: Any, cfg: Optional[dict] = None) -> None:
+def apply_penalties(
+    analyzer: Any,
+    def_obj: Any,
+    visitor: Any,
+    framework: Any,
+    cfg: Optional[dict] = None,
+) -> None:
     confidence = 100
     simple_name = def_obj.simple_name
 

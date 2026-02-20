@@ -56,7 +56,6 @@ class RemediationExecutor:
         for fp in list(self._backups.keys()):
             self.revert_fix(fp)
 
-
     def run_tests(self, timeout: int = 300) -> TestResult:
         cmd = self.test_cmd or self._detect_test_command()
         if not cmd:

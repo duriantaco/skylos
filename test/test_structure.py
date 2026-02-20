@@ -26,7 +26,7 @@ def my_func(a, b, c, d, e, f):
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-C303"
         assert findings[0]["value"] == 6
-        assert "Function has 6 arguments" in findings[0]["message"]
+        assert "Function has 6 required arguments" in findings[0]["message"]
 
     def test_exact_limit_is_fine(self):
         code = """
@@ -54,10 +54,10 @@ class MyClass:
 
     def test_counts_kwonly_args(self):
         code = """
-def my_func(a, b, *, c, d, e, f): 
+def my_func(a, b, *, c, d, e, f):
     pass
         """
-        rule = ArgCountRule(max_args=5)
+        rule = ArgCountRule(max_args=5, max_total=5)
 
         findings = check_code(rule, code)
         assert len(findings) == 1

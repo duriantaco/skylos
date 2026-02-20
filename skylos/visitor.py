@@ -447,7 +447,10 @@ class Visitor(ast.NodeVisitor):
             self.add_def(full, "import", node.lineno)
 
     def visit_If(self, node: ast.If) -> None:
-        from skylos.control_flow import _is_sys_version_info_node, _extract_version_tuple
+        from skylos.control_flow import (
+            _is_sys_version_info_node,
+            _extract_version_tuple,
+        )
 
         condition = evaluate_static_condition(node.test, file_path=self.file)
         self.visit(node.test)
@@ -456,9 +459,15 @@ class Visitor(ast.NodeVisitor):
         is_version_conditional = False
         if isinstance(node.test, ast.Compare):
             if _is_sys_version_info_node(node.test.left):
-                version_tuple = _extract_version_tuple(node.test.comparators[0]) if node.test.comparators else None
+                version_tuple = (
+                    _extract_version_tuple(node.test.comparators[0])
+                    if node.test.comparators
+                    else None
+                )
                 is_version_conditional = version_tuple is not None
-            elif node.test.comparators and _is_sys_version_info_node(node.test.comparators[0]):
+            elif node.test.comparators and _is_sys_version_info_node(
+                node.test.comparators[0]
+            ):
                 version_tuple = _extract_version_tuple(node.test.left)
                 is_version_conditional = version_tuple is not None
 
@@ -480,7 +489,7 @@ class Visitor(ast.NodeVisitor):
 
     def _mark_version_conditional(self, node: ast.AST) -> None:
         for child in ast.walk(node):
-            if hasattr(child, 'lineno'):
+            if hasattr(child, "lineno"):
                 self.version_conditional_lines.add(child.lineno)
 
     def visit_For(self, node: ast.For) -> None:

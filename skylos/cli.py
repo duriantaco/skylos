@@ -377,11 +377,20 @@ def _print_upload_destination(console: Console, project_root: Path):
 
 
 def _is_ci():
-    return any(os.getenv(v) for v in (
-        "CI", "GITHUB_ACTIONS", "JENKINS_URL", "BUILD_NUMBER",
-        "CIRCLECI", "GITLAB_CI", "BITBUCKET_PIPELINE_UUID",
-        "AZURE_PIPELINES", "TF_BUILD",
-    ))
+    return any(
+        os.getenv(v)
+        for v in (
+            "CI",
+            "GITHUB_ACTIONS",
+            "JENKINS_URL",
+            "BUILD_NUMBER",
+            "CIRCLECI",
+            "GITLAB_CI",
+            "BITBUCKET_PIPELINE_UUID",
+            "AZURE_PIPELINES",
+            "TF_BUILD",
+        )
+    )
 
 
 def _print_upload_cta(console: Console, project_root: Path):
@@ -394,32 +403,40 @@ def _print_upload_cta(console: Console, project_root: Path):
 
     console.print()
     if connected:
-        console.print(Panel(
-            "\n".join([
-                "[bold]Upload to Skylos Cloud for trend tracking and PR blocking[/bold]",
-                "",
-                "  [bold cyan]skylos . --upload[/bold cyan]",
-                "",
-                "  [dim]Dashboard:[/dim] https://skylos.dev/dashboard",
-            ]),
-            title="[bold]☁️  Skylos Cloud[/bold]",
-            border_style="blue",
-            padding=(1, 2),
-        ))
+        console.print(
+            Panel(
+                "\n".join(
+                    [
+                        "[bold]Upload to Skylos Cloud for trend tracking and PR blocking[/bold]",
+                        "",
+                        "  [bold cyan]skylos . --upload[/bold cyan]",
+                        "",
+                        "  [dim]Dashboard:[/dim] https://skylos.dev/dashboard",
+                    ]
+                ),
+                title="[bold]☁️  Skylos Cloud[/bold]",
+                border_style="blue",
+                padding=(1, 2),
+            )
+        )
     else:
-        console.print(Panel(
-            "\n".join([
-                "[bold]Upload to Skylos Cloud in one command[/bold]",
-                "",
-                "  [bold cyan]skylos . --upload[/bold cyan]",
-                "",
-                "  [dim]Browser opens → pick project → done![/dim]",
-                "  [dim]Dashboard:[/dim] https://skylos.dev",
-            ]),
-            title="[bold]☁️  Skylos Cloud[/bold]",
-            border_style="blue",
-            padding=(1, 2),
-        ))
+        console.print(
+            Panel(
+                "\n".join(
+                    [
+                        "[bold]Upload to Skylos Cloud in one command[/bold]",
+                        "",
+                        "  [bold cyan]skylos . --upload[/bold cyan]",
+                        "",
+                        "  [dim]Browser opens → pick project → done![/dim]",
+                        "  [dim]Dashboard:[/dim] https://skylos.dev",
+                    ]
+                ),
+                title="[bold]☁️  Skylos Cloud[/bold]",
+                border_style="blue",
+                padding=(1, 2),
+            )
+        )
 
 
 def interactive_selection(
@@ -542,7 +559,9 @@ def _emit_github_annotations(result, *, max_annotations=50, severity_filter=None
     grade_data = result.get("grade")
     if grade_data:
         overall = grade_data["overall"]
-        print(f"::notice title=Skylos Grade::{overall['letter']} ({overall['score']}/100)")
+        print(
+            f"::notice title=Skylos Grade::{overall['letter']} ({overall['score']}/100)"
+        )
 
     annotations = []
 
@@ -646,15 +665,17 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
         kept = items
         if file_filter:
             kept = [
-                item for item in kept
+                item
+                for item in kept
                 if file_filter in (item.get("file") or item.get("file_path") or "")
             ]
 
         if min_rank > 0:
+
             def _passes_severity(item):
                 sev = (item.get("severity") or "").lower()
                 return SEVERITY_RANK.get(sev, 0) >= min_rank
-            
+
             if kept:
                 has_severity = False
                 for item in kept:
@@ -815,7 +836,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print(table)
         if overflow:
-            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
+            console.print(
+                f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+            )
         console.print()
 
     def _render_unused_simple(title, items, name_key="name"):
@@ -838,7 +861,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print(table)
         if overflow:
-            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
+            console.print(
+                f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+            )
         console.print()
 
     def _render_quality(items):
@@ -876,7 +901,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print(table)
         if overflow:
-            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
+            console.print(
+                f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+            )
         console.print(
             "[muted]Tip: split helpers, add early returns, flatten branches.[/muted]\n"
         )
@@ -905,7 +932,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print(table)
         if overflow:
-            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
+            console.print(
+                f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+            )
         console.print(
             "[muted]Tip: Break the cycle by refactoring the suggested module.[/muted]\n"
         )
@@ -936,7 +965,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print(table)
         if overflow:
-            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
+            console.print(
+                f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+            )
         console.print()
 
     def _render_secrets(items):
@@ -962,7 +993,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print(table)
         if overflow:
-            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
+            console.print(
+                f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+            )
         console.print()
 
     def render_tree(console: Console, result, root_path=None):
@@ -1000,7 +1033,11 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
         _add_findings(result.get("danger"), "security", default_sev="high")
         _add_findings(result.get("secrets"), "secret", default_sev="high")
         _add_findings(result.get("quality"), "quality", default_sev="medium")
-        _add_findings(result.get("dependency_vulnerabilities"), "vulnerability", default_sev="high")
+        _add_findings(
+            result.get("dependency_vulnerabilities"),
+            "vulnerability",
+            default_sev="high",
+        )
 
         if not by_file:
             console.print("[good]No findings to display.[/good]")
@@ -1130,7 +1167,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print(table)
         if overflow:
-            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
+            console.print(
+                f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+            )
         console.print()
 
     def _render_sca(items):
@@ -1150,7 +1189,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
         for i, v in enumerate(show, 1):
             meta = v.get("metadata") or {}
             pkg = f"{meta.get('package_name', '?')}@{meta.get('package_version', '?')}"
-            vuln_id = meta.get("display_id") or meta.get("vuln_id") or v.get("rule_id", "")
+            vuln_id = (
+                meta.get("display_id") or meta.get("vuln_id") or v.get("rule_id", "")
+            )
             sev = (v.get("severity") or "MEDIUM").title()
             msg = v.get("message") or "Known vulnerability"
             fix = meta.get("fixed_version") or "-"
@@ -1158,7 +1199,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print(table)
         if overflow:
-            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
+            console.print(
+                f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+            )
         console.print()
 
     if tree:
@@ -1365,47 +1408,57 @@ def _run_clean_command():
     console = Console()
     path = sys.argv[2] if len(sys.argv) > 2 else "."
 
-    console.print(Panel(
-        "[bold]Skylos Clean[/bold] — Interactive Dead Code Removal",
-        border_style="blue",
-    ))
+    console.print(
+        Panel(
+            "[bold]Skylos Clean[/bold] — Interactive Dead Code Removal",
+            border_style="blue",
+        )
+    )
     console.print(f"Scanning [bold]{path}[/bold]...\n")
 
     result = json.loads(run_analyze(path))
 
     findings = []
     for fn in result.get("unused_functions", []):
-        findings.append({
-            "type": "function",
-            "name": fn.get("name", ""),
-            "file": fn.get("file", ""),
-            "line": fn.get("line", 0),
-            "confidence": fn.get("confidence", 100),
-        })
+        findings.append(
+            {
+                "type": "function",
+                "name": fn.get("name", ""),
+                "file": fn.get("file", ""),
+                "line": fn.get("line", 0),
+                "confidence": fn.get("confidence", 100),
+            }
+        )
     for imp in result.get("unused_imports", []):
-        findings.append({
-            "type": "import",
-            "name": imp.get("name", ""),
-            "file": imp.get("file", ""),
-            "line": imp.get("line", 0),
-            "confidence": imp.get("confidence", 100),
-        })
+        findings.append(
+            {
+                "type": "import",
+                "name": imp.get("name", ""),
+                "file": imp.get("file", ""),
+                "line": imp.get("line", 0),
+                "confidence": imp.get("confidence", 100),
+            }
+        )
     for var in result.get("unused_variables", []):
-        findings.append({
-            "type": "variable",
-            "name": var.get("name", ""),
-            "file": var.get("file", ""),
-            "line": var.get("line", 0),
-            "confidence": var.get("confidence", 100),
-        })
+        findings.append(
+            {
+                "type": "variable",
+                "name": var.get("name", ""),
+                "file": var.get("file", ""),
+                "line": var.get("line", 0),
+                "confidence": var.get("confidence", 100),
+            }
+        )
     for cls in result.get("unused_classes", []):
-        findings.append({
-            "type": "class",
-            "name": cls.get("name", ""),
-            "file": cls.get("file", ""),
-            "line": cls.get("line", 0),
-            "confidence": cls.get("confidence", 100),
-        })
+        findings.append(
+            {
+                "type": "class",
+                "name": cls.get("name", ""),
+                "file": cls.get("file", ""),
+                "line": cls.get("line", 0),
+                "confidence": cls.get("confidence", 100),
+            }
+        )
 
     findings.sort(key=lambda f: -f["confidence"])
 
@@ -1425,12 +1478,12 @@ def _run_clean_command():
             f"[bold][{i}/{len(findings)}][/bold] Unused {f['type']} "
             f"[bold cyan]{f['name']}[/bold cyan] at {f['file']}:{f['line']}"
         )
-        console.print(
-            f"         Confidence: [bold]{f['confidence']}%[/bold]"
-        )
+        console.print(f"         Confidence: [bold]{f['confidence']}%[/bold]")
 
         try:
-            choice = input("\n  [R]emove  [C]omment-out  [S]kip  [Q]uit > ").strip().lower()
+            choice = (
+                input("\n  [R]emove  [C]omment-out  [S]kip  [Q]uit > ").strip().lower()
+            )
         except (KeyboardInterrupt, EOFError):
             console.print("\n[dim]Interrupted.[/dim]")
             break
@@ -1547,32 +1600,40 @@ def main():
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] == "badge":
-        from rich.console import Console
         console = Console()
 
         badge_markdown = "[![Analyzed with Skylos](https://img.shields.io/badge/Analyzed%20with-Skylos-2f80ed?style=flat&logo=python&logoColor=white)](https://github.com/duriantaco/skylos)"
 
         console.print()
-        console.print(Panel.fit(
-            "[bold cyan]Add this badge to your README.md:[/bold cyan]\n\n"
-            f"[yellow]{badge_markdown}[/yellow]\n\n"
-            "[dim]Shows others you maintain clean, secure code with Skylos![/dim]\n\n"
-            "[bold]Preview:[/bold]\n"
-            "[![Analyzed with Skylos](2f80ed badge)](github.com/duriantaco/skylos)",
-            title="[cyan]📛 Skylos Badge[/cyan]",
-            border_style="cyan"
-        ))
+        console.print(
+            Panel.fit(
+                "[bold cyan]Add this badge to your README.md:[/bold cyan]\n\n"
+                f"[yellow]{badge_markdown}[/yellow]\n\n"
+                "[dim]Shows others you maintain clean, secure code with Skylos![/dim]\n\n"
+                "[bold]Preview:[/bold]\n"
+                "[![Analyzed with Skylos](2f80ed badge)](github.com/duriantaco/skylos)",
+                title="[cyan]📛 Skylos Badge[/cyan]",
+                border_style="cyan",
+            )
+        )
         console.print()
-        console.print("[dim]💡 Tip: Add this near your other badges at the top of README.md[/dim]")
-        console.print("[dim]📢 Share your project: https://github.com/duriantaco/skylos#projects-using-skylos[/dim]")
+        console.print(
+            "[dim]💡 Tip: Add this near your other badges at the top of README.md[/dim]"
+        )
+        console.print(
+            "[dim]📢 Share your project: https://github.com/duriantaco/skylos#projects-using-skylos[/dim]"
+        )
         console.print()
 
         try:
             import pyperclip
+
             pyperclip.copy(badge_markdown)
             console.print("[good]✅ Badge markdown copied to clipboard![/good]")
         except ImportError:
-            console.print("[muted]💡 Install pyperclip for auto-copy: pip install pyperclip[/muted]")
+            console.print(
+                "[muted]💡 Install pyperclip for auto-copy: pip install pyperclip[/muted]"
+            )
 
         sys.exit(0)
 
@@ -2095,7 +2156,7 @@ def main():
                     strict=getattr(agent_args, "strict", False),
                     analysis_mode="hybrid",
                 )
-            
+
             if merged_findings:
                 sys.exit(1)
             else:
@@ -2346,7 +2407,7 @@ Additional commands:
   skylos badge           Get badge markdown for your README
 
 Run 'skylos <command> --help' for more information on each command.
-        """
+        """,
     )
     parser.add_argument("path", help="Path to the Python project")
     parser.add_argument(
@@ -2394,7 +2455,9 @@ Run 'skylos <command> --help' for more information on each command.
         "--fix", action="store_true", help="Attempt to auto-fix issues using AI"
     )
     parser.add_argument(
-        "--table", action="store_true", help="Show findings in Rich table format instead of TUI"
+        "--table",
+        action="store_true",
+        help="Show findings in Rich table format instead of TUI",
     )
     parser.add_argument(
         "--tree", action="store_true", help="Show findings in tree format"
@@ -2787,10 +2850,13 @@ sys.exit(ret)
         if getattr(args, "sca", False) and "dependency_vulnerabilities" not in result:
             try:
                 from skylos.rules.sca.vulnerability_scanner import scan_dependencies
+
                 sca_findings = scan_dependencies(project_root)
                 if sca_findings:
                     result["dependency_vulnerabilities"] = sca_findings
-                    result.setdefault("analysis_summary", {})["sca_count"] = len(sca_findings)
+                    result.setdefault("analysis_summary", {})["sca_count"] = len(
+                        sca_findings
+                    )
             except Exception as e:
                 if args.verbose:
                     console.print(f"[warn]SCA scan error: {e}[/warn]")
@@ -2959,6 +3025,7 @@ sys.exit(ret)
             if grade_data:
                 sarif_data["runs"][0].setdefault("properties", {})["grade"] = grade_data
             import json as _json
+
             with open(args.sarif, "w", encoding="utf-8") as _sf:
                 _json.dump(sarif_data, _sf, indent=2)
 
@@ -3161,15 +3228,21 @@ sys.exit(ret)
         _cli_limit = getattr(args, "limit", None)
         if _cli_severity or _cli_category or _cli_file_filter:
             display_result = _apply_display_filters(
-                result, severity=_cli_severity,
-                category=_cli_category, file_filter=_cli_file_filter,
+                result,
+                severity=_cli_severity,
+                category=_cli_category,
+                file_filter=_cli_file_filter,
             )
         render_results(
-            console, display_result,
-            tree=args.tree, root_path=project_root, limit=_cli_limit,
+            console,
+            display_result,
+            tree=args.tree,
+            root_path=project_root,
+            limit=_cli_limit,
         )
     else:
         from skylos.tui import run_tui
+
         run_tui(result, root_path=project_root)
 
     unused_total = sum(
@@ -3233,13 +3306,13 @@ sys.exit(ret)
             )
 
             no_prompt = bool(config.get("no_upload_prompt"))
-            if (
-                (not no_prompt)
-                and _has_high_intent_findings(result)
-                and _is_tty()
-            ):
+            if (not no_prompt) and _has_high_intent_findings(result) and _is_tty():
                 try:
-                    ans = input("  Upload this scan to Skylos Cloud? [Y/n/never] ").strip().lower()
+                    ans = (
+                        input("  Upload this scan to Skylos Cloud? [Y/n/never] ")
+                        .strip()
+                        .lower()
+                    )
                 except (KeyboardInterrupt, EOFError):
                     ans = "n"
 
@@ -3248,7 +3321,9 @@ sys.exit(ret)
                 elif ans == "never":
                     ok = _set_no_upload_prompt(project_root, True)
                     if ok:
-                        console.print("[muted]Okay. Run 'skylos . --upload' anytime to upload manually.[/muted]")
+                        console.print(
+                            "[muted]Okay. Run 'skylos . --upload' anytime to upload manually.[/muted]"
+                        )
                     else:
                         console.print(
                             "[warn]Could not persist preference (no pyproject.toml).[/warn]"
@@ -3286,9 +3361,7 @@ sys.exit(ret)
                 if login_result is None:
                     console.print("[dim]Upload cancelled.[/dim]")
                     raise SystemExit(0)
-                has_link, using_env = _print_upload_destination(
-                    console, project_root
-                )
+                has_link, using_env = _print_upload_destination(console, project_root)
             elif _is_ci():
                 console.print(
                     "[warn]No SKYLOS_TOKEN set. To upload from CI, add SKYLOS_TOKEN to your environment.[/warn]"

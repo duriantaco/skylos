@@ -334,7 +334,7 @@ class TestMainFunction:
 
     def test_main_verbose_output(self, mock_skylos_result):
         """with verbose"""
-        test_args = ["cli.py", "test_path", "--verbose"]
+        test_args = ["cli.py", "test_path", "--verbose", "--table"]
 
         with (
             patch("sys.argv", test_args),
@@ -637,6 +637,7 @@ def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
         captured["findings"] = findings
         exp = Mock()
         exp.write = Mock()
+        exp.generate = Mock(return_value={"runs": [{}]})
         return exp
 
     with (
@@ -686,7 +687,9 @@ def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
     }
 
     # Add --upload and --strict flags
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--upload", "--strict"])
+    monkeypatch.setattr(
+        cli.sys, "argv", ["skylos", ".", "--upload", "--strict", "--table"]
+    )
 
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -698,6 +701,7 @@ def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
         patch("skylos.cli.load_config", return_value={}),
         patch("skylos.cli.render_results"),
         patch("skylos.cli.print_badge"),
+        patch("skylos.cli._print_upload_destination", return_value=(True, False)),
         patch(
             "skylos.cli.upload_report",
             return_value={
@@ -726,7 +730,7 @@ def test_main_upload_gate_failed_does_not_exit_when_forced(monkeypatch):
         "secrets": [],
     }
 
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--force"])
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--force", "--table"])
 
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -766,7 +770,7 @@ def test_main_command_exec_success_exits_zero(monkeypatch):
         "secrets": [],
     }
 
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--", "echo", "hi"])
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--table", "--", "echo", "hi"])
 
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -811,7 +815,7 @@ def test_main_command_exec_failure_exits_with_code(monkeypatch):
         "secrets": [],
     }
 
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--", "false"])
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--table", "--", "false"])
 
     fake_logger = Mock()
     fake_logger.console = Mock()

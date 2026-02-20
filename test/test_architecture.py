@@ -13,6 +13,7 @@ from skylos.architecture import (
 
 # ── _compute_abstractness ──
 
+
 class TestComputeAbstractness:
     def test_no_abstractions(self):
         tree = ast.parse("""
@@ -78,6 +79,7 @@ class Baz:
 
 # ── _classify_zone ──
 
+
 class TestClassifyZone:
     def test_main_sequence(self):
         # A + I ≈ 1.0, not in extreme zones
@@ -98,6 +100,7 @@ class TestClassifyZone:
 
 
 # ── analyze_architecture ──
+
 
 class TestAnalyzeArchitecture:
     def test_empty_project(self):
@@ -142,11 +145,11 @@ class TestAnalyzeArchitecture:
         # Stable module depending on unstable module
         result = analyze_architecture(
             dependency_graph={
-                "core": {"utils"},   # core is stable, depends on utils
-                "utils": {"core"},   # utils is unstable (self-referential for Ca)
-                "app": {"core"},     # app depends on core (making core stable)
-                "cli": {"core"},     # another dependent of core
-                "web": {"utils"},    # utils depends on nothing important
+                "core": {"utils"},  # core is stable, depends on utils
+                "utils": {"core"},  # utils is unstable (self-referential for Ca)
+                "app": {"core"},  # app depends on core (making core stable)
+                "cli": {"core"},  # another dependent of core
+                "web": {"utils"},  # utils depends on nothing important
             },
             module_files={
                 "core": "/p/core.py",
@@ -220,6 +223,7 @@ class Concrete:
 
 
 # ── get_architecture_findings ──
+
 
 class TestGetArchitectureFindings:
     def test_returns_findings_and_summary(self):

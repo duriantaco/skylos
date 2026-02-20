@@ -6,45 +6,45 @@ from urllib.parse import quote
 
 GRADE_TABLE: list[tuple[str, int, int]] = [
     ("A+", 97, 100),
-    ("A",  93, 96),
+    ("A", 93, 96),
     ("A-", 90, 92),
     ("B+", 87, 89),
-    ("B",  83, 86),
+    ("B", 83, 86),
     ("B-", 80, 82),
     ("C+", 77, 79),
-    ("C",  73, 76),
+    ("C", 73, 76),
     ("C-", 70, 72),
     ("D+", 67, 69),
-    ("D",  63, 66),
+    ("D", 63, 66),
     ("D-", 60, 62),
-    ("F",  0,  59),
+    ("F", 0, 59),
 ]
 
 CATEGORY_WEIGHTS: dict[str, float] = {
-    "security":     0.35,
-    "quality":      0.25,
-    "dead_code":    0.20,
+    "security": 0.35,
+    "quality": 0.25,
+    "dead_code": 0.20,
     "dependencies": 0.10,
-    "secrets":      0.10,
+    "secrets": 0.10,
 }
 
 SEVERITY_CAPS: dict[str, int] = {
     "CRITICAL": 55,
-    "HIGH":     79,
-    "MEDIUM":   100,
-    "LOW":      100,
+    "HIGH": 79,
+    "MEDIUM": 100,
+    "LOW": 100,
 }
 
 SEVERITY_PENALTIES: dict[str, int] = {
     "CRITICAL": 15,
-    "HIGH":     8,
-    "MEDIUM":   3,
-    "LOW":      1,
+    "HIGH": 8,
+    "MEDIUM": 3,
+    "LOW": 1,
 }
 
 DEAD_CODE_DENSITY_TABLE: list[tuple[float, int]] = [
-    (0,  100),
-    (5,  85),
+    (0, 100),
+    (5, 85),
     (15, 55),
     (30, 20),
     (50, 0),
@@ -84,7 +84,11 @@ def count_lines_of_code(files: list[Path] | list[str]) -> int:
             stripped = line.strip()
             if not stripped:
                 continue
-            if prefix and stripped.startswith(prefix) and not stripped.startswith(prefix * 2 + "!"):
+            if (
+                prefix
+                and stripped.startswith(prefix)
+                and not stripped.startswith(prefix * 2 + "!")
+            ):
                 continue
             total += 1
     return total
@@ -250,18 +254,34 @@ def compute_grade(result: dict, total_loc: int) -> dict:
 
 
 _BADGE_COLORS: dict[str, str] = {
-    "A+": "brightgreen", "A": "brightgreen", "A-": "brightgreen",
-    "B+": "green", "B": "green", "B-": "green",
-    "C+": "yellow", "C": "yellow", "C-": "yellow",
-    "D+": "orange", "D": "orange", "D-": "orange",
+    "A+": "brightgreen",
+    "A": "brightgreen",
+    "A-": "brightgreen",
+    "B+": "green",
+    "B": "green",
+    "B-": "green",
+    "C+": "yellow",
+    "C": "yellow",
+    "C-": "yellow",
+    "D+": "orange",
+    "D": "orange",
+    "D-": "orange",
     "F": "red",
 }
 
 _BADGE_HEX: dict[str, str] = {
-    "A+": "#4c1", "A": "#4c1", "A-": "#4c1",
-    "B+": "#97CA00", "B": "#97CA00", "B-": "#97CA00",
-    "C+": "#dfb317", "C": "#dfb317", "C-": "#dfb317",
-    "D+": "#fe7d37", "D": "#fe7d37", "D-": "#fe7d37",
+    "A+": "#4c1",
+    "A": "#4c1",
+    "A-": "#4c1",
+    "B+": "#97CA00",
+    "B": "#97CA00",
+    "B-": "#97CA00",
+    "C+": "#dfb317",
+    "C": "#dfb317",
+    "C-": "#dfb317",
+    "D+": "#fe7d37",
+    "D": "#fe7d37",
+    "D-": "#fe7d37",
     "F": "#e05d44",
 }
 
@@ -283,5 +303,5 @@ def generate_badge_svg(grade_letter: str, score: int) -> str:
         f'font-size="11" font-family="sans-serif">Skylos</text>'
         f'<text x="90" y="14" fill="#fff" text-anchor="middle" '
         f'font-size="11" font-family="sans-serif">{label}</text>'
-        f'</svg>'
+        f"</svg>"
     )

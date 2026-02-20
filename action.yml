@@ -1,0 +1,167 @@
+name: "Skylos - Python SAST & Dead Code Detection"
+description: "Find dead code, security vulnerabilities, hardcoded secrets, and quality issues in your Python codebase."
+author: "Skylos (founder@skylos.dev)"
+
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  path:
+    description: "Path to scan (default: current directory)"
+    required: false
+    default: "."
+  mode:
+    description: "Scan mode: 'scan' (report only), 'gate' (fail on issues), 'review' (PR comments + gate)"
+    required: false
+    default: "gate"
+  analysis:
+    description: "Analysis types to run (space-separated): dead-code security quality secrets"
+    required: false
+    default: "dead-code security"
+  confidence:
+    description: "Minimum confidence threshold (0-100)"
+    required: false
+    default: "60"
+  token:
+    description: "Skylos API token for uploading results to skylos.dev dashboard"
+    required: false
+  python-version:
+    description: "Python version to use"
+    required: false
+    default: "3.11"
+  max-comments:
+    description: "Maximum inline PR review comments (default: 15)"
+    required: false
+    default: "15"
+
+outputs:
+  findings-count:
+    description: "Total number of findings"
+    value: ${{ steps.scan.outputs.findings_count }}
+  gate-passed:
+    description: "Whether the quality gate passed (true/false)"
+    value: ${{ steps.gate.outputs.passed }}
+  report-path:
+    description: "Path to the JSON report file"
+    value: ${{ steps.scan.outputs.report }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Skylos
+      shell: bash
+      run: pip install skylos
+
+    - name: Run Skylos Scan
+      id: scan
+      shell: bash
+      env:
+        SKYLOS_PATH: ${{ inputs.path }}
+        SKYLOS_ANALYSIS: ${{ inputs.analysis }}
+        SKYLOS_CONFIDENCE: ${{ inputs.confidence }}
+        SKYLOS_TOKEN: ${{ inputs.token }}
+      run: |
+        REPORT="skylos-report.json"
+        echo "report=$REPORT" >> "$GITHUB_OUTPUT"
+
+        # Build flags from analysis types
+        FLAGS=""
+        if echo "$SKYLOS_ANALYSIS" | grep -q "security"; then
+          FLAGS="$FLAGS --danger"
+        fi
+        if echo "$SKYLOS_ANALYSIS" | grep -q "quality"; then
+          FLAGS="$FLAGS --quality"
+        fi
+        if echo "$SKYLOS_ANALYSIS" | grep -q "secrets"; then
+          FLAGS="$FLAGS --secrets"
+        fi
+
+        # Run scan
+        python -m skylos.cli "$SKYLOS_PATH" \
+          --confidence "$SKYLOS_CONFIDENCE" \
+          $FLAGS \
+          --json > "$REPORT" || true
+
+        # Count findings
+        COUNT=$(python -c "
+        import json, sys
+        data = json.load(open('$REPORT'))
+        count = sum(len(v) for v in data.values() if isinstance(v, list))
+        print(count)
+        ")
+        echo "findings_count=$COUNT" >> "$GITHUB_OUTPUT"
+        echo "### Skylos Scan Results" >> "$GITHUB_STEP_SUMMARY"
+        echo "Found **$COUNT** issue(s) in \`$SKYLOS_PATH\`" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload to Skylos Dashboard
+      shell: bash
+      env:
+        SKYLOS_TOKEN: ${{ inputs.token }}
+        SKYLOS_PATH: ${{ inputs.path }}
+        SKYLOS_ANALYSIS: ${{ inputs.analysis }}
+        SKYLOS_CONFIDENCE: ${{ inputs.confidence }}
+      run: |
+        # Upload works with SKYLOS_TOKEN or tokenless via GitHub OIDC
+        FLAGS=""
+        if echo "$SKYLOS_ANALYSIS" | grep -q "security"; then
+          FLAGS="$FLAGS --danger"
+        fi
+        if echo "$SKYLOS_ANALYSIS" | grep -q "quality"; then
+          FLAGS="$FLAGS --quality"
+        fi
+        if echo "$SKYLOS_ANALYSIS" | grep -q "secrets"; then
+          FLAGS="$FLAGS --secrets"
+        fi
+
+        python -m skylos.cli "$SKYLOS_PATH" \
+          --confidence "$SKYLOS_CONFIDENCE" \
+          $FLAGS \
+          --upload || echo "Upload failed (non-fatal)"
+
+    - name: Post GitHub Annotations
+      if: always()
+      shell: bash
+      run: |
+        python -m skylos.cicd.cli annotate \
+          -i skylos-report.json \
+          --max 50 || true
+
+    - name: Post PR Review Comments
+      if: github.event_name == 'pull_request' && (inputs.mode == 'review')
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python -m skylos.cicd.cli review \
+          -i skylos-report.json \
+          --max-comments ${{ inputs.max-comments }} || true
+
+    - name: Quality Gate
+      id: gate
+      if: inputs.mode == 'gate' || inputs.mode == 'review'
+      shell: bash
+      run: |
+        python -m skylos.cicd.cli gate \
+          -i skylos-report.json \
+          --summary
+        RESULT=$?
+        if [ $RESULT -eq 0 ]; then
+          echo "passed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+
+    - name: Upload Report Artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: skylos-report
+        path: skylos-report.json
+        retention-days: 30

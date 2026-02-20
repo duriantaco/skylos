@@ -62,7 +62,7 @@ class TestSkylosApi(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(
             result["error"],
-            "No token found. Run 'skylos sync connect' or set SKYLOS_TOKEN.",
+            "No token found. Run 'skylos login' or set SKYLOS_TOKEN.",
         )
 
     @patch("subprocess.check_output")

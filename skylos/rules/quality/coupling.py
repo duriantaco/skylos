@@ -4,30 +4,92 @@ from typing import Any, Optional
 
 from skylos.rules.base import SkylosRule
 
-BUILTIN_TYPES = frozenset({
-    "int", "str", "float", "bool", "bytes", "list", "dict", "set", "tuple",
-    "frozenset", "type", "object", "None", "complex", "bytearray",
-    "memoryview", "range", "slice", "property", "classmethod", "staticmethod",
-    "Exception", "BaseException", "ValueError", "TypeError", "KeyError",
-    "IndexError", "AttributeError", "RuntimeError", "StopIteration",
-    "OSError", "IOError", "FileNotFoundError", "NotImplementedError",
-})
+BUILTIN_TYPES = frozenset(
+    {
+        "int",
+        "str",
+        "float",
+        "bool",
+        "bytes",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "frozenset",
+        "type",
+        "object",
+        "None",
+        "complex",
+        "bytearray",
+        "memoryview",
+        "range",
+        "slice",
+        "property",
+        "classmethod",
+        "staticmethod",
+        "Exception",
+        "BaseException",
+        "ValueError",
+        "TypeError",
+        "KeyError",
+        "IndexError",
+        "AttributeError",
+        "RuntimeError",
+        "StopIteration",
+        "OSError",
+        "IOError",
+        "FileNotFoundError",
+        "NotImplementedError",
+    }
+)
 
-TYPING_WRAPPERS = frozenset({
-    "Optional", "Union", "List", "Dict", "Set", "Tuple", "FrozenSet",
-    "Type", "ClassVar", "Final", "Literal", "Annotated", "Callable",
-    "Iterator", "Iterable", "Generator", "AsyncIterator", "AsyncIterable",
-    "Awaitable", "Coroutine", "Sequence", "MutableSequence", "Mapping",
-    "MutableMapping", "Any",
-})
+TYPING_WRAPPERS = frozenset(
+    {
+        "Optional",
+        "Union",
+        "List",
+        "Dict",
+        "Set",
+        "Tuple",
+        "FrozenSet",
+        "Type",
+        "ClassVar",
+        "Final",
+        "Literal",
+        "Annotated",
+        "Callable",
+        "Iterator",
+        "Iterable",
+        "Generator",
+        "AsyncIterator",
+        "AsyncIterable",
+        "Awaitable",
+        "Coroutine",
+        "Sequence",
+        "MutableSequence",
+        "Mapping",
+        "MutableMapping",
+        "Any",
+    }
+)
 
-FRAMEWORK_EXPECTED_COUPLING = frozenset({
-    "models.Model", "models.Manager", "admin.ModelAdmin",
-    "forms.ModelForm", "forms.Form", "views.View",
-    "serializers.ModelSerializer", "serializers.Serializer",
-    "viewsets.ModelViewSet", "viewsets.ViewSet",
-    "permissions.BasePermission", "TestCase", "SimpleTestCase",
-})
+FRAMEWORK_EXPECTED_COUPLING = frozenset(
+    {
+        "models.Model",
+        "models.Manager",
+        "admin.ModelAdmin",
+        "forms.ModelForm",
+        "forms.Form",
+        "views.View",
+        "serializers.ModelSerializer",
+        "serializers.Serializer",
+        "viewsets.ModelViewSet",
+        "viewsets.ViewSet",
+        "permissions.BasePermission",
+        "TestCase",
+        "SimpleTestCase",
+    }
+)
 
 
 def _extract_type_names(node: ast.AST) -> set[str]:
@@ -74,10 +136,21 @@ def _extract_type_names(node: ast.AST) -> set[str]:
 
 class _ClassInfo:
     __slots__ = (
-        "name", "lineno", "col_offset", "bases", "decorators",
-        "type_deps", "instantiation_deps", "attribute_deps",
-        "import_deps", "decorator_deps", "protocol_abc_deps",
-        "is_protocol", "is_abc", "is_dataclass", "methods",
+        "name",
+        "lineno",
+        "col_offset",
+        "bases",
+        "decorators",
+        "type_deps",
+        "instantiation_deps",
+        "attribute_deps",
+        "import_deps",
+        "decorator_deps",
+        "protocol_abc_deps",
+        "is_protocol",
+        "is_abc",
+        "is_dataclass",
+        "methods",
     )
 
     def __init__(self, name: str, lineno: int, col_offset: int):
@@ -162,7 +235,9 @@ def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
         elif isinstance(node, ast.ImportFrom):
             if node.module:
                 for alias in node.names:
-                    module_imports[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+                    module_imports[alias.asname or alias.name] = (
+                        f"{node.module}.{alias.name}"
+                    )
 
     # second pass analyze coupling for each class
     for node in ast.walk(tree):
@@ -235,7 +310,8 @@ def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
                 continue
             shared_bases = info.bases & other_info.bases
             shared_protocols = {
-                b for b in shared_bases
+                b
+                for b in shared_bases
                 if any(
                     classes.get(b, _ClassInfo("", 0, 0)).is_protocol
                     or classes.get(b, _ClassInfo("", 0, 0)).is_abc
@@ -299,17 +375,17 @@ def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
         result_classes[class_name]["line"] = info.lineno
         result_classes[class_name]["methods"] = info.methods
 
-        coupling_graph_out = {}
-        for name, bd in coupling_graph.items():
-            combined = set()
-            for values in bd.values():
-                combined.update(values)
-            coupling_graph_out[name] = sorted(combined)
+    coupling_graph_out = {}
+    for name, bd in coupling_graph.items():
+        combined = set()
+        for values in bd.values():
+            combined.update(values)
+        coupling_graph_out[name] = sorted(combined)
 
-        return {
-            "classes": result_classes,
-            "coupling_graph": coupling_graph_out,
-        }
+    return {
+        "classes": result_classes,
+        "coupling_graph": coupling_graph_out,
+    }
 
 
 class CBORule(SkylosRule):
