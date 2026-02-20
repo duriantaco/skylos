@@ -7,6 +7,7 @@
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 ![Skylos](https://img.shields.io/badge/Skylos-PR%20Guard-2f80ed?style=flat&logo=github&logoColor=white)
 ![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
+![CI/CD Ready](https://img.shields.io/badge/CI%2FCD-30s%20Setup-brightgreen?style=flat&logo=github-actions&logoColor=white)
 [![codecov](https://codecov.io/gh/duriantaco/skylos/branch/main/graph/badge.svg)](https://codecov.io/gh/duriantaco/skylos)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 ![PyPI version](https://img.shields.io/pypi/v/skylos)
@@ -21,7 +22,7 @@
 
 # What is Skylos? 
 
-> Skylos is a privacy-first Python SAST tool that bridges the gap between traditional static analysis and AI agents. It detects dead code, security vulnerabilities (SQLi, SSRF, Secrets), and code quality issues with high precision.
+> Skylos is a privacy-first SAST tool for Python, TypeScript, and Go that bridges the gap between traditional static analysis and AI agents. It detects dead code, security vulnerabilities (SQLi, SSRF, Secrets), and code quality issues with high precision.
 
 Unlike standard linters (like Vulture or Bandit) that struggle with dynamic Python patterns, Skylos uses a **hybrid engine** (AST + optional Local/Cloud LLM). This allows it to:
 
@@ -29,12 +30,36 @@ Unlike standard linters (like Vulture or Bandit) that struggle with dynamic Pyth
 2.  **Verify via Runtime:** Optional `--trace` mode validates findings against actual runtime execution.
 3.  **Find Logic Bugs:** Goes beyond linting to find deep logic errors that regex-based tools miss.
 
+---
+
+### 🚀 **New to Skylos? Start with CI/CD Integration**
+
+```bash
+# Generate a GitHub Actions workflow in 30 seconds
+skylos cicd init
+
+# Commit and push to activate
+git add .github/workflows/skylos.yml && git push
+```
+
+**What you get:**
+- Automatic dead code detection on every PR
+- Security vulnerability scanning (SQLi, secrets, dangerous patterns)
+- Quality gate that fails builds on critical issues
+- Inline PR review comments with file:line links
+- GitHub Annotations visible in the "Files Changed" tab
+
+**No configuration needed** - works out of the box with sensible defaults. See [CI/CD section](#cicd) for customization.
+
+---
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Installation](#installation)
 - [Skylos vs Vulture](#skylos-vs-vulture-benchmark)
+- [Projects Using Skylos](#projects-using-skylos)
 - [How It Works](#how-it-works)
 - [Agent Analysis](#agent-analysis)
 - [CI/CD](#cicd)
@@ -70,6 +95,9 @@ Unlike standard linters (like Vulture or Bandit) that struggle with dynamic Pyth
 | **Local LLM** | `skylos agent analyze . --base-url http://localhost:11434/v1 --model codellama` | Use Ollama/LM Studio (no API key needed) |
 | **Secure the Gate** | `skylos --gate` | Block risky code from merging |
 | **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
+| **🚀 Setup CI/CD** | `skylos cicd init` | Generate GitHub Actions workflow in 30 seconds |
+| **Quality Gate (CI)** | `skylos cicd gate -i results.json` | Fail builds when issues found |
+| **PR Review (CI)** | `skylos cicd review -i results.json` | Post inline comments on PRs |
 
 ### Demo
 [![Skylos demo](https://img.youtube.com/vi/BjMdSP2zZl8/0.jpg)](https://www.youtube.com/watch?v=BjMdSP2zZl8)
@@ -117,14 +145,20 @@ Backup (GitHub): https://github.com/duriantaco/skylos/discussions/82
 | Language | Parser | Dead Code | Security | Quality |
 |----------|--------|-----------|----------|---------|
 | Python | AST | ✅ | ✅ | ✅ |
-| TypeScript | Tree-sitter | ✅ | ✅ | ✅ |
+| TypeScript/TSX | Tree-sitter | ✅ | ✅ | ✅ |
+| Go | Standalone binary | ✅ | - | - |
 
-No Node.js required — TypeScript parser is built-in via Tree-sitter.
+No Node.js required — TypeScript parser is built-in via Tree-sitter. Languages are auto-detected by file extension. Mixed-language repos (e.g. Python + TypeScript) work out of the box.
 
 #### TypeScript Rules
 
 | Rule | ID | What It Catches |
 |------|-----|-----------------|
+| **Dead Code** | | |
+| Functions | - | Unused functions, arrow functions, and overloads |
+| Classes | - | Unused classes, interfaces, enums, and type aliases |
+| Imports | - | Unused named, default, and namespace imports |
+| Methods | - | Unused methods (lifecycle methods excluded) |
 | **Security** | | |
 | eval() | SKY-D501 | `eval()` usage |
 | innerHTML | SKY-D502 | Unsafe `innerHTML` assignment |
@@ -138,6 +172,8 @@ No Node.js required — TypeScript parser is built-in via Tree-sitter.
 | Nesting depth | SKY-Q602 | Too many nested levels |
 | Function length | SKY-Q603 | Function exceeds line limit |
 | Too many params | SKY-Q604 | Function has too many parameters |
+
+TypeScript dead code detection tracks: callbacks, type annotations, generics, decorators, inheritance (`extends`), object shorthand, spread, re-exports, and `typeof` references. Benchmarked at 95% recall with 0 false positives on alive code.
 
 ## Installation
 
@@ -153,6 +189,38 @@ cd skylos
 
 pip install .
 ```
+
+### 🎯 What's Next?
+
+After installation, we recommend:
+
+1. **Set up CI/CD (30 seconds):**
+   ```bash
+   skylos cicd init
+   git add .github/workflows/skylos.yml && git push
+   ```
+   This will automatically scan every PR for dead code and security issues.
+
+2. **Run your first scan:**
+   ```bash
+   skylos .                              # Dead code only
+   skylos . --danger --secrets           # Include security checks
+   ```
+
+3. **Try AI-powered analysis:**
+   ```bash
+   skylos agent analyze . --model gpt-4.1
+   ```
+
+4. **Add a badge to your README:**
+   ```markdown
+   [![Analyzed with Skylos](https://img.shields.io/badge/Analyzed%20with-Skylos-2f80ed?style=flat&logo=python&logoColor=white)](https://github.com/duriantaco/skylos)
+   ```
+   Shows others you maintain clean, secure code!
+
+[See all commands in the Quick Start table](#quick-start)
+
+---
 
 ## Skylos vs. Vulture Benchmark
 
@@ -171,6 +239,29 @@ We benchmarked Skylos against Vulture (the standard for dead code detection) on 
 >
 > *See the full methodology and breakdown in [BENCHMARK.md](BENCHMARK.md).*
 
+---
+
+## Projects Using Skylos
+
+Show you're maintaining clean, secure code! Add your project:
+
+[![Analyzed with Skylos](https://img.shields.io/badge/Analyzed%20with-Skylos-2f80ed?style=flat&logo=python&logoColor=white)](https://github.com/duriantaco/skylos)
+
+**Featured Projects:**
+
+| Project | Description | Badge |
+|---------|-------------|-------|
+| [Skylos](https://github.com/duriantaco/skylos) | Python SAST & dead code detection | [![Skylos](https://img.shields.io/badge/Analyzed%20with-Skylos-2f80ed?style=flat&logo=python)](https://github.com/duriantaco/skylos) |
+| *Your project here* | [Add yours!](https://github.com/duriantaco/skylos/issues/new?title=Add%20my%20project%20to%20showcase&body=Project:%20%0AURL:%20%0ADescription:%20) | |
+
+**Why share?**
+- Show commitment to code quality
+- Get a backlink to your project
+- Join the community of quality-focused developers
+
+[Add your project →](https://github.com/duriantaco/skylos/issues/new?title=Add%20my%20project%20to%20showcase&body=Project:%20%0AURL:%20%0ADescription:%20)
+
+---
 
 ## How it works
 
@@ -389,14 +480,22 @@ skylos agent remediate . --test-cmd "pytest test/ -x"
 
 Run Skylos in your CI pipeline with quality gates, GitHub annotations, and PR review comments.
 
-## Quick Start
+## Quick Start (30 seconds)
 
 ```bash
+# Auto-generate a GitHub Actions workflow
 skylos cicd init
+
+# Commit and activate
 git add .github/workflows/skylos.yml && git push
 ```
 
-That's it. Skylos will now run on every PR and push to `main`.
+That's it! Your next PR will have:
+- Dead code detection
+- Security scanning (SQLi, SSRF, secrets)
+- Quality checks
+- Inline PR comments with clickable file:line links
+- Quality gate that fails builds on critical issues
 
 ## Commands
 
@@ -754,7 +853,7 @@ Control how you consume the watchdog's findings.
 
 | Flag | Format | Primary Use |
 |------|--------|-------------|
-| `--table` | Rich Table | Default human-readable CLI summary. |
+| `--table` | Rich Table | Classic Rich table output instead of TUI. |
 | `--tree` | Logic Tree | Visualizes code hierarchy and structural dependencies. |
 | `--json` | Machine Raw | Piping results to `jq`, custom scripts, or log aggregators. |
 | `--sarif` | SARIF | GitHub Code Scanning, IDE integration |
@@ -835,6 +934,12 @@ skylos . --quality
 | Deep nesting | SKY-Q302 | Too many nested levels (default: >3) |
 | Async Blocking | SKY-Q401 | Detects blocking calls inside async functions that kill server throughput |
 | God class | SKY-Q501 | Class has too many methods/attributes |
+| Coupling (CBO) | SKY-Q701 | High inter-class coupling (7 dependency types: inheritance, type hints, instantiation, attribute access, imports, decorators, protocol/ABC) |
+| Cohesion (LCOM) | SKY-Q702 | Low class cohesion — disconnected method groups that should be split (LCOM1/4/5 metrics with Union-Find) |
+| **Architecture** | | |
+| Distance from Main Sequence | SKY-Q802 | Module far from ideal balance of abstractness vs instability |
+| Zone warning | SKY-Q803 | Module in Zone of Pain (rigid) or Zone of Uselessness (throwaway) |
+| DIP violation | SKY-Q804 | Stable module depends on unstable module (Dependency Inversion Principle) |
 | **Structure** | | |
 | Too many arguments | SKY-C303 | Functions with >5 args |
 | Function too long | SKY-C304 | Functions >50 lines |
@@ -1119,7 +1224,7 @@ Options:
   -h, --help                   Show this help message and exit
   --json                       Output raw JSON instead of formatted text  
   --tree                       Output results in tree format
-  --table                      Output results in table format via the CLI
+  --table                      Rich table output instead of TUI
   --sarif                      Output SARIF format for GitHub/IDE integration
   -c, --confidence LEVEL       Confidence threshold 0-100 (default: 60)
   --comment-out                Comment out code instead of deleting
@@ -1326,6 +1431,7 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 - [ ] Expanding on the `dangerous.py` list
 - [x] Porting to uv
 - [x] Small integration with typescript
+- [x] Expanded TypeScript dead code detection (interfaces, enums, type aliases, 95% recall)
 - [ ] Expand and improve on capabilities of Skylos in various other languages
 - [x] Expand the providers for LLMs (OpenAI, Anthropic, Ollama, LM Studio, vLLM)
 - [x] Expand the LLM portion for detecting dead/dangerous code (hybrid architecture)

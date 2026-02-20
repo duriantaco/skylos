@@ -1,5 +1,32 @@
 ## Changelog
 
+## [3.4.0] - 2026-02-18
+
+### Added
+- TypeScript: interface, enum, and type alias dead code detection
+- TUI detected languages display and severity bar chart in Overview panel
+- `languages` field in `analysis_summary` output
+- CI/CD visibility added in README, "30-second setup", badge, `skylos badge` command
+- Type hints added to control_flow.py, penalties.py, cicd/workflow.py, cicd/review.py, and all TypeScript scanner files
+- CBO coupling (SKY-Q701) with 7 dependency types, afferent/efferent breakdown, and framework-aware filtering. LCOM cohesion (SKY-Q702) with Union-Find LCOM1/4/5, Python-aware method categorization, and dataclass exemption
+- Architecture metrics: distance from Main Sequence (SKY-Q802), Zone of Pain/Uselessness classification (SKY-Q803), Dependency Inversion violations (SKY-Q804), per-module and package-level instability/abstractness scoring with system-wide fitness scores in JSON output
+- CBO coupling (SKY-Q701) with 7 dependency types, afferent/efferent breakdown, and framework-aware filtering; LCOM cohesion (SKY-Q702) with Union-Find LCOM1/4/5, Python-aware method categorization, and dataclass exemption
+- Architecture metrics: distance from Main Sequence (SKY-Q802), Zone of Pain/Uselessness classification (SKY-Q803), Dependency Inversion violations (SKY-Q804), per-module and package-level instability/abstractness scoring with system-wide fitness scores in JSON output
+- 50 new tests for coupling, cohesion, architecture metrics, zone classification, and DIP detection
+
+### Fixed
+- class names in the typescript portion now captured correctly (`type_identifier` instead of `identifier`)
+- `regex.exec()` in typescript no longer triggers SKY-D506 and decorated classes no longer flagged as dead (FPs)
+- TypeScript: lifecycle methods (`constructor`, `render`, `componentDidMount`, etc.) excluded from dead code
+- `export default function`, `export { name }`, and `extends Base` all tracked properly
+- TypeScript: callbacks, array storage, object shorthand, return values, spread, and type annotations now tracked as references
+- Version-conditional imports no longer flagged as dead code
+
+### Changed
+- Quick Start table expanded with CI/CD commands
+- TypeScript scanner uses `Query()` constructor instead of deprecated `TS_LANG.query()`
+- `--table` flag outputs Rich tables 
+
 ## [3.3.0] - 2026-02-13
 
 ### Added
