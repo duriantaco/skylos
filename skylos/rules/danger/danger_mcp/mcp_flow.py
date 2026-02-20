@@ -16,9 +16,6 @@ import re
 import sys
 
 
-# ---------------------------------------------------------------------------
-# D240: prompt-injection patterns in tool descriptions / docstrings
-# ---------------------------------------------------------------------------
 _INJECTION_TAG_RE = re.compile(
     r"<\s*/?\s*("
     r"system|instruction|s>|admin|prompt|context|rules|configuration"
@@ -40,7 +37,6 @@ _INJECTION_PHRASE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Hidden Unicode: zero-width chars, RTL overrides, BOM
 _HIDDEN_UNICODE_RE = re.compile(
     r"[\u200b\u200c\u200d\u200e\u200f"
     r"\u2028\u2029\u202a\u202b\u202c\u202d\u202e"
@@ -48,9 +44,7 @@ _HIDDEN_UNICODE_RE = re.compile(
     r"\ufeff\ufff9\ufffa\ufffb]"
 )
 
-# ---------------------------------------------------------------------------
-# D244: patterns that look like hardcoded secrets
-# ---------------------------------------------------------------------------
+
 _SECRET_PATTERNS = [
     re.compile(r"^sk-[a-zA-Z0-9]{20,}$"),  # OpenAI
     re.compile(r"^sk-ant-[a-zA-Z0-9\-]{20,}$"),  # Anthropic
@@ -66,9 +60,6 @@ _SECRET_PATTERNS = [
     re.compile(r"^eyJ[a-zA-Z0-9\-_]{20,}"),  # JWT
 ]
 
-# ---------------------------------------------------------------------------
-# MCP library detection
-# ---------------------------------------------------------------------------
 _MCP_IMPORTS = {
     "mcp",
     "fastmcp",
@@ -78,14 +69,11 @@ _MCP_IMPORTS = {
 }
 
 _MCP_SERVER_CLASSES = {"FastMCP", "Server"}
-
 _MCP_TOOL_DECORATORS = {"tool", "resource", "prompt"}
-
 _NETWORK_TRANSPORTS = {"sse", "streamable-http", "streamable_http", "http"}
 
 
 def _qualified_name(node):
-    """Build dotted name from AST attribute chain."""
     func = node.func if isinstance(node, ast.Call) else node
     parts = []
     while isinstance(func, ast.Attribute):
@@ -99,14 +87,12 @@ def _qualified_name(node):
 
 
 def _get_string_value(node):
-    """Extract string from a Constant node."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     return None
 
 
 def _is_mcp_file(tree):
-    """Check if the file imports any MCP library."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -121,7 +107,6 @@ def _is_mcp_file(tree):
 
 
 def _get_decorator_name(decorator):
-    """Get the method name from a decorator (e.g., 'tool' from @server.tool())."""
     if isinstance(decorator, ast.Call):
         if isinstance(decorator.func, ast.Attribute):
             return decorator.func.attr
@@ -135,7 +120,6 @@ def _get_decorator_name(decorator):
 
 
 def _is_mcp_tool_function(node):
-    """Check if a FunctionDef is decorated with @server.tool() or similar."""
     for dec in node.decorator_list:
         name = _get_decorator_name(dec)
         if name in _MCP_TOOL_DECORATORS:
@@ -144,7 +128,6 @@ def _is_mcp_tool_function(node):
 
 
 def _get_docstring(node):
-    """Extract docstring from a function/class definition."""
     if (
         node.body
         and isinstance(node.body[0], ast.Expr)
@@ -156,7 +139,6 @@ def _get_docstring(node):
 
 
 def _get_decorator_description(decorator):
-    """Extract description= kwarg or first positional string arg from decorator."""
     if not isinstance(decorator, ast.Call):
         return None
     for kw in decorator.keywords:
@@ -192,8 +174,6 @@ class _MCPChecker(ast.NodeVisitor):
             elif isinstance(value, ast.AST):
                 self.visit(value)
 
-    # -- Track MCP server variable names --
-
     def visit_Assign(self, node):
         if isinstance(node.value, ast.Call):
             qn = _qualified_name(node.value)
@@ -203,10 +183,7 @@ class _MCPChecker(ast.NodeVisitor):
                         self._mcp_server_vars.add(target.id)
         self.generic_visit(node)
 
-    # -- D240: Tool description poisoning --
-
     def _check_text_for_injection(self, text, node, context):
-        """Scan a string for prompt injection patterns."""
         if _INJECTION_TAG_RE.search(text):
             self._report(
                 "SKY-D240",
@@ -241,18 +218,15 @@ class _MCPChecker(ast.NodeVisitor):
         if not _is_mcp_tool_function(node):
             return
 
-        # D240: Check docstring
         docstring = _get_docstring(node)
         if docstring:
             self._check_text_for_injection(docstring, node.body[0], "tool docstring")
 
-        # D240: Check description= kwarg in decorator
         for dec in node.decorator_list:
             desc = _get_decorator_description(dec)
             if desc:
                 self._check_text_for_injection(desc, dec, "tool description")
 
-        # D242: Check resource URI patterns for path traversal
         for dec in node.decorator_list:
             dec_name = _get_decorator_name(dec)
             if dec_name == "resource" and isinstance(dec, ast.Call):
@@ -266,12 +240,9 @@ class _MCPChecker(ast.NodeVisitor):
                         if uri:
                             self._check_resource_uri(uri, dec)
 
-        # D244: Check default parameter values for hardcoded secrets
         self._check_param_defaults(node)
 
     def _check_resource_uri(self, uri, node):
-        """D242: Flag resource URIs that allow arbitrary path traversal."""
-        # Pattern: file:///{path} or similar with unconstrained path template
         if re.search(r"file://.*\{", uri):
             self._report(
                 "SKY-D242",
@@ -280,13 +251,10 @@ class _MCPChecker(ast.NodeVisitor):
                 severity="HIGH",
             )
             return
-        # Generic: any URI with {path} or {file} template vars
         if re.search(r"\{(path|file|filename|dir|directory|filepath)\}", uri, re.I):
-            # Only flag if no fixed prefix constraining the path
             parts = uri.split("://", 1)
             if len(parts) == 2:
                 path_part = parts[1]
-                # If the template var is at root level or near-root
                 if re.match(r"^/?\{", path_part) or re.match(r"^[^/]*/?\{", path_part):
                     self._report(
                         "SKY-D242",
@@ -296,11 +264,9 @@ class _MCPChecker(ast.NodeVisitor):
                     )
 
     def _check_param_defaults(self, node):
-        """D244: Flag hardcoded secrets as default values in MCP tool params."""
         defaults = []
         args_obj = node.args
 
-        # Collect (arg_name, default_node) pairs
         num_args = len(args_obj.args)
         num_defaults = len(args_obj.defaults)
         offset = num_args - num_defaults
@@ -326,15 +292,12 @@ class _MCPChecker(ast.NodeVisitor):
                     )
                     break
 
-    # -- D241 / D243: server.run() checks --
-
     def visit_Call(self, node):
         qn = _qualified_name(node)
         if not qn:
             self.generic_visit(node)
             return
 
-        # Check if this is server.run() on a known MCP server var
         parts = qn.rsplit(".", 1)
         if len(parts) == 2 and parts[1] == "run":
             obj_name = parts[0]
@@ -348,7 +311,6 @@ class _MCPChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _check_server_run(self, node):
-        """Check server.run() for D241 (unauth transport) and D243 (0.0.0.0)."""
         transport = None
         host = None
         has_auth = False
@@ -373,7 +335,6 @@ class _MCPChecker(ast.NodeVisitor):
         if host and host != "127.0.0.1" and host != "localhost":
             is_network = True
 
-        # D241: Network transport without auth
         if is_network and not has_auth:
             self._report(
                 "SKY-D241",
@@ -384,7 +345,6 @@ class _MCPChecker(ast.NodeVisitor):
                 severity="HIGH",
             )
 
-        # D243: Bound to 0.0.0.0
         if host == "0.0.0.0" and not has_auth:
             self._report(
                 "SKY-D243",
@@ -396,7 +356,6 @@ class _MCPChecker(ast.NodeVisitor):
 
 
 def scan(tree, file_path, findings):
-    """Entry point called by danger.py — only runs on MCP server files."""
     if not _is_mcp_file(tree):
         return
     try:

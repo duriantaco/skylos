@@ -4,6 +4,42 @@ import sys
 from skylos.rules.danger.taint import TaintVisitor
 
 
+DB_MODULES = frozenset(
+    {
+        "sqlite3",
+        "psycopg2",
+        "psycopg",
+        "pymysql",
+        "MySQLdb",
+        "cx_Oracle",
+        "oracledb",
+        "pyodbc",
+        "sqlalchemy",
+        "asyncpg",
+        "aiosqlite",
+        "databases",
+        "peewee",
+        "tortoise",
+        "django.db",
+    }
+)
+
+DB_RECEIVER_NAMES = frozenset(
+    {
+        "cursor",
+        "cur",
+        "conn",
+        "connection",
+        "db",
+        "database",
+        "session",
+        "engine",
+        "tx",
+        "transaction",
+    }
+)
+
+
 def _qualified_name_from_call(node):
     func = node.func
     parts = []
@@ -61,6 +97,16 @@ def _func_name(node):
     return node.name
 
 
+def _receiver_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Attribute):
+        value = node.func.value
+        if isinstance(value, ast.Name):
+            return value.id
+        if isinstance(value, ast.Attribute):
+            return value.attr
+    return None
+
+
 def get_query_expression(call: ast.Call, names=("sql", "query", "statement")):
     expression = None
     if call.args and len(call.args) > 0:
@@ -108,7 +154,40 @@ class _SQLFlowChecker(TaintVisitor):
 
     def __init__(self, file_path, findings):
         super().__init__(file_path, findings)
-        self.passthrough_functions = set()
+        self.passthrough_functions: set[str] = set()
+        self.db_names: set[str] = set()
+
+    def visit_Import(self, node):
+        for alias in node.names:
+            top_level = alias.name.split(".")[0]
+            if top_level in DB_MODULES or alias.name in DB_MODULES:
+                self.db_names.add(alias.asname or alias.name.split(".")[0])
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node):
+        if node.module:
+            top_level = node.module.split(".")[0]
+            if top_level in DB_MODULES or node.module in DB_MODULES:
+                for alias in node.names:
+                    self.db_names.add(alias.asname or alias.name)
+        self.generic_visit(node)
+
+    def _is_likely_db_receiver(self, node: ast.Call) -> bool:
+        name = _receiver_name(node)
+        if name is None:
+            return False
+
+        if name in self.db_names:
+            return True
+
+        if name.lower() in DB_RECEIVER_NAMES:
+            return True
+
+        lower = name.lower()
+        if any(hint in lower for hint in ("cursor", "conn", "session", "engine", "db")):
+            return True
+
+        return False
 
     def visit_FunctionDef(self, node):
         self._push()
@@ -143,6 +222,10 @@ class _SQLFlowChecker(TaintVisitor):
             pass
 
         if qual_name and qual_name.endswith(self.DBAPI_SQL_SINK_SUFFIXES):
+            if not self._is_likely_db_receiver(node):
+                self.generic_visit(node)
+                return
+
             query_expr = get_query_expression(node, names=("sql", "query", "statement"))
 
             if query_expr is not None:
@@ -178,6 +261,7 @@ class _SQLFlowChecker(TaintVisitor):
             self.generic_visit(node)
             return
 
+        # ----- Pandas read_sql / read_sql_query -----
         if qual_name and (
             qual_name.endswith(".read_sql") or qual_name.endswith(".read_sql_query")
         ):
@@ -201,6 +285,10 @@ class _SQLFlowChecker(TaintVisitor):
             return
 
         if isinstance(node.func, ast.Attribute) and node.func.attr == "execute":
+            if not self._is_likely_db_receiver(node):
+                self.generic_visit(node)
+                return
+
             statement_expression = get_query_expression(
                 node, names=("statement", "sql", "query")
             )
