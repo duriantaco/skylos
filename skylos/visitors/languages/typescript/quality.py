@@ -1,12 +1,14 @@
+from __future__ import annotations
+
 from tree_sitter import Language, QueryCursor, Query
 import tree_sitter_typescript as tsts
 
 try:
-    TS_LANG = Language(tsts.language_typescript())
+    TS_LANG: Language | None = Language(tsts.language_typescript())
 except Exception:
     TS_LANG = None
 
-COMPLEXITY_NODES = {
+COMPLEXITY_NODES: set[str] = {
     "if_statement",
     "for_statement",
     "while_statement",
@@ -16,7 +18,7 @@ COMPLEXITY_NODES = {
 }
 
 
-NESTING_NODES = {
+NESTING_NODES: set[str] = {
     "if_statement",
     "for_statement",
     "for_in_statement",
@@ -27,7 +29,7 @@ NESTING_NODES = {
 }
 
 
-def _get_func_name(func_node, source):
+def _get_func_name(func_node, source: bytes) -> str:
     name = "anonymous"
     try:
         name_node = func_node.child_by_field_name("name")
@@ -40,7 +42,7 @@ def _get_func_name(func_node, source):
     return name
 
 
-def _get_func_nodes(root_node):
+def _get_func_nodes(root_node) -> list:
     query_str = """
     (function_declaration) @func
     (arrow_function) @func
@@ -55,7 +57,7 @@ def _get_func_nodes(root_node):
         return []
 
 
-def _max_nesting(node, depth=0):
+def _max_nesting(node, depth: int = 0) -> int:
     max_depth = depth
     cursor = node.walk()
     visited = False
@@ -84,7 +86,7 @@ def _max_nesting(node, depth=0):
     return max_depth
 
 
-def _param_count(func_node):
+def _param_count(func_node) -> int:
     params = func_node.child_by_field_name("parameters")
     if not params:
         return 0
@@ -97,24 +99,23 @@ def _param_count(func_node):
 
 def scan_quality(
     root_node,
-    source,
-    file_path,
-    threshold=10,
-    max_nesting=4,
-    max_length=50,
-    max_params=5,
-):
-    findings = []
+    source: bytes,
+    file_path: str,
+    threshold: int = 10,
+    max_nesting: int = 4,
+    max_length: int = 50,
+    max_params: int = 5,
+) -> list[dict]:
+    findings: list[dict] = []
     if not TS_LANG:
         return []
 
     func_nodes = _get_func_nodes(root_node)
 
     for func_node in func_nodes:
-        line = func_node.start_point[0] + 1
+        line: int = func_node.start_point[0] + 1
         name = _get_func_name(func_node, source)
 
-        # Cyclomatic complexity
         complexity = _calc_complexity(func_node)
         if complexity > threshold:
             findings.append(
@@ -128,7 +129,6 @@ def scan_quality(
                 }
             )
 
-        # Nesting depth
         nesting = _max_nesting(func_node)
         if nesting > max_nesting:
             findings.append(
@@ -142,8 +142,7 @@ def scan_quality(
                 }
             )
 
-        # Function length
-        func_length = func_node.end_point[0] - func_node.start_point[0] + 1
+        func_length: int = func_node.end_point[0] - func_node.start_point[0] + 1
         if func_length > max_length:
             findings.append(
                 {
@@ -156,7 +155,6 @@ def scan_quality(
                 }
             )
 
-        # Argument count
         params = _param_count(func_node)
         if params > max_params:
             findings.append(
@@ -173,7 +171,7 @@ def scan_quality(
     return findings
 
 
-def _calc_complexity(node):
+def _calc_complexity(node) -> int:
     count = 1
     cursor = node.walk()
     visited_children = False
