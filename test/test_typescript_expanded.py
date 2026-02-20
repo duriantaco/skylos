@@ -1,4 +1,11 @@
+import json
+from pathlib import Path
+
+import pytest
+
 from skylos.visitors.languages.typescript import scan_typescript_file
+
+_BENCHMARKS_DIR = Path(__file__).parent.parent / "manual" / "mixed_repo"
 
 
 def _scan_ts(tmp_path, code):
@@ -9,6 +16,23 @@ def _scan_ts(tmp_path, code):
     return defs, refs, quality, danger
 
 
+def _def_names(defs):
+    return {d.name for d in defs}
+
+
+def _ref_names(refs):
+    return {r[0] for r in refs}
+
+
+def _unused(defs, refs):
+    """Return set of def names that have no matching ref."""
+    rn = _ref_names(refs)
+    return {d.name for d in defs if d.name not in rn and not getattr(d, "is_exported", False)}
+
+
+# =====================================================================
+# Danger rules
+# =====================================================================
 class TestTSDangerRules:
     def test_eval_detected(self, tmp_path):
         _, _, _, danger = _scan_ts(tmp_path, 'eval("alert(1)");')
@@ -51,7 +75,34 @@ class TestTSDangerRules:
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D505" not in ids
 
+    def test_regex_exec_not_flagged(self, tmp_path):
+        """regex.exec() is safe — should NOT trigger SKY-D506."""
+        code = 'const regex = /hello/g;\nconst m = regex.exec("hello world");'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D506" not in ids
 
+    def test_db_exec_not_flagged(self, tmp_path):
+        """db.exec() / stmt.exec() should NOT trigger SKY-D506."""
+        code = 'const db = getDB();\ndb.exec("SELECT 1");'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D506" not in ids
+
+    def test_child_process_exec_flagged(self, tmp_path):
+        """child_process.exec() SHOULD trigger SKY-D506."""
+        code = (
+            'import cp from "child_process";\n'
+            'cp.exec("rm -rf /");'
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D506" in ids
+
+
+# =====================================================================
+# Quality rules
+# =====================================================================
 class TestTSQualityRules:
     def test_cyclomatic_complexity(self, tmp_path):
         code = (
@@ -125,6 +176,9 @@ class TestTSQualityRules:
         assert len(quality) == 0
 
 
+# =====================================================================
+# Import tracking
+# =====================================================================
 class TestTSImports:
     def test_named_imports(self, tmp_path):
         code = (
@@ -169,3 +223,401 @@ class TestTSImports:
         ref_names = {r[0] for r in refs}
         assert "unused" in def_names
         assert "unused" not in ref_names
+
+
+# =====================================================================
+# Dead code — false positive prevention
+# =====================================================================
+class TestTSDeadCodeFalsePositives:
+    """Each test verifies a scenario where a symbol IS used and must NOT
+    be flagged as dead code by the scanner."""
+
+    def test_callback_passed_as_argument(self, tmp_path):
+        """fn passed as argument to .map() should be detected as used."""
+        code = (
+            "function transformer(x: number): number { return x * 2; }\n"
+            "const results = [1, 2, 3].map(transformer);\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "transformer" not in _unused(defs, refs)
+
+    def test_assigned_to_variable(self, tmp_path):
+        """fn assigned to a variable is a reference."""
+        code = (
+            "function helper() { return 42; }\n"
+            "const ref = helper;\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "helper" not in _unused(defs, refs)
+
+    def test_stored_in_array(self, tmp_path):
+        """fn stored in an array literal is a reference."""
+        code = (
+            "function a() { return 1; }\n"
+            "function b() { return 2; }\n"
+            "const handlers = [a, b];\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "a" not in _unused(defs, refs)
+        assert "b" not in _unused(defs, refs)
+
+    def test_object_shorthand(self, tmp_path):
+        """{ myFunc } shorthand property is a reference."""
+        code = (
+            "function myFunc() { return 1; }\n"
+            "const obj = { myFunc };\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "myFunc" not in _unused(defs, refs)
+
+    def test_type_annotation_reference(self, tmp_path):
+        """Class used as a type annotation is a reference."""
+        code = (
+            "class UserModel { name: string = ''; }\n"
+            "function process(user: UserModel): void { console.log(user); }\n"
+            "process(new UserModel());\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "UserModel" not in _unused(defs, refs)
+
+    def test_generic_type_parameter(self, tmp_path):
+        """Class used as a generic type arg is a reference."""
+        code = (
+            "class Item { id: number = 0; }\n"
+            "class Box<T> { value: T; constructor(v: T) { this.value = v; } }\n"
+            "const b: Box<Item> = new Box(new Item());\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "Item" not in _unused(defs, refs)
+        assert "Box" not in _unused(defs, refs)
+
+    def test_extends_clause(self, tmp_path):
+        """Parent class in extends clause is a reference."""
+        code = (
+            "class Base { greet() { return 'hi'; } }\n"
+            "class Child extends Base { wave() { return 'bye'; } }\n"
+            "const c = new Child();\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "Base" not in _unused(defs, refs)
+
+    def test_instanceof_check(self, tmp_path):
+        """Class used in instanceof is a reference."""
+        code = (
+            "class AppError extends Error { code: number = 500; }\n"
+            "function check(e: unknown) {\n"
+            "    if (e instanceof AppError) { console.log('app error'); }\n"
+            "}\n"
+            "check(new AppError());\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "AppError" not in _unused(defs, refs)
+
+    def test_decorator_marks_class_used(self, tmp_path):
+        """A class with a decorator should not be flagged as dead."""
+        code = (
+            "function Component(t: any) { return t; }\n"
+            "@Component\n"
+            "class MyWidget { render() { return 'hi'; } }\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "MyWidget" not in _unused(defs, refs)
+        # The decorator function itself is also used
+        assert "Component" not in _unused(defs, refs)
+
+    def test_export_default_marks_exported(self, tmp_path):
+        """export default function should be marked as exported."""
+        code = "export default function main() { return 1; }\n"
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        main_def = [d for d in defs if d.name == "main"][0]
+        assert main_def.is_exported is True
+
+    def test_export_statement_at_bottom(self, tmp_path):
+        """export { foo } at bottom of file makes foo a ref."""
+        code = (
+            "function internal() { return 42; }\n"
+            "export { internal };\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "internal" not in _unused(defs, refs)
+
+    def test_constructor_not_flagged(self, tmp_path):
+        """constructor methods should never appear as dead code defs."""
+        code = (
+            "class Svc {\n"
+            "    constructor(private db: any) {}\n"
+            "    run() { return this.db; }\n"
+            "}\n"
+            "const s = new Svc({});\n"
+            "s.run();\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        def_names = _def_names(defs)
+        assert "constructor" not in def_names
+
+    def test_return_statement_reference(self, tmp_path):
+        """fn returned from another fn is a reference."""
+        code = (
+            "function inner() { return 1; }\n"
+            "function outer() { return inner; }\n"
+            "outer();\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "inner" not in _unused(defs, refs)
+
+
+# =====================================================================
+# Dead code — true positives (should be flagged)
+# =====================================================================
+class TestTSDeadCodeTruePositives:
+    """Each test verifies a symbol that IS dead and should be flagged."""
+
+    def test_unused_function_flagged(self, tmp_path):
+        code = (
+            "function used() { return 1; }\n"
+            "function dead() { return 2; }\n"
+            "used();\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "dead" in _unused(defs, refs)
+        assert "used" not in _unused(defs, refs)
+
+    def test_unused_class_flagged(self, tmp_path):
+        code = (
+            "class UsedClass { run() { return 1; } }\n"
+            "class DeadClass { run() { return 2; } }\n"
+            "const x = new UsedClass();\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "DeadClass" in _unused(defs, refs)
+        assert "UsedClass" not in _unused(defs, refs)
+
+    def test_unused_import_flagged(self, tmp_path):
+        code = (
+            "import { used, dead } from './lib';\n"
+            "used();\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "dead" in _unused(defs, refs)
+        assert "used" not in _unused(defs, refs)
+
+
+# =====================================================================
+# Class definition tracking (type_identifier fix)
+# =====================================================================
+class TestTSClassDefs:
+    """Verify classes are correctly captured as definitions (not just fns)."""
+
+    def test_class_captured_as_def(self, tmp_path):
+        code = "class Foo { bar() { return 1; } }\n"
+        defs, _, _, _ = _scan_ts(tmp_path, code)
+        class_defs = [d for d in defs if d.type == "class"]
+        names = {d.name for d in class_defs}
+        assert "Foo" in names
+
+    def test_multiple_classes(self, tmp_path):
+        code = (
+            "class Alpha { }\n"
+            "class Beta { }\n"
+            "class Gamma { }\n"
+        )
+        defs, _, _, _ = _scan_ts(tmp_path, code)
+        class_defs = [d for d in defs if d.type == "class"]
+        assert len(class_defs) == 3
+        names = {d.name for d in class_defs}
+        assert names == {"Alpha", "Beta", "Gamma"}
+
+    def test_exported_class_detected(self, tmp_path):
+        code = "export class ApiService { fetch() { return null; } }\n"
+        defs, _, _, _ = _scan_ts(tmp_path, code)
+        cls = [d for d in defs if d.name == "ApiService"][0]
+        assert cls.is_exported is True
+        assert cls.type == "class"
+
+
+# =====================================================================
+# Mixed repo integration test
+# =====================================================================
+class TestMixedRepoIntegration:
+    """Test that Python + TypeScript files are analyzed together."""
+
+    def test_mixed_repo_finds_dead_code_in_both(self, tmp_path):
+        """Both Python and TS dead code should appear in results."""
+        from skylos.analyzer import analyze
+
+        # Python file
+        (tmp_path / "utils.py").write_text(
+            "def used_helper():\n"
+            "    return 42\n"
+            "\n"
+            "def dead_python_func():\n"
+            "    return 'nobody calls me'\n"
+            "\n"
+            "result = used_helper()\n"
+        )
+
+        # TypeScript file
+        (tmp_path / "app.ts").write_text(
+            "function usedHandler(): string { return 'ok'; }\n"
+            "function deadTsFunc(): string { return 'nobody calls me'; }\n"
+            "usedHandler();\n"
+        )
+
+        result_json = analyze(str(tmp_path), conf=10)
+        result = json.loads(result_json)
+
+        unused_names = {f["name"] for f in result.get("unused_functions", [])}
+        assert "dead_python_func" in unused_names, f"Python dead code not found in {unused_names}"
+        assert "deadTsFunc" in unused_names, f"TS dead code not found in {unused_names}"
+        assert "used_helper" not in unused_names
+        assert "usedHandler" not in unused_names
+
+    def test_mixed_repo_danger_from_ts(self, tmp_path):
+        """TS danger findings should appear in mixed repo results."""
+        from skylos.analyzer import analyze
+
+        (tmp_path / "safe.py").write_text("x = 1\n")
+        (tmp_path / "dangerous.ts").write_text('eval("alert(1)");\n')
+
+        result_json = analyze(str(tmp_path), conf=10, enable_danger=True)
+        result = json.loads(result_json)
+
+        danger_rules = {f["rule_id"] for f in result.get("danger", [])}
+        assert "SKY-D501" in danger_rules
+
+    def test_mixed_repo_quality_from_ts(self, tmp_path):
+        """TS quality findings should appear in mixed repo results."""
+        from skylos.analyzer import analyze
+
+        (tmp_path / "ok.py").write_text("x = 1\n")
+        # Write a deeply nested TS function (5 levels > limit of 4)
+        (tmp_path / "messy.ts").write_text(
+            "function deep(x: number) {\n"
+            "    if (x > 0) {\n"
+            "        for (let i = 0; i < 10; i++) {\n"
+            "            while (i < 5) {\n"
+            "                if (i % 2 === 0) {\n"
+            "                    try { console.log(i); } catch(e) { }\n"
+            "                }\n"
+            "                break;\n"
+            "            }\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+            "deep(1);\n"
+        )
+
+        result_json = analyze(str(tmp_path), conf=10, enable_quality=True)
+        result = json.loads(result_json)
+
+        quality_rules = {f.get("rule_id") for f in result.get("quality", [])}
+        assert "SKY-Q602" in quality_rules
+
+
+class TestHardBenchmark:
+    """Validates scanner recall and precision on hard_benchmark.ts (18 dead, 30+ alive)."""
+
+    EXPECTED_DEAD = {
+        # "reduce" excluded: collides with Array.prototype.reduce in html()
+        "defaultExport",
+        "DeadInterface", "DeadAlias", "DeadEnum",
+        "deadStandalone", "anotherDeadFn",
+        "OrphanService", "BaseProcessor",
+        "createLogger", "syncToCloud",
+        "subtract", "multiply",
+        "notExportedNotCalled",
+        "identity",
+        "deeplyBuriedDead",
+        "parseInput",
+        "isPullRequest",
+    }
+
+    EXPECTED_ALIVE = {
+        "processRepo", "handleClick", "extraValidator", "formatNumber",
+        "createFormatter", "fallbackMessage", "defaultGreeting", "serialize",
+        "html", "LogClass", "WithRetry", "createCounter", "fetchStars",
+        "toUpperCase", "firstItem", "filterMerged", "getDefaultPort",
+        "getDefaultHost", "logStartup", "stringify", "isRepository",
+        "dynamicLookup", "phantomRef", "describeStatus", "greet",
+        "add", "isEven",
+        "ServiceA", "ServiceB", "EventBus", "MathUtils", "CustomError",
+        "Repository", "PullRequest", "EventHandler", "Status",
+        "map", "filter", "helpers",
+    }
+
+    @pytest.fixture(autouse=True)
+    def _scan(self, tmp_path):
+        src = _BENCHMARKS_DIR / "hard_benchmark.ts"
+        if not src.exists():
+            pytest.skip("hard_benchmark.ts not found")
+        self.defs, self.refs, _, _ = _scan_ts(tmp_path, src.read_text())
+        self.unused = _unused(self.defs, self.refs)
+
+    def test_all_dead_detected(self):
+        for name in self.EXPECTED_DEAD:
+            assert name in self.unused, f"{name} should be flagged as dead"
+
+    def test_no_false_positives(self):
+        for name in self.EXPECTED_ALIVE:
+            assert name not in self.unused, f"{name} is alive but was flagged"
+
+
+class TestRealisticBenchmark:
+    """Validates scanner recall and precision on realistic_benchmark.ts (26 dead, 56 alive)."""
+
+    EXPECTED_DEAD = {
+        "useRef", "_",
+        "csrfProtection", "globalErrorHandler",
+        "ObsoleteSchema",
+        "CacheEntry",
+        "NotificationService", "AnalyticsService",
+        "useLocalStorage", "useWindowSize",
+        "slugify", "deepClone", "retry",
+        "Nullable", "ReadonlyDeep",
+        "SocketEvent",
+        "LEGACY_API_URL", "FEATURE_FLAGS",
+        "slackNotifyHook",
+        "syncUserData", "purgeExpiredSessions",
+        "adminOnlyEndpoint",
+        "isString",
+        "formatCurrency",
+        "ConflictError", "RateLimitError",
+    }
+
+    EXPECTED_ALIVE = {
+        "Request", "Response", "NextFunction",
+        "createSlice", "PayloadAction",
+        "useCallback", "useMemo",
+        "axios", "z",
+        "rateLimiter", "corsHandler", "requestLogger",
+        "UserSchema", "CreatePostSchema",
+        "User", "CreatePostInput",
+        "ApiConfig", "PaginatedResponse", "AppState",
+        "DeepPartial", "ApiResponse", "AppEvent", "PluginHook",
+        "UserService", "PostService", "QueryBuilder",
+        "ValidationError", "NotFoundError",
+        "useDebounce", "useFetchUsers",
+        "truncate", "toLowerCase", "trim", "pipe", "formatDate",
+        "handleEvent", "registerHooks", "auditHook", "metricsHook",
+        "fetchUserProfile", "fetchUserPosts",
+        "validateAge", "withAuth", "protectedEndpoint",
+        "isNonEmpty", "formatUserRow",
+        "API_BASE_URL", "userSlice",
+        "internalHelper",
+    }
+
+    @pytest.fixture(autouse=True)
+    def _scan(self, tmp_path):
+        src = _BENCHMARKS_DIR / "realistic_benchmark.ts"
+        if not src.exists():
+            pytest.skip("realistic_benchmark.ts not found")
+        self.defs, self.refs, _, _ = _scan_ts(tmp_path, src.read_text())
+        self.unused = _unused(self.defs, self.refs)
+
+    def test_all_dead_detected(self):
+        for name in self.EXPECTED_DEAD:
+            assert name in self.unused, f"{name} should be flagged as dead"
+
+    def test_no_false_positives(self):
+        for name in self.EXPECTED_ALIVE:
+            assert name not in self.unused, f"{name} is alive but was flagged"

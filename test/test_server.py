@@ -1,8 +1,10 @@
 import json
 import sys
 import os
+import unittest 
 from unittest.mock import patch, MagicMock
 
+_original_constants = sys.modules.get("skylos.constants")
 mock_constants = MagicMock()
 mock_constants.DEFAULT_EXCLUDE_FOLDERS = [".git", "__pycache__"]
 sys.modules["skylos.constants"] = mock_constants
@@ -17,6 +19,12 @@ except ImportError:
 
 
 from skylos.server import app, start_server
+
+# Restore real constants so other test files aren't affected
+if _original_constants is not None:
+    sys.modules["skylos.constants"] = _original_constants
+else:
+    del sys.modules["skylos.constants"]
 
 
 class TestSkylosWebApp(unittest.TestCase):
