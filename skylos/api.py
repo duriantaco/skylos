@@ -146,10 +146,35 @@ else:
     VERIFY_URL = f"{BASE_URL}/api/verify"
 
 
+def _try_github_oidc_token():
+    oidc_url = os.getenv("ACTIONS_ID_TOKEN_REQUEST_URL")
+    oidc_token = os.getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+    if not oidc_url or not oidc_token:
+        return None
+    try:
+        sep = "&" if "?" in oidc_url else "?"
+        resp = requests.get(
+            f"{oidc_url}{sep}audience=skylos",
+            headers={"Authorization": f"Bearer {oidc_token}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            jwt_token = resp.json().get("value")
+            if jwt_token:
+                return f"oidc:{jwt_token}"
+    except Exception:
+        pass
+    return None
+
+
 def get_project_token():
     token = os.getenv("SKYLOS_TOKEN")
     if token:
         return token
+
+    oidc = _try_github_oidc_token()
+    if oidc:
+        return oidc
 
     repo_root = _get_repo_root_for_link()
     link_path = repo_root / LINK_FILE
@@ -174,6 +199,8 @@ def get_project_token():
 
 def get_project_info(token):
     if not token:
+        return None
+    if token.startswith("oidc:"):
         return None
     try:
         resp = requests.get(
@@ -304,12 +331,152 @@ def extract_snippet(file_abs, line_number, context=3):
         return None
 
 
-def upload_report(result_json, is_forced=False, quiet=False, strict=False):
+def _build_auth_headers(token):
+    if token and token.startswith("oidc:"):
+        return {
+            "Authorization": f"Bearer {token[5:]}",
+            "X-Skylos-Auth": "oidc",
+        }
+    return {"Authorization": f"Bearer {token}"}
+
+
+def detect_ai_code(git_root=None):
+    if not git_root:
+        git_root = get_git_root()
+    if not git_root:
+        return {"detected": False, "indicators": [], "ai_files": [], "confidence": "low"}
+
+    import re as _re
+
+    indicators = []
+    ai_files = set()
+
+    AI_COAUTHOR_PATTERNS = [
+        _re.compile(r"copilot", _re.IGNORECASE),
+        _re.compile(r"claude", _re.IGNORECASE),
+        _re.compile(r"cursor", _re.IGNORECASE),
+        _re.compile(r"codewhisperer", _re.IGNORECASE),
+        _re.compile(r"tabnine", _re.IGNORECASE),
+        _re.compile(r"github-actions\[bot\]", _re.IGNORECASE),
+        _re.compile(r"devin", _re.IGNORECASE),
+    ]
+
+    AI_EMAIL_PATTERNS = [
+        _re.compile(r"\[bot\]@", _re.IGNORECASE),
+        _re.compile(r"copilot", _re.IGNORECASE),
+        _re.compile(r"cursor", _re.IGNORECASE),
+        _re.compile(r"claude", _re.IGNORECASE),
+    ]
+
+    AI_MESSAGE_PATTERNS = [
+        _re.compile(r"generated\s+by\s+(copilot|claude|cursor|ai)", _re.IGNORECASE),
+        _re.compile(r"ai[- ]generated", _re.IGNORECASE),
+        _re.compile(r"co-authored-by.*copilot", _re.IGNORECASE),
+        _re.compile(r"co-authored-by.*claude", _re.IGNORECASE),
+    ]
+
+    try:
+        log_output = subprocess.check_output(
+            [
+                "git", "log",
+                "--format=%H|%an|%ae|%s|%(trailers:key=Co-authored-by,valueonly,separator=%x00)",
+                "-50",
+            ],
+            cwd=git_root,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        ).decode("utf-8", errors="ignore")
+
+        for line in log_output.strip().splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("|", 4)
+            if len(parts) < 4:
+                continue
+
+            commit_sha = parts[0]
+            author_name = parts[1]
+            author_email = parts[2]
+            subject = parts[3]
+
+            if len(parts) > 4:
+                trailers = parts[4]
+            else:
+                trailers = ""
+
+            is_ai_commit = False
+
+            for pat in AI_COAUTHOR_PATTERNS:
+                if pat.search(trailers):
+                    indicators.append({
+                        "type": "co-author",
+                        "commit": commit_sha[:7],
+                        "detail": trailers.strip()[:100],
+                    })
+                    is_ai_commit = True
+                    break
+
+            if not is_ai_commit:
+                for pat in AI_EMAIL_PATTERNS:
+                    if pat.search(author_email):
+                        indicators.append({
+                            "type": "author-email",
+                            "commit": commit_sha[:7],
+                            "detail": f"{author_name} <{author_email}>",
+                        })
+                        is_ai_commit = True
+                        break
+
+            if not is_ai_commit:
+                for pat in AI_MESSAGE_PATTERNS:
+                    if pat.search(subject):
+                        indicators.append({
+                            "type": "commit-message",
+                            "commit": commit_sha[:7],
+                            "detail": subject[:100],
+                        })
+                        is_ai_commit = True
+                        break
+
+            if is_ai_commit:
+                try:
+                    diff_output = subprocess.check_output(
+                        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_sha],
+                        cwd=git_root,
+                        stderr=subprocess.DEVNULL,
+                        timeout=5,
+                    ).decode("utf-8", errors="ignore")
+                    for f in diff_output.strip().splitlines():
+                        if f.strip():
+                            ai_files.add(f.strip())
+                except Exception:
+                    pass
+
+    except Exception:
+        pass
+
+    detected = len(indicators) > 0
+    if len(indicators) > 5:
+        confidence = "high"
+    elif len(indicators) > 0:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    return {
+        "detected": detected,
+        "indicators": indicators[:20],
+        "ai_files": sorted(ai_files)[:100],
+        "confidence": confidence,
+    }
+
+
+def upload_report(result_json, is_forced=False, quiet=False, strict=False, analysis_mode="static"):
     token = get_project_token()
     if not token:
         return {
             "success": False,
-            "error": "No token found. Run 'skylos sync connect' or set SKYLOS_TOKEN.",
+            "error": "No token found. Run 'skylos login' or set SKYLOS_TOKEN.",
         }
 
     if not quiet:
@@ -384,6 +551,15 @@ def upload_report(result_json, is_forced=False, quiet=False, strict=False):
                     finding.get("snippet") or extract_snippet(file_abs, line) or None
                 )
 
+            metadata = {}
+            for meta_key in ("_source", "_confidence", "_llm_verdict", "_llm_rationale",
+                             "_llm_challenged", "_needs_review", "_llm_uncertain"):
+                val = finding.pop(meta_key, None)
+                if val is not None:
+                    metadata[meta_key.lstrip("_")] = val
+            if metadata:
+                finding["metadata"] = metadata
+
             processed.append(finding)
 
         return processed
@@ -423,11 +599,18 @@ def upload_report(result_json, is_forced=False, quiet=False, strict=False):
         )
     )
 
+    all_findings.extend(
+        prepare_for_sarif(
+            result_json.get("dependency_vulnerabilities", []), "DEPENDENCY", "SKY-SCA-000"
+        )
+    )
+
     exporter = SarifExporter(all_findings, tool_name="Skylos")
     payload = exporter.generate()
 
     info = get_project_info(token) or {}
     plan = (info.get("plan") or "free").lower()
+    ai_code = detect_ai_code(git_root)
 
     payload.update(
         {
@@ -436,8 +619,14 @@ def upload_report(result_json, is_forced=False, quiet=False, strict=False):
             "actor": actor,
             "is_forced": bool(is_forced),
             "ci": ci,
+            "analysis_mode": analysis_mode,
+            "ai_code": ai_code if ai_code.get("detected") else None,
         }
     )
+
+    grade_data = result_json.get("grade") if isinstance(result_json, dict) else None
+    if grade_data:
+        payload["grade"] = grade_data
 
     link = _load_repo_link(git_root)
     if link.get("project_id"):
@@ -449,7 +638,7 @@ def upload_report(result_json, is_forced=False, quiet=False, strict=False):
             response = requests.post(
                 REPORT_URL,
                 json=payload,
-                headers={"Authorization": f"Bearer {token}"},
+                headers=_build_auth_headers(token),
                 timeout=30,
             )
             if response.status_code in (200, 201):
@@ -463,6 +652,9 @@ def upload_report(result_json, is_forced=False, quiet=False, strict=False):
 
                 if not quiet:
                     print(f"✓ Scan uploaded")
+                    if grade_data:
+                        g = grade_data["overall"]
+                        print(f"Grade: {g['letter']} ({g['score']}/100)")
                     if passed:
                         print(f"✅ PASS Quality gate: PASSED")
                     else:

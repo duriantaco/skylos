@@ -325,6 +325,7 @@ class Visitor(ast.NodeVisitor):
         self._mro_cache = {}
         self.slotted_classes = set()
         self.property_chains = defaultdict(dict)
+        self.version_conditional_lines = set()
 
     def add_def(
         self, name: str, t: str, line: int, node: Optional[ast.AST] = None, **extra: Any
@@ -446,9 +447,20 @@ class Visitor(ast.NodeVisitor):
             self.add_def(full, "import", node.lineno)
 
     def visit_If(self, node: ast.If) -> None:
-        condition = evaluate_static_condition(node.test)
+        from skylos.control_flow import _is_sys_version_info_node, _extract_version_tuple
+
+        condition = evaluate_static_condition(node.test, file_path=self.file)
         self.visit(node.test)
         self._complexity_stack[-1] += 1
+
+        is_version_conditional = False
+        if isinstance(node.test, ast.Compare):
+            if _is_sys_version_info_node(node.test.left):
+                version_tuple = _extract_version_tuple(node.test.comparators[0]) if node.test.comparators else None
+                is_version_conditional = version_tuple is not None
+            elif node.test.comparators and _is_sys_version_info_node(node.test.comparators[0]):
+                version_tuple = _extract_version_tuple(node.test.left)
+                is_version_conditional = version_tuple is not None
 
         if condition is True:
             for statement in node.body:
@@ -458,9 +470,18 @@ class Visitor(ast.NodeVisitor):
                 self.visit(statement)
         else:
             for statement in node.body:
+                if is_version_conditional:
+                    self._mark_version_conditional(statement)
                 self.visit(statement)
             for statement in node.orelse:
+                if is_version_conditional:
+                    self._mark_version_conditional(statement)
                 self.visit(statement)
+
+    def _mark_version_conditional(self, node: ast.AST) -> None:
+        for child in ast.walk(node):
+            if hasattr(child, 'lineno'):
+                self.version_conditional_lines.add(child.lineno)
 
     def visit_For(self, node: ast.For) -> None:
         self._complexity_stack[-1] += 1
