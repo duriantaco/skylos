@@ -42,6 +42,8 @@ from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
 from skylos.rules.quality.async_blocking import AsyncBlockingRule
 from skylos.rules.quality.class_size import GodClassRule
+from skylos.rules.quality.coupling import CBORule
+from skylos.rules.quality.cohesion import LCOMRule
 from skylos.rules.quality.clones import (
     CloneConfig,
     GroupingMode,
@@ -117,6 +119,22 @@ class Skylos:
 
         return False
 
+    _LANG_MAP = {
+        ".py": "Python",
+        ".go": "Go",
+        ".ts": "TypeScript",
+        ".tsx": "TypeScript",
+    }
+
+    def _count_languages(self, files) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for f in files:
+            ext = Path(f).suffix.lower()
+            lang = self._LANG_MAP.get(ext)
+            if lang:
+                counts[lang] = counts.get(lang, 0) + 1
+        return counts
+
     def _get_python_files(self, path, exclude_folders=None):
         p = Path(path).resolve()
 
@@ -174,6 +192,53 @@ class Skylos:
                         and def_obj.type != "import"
                     ):
                         def_obj.is_exported = True
+
+    def _propagate_transitive_dead(self):
+        dead_set = set()
+        for name, defn in self.defs.items():
+            if (
+                defn.type in ("function", "method")
+                and defn.references == 0
+                and not defn.is_exported
+            ):
+                dead_set.add(name)
+
+        changed = True
+        iterations = 0
+        max_iterations = 100
+
+        while changed and iterations < max_iterations:
+            changed = False
+            iterations += 1
+
+            for name, defn in self.defs.items():
+                if name in dead_set:
+                    continue
+
+                if defn.type not in ("function", "method"):
+                    continue
+                if defn.references == 0:
+                    continue
+                if defn.is_exported:
+                    continue
+
+                if not defn.called_by:
+                    continue
+
+                all_callers_dead = True
+                for caller in defn.called_by:
+                    if caller not in dead_set:
+                        all_callers_dead = False
+                        break
+
+                if all_callers_dead:
+                    dead_set.add(name)
+                    defn.references = 0
+                    defn.confidence = min(defn.confidence, 10)
+                    changed = True
+
+        logger.info(f"Transitive dead code propagation: {iterations} iterations, "
+                    f"{len(dead_set)} total dead functions")
 
     def _mark_refs(self, progress_callback=None):
         total_refs = len(self.refs)
@@ -454,9 +519,11 @@ class Skylos:
         all_secrets = []
         all_dangers = []
         all_quality = []
+        all_suppressed = []
         empty_files = []
         file_contexts = []
 
+        per_file_ignore_lines = {}
         pattern_trackers = {}
         all_raw_imports = {}
 
@@ -495,6 +562,8 @@ class Skylos:
                 mod = modmap[file]
 
                 file_raw_imports = out[12] if len(out) > 12 else []
+                file_ignore_lines = out[13] if len(out) > 13 else set()
+                file_suppressed = out[14] if len(out) > 14 else []
                 (
                     defs,
                     refs,
@@ -509,6 +578,11 @@ class Skylos:
                     empty_file_finding,
                     cfg,
                 ) = out[:12]
+
+                if file_ignore_lines:
+                    per_file_ignore_lines[str(file)] = file_ignore_lines
+                if file_suppressed:
+                    all_suppressed.extend(file_suppressed)
 
                 if file_raw_imports and str(file).endswith(".py"):
                     all_raw_imports[file] = file_raw_imports
@@ -554,6 +628,12 @@ class Skylos:
                             ctx = {"relpath": rel, "lines": src_lines, "tree": None}
                             findings = list(_secrets_scan_ctx(ctx))
                             if findings:
+                                f_ignore = per_file_ignore_lines.get(str(file), set())
+                                if f_ignore:
+                                    for sf in findings:
+                                        if sf.get("line") in f_ignore:
+                                            all_suppressed.append({**sf, "category": "secrets", "reason": "inline ignore comment"})
+                                    findings = [sf for sf in findings if sf.get("line") not in f_ignore]
                                 all_secrets.extend(findings)
                         except Exception:
                             pass
@@ -775,6 +855,24 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
+        # SCA: Dependency vulnerability scanning
+        all_sca = []
+        if enable_danger:
+            try:
+                from skylos.rules.sca.vulnerability_scanner import scan_dependencies
+
+                scan_root = Path(
+                    os.path.commonpath([str(p.resolve()) for p in files])
+                ) if files else Path(path)
+                if scan_root.is_file():
+                    scan_root = scan_root.parent
+                sca_findings = scan_dependencies(scan_root)
+                if sca_findings:
+                    all_sca.extend(sca_findings)
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error(traceback.format_exc())
+
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
         self._mark_refs(progress_callback=progress_callback)
@@ -786,6 +884,10 @@ class Skylos:
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: exports"))
         self._mark_exports()
+
+        if progress_callback:
+            progress_callback(0, 1, Path("PHASE: transitive dead code"))
+        self._propagate_transitive_dead()
 
         shown = 0
 
@@ -821,14 +923,16 @@ class Skylos:
         for d in self.defs.values():
             reason = getattr(d, "skip_reason", None)
             if reason:
-                whitelisted.append(
-                    {
-                        "name": d.simple_name,
-                        "file": str(d.filename),
-                        "line": d.line,
-                        "reason": d.skip_reason,
-                    }
-                )
+                entry = {
+                    "name": d.simple_name,
+                    "file": str(d.filename),
+                    "line": d.line,
+                    "reason": d.skip_reason,
+                    "category": "dead_code",
+                }
+                whitelisted.append(entry)
+                if reason == "inline ignore comment":
+                    all_suppressed.append(entry)
 
         result = {
             "definitions": context_map,
@@ -839,9 +943,11 @@ class Skylos:
             "unused_parameters": [],
             "unused_files": [],
             "whitelisted": whitelisted,
+            "suppressed": all_suppressed,
             "analysis_summary": {
                 "total_files": len(files),
                 "excluded_folders": exclude_folders or [],
+                "languages": self._count_languages(files),
             },
         }
 
@@ -852,6 +958,10 @@ class Skylos:
         if enable_danger and all_dangers:
             result["danger"] = all_dangers
             result["analysis_summary"]["danger_count"] = len(all_dangers)
+
+        if all_sca:
+            result["dependency_vulnerabilities"] = all_sca
+            result["analysis_summary"]["sca_count"] = len(all_sca)
 
         if enable_quality and all_quality:
             custom_hits = []
@@ -909,9 +1019,51 @@ class Skylos:
                 if circular_findings:
                     result["circular_dependencies"] = circular_findings
 
+                # Architecture metrics (reuses the dependency graph)
+                if enable_quality and "SKY-Q802" not in project_cfg.get("ignore", []):
+                    try:
+                        from skylos.architecture import get_architecture_findings
+
+                        dep_graph = dict(circular_rule._analyzer.dependencies)
+                        mod_files = dict(circular_rule._analyzer.modules)
+
+                        # Collect module ASTs for abstractness computation
+                        mod_trees = {}
+                        for file in files:
+                            if not str(file).endswith(".py"):
+                                continue
+                            mod = modmap.get(file, "")
+                            try:
+                                src = Path(file).read_text(encoding="utf-8", errors="ignore")
+                                mod_trees[mod] = ast.parse(src)
+                            except Exception:
+                                pass
+
+                        arch_findings, arch_summary = get_architecture_findings(
+                            dependency_graph=dep_graph,
+                            module_files=mod_files,
+                            module_trees=mod_trees,
+                        )
+                        if arch_findings:
+                            all_quality.extend(arch_findings)
+                        if arch_summary:
+                            result["architecture_metrics"] = arch_summary
+                    except Exception:
+                        if os.getenv("SKYLOS_DEBUG"):
+                            traceback.print_exc()
+
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
                     traceback.print_exc()
+
+        try:
+            from skylos.grader import count_lines_of_code, compute_grade
+            total_loc = count_lines_of_code(files)
+            result["analysis_summary"]["total_loc"] = total_loc
+            result["grade"] = compute_grade(result, total_loc)
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                traceback.print_exc()
 
         return json.dumps(result, indent=2)
 
@@ -1041,6 +1193,10 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
                 q_rules.append(ReturnConsistencyRule())
             if "SKY-Q501" not in cfg["ignore"]:
                 q_rules.append(GodClassRule())
+            if "SKY-Q701" not in cfg["ignore"]:
+                q_rules.append(CBORule())
+            if "SKY-Q702" not in cfg["ignore"]:
+                q_rules.append(LCOMRule())
 
             if "SKY-U001" not in cfg["ignore"]:
                 q_rules.append(UnreachableCodeRule())
@@ -1110,6 +1266,17 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
                 checker = VisitorClass(file, pro_findings)
                 checker.visit(tree)
 
+        suppressed_findings = []
+        if ignore_lines:
+            sup_q = [f for f in quality_findings if f.get("line") in ignore_lines]
+            sup_d = [f for f in danger_findings if f.get("line") in ignore_lines]
+            quality_findings = [f for f in quality_findings if f.get("line") not in ignore_lines]
+            danger_findings = [f for f in danger_findings if f.get("line") not in ignore_lines]
+            for f in sup_q:
+                suppressed_findings.append({**f, "category": "quality", "reason": "inline ignore comment"})
+            for f in sup_d:
+                suppressed_findings.append({**f, "category": "security", "reason": "inline ignore comment"})
+
         tv = TestAwareVisitor(filename=file)
         tv.visit(tree)
         tv.ignore_lines = ignore_lines
@@ -1134,6 +1301,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
         fv.abc_implementers = getattr(v, "abc_implementers", {})
         fv.protocol_implementers = getattr(v, "protocol_implementers", {})
         fv.protocol_method_names = getattr(v, "protocol_method_names", {})
+        fv.version_conditional_lines = getattr(v, "version_conditional_lines", set())
 
         return (
             v.defs,
@@ -1149,6 +1317,8 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
             empty_file_finding,
             cfg,
             raw_imports,
+            ignore_lines,
+            suppressed_findings,
         )
 
     except Exception as e:
@@ -1171,6 +1341,8 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
             None,
             None,
             cfg,
+            [],
+            set(),
             [],
         )
 
