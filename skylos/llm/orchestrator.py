@@ -108,7 +108,6 @@ class RemediationAgent:
 
         return summary
 
-
     def _scan(self, path: Path) -> dict:
         import json
         from skylos.analyzer import analyze as run_analyze

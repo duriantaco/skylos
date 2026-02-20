@@ -179,9 +179,8 @@ class TryBlockPatternsRule(SkylosRule):
             return None
 
         parent_body = context.get("_parent_body")
-        is_func_level = (
-            parent_body is not None
-            and _is_function_level_try(node, parent_body)
+        is_func_level = parent_body is not None and _is_function_level_try(
+            node, parent_body
         )
 
         findings = []

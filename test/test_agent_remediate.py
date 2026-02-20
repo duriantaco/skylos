@@ -1,4 +1,5 @@
 """Tests for the Skylos DevOps Agent (planner, executor, orchestrator)."""
+
 from __future__ import annotations
 
 import os
@@ -35,8 +36,20 @@ class TestRemediationPlanner:
 
     def test_sorts_critical_first(self):
         findings = [
-            {"rule_id": "SKY-D211", "severity": "MEDIUM", "message": "sql", "file": "a.py", "line": 10},
-            {"rule_id": "SKY-D212", "severity": "CRITICAL", "message": "cmd", "file": "b.py", "line": 5},
+            {
+                "rule_id": "SKY-D211",
+                "severity": "MEDIUM",
+                "message": "sql",
+                "file": "a.py",
+                "line": 10,
+            },
+            {
+                "rule_id": "SKY-D212",
+                "severity": "CRITICAL",
+                "message": "cmd",
+                "file": "b.py",
+                "line": 5,
+            },
         ]
         planner = RemediationPlanner()
         plan = planner.create_plan(self._make_results(findings), max_fixes=10)
@@ -45,9 +58,27 @@ class TestRemediationPlanner:
 
     def test_groups_by_file(self):
         findings = [
-            {"rule_id": "SKY-D201", "severity": "HIGH", "message": "eval", "file": "a.py", "line": 1},
-            {"rule_id": "SKY-D202", "severity": "HIGH", "message": "exec", "file": "a.py", "line": 5},
-            {"rule_id": "SKY-D211", "severity": "HIGH", "message": "sql", "file": "b.py", "line": 3},
+            {
+                "rule_id": "SKY-D201",
+                "severity": "HIGH",
+                "message": "eval",
+                "file": "a.py",
+                "line": 1,
+            },
+            {
+                "rule_id": "SKY-D202",
+                "severity": "HIGH",
+                "message": "exec",
+                "file": "a.py",
+                "line": 5,
+            },
+            {
+                "rule_id": "SKY-D211",
+                "severity": "HIGH",
+                "message": "sql",
+                "file": "b.py",
+                "line": 3,
+            },
         ]
         planner = RemediationPlanner()
         plan = planner.create_plan(self._make_results(findings), max_fixes=10)
@@ -58,7 +89,13 @@ class TestRemediationPlanner:
 
     def test_max_fixes_caps(self):
         findings = [
-            {"rule_id": f"SKY-D20{i}", "severity": "HIGH", "message": f"issue {i}", "file": f"f{i}.py", "line": 1}
+            {
+                "rule_id": f"SKY-D20{i}",
+                "severity": "HIGH",
+                "message": f"issue {i}",
+                "file": f"f{i}.py",
+                "line": 1,
+            }
             for i in range(20)
         ]
         planner = RemediationPlanner()
@@ -69,9 +106,27 @@ class TestRemediationPlanner:
 
     def test_severity_filter(self):
         findings = [
-            {"rule_id": "SKY-D211", "severity": "CRITICAL", "message": "sql", "file": "a.py", "line": 1},
-            {"rule_id": "SKY-D206", "severity": "MEDIUM", "message": "md5", "file": "b.py", "line": 1},
-            {"rule_id": "SKY-Q301", "severity": "LOW", "message": "complex", "file": "c.py", "line": 1},
+            {
+                "rule_id": "SKY-D211",
+                "severity": "CRITICAL",
+                "message": "sql",
+                "file": "a.py",
+                "line": 1,
+            },
+            {
+                "rule_id": "SKY-D206",
+                "severity": "MEDIUM",
+                "message": "md5",
+                "file": "b.py",
+                "line": 1,
+            },
+            {
+                "rule_id": "SKY-Q301",
+                "severity": "LOW",
+                "message": "complex",
+                "file": "c.py",
+                "line": 1,
+            },
         ]
         planner = RemediationPlanner(severity_filter="high")
         plan = planner.create_plan(self._make_results(findings), max_fixes=10)
@@ -82,8 +137,20 @@ class TestRemediationPlanner:
 
     def test_auto_fixable_sorted_first(self):
         findings = [
-            {"rule_id": "SKY-D211", "severity": "HIGH", "message": "sql", "file": "a.py", "line": 1},
-            {"rule_id": "SKY-D206", "severity": "HIGH", "message": "md5", "file": "a.py", "line": 5},
+            {
+                "rule_id": "SKY-D211",
+                "severity": "HIGH",
+                "message": "sql",
+                "file": "a.py",
+                "line": 1,
+            },
+            {
+                "rule_id": "SKY-D206",
+                "severity": "HIGH",
+                "message": "md5",
+                "file": "a.py",
+                "line": 5,
+            },
         ]
         planner = RemediationPlanner()
         plan = planner.create_plan(self._make_results(findings), max_fixes=10)
@@ -94,12 +161,36 @@ class TestRemediationPlanner:
     def test_summary(self):
         plan = RemediationPlan(
             batches=[
-                FixBatch(file="a.py", findings=[FindingItem.from_dict(
-                    {"rule_id": "SKY-D206", "severity": "HIGH", "message": "md5", "file": "a.py", "line": 1}
-                )], status="fixed"),
-                FixBatch(file="b.py", findings=[FindingItem.from_dict(
-                    {"rule_id": "SKY-D211", "severity": "CRITICAL", "message": "sql", "file": "b.py", "line": 1}
-                )], status="test_failed"),
+                FixBatch(
+                    file="a.py",
+                    findings=[
+                        FindingItem.from_dict(
+                            {
+                                "rule_id": "SKY-D206",
+                                "severity": "HIGH",
+                                "message": "md5",
+                                "file": "a.py",
+                                "line": 1,
+                            }
+                        )
+                    ],
+                    status="fixed",
+                ),
+                FixBatch(
+                    file="b.py",
+                    findings=[
+                        FindingItem.from_dict(
+                            {
+                                "rule_id": "SKY-D211",
+                                "severity": "CRITICAL",
+                                "message": "sql",
+                                "file": "b.py",
+                                "line": 1,
+                            }
+                        )
+                    ],
+                    status="test_failed",
+                ),
             ],
             total_findings=5,
             skipped_findings=3,
@@ -111,7 +202,14 @@ class TestRemediationPlanner:
         assert s["total_findings"] == 5
 
     def test_finding_item_from_dict(self):
-        raw = {"rule_id": "SKY-D206", "severity": "HIGH", "message": "md5", "file": "a.py", "line": 10, "col": 5}
+        raw = {
+            "rule_id": "SKY-D206",
+            "severity": "HIGH",
+            "message": "md5",
+            "file": "a.py",
+            "line": 10,
+            "col": 5,
+        }
         item = FindingItem.from_dict(raw)
         assert item.rule_id == "SKY-D206"
         assert item.auto_fixable is True
@@ -119,9 +217,33 @@ class TestRemediationPlanner:
 
     def test_extracts_from_all_categories(self):
         results = {
-            "danger": [{"rule_id": "SKY-D201", "severity": "HIGH", "message": "eval", "file": "a.py", "line": 1}],
-            "quality": [{"rule_id": "SKY-Q301", "severity": "MEDIUM", "message": "complex", "file": "b.py", "line": 1}],
-            "secrets": [{"rule_id": "SKY-S101", "severity": "CRITICAL", "message": "key", "file": "c.py", "line": 1}],
+            "danger": [
+                {
+                    "rule_id": "SKY-D201",
+                    "severity": "HIGH",
+                    "message": "eval",
+                    "file": "a.py",
+                    "line": 1,
+                }
+            ],
+            "quality": [
+                {
+                    "rule_id": "SKY-Q301",
+                    "severity": "MEDIUM",
+                    "message": "complex",
+                    "file": "b.py",
+                    "line": 1,
+                }
+            ],
+            "secrets": [
+                {
+                    "rule_id": "SKY-S101",
+                    "severity": "CRITICAL",
+                    "message": "key",
+                    "file": "c.py",
+                    "line": 1,
+                }
+            ],
         }
         planner = RemediationPlanner()
         plan = planner.create_plan(results, max_fixes=10)
@@ -221,9 +343,27 @@ class TestPRDescription:
             "failed": 1,
             "skipped": 6,
             "batches": [
-                {"file": "a.py", "findings": 2, "status": "fixed", "top_severity": "CRITICAL", "description": "Fixed eval"},
-                {"file": "b.py", "findings": 1, "status": "fixed", "top_severity": "HIGH", "description": "Fixed md5"},
-                {"file": "c.py", "findings": 1, "status": "test_failed", "top_severity": "MEDIUM", "description": "Tests failed"},
+                {
+                    "file": "a.py",
+                    "findings": 2,
+                    "status": "fixed",
+                    "top_severity": "CRITICAL",
+                    "description": "Fixed eval",
+                },
+                {
+                    "file": "b.py",
+                    "findings": 1,
+                    "status": "fixed",
+                    "top_severity": "HIGH",
+                    "description": "Fixed md5",
+                },
+                {
+                    "file": "c.py",
+                    "findings": 1,
+                    "status": "test_failed",
+                    "top_severity": "MEDIUM",
+                    "description": "Tests failed",
+                },
             ],
         }
         body = build_pr_description(summary)
@@ -289,7 +429,9 @@ class TestOrchestrator:
 
         agent = RemediationAgent()
 
-        with patch.object(agent, "_scan", return_value={"danger": [], "quality": [], "secrets": []}):
+        with patch.object(
+            agent, "_scan", return_value={"danger": [], "quality": [], "secrets": []}
+        ):
             summary = agent.run(str(tmp_path), quiet=True)
 
         assert summary["total_findings"] == 0

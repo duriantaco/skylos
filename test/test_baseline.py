@@ -14,10 +14,20 @@ def _sample_result():
         "unused_classes": [],
         "unused_variables": [],
         "danger": [
-            {"rule_id": "SKY-D211", "file": "app.py", "line": 50, "message": "SQL injection"},
+            {
+                "rule_id": "SKY-D211",
+                "file": "app.py",
+                "line": 50,
+                "message": "SQL injection",
+            },
         ],
         "quality": [
-            {"rule_id": "SKY-Q301", "file": "app.py", "line": 80, "message": "Complex function"},
+            {
+                "rule_id": "SKY-Q301",
+                "file": "app.py",
+                "line": 80,
+                "message": "Complex function",
+            },
         ],
         "secrets": [],
     }
@@ -54,9 +64,18 @@ class TestSaveBaseline:
 
     def test_overwrites_existing(self, tmp_path):
         save_baseline(tmp_path, _sample_result())
-        save_baseline(tmp_path, {"unused_functions": [], "unused_imports": [],
-                                  "unused_classes": [], "unused_variables": [],
-                                  "danger": [], "quality": [], "secrets": []})
+        save_baseline(
+            tmp_path,
+            {
+                "unused_functions": [],
+                "unused_imports": [],
+                "unused_classes": [],
+                "unused_variables": [],
+                "danger": [],
+                "quality": [],
+                "secrets": [],
+            },
+        )
         baseline = json.loads((tmp_path / ".skylos" / "baseline.json").read_text())
         assert len(baseline["fingerprints"]) == 0
 
@@ -94,7 +113,12 @@ class TestFilterNewFindings:
     def test_keeps_new_findings(self):
         result = _sample_result()
         result["danger"].append(
-            {"rule_id": "SKY-D212", "file": "new.py", "line": 5, "message": "CMD injection"}
+            {
+                "rule_id": "SKY-D212",
+                "file": "new.py",
+                "line": 5,
+                "message": "CMD injection",
+            }
         )
         result["unused_functions"].append(
             {"name": "brand_new_func", "file": "new.py", "line": 15}
@@ -130,7 +154,14 @@ class TestFilterNewFindings:
         filtered = filter_new_findings(result, baseline)
         total = sum(
             len(filtered.get(k, []))
-            for k in ["unused_functions", "unused_imports", "unused_classes",
-                       "unused_variables", "danger", "quality", "secrets"]
+            for k in [
+                "unused_functions",
+                "unused_imports",
+                "unused_classes",
+                "unused_variables",
+                "danger",
+                "quality",
+                "secrets",
+            ]
         )
         assert total == 0

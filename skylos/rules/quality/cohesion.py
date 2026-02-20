@@ -4,27 +4,60 @@ from typing import Any, Optional
 
 from skylos.rules.base import SkylosRule
 
-DATACLASS_DECORATORS = frozenset({
-    "dataclass", "dataclasses.dataclass",
-    "attrs", "attr.s", "attr.attrs", "define", "attrs.define",
-})
+DATACLASS_DECORATORS = frozenset(
+    {
+        "dataclass",
+        "dataclasses.dataclass",
+        "attrs",
+        "attr.s",
+        "attr.attrs",
+        "define",
+        "attrs.define",
+    }
+)
 
-DATACLASS_BASES = frozenset({
-    "BaseModel", "BaseSettings",
-    "TypedDict",
-    "NamedTuple",
-})
+DATACLASS_BASES = frozenset(
+    {
+        "BaseModel",
+        "BaseSettings",
+        "TypedDict",
+        "NamedTuple",
+    }
+)
 
 INIT_METHODS = frozenset({"__init__", "__post_init__", "__init_subclass__"})
 
-INTERFACE_DUNDERS = frozenset({
-    "__str__", "__repr__", "__format__", "__bytes__",
-    "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__",
-    "__hash__", "__bool__", "__len__", "__iter__", "__next__",
-    "__contains__", "__getitem__", "__setitem__", "__delitem__",
-    "__enter__", "__exit__", "__aenter__", "__aexit__",
-    "__call__", "__add__", "__sub__", "__mul__",
-})
+INTERFACE_DUNDERS = frozenset(
+    {
+        "__str__",
+        "__repr__",
+        "__format__",
+        "__bytes__",
+        "__eq__",
+        "__ne__",
+        "__lt__",
+        "__le__",
+        "__gt__",
+        "__ge__",
+        "__hash__",
+        "__bool__",
+        "__len__",
+        "__iter__",
+        "__next__",
+        "__contains__",
+        "__getitem__",
+        "__setitem__",
+        "__delitem__",
+        "__enter__",
+        "__exit__",
+        "__aenter__",
+        "__aexit__",
+        "__call__",
+        "__add__",
+        "__sub__",
+        "__mul__",
+    }
+)
 
 
 class _UnionFind:
@@ -64,8 +97,16 @@ class _UnionFind:
 
 class _MethodInfo:
     __slots__ = (
-        "name", "lineno", "is_static", "is_classmethod", "is_property",
-        "is_init", "is_dunder", "self_attrs", "cls_attrs", "self_calls",
+        "name",
+        "lineno",
+        "is_static",
+        "is_classmethod",
+        "is_property",
+        "is_init",
+        "is_dunder",
+        "self_attrs",
+        "cls_attrs",
+        "self_calls",
         "property_backing",
     )
 
@@ -124,7 +165,9 @@ def _is_dataclass_or_container(node: ast.ClassDef) -> bool:
     return False
 
 
-def _extract_method_info(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> _MethodInfo:
+def _extract_method_info(
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> _MethodInfo:
     info = _MethodInfo(func_node.name, func_node.lineno)
 
     dec_names = _get_decorator_names(func_node.decorator_list)
@@ -285,11 +328,13 @@ def analyze_cohesion(class_node: ast.ClassDef) -> dict[str, Any] | None:
         group_attrs = set()
         for member in members:
             group_attrs.update(method_attrs.get(member, set()))
-        cohesion_groups.append({
-            "methods": sorted(members),
-            "shared_attributes": sorted(group_attrs),
-            "size": len(members),
-        })
+        cohesion_groups.append(
+            {
+                "methods": sorted(members),
+                "shared_attributes": sorted(group_attrs),
+                "size": len(members),
+            }
+        )
 
     return {
         "lcom1": lcom1,

@@ -114,18 +114,14 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(400)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
-            self.wfile.write(
-                b"<html><body><h2>Missing parameters</h2></body></html>"
-            )
+            self.wfile.write(b"<html><body><h2>Missing parameters</h2></body></html>")
 
     def log_message(self, format, *args):
         pass
 
 
 def browser_login(console=None, base_url=None):
-    base_url = (
-        base_url or os.getenv("SKYLOS_API_URL", DEFAULT_BASE_URL).rstrip("/")
-    )
+    base_url = base_url or os.getenv("SKYLOS_API_URL", DEFAULT_BASE_URL).rstrip("/")
 
     port = _find_free_port()
     repo_name = _get_repo_name() or ""
@@ -137,16 +133,11 @@ def browser_login(console=None, base_url=None):
     server.timeout = 5
 
     connect_url = (
-        f"{base_url}/cli/connect"
-        f"?port={port}"
-        f"&repo={repo_name}"
-        f"&repo_url={repo_url}"
+        f"{base_url}/cli/connect?port={port}&repo={repo_name}&repo_url={repo_url}"
     )
 
     if console:
-        console.print(
-            "\n[bold]Opening browser to connect to Skylos Cloud...[/bold]"
-        )
+        console.print("\n[bold]Opening browser to connect to Skylos Cloud...[/bold]")
         console.print(f"[dim]If the browser doesn't open, visit:[/dim]")
         console.print(f"  {connect_url}\n")
     else:
@@ -176,9 +167,7 @@ def browser_login(console=None, base_url=None):
             server.handle_request()
             if time.time() - start_time > TIMEOUT_SECONDS:
                 if console:
-                    console.print(
-                        "[warn]Login timed out after 5 minutes.[/warn]"
-                    )
+                    console.print("[warn]Login timed out after 5 minutes.[/warn]")
                 else:
                     print("Login timed out after 5 minutes.")
                 break
@@ -285,9 +274,7 @@ def run_login(console=None, base_url=None):
                 token=existing,
                 project_id=project.get("id", ""),
                 project_name=name,
-                org_name=info.get("organization", {}).get(
-                    "name", "My Workspace"
-                ),
+                org_name=info.get("organization", {}).get("name", "My Workspace"),
                 plan=info.get("plan", "free"),
             )
         except AuthError:

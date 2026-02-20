@@ -237,8 +237,10 @@ class Skylos:
                     defn.confidence = min(defn.confidence, 10)
                     changed = True
 
-        logger.info(f"Transitive dead code propagation: {iterations} iterations, "
-                    f"{len(dead_set)} total dead functions")
+        logger.info(
+            f"Transitive dead code propagation: {iterations} iterations, "
+            f"{len(dead_set)} total dead functions"
+        )
 
     def _mark_refs(self, progress_callback=None):
         total_refs = len(self.refs)
@@ -632,8 +634,18 @@ class Skylos:
                                 if f_ignore:
                                     for sf in findings:
                                         if sf.get("line") in f_ignore:
-                                            all_suppressed.append({**sf, "category": "secrets", "reason": "inline ignore comment"})
-                                    findings = [sf for sf in findings if sf.get("line") not in f_ignore]
+                                            all_suppressed.append(
+                                                {
+                                                    **sf,
+                                                    "category": "secrets",
+                                                    "reason": "inline ignore comment",
+                                                }
+                                            )
+                                    findings = [
+                                        sf
+                                        for sf in findings
+                                        if sf.get("line") not in f_ignore
+                                    ]
                                 all_secrets.extend(findings)
                         except Exception:
                             pass
@@ -861,9 +873,11 @@ class Skylos:
             try:
                 from skylos.rules.sca.vulnerability_scanner import scan_dependencies
 
-                scan_root = Path(
-                    os.path.commonpath([str(p.resolve()) for p in files])
-                ) if files else Path(path)
+                scan_root = (
+                    Path(os.path.commonpath([str(p.resolve()) for p in files]))
+                    if files
+                    else Path(path)
+                )
                 if scan_root.is_file():
                     scan_root = scan_root.parent
                 sca_findings = scan_dependencies(scan_root)
@@ -1034,7 +1048,9 @@ class Skylos:
                                 continue
                             mod = modmap.get(file, "")
                             try:
-                                src = Path(file).read_text(encoding="utf-8", errors="ignore")
+                                src = Path(file).read_text(
+                                    encoding="utf-8", errors="ignore"
+                                )
                                 mod_trees[mod] = ast.parse(src)
                             except Exception:
                                 pass
@@ -1058,6 +1074,7 @@ class Skylos:
 
         try:
             from skylos.grader import count_lines_of_code, compute_grade
+
             total_loc = count_lines_of_code(files)
             result["analysis_summary"]["total_loc"] = total_loc
             result["grade"] = compute_grade(result, total_loc)
@@ -1270,12 +1287,20 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
         if ignore_lines:
             sup_q = [f for f in quality_findings if f.get("line") in ignore_lines]
             sup_d = [f for f in danger_findings if f.get("line") in ignore_lines]
-            quality_findings = [f for f in quality_findings if f.get("line") not in ignore_lines]
-            danger_findings = [f for f in danger_findings if f.get("line") not in ignore_lines]
+            quality_findings = [
+                f for f in quality_findings if f.get("line") not in ignore_lines
+            ]
+            danger_findings = [
+                f for f in danger_findings if f.get("line") not in ignore_lines
+            ]
             for f in sup_q:
-                suppressed_findings.append({**f, "category": "quality", "reason": "inline ignore comment"})
+                suppressed_findings.append(
+                    {**f, "category": "quality", "reason": "inline ignore comment"}
+                )
             for f in sup_d:
-                suppressed_findings.append({**f, "category": "security", "reason": "inline ignore comment"})
+                suppressed_findings.append(
+                    {**f, "category": "security", "reason": "inline ignore comment"}
+                )
 
         tv = TestAwareVisitor(filename=file)
         tv.visit(tree)

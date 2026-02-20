@@ -19,44 +19,24 @@ def check_code(rule, code, filename="test.py"):
 
 class TestUnusedExceptVar:
     def test_unused_exception_variable(self):
-        code = (
-            "try:\n"
-            "    pass\n"
-            "except ValueError as e:\n"
-            "    print('oops')\n"
-        )
+        code = "try:\n    pass\nexcept ValueError as e:\n    print('oops')\n"
         findings = check_code(UnusedExceptVarRule(), code)
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-L005"
         assert "e" in findings[0]["message"]
 
     def test_used_exception_variable(self):
-        code = (
-            "try:\n"
-            "    pass\n"
-            "except ValueError as e:\n"
-            "    print(e)\n"
-        )
+        code = "try:\n    pass\nexcept ValueError as e:\n    print(e)\n"
         findings = check_code(UnusedExceptVarRule(), code)
         assert len(findings) == 0
 
     def test_bare_except_no_var(self):
-        code = (
-            "try:\n"
-            "    pass\n"
-            "except:\n"
-            "    pass\n"
-        )
+        code = "try:\n    pass\nexcept:\n    pass\n"
         findings = check_code(UnusedExceptVarRule(), code)
         assert len(findings) == 0
 
     def test_underscore_convention(self):
-        code = (
-            "try:\n"
-            "    pass\n"
-            "except ValueError as _:\n"
-            "    print('ignored')\n"
-        )
+        code = "try:\n    pass\nexcept ValueError as _:\n    print('ignored')\n"
         # _ is still flagged — no special-casing (user can suppress via skylos:ignore)
         findings = check_code(UnusedExceptVarRule(), code)
         assert len(findings) == 1
@@ -93,54 +73,29 @@ class TestUnusedExceptVar:
 class TestReturnConsistency:
     def test_inconsistent_explicit_return_vs_bare_return(self):
         """return value on one path, bare return on another."""
-        code = (
-            "def f(x):\n"
-            "    if x > 0:\n"
-            "        return x * 2\n"
-            "    return\n"
-        )
+        code = "def f(x):\n    if x > 0:\n        return x * 2\n    return\n"
         findings = check_code(ReturnConsistencyRule(), code)
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-L006"
         assert "inconsistent" in findings[0]["message"].lower()
 
     def test_consistent_return_value(self):
-        code = (
-            "def f(x):\n"
-            "    if x > 0:\n"
-            "        return x * 2\n"
-            "    return 0\n"
-        )
+        code = "def f(x):\n    if x > 0:\n        return x * 2\n    return 0\n"
         findings = check_code(ReturnConsistencyRule(), code)
         assert len(findings) == 0
 
     def test_consistent_return_none(self):
-        code = (
-            "def f(x):\n"
-            "    if x > 0:\n"
-            "        return\n"
-            "    return\n"
-        )
+        code = "def f(x):\n    if x > 0:\n        return\n    return\n"
         findings = check_code(ReturnConsistencyRule(), code)
         assert len(findings) == 0
 
     def test_explicit_return_none_mixed(self):
-        code = (
-            "def f(x):\n"
-            "    if x > 0:\n"
-            "        return x\n"
-            "    return None\n"
-        )
+        code = "def f(x):\n    if x > 0:\n        return x\n    return None\n"
         findings = check_code(ReturnConsistencyRule(), code)
         assert len(findings) == 1
 
     def test_async_function_inconsistent(self):
-        code = (
-            "async def f(x):\n"
-            "    if x > 0:\n"
-            "        return x\n"
-            "    return\n"
-        )
+        code = "async def f(x):\n    if x > 0:\n        return x\n    return\n"
         findings = check_code(ReturnConsistencyRule(), code)
         assert len(findings) == 1
 
@@ -158,11 +113,7 @@ class TestReturnConsistency:
 
     def test_only_implicit_return_no_flag(self):
         """Only one return path + implicit None — rule doesn't detect implicit."""
-        code = (
-            "def f(x):\n"
-            "    if x > 0:\n"
-            "        return x * 2\n"
-        )
+        code = "def f(x):\n    if x > 0:\n        return x * 2\n"
         findings = check_code(ReturnConsistencyRule(), code)
         assert len(findings) == 0
 
@@ -189,7 +140,9 @@ class TestGodClass:
         findings = check_code(GodClassRule(), code)
         rule_ids = [f["rule_id"] for f in findings]
         assert "SKY-Q501" in rule_ids
-        method_finding = [f for f in findings if isinstance(f["value"], int) and f["value"] >= 21][0]
+        method_finding = [
+            f for f in findings if isinstance(f["value"], int) and f["value"] >= 21
+        ][0]
         assert method_finding["threshold"] == 20
 
     def test_too_many_attributes(self):
@@ -220,7 +173,15 @@ class TestGodClass:
         code = self._make_big_class(method_count=6, attr_count=4)
         findings = check_code(GodClassRule(max_methods=5, max_attributes=3), code)
         # 6 methods > 5 limit, 6 attrs > 3 limit
-        method_findings = [f for f in findings if isinstance(f["value"], int) and f["value"] >= 6 and f["threshold"] == 5]
-        attr_findings = [f for f in findings if isinstance(f["value"], int) and f["value"] >= 4 and f["threshold"] == 3]
+        method_findings = [
+            f
+            for f in findings
+            if isinstance(f["value"], int) and f["value"] >= 6 and f["threshold"] == 5
+        ]
+        attr_findings = [
+            f
+            for f in findings
+            if isinstance(f["value"], int) and f["value"] >= 4 and f["threshold"] == 3
+        ]
         assert len(method_findings) >= 1
         assert len(attr_findings) >= 1

@@ -27,7 +27,11 @@ def _ref_names(refs):
 def _unused(defs, refs):
     """Return set of def names that have no matching ref."""
     rn = _ref_names(refs)
-    return {d.name for d in defs if d.name not in rn and not getattr(d, "is_exported", False)}
+    return {
+        d.name
+        for d in defs
+        if d.name not in rn and not getattr(d, "is_exported", False)
+    }
 
 
 # =====================================================================
@@ -91,10 +95,7 @@ class TestTSDangerRules:
 
     def test_child_process_exec_flagged(self, tmp_path):
         """child_process.exec() SHOULD trigger SKY-D506."""
-        code = (
-            'import cp from "child_process";\n'
-            'cp.exec("rm -rf /");'
-        )
+        code = 'import cp from "child_process";\ncp.exec("rm -rf /");'
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D506" in ids
@@ -166,12 +167,7 @@ class TestTSQualityRules:
         assert "6 parameters" in param_findings[0]["message"]
 
     def test_small_function_no_findings(self, tmp_path):
-        code = (
-            "function small(x: number): number {\n"
-            "    return x + 1;\n"
-            "}\n"
-            "small(1);\n"
-        )
+        code = "function small(x: number): number {\n    return x + 1;\n}\nsmall(1);\n"
         _, _, quality, _ = _scan_ts(tmp_path, code)
         assert len(quality) == 0
 
@@ -181,10 +177,7 @@ class TestTSQualityRules:
 # =====================================================================
 class TestTSImports:
     def test_named_imports(self, tmp_path):
-        code = (
-            "import { foo, bar } from './helpers';\n"
-            "foo();\n"
-        )
+        code = "import { foo, bar } from './helpers';\nfoo();\n"
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         def_names = {d.name for d in defs}
         assert "foo" in def_names
@@ -193,20 +186,14 @@ class TestTSImports:
         assert len(import_defs) == 2
 
     def test_default_import(self, tmp_path):
-        code = (
-            "import React from 'react';\n"
-            "React.createElement('div');\n"
-        )
+        code = "import React from 'react';\nReact.createElement('div');\n"
         defs, _, _, _ = _scan_ts(tmp_path, code)
         import_defs = [d for d in defs if d.type == "import"]
         names = {d.name for d in import_defs}
         assert "React" in names
 
     def test_namespace_import(self, tmp_path):
-        code = (
-            "import * as utils from './utils';\n"
-            "utils.doThing();\n"
-        )
+        code = "import * as utils from './utils';\nutils.doThing();\n"
         defs, _, _, _ = _scan_ts(tmp_path, code)
         import_defs = [d for d in defs if d.type == "import"]
         names = {d.name for d in import_defs}
@@ -243,10 +230,7 @@ class TestTSDeadCodeFalsePositives:
 
     def test_assigned_to_variable(self, tmp_path):
         """fn assigned to a variable is a reference."""
-        code = (
-            "function helper() { return 42; }\n"
-            "const ref = helper;\n"
-        )
+        code = "function helper() { return 42; }\nconst ref = helper;\n"
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         assert "helper" not in _unused(defs, refs)
 
@@ -263,10 +247,7 @@ class TestTSDeadCodeFalsePositives:
 
     def test_object_shorthand(self, tmp_path):
         """{ myFunc } shorthand property is a reference."""
-        code = (
-            "function myFunc() { return 1; }\n"
-            "const obj = { myFunc };\n"
-        )
+        code = "function myFunc() { return 1; }\nconst obj = { myFunc };\n"
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         assert "myFunc" not in _unused(defs, refs)
 
@@ -334,10 +315,7 @@ class TestTSDeadCodeFalsePositives:
 
     def test_export_statement_at_bottom(self, tmp_path):
         """export { foo } at bottom of file makes foo a ref."""
-        code = (
-            "function internal() { return 42; }\n"
-            "export { internal };\n"
-        )
+        code = "function internal() { return 42; }\nexport { internal };\n"
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         assert "internal" not in _unused(defs, refs)
 
@@ -373,11 +351,7 @@ class TestTSDeadCodeTruePositives:
     """Each test verifies a symbol that IS dead and should be flagged."""
 
     def test_unused_function_flagged(self, tmp_path):
-        code = (
-            "function used() { return 1; }\n"
-            "function dead() { return 2; }\n"
-            "used();\n"
-        )
+        code = "function used() { return 1; }\nfunction dead() { return 2; }\nused();\n"
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         assert "dead" in _unused(defs, refs)
         assert "used" not in _unused(defs, refs)
@@ -393,10 +367,7 @@ class TestTSDeadCodeTruePositives:
         assert "UsedClass" not in _unused(defs, refs)
 
     def test_unused_import_flagged(self, tmp_path):
-        code = (
-            "import { used, dead } from './lib';\n"
-            "used();\n"
-        )
+        code = "import { used, dead } from './lib';\nused();\n"
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         assert "dead" in _unused(defs, refs)
         assert "used" not in _unused(defs, refs)
@@ -416,11 +387,7 @@ class TestTSClassDefs:
         assert "Foo" in names
 
     def test_multiple_classes(self, tmp_path):
-        code = (
-            "class Alpha { }\n"
-            "class Beta { }\n"
-            "class Gamma { }\n"
-        )
+        code = "class Alpha { }\nclass Beta { }\nclass Gamma { }\n"
         defs, _, _, _ = _scan_ts(tmp_path, code)
         class_defs = [d for d in defs if d.type == "class"]
         assert len(class_defs) == 3
@@ -467,7 +434,9 @@ class TestMixedRepoIntegration:
         result = json.loads(result_json)
 
         unused_names = {f["name"] for f in result.get("unused_functions", [])}
-        assert "dead_python_func" in unused_names, f"Python dead code not found in {unused_names}"
+        assert "dead_python_func" in unused_names, (
+            f"Python dead code not found in {unused_names}"
+        )
         assert "deadTsFunc" in unused_names, f"TS dead code not found in {unused_names}"
         assert "used_helper" not in unused_names
         assert "usedHandler" not in unused_names
@@ -520,11 +489,17 @@ class TestHardBenchmark:
     EXPECTED_DEAD = {
         # "reduce" excluded: collides with Array.prototype.reduce in html()
         "defaultExport",
-        "DeadInterface", "DeadAlias", "DeadEnum",
-        "deadStandalone", "anotherDeadFn",
-        "OrphanService", "BaseProcessor",
-        "createLogger", "syncToCloud",
-        "subtract", "multiply",
+        "DeadInterface",
+        "DeadAlias",
+        "DeadEnum",
+        "deadStandalone",
+        "anotherDeadFn",
+        "OrphanService",
+        "BaseProcessor",
+        "createLogger",
+        "syncToCloud",
+        "subtract",
+        "multiply",
         "notExportedNotCalled",
         "identity",
         "deeplyBuriedDead",
@@ -533,16 +508,45 @@ class TestHardBenchmark:
     }
 
     EXPECTED_ALIVE = {
-        "processRepo", "handleClick", "extraValidator", "formatNumber",
-        "createFormatter", "fallbackMessage", "defaultGreeting", "serialize",
-        "html", "LogClass", "WithRetry", "createCounter", "fetchStars",
-        "toUpperCase", "firstItem", "filterMerged", "getDefaultPort",
-        "getDefaultHost", "logStartup", "stringify", "isRepository",
-        "dynamicLookup", "phantomRef", "describeStatus", "greet",
-        "add", "isEven",
-        "ServiceA", "ServiceB", "EventBus", "MathUtils", "CustomError",
-        "Repository", "PullRequest", "EventHandler", "Status",
-        "map", "filter", "helpers",
+        "processRepo",
+        "handleClick",
+        "extraValidator",
+        "formatNumber",
+        "createFormatter",
+        "fallbackMessage",
+        "defaultGreeting",
+        "serialize",
+        "html",
+        "LogClass",
+        "WithRetry",
+        "createCounter",
+        "fetchStars",
+        "toUpperCase",
+        "firstItem",
+        "filterMerged",
+        "getDefaultPort",
+        "getDefaultHost",
+        "logStartup",
+        "stringify",
+        "isRepository",
+        "dynamicLookup",
+        "phantomRef",
+        "describeStatus",
+        "greet",
+        "add",
+        "isEven",
+        "ServiceA",
+        "ServiceB",
+        "EventBus",
+        "MathUtils",
+        "CustomError",
+        "Repository",
+        "PullRequest",
+        "EventHandler",
+        "Status",
+        "map",
+        "filter",
+        "helpers",
     }
 
     @pytest.fixture(autouse=True)
@@ -566,43 +570,83 @@ class TestRealisticBenchmark:
     """Validates scanner recall and precision on realistic_benchmark.ts (26 dead, 56 alive)."""
 
     EXPECTED_DEAD = {
-        "useRef", "_",
-        "csrfProtection", "globalErrorHandler",
+        "useRef",
+        "_",
+        "csrfProtection",
+        "globalErrorHandler",
         "ObsoleteSchema",
         "CacheEntry",
-        "NotificationService", "AnalyticsService",
-        "useLocalStorage", "useWindowSize",
-        "slugify", "deepClone", "retry",
-        "Nullable", "ReadonlyDeep",
+        "NotificationService",
+        "AnalyticsService",
+        "useLocalStorage",
+        "useWindowSize",
+        "slugify",
+        "deepClone",
+        "retry",
+        "Nullable",
+        "ReadonlyDeep",
         "SocketEvent",
-        "LEGACY_API_URL", "FEATURE_FLAGS",
+        "LEGACY_API_URL",
+        "FEATURE_FLAGS",
         "slackNotifyHook",
-        "syncUserData", "purgeExpiredSessions",
+        "syncUserData",
+        "purgeExpiredSessions",
         "adminOnlyEndpoint",
         "isString",
         "formatCurrency",
-        "ConflictError", "RateLimitError",
+        "ConflictError",
+        "RateLimitError",
     }
 
     EXPECTED_ALIVE = {
-        "Request", "Response", "NextFunction",
-        "createSlice", "PayloadAction",
-        "useCallback", "useMemo",
-        "axios", "z",
-        "rateLimiter", "corsHandler", "requestLogger",
-        "UserSchema", "CreatePostSchema",
-        "User", "CreatePostInput",
-        "ApiConfig", "PaginatedResponse", "AppState",
-        "DeepPartial", "ApiResponse", "AppEvent", "PluginHook",
-        "UserService", "PostService", "QueryBuilder",
-        "ValidationError", "NotFoundError",
-        "useDebounce", "useFetchUsers",
-        "truncate", "toLowerCase", "trim", "pipe", "formatDate",
-        "handleEvent", "registerHooks", "auditHook", "metricsHook",
-        "fetchUserProfile", "fetchUserPosts",
-        "validateAge", "withAuth", "protectedEndpoint",
-        "isNonEmpty", "formatUserRow",
-        "API_BASE_URL", "userSlice",
+        "Request",
+        "Response",
+        "NextFunction",
+        "createSlice",
+        "PayloadAction",
+        "useCallback",
+        "useMemo",
+        "axios",
+        "z",
+        "rateLimiter",
+        "corsHandler",
+        "requestLogger",
+        "UserSchema",
+        "CreatePostSchema",
+        "User",
+        "CreatePostInput",
+        "ApiConfig",
+        "PaginatedResponse",
+        "AppState",
+        "DeepPartial",
+        "ApiResponse",
+        "AppEvent",
+        "PluginHook",
+        "UserService",
+        "PostService",
+        "QueryBuilder",
+        "ValidationError",
+        "NotFoundError",
+        "useDebounce",
+        "useFetchUsers",
+        "truncate",
+        "toLowerCase",
+        "trim",
+        "pipe",
+        "formatDate",
+        "handleEvent",
+        "registerHooks",
+        "auditHook",
+        "metricsHook",
+        "fetchUserProfile",
+        "fetchUserPosts",
+        "validateAge",
+        "withAuth",
+        "protectedEndpoint",
+        "isNonEmpty",
+        "formatUserRow",
+        "API_BASE_URL",
+        "userSlice",
         "internalHelper",
     }
 

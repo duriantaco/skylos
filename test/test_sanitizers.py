@@ -55,11 +55,7 @@ def test_cmd_shlex_quote_clears_taint(tmp_path):
 
 
 def test_cmd_without_sanitizer_flags(tmp_path):
-    code = (
-        "import os\n"
-        "def f(user_input):\n"
-        "    os.system('echo ' + user_input)\n"
-    )
+    code = "import os\ndef f(user_input):\n    os.system('echo ' + user_input)\n"
     out = _scan_one(tmp_path, "vuln_cmd.py", code)
     assert "SKY-D212" in _rule_ids(out)
 

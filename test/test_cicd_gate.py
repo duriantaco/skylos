@@ -61,7 +61,13 @@ def test_gate_fails_on_critical(failing_results):
 
 def test_gate_strict_mode(clean_results):
     clean_results["quality"] = [
-        {"rule_id": "SKY-Q301", "file": "a.py", "line": 1, "severity": "LOW", "message": "complex"}
+        {
+            "rule_id": "SKY-Q301",
+            "file": "a.py",
+            "line": 1,
+            "severity": "LOW",
+            "message": "complex",
+        }
     ]
     passed, reasons = check_gate(clean_results, {}, strict=True)
     assert passed is False
@@ -90,7 +96,9 @@ def test_summary_markdown_passed(clean_results):
 
 
 def test_summary_markdown_failed(failing_results):
-    md = build_summary_markdown(failing_results, False, ["1 critical security issue(s)"])
+    md = build_summary_markdown(
+        failing_results, False, ["1 critical security issue(s)"]
+    )
     assert "FAILED" in md
     assert "Failure Reasons" in md
     assert "critical" in md

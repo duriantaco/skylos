@@ -284,7 +284,9 @@ def run_pipeline(
             if not api_ok:
                 console.print(f"[bad]✗ LLM API test failed:[/bad] {api_message}")
                 console.print("[bad]Cannot run LLM verification. Skipping...[/bad]")
-                console.print("[dim]Tip: Run 'skylos key' to configure your API key[/dim]")
+                console.print(
+                    "[dim]Tip: Run 'skylos key' to configure your API key[/dim]"
+                )
                 # Skip verification, just use static findings
                 for f in dead_code_findings:
                     f["_confidence"] = "medium"
@@ -297,7 +299,10 @@ def run_pipeline(
                 findings=dead_code_findings,
                 defs_map=defs_map,
                 source_cache=source_cache,
-                confidence_range=(10, 100),  # Lowered from 20 to verify low-conf findings
+                confidence_range=(
+                    10,
+                    100,
+                ),  # Lowered from 20 to verify low-conf findings
             )
 
             tp = sum(1 for f in verified if f.get("_llm_verdict") == "TRUE_POSITIVE")

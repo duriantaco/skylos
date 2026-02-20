@@ -130,10 +130,7 @@ class TypeScriptCore:
         ):
             self._add_def(node, "class")
 
-        for node in self._run_query(
-            "(decorator (identifier) @dec)", "dec"
-        ):
-  
+        for node in self._run_query("(decorator (identifier) @dec)", "dec"):
             class_node = node.parent
             if class_node:
                 class_node = class_node.parent
@@ -252,8 +249,11 @@ class TypeScriptCore:
         while current:
             if current.type == "program":
                 return True
-            if current.type in ("export_statement", "lexical_declaration",
-                                "variable_declarator"):
+            if current.type in (
+                "export_statement",
+                "lexical_declaration",
+                "variable_declarator",
+            ):
                 current = current.parent
                 continue
             return False

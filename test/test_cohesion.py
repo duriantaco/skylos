@@ -7,6 +7,7 @@ from skylos.rules.quality.cohesion import LCOMRule, analyze_cohesion, _UnionFind
 
 # ── Helper ──
 
+
 def _parse(code: str) -> ast.ClassDef:
     tree = ast.parse(code)
     for node in ast.walk(tree):
@@ -16,6 +17,7 @@ def _parse(code: str) -> ast.ClassDef:
 
 
 # ── UnionFind ──
+
 
 class TestUnionFind:
     def test_basic_union(self):
@@ -51,6 +53,7 @@ class TestUnionFind:
 
 
 # ── analyze_cohesion ──
+
 
 class TestAnalyzeCohesion:
     def test_single_method_returns_none(self):
@@ -232,6 +235,7 @@ class Foo:
 
 
 # ── LCOMRule ──
+
 
 class TestLCOMRule:
     def test_cohesive_class_no_finding(self):

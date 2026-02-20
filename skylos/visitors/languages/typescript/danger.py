@@ -9,9 +9,18 @@ except Exception:
     TS_LANG = None
 
 _SAFE_EXEC_OBJECTS: set[str] = {
-    "regex", "re", "regexp", "pattern", "reg",
-    "db", "stmt", "query", "statement",
-    "cursor", "conn", "connection",
+    "regex",
+    "re",
+    "regexp",
+    "pattern",
+    "reg",
+    "db",
+    "stmt",
+    "query",
+    "statement",
+    "cursor",
+    "conn",
+    "connection",
 }
 
 

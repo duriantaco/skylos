@@ -7,11 +7,13 @@ from skylos.rules.quality.coupling import CBORule, analyze_coupling, _extract_ty
 
 # ── Helper ──
 
+
 def _parse(code: str) -> ast.AST:
     return ast.parse(code)
 
 
 # ── _extract_type_names ──
+
 
 class TestExtractTypeNames:
     def test_simple_name(self):
@@ -39,6 +41,7 @@ class TestExtractTypeNames:
 
 
 # ── analyze_coupling ──
+
 
 class TestAnalyzeCoupling:
     def test_no_classes(self):
@@ -157,6 +160,7 @@ class B(A):
 
 # ── CBORule ──
 
+
 class TestCBORule:
     def test_low_coupling_no_finding(self):
         code = """
@@ -188,6 +192,7 @@ class BigClass(A):
         return F()
 """
         import tempfile, os
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(code)
             f.flush()

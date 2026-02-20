@@ -600,10 +600,30 @@ class TestPipelinePhase2b:
     def test_llm_dead_code_discoveries_included(self, tmp_path):
         findings = self._run_with_llm_findings(
             [
-                _llm_finding(issue_type="dead_code", line=10, rule_id="DC-001", message="unused func a"),
-                _llm_finding(issue_type="unused", line=20, rule_id="DC-002", message="unused func b"),
-                _llm_finding(issue_type="unreachable", line=30, rule_id="DC-003", message="unreachable code"),
-                _llm_finding(issue_type="security", line=40, rule_id="SEC-001", message="SQL injection"),
+                _llm_finding(
+                    issue_type="dead_code",
+                    line=10,
+                    rule_id="DC-001",
+                    message="unused func a",
+                ),
+                _llm_finding(
+                    issue_type="unused",
+                    line=20,
+                    rule_id="DC-002",
+                    message="unused func b",
+                ),
+                _llm_finding(
+                    issue_type="unreachable",
+                    line=30,
+                    rule_id="DC-003",
+                    message="unreachable code",
+                ),
+                _llm_finding(
+                    issue_type="security",
+                    line=40,
+                    rule_id="SEC-001",
+                    message="SQL injection",
+                ),
             ],
             tmp_path,
         )

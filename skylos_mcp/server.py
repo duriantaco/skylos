@@ -26,7 +26,9 @@ def _lazy_constants():
 logger = logging.getLogger("skylos-mcp")
 
 
-RESULTS_DIR = Path(os.getenv("SKYLOS_MCP_RESULTS_DIR", Path.home() / ".skylos" / "mcp_results"))
+RESULTS_DIR = Path(
+    os.getenv("SKYLOS_MCP_RESULTS_DIR", Path.home() / ".skylos" / "mcp_results")
+)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 _results_cache: dict[str, dict[str, Any]] = {}
@@ -74,7 +76,9 @@ def _list_runs() -> list[dict]:
     seen = set()
     runs = []
 
-    for f in sorted(RESULTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for f in sorted(
+        RESULTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+    ):
         if f.stem == "latest":
             continue
         try:
@@ -82,12 +86,14 @@ def _list_runs() -> list[dict]:
             rid = data["run_id"]
             if rid not in seen:
                 seen.add(rid)
-                runs.append({
-                    "run_id": rid,
-                    "tool": data.get("tool"),
-                    "path": data.get("path"),
-                    "timestamp": data.get("timestamp"),
-                })
+                runs.append(
+                    {
+                        "run_id": rid,
+                        "tool": data.get("tool"),
+                        "path": data.get("path"),
+                        "timestamp": data.get("timestamp"),
+                    }
+                )
         except Exception:
             continue
 
@@ -96,12 +102,14 @@ def _list_runs() -> list[dict]:
         if rid == "latest" or rid in seen:
             continue
         seen.add(rid)
-        runs.append({
-            "run_id": rid,
-            "tool": data.get("tool"),
-            "path": data.get("path"),
-            "timestamp": data.get("timestamp"),
-        })
+        runs.append(
+            {
+                "run_id": rid,
+                "tool": data.get("tool"),
+                "path": data.get("path"),
+                "timestamp": data.get("timestamp"),
+            }
+        )
 
     return runs
 
@@ -137,8 +145,12 @@ def _make_summary(result: dict, focus: str | None = None) -> dict:
 
     if focus is None or focus == "dead_code":
         for key in [
-            "unused_functions", "unused_imports", "unused_classes",
-            "unused_variables", "unused_parameters", "unused_files",
+            "unused_functions",
+            "unused_imports",
+            "unused_classes",
+            "unused_variables",
+            "unused_parameters",
+            "unused_files",
         ]:
             items = result.get(key, [])
             if items:
@@ -163,10 +175,7 @@ def _make_summary(result: dict, focus: str | None = None) -> dict:
     return out
 
 
-mcp = FastMCP(
-    name = "skylos",
-    port = 8080
-)
+mcp = FastMCP(name="skylos", port=8080)
 
 
 @mcp.tool()

@@ -36,11 +36,7 @@ def test_django_redirect_tainted():
 
 
 def test_redirect_constant_safe():
-    code = (
-        "from flask import redirect\n"
-        "def f():\n"
-        "    return redirect('/home')\n"
-    )
+    code = "from flask import redirect\ndef f():\n    return redirect('/home')\n"
     findings = _scan_code(code)
     assert "SKY-D230" not in _rule_ids(findings)
 

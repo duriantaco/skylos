@@ -344,7 +344,12 @@ def detect_ai_code(git_root=None):
     if not git_root:
         git_root = get_git_root()
     if not git_root:
-        return {"detected": False, "indicators": [], "ai_files": [], "confidence": "low"}
+        return {
+            "detected": False,
+            "indicators": [],
+            "ai_files": [],
+            "confidence": "low",
+        }
 
     import re as _re
 
@@ -378,7 +383,8 @@ def detect_ai_code(git_root=None):
     try:
         log_output = subprocess.check_output(
             [
-                "git", "log",
+                "git",
+                "log",
                 "--format=%H|%an|%ae|%s|%(trailers:key=Co-authored-by,valueonly,separator=%x00)",
                 "-50",
             ],
@@ -408,40 +414,53 @@ def detect_ai_code(git_root=None):
 
             for pat in AI_COAUTHOR_PATTERNS:
                 if pat.search(trailers):
-                    indicators.append({
-                        "type": "co-author",
-                        "commit": commit_sha[:7],
-                        "detail": trailers.strip()[:100],
-                    })
+                    indicators.append(
+                        {
+                            "type": "co-author",
+                            "commit": commit_sha[:7],
+                            "detail": trailers.strip()[:100],
+                        }
+                    )
                     is_ai_commit = True
                     break
 
             if not is_ai_commit:
                 for pat in AI_EMAIL_PATTERNS:
                     if pat.search(author_email):
-                        indicators.append({
-                            "type": "author-email",
-                            "commit": commit_sha[:7],
-                            "detail": f"{author_name} <{author_email}>",
-                        })
+                        indicators.append(
+                            {
+                                "type": "author-email",
+                                "commit": commit_sha[:7],
+                                "detail": f"{author_name} <{author_email}>",
+                            }
+                        )
                         is_ai_commit = True
                         break
 
             if not is_ai_commit:
                 for pat in AI_MESSAGE_PATTERNS:
                     if pat.search(subject):
-                        indicators.append({
-                            "type": "commit-message",
-                            "commit": commit_sha[:7],
-                            "detail": subject[:100],
-                        })
+                        indicators.append(
+                            {
+                                "type": "commit-message",
+                                "commit": commit_sha[:7],
+                                "detail": subject[:100],
+                            }
+                        )
                         is_ai_commit = True
                         break
 
             if is_ai_commit:
                 try:
                     diff_output = subprocess.check_output(
-                        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_sha],
+                        [
+                            "git",
+                            "diff-tree",
+                            "--no-commit-id",
+                            "--name-only",
+                            "-r",
+                            commit_sha,
+                        ],
                         cwd=git_root,
                         stderr=subprocess.DEVNULL,
                         timeout=5,
@@ -471,7 +490,9 @@ def detect_ai_code(git_root=None):
     }
 
 
-def upload_report(result_json, is_forced=False, quiet=False, strict=False, analysis_mode="static"):
+def upload_report(
+    result_json, is_forced=False, quiet=False, strict=False, analysis_mode="static"
+):
     token = get_project_token()
     if not token:
         return {
@@ -552,8 +573,15 @@ def upload_report(result_json, is_forced=False, quiet=False, strict=False, analy
                 )
 
             metadata = {}
-            for meta_key in ("_source", "_confidence", "_llm_verdict", "_llm_rationale",
-                             "_llm_challenged", "_needs_review", "_llm_uncertain"):
+            for meta_key in (
+                "_source",
+                "_confidence",
+                "_llm_verdict",
+                "_llm_rationale",
+                "_llm_challenged",
+                "_needs_review",
+                "_llm_uncertain",
+            ):
                 val = finding.pop(meta_key, None)
                 if val is not None:
                     metadata[meta_key.lstrip("_")] = val
@@ -601,7 +629,9 @@ def upload_report(result_json, is_forced=False, quiet=False, strict=False, analy
 
     all_findings.extend(
         prepare_for_sarif(
-            result_json.get("dependency_vulnerabilities", []), "DEPENDENCY", "SKY-SCA-000"
+            result_json.get("dependency_vulnerabilities", []),
+            "DEPENDENCY",
+            "SKY-SCA-000",
         )
     )
 

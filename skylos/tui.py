@@ -1,4 +1,5 @@
 """Skylos interactive TUI dashboard powered by Textual."""
+
 from __future__ import annotations
 
 import os
@@ -95,13 +96,15 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
     sec_cols = ["Rule", "Severity", "Message", "File:Line", "Symbol"]
     sec_rows, sec_raw = [], []
     for item in result.get("danger") or []:
-        sec_rows.append((
-            item.get("rule_id", "?"),
-            (item.get("severity") or "?").upper(),
-            item.get("message") or "",
-            _loc(item, root_path),
-            item.get("symbol") or "<module>",
-        ))
+        sec_rows.append(
+            (
+                item.get("rule_id", "?"),
+                (item.get("severity") or "?").upper(),
+                item.get("message") or "",
+                _loc(item, root_path),
+                item.get("symbol") or "<module>",
+            )
+        )
         sec_raw.append(item)
     data["security"] = (sec_cols, sec_rows, sec_raw)
 
@@ -109,11 +112,13 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
     secret_cols = ["Provider", "Message", "File:Line"]
     secret_rows, secret_raw = [], []
     for item in result.get("secrets") or []:
-        secret_rows.append((
-            item.get("provider") or "generic",
-            item.get("message") or "Secret detected",
-            _loc(item, root_path),
-        ))
+        secret_rows.append(
+            (
+                item.get("provider") or "generic",
+                item.get("message") or "Secret detected",
+                _loc(item, root_path),
+            )
+        )
         secret_raw.append(item)
     data["secrets"] = (secret_cols, secret_rows, secret_raw)
 
@@ -132,20 +137,24 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
         q_raw.append(item)
     for item in result.get("circular_dependencies") or []:
         cycle = item.get("cycle", [])
-        q_rows.append((
-            "Circular Dep",
-            " → ".join(cycle),
-            f"Break: {item.get('suggested_break', '?')}",
-            item.get("severity", "MEDIUM"),
-        ))
+        q_rows.append(
+            (
+                "Circular Dep",
+                " → ".join(cycle),
+                f"Break: {item.get('suggested_break', '?')}",
+                item.get("severity", "MEDIUM"),
+            )
+        )
         q_raw.append(item)
     for item in result.get("custom_rules") or []:
-        q_rows.append((
-            "Custom",
-            item.get("rule_id") or item.get("rule") or "CUSTOM",
-            item.get("message") or "",
-            _loc(item, root_path),
-        ))
+        q_rows.append(
+            (
+                "Custom",
+                item.get("rule_id") or item.get("rule") or "CUSTOM",
+                item.get("message") or "",
+                _loc(item, root_path),
+            )
+        )
         q_raw.append(item)
     data["quality"] = (q_cols, q_rows, q_raw)
 
@@ -157,17 +166,17 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
         pkg_name = meta.get("package_name") or "?"
         pkg_ver = meta.get("package_version") or "?"
         vuln_id = (
-            meta.get("display_id")
-            or meta.get("vuln_id")
-            or item.get("rule_id", "")
+            meta.get("display_id") or meta.get("vuln_id") or item.get("rule_id", "")
         )
-        dep_rows.append((
-            f"{pkg_name}@{pkg_ver}",
-            vuln_id,
-            (item.get("severity") or "MEDIUM").upper(),
-            item.get("message") or "",
-            meta.get("fixed_version") or "-",
-        ))
+        dep_rows.append(
+            (
+                f"{pkg_name}@{pkg_ver}",
+                vuln_id,
+                (item.get("severity") or "MEDIUM").upper(),
+                item.get("message") or "",
+                meta.get("fixed_version") or "-",
+            )
+        )
         dep_raw.append(item)
     data["dependencies"] = (dep_cols, dep_rows, dep_raw)
 
@@ -250,9 +259,7 @@ class OverviewPanel(VerticalScroll):
                 filled = max(1, round(c / total * bar_width)) if total else 0
                 pct = round(c / total * 100) if total else 0
                 bar = "█" * filled + "░" * (bar_width - filled)
-                sev_lines.append(
-                    f"    [{color}]{s:10s} {bar} {c} ({pct}%)[/{color}]"
-                )
+                sev_lines.append(f"    [{color}]{s:10s} {bar} {c} ({pct}%)[/{color}]")
             yield Static("\n".join(sev_lines) + "\n")
 
         # Languages detected
@@ -260,7 +267,9 @@ class OverviewPanel(VerticalScroll):
         if languages:
             lang_lines = ["  [bold]Languages Detected[/bold]"]
             for lang, count in sorted(languages.items(), key=lambda x: -x[1]):
-                lang_lines.append(f"    {lang:15s} {count} file{'s' if count != 1 else ''}")
+                lang_lines.append(
+                    f"    {lang:15s} {count} file{'s' if count != 1 else ''}"
+                )
             yield Static("\n".join(lang_lines) + "\n")
 
         # Top affected files
@@ -296,12 +305,18 @@ class DetailPanel(Static):
             if isinstance(conf, (int, float)):
                 bar_len = int(conf) // 5
                 color = "red" if conf >= 90 else "yellow" if conf >= 75 else "dim"
-                lines.append(f"  [{color}]{'█' * bar_len}{'░' * (20 - bar_len)}[/{color}]")
+                lines.append(
+                    f"  [{color}]{'█' * bar_len}{'░' * (20 - bar_len)}[/{color}]"
+                )
 
         elif category == "security":
             lines.append(f"  [bold]Rule:[/bold]  {item.get('rule_id', '?')}")
             sev = item.get("severity", "?")
-            color = SEVERITY_COLORS.get(sev.upper(), "white") if isinstance(sev, str) else "white"
+            color = (
+                SEVERITY_COLORS.get(sev.upper(), "white")
+                if isinstance(sev, str)
+                else "white"
+            )
             lines.append(f"  [bold]Severity:[/bold]  [{color}]{sev}[/{color}]")
             lines.append(f"  [bold]Message:[/bold]  {item.get('message', '')}")
             ver = item.get("verification") or {}
@@ -431,12 +446,16 @@ class SkylosApp(App):
         Binding("o", "open_editor", "Open in $EDITOR", priority=True),
         Binding("escape", "dismiss", "Dismiss", show=False, priority=True),
         Binding("1", "go_category('overview')", "Overview", show=False, priority=True),
-        Binding("2", "go_category('dead_code')", "Dead Code", show=False, priority=True),
+        Binding(
+            "2", "go_category('dead_code')", "Dead Code", show=False, priority=True
+        ),
         Binding("3", "go_category('security')", "Security", show=False, priority=True),
         Binding("4", "go_category('secrets')", "Secrets", show=False, priority=True),
         Binding("5", "go_category('quality')", "Quality", show=False, priority=True),
         Binding("6", "go_category('dependencies')", "Deps", show=False, priority=True),
-        Binding("7", "go_category('suppressed')", "Suppressed", show=False, priority=True),
+        Binding(
+            "7", "go_category('suppressed')", "Suppressed", show=False, priority=True
+        ),
     ]
 
     active_category: reactive[str] = reactive("overview")

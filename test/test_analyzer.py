@@ -485,6 +485,8 @@ class TestClass:
                         empty_file_finding,
                         cfg,
                         raw_imports,
+                        ignore_lines,
+                        suppressed_findings,
                     ) = proc_file(f.name, "test_module")
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
@@ -524,6 +526,8 @@ class TestClass:
                     empty_file_finding,
                     cfg,
                     raw_imports,
+                    ignore_lines,
+                    suppressed_findings,
                 ) = proc_file(f.name, "test_module")
 
                 assert defs == []
@@ -585,6 +589,8 @@ class TestClass:
                         empty_file_finding,
                         cfg,
                         raw_imports,
+                        ignore_lines,
+                        suppressed_findings,
                     ) = proc_file((f.name, "test_module"))
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)

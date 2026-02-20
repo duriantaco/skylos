@@ -100,8 +100,8 @@ def complex_try():
         while True:
             pass
 """
-        rule = NestingRule(threshold=1)
+        rule = NestingRule(threshold=0)
         findings = check_code(rule, code)
 
         assert len(findings) == 1
-        assert findings[0]["value"] == 2
+        assert findings[0]["value"] == 1

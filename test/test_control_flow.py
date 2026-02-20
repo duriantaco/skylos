@@ -336,7 +336,7 @@ class TestParseRequiresPython:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
             pyproject = project_dir / "pyproject.toml"
-            pyproject.write_text('invalid toml {{')
+            pyproject.write_text("invalid toml {{")
 
             test_file = project_dir / "test.py"
             test_file.write_text("# test")
@@ -384,9 +384,7 @@ class TestVersionCheckIsWithinSupportedRange:
         assert result is True
 
     def test_no_version_constraint(self):
-        result = _version_check_is_within_supported_range(
-            (3, 12), ast.GtE, None, None
-        )
+        result = _version_check_is_within_supported_range((3, 12), ast.GtE, None, None)
         assert result is True
 
 

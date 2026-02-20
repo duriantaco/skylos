@@ -70,7 +70,9 @@ def _find_pyproject_toml(file_path: Optional[str]) -> Optional[Path]:
     return None
 
 
-def _parse_requires_python(file_path: Optional[str]) -> Tuple[Optional[Tuple[int, int]], Optional[Tuple[int, int]]]:
+def _parse_requires_python(
+    file_path: Optional[str],
+) -> Tuple[Optional[Tuple[int, int]], Optional[Tuple[int, int]]]:
     pyproject_path = _find_pyproject_toml(file_path)
     if not pyproject_path:
         return (None, None)
@@ -94,11 +96,11 @@ def _parse_requires_python(file_path: Optional[str]) -> Tuple[Optional[Tuple[int
         min_version = None
         max_version = None
 
-        match = re.search(r'>=\s*(\d+)\.(\d+)', requires_python)
+        match = re.search(r">=\s*(\d+)\.(\d+)", requires_python)
         if match:
             min_version = (int(match.group(1)), int(match.group(2)))
 
-        match = re.search(r'<=?\s*(\d+)\.(\d+)', requires_python)
+        match = re.search(r"<=?\s*(\d+)\.(\d+)", requires_python)
         if match:
             max_version = (int(match.group(1)), int(match.group(2)))
 
@@ -111,7 +113,7 @@ def _version_check_is_within_supported_range(
     version_tuple: tuple[int, ...],
     op_type: type[ast.cmpop],
     min_version: Optional[Tuple[int, int]],
-    max_version: Optional[Tuple[int, int]]
+    max_version: Optional[Tuple[int, int]],
 ) -> bool:
     if min_version is None:
         return True
@@ -136,7 +138,9 @@ def _version_check_is_within_supported_range(
     return False
 
 
-def evaluate_static_condition(node: ast.AST, file_path: Optional[str] = None) -> Optional[bool]:
+def evaluate_static_condition(
+    node: ast.AST, file_path: Optional[str] = None
+) -> Optional[bool]:
     if isinstance(node, ast.Constant):
         return node.value
 
@@ -189,7 +193,9 @@ def evaluate_static_condition(node: ast.AST, file_path: Optional[str] = None) ->
 
             if is_version_check and version_tuple:
                 min_version, max_version = _parse_requires_python(file_path)
-                if _version_check_is_within_supported_range(version_tuple, op_type, min_version, max_version):
+                if _version_check_is_within_supported_range(
+                    version_tuple, op_type, min_version, max_version
+                ):
                     return None
 
             left = evaluate_static_condition(node.left, file_path)

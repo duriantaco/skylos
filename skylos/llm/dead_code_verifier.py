@@ -111,15 +111,21 @@ def build_verification_context(
     parts.append("    # This CALLS export_csv dynamically when fmt='csv'")
     parts.append("    return handler(data)")
     parts.append("```")
-    parts.append("→ If you see getattr() with a pattern matching the symbol name, mark FALSE_POSITIVE")
+    parts.append(
+        "→ If you see getattr() with a pattern matching the symbol name, mark FALSE_POSITIVE"
+    )
     parts.append("")
     parts.append("Pattern 2 - globals() dict access:")
     parts.append("```python")
     parts.append("def handle_create(payload): ...")
-    parts.append("HANDLER_MAP = {action: globals()[f'handle_{action}'] for action in ['create', 'update']}")
+    parts.append(
+        "HANDLER_MAP = {action: globals()[f'handle_{action}'] for action in ['create', 'update']}"
+    )
     parts.append("# This REFERENCES handle_create dynamically")
     parts.append("```")
-    parts.append("→ If you see globals()[...] with a pattern matching the symbol name, mark FALSE_POSITIVE")
+    parts.append(
+        "→ If you see globals()[...] with a pattern matching the symbol name, mark FALSE_POSITIVE"
+    )
     parts.append("")
     parts.append("Pattern 3 - __init_subclass__ registration:")
     parts.append("```python")
@@ -128,13 +134,17 @@ def build_verification_context(
     parts.append("        REGISTRY[cls.name] = cls  # Auto-registers subclasses")
     parts.append("class EmailHandler(Base):  # Gets auto-registered")
     parts.append("```")
-    parts.append("→ If the symbol inherits from a class with __init_subclass__, mark FALSE_POSITIVE")
+    parts.append(
+        "→ If the symbol inherits from a class with __init_subclass__, mark FALSE_POSITIVE"
+    )
     parts.append("")
 
     if source_lines:
         max_lines = min(len(source_lines), 200)
         parts.append("## Full File Source (YOUR CODE TO ANALYZE)")
-        parts.append(f"Showing {max_lines} of {len(source_lines)} lines. The flagged symbol is at line {line}.\n")
+        parts.append(
+            f"Showing {max_lines} of {len(source_lines)} lines. The flagged symbol is at line {line}.\n"
+        )
         for i in range(max_lines):
             marker = " >>> " if i == line - 1 else "     "
             parts.append(f"{i + 1:4d}{marker}{source_lines[i]}")
@@ -191,26 +201,40 @@ def build_verification_context(
     parts.append("")
     parts.append("3. __init_subclass__ registration:")
     parts.append("   Search for: def __init_subclass__")
-    parts.append(f"   Then check if class {name} inherits from a base with __init_subclass__")
+    parts.append(
+        f"   Then check if class {name} inherits from a base with __init_subclass__"
+    )
     parts.append("")
     parts.append("4. Registry/Map access pattern (CRITICAL FOR DISPATCHER FUNCTIONS):")
     parts.append(f"   Does function `{name}` access a dict/map/registry variable?")
     parts.append("   Examples: HANDLER_MAP[key], _REGISTRY.get(name), registry[action]")
     parts.append("   If YES, search the file for where that dict/map is created:")
-    parts.append("   - If populated by globals()[...] → FALSE_POSITIVE (dispatcher function)")
-    parts.append("   - If populated by getattr(...) → FALSE_POSITIVE (dispatcher function)")
-    parts.append("   - If populated by __init_subclass__ → FALSE_POSITIVE (registry accessor)")
-    parts.append(f"   Example: `{name}` does `MAP.get(key)` and MAP is `{{k: globals()[f'handle_{{k}}']}}`")
+    parts.append(
+        "   - If populated by globals()[...] → FALSE_POSITIVE (dispatcher function)"
+    )
+    parts.append(
+        "   - If populated by getattr(...) → FALSE_POSITIVE (dispatcher function)"
+    )
+    parts.append(
+        "   - If populated by __init_subclass__ → FALSE_POSITIVE (registry accessor)"
+    )
+    parts.append(
+        f"   Example: `{name}` does `MAP.get(key)` and MAP is `{{k: globals()[f'handle_{{k}}']}}`"
+    )
     parts.append(f"            → This makes `{name}` a dispatcher → FALSE_POSITIVE")
     parts.append("")
     parts.append("5. String interpolation that builds function/class names:")
-    parts.append(f"   Search for: f\\\"{{.*}}.*{name.lstrip('_')}\\\"")
+    parts.append(f'   Search for: f\\"{{.*}}.*{name.lstrip("_")}\\"')
     parts.append(f"   Search for: {{.*}}.format\\(.*{name.lstrip('_')}")
     parts.append("")
     parts.append("6. Framework decorators (Flask, FastAPI, Click, Pytest):")
-    parts.append("   Look for @app.route, @router.get, @click.command, @pytest.fixture, etc.")
+    parts.append(
+        "   Look for @app.route, @router.get, @click.command, @pytest.fixture, etc."
+    )
     parts.append("")
-    parts.append("If you find ANY of these patterns in the code above, mark FALSE_POSITIVE.")
+    parts.append(
+        "If you find ANY of these patterns in the code above, mark FALSE_POSITIVE."
+    )
     parts.append("")
     parts.append("NOT valid reasons for FALSE_POSITIVE:")
     parts.append(
@@ -298,12 +322,15 @@ class DeadCodeVerifierAgent:
     def test_api_connection(self) -> tuple[bool, str]:
         try:
             response = self.get_adapter().complete(
-                "You are a test assistant. Respond with exactly: OK",
-                "Test"
+                "You are a test assistant. Respond with exactly: OK", "Test"
             )
 
             response_lower = response.lower()
-            if "error:" in response_lower or "quota" in response_lower or "exceeded" in response_lower:
+            if (
+                "error:" in response_lower
+                or "quota" in response_lower
+                or "exceeded" in response_lower
+            ):
                 return False, f"API error: {response}"
 
             if "ratelimiterror" in response_lower or "unauthorized" in response_lower:
@@ -316,9 +343,17 @@ class DeadCodeVerifierAgent:
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "quota" in error_msg or "exceeded" in error_msg or "ratelimit" in error_msg:
+            if (
+                "quota" in error_msg
+                or "exceeded" in error_msg
+                or "ratelimit" in error_msg
+            ):
                 return False, f"API quota exceeded: {e}"
-            elif "unauthorized" in error_msg or "authentication" in error_msg or "api key" in error_msg:
+            elif (
+                "unauthorized" in error_msg
+                or "authentication" in error_msg
+                or "api key" in error_msg
+            ):
                 return False, f"API authentication failed: {e}"
             else:
                 return False, f"API connection failed: {e}"
@@ -357,7 +392,9 @@ class DeadCodeVerifierAgent:
             clean = response.strip()
 
             if finding.get("name") in ["export_csv", "handle_create", "EmailHandler"]:
-                logger.warning(f"DEBUG RAW RESPONSE for {finding.get('name')}: {response[:500]}")
+                logger.warning(
+                    f"DEBUG RAW RESPONSE for {finding.get('name')}: {response[:500]}"
+                )
 
             if clean.startswith("```"):
                 clean = clean.split("\n", 1)[-1]
@@ -373,10 +410,16 @@ class DeadCodeVerifierAgent:
                 verdict = Verdict.UNCERTAIN
             rationale = data.get("rationale", "")
 
-            if verdict == Verdict.TRUE_POSITIVE and finding.get("name") in ["export_csv", "handle_create", "EmailHandler"]:
+            if verdict == Verdict.TRUE_POSITIVE and finding.get("name") in [
+                "export_csv",
+                "handle_create",
+                "EmailHandler",
+            ]:
                 logger.info(f"DEBUG: LLM marked {finding.get('name')} as TRUE_POSITIVE")
                 logger.info(f"DEBUG: Rationale: {rationale}")
-                logger.info(f"DEBUG: Source lines provided: {len(source_lines) if source_lines else 0}")
+                logger.info(
+                    f"DEBUG: Source lines provided: {len(source_lines) if source_lines else 0}"
+                )
 
         except json.JSONDecodeError as e:
             logger.warning(f"JSON parse failed for {finding.get('name')}: {e}")
@@ -384,11 +427,19 @@ class DeadCodeVerifierAgent:
             rationale = f"JSON parse failed: {e}"
         except Exception as e:
             error_msg = str(e).lower()
-            if "ratelimiterror" in error_msg or "quota" in error_msg or "exceeded" in error_msg:
+            if (
+                "ratelimiterror" in error_msg
+                or "quota" in error_msg
+                or "exceeded" in error_msg
+            ):
                 logger.error(f"⚠️  LLM API QUOTA EXCEEDED - verification disabled: {e}")
-                logger.error("Run 'skylos key' to configure a valid API key with credits")
+                logger.error(
+                    "Run 'skylos key' to configure a valid API key with credits"
+                )
             else:
-                logger.warning(f"LLM verification failed for {finding.get('name')}: {e}")
+                logger.warning(
+                    f"LLM verification failed for {finding.get('name')}: {e}"
+                )
             verdict = Verdict.UNCERTAIN
             rationale = f"LLM call failed: {e}"
 

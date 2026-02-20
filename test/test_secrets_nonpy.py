@@ -25,7 +25,7 @@ class TestAllowedSuffixes:
 
 class TestEnvFileScanning:
     def test_detects_aws_key_in_env(self):
-        src = 'AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE1234567890abcdef\n'
+        src = "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE1234567890abcdef\n"
         ctx = {"relpath": ".env", "lines": src.splitlines(True), "tree": None}
         findings = list(scan_ctx(ctx))
         assert len(findings) > 0
@@ -41,7 +41,7 @@ class TestEnvFileScanning:
         assert "generic" in providers
 
     def test_safe_env_no_findings(self):
-        src = 'DATABASE_HOST=localhost\nDEBUG=true\n'
+        src = "DATABASE_HOST=localhost\nDEBUG=true\n"
         ctx = {"relpath": ".env", "lines": src.splitlines(True), "tree": None}
         findings = list(scan_ctx(ctx))
         assert len(findings) == 0
@@ -55,7 +55,7 @@ class TestYamlFileScanning:
         assert len(findings) > 0
 
     def test_safe_yaml_no_findings(self):
-        src = 'host: localhost\nport: 5432\n'
+        src = "host: localhost\nport: 5432\n"
         ctx = {"relpath": "config.yaml", "lines": src.splitlines(True), "tree": None}
         findings = list(scan_ctx(ctx))
         assert len(findings) == 0

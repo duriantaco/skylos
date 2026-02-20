@@ -1,7 +1,7 @@
 import json
 import sys
 import os
-import unittest 
+import unittest
 from unittest.mock import patch, MagicMock
 
 _original_constants = sys.modules.get("skylos.constants")
@@ -15,6 +15,7 @@ try:
     import flask  # noqa: F401
 except ImportError:
     import unittest
+
     raise unittest.SkipTest("Flask not installed — skipping server tests")
 
 
