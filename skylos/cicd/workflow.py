@@ -1,14 +1,13 @@
 from __future__ import annotations
-
-import os
 from pathlib import Path
+from typing import Optional
 
 from rich.console import Console
 
 console = Console()
 
-ANALYSIS_FLAG_MAP = {
-    "dead-code": "",  # default, always runs
+ANALYSIS_FLAG_MAP: dict[str, str] = {
+    "dead-code": "",
     "security": "--danger",
     "quality": "--quality",
     "secrets": "--secrets",
@@ -17,12 +16,12 @@ ANALYSIS_FLAG_MAP = {
 
 def generate_workflow(
     *,
-    triggers: list[str] | None = None,
-    analysis_types: list[str] | None = None,
+    triggers: Optional[list[str]] = None,
+    analysis_types: Optional[list[str]] = None,
     python_version: str = "3.12",
     use_baseline: bool = True,
     use_llm: bool = False,
-    model: str | None = None,
+    model: Optional[str] = None,
 ) -> str:
     triggers = triggers or ["pull_request", "push"]
     analysis_types = analysis_types or ["dead-code", "security", "quality", "secrets"]
@@ -36,7 +35,6 @@ def generate_workflow(
     if analysis_flags:
         analysis_flags = " " + analysis_flags
 
-    baseline_step = ""
     baseline_flag = ""
     if use_baseline:
         baseline_flag = " --baseline"
