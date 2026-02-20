@@ -7,22 +7,32 @@ class ArgCountRule(SkylosRule):
     rule_id = "SKY-C303"
     name = "Too Many Arguments"
 
-    def __init__(self, max_args=5):
-        self.max_args = max_args
+    def __init__(self, max_args=5, max_required=5, max_total=10):
+        self.max_required = max_required if max_required != 5 else max_args
+        self.max_total = max_total
 
     def visit_node(self, node, context):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return None
 
-        args = node.args.args
-        clean_args = []
-        for a in args:
-            if a.arg not in ("self", "cls"):
-                clean_args.append(a)
+        args = node.args
 
-        total_count = len(clean_args) + len(node.args.kwonlyargs)
+        positional = [a for a in args.args if a.arg not in ("self", "cls")]
+        if args.posonlyargs:
+            pos_only = list(args.posonlyargs)
+        else:
+            pos_only = []
 
-        if total_count <= self.max_args:
+        all_positional = pos_only + positional
+        num_defaults = len(args.defaults)
+        num_required = len(all_positional) - num_defaults
+
+        total_count = len(all_positional) + len(args.kwonlyargs)
+
+        exceeds_required = num_required > self.max_required
+        exceeds_total = total_count > self.max_total
+
+        if not exceeds_required and not exceeds_total:
             return None
 
         mod = context.get("mod", "")
@@ -31,23 +41,55 @@ class ArgCountRule(SkylosRule):
         else:
             func_name = node.name
 
-        return [
-            {
-                "rule_id": self.rule_id,
-                "kind": "structure",
-                "type": "function",
-                "name": func_name,
-                "simple_name": node.name,
-                "value": total_count,
-                "threshold": self.max_args,
-                "severity": "MEDIUM",
-                "message": f"Function has {total_count} arguments (limit: {self.max_args}). Refactor.",
-                "file": context.get("filename"),
-                "basename": Path(context.get("filename", "")).name,
-                "line": node.lineno,
-                "col": node.col_offset,
-            }
-        ]
+        findings = []
+
+        if exceeds_required:
+            findings.append(
+                {
+                    "rule_id": self.rule_id,
+                    "kind": "structure",
+                    "type": "function",
+                    "name": func_name,
+                    "simple_name": node.name,
+                    "value": num_required,
+                    "threshold": self.max_required,
+                    "severity": "MEDIUM",
+                    "message": (
+                        f"Function has {num_required} required arguments "
+                        f"(limit: {self.max_required}). Consider using a "
+                        f"config object or keyword arguments with defaults."
+                    ),
+                    "file": context.get("filename"),
+                    "basename": Path(context.get("filename", "")).name,
+                    "line": node.lineno,
+                    "col": node.col_offset,
+                }
+            )
+        elif exceeds_total:
+            findings.append(
+                {
+                    "rule_id": self.rule_id,
+                    "kind": "structure",
+                    "type": "function",
+                    "name": func_name,
+                    "simple_name": node.name,
+                    "value": total_count,
+                    "threshold": self.max_total,
+                    "severity": "LOW",
+                    "message": (
+                        f"Function has {total_count} total parameters "
+                        f"(limit: {self.max_total}). "
+                        f"({num_required} required, "
+                        f"{total_count - num_required} optional)."
+                    ),
+                    "file": context.get("filename"),
+                    "basename": Path(context.get("filename", "")).name,
+                    "line": node.lineno,
+                    "col": node.col_offset,
+                }
+            )
+
+        return findings
 
 
 class FunctionLengthRule(SkylosRule):
@@ -90,7 +132,7 @@ class FunctionLengthRule(SkylosRule):
                 "value": physical_length,
                 "threshold": self.max_lines,
                 "severity": severity,
-                "message": f"Function is {physical_length} lines long (limit: {self.max_lines}). It is too big.",
+                "message": f"Function is {physical_length} lines long (limit: {self.max_lines}).",
                 "file": context.get("filename"),
                 "basename": Path(context.get("filename", "")).name,
                 "line": node.lineno,

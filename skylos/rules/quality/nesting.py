@@ -5,41 +5,56 @@ from skylos.rules.base import SkylosRule
 
 RULE_ID = "SKY-Q302"
 
-NEST_NODES = (ast.If, ast.For, ast.While, ast.Try, ast.With)
+_BRANCH_NODES = (ast.If, ast.For, ast.While)
 
 
-def _max_depth(nodes, depth=0):
+def _max_depth(nodes, depth=0, is_function_body=False):
     max_depth = depth
     for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             continue
 
-        if isinstance(node, NEST_NODES):
+        if isinstance(node, _BRANCH_NODES):
             branches = []
             if isinstance(node, ast.If):
                 branches.append(node.body)
                 if node.orelse:
                     branches.append(node.orelse)
-
             elif isinstance(node, (ast.For, ast.While)):
                 branches.append(node.body)
                 if node.orelse:
                     branches.append(node.orelse)
 
-            elif isinstance(node, ast.With):
-                branches.append(node.body)
-
-            elif isinstance(node, ast.Try):
-                branches.append(node.body)
-                for handler in node.handlers:
-                    branches.append(handler.body)
-                if node.orelse:
-                    branches.append(node.orelse)
-                if node.finalbody:
-                    branches.append(node.finalbody)
-
             for branch in branches:
                 max_depth = max(max_depth, _max_depth(branch, depth + 1))
+            continue
+
+        if isinstance(node, ast.With):
+            max_depth = max(max_depth, _max_depth(node.body, depth))
+            continue
+
+        try_types = [ast.Try]
+        if hasattr(ast, "TryStar"):
+            try_types.append(ast.TryStar)
+
+        if isinstance(node, tuple(try_types)):
+            if is_function_body:
+                increment = 0
+            else:
+                increment = 1
+            inner_depth = depth + increment
+
+            branches = [node.body]
+            for handler in node.handlers:
+                branches.append(handler.body)
+            if node.orelse:
+                branches.append(node.orelse)
+            if node.finalbody:
+                branches.append(node.finalbody)
+
+            for branch in branches:
+                max_depth = max(max_depth, _max_depth(branch, inner_depth))
+            continue
 
     return max_depth
 
@@ -61,7 +76,7 @@ class NestingRule(SkylosRule):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return None
 
-        depth = _max_depth(node.body, 0)
+        depth = _max_depth(node.body, 0, is_function_body=True)
 
         if depth <= self.threshold:
             return None

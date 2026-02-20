@@ -18,7 +18,7 @@ class UnreachableCodeRule(SkylosRule):
             basename = ""
 
         if isinstance(node, ast.If):
-            cond = evaluate_static_condition(node.test)
+            cond = evaluate_static_condition(node.test, file_path=filename)
 
             if cond is False and node.body:
                 first = node.body[0]

@@ -131,6 +131,41 @@ class DangerousComparisonRule(SkylosRule):
         return None
 
 
+def _walk_scope(nodes):
+    stack = []
+
+    if isinstance(nodes, list):
+        for n in nodes:
+            stack.append(n)
+    else:
+        stack.append(nodes)
+
+    while stack:
+        node = stack.pop()
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+
+        yield node
+
+        for child in ast.iter_child_nodes(node):
+            stack.append(child)
+
+
+def _is_function_level_try(node: ast.Try, parent_body: list[ast.stmt]) -> bool:
+    if len(parent_body) == 1 and parent_body[0] is node:
+        return True
+    if (
+        len(parent_body) == 2
+        and isinstance(parent_body[0], ast.Expr)
+        and isinstance(parent_body[0].value, ast.Constant)
+        and isinstance(parent_body[0].value.value, str)
+        and parent_body[1] is node
+    ):
+        return True
+    return False
+
+
 class TryBlockPatternsRule(SkylosRule):
     rule_id = "SKY-L004"
     name = "Anti-Pattern Try Block"
@@ -143,9 +178,15 @@ class TryBlockPatternsRule(SkylosRule):
         if not isinstance(node, ast.Try):
             return None
 
+        parent_body = context.get("_parent_body")
+        is_func_level = (
+            parent_body is not None
+            and _is_function_level_try(node, parent_body)
+        )
+
         findings = []
 
-        if node.body:
+        if node.body and not is_func_level:
             start = node.body[0].lineno
             end = getattr(node.body[-1], "end_lineno", start)
             length = end - start + 1
@@ -165,10 +206,11 @@ class TryBlockPatternsRule(SkylosRule):
         has_nested_try = False
 
         for stmt in node.body:
-            for child in ast.walk(stmt):
+            for child in _walk_scope([stmt]):
+                if child is stmt:
+                    continue
                 if isinstance(child, ast.Try):
                     has_nested_try = True
-
                 if isinstance(child, (ast.If, ast.For, ast.While)):
                     control_flow_count += 1
 
@@ -252,6 +294,45 @@ class UnusedExceptVarRule(SkylosRule):
         return None
 
 
+def _annotation_allows_none(annotation) -> bool:
+    if annotation is None:
+        return False
+
+    if isinstance(annotation, ast.Constant) and annotation.value is None:
+        return True
+
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        if _annotation_allows_none(annotation.left):
+            return True
+        if _annotation_allows_none(annotation.right):
+            return True
+
+    if isinstance(annotation, ast.Subscript):
+        func = annotation.value
+        name = None
+        if isinstance(func, ast.Name):
+            name = func.id
+        elif isinstance(func, ast.Attribute):
+            name = func.attr
+
+        if name in ("Optional",):
+            return True
+
+        if name in ("Union",):
+            slice_node = annotation.slice
+            if isinstance(slice_node, ast.Tuple):
+                for elt in slice_node.elts:
+                    if isinstance(elt, ast.Constant) and elt.value is None:
+                        return True
+                    if isinstance(elt, ast.Name) and elt.id == "None":
+                        return True
+
+    if isinstance(annotation, ast.Name) and annotation.id == "None":
+        return True
+
+    return False
+
+
 class ReturnConsistencyRule(SkylosRule):
     rule_id = "SKY-L006"
     name = "Inconsistent Return"
@@ -260,14 +341,13 @@ class ReturnConsistencyRule(SkylosRule):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return None
 
+        if _annotation_allows_none(node.returns):
+            return None
+
         returns_value = False
         returns_none = False
 
-        for child in ast.walk(node):
-            if child is node:
-                continue
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
+        for child in _walk_scope(node.body):
             if isinstance(child, ast.Return):
                 if child.value is None:
                     returns_none = True
