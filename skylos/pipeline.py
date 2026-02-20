@@ -4,7 +4,6 @@ import json
 import logging
 import pathlib
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +166,7 @@ def run_pipeline(
                     static_result = run_static_on_files(
                         changed_files,
                         project_root=path if path.is_dir() else path.parent,
-                        conf=60,
+                        conf=10,
                         enable_secrets=True,
                         enable_danger=True,
                         enable_quality=True,
@@ -178,7 +177,7 @@ def run_pipeline(
 
                     result_json = run_analyze(
                         str(path),
-                        conf=60,
+                        conf=10,
                         enable_secrets=True,
                         enable_danger=True,
                         enable_quality=True,
@@ -259,6 +258,13 @@ def run_pipeline(
 
     dead_code_findings = static_findings.get("dead_code", [])
 
+    # DEBUG: Check for low-confidence findings
+    low_conf = [f for f in dead_code_findings if f.get("confidence", 100) < 20]
+    if low_conf:
+        logger.info(f"DEBUG: Found {len(low_conf)} findings with conf < 20:")
+        for f in low_conf[:5]:
+            logger.info(f"  {f.get('name')} conf={f.get('confidence')}")
+
     if dead_code_findings and not getattr(agent_args, "skip_verification", False):
         console.print(
             f"[brand]Phase 2a:[/brand] LLM verifying "
@@ -272,11 +278,26 @@ def run_pipeline(
             verifier_config = AgentConfig(model=model, api_key=api_key)
             verifier = DeadCodeVerifierAgent(verifier_config)
 
+            # Pre-flight check: test API connection before processing all findings
+            console.print("[brand]Testing LLM API connection...[/brand]")
+            api_ok, api_message = verifier.test_api_connection()
+            if not api_ok:
+                console.print(f"[bad]✗ LLM API test failed:[/bad] {api_message}")
+                console.print("[bad]Cannot run LLM verification. Skipping...[/bad]")
+                console.print("[dim]Tip: Run 'skylos key' to configure your API key[/dim]")
+                # Skip verification, just use static findings
+                for f in dead_code_findings:
+                    f["_confidence"] = "medium"
+                    f["_llm_skipped"] = True
+                    all_findings.append(f)
+                raise Exception("LLM API unavailable")
+            console.print(f"[good]✓[/good] {api_message}")
+
             verified = verifier.annotate_findings(
                 findings=dead_code_findings,
                 defs_map=defs_map,
                 source_cache=source_cache,
-                confidence_range=(50, 85),
+                confidence_range=(10, 100),  # Lowered from 20 to verify low-conf findings
             )
 
             tp = sum(1 for f in verified if f.get("_llm_verdict") == "TRUE_POSITIVE")
@@ -289,13 +310,25 @@ def run_pipeline(
             )
 
             for f in verified:
-                if not f.get("_suppressed"):
-                    if f.get("_llm_verdict") == "TRUE_POSITIVE":
-                        f["_source"] = "static+llm"
-                        f["_confidence"] = "high"
-                    else:
-                        f["_confidence"] = "medium"
-                    all_findings.append(f)
+                verdict = f.get("_llm_verdict", "UNCERTAIN")
+                if verdict == "TRUE_POSITIVE":
+                    # LLM explicitly agrees with static — highest confidence
+                    f["_source"] = "static+llm"
+                    f["_confidence"] = "high"
+                    f["_suppressed"] = False
+                elif verdict == "UNCERTAIN":
+                    # LLM couldn't verify (API error, parse fail, etc) — keep as static-only
+                    f["_source"] = "static"
+                    f["_confidence"] = "medium"
+                    f["_suppressed"] = False
+                    f["_llm_uncertain"] = True
+                elif verdict == "FALSE_POSITIVE":
+                    # LLM claims it's alive — demote but keep (LLM may be wrong)
+                    f["_source"] = "static"
+                    f["_confidence"] = "low"
+                    f["_suppressed"] = False
+                    f["_llm_challenged"] = True
+                all_findings.append(f)
 
         except Exception as e:
             console.print(f"[warn]LLM verification failed: {e}[/warn]")
@@ -341,9 +374,6 @@ def run_pipeline(
                         if hasattr(finding.issue_type, "value")
                         else str(finding.issue_type)
                     )
-
-                    if issue_type.lower() in ("dead_code", "unused", "unreachable"):
-                        continue
 
                     llm_finding = {
                         "file": finding.location.file,

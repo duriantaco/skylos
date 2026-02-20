@@ -1,4 +1,5 @@
 import ast
+from typing import Any, Optional
 from skylos.constants import PENALTIES
 from skylos.config import is_whitelisted
 from skylos.known_patterns import (
@@ -17,6 +18,8 @@ from skylos.known_patterns import (
     DJANGO_COMMAND_BASES,
     DJANGO_APPCONFIG_METHODS,
     DJANGO_APPCONFIG_BASES,
+    DJANGO_MIDDLEWARE_METHODS,
+    DJANGO_MIDDLEWARE_BASES,
     DRF_VIEWSET_METHODS,
     DRF_VIEWSET_BASES,
     DRF_SERIALIZER_METHODS,
@@ -31,7 +34,7 @@ from skylos.visitors.framework_aware import detect_framework_usage
 from pathlib import Path
 
 
-def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
+def apply_penalties(analyzer: Any, def_obj: Any, visitor: Any, framework: Any, cfg: Optional[dict] = None) -> None:
     confidence = 100
     simple_name = def_obj.simple_name
 
@@ -39,6 +42,10 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
         def_obj.confidence = 0
         def_obj.skip_reason = "inline ignore comment"
         return
+
+    if getattr(framework, "version_conditional_lines", None):
+        if def_obj.line in framework.version_conditional_lines:
+            confidence -= 60
 
     if cfg:
         is_wl, reason, conf_reduction = is_whitelisted(
@@ -103,6 +110,11 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
             return
         if simple_name in DJANGO_APPCONFIG_METHODS and has_base_class(
             def_obj, DJANGO_APPCONFIG_BASES, framework
+        ):
+            def_obj.confidence = 0
+            return
+        if simple_name in DJANGO_MIDDLEWARE_METHODS and has_base_class(
+            def_obj, DJANGO_MIDDLEWARE_BASES, framework
         ):
             def_obj.confidence = 0
             return
@@ -296,7 +308,9 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
                 def_obj.confidence = 0
                 return
 
-    if def_obj.type == "variable" and simple_name == "_":
+    _is_ts = str(def_obj.filename).endswith((".ts", ".tsx"))
+
+    if def_obj.type == "variable" and simple_name == "_" and not _is_ts:
         def_obj.confidence = 0
         return
 
@@ -307,10 +321,10 @@ def apply_penalties(analyzer, def_obj, visitor, framework, cfg=None):
             confidence -= 40
             return
 
-    if simple_name.startswith("_") and not simple_name.startswith("__"):
+    if simple_name.startswith("_") and not simple_name.startswith("__") and not _is_ts:
         confidence -= PENALTIES["private_name"]
 
-    if simple_name.startswith("__") and simple_name.endswith("__"):
+    if simple_name.startswith("__") and simple_name.endswith("__") and not _is_ts:
         confidence -= PENALTIES["dunder_or_magic"]
 
     if def_obj.in_init and def_obj.type in ("function", "class"):
