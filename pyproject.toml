@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "3.3.0"
+version = "3.4.0"
 requires-python = ">=3.10"
 description = "An analysis tool for Python codebases"
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
@@ -23,6 +23,7 @@ dependencies = [
     "inquirer>=3.0.3",
     "libcst>=1.8.2",
     "rich>=14.0.0",
+    "textual>=1.0.0",
     "keyring>=25.7.0",
     "requests",
     "tree-sitter>=0.25.2",
@@ -30,6 +31,7 @@ dependencies = [
     "pyyaml",
     "litellm>=1.81.3",
     "networkx",
+    "pyperclip"
 ]
 
 [project.optional-dependencies]
