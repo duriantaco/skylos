@@ -1,5 +1,3 @@
-"""Prioritize findings and create a remediation plan."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -7,7 +5,6 @@ from dataclasses import dataclass, field
 
 SEVERITY_PRIORITY = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
-# Rules with well-known mechanical fixes (high LLM fix confidence).
 AUTO_FIXABLE = {
     "SKY-D205",  # yaml.load → yaml.safe_load
     "SKY-D206",  # md5 → sha256
@@ -22,8 +19,6 @@ AUTO_FIXABLE = {
 
 @dataclass
 class FindingItem:
-    """Single finding to be remediated."""
-
     rule_id: str
     severity: str
     message: str
@@ -55,8 +50,6 @@ class FindingItem:
 
 @dataclass
 class FixBatch:
-    """A group of findings in the same file to fix together."""
-
     file: str
     findings: list[FindingItem] = field(default_factory=list)
     status: str = "pending"
@@ -76,8 +69,6 @@ class FixBatch:
 
 @dataclass
 class RemediationPlan:
-    """Ordered list of fix batches with summary tracking."""
-
     batches: list[FixBatch] = field(default_factory=list)
     total_findings: int = 0
     skipped_findings: int = 0
@@ -122,8 +113,6 @@ class RemediationPlan:
 
 
 class RemediationPlanner:
-    """Create a prioritized remediation plan from scan results."""
-
     def __init__(self, *, severity_filter: str | None = None):
         self.severity_filter = severity_filter
 
@@ -143,14 +132,12 @@ class RemediationPlanner:
         for f in findings:
             file_groups.setdefault(f.file, []).append(f)
 
-        # Build batches — one per file, ordered by top severity
         batches: list[FixBatch] = []
         for filepath, items in file_groups.items():
             batches.append(FixBatch(file=filepath, findings=items))
 
         batches.sort(key=lambda b: SEVERITY_PRIORITY.get(b.top_severity, 99))
 
-        # Cap total findings across batches
         capped: list[FixBatch] = []
         count = 0
         for batch in batches:
@@ -170,7 +157,6 @@ class RemediationPlanner:
         )
 
     def _extract_findings(self, results: dict) -> list[FindingItem]:
-        """Pull findings from all categories in scan results."""
         items: list[FindingItem] = []
         for key in ("danger", "quality", "secrets"):
             for raw in results.get(key, []) or []:

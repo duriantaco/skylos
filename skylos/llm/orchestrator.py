@@ -1,12 +1,3 @@
-"""
-RemediationAgent — end-to-end scan → fix → test → PR orchestrator.
-
-Usage:
-    from skylos.llm.orchestrator import RemediationAgent
-    agent = RemediationAgent(model="gpt-4.1")
-    result = agent.run(".", dry_run=True)
-"""
-
 from __future__ import annotations
 
 import sys
@@ -18,8 +9,6 @@ from .prompts import build_pr_description
 
 
 class RemediationAgent:
-    """Orchestrates the full remediation lifecycle."""
-
     def __init__(
         self,
         *,
@@ -48,18 +37,9 @@ class RemediationAgent:
         branch_prefix: str = "skylos/fix",
         quiet: bool = False,
     ) -> dict:
-        """
-        Full remediation loop.
-
-        Returns plan summary dict with keys:
-            total_findings, planned, fixed, failed, skipped, batches
-        """
         path = Path(path).resolve()
         log = _logger(quiet)
 
-        # ---------------------------------------------------------------
-        # Step 1: Scan
-        # ---------------------------------------------------------------
         log("Step 1/5: Scanning project...")
         results = self._scan(path)
         danger_count = len(results.get("danger", []) or [])
@@ -75,9 +55,6 @@ class RemediationAgent:
             log("No findings — nothing to remediate.")
             return RemediationPlan().summary()
 
-        # ---------------------------------------------------------------
-        # Step 2: Plan
-        # ---------------------------------------------------------------
         log("Step 2/5: Creating remediation plan...")
         plan = self.planner.create_plan(results, max_fixes=max_fixes)
         log(
@@ -91,9 +68,6 @@ class RemediationAgent:
             self._print_plan(plan, log)
             return plan.summary()
 
-        # ---------------------------------------------------------------
-        # Step 3: Fix loop
-        # ---------------------------------------------------------------
         log("Step 3/5: Generating and applying fixes...")
         executor = RemediationExecutor(
             test_cmd=self.test_cmd,
@@ -116,9 +90,6 @@ class RemediationAgent:
         fixed_count = sum(1 for b in plan.batches if b.status == "fixed")
         log(f"\n  Results: {fixed_count}/{len(plan.batches)} files fixed")
 
-        # ---------------------------------------------------------------
-        # Step 4: Create PR
-        # ---------------------------------------------------------------
         pr_url = None
         if auto_pr and fixed_files:
             log("Step 4/5: Creating pull request...")
@@ -129,9 +100,6 @@ class RemediationAgent:
             else:
                 log("Step 4/5: Skipped (--auto-pr not set).")
 
-        # ---------------------------------------------------------------
-        # Step 5: Report
-        # ---------------------------------------------------------------
         log("Step 5/5: Summary")
         summary = plan.summary()
         if pr_url:
@@ -140,12 +108,8 @@ class RemediationAgent:
 
         return summary
 
-    # ------------------------------------------------------------------
-    # Internal methods
-    # ------------------------------------------------------------------
 
     def _scan(self, path: Path) -> dict:
-        """Run static analysis scan."""
         import json
         from skylos.analyzer import analyze as run_analyze
 
@@ -159,7 +123,6 @@ class RemediationAgent:
         return json.loads(raw) if isinstance(raw, str) else raw
 
     def _create_fixer(self):
-        """Create a FixerAgent with the configured model."""
         from .agents import FixerAgent, AgentConfig
 
         config = AgentConfig()
@@ -179,7 +142,6 @@ class RemediationAgent:
         executor: RemediationExecutor,
         log,
     ):
-        """Process a single fix batch through the fix → test → verify cycle."""
         file_path = batch.file
         p = Path(file_path)
         if not p.exists():
@@ -190,10 +152,8 @@ class RemediationAgent:
         source = p.read_text(encoding="utf-8")
         batch.source = source
 
-        # Pick the highest-severity finding to fix first
         primary = batch.findings[0]
 
-        # Generate fix via LLM
         try:
             fix = fixer.fix(
                 source,
@@ -217,13 +177,11 @@ class RemediationAgent:
             batch.fix_description = "Fix confidence too low"
             return
 
-        # Apply fix to disk
         if not executor.apply_fix(file_path, fix.fixed_code):
             batch.status = "failed"
             batch.fix_description = "Could not write fixed file"
             return
 
-        # Run tests
         test_result = executor.run_tests()
         if not test_result.passed:
             executor.revert_fix(file_path)
@@ -231,7 +189,6 @@ class RemediationAgent:
             batch.fix_description = f"Tests failed after fix ({test_result.command})"
             return
 
-        # Verify the finding is actually resolved
         rule_ids = [f.rule_id for f in batch.findings]
         verify = executor.verify_fix(file_path, rule_ids)
         if not verify.finding_resolved:
@@ -253,7 +210,6 @@ class RemediationAgent:
         branch_prefix: str,
         log,
     ) -> str | None:
-        """Create git branch, commit, push, and open PR."""
         fixed_batches = [b for b in plan.batches if b.status == "fixed"]
         if not fixed_batches:
             return None
@@ -291,7 +247,6 @@ class RemediationAgent:
         return pr_url
 
     def _print_plan(self, plan: RemediationPlan, log):
-        """Print a human-readable plan summary."""
         s = plan.summary()
         log(f"\n  Total findings: {s['total_findings']}")
         log(f"  Planned: {s['planned']}")
@@ -314,7 +269,6 @@ class RemediationAgent:
 
 
 def _logger(quiet: bool):
-    """Return a log function that respects quiet mode."""
     if quiet:
         return lambda msg: None
 
