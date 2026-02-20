@@ -124,10 +124,7 @@ class RemediationPlanner:
             cutoff = SEVERITY_PRIORITY.get(self.severity_filter.upper(), 99)
             findings = [f for f in findings if f.priority <= cutoff]
 
-        # Sort: CRITICAL first, then auto-fixable first within same severity
         findings.sort(key=lambda f: (f.priority, not f.auto_fixable, f.file))
-
-        # Group by file
         file_groups: dict[str, list[FindingItem]] = {}
         for f in findings:
             file_groups.setdefault(f.file, []).append(f)

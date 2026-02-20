@@ -42,7 +42,6 @@ class RemediationExecutor:
             return False
 
     def revert_fix(self, file_path: str) -> bool:
-        """Restore original file content from backup."""
         key = str(Path(file_path))
         original = self._backups.pop(key, None)
         if original is None:
@@ -54,7 +53,6 @@ class RemediationExecutor:
             return False
 
     def revert_all(self):
-        """Revert all applied fixes."""
         for fp in list(self._backups.keys()):
             self.revert_fix(fp)
 
