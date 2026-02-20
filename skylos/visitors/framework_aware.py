@@ -42,6 +42,11 @@ FRAMEWORK_DECORATORS = [
     "@*.group",
     "@*.subcommand",
     "@*.main",
+    "@shared_task",
+    "@*.shared_task",
+    "@*.task",
+    "@*.signal",
+    "@*.lifespan",
 ]
 
 FRAMEWORK_FUNCTIONS = [
@@ -77,6 +82,7 @@ ENTRY_POINT_DECORATORS = {
     "blueprint.get",
     "blueprint.post",
     "celery.task",
+    "shared_task",
     "task",
     "job",
     "click.command",
@@ -89,6 +95,8 @@ ENTRY_POINT_DECORATORS = {
     "subscriber",
     "listener",
     "handler",
+    "app.before_first_request",
+    "app.cli.command",
 }
 
 FRAMEWORK_IMPORTS = {
