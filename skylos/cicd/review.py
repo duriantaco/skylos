@@ -18,7 +18,9 @@ def run_pr_review(
     summary_only: bool = False,
     max_comments: int = 25,
     diff_base: str = "origin/main",
-):
+    grade: dict | None = None,
+    previous_grade: dict | None = None,
+) -> None:
     pr_number = pr_number or _detect_pr_number()
     repo = repo or os.environ.get("GITHUB_REPOSITORY")
 
@@ -38,6 +40,9 @@ def run_pr_review(
         )
         return
 
+    if grade and previous_grade is None:
+        previous_grade = _fetch_previous_grade(repo, diff_base)
+
     all_findings = _flatten_findings(results)
 
     if not summary_only:
@@ -46,12 +51,13 @@ def run_pr_review(
     else:
         findings = all_findings
 
-    # Post inline review if we have findings on changed lines
     if findings and not summary_only:
         _post_pr_review(findings[:max_comments], pr_number, repo)
 
-    # Always post a summary comment
-    _post_summary_comment(all_findings, findings, pr_number, repo)
+    _post_summary_comment(
+        all_findings, findings, pr_number, repo,
+        grade=grade, previous_grade=previous_grade,
+    )
 
     console.print(
         f"[green]Posted review on PR #{pr_number} "
@@ -79,12 +85,10 @@ def _parse_unified_diff(diff_output: str) -> list[dict]:
     current_file = None
 
     for line in diff_output.splitlines():
-        # Match: +++ b/path/to/file.py
         if line.startswith("+++ b/"):
             current_file = line[6:]
             continue
 
-        # Match: @@ -old,count +new,count @@
         hunk_match = re.match(r"^@@ .+ \+(\d+)(?:,(\d+))? @@", line)
         if hunk_match and current_file:
             start = int(hunk_match.group(1))
@@ -107,7 +111,6 @@ def filter_findings_to_diff(
     if not changed_ranges:
         return []
 
-    # Build a lookup: file -> list of (start, end) ranges
     ranges_by_file = {}
     for r in changed_ranges:
         ranges_by_file.setdefault(r["file"], []).append((r["start"], r["end"]))
@@ -157,10 +160,12 @@ def _format_review_comment(finding: dict) -> str:
     message = finding.get("message", "")
     rule_str = f" `{rule_id}`" if rule_id else ""
 
-    return f"{badge} **{severity}**{rule_str}\n\n{message}"
+    footer = "\n\n---\n_🤖 Analyzed by [Skylos](https://github.com/duriantaco/skylos) • [Add to your repo](https://github.com/duriantaco/skylos#cicd)_"
+
+    return f"{badge} **{severity}**{rule_str}\n\n{message}{footer}"
 
 
-def _post_pr_review(findings: list[dict], pr_number: int, repo: str):
+def _post_pr_review(findings: list[dict], pr_number: int, repo: str) -> None:
     comments = []
     for f in findings:
         if not f.get("file") or not f.get("line"):
@@ -177,7 +182,12 @@ def _post_pr_review(findings: list[dict], pr_number: int, repo: str):
         return
 
     payload = {
-        "body": f"Skylos found {len(comments)} issue(s) on changed lines.",
+        "body": (
+            f"Skylos found {len(comments)} issue(s) on changed lines.\n\n"
+            "---\n"
+            "_🤖 Analyzed by [Skylos](https://github.com/duriantaco/skylos) • "
+            "[Set up in 30 seconds](https://github.com/duriantaco/skylos#cicd)_"
+        ),
         "event": "COMMENT",
         "comments": comments,
     }
@@ -207,7 +217,10 @@ def _post_summary_comment(
     diff_findings: list[dict],
     pr_number: int,
     repo: str,
-):
+    *,
+    grade: dict | None = None,
+    previous_grade: dict | None = None,
+) -> None:
     by_severity = {}
     for f in all_findings:
         sev = f.get("severity", "MEDIUM")
@@ -246,6 +259,48 @@ def _post_summary_comment(
             if count > 0:
                 lines.append(f"| {cat} | {count} |")
 
+    if grade:
+        overall = grade["overall"]
+        cats = grade["categories"]
+
+        lines.extend(["", "### Codebase Grade", ""])
+
+        if previous_grade:
+            prev = previous_grade["overall"]
+            delta = overall["score"] - prev["score"]
+            arrow = "+" if delta > 0 else ""
+            direction = "\u2191" if delta > 0 else ("\u2193" if delta < 0 else "\u2194")
+            lines.append(
+                f"**{prev['letter']} ({prev['score']}) \u2192 "
+                f"{overall['letter']} ({overall['score']}) {direction}** "
+                f"({arrow}{delta})"
+            )
+        else:
+            lines.append(f"**Overall: {overall['letter']} ({overall['score']}/100)**")
+
+        lines.extend([
+            "",
+            "| Category | Score | Grade | Key Issue |",
+            "|----------|-------|-------|-----------|",
+        ])
+
+        for cat_name in ("security", "quality", "dead_code", "dependencies", "secrets"):
+            cat = cats[cat_name]
+            display = cat_name.replace("_", " ").title()
+            issue = (cat.get("key_issue") or "-")[:50]
+
+            delta_str = ""
+            if previous_grade and cat_name in previous_grade.get("categories", {}):
+                prev_cat = previous_grade["categories"][cat_name]
+                cat_delta = cat["score"] - prev_cat["score"]
+                if cat_delta != 0:
+                    d_arrow = "\u2191" if cat_delta > 0 else "\u2193"
+                    delta_str = f" {d_arrow}{abs(cat_delta)}"
+
+            lines.append(
+                f"| {display} | {cat['score']}{delta_str} | {cat['letter']} | {issue} |"
+            )
+
     body = "\n".join(lines)
 
     try:
@@ -259,8 +314,30 @@ def _post_summary_comment(
         console.print(f"[yellow]Failed to post summary comment: {e.stderr}[/yellow]")
 
 
+def _fetch_previous_grade(repo: str, base_branch: str = "origin/main") -> dict | None:
+    try:
+        from skylos.api import get_project_token, BASE_URL
+        import requests
+
+        token = get_project_token()
+        if not token:
+            return None
+
+        branch = base_branch.replace("origin/", "")
+        resp = requests.get(
+            f"{BASE_URL}/api/grade/latest",
+            params={"branch": branch},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("grade")
+    except Exception:
+        pass
+    return None
+
+
 def _detect_pr_number() -> int | None:
-    # GITHUB_REF format for PRs: refs/pull/<number>/merge
     ref = os.environ.get("GITHUB_REF", "")
     match = re.match(r"refs/pull/(\d+)/merge", ref)
     if match:
