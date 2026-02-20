@@ -167,10 +167,34 @@ DJANGO_FORM_METHODS = {"clean"}
 DJANGO_FORM_BASES = {"Form", "ModelForm"}
 
 DJANGO_COMMAND_METHODS = {"add_arguments", "handle"}
-DJANGO_COMMAND_BASES = {"BaseCommand"}
+DJANGO_COMMAND_BASES = {"BaseCommand", "Command"}
 
 DJANGO_APPCONFIG_METHODS = {"ready"}
 DJANGO_APPCONFIG_BASES = {"AppConfig"}
+
+DJANGO_MIDDLEWARE_METHODS = {
+    "process_request",
+    "process_response",
+    "process_view",
+    "process_exception",
+    "process_template_response",
+}
+DJANGO_MIDDLEWARE_BASES = {"MiddlewareMixin"}
+
+DJANGO_SIGNAL_METHODS = {
+    "pre_save",
+    "post_save",
+    "pre_delete",
+    "post_delete",
+    "m2m_changed",
+    "pre_init",
+    "post_init",
+    "pre_migrate",
+    "post_migrate",
+    "request_started",
+    "request_finished",
+    "got_request_exception",
+}
 
 DRF_VIEWSET_METHODS = {
     "list",
