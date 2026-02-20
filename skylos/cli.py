@@ -46,7 +46,6 @@ except ImportError:
 
 try:
     from skylos.llm.analyzer import SkylosLLM, AnalyzerConfig
-    from skylos.llm.schemas import Confidence
     from skylos.llm.ui import estimate_cost as llm_estimate_cost
 
     LLM_AVAILABLE = True
@@ -244,6 +243,51 @@ def _normalize_agent_findings(payload, project_root: Path):
     return out
 
 
+def _agent_findings_to_result_json(findings):
+    result = {
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+    }
+
+    category_map = {
+        "security": "danger",
+        "danger": "danger",
+        "quality": "quality",
+        "secret": "secrets",
+        "secrets": "secrets",
+    }
+
+    dead_code_map = {
+        "SKY-U001": "unused_functions",
+        "SKY-U002": "unused_imports",
+        "SKY-U003": "unused_variables",
+        "SKY-U004": "unused_classes",
+    }
+
+    for f in findings or []:
+        item = dict(f)
+        item.setdefault("file_path", item.get("file", ""))
+        item.setdefault("line_number", item.get("line", 1))
+
+        cat = str(item.get("_category") or item.get("category") or "").lower()
+        rule_id = str(item.get("rule_id") or item.get("rule") or "")
+
+        if cat == "dead_code" or rule_id.startswith("SKY-U"):
+            bucket = dead_code_map.get(rule_id, "unused_functions")
+            result[bucket].append(item)
+        elif cat in category_map:
+            result[category_map[cat]].append(item)
+        else:
+            result["quality"].append(item)
+
+    return result
+
+
 def _is_tty():
     try:
         return sys.stdin.isatty() and sys.stdout.isatty()
@@ -332,21 +376,50 @@ def _print_upload_destination(console: Console, project_root: Path):
     return has_link, using_env
 
 
+def _is_ci():
+    return any(os.getenv(v) for v in (
+        "CI", "GITHUB_ACTIONS", "JENKINS_URL", "BUILD_NUMBER",
+        "CIRCLECI", "GITLAB_CI", "BITBUCKET_PIPELINE_UUID",
+        "AZURE_PIPELINES", "TF_BUILD",
+    ))
+
+
 def _print_upload_cta(console: Console, project_root: Path):
+    if _is_ci():
+        return
+
     has_link = _detect_link_file(project_root) is not None
     has_env = bool(os.getenv("SKYLOS_TOKEN"))
     connected = has_link or has_env
 
-    console.print(Rule(style="muted"))
-    console.print(
-        "[brand]Next:[/brand] Save this scan to Skylos Cloud (history, suppressions, PR gate)"
-    )
+    console.print()
     if connected:
-        console.print("  [bold]skylos . --upload[/bold]")
+        console.print(Panel(
+            "\n".join([
+                "[bold]Upload to Skylos Cloud for trend tracking and PR blocking[/bold]",
+                "",
+                "  [bold cyan]skylos . --upload[/bold cyan]",
+                "",
+                "  [dim]Dashboard:[/dim] https://skylos.dev/dashboard",
+            ]),
+            title="[bold]☁️  Skylos Cloud[/bold]",
+            border_style="blue",
+            padding=(1, 2),
+        ))
     else:
-        console.print("  [bold]skylos sync connect[/bold]")
-        console.print("  [bold]skylos . --upload[/bold]")
-    console.print("  [muted]Dashboard:[/muted] https://skylos.dev/dashboard")
+        console.print(Panel(
+            "\n".join([
+                "[bold]Upload to Skylos Cloud in one command[/bold]",
+                "",
+                "  [bold cyan]skylos . --upload[/bold cyan]",
+                "",
+                "  [dim]Browser opens → pick project → done![/dim]",
+                "  [dim]Dashboard:[/dim] https://skylos.dev",
+            ]),
+            title="[bold]☁️  Skylos Cloud[/bold]",
+            border_style="blue",
+            padding=(1, 2),
+        ))
 
 
 def interactive_selection(
@@ -466,6 +539,11 @@ def _emit_github_annotations(result, *, max_annotations=50, severity_filter=None
         "low": {"CRITICAL", "HIGH", "MEDIUM", "LOW"},
     }
 
+    grade_data = result.get("grade")
+    if grade_data:
+        overall = grade_data["overall"]
+        print(f"::notice title=Skylos Grade::{overall['letter']} ({overall['score']}/100)")
+
     annotations = []
 
     for category in ("danger", "quality", "secrets", "custom_rules"):
@@ -526,7 +604,77 @@ def _emit_github_annotations(result, *, max_annotations=50, severity_filter=None
         )
 
 
-def render_results(console: Console, result, tree=False, root_path=None):
+def _apply_display_filters(result, severity=None, category=None, file_filter=None):
+    import copy
+
+    SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    if severity:
+        min_rank = SEVERITY_RANK.get(str(severity).lower(), 0)
+    else:
+        min_rank = 0
+
+    allowed_cats = None
+    if category:
+        allowed_cats = {c.strip().lower() for c in category.split(",")}
+
+    CATEGORY_MAP = {
+        "unused_functions": "dead_code",
+        "unused_imports": "dead_code",
+        "unused_parameters": "dead_code",
+        "unused_variables": "dead_code",
+        "unused_classes": "dead_code",
+        "unused_fixtures": "dead_code",
+        "danger": "security",
+        "secrets": "secret",
+        "quality": "quality",
+        "circular_dependencies": "quality",
+        "custom_rules": "quality",
+        "dependency_vulnerabilities": "dependency",
+    }
+
+    filtered = copy.copy(result)
+
+    for key, cat in CATEGORY_MAP.items():
+        items = result.get(key, []) or []
+        if not items:
+            continue
+
+        if allowed_cats and cat not in allowed_cats:
+            filtered[key] = []
+            continue
+
+        kept = items
+        if file_filter:
+            kept = [
+                item for item in kept
+                if file_filter in (item.get("file") or item.get("file_path") or "")
+            ]
+
+        if min_rank > 0:
+            def _passes_severity(item):
+                sev = (item.get("severity") or "").lower()
+                return SEVERITY_RANK.get(sev, 0) >= min_rank
+            
+            if kept:
+                has_severity = False
+                for item in kept:
+                    if "severity" in item:
+                        has_severity = True
+                        break
+
+                if has_severity:
+                    filtered = []
+                    for item in kept:
+                        if _passes_severity(item):
+                            filtered.append(item)
+                    kept = filtered
+
+        filtered[key] = kept
+
+    return filtered
+
+
+def render_results(console: Console, result, tree=False, root_path=None, limit=None):
     summ = result.get("analysis_summary", {})
     console.print(
         Panel.fit(
@@ -558,10 +706,81 @@ def render_results(console: Console, result, tree=False, root_path=None):
                     len(result.get("custom_rules", []) or []),
                     bad_style="warn",
                 ),
+                _pill(
+                    "Suppressed",
+                    len(result.get("suppressed", []) or []),
+                    ok_style="muted",
+                    bad_style="muted",
+                ),
             ]
         )
     )
     console.print()
+
+    grade_data = result.get("grade")
+    if grade_data:
+        from skylos.grader import generate_badge_url
+
+        overall = grade_data["overall"]
+        cats = grade_data["categories"]
+        o_score = overall["score"]
+
+        if o_score >= 90:
+            g_style = "good"
+        elif o_score >= 80:
+            g_style = "brand"
+        elif o_score >= 70:
+            g_style = "yellow"
+        else:
+            g_style = "bad"
+
+        console.print(
+            Panel.fit(
+                f"[{g_style}]Codebase Grade: {overall['letter']} ({o_score}/100)[/{g_style}]",
+                border_style=g_style,
+            )
+        )
+
+        grade_table = Table(title="Grade Breakdown", expand=True)
+        grade_table.add_column("Category", style="bold", width=16)
+        grade_table.add_column("Score", justify="right", width=8)
+        grade_table.add_column("Grade", width=6)
+        grade_table.add_column("Weight", style="muted", width=8)
+        grade_table.add_column("Key Issue", overflow="fold")
+
+        for cat_name in ("security", "quality", "dead_code", "dependencies", "secrets"):
+            cat = cats[cat_name]
+            display_name = cat_name.replace("_", " ").title()
+            s_val = cat["score"]
+            l_val = cat["letter"]
+            w_pct = f"{int(cat['weight'] * 100)}%"
+            issue = cat.get("key_issue") or "-"
+            if len(issue) > 60:
+                issue = issue[:57] + "..."
+
+            if s_val >= 90:
+                s_str = f"[good]{s_val}[/good]"
+                l_str = f"[good]{l_val}[/good]"
+            elif s_val >= 80:
+                s_str = f"[brand]{s_val}[/brand]"
+                l_str = f"[brand]{l_val}[/brand]"
+            elif s_val >= 70:
+                s_str = f"[yellow]{s_val}[/yellow]"
+                l_str = f"[yellow]{l_val}[/yellow]"
+            else:
+                s_str = f"[bad]{s_val}[/bad]"
+                l_str = f"[bad]{l_val}[/bad]"
+
+            grade_table.add_row(display_name, s_str, l_str, w_pct, issue)
+
+        console.print(grade_table)
+        badge_url = generate_badge_url(overall["letter"], o_score)
+        console.print(f"[muted]Badge: ![Skylos Grade]({badge_url})[/muted]")
+        console.print()
+
+    def _display_cap(items):
+        cap = limit or len(items)
+        return items[:cap], max(0, len(items) - cap)
 
     def _render_unused(title, items, name_key="name"):
         if not items:
@@ -575,7 +794,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
         table.add_column("Location", style="muted", overflow="fold")
         table.add_column("Conf", style="yellow", width=6, justify="right")
 
-        for i, item in enumerate(items, 1):
+        show, overflow = _display_cap(items)
+        for i, item in enumerate(show, 1):
             nm = item.get(name_key) or item.get("simple_name") or "<?>"
             short = _shorten_path(item.get("file"), root_path)
             loc = f"{short}:{item.get('line', '?')}"
@@ -594,6 +814,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
             table.add_row(str(i), nm, loc, conf_str)
 
         console.print(table)
+        if overflow:
+            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
         console.print()
 
     def _render_unused_simple(title, items, name_key="name"):
@@ -607,13 +829,16 @@ def render_results(console: Console, result, tree=False, root_path=None):
         table.add_column("Name", style="bold")
         table.add_column("Location", style="muted", overflow="fold")
 
-        for i, item in enumerate(items, 1):
+        show, overflow = _display_cap(items)
+        for i, item in enumerate(show, 1):
             nm = item.get(name_key) or item.get("simple_name") or "<?>"
             short = _shorten_path(item.get("file"), root_path)
             loc = f"{short}:{item.get('line', '?')}"
             table.add_row(str(i), nm, loc)
 
         console.print(table)
+        if overflow:
+            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
         console.print()
 
     def _render_quality(items):
@@ -628,7 +853,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
         table.add_column("Detail")
         table.add_column("Location", style="muted", width=36)
 
-        for i, quality in enumerate(items, 1):
+        show, overflow = _display_cap(items)
+        for i, quality in enumerate(show, 1):
             kind = (quality.get("kind") or quality.get("metric") or "quality").title()
             func = quality.get("name") or quality.get("simple_name") or "<?>"
             loc = f"{quality.get('basename', '?')}:{quality.get('line', '?')}"
@@ -649,6 +875,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
             table.add_row(str(i), kind, func, detail, loc)
 
         console.print(table)
+        if overflow:
+            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
         console.print(
             "[muted]Tip: split helpers, add early returns, flatten branches.[/muted]\n"
         )
@@ -665,7 +893,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
         table.add_column("Severity", width=8)
         table.add_column("Suggested Break", style="cyan")
 
-        for i, cd in enumerate(items, 1):
+        show, overflow = _display_cap(items)
+        for i, cd in enumerate(show, 1):
             cycle = cd.get("cycle", [])
             cycle_str = " → ".join(cycle) + f" → {cycle[0]}" if cycle else "?"
             length = str(cd.get("cycle_length", len(cycle)))
@@ -675,6 +904,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
             table.add_row(str(i), cycle_str, length, sev, suggested)
 
         console.print(table)
+        if overflow:
+            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
         console.print(
             "[muted]Tip: Break the cycle by refactoring the suggested module.[/muted]\n"
         )
@@ -694,7 +925,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
         table.add_column("Message", overflow="fold")
         table.add_column("Location", style="muted", width=36)
 
-        for i, d in enumerate(custom, 1):
+        show, overflow = _display_cap(custom)
+        for i, d in enumerate(show, 1):
             rule = d.get("rule_id") or "CUSTOM"
             sev = d.get("severity") or "MEDIUM"
             msg = d.get("message") or "Custom rule violation"
@@ -703,6 +935,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
             table.add_row(str(i), rule, sev, msg, loc)
 
         console.print(table)
+        if overflow:
+            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
         console.print()
 
     def _render_secrets(items):
@@ -717,7 +951,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
         table.add_column("Preview", style="muted", width=18)
         table.add_column("Location", style="muted", overflow="fold")
 
-        for i, s in enumerate(items[:100], 1):
+        show, overflow = _display_cap(items)
+        for i, s in enumerate(show, 1):
             prov = s.get("provider") or "generic"
             msg = s.get("message") or "Secret detected"
             prev = s.get("preview") or "****"
@@ -726,6 +961,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
             table.add_row(str(i), prov, msg, prev, loc)
 
         console.print(table)
+        if overflow:
+            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
         console.print()
 
     def render_tree(console: Console, result, root_path=None):
@@ -763,6 +1000,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
         _add_findings(result.get("danger"), "security", default_sev="high")
         _add_findings(result.get("secrets"), "secret", default_sev="high")
         _add_findings(result.get("quality"), "quality", default_sev="medium")
+        _add_findings(result.get("dependency_vulnerabilities"), "vulnerability", default_sev="high")
 
         if not by_file:
             console.print("[good]No findings to display.[/good]")
@@ -828,7 +1066,8 @@ def render_results(console: Console, result, tree=False, root_path=None):
             table.add_column("Verified", width=9)
             table.add_column("Proof", overflow="fold")
 
-        for i, d in enumerate(items[:100], 1):
+        show, overflow = _display_cap(items)
+        for i, d in enumerate(show, 1):
             rule_id = d.get("rule_id") or "UNKNOWN"
 
             issue_name = _display_rule_name(rule_id)
@@ -890,6 +1129,36 @@ def render_results(console: Console, result, tree=False, root_path=None):
                 table.add_row(str(i), issue_cell, sev, msg, loc, symbol)
 
         console.print(table)
+        if overflow:
+            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
+        console.print()
+
+    def _render_sca(items):
+        if not items:
+            return
+
+        console.rule("[bold red]Dependency Vulnerabilities (SCA)")
+        table = Table(expand=True)
+        table.add_column("#", style="muted", width=3)
+        table.add_column("Package", style="yellow", width=22)
+        table.add_column("Vuln ID", width=18)
+        table.add_column("Severity", width=9)
+        table.add_column("Message", overflow="fold")
+        table.add_column("Fix", style="good", width=14, overflow="fold")
+
+        show, overflow = _display_cap(items)
+        for i, v in enumerate(show, 1):
+            meta = v.get("metadata") or {}
+            pkg = f"{meta.get('package_name', '?')}@{meta.get('package_version', '?')}"
+            vuln_id = meta.get("display_id") or meta.get("vuln_id") or v.get("rule_id", "")
+            sev = (v.get("severity") or "MEDIUM").title()
+            msg = v.get("message") or "Known vulnerability"
+            fix = meta.get("fixed_version") or "-"
+            table.add_row(str(i), pkg, vuln_id, sev, msg, fix)
+
+        console.print(table)
+        if overflow:
+            console.print(f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]")
         console.print()
 
     if tree:
@@ -918,6 +1187,7 @@ def render_results(console: Console, result, tree=False, root_path=None):
         _render_quality(result.get("quality", []) or [])
         _render_circular_deps(result.get("circular_dependencies", []) or [])
         _render_custom_rules(result.get("custom_rules", []) or [])
+        _render_sca(result.get("dependency_vulnerabilities", []) or [])
 
 
 def run_init():
@@ -1091,6 +1361,143 @@ def estimate_cost(files):
     return est_tokens, est_cost_usd
 
 
+def _run_clean_command():
+    console = Console()
+    path = sys.argv[2] if len(sys.argv) > 2 else "."
+
+    console.print(Panel(
+        "[bold]Skylos Clean[/bold] — Interactive Dead Code Removal",
+        border_style="blue",
+    ))
+    console.print(f"Scanning [bold]{path}[/bold]...\n")
+
+    result = json.loads(run_analyze(path))
+
+    findings = []
+    for fn in result.get("unused_functions", []):
+        findings.append({
+            "type": "function",
+            "name": fn.get("name", ""),
+            "file": fn.get("file", ""),
+            "line": fn.get("line", 0),
+            "confidence": fn.get("confidence", 100),
+        })
+    for imp in result.get("unused_imports", []):
+        findings.append({
+            "type": "import",
+            "name": imp.get("name", ""),
+            "file": imp.get("file", ""),
+            "line": imp.get("line", 0),
+            "confidence": imp.get("confidence", 100),
+        })
+    for var in result.get("unused_variables", []):
+        findings.append({
+            "type": "variable",
+            "name": var.get("name", ""),
+            "file": var.get("file", ""),
+            "line": var.get("line", 0),
+            "confidence": var.get("confidence", 100),
+        })
+    for cls in result.get("unused_classes", []):
+        findings.append({
+            "type": "class",
+            "name": cls.get("name", ""),
+            "file": cls.get("file", ""),
+            "line": cls.get("line", 0),
+            "confidence": cls.get("confidence", 100),
+        })
+
+    findings.sort(key=lambda f: -f["confidence"])
+
+    if not findings:
+        console.print("[green]No dead code found. Your codebase is clean![/green]")
+        return
+
+    console.print(f"Found [bold]{len(findings)}[/bold] potential dead code items.\n")
+
+    to_remove = []
+    to_comment = []
+    skipped = 0
+
+    for i, f in enumerate(findings, 1):
+        console.print(Rule(style="dim"))
+        console.print(
+            f"[bold][{i}/{len(findings)}][/bold] Unused {f['type']} "
+            f"[bold cyan]{f['name']}[/bold cyan] at {f['file']}:{f['line']}"
+        )
+        console.print(
+            f"         Confidence: [bold]{f['confidence']}%[/bold]"
+        )
+
+        try:
+            choice = input("\n  [R]emove  [C]omment-out  [S]kip  [Q]uit > ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]Interrupted.[/dim]")
+            break
+
+        if choice in ("r", "remove"):
+            to_remove.append(f)
+            console.print("  [green]Marked for removal[/green]")
+        elif choice in ("c", "comment", "comment-out"):
+            to_comment.append(f)
+            console.print("  [yellow]Marked for comment-out[/yellow]")
+        elif choice in ("q", "quit"):
+            console.print("[dim]Stopping early.[/dim]")
+            break
+        else:
+            skipped += 1
+            console.print("  [dim]Skipped[/dim]")
+
+    if not to_remove and not to_comment:
+        console.print("\n[dim]No changes to apply.[/dim]")
+        return
+
+    console.print(Rule(style="blue"))
+    console.print(
+        f"\n[bold]Summary:[/bold] {len(to_remove)} to remove, "
+        f"{len(to_comment)} to comment out, {skipped} skipped\n"
+    )
+
+    try:
+        confirm = input("Apply changes? (y/N): ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[dim]Cancelled.[/dim]")
+        return
+
+    if confirm not in ("y", "yes"):
+        console.print("[dim]No changes applied.[/dim]")
+        return
+
+    applied = 0
+
+    for f in to_remove:
+        try:
+            if f["type"] == "import":
+                remove_unused_import_cst(f["file"], f["name"])
+                applied += 1
+            elif f["type"] == "function":
+                remove_unused_function_cst(f["file"], f["name"])
+                applied += 1
+        except Exception as e:
+            console.print(f"  [red]Failed to remove {f['name']}: {e}[/red]")
+
+    for f in to_comment:
+        try:
+            if f["type"] == "import":
+                comment_out_unused_import_cst(f["file"], f["name"])
+                applied += 1
+            elif f["type"] == "function":
+                comment_out_unused_function_cst(f["file"], f["name"])
+                applied += 1
+        except Exception as e:
+            console.print(f"  [red]Failed to comment out {f['name']}: {e}[/red]")
+
+    console.print(
+        f"\n[green]Done![/green] Applied {applied} changes "
+        f"({len(to_remove)} removed, {len(to_comment)} commented out)."
+    )
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "key":
         from skylos.commands.key_cmd import run_key_command
@@ -1106,7 +1513,11 @@ def main():
         from skylos.baseline import save_baseline
         from skylos import analyze as _baseline_analyze
 
-        path = sys.argv[2] if len(sys.argv) > 2 else "."
+        if len(sys.argv) > 2:
+            path = sys.argv[2]
+        else:
+            path = "."
+
         console = Console()
         console.print(f"[bold]Creating baseline for {path}...[/bold]")
         result = json.loads(_baseline_analyze(path))
@@ -1135,6 +1546,36 @@ def main():
         run_init()
         sys.exit(0)
 
+    if len(sys.argv) > 1 and sys.argv[1] == "badge":
+        from rich.console import Console
+        console = Console()
+
+        badge_markdown = "[![Analyzed with Skylos](https://img.shields.io/badge/Analyzed%20with-Skylos-2f80ed?style=flat&logo=python&logoColor=white)](https://github.com/duriantaco/skylos)"
+
+        console.print()
+        console.print(Panel.fit(
+            "[bold cyan]Add this badge to your README.md:[/bold cyan]\n\n"
+            f"[yellow]{badge_markdown}[/yellow]\n\n"
+            "[dim]Shows others you maintain clean, secure code with Skylos![/dim]\n\n"
+            "[bold]Preview:[/bold]\n"
+            "[![Analyzed with Skylos](2f80ed badge)](github.com/duriantaco/skylos)",
+            title="[cyan]📛 Skylos Badge[/cyan]",
+            border_style="cyan"
+        ))
+        console.print()
+        console.print("[dim]💡 Tip: Add this near your other badges at the top of README.md[/dim]")
+        console.print("[dim]📢 Share your project: https://github.com/duriantaco/skylos#projects-using-skylos[/dim]")
+        console.print()
+
+        try:
+            import pyperclip
+            pyperclip.copy(badge_markdown)
+            console.print("[good]✅ Badge markdown copied to clipboard![/good]")
+        except ImportError:
+            console.print("[muted]💡 Install pyperclip for auto-copy: pip install pyperclip[/muted]")
+
+        sys.exit(0)
+
     if len(sys.argv) > 1 and sys.argv[1] == "whitelist":
         pattern = None
         reason = None
@@ -1152,6 +1593,20 @@ def main():
             i += 1
         run_whitelist(pattern=pattern, reason=reason, show=show)
         sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "clean":
+        _run_clean_command()
+        sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "login":
+        from skylos.login import run_login
+
+        console = Console()
+        result = run_login(console=console)
+        if result:
+            sys.exit(0)
+        else:
+            sys.exit(1)
 
     if len(sys.argv) > 1 and sys.argv[1] == "sync":
         from skylos.sync import main as sync_main
@@ -1363,6 +1818,21 @@ def main():
             "--base-url",
             default=None,
             help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
+        )
+        p_analyze.add_argument(
+            "--upload",
+            action="store_true",
+            help="Upload results to skylos.dev dashboard",
+        )
+        p_analyze.add_argument(
+            "--force",
+            action="store_true",
+            help="Force upload even if quality gate fails",
+        )
+        p_analyze.add_argument(
+            "--strict",
+            action="store_true",
+            help="Exit with error code if quality gate fails",
         )
 
         p_sec_audit = agent_sub.add_parser(
@@ -1617,7 +2087,19 @@ def main():
                 else:
                     console.print("[good]No issues found![/good]")
 
-            sys.exit(1 if merged_findings else 0)
+            if getattr(agent_args, "upload", False) and merged_findings:
+                result_for_upload = _agent_findings_to_result_json(merged_findings)
+                upload_report(
+                    result_for_upload,
+                    is_forced=getattr(agent_args, "force", False),
+                    strict=getattr(agent_args, "strict", False),
+                    analysis_mode="hybrid",
+                )
+            
+            if merged_findings:
+                sys.exit(1)
+            else:
+                sys.exit(0)
 
         elif cmd == "security-audit":
             path = pathlib.Path(agent_args.path)
@@ -1738,7 +2220,10 @@ def main():
                     pathlib.Path(agent_args.output).write_text(output)
                 else:
                     print(output)
-                sys.exit(1 if merged_findings else 0)
+                if merged_findings:
+                    sys.exit(1)
+                else:
+                    sys.exit(0)
 
             if merged_findings:
                 table = Table(
@@ -1849,7 +2334,19 @@ def main():
             sys.exit(1)
 
     parser = argparse.ArgumentParser(
-        description="Detect unused functions and unused imports in a Python project"
+        description="Detect unused functions and unused imports in a Python project",
+        epilog="""
+Additional commands:
+  skylos cicd init       Generate GitHub Actions workflow (30-second setup)
+  skylos cicd gate       Quality gate for CI/CD pipelines
+  skylos cicd annotate   Emit GitHub Annotations on PRs
+  skylos cicd review     Post inline PR review comments
+  skylos agent analyze   AI-powered hybrid analysis with LLM
+  skylos agent review    AI code review for git-changed files
+  skylos badge           Get badge markdown for your README
+
+Run 'skylos <command> --help' for more information on each command.
+        """
     )
     parser.add_argument("path", help="Path to the Python project")
     parser.add_argument(
@@ -1897,7 +2394,7 @@ def main():
         "--fix", action="store_true", help="Attempt to auto-fix issues using AI"
     )
     parser.add_argument(
-        "--table", action="store_true", help="(deprecated) Show findings in table"
+        "--table", action="store_true", help="Show findings in Rich table format instead of TUI"
     )
     parser.add_argument(
         "--tree", action="store_true", help="Show findings in tree format"
@@ -1983,6 +2480,11 @@ def main():
         action="store_true",
         help="Run code quality checks. Off by default.",
     )
+    parser.add_argument(
+        "--sca",
+        action="store_true",
+        help="Scan dependencies for known vulnerabilities (CVEs) via OSV.dev.",
+    )
 
     parser.add_argument(
         "--sarif",
@@ -2014,6 +2516,39 @@ def main():
         "--summary",
         action="store_true",
         help="Write markdown summary to $GITHUB_STEP_SUMMARY (use with --gate)",
+    )
+
+    parser.add_argument(
+        "--severity",
+        type=str,
+        default=None,
+        metavar="LEVEL",
+        help="Filter findings by minimum severity: critical, high, medium, low. "
+        "Example: --severity high shows only CRITICAL and HIGH.",
+    )
+    parser.add_argument(
+        "--category",
+        type=str,
+        default=None,
+        metavar="CAT",
+        help="Show only specific category: security, secret, quality, dead_code, dependency. "
+        "Comma-separated for multiple. Example: --category security,secret",
+    )
+    parser.add_argument(
+        "--file-filter",
+        type=str,
+        default=None,
+        metavar="PATTERN",
+        help="Only show findings in files matching this substring. "
+        "Example: --file-filter auth/ or --file-filter models.py",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Max findings to display per category. Remaining shown as summary. "
+        "Example: --limit 20",
     )
 
     parser.add_argument("command", nargs="*", help="Command to run if gate passes")
@@ -2249,6 +2784,17 @@ sys.exit(ret)
 
         result = json.loads(result_json)
 
+        if getattr(args, "sca", False) and "dependency_vulnerabilities" not in result:
+            try:
+                from skylos.rules.sca.vulnerability_scanner import scan_dependencies
+                sca_findings = scan_dependencies(project_root)
+                if sca_findings:
+                    result["dependency_vulnerabilities"] = sca_findings
+                    result.setdefault("analysis_summary", {})["sca_count"] = len(sca_findings)
+            except Exception as e:
+                if args.verbose:
+                    console.print(f"[warn]SCA scan error: {e}[/warn]")
+
         if args.baseline:
             from skylos.baseline import load_baseline, filter_new_findings
 
@@ -2407,7 +2953,14 @@ sys.exit(ret)
                 "SKYLOS-DEADCODE-UNUSED_PARAMETER",
             )
 
-            SarifExporter(all_findings, tool_name="Skylos").write(args.sarif)
+            exporter = SarifExporter(all_findings, tool_name="Skylos")
+            sarif_data = exporter.generate()
+            grade_data = result.get("grade")
+            if grade_data:
+                sarif_data["runs"][0].setdefault("properties", {})["grade"] = grade_data
+            import json as _json
+            with open(args.sarif, "w", encoding="utf-8") as _sf:
+                _json.dump(sarif_data, _sf, indent=2)
 
         if args.json:
             print(result_json)
@@ -2600,7 +3153,24 @@ sys.exit(ret)
             else:
                 console.print("[muted]No items selected.[/muted]")
 
-    render_results(console, result, tree=args.tree, root_path=project_root)
+    if args.tree or args.table:
+        display_result = result
+        _cli_severity = getattr(args, "severity", None)
+        _cli_category = getattr(args, "category", None)
+        _cli_file_filter = getattr(args, "file_filter", None)
+        _cli_limit = getattr(args, "limit", None)
+        if _cli_severity or _cli_category or _cli_file_filter:
+            display_result = _apply_display_filters(
+                result, severity=_cli_severity,
+                category=_cli_category, file_filter=_cli_file_filter,
+            )
+        render_results(
+            console, display_result,
+            tree=args.tree, root_path=project_root, limit=_cli_limit,
+        )
+    else:
+        from skylos.tui import run_tui
+        run_tui(result, root_path=project_root)
 
     unused_total = sum(
         len(result.get(k, []))
@@ -2635,39 +3205,50 @@ sys.exit(ret)
             "quality",
             "secrets",
             "custom_rules",
+            "dependency_vulnerabilities",
         ):
             total_findings += len(result.get(k, []) or [])
 
         if total_findings > 0:
+            workflow_path = project_root / ".github" / "workflows" / "skylos.yml"
+            if not workflow_path.exists():
+                console.print()
+                console.print(
+                    Panel.fit(
+                        "[bold cyan]💡 Tip:[/bold cyan] Catch these issues automatically on every PR\n\n"
+                        "[dim]Run:[/dim] [bold]skylos cicd init[/bold]\n"
+                        "[dim]Then:[/dim] [bold]git add .github/workflows/skylos.yml && git push[/bold]\n\n"
+                        "[muted]30-second setup for automated code analysis in CI/CD[/muted]",
+                        title="[cyan]Set up CI/CD[/cyan]",
+                        border_style="cyan",
+                    )
+                )
+
             _print_upload_cta(console, project_root)
+        else:
+            console.print()
+            console.print(
+                "[good]✨ Clean codebase! No issues found.[/good]\n"
+                "[dim]💡 Show others you maintain quality code: [/dim][bold cyan]skylos badge[/bold cyan]"
+            )
 
             no_prompt = bool(config.get("no_upload_prompt"))
             if (
                 (not no_prompt)
                 and _has_high_intent_findings(result)
-                and INTERACTIVE_AVAILABLE
+                and _is_tty()
             ):
-                ans = inquirer.prompt(
-                    [
-                        inquirer.List(
-                            "choice",
-                            message="Upload this scan to Skylos Cloud now?",
-                            choices=[
-                                ("Upload now", "upload"),
-                                ("Not now", "later"),
-                                ("Don't remind me again", "never"),
-                            ],
-                        )
-                    ]
-                )
-                choice = (ans or {}).get("choice")
+                try:
+                    ans = input("  Upload this scan to Skylos Cloud? [Y/n/never] ").strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    ans = "n"
 
-                if choice == "upload":
+                if ans in ("", "y", "yes"):
                     args.upload = True
-                elif choice == "never":
+                elif ans == "never":
                     ok = _set_no_upload_prompt(project_root, True)
                     if ok:
-                        console.print("[muted]Okay — I won't ask again.[/muted]")
+                        console.print("[muted]Okay. Run 'skylos . --upload' anytime to upload manually.[/muted]")
                     else:
                         console.print(
                             "[warn]Could not persist preference (no pyproject.toml).[/warn]"
@@ -2693,23 +3274,32 @@ sys.exit(ret)
     if args.upload and not args.json:
         has_link, using_env = _print_upload_destination(console, project_root)
 
-        if (not has_link) and (not using_env) and _is_tty():
-            if INTERACTIVE_AVAILABLE:
-                proceed = inquirer.confirm(
-                    "No repo link found. You may upload to the wrong project. Continue?",
-                    default=False,
+        if (not has_link) and (not using_env):
+            if _is_tty() and not _is_ci():
+                console.print(
+                    "\n[bold yellow]No Skylos token found.[/bold yellow] "
+                    "Let's connect to Skylos Cloud.\n"
                 )
-                if not proceed:
-                    raise SystemExit(1)
+                from skylos.login import run_login
+
+                login_result = run_login(console=console)
+                if login_result is None:
+                    console.print("[dim]Upload cancelled.[/dim]")
+                    raise SystemExit(0)
+                has_link, using_env = _print_upload_destination(
+                    console, project_root
+                )
+            elif _is_ci():
+                console.print(
+                    "[warn]No SKYLOS_TOKEN set. To upload from CI, add SKYLOS_TOKEN to your environment.[/warn]"
+                )
+                console.print("  See: https://docs.skylos.dev/ci-setup")
+                raise SystemExit(1)
             else:
-                ans = (
-                    input(
-                        "No repo link found. You may upload to the wrong project. Continue? (y/N): "
-                    )
-                    .strip()
-                    .lower()
-                )
-                if ans not in ("y", "yes"):
+                from skylos.login import manual_token_fallback
+
+                login_result = manual_token_fallback(console=console)
+                if login_result is None:
                     raise SystemExit(1)
 
         upload_resp = upload_report(result, is_forced=args.force, strict=args.strict)
