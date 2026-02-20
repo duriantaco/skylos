@@ -1,20 +1,34 @@
-from tree_sitter import Language, QueryCursor
+from __future__ import annotations
+
+from tree_sitter import Language, Query, QueryCursor
 import tree_sitter_typescript as tsts
 
 try:
-    TS_LANG = Language(tsts.language_typescript())
-except:
+    TS_LANG: Language | None = Language(tsts.language_typescript())
+except Exception:
     TS_LANG = None
 
+_SAFE_EXEC_OBJECTS: set[str] = {
+    "regex", "re", "regexp", "pattern", "reg",
+    "db", "stmt", "query", "statement",
+    "cursor", "conn", "connection",
+}
 
-def scan_danger(root_node, file_path):
-    findings = []
+
+def _get_text(source: bytes, node) -> str:
+    return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+
+
+def scan_danger(root_node, file_path: str) -> list[dict]:
+    findings: list[dict] = []
     if not TS_LANG:
         return []
 
-    def check(pattern, cap_name, rule, sev, msg):
+    source_bytes: bytes = root_node.text
+
+    def check(pattern: str, cap_name: str, rule: str, sev: str, msg: str) -> None:
         try:
-            query = TS_LANG.query(pattern)
+            query = Query(TS_LANG, pattern)
             cursor = QueryCursor(query)
             captures = cursor.captures(root_node)
             nodes = captures.get(cap_name, [])
@@ -50,7 +64,6 @@ def scan_danger(root_node, file_path):
         "Unsafe innerHTML assignment",
     )
 
-    # document.write
     check(
         '(call_expression function: (member_expression property: (property_identifier) @dw (#eq? @dw "write") object: (identifier) @obj (#eq? @obj "document")))',
         "dw",
@@ -59,7 +72,6 @@ def scan_danger(root_node, file_path):
         "document.write() can lead to XSS vulnerabilities",
     )
 
-    # new Function()
     check(
         '(new_expression constructor: (identifier) @fn (#eq? @fn "Function"))',
         "fn",
@@ -68,7 +80,6 @@ def scan_danger(root_node, file_path):
         "new Function() is equivalent to eval()",
     )
 
-    # setTimeout/setInterval with string argument
     for fn_name in ("setTimeout", "setInterval"):
         check(
             f'(call_expression function: (identifier) @timer (#eq? @timer "{fn_name}") arguments: (arguments (string) @str))',
@@ -78,16 +89,8 @@ def scan_danger(root_node, file_path):
             f"{fn_name}() with string argument is equivalent to eval()",
         )
 
-    # child_process.exec (Node.js command injection)
-    check(
-        '(call_expression function: (member_expression property: (property_identifier) @exec (#eq? @exec "exec")))',
-        "exec",
-        "SKY-D506",
-        "HIGH",
-        "child_process.exec() can lead to command injection. Use execFile() instead.",
-    )
+    _check_exec(root_node, source_bytes, file_path, findings)
 
-    # outerHTML assignment (similar to innerHTML)
     check(
         '(assignment_expression left: (member_expression property: (property_identifier) @oh (#eq? @oh "outerHTML")))',
         "oh",
@@ -97,3 +100,39 @@ def scan_danger(root_node, file_path):
     )
 
     return findings
+
+
+def _check_exec(root_node, source: bytes, file_path: str, findings: list[dict]) -> None:
+    pattern = '(call_expression function: (member_expression object: (identifier) @obj property: (property_identifier) @prop (#eq? @prop "exec")))'
+    try:
+        query = Query(TS_LANG, pattern)
+        cursor = QueryCursor(query)
+        captures = cursor.captures(root_node)
+        prop_nodes = captures.get("prop", [])
+    except Exception:
+        return
+
+    for prop_node in prop_nodes:
+        call_node = prop_node.parent
+        if call_node is None:
+            continue
+        obj_node = call_node.child_by_field_name("object")
+        if obj_node is None:
+            continue
+
+        obj_name = _get_text(source, obj_node).lower()
+
+        if obj_name in _SAFE_EXEC_OBJECTS:
+            continue
+
+        line = prop_node.start_point[0] + 1
+        findings.append(
+            {
+                "rule_id": "SKY-D506",
+                "severity": "HIGH",
+                "message": "child_process.exec() can lead to command injection. Use execFile() instead.",
+                "file": str(file_path),
+                "line": line,
+                "col": 0,
+            }
+        )

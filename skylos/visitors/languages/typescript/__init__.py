@@ -1,20 +1,24 @@
+from __future__ import annotations
+
 from .core import TypeScriptCore
 from .danger import scan_danger
 from .quality import scan_quality
 
 
 class DummyVisitor:
-    def __init__(self):
-        self.is_test_file = False
-        self.test_decorated_lines = set()
-        self.dataclass_fields = set()
-        self.pydantic_models = set()
-        self.class_defs = {}
-        self.first_read_lineno = {}
-        self.framework_decorated_lines = set()
+    """Placeholder visitor for non-Python files to satisfy the pipeline tuple format."""
+
+    def __init__(self) -> None:
+        self.is_test_file: bool = False
+        self.test_decorated_lines: set[int] = set()
+        self.dataclass_fields: set[str] = set()
+        self.pydantic_models: set[str] = set()
+        self.class_defs: dict = {}
+        self.first_read_lineno: dict = {}
+        self.framework_decorated_lines: set[int] = set()
 
 
-def scan_typescript_file(file_path, config=None):
+def scan_typescript_file(file_path: str, config: dict | None = None) -> tuple:
     if config is None:
         config = {}
 
@@ -37,16 +41,16 @@ def scan_typescript_file(file_path, config=None):
             config,
         )
 
-    complexity_limit = config.get("complexity", 10)
+    complexity_limit: int = config.get("complexity", 10)
 
-    lang_overrides = config.get("languages", {}).get("typescript", {})
+    lang_overrides: dict = config.get("languages", {}).get("typescript", {})
     complexity_limit = lang_overrides.get("complexity", complexity_limit)
 
     core = TypeScriptCore(file_path, source)
     core.scan()
 
-    d_findings = scan_danger(core.root_node, file_path)
-    q_findings = scan_quality(
+    d_findings: list[dict] = scan_danger(core.root_node, file_path)
+    q_findings: list[dict] = scan_quality(
         core.root_node, source, file_path, threshold=complexity_limit
     )
 
