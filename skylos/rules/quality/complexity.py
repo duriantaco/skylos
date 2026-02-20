@@ -41,13 +41,12 @@ def _func_complexity(fn_node: ast.AST) -> int:
             if isinstance(node, ast.Try):
                 c += len(getattr(node, "handlers", []) or [])
 
+            if hasattr(ast, "TryStar") and isinstance(node, ast.TryStar):
+                c += len(getattr(node, "handlers", []) or [])
+
             if hasattr(ast, "Match") and isinstance(node, ast.Match):
                 cases = getattr(node, "cases", []) or []
                 c += max(len(cases) - 1, 0)
-
-            if isinstance(node, ast.comprehension):
-                c += 1
-                c += len(node.ifs or [])
 
             for child in ast.iter_child_nodes(node):
                 self.visit(child)
@@ -117,7 +116,7 @@ class ComplexityRule(SkylosRule):
                 "value": complexity,
                 "threshold": self.threshold,
                 "length": length,
-                "message": f"Function is complex (McCabe={complexity}). Consider splitting loops/branches.",
+                "message": f"Cyclomatic complexity is {complexity} (threshold: {self.threshold}). Consider splitting branches.",
                 "file": context.get("filename"),
                 "basename": Path(context.get("filename", "")).name,
                 "line": node.lineno,
