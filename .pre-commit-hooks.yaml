@@ -5,4 +5,4 @@
   types_or: [python]
   pass_filenames: false
   require_serial: true
-  args: [".", "--output", "report.json", "--confidence", "70", "--danger"]
+  args: [".", "--json", "--confidence", "70", "--danger"]

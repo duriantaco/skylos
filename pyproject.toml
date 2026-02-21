@@ -24,7 +24,7 @@ dependencies = [
     "libcst>=1.8.2",
     "rich>=14.0.0",
     "textual>=1.0.0",
-    "keyring>=25.7.0",
+    "keyring>=25.6.0,!=3.4.1",
     "requests",
     "tree-sitter>=0.25.2",
     "tree-sitter-typescript>=0.23.2",
