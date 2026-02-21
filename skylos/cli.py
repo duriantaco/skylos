@@ -2672,7 +2672,9 @@ Run 'skylos <command> --help' for more information on each command.
 
     parser.add_argument("command", nargs="*", help="Command to run if gate passes")
 
-    args = parser.parse_args()
+    args, _extra = parser.parse_known_args()
+    if _extra:
+        args.command = (args.command or []) + _extra
     project_root = pathlib.Path(args.path).resolve()
     if project_root.is_file():
         project_root = project_root.parent
