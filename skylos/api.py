@@ -215,6 +215,42 @@ def get_project_info(token):
     return None
 
 
+def get_credit_balance(token=None):
+    if token is None:
+        token = get_project_token()
+    if not token or token.startswith("oidc:"):
+        return None
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/api/credits/balance",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return None
+
+
+def print_credit_status(token=None, quiet=False):
+    data = get_credit_balance(token)
+    if not data or quiet:
+        return data
+
+    balance = data.get("balance", 0)
+    plan = data.get("plan", "free")
+
+    if plan == "enterprise":
+        print(f"Credits: unlimited (Enterprise)")
+    else:
+        print(f"Credits: {balance:,}")
+        if balance < 10:
+            print(f"Low credits! Buy more: {BASE_URL}/dashboard/billing")
+
+    return data
+
+
 def get_git_root():
     try:
         return (
@@ -709,6 +745,9 @@ def upload_report(
                             f"\n🔗 View details: {BASE_URL}/dashboard/scans/{scan_id}"
                         )
 
+                if not quiet and data.get("credits_warning"):
+                    print("\n Low credits. Top up at skylos.dev/dashboard/billing")
+
                 if not passed:
                     if strict and (not is_forced):
                         if not quiet:
@@ -725,6 +764,7 @@ def upload_report(
                     "scan_id": scan_id,
                     "quality_gate_passed": passed,
                     "plan": plan,
+                    "credits_warning": data.get("credits_warning", False),
                 }
 
             if response.status_code == 401:

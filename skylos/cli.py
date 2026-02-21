@@ -1562,6 +1562,62 @@ def main():
 
         sys.exit(run_key_command(args))
 
+    if len(sys.argv) > 1 and sys.argv[1] == "credits":
+        from skylos.api import print_credit_status, get_project_token, BASE_URL
+
+        console = Console()
+        token = get_project_token()
+        if not token:
+            console.print(
+                "[red]Not connected.[/red] Run [bold]skylos login[/bold] first."
+            )
+            sys.exit(1)
+
+        data = print_credit_status(token)
+        if data is None:
+            console.print("[red]Could not fetch credit balance.[/red]")
+            sys.exit(1)
+
+        balance = data.get("balance", 0)
+        plan = data.get("plan", "free")
+        org_name = data.get("org_name", "")
+
+        console.print()
+        if org_name:
+            console.print(f"[bold]{org_name}[/bold] ({plan} plan)")
+        if plan == "enterprise":
+            console.print("[green]Unlimited credits[/green]")
+        else:
+            console.print(f"Balance: [bold]{balance:,}[/bold] credits")
+
+        recent = data.get("recent_transactions", [])
+        if recent:
+            console.print()
+            console.print("[bold]Recent activity:[/bold]")
+            for tx in recent[:5]:
+                amt = tx.get("amount", 0)
+                desc = tx.get("description", "")
+
+                if amt > 0:
+                    sign = "+"
+                else:
+                    sign = ""
+
+                if amt > 0:
+                    color = "green"
+                else:
+                    color = "red"
+
+                console.print(f"  [{color}]{sign}{amt}[/{color}]  {desc}")
+
+        if plan != "enterprise":
+            console.print()
+            console.print(
+                f"Buy credits: [link={BASE_URL}/dashboard/billing]{BASE_URL}/dashboard/billing[/link]"
+            )
+
+        sys.exit(0)
+
     if len(sys.argv) > 1 and sys.argv[1] == "baseline":
         from skylos.baseline import save_baseline
         from skylos import analyze as _baseline_analyze
@@ -2721,7 +2777,7 @@ sys.exit(ret)
         r = subprocess.run(
             [sys.executable, "-c", trace_script],
             cwd=project_root,
-            capture_output=not args.json,
+            capture_output=True,
             text=True,
         )
 
@@ -2762,7 +2818,7 @@ sys.exit(ret)
         r = subprocess.run(
             ["pytest", "-q", *pytest_targets, "-p", "skylos.pytest_unused_fixtures"],
             cwd=project_root,
-            capture_output=not args.json,
+            capture_output=True,
             text=True,
             env=env,
         )
@@ -3374,6 +3430,29 @@ sys.exit(ret)
                 login_result = manual_token_fallback(console=console)
                 if login_result is None:
                     raise SystemExit(1)
+
+        from skylos.api import (
+            get_credit_balance,
+            get_project_token as _get_token,
+            BASE_URL,
+        )
+
+        _token = _get_token()
+
+        if _token:
+            _balance_data = get_credit_balance(_token)
+        else:
+            _balance_data = None
+
+        if _balance_data:
+            _plan = _balance_data.get("plan", "free")
+            _bal = _balance_data.get("balance", 0)
+            if _plan != "enterprise" and _bal <= 0:
+                console.print(
+                    f"[bold red]0 credits remaining.[/bold red] "
+                    f"Buy more: [link={BASE_URL}/dashboard/billing]{BASE_URL}/dashboard/billing[/link]"
+                )
+                console.print("[dim]Run 'skylos credits' to check your balance.[/dim]")
 
         upload_resp = upload_report(result, is_forced=args.force, strict=args.strict)
 
