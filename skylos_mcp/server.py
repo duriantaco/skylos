@@ -10,6 +10,12 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from skylos_mcp.auth import (
+    initialize_auth,
+    check_tool_access,
+    deduct_credits,
+)
+
 
 def _lazy_analyze():
     from skylos.analyzer import analyze as run_analyze
@@ -178,12 +184,29 @@ def _make_summary(result: dict, focus: str | None = None) -> dict:
 mcp = FastMCP(name="skylos", port=8080)
 
 
+def _gate(tool_name: str) -> str | None:
+    """Check auth + credits for a tool call. Returns error JSON or None if OK."""
+    allowed, err = check_tool_access(tool_name)
+    if not allowed:
+        return json.dumps({"error": err})
+
+    ok, credit_err = deduct_credits(tool_name)
+    if not ok:
+        return json.dumps({"error": credit_err})
+
+    return None
+
+
 @mcp.tool()
 def analyze(
     path: str,
     confidence: int = 60,
     exclude_folders: list[str] | None = None,
 ) -> str:
+    gate_err = _gate("analyze")
+    if gate_err:
+        return gate_err
+
     result = _run_analysis(
         path,
         confidence=confidence,
@@ -204,6 +227,10 @@ def security_scan(
     confidence: int = 60,
     exclude_folders: list[str] | None = None,
 ) -> str:
+    gate_err = _gate("security_scan")
+    if gate_err:
+        return gate_err
+
     result = _run_analysis(
         path,
         confidence=confidence,
@@ -222,6 +249,10 @@ def quality_check(
     confidence: int = 60,
     exclude_folders: list[str] | None = None,
 ) -> str:
+    gate_err = _gate("quality_check")
+    if gate_err:
+        return gate_err
+
     result = _run_analysis(
         path,
         confidence=confidence,
@@ -240,6 +271,10 @@ def secrets_scan(
     confidence: int = 60,
     exclude_folders: list[str] | None = None,
 ) -> str:
+    gate_err = _gate("secrets_scan")
+    if gate_err:
+        return gate_err
+
     result = _run_analysis(
         path,
         confidence=confidence,
@@ -266,6 +301,10 @@ def remediate(
     Returns a remediation plan with status of each fix attempt.
     Set dry_run=False to actually apply fixes to disk.
     """
+    gate_err = _gate("remediate")
+    if gate_err:
+        return gate_err
+
     try:
         from skylos.llm.orchestrator import RemediationAgent
 
@@ -307,6 +346,11 @@ def list_results() -> str:
 
 
 def main():
+    session = initialize_auth()
+    if session.authenticated:
+        logger.info("MCP server starting (authenticated, plan=%s)", session.plan)
+    else:
+        logger.info("MCP server starting (local-only mode, limited)")
     mcp.run()
 
 
