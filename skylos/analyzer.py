@@ -492,10 +492,12 @@ class Skylos:
         if not project_root.is_dir():
             project_root = project_root.parent
 
+        pyproject_eps = set()
         try:
             from skylos.pyproject_entrypoints import extract_entrypoints
 
-            for qname in extract_entrypoints(project_root):
+            pyproject_eps = extract_entrypoints(project_root)
+            for qname in pyproject_eps:
                 global_pattern_tracker.known_qualified_refs.add(qname)
         except Exception:
             pass
@@ -528,6 +530,7 @@ class Skylos:
         per_file_ignore_lines = {}
         pattern_trackers = {}
         all_raw_imports = {}
+        file_defs_map = {}
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -563,9 +566,20 @@ class Skylos:
 
                 mod = modmap[file]
 
-                file_raw_imports = out[12] if len(out) > 12 else []
-                file_ignore_lines = out[13] if len(out) > 13 else set()
-                file_suppressed = out[14] if len(out) > 14 else []
+                if len(out) > 12:
+                    file_raw_imports = out[12]
+                else:
+                    file_raw_imports = []
+
+                if len(out) > 13:
+                    file_ignore_lines = out[13]
+                else:
+                    file_ignore_lines = set()
+
+                if len(out) > 14:
+                    file_suppressed = out[14]
+                else:
+                    file_suppressed = []
                 (
                     defs,
                     refs,
@@ -588,6 +602,9 @@ class Skylos:
 
                 if file_raw_imports and str(file).endswith(".py"):
                     all_raw_imports[file] = file_raw_imports
+
+                if defs and str(file).endswith(".py"):
+                    file_defs_map[file] = defs
 
                 if pattern_tracker_obj:
                     pattern_trackers[mod] = pattern_tracker_obj
@@ -887,6 +904,31 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
+        # Module-level reachability: penalise definitions in modules that
+        # are unreachable from any entry point.  This is the "first pass"
+        # of the two-pass strategy — high-confidence, low-noise.
+        try:
+            from skylos.module_reachability import find_unreachable_modules
+
+            unreachable_mods = find_unreachable_modules(
+                modmap=modmap,
+                all_raw_imports=all_raw_imports,
+                pyproject_entrypoints=pyproject_eps,
+                dynamic_modules=self.dynamic,
+                file_defs=file_defs_map,
+            )
+            if unreachable_mods:
+                for definition in self.defs.values():
+                    if definition.type == "import":
+                        continue
+                    # Check if this definition's module is unreachable
+                    def_mod = modmap.get(Path(str(definition.filename)))
+                    if def_mod and def_mod in unreachable_mods:
+                        definition.confidence = min(definition.confidence, 5)
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error(traceback.format_exc())
+
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
         self._mark_refs(progress_callback=progress_callback)
@@ -1138,6 +1180,12 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
         tree = ast.parse(source)
 
         raw_imports = []
+        is_init = Path(file).name == "__init__.py"
+        cur_pkg = (
+            mod
+            if is_init
+            else (mod.rsplit(".", 1)[0] if mod and "." in mod else (mod or ""))
+        )
         for node in ast.iter_child_nodes(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
@@ -1152,6 +1200,30 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
             elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
                 names = [a.name for a in node.names if a.name != "*"]
                 raw_imports.append((node.module, node.lineno, "from_import", names))
+            elif isinstance(node, ast.ImportFrom) and node.level and node.level > 0:
+                if cur_pkg:
+                    parts = cur_pkg.split(".")
+                else:
+                    parts = []
+
+                up = node.level - 1
+                if up <= len(parts):
+                    base = ".".join(parts[: len(parts) - up])
+                    if node.module:
+                        if base:
+                            resolved = f"{base}.{node.module}"
+                        else:
+                            resolved = node.module
+                    else:
+                        resolved = base
+                    if resolved:
+                        names = []
+                        for a in node.names:
+                            if a.name != "*":
+                                names.append(a.name)
+                        raw_imports.append(
+                            (resolved, node.lineno, "from_import", names)
+                        )
 
         empty_file_finding = None
 
