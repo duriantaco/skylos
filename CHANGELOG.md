@@ -1,5 +1,21 @@
 ## Changelog
 
+## [3.4.1] - 2026-02-21
+
+### Added
+- BFS from entry points through the import graph to eliminate false positives for code in orphaned modules
+- `__getattr__` package handling and dynamic module safety for lazy-loading and `eval`/`exec` patterns
+- Relative import resolution in raw import collection
+- `skylos credits` command and credit check before `--upload`
+- MCP server auth, rate limiting, and per-tool credit deduction
+
+### Fixed
+- `--trace --json` and `--pytest-fixtures --json` producing invalid JSON (`capture_output` logic was inverted, letting subprocess stdout leak into JSON output)
+
+### Changed
+- MCP tools now gated with auth check + credit deduction before execution
+- Unreachable module definitions capped at confidence 5
+
 ## [3.4.0] - 2026-02-18
 
 ### Added
