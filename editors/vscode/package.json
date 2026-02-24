@@ -1,8 +1,8 @@
 {
   "name": "skylos-vscode-extension",
   "displayName": "Skylos",
-  "description": "Inline dead code + optional secrets/dangerous findings powered by skylos --json.",
-  "version": "0.3.0",
+  "description": "Dead code detection, security scanning, and AI analysis for Python, TypeScript, JavaScript, and Go.",
+  "version": "0.4.1",
   "publisher": "oha",
   "icon": "icon.png",
   "repository": { "type": "git", "url": "https://github.com/duriantaco/skylos" },
@@ -12,13 +12,108 @@
   "activationEvents": [
     "onStartupFinished",
     "onLanguage:python",
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onLanguage:go",
     "onCommand:skylos.scan"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "skylos.scan", "title": "Skylos: Scan Workspace" },
-      { "command": "skylos.fix", "title": "Skylos: Fix Issue" }
+      { "command": "skylos.scan", "title": "Skylos: Scan Workspace", "icon": "$(refresh)" },
+      { "command": "skylos.fix", "title": "Skylos: Fix Issue with AI" },
+      { "command": "skylos.refresh", "title": "Skylos: Refresh", "icon": "$(refresh)" },
+      { "command": "skylos.clear", "title": "Skylos: Clear All Findings", "icon": "$(clear-all)" },
+      { "command": "skylos.dismissIssue", "title": "Skylos: Dismiss AI Finding" },
+      { "command": "skylos.removeImport", "title": "Skylos: Remove Unused Import" },
+      { "command": "skylos.removeFunction", "title": "Skylos: Remove Unused Function" },
+      { "command": "skylos.addToWhitelist", "title": "Skylos: Add to Whitelist" },
+      { "command": "skylos.fixAll", "title": "Skylos: Auto-Fix All", "icon": "$(wand)" },
+      { "command": "skylos.fixAllDryRun", "title": "Skylos: Auto-Fix Dry Run", "icon": "$(preview)" },
+      { "command": "skylos.chatAboutFinding", "title": "Skylos: Ask AI About Finding", "icon": "$(comment-discussion)" },
+      { "command": "skylos.clearChat", "title": "Skylos: Clear Chat", "icon": "$(clear-all)" },
+      { "command": "skylos.dashboard", "title": "Skylos: Security Dashboard", "icon": "$(graph)" },
+      { "command": "skylos.nextFinding", "title": "Skylos: Next Finding", "icon": "$(arrow-down)" },
+      { "command": "skylos.prevFinding", "title": "Skylos: Previous Finding", "icon": "$(arrow-up)" },
+      { "command": "skylos.exportReport", "title": "Skylos: Export Report", "icon": "$(export)" },
+      { "command": "skylos.scanFile", "title": "Skylos: Scan This File", "icon": "$(file-code)" },
+      { "command": "skylos.toggleDelta", "title": "Skylos: Toggle Delta Mode", "icon": "$(git-compare)" },
+      { "command": "skylos.showFindingDetail", "title": "Skylos: Show Finding Detail", "icon": "$(info)" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "skylos",
+          "title": "Skylos",
+          "icon": "media/shield.svg"
+        }
+      ]
+    },
+    "views": {
+      "skylos": [
+        {
+          "id": "skylosFindings",
+          "name": "Findings",
+          "icon": "$(shield)"
+        },
+        {
+          "type": "webview",
+          "id": "skylosChatPanel",
+          "name": "Security Copilot"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "skylos.refresh", "when": "view == skylosFindings", "group": "navigation" },
+        { "command": "skylos.clear", "when": "view == skylosFindings", "group": "navigation" },
+        { "command": "skylos.fixAll", "when": "view == skylosFindings", "group": "navigation" },
+        { "command": "skylos.dashboard", "when": "view == skylosFindings", "group": "navigation" },
+        { "command": "skylos.toggleDelta", "when": "view == skylosFindings", "group": "navigation" },
+        { "command": "skylos.clearChat", "when": "view == skylosChatPanel", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "skylos.showFindingDetail", "when": "viewItem == skylosFinding", "group": "inline" },
+        { "command": "skylos.chatAboutFinding", "when": "viewItem == skylosFinding", "group": "inline" }
+      ],
+      "editor/context": [
+        { "command": "skylos.scan", "group": "skylos" },
+        { "command": "skylos.scanFile", "group": "skylos" }
+      ],
+      "explorer/context": [
+        { "command": "skylos.scanFile", "group": "skylos" }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "skylos.scan",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "skylos.fixAll",
+        "key": "ctrl+alt+f",
+        "mac": "cmd+alt+f"
+      },
+      {
+        "command": "skylos.nextFinding",
+        "key": "ctrl+alt+]",
+        "mac": "cmd+alt+]"
+      },
+      {
+        "command": "skylos.prevFinding",
+        "key": "ctrl+alt+[",
+        "mac": "cmd+alt+["
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "skylosFindings",
+        "contents": "No security findings yet.\n[Run Scan](command:skylos.scan)\n[Open Settings](command:workbench.action.openSettings?%5B%22skylos%22%5D)"
+      }
     ],
     "configuration": {
       "title": "Skylos",
@@ -30,7 +125,7 @@
         },
         "skylos.confidence": {
           "type": "number",
-          "default": 60,
+          "default": 80,
           "minimum": 0,
           "maximum": 100,
           "description": "Confidence threshold, lower will show more"
@@ -38,7 +133,7 @@
         "skylos.excludeFolders": {
           "type": "array",
           "items": { "type": "string" },
-          "default": ["venv", ".venv", "build", "dist", ".git", "__pycache__"],
+          "default": ["venv", ".venv", "build", "dist", ".git", "__pycache__", "node_modules", ".next"],
           "description": "Folders to exclude"
         },
         "skylos.enableSecrets": {
@@ -59,7 +154,12 @@
         "skylos.runOnSave": {
           "type": "boolean",
           "default": true,
-          "description": "Auto run skylos when you save a Python file"
+          "description": "Auto run skylos when you save a file"
+        },
+        "skylos.scanOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto scan workspace when it opens"
         },
         "skylos.showPopup": {
           "type": "boolean",
@@ -70,7 +170,7 @@
           "type": "number",
           "default": 1000,
           "minimum": 200,
-          "description": "Milliseconds of idle time before auto-scanning"
+          "description": "Milliseconds of idle time before AI auto-analysis"
         },
         "skylos.popupCooldownMs": {
           "type": "number",
@@ -78,15 +178,53 @@
           "minimum": 1000,
           "description": "Cooldown between popup alerts (ms)"
         },
+        "skylos.aiProvider": {
+          "type": "string",
+          "enum": ["openai", "anthropic"],
+          "default": "openai",
+          "description": "AI provider for code analysis and fixes"
+        },
         "skylos.openaiApiKey": {
           "type": "string",
           "default": "",
-          "description": "OpenAI API key for auto-fix feature"
+          "description": "OpenAI API key for AI features"
         },
         "skylos.openaiModel": {
           "type": "string",
           "default": "gpt-4o",
-          "description": "OpenAI model to use for fixes"
+          "description": "OpenAI model to use"
+        },
+        "skylos.anthropicApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic API key for AI features"
+        },
+        "skylos.anthropicModel": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "description": "Anthropic model to use"
+        },
+        "skylos.streamingInline": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show streaming inline ghost text during AI analysis"
+        },
+        "skylos.enableDeadCode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show dead code findings (unused functions, imports, classes, variables)"
+        },
+        "skylos.showDeadParams": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show unused parameter findings (noisy in codebases with callbacks/interfaces)"
+        },
+        "skylos.autoFixMaxFindings": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum findings to auto-fix in one run (prevents API bill explosions)"
         }
       }
     }
