@@ -193,6 +193,7 @@ class Definition:
         "decorators",
         "complexity",
         "skip_reason",
+        "base_classes",
     )
 
     def __init__(
@@ -224,6 +225,7 @@ class Definition:
         self.is_dunder = False
         self.decorators = []
         self.complexity = 1
+        self.base_classes = []
 
     def to_dict(self) -> dict[str, Any]:
         if self.type == "method" and "." in self.name:
@@ -1013,6 +1015,11 @@ class Visitor(ast.NodeVisitor):
 
         self.class_bases[cname] = base_qnames
 
+        for d in self.defs:
+            if d.name == cname and d.type == "class":
+                d.base_classes = base_qnames
+                break
+
         is_namedtuple = False
         is_enum = False
         is_orm_model = False
@@ -1026,7 +1033,10 @@ class Visitor(ast.NodeVisitor):
 
             if base_name == "NamedTuple":
                 is_namedtuple = True
-            if base_name in ("Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"):
+            if (
+                base_name in ("Enum", "IntEnum", "StrEnum", "Flag", "IntFlag")
+                or base_name in self.enum_classes
+            ):
                 is_enum = True
             if base_name in (
                 "Base",
@@ -1434,31 +1444,44 @@ class Visitor(ast.NodeVisitor):
                         qualified_name = f"{self.qual(module_name)}.{attr_name}"
                         self.add_ref(qualified_name)
 
-            elif isinstance(node.args[0], ast.Name):
-                target_name = node.args[0].id
-                if target_name != "self":
-                    if isinstance(node.args[1], ast.Name):
-                        var_name = node.args[1].id
-                        if var_name in self.pattern_tracker.f_string_patterns:
-                            pattern = self.pattern_tracker.f_string_patterns[var_name]
-                            self.pattern_tracker.pattern_refs.append((pattern, 70))
-                        elif (
-                            self.local_constants
-                            and var_name in self.local_constants[-1]
-                        ):
-                            val = self.local_constants[-1][var_name]
+            else:
+                fstring_pattern = None
+                if isinstance(node.args[1], ast.JoinedStr):
+                    fstring_pattern = self._extract_fstring_pattern(node.args[1])
+                elif isinstance(node.args[1], ast.Name):
+                    var_name = node.args[1].id
+                    fstring_pattern = self.pattern_tracker.f_string_patterns.get(
+                        var_name
+                    )
+                    if not fstring_pattern and self.local_constants:
+                        val = self.local_constants[-1].get(var_name)
+                        if val:
                             self.pattern_tracker.known_refs.add(val)
+
+                if fstring_pattern:
+                    self.pattern_tracker.add_pattern_ref(fstring_pattern, 70)
+                    if self._current_function_qname:
+                        self.pattern_tracker.known_refs.add(
+                            self._current_function_qname.split(".")[-1]
+                        )
 
         elif isinstance(node.func, ast.Name) and node.func.id == "globals":
             parent = getattr(node, "parent", None)
-            if (
-                isinstance(parent, ast.Subscript)
-                and isinstance(parent.slice, ast.Constant)
-                and isinstance(parent.slice.value, str)
-            ):
-                func_name = parent.slice.value
-                self.add_ref(func_name)
-                self.add_ref(f"{self.mod}.{func_name}")
+            if isinstance(parent, ast.Subscript):
+                if isinstance(parent.slice, ast.Constant) and isinstance(
+                    parent.slice.value, str
+                ):
+                    func_name = parent.slice.value
+                    self.add_ref(func_name)
+                    self.add_ref(f"{self.mod}.{func_name}")
+                elif isinstance(parent.slice, ast.JoinedStr):
+                    pattern = self._extract_fstring_pattern(parent.slice)
+                    if pattern:
+                        self.pattern_tracker.add_pattern_ref(pattern, 70)
+                        if self._current_function_qname:
+                            self.pattern_tracker.known_refs.add(
+                                self._current_function_qname.split(".")[-1]
+                            )
 
         elif isinstance(node.func, ast.Name) and node.func.id in ("eval", "exec"):
             root_mod = ""

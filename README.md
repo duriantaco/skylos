@@ -173,6 +173,8 @@ No Node.js required — TypeScript parser is built-in via Tree-sitter. Languages
 | Function length | SKY-Q603 | Function exceeds line limit |
 | Too many params | SKY-Q604 | Function has too many parameters |
 
+**Framework-aware:** Next.js convention exports (`page.tsx`, `layout.tsx`, `route.ts`, `middleware.ts`), config exports (`getServerSideProps`, `generateMetadata`, `revalidate`), React patterns (`memo`, `forwardRef`), and exported custom hooks (`use*`) are automatically excluded from dead code reports.
+
 TypeScript dead code detection tracks: callbacks, type annotations, generics, decorators, inheritance (`extends`), object shorthand, spread, re-exports, and `typeof` references. Benchmarked at 95% recall with 0 false positives on alive code.
 
 ## Installation
@@ -294,7 +296,7 @@ skylos . -c 0  # Everything
 
 ### Framework Detection
 
-When Skylos sees Flask, Django, or FastAPI imports, it adjusts scoring automatically:
+When Skylos sees Flask, Django, FastAPI, Next.js, or React imports, it adjusts scoring automatically:
 
 | Pattern | Handling |
 |---------|----------|
@@ -303,6 +305,10 @@ When Skylos sees Flask, Django, or FastAPI imports, it adjusts scoring automatic
 | `@celery.task` | Entry point → marked as used |
 | `getattr(mod, "func")` | Tracks dynamic reference |
 | `getattr(mod, f"handle_{x}")` | Tracks pattern `handle_*` |
+| Next.js `page.tsx`, `layout.tsx`, `route.ts` | Default/named exports → marked as used |
+| Next.js `getServerSideProps`, `generateMetadata` | Config exports → marked as used |
+| `React.memo()`, `forwardRef()` | Wrapped components → marked as used |
+| Exported `use*` hooks | Custom hooks → marked as used |
 
 ### Test File Exclusion
 
@@ -655,7 +661,7 @@ The baseline is stored in `.skylos/baseline.json`. Commit this file to your repo
 
 Real-time AI-powered code analysis directly in your editor.
 
-<img src="assets/python-security-scan-vscode.png" alt="Skylos VS Code Extension" width="700" />
+<img src="editors/vscode/media/vsce.gif" alt="Skylos VS Code Extension — inline dead code detection, security scanning, and CodeLens actions" width="700" />
 
 ### Installation
 

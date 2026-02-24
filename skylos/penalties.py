@@ -320,11 +320,22 @@ def apply_penalties(
         def_obj.confidence = 0
         return
 
+    if def_obj.type in ("variable", "method") and "." in def_obj.name:
+        prefix = def_obj.name.rsplit(".", 1)[0]
+        parent_simple = prefix.split(".")[-1]
+        if parent_simple in getattr(framework, "enum_classes", set()):
+            def_obj.confidence = 0
+            def_obj.skip_reason = (
+                "Enum member" if def_obj.type == "variable" else "Enum method"
+            )
+            return
+
     if def_obj.type == "variable" and "." in def_obj.name:
         parts = def_obj.name.split(".")
         var_name = parts[-1]
         if var_name.isupper() and len(var_name) > 1:
             confidence -= 40
+            def_obj.confidence = max(confidence, 0)
             return
 
     if simple_name.startswith("_") and not simple_name.startswith("__") and not _is_ts:
@@ -353,14 +364,6 @@ def apply_penalties(
         if parent_simple in getattr(framework, "namedtuple_classes", set()):
             def_obj.confidence = 0
             def_obj.skip_reason = "NamedTuple field"
-            return
-
-    if def_obj.type == "variable" and "." in def_obj.name:
-        prefix = def_obj.name.rsplit(".", 1)[0]
-        parent_simple = prefix.split(".")[-1]
-        if parent_simple in getattr(framework, "enum_classes", set()):
-            def_obj.confidence = 0
-            def_obj.skip_reason = "Enum member"
             return
 
     if def_obj.type == "variable" and "." in def_obj.name:
