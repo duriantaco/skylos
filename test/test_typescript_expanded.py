@@ -12,7 +12,7 @@ def _scan_ts(tmp_path, code):
     p = tmp_path / "test.ts"
     p.write_text(code, encoding="utf-8")
     results = scan_typescript_file(str(p))
-    defs, refs, _, _, _, _, quality, danger, _, _, _, _ = results
+    defs, refs, _, _, _, _, quality, danger, *_ = results
     return defs, refs, quality, danger
 
 
@@ -34,9 +34,6 @@ def _unused(defs, refs):
     }
 
 
-# =====================================================================
-# Danger rules
-# =====================================================================
 class TestTSDangerRules:
     def test_eval_detected(self, tmp_path):
         _, _, _, danger = _scan_ts(tmp_path, 'eval("alert(1)");')
@@ -101,9 +98,6 @@ class TestTSDangerRules:
         assert "SKY-D506" in ids
 
 
-# =====================================================================
-# Quality rules
-# =====================================================================
 class TestTSQualityRules:
     def test_cyclomatic_complexity(self, tmp_path):
         code = (
@@ -172,9 +166,6 @@ class TestTSQualityRules:
         assert len(quality) == 0
 
 
-# =====================================================================
-# Import tracking
-# =====================================================================
 class TestTSImports:
     def test_named_imports(self, tmp_path):
         code = "import { foo, bar } from './helpers';\nfoo();\n"
@@ -212,15 +203,8 @@ class TestTSImports:
         assert "unused" not in ref_names
 
 
-# =====================================================================
-# Dead code — false positive prevention
-# =====================================================================
 class TestTSDeadCodeFalsePositives:
-    """Each test verifies a scenario where a symbol IS used and must NOT
-    be flagged as dead code by the scanner."""
-
     def test_callback_passed_as_argument(self, tmp_path):
-        """fn passed as argument to .map() should be detected as used."""
         code = (
             "function transformer(x: number): number { return x * 2; }\n"
             "const results = [1, 2, 3].map(transformer);\n"
@@ -229,13 +213,11 @@ class TestTSDeadCodeFalsePositives:
         assert "transformer" not in _unused(defs, refs)
 
     def test_assigned_to_variable(self, tmp_path):
-        """fn assigned to a variable is a reference."""
         code = "function helper() { return 42; }\nconst ref = helper;\n"
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         assert "helper" not in _unused(defs, refs)
 
     def test_stored_in_array(self, tmp_path):
-        """fn stored in an array literal is a reference."""
         code = (
             "function a() { return 1; }\n"
             "function b() { return 2; }\n"
@@ -246,13 +228,11 @@ class TestTSDeadCodeFalsePositives:
         assert "b" not in _unused(defs, refs)
 
     def test_object_shorthand(self, tmp_path):
-        """{ myFunc } shorthand property is a reference."""
         code = "function myFunc() { return 1; }\nconst obj = { myFunc };\n"
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         assert "myFunc" not in _unused(defs, refs)
 
     def test_type_annotation_reference(self, tmp_path):
-        """Class used as a type annotation is a reference."""
         code = (
             "class UserModel { name: string = ''; }\n"
             "function process(user: UserModel): void { console.log(user); }\n"
@@ -262,7 +242,6 @@ class TestTSDeadCodeFalsePositives:
         assert "UserModel" not in _unused(defs, refs)
 
     def test_generic_type_parameter(self, tmp_path):
-        """Class used as a generic type arg is a reference."""
         code = (
             "class Item { id: number = 0; }\n"
             "class Box<T> { value: T; constructor(v: T) { this.value = v; } }\n"
@@ -295,7 +274,6 @@ class TestTSDeadCodeFalsePositives:
         assert "AppError" not in _unused(defs, refs)
 
     def test_decorator_marks_class_used(self, tmp_path):
-        """A class with a decorator should not be flagged as dead."""
         code = (
             "function Component(t: any) { return t; }\n"
             "@Component\n"
@@ -303,24 +281,20 @@ class TestTSDeadCodeFalsePositives:
         )
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         assert "MyWidget" not in _unused(defs, refs)
-        # The decorator function itself is also used
         assert "Component" not in _unused(defs, refs)
 
     def test_export_default_marks_exported(self, tmp_path):
-        """export default function should be marked as exported."""
         code = "export default function main() { return 1; }\n"
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         main_def = [d for d in defs if d.name == "main"][0]
         assert main_def.is_exported is True
 
     def test_export_statement_at_bottom(self, tmp_path):
-        """export { foo } at bottom of file makes foo a ref."""
         code = "function internal() { return 42; }\nexport { internal };\n"
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         assert "internal" not in _unused(defs, refs)
 
     def test_constructor_not_flagged(self, tmp_path):
-        """constructor methods should never appear as dead code defs."""
         code = (
             "class Svc {\n"
             "    constructor(private db: any) {}\n"
@@ -344,12 +318,7 @@ class TestTSDeadCodeFalsePositives:
         assert "inner" not in _unused(defs, refs)
 
 
-# =====================================================================
-# Dead code — true positives (should be flagged)
-# =====================================================================
 class TestTSDeadCodeTruePositives:
-    """Each test verifies a symbol that IS dead and should be flagged."""
-
     def test_unused_function_flagged(self, tmp_path):
         code = "function used() { return 1; }\nfunction dead() { return 2; }\nused();\n"
         defs, refs, _, _ = _scan_ts(tmp_path, code)
@@ -373,12 +342,7 @@ class TestTSDeadCodeTruePositives:
         assert "used" not in _unused(defs, refs)
 
 
-# =====================================================================
-# Class definition tracking (type_identifier fix)
-# =====================================================================
 class TestTSClassDefs:
-    """Verify classes are correctly captured as definitions (not just fns)."""
-
     def test_class_captured_as_def(self, tmp_path):
         code = "class Foo { bar() { return 1; } }\n"
         defs, _, _, _ = _scan_ts(tmp_path, code)
@@ -402,17 +366,11 @@ class TestTSClassDefs:
         assert cls.type == "class"
 
 
-# =====================================================================
-# Mixed repo integration test
-# =====================================================================
 class TestMixedRepoIntegration:
-    """Test that Python + TypeScript files are analyzed together."""
-
     def test_mixed_repo_finds_dead_code_in_both(self, tmp_path):
         """Both Python and TS dead code should appear in results."""
         from skylos.analyzer import analyze
 
-        # Python file
         (tmp_path / "utils.py").write_text(
             "def used_helper():\n"
             "    return 42\n"
@@ -423,7 +381,6 @@ class TestMixedRepoIntegration:
             "result = used_helper()\n"
         )
 
-        # TypeScript file
         (tmp_path / "app.ts").write_text(
             "function usedHandler(): string { return 'ok'; }\n"
             "function deadTsFunc(): string { return 'nobody calls me'; }\n"
@@ -442,7 +399,6 @@ class TestMixedRepoIntegration:
         assert "usedHandler" not in unused_names
 
     def test_mixed_repo_danger_from_ts(self, tmp_path):
-        """TS danger findings should appear in mixed repo results."""
         from skylos.analyzer import analyze
 
         (tmp_path / "safe.py").write_text("x = 1\n")
@@ -455,11 +411,9 @@ class TestMixedRepoIntegration:
         assert "SKY-D501" in danger_rules
 
     def test_mixed_repo_quality_from_ts(self, tmp_path):
-        """TS quality findings should appear in mixed repo results."""
         from skylos.analyzer import analyze
 
         (tmp_path / "ok.py").write_text("x = 1\n")
-        # Write a deeply nested TS function (5 levels > limit of 4)
         (tmp_path / "messy.ts").write_text(
             "function deep(x: number) {\n"
             "    if (x > 0) {\n"
@@ -484,10 +438,7 @@ class TestMixedRepoIntegration:
 
 
 class TestHardBenchmark:
-    """Validates scanner recall and precision on hard_benchmark.ts (18 dead, 30+ alive)."""
-
     EXPECTED_DEAD = {
-        # "reduce" excluded: collides with Array.prototype.reduce in html()
         "defaultExport",
         "DeadInterface",
         "DeadAlias",
@@ -567,8 +518,6 @@ class TestHardBenchmark:
 
 
 class TestRealisticBenchmark:
-    """Validates scanner recall and precision on realistic_benchmark.ts (26 dead, 56 alive)."""
-
     EXPECTED_DEAD = {
         "useRef",
         "_",

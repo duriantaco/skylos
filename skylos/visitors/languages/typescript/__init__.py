@@ -3,6 +3,7 @@ from __future__ import annotations
 from .core import TypeScriptCore
 from .danger import scan_danger
 from .quality import scan_quality
+from .framework import TSFrameworkVisitor
 
 
 class DummyVisitor:
@@ -49,7 +50,10 @@ def scan_typescript_file(file_path: str, config: dict | None = None) -> tuple:
     core = TypeScriptCore(file_path, source)
     core.scan()
 
-    d_findings: list[dict] = scan_danger(core.root_node, file_path)
+    fw = TSFrameworkVisitor()
+    fw.scan(file_path, core.root_node, source, core.lang)
+
+    d_findings: list[dict] = scan_danger(core.root_node, file_path, lang=core.lang)
     q_findings: list[dict] = scan_quality(
         core.root_node, source, file_path, threshold=complexity_limit
     )
@@ -60,11 +64,12 @@ def scan_typescript_file(file_path: str, config: dict | None = None) -> tuple:
         set(),
         set(),
         DummyVisitor(),
-        DummyVisitor(),
+        fw,
         q_findings,
         d_findings,
         [],
         None,
         None,
         config,
+        core.raw_imports,
     )

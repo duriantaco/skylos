@@ -27,7 +27,7 @@ def test_typescript_scanner_defaults(tmp_path):
     p.write_text(TS_CODE, encoding="utf-8")
 
     results = scan_typescript_file(str(p))
-    defs, refs, _, _, _, _, quality, danger, _, _, _, _ = results
+    defs, refs, _, _, _, _, quality, danger, _, _, _, _, _ = results
 
     def_names = {d.name for d in defs}
     ref_names = {r[0] for r in refs}
@@ -51,7 +51,7 @@ def test_typescript_config_override(tmp_path):
     strict_config = {"languages": {"typescript": {"complexity": 1}}}
 
     results = scan_typescript_file(str(p), config=strict_config)
-    _, _, _, _, _, _, quality, _, _, _, _, _ = results
+    _, _, _, _, _, _, quality, _, _, _, _, _, _ = results
 
     assert len(quality) > 0
     assert quality[0]["rule_id"] == "SKY-Q601"

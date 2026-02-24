@@ -179,6 +179,8 @@ class Skylos:
             all_exported_names.update(export_names)
 
         for def_name, def_obj in self.defs.items():
+            if str(def_obj.filename).endswith((".ts", ".tsx")):
+                continue
             if def_obj.simple_name in all_exported_names:
                 def_obj.is_exported = True
                 def_obj.references += 1
@@ -192,6 +194,43 @@ class Skylos:
                         and def_obj.type != "import"
                     ):
                         def_obj.is_exported = True
+
+    def _resolve_ts_module(self, source: str, importer: str) -> str | None:
+        if not source.startswith("."):
+            return None
+        base = os.path.dirname(importer)
+        target = os.path.normpath(os.path.join(base, source))
+        for suffix in (".ts", ".tsx", "/index.ts", "/index.tsx"):
+            candidate = target + suffix
+            if os.path.isfile(candidate):
+                return candidate
+        if os.path.isfile(target):
+            return target
+        return None
+
+    def _build_ts_import_graph(self, ts_raw_imports: dict):
+        self.ts_consumed_exports = defaultdict(set)
+        for importer_file, raw_imports in ts_raw_imports.items():
+            for imp in raw_imports:
+                resolved = self._resolve_ts_module(imp["source"], str(importer_file))
+                if resolved:
+                    for name in imp["names"]:
+                        self.ts_consumed_exports[resolved].add(name)
+
+    def _demote_unconsumed_ts_exports(self):
+        if not hasattr(self, "ts_consumed_exports"):
+            return
+        for name, defn in self.defs.items():
+            if not defn.is_exported:
+                continue
+            if not str(defn.filename).endswith((".ts", ".tsx")):
+                continue
+            if defn.type == "import":
+                continue
+
+            consumed = self.ts_consumed_exports.get(str(defn.filename), set())
+            if defn.simple_name not in consumed and "*" not in consumed:
+                defn.is_exported = False
 
     def _propagate_transitive_dead(self):
         dead_set = set()
@@ -234,7 +273,8 @@ class Skylos:
                 if all_callers_dead:
                     dead_set.add(name)
                     defn.references = 0
-                    defn.confidence = min(defn.confidence, 10)
+                    if not str(defn.filename).endswith((".ts", ".tsx")):
+                        defn.confidence = min(defn.confidence, 10)
                     changed = True
 
         logger.info(
@@ -436,6 +476,27 @@ class Skylos:
                     if method.simple_name == "format" and cls.endswith("Formatter"):
                         method.references += 1
 
+        registry_bases = set()
+        for name, defn in self.defs.items():
+            if defn.type == "method" and defn.simple_name == "__init_subclass__":
+                parent_cls = name.rsplit(".", 1)[0]
+                registry_bases.add(parent_cls)
+
+        if registry_bases:
+            registry_simple_names = {b.split(".")[-1] for b in registry_bases}
+
+            for name, defn in self.defs.items():
+                if defn.type == "class":
+                    bases = getattr(defn, "base_classes", [])
+                    for base in bases:
+                        if base in registry_bases:
+                            defn.references += 1
+                            break
+
+                if defn.type == "function" and defn.return_type:
+                    if defn.return_type in registry_simple_names:
+                        defn.references += 1
+
     def analyze(
         self,
         path,
@@ -492,12 +553,10 @@ class Skylos:
         if not project_root.is_dir():
             project_root = project_root.parent
 
-        pyproject_eps = set()
         try:
             from skylos.pyproject_entrypoints import extract_entrypoints
 
-            pyproject_eps = extract_entrypoints(project_root)
-            for qname in pyproject_eps:
+            for qname in extract_entrypoints(project_root):
                 global_pattern_tracker.known_qualified_refs.add(qname)
         except Exception:
             pass
@@ -530,7 +589,7 @@ class Skylos:
         per_file_ignore_lines = {}
         pattern_trackers = {}
         all_raw_imports = {}
-        file_defs_map = {}
+        ts_raw_imports = {}
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -600,11 +659,11 @@ class Skylos:
                 if file_suppressed:
                     all_suppressed.extend(file_suppressed)
 
-                if file_raw_imports and str(file).endswith(".py"):
-                    all_raw_imports[file] = file_raw_imports
-
-                if defs and str(file).endswith(".py"):
-                    file_defs_map[file] = defs
+                if file_raw_imports:
+                    if str(file).endswith(".py"):
+                        all_raw_imports[file] = file_raw_imports
+                    elif str(file).endswith((".ts", ".tsx")):
+                        ts_raw_imports[file] = file_raw_imports
 
                 if pattern_tracker_obj:
                     pattern_trackers[mod] = pattern_tracker_obj
@@ -884,7 +943,6 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
-        # SCA: Dependency vulnerability scanning
         all_sca = []
         if enable_danger:
             try:
@@ -904,30 +962,7 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
-        # Module-level reachability: penalise definitions in modules that
-        # are unreachable from any entry point.  This is the "first pass"
-        # of the two-pass strategy — high-confidence, low-noise.
-        try:
-            from skylos.module_reachability import find_unreachable_modules
-
-            unreachable_mods = find_unreachable_modules(
-                modmap=modmap,
-                all_raw_imports=all_raw_imports,
-                pyproject_entrypoints=pyproject_eps,
-                dynamic_modules=self.dynamic,
-                file_defs=file_defs_map,
-            )
-            if unreachable_mods:
-                for definition in self.defs.values():
-                    if definition.type == "import":
-                        continue
-                    # Check if this definition's module is unreachable
-                    def_mod = modmap.get(Path(str(definition.filename)))
-                    if def_mod and def_mod in unreachable_mods:
-                        definition.confidence = min(definition.confidence, 5)
-        except Exception:
-            if os.getenv("SKYLOS_DEBUG"):
-                logger.error(traceback.format_exc())
+        self._build_ts_import_graph(ts_raw_imports)
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
@@ -940,6 +975,8 @@ class Skylos:
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: exports"))
         self._mark_exports()
+
+        self._demote_unconsumed_ts_exports()
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: transitive dead code"))
@@ -1075,7 +1112,6 @@ class Skylos:
                 if circular_findings:
                     result["circular_dependencies"] = circular_findings
 
-                # Architecture metrics (reuses the dependency graph)
                 if enable_quality and "SKY-Q802" not in project_cfg.get("ignore", []):
                     try:
                         from skylos.architecture import get_architecture_findings
@@ -1083,7 +1119,6 @@ class Skylos:
                         dep_graph = dict(circular_rule._analyzer.dependencies)
                         mod_files = dict(circular_rule._analyzer.modules)
 
-                        # Collect module ASTs for abstractness computation
                         mod_trees = {}
                         for file in files:
                             if not str(file).endswith(".py"):
