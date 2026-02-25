@@ -11,7 +11,7 @@
 ### Fixed
 - Pattern tracker double-counting refs from redundant per-module loop
 - `private_name` penalty 80→60 for correct threshold behavior at `--confidence 20`
-- TUI sidebar no longer focusable by arrow keys — tab switching via TAB/SHIFT+TAB and 1-7 only
+- TUI sidebar no longer focusable by arrow keys
 
 ## [3.4.2] - 2026-02-22
 
