@@ -2465,7 +2465,7 @@ Additional commands:
 Run 'skylos <command> --help' for more information on each command.
         """,
     )
-    parser.add_argument("path", help="Path to the Python project")
+    parser.add_argument("path", nargs="+", help="Path(s) to the Python project")
     parser.add_argument(
         "--gate",
         action="store_true",
@@ -2675,9 +2675,13 @@ Run 'skylos <command> --help' for more information on each command.
     args, _extra = parser.parse_known_args()
     if _extra:
         args.command = (args.command or []) + _extra
-    project_root = pathlib.Path(args.path).resolve()
+    project_root = pathlib.Path(args.path[0]).resolve()
     if project_root.is_file():
         project_root = project_root.parent
+    if len(args.path) > 1:
+        # Multiple paths: find common parent
+        all_resolved = [pathlib.Path(p).resolve() for p in args.path]
+        project_root = pathlib.Path(os.path.commonpath(all_resolved))
 
     logger = setup_logger(args.output)
     console = logger.console
@@ -2693,7 +2697,7 @@ Run 'skylos <command> --help' for more information on each command.
 
     if args.verbose:
         logger.setLevel(logging.DEBUG)
-        logger.debug(f"Analyzing path: {args.path}")
+        logger.debug(f"Analyzing path(s): {args.path}")
         if args.exclude_folders:
             logger.debug(f"Excluding folders: {args.exclude_folders}")
 
@@ -2813,9 +2817,10 @@ sys.exit(ret)
         )
 
         pytest_targets = []
-        p = pathlib.Path(args.path).resolve()
-        if p.is_file():
-            pytest_targets = [str(p)]
+        if len(args.path) == 1:
+            p = pathlib.Path(args.path[0]).resolve()
+            if p.is_file():
+                pytest_targets = [str(p)]
 
         r = subprocess.run(
             ["pytest", "-q", *pytest_targets, "-p", "skylos.pytest_unused_fixtures"],
@@ -2892,7 +2897,7 @@ sys.exit(ret)
                 progress.update(task, description=f"[{current}/{total}] {file.name}")
 
             result_json = run_analyze(
-                args.path,
+                args.path if len(args.path) > 1 else args.path[0],
                 conf=args.confidence,
                 enable_secrets=bool(args.secrets),
                 enable_danger=bool(args.danger),
@@ -2965,8 +2970,8 @@ sys.exit(ret)
                     fixtures = data.get("unused_fixtures", []) or []
                     counts = data.get("counts", {}) or {}
 
-                    p = pathlib.Path(args.path).resolve()
-                    if p.is_file():
+                    p = pathlib.Path(args.path[0]).resolve()
+                    if len(args.path) == 1 and p.is_file():
                         allowed = {str(p)}
                         allowed.add(str(p.parent / "conftest.py"))
                         fixtures = [

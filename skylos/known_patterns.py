@@ -225,6 +225,103 @@ DRF_SERIALIZER_BASES = {"Serializer", "ModelSerializer"}
 DRF_PERMISSION_METHODS = {"has_permission", "has_object_permission"}
 DRF_PERMISSION_BASES = {"BasePermission"}
 
+STARLETTE_MIDDLEWARE_METHODS = {"dispatch"}
+STARLETTE_MIDDLEWARE_BASES = {
+    "BaseHTTPMiddleware",
+    "HTTPMiddleware",
+}
+
+FASTAPI_CBVROUTER_METHODS = {
+    "get",
+    "post",
+    "put",
+    "patch",
+    "delete",
+    "head",
+    "options",
+}
+FASTAPI_CBVROUTER_BASES = {"APIRouter", "CBVRouter"}
+
+CELERY_TASK_METHODS = {"run"}
+CELERY_TASK_BASES = {"Task", "BaseTask"}
+
+CLICK_COMMAND_METHODS = {"invoke"}
+CLICK_COMMAND_BASES = {"BaseCommand", "Command", "Group", "MultiCommand"}
+
+PYDANTIC_MODEL_METHODS = {
+    "model_post_init",
+    "model_validate",
+    "model_dump",
+}
+PYDANTIC_MODEL_BASES = {"BaseModel", "BaseSettings"}
+
+PYDANTIC_VALIDATOR_DECORATORS = {
+    "validator",
+    "field_validator",
+    "model_validator",
+    "root_validator",
+    "field_serializer",
+    "model_serializer",
+    "computed_field",
+}
+
+SQLALCHEMY_MODEL_METHODS = {
+    "__tablename__",
+}
+SQLALCHEMY_MODEL_BASES = {"Base", "DeclarativeBase"}
+
+FLASK_RESTFUL_METHODS = {
+    "get",
+    "post",
+    "put",
+    "patch",
+    "delete",
+    "head",
+    "options",
+}
+FLASK_RESTFUL_BASES = {"Resource", "MethodView"}
+
+MARSHMALLOW_METHODS = {
+    "load",
+    "dump",
+    "dumps",
+    "loads",
+}
+MARSHMALLOW_HOOK_DECORATORS = {
+    "pre_load",
+    "post_load",
+    "pre_dump",
+    "post_dump",
+    "validates",
+    "validates_schema",
+}
+
+TORNADO_HANDLER_METHODS = {
+    "get",
+    "post",
+    "put",
+    "patch",
+    "delete",
+    "head",
+    "options",
+    "prepare",
+    "on_finish",
+    "on_connection_close",
+    "write_error",
+}
+TORNADO_HANDLER_BASES = {"RequestHandler", "WebSocketHandler"}
+
+STARLETTE_ENDPOINT_METHODS = {
+    "get",
+    "post",
+    "put",
+    "patch",
+    "delete",
+    "head",
+    "options",
+}
+STARLETTE_ENDPOINT_BASES = {"HTTPEndpoint", "WebSocketEndpoint"}
+
 SOFT_PATTERNS = [
     ("test_*", 40, "test_file"),
     ("*_test", 40, "test_file"),

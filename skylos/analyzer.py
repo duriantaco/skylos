@@ -271,11 +271,11 @@ class Skylos:
                         break
 
                 if all_callers_dead:
-                    dead_set.add(name)
-                    defn.references = 0
-                    if not str(defn.filename).endswith((".ts", ".tsx")):
-                        defn.confidence = min(defn.confidence, 10)
-                    changed = True
+                    dead_callers = len([c for c in defn.called_by if c in dead_set])
+                    if defn.references <= dead_callers:
+                        dead_set.add(name)
+                        defn.references = 0
+                        changed = True
 
         logger.info(
             f"Transitive dead code propagation: {iterations} iterations, "
@@ -417,23 +417,13 @@ class Skylos:
                         m.references += 1
                     continue
 
-        if hasattr(self, "pattern_trackers"):
-            seen_trackers = set()
-            for _, tracker in self.pattern_trackers.items():
-                if id(tracker) in seen_trackers:
-                    continue
-                seen_trackers.add(id(tracker))
-                for def_obj in self.defs.values():
-                    should_mark, _, _ = tracker.should_mark_as_used(def_obj)
-                    if should_mark:
-                        def_obj.references += 1
-
         from skylos.implicit_refs import pattern_tracker as global_tracker
 
         if (
             global_tracker.traced_calls
             or global_tracker.coverage_hits
             or global_tracker.known_refs
+            or global_tracker._compiled_patterns
             or getattr(global_tracker, "known_qualified_refs", None)
         ):
             for def_obj in self.defs.values():
@@ -510,7 +500,26 @@ class Skylos:
         custom_rules_data=None,
         changed_files=None,
     ):
-        files, root = self._get_python_files(path, exclude_folders)
+        if isinstance(path, (list, tuple)):
+            all_files = []
+            seen = set()
+            roots = []
+            for p in path:
+                f, r = self._get_python_files(p, exclude_folders)
+                for fp in f:
+                    resolved = fp.resolve()
+                    if resolved not in seen:
+                        seen.add(resolved)
+                        all_files.append(fp)
+                roots.append(r)
+            files = all_files
+            # Common root of all paths
+            if roots:
+                root = Path(os.path.commonpath(roots))
+            else:
+                root = Path(".").resolve()
+        else:
+            files, root = self._get_python_files(path, exclude_folders)
 
         if not files:
             logger.warning(f"No Python files found in {path}")
@@ -549,7 +558,13 @@ class Skylos:
         global_pattern_tracker.traced_by_file.clear()
         global_pattern_tracker._traced_by_basename.clear()
 
-        project_root = Path(path).resolve()
+        if isinstance(path, (list, tuple)):
+            _first = Path(path[0]).resolve()
+            all_resolved = [Path(p).resolve() for p in path]
+            project_root = Path(os.path.commonpath(all_resolved))
+        else:
+            _first = Path(path).resolve()
+            project_root = _first
         if not project_root.is_dir():
             project_root = project_root.parent
 
@@ -568,12 +583,7 @@ class Skylos:
                     f"Loaded coverage data ({len(pattern_tracker.coverage_hits)} lines)"
                 )
 
-        root = Path(path).resolve()
-        if root.is_dir():
-            project_root = root
-        else:
-            project_root = root.parent
-            root = project_root
+        root = project_root
 
         trace_path = project_root / ".skylos_trace"
         if trace_path.exists():
@@ -951,7 +961,7 @@ class Skylos:
                 scan_root = (
                     Path(os.path.commonpath([str(p.resolve()) for p in files]))
                     if files
-                    else Path(path)
+                    else Path(path[0] if isinstance(path, (list, tuple)) else path)
                 )
                 if scan_root.is_file():
                     scan_root = scan_root.parent
@@ -1096,7 +1106,7 @@ class Skylos:
             elif u["type"] == "parameter":
                 result["unused_parameters"].append(u)
 
-        project_cfg = load_config(path)
+        project_cfg = load_config(path[0] if isinstance(path, (list, tuple)) else path)
         if project_cfg.get("check_circular", True):
             circular_rule = CircularDependencyRule()
 
@@ -1205,7 +1215,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
 
         go_out = scan_go_file(file, cfg)
         if isinstance(go_out, tuple) and len(go_out) < 13:
-            return (*go_out, *([None] * (12 - len(go_out))), [])
+            return (*go_out, *([None] * (13 - len(go_out))))
         return go_out
 
     try:

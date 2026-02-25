@@ -26,6 +26,15 @@ from skylos.known_patterns import (
     DRF_SERIALIZER_BASES,
     DRF_PERMISSION_METHODS,
     DRF_PERMISSION_BASES,
+    STARLETTE_MIDDLEWARE_METHODS,
+    STARLETTE_MIDDLEWARE_BASES,
+    STARLETTE_ENDPOINT_METHODS,
+    STARLETTE_ENDPOINT_BASES,
+    FLASK_RESTFUL_METHODS,
+    FLASK_RESTFUL_BASES,
+    TORNADO_HANDLER_METHODS,
+    TORNADO_HANDLER_BASES,
+    PYDANTIC_VALIDATOR_DECORATORS,
     SOFT_PATTERNS,
     matches_pattern,
     has_base_class,
@@ -141,6 +150,43 @@ def apply_penalties(
         ):
             def_obj.confidence = 0
             return
+
+    if simple_name in STARLETTE_MIDDLEWARE_METHODS and has_base_class(
+        def_obj, STARLETTE_MIDDLEWARE_BASES, framework
+    ):
+        def_obj.confidence = 0
+        return
+
+    if simple_name in STARLETTE_ENDPOINT_METHODS and has_base_class(
+        def_obj, STARLETTE_ENDPOINT_BASES, framework
+    ):
+        def_obj.confidence = 0
+        return
+
+    if simple_name in FLASK_RESTFUL_METHODS and has_base_class(
+        def_obj, FLASK_RESTFUL_BASES, framework
+    ):
+        def_obj.confidence = 0
+        return
+
+    if simple_name in TORNADO_HANDLER_METHODS and has_base_class(
+        def_obj, TORNADO_HANDLER_BASES, framework
+    ):
+        def_obj.confidence = 0
+        return
+
+    if def_obj.type == "method" and "." in def_obj.name:
+        abstract_methods = {
+            **getattr(analyzer, "_global_abstract_methods", {}),
+            **getattr(framework, "abstract_methods", {}),
+        }
+        parts = def_obj.name.split(".")
+        method_name = parts[-1]
+        for part in parts[:-1]:
+            if part in abstract_methods and method_name in abstract_methods[part]:
+                def_obj.confidence = 0
+                def_obj.skip_reason = f"Abstract method declaration in {part}"
+                return
 
     for pattern, reduction, context in SOFT_PATTERNS:
         if not matches_pattern(simple_name, pattern):
@@ -350,7 +396,7 @@ def apply_penalties(
     if def_obj.name.split(".")[0] in analyzer.dynamic:
         confidence -= PENALTIES["dynamic_module"]
 
-    if visitor.is_test_file or def_obj.line in visitor.test_decorated_lines:
+    if def_obj.line in visitor.test_decorated_lines:
         confidence -= PENALTIES["test_related"]
 
     if def_obj.type == "variable" and getattr(framework, "dataclass_fields", None):
@@ -460,7 +506,7 @@ def apply_penalties(
             if method_name.startswith("__") and method_name.endswith("__"):
                 confidence = 0
 
-    if visitor.is_test_file or def_obj.line in visitor.test_decorated_lines:
+    if def_obj.line in visitor.test_decorated_lines:
         confidence = 0
 
     if (

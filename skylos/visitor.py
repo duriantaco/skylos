@@ -1459,7 +1459,7 @@ class Visitor(ast.NodeVisitor):
                             self.pattern_tracker.known_refs.add(val)
 
                 if fstring_pattern:
-                    self.pattern_tracker.add_pattern_ref(fstring_pattern, 70)
+                    self.pattern_tracker.add_pattern_ref(fstring_pattern, 70, source_module=self.mod)
                     if self._current_function_qname:
                         self.pattern_tracker.known_refs.add(
                             self._current_function_qname.split(".")[-1]
@@ -1477,7 +1477,7 @@ class Visitor(ast.NodeVisitor):
                 elif isinstance(parent.slice, ast.JoinedStr):
                     pattern = self._extract_fstring_pattern(parent.slice)
                     if pattern:
-                        self.pattern_tracker.add_pattern_ref(pattern, 70)
+                        self.pattern_tracker.add_pattern_ref(pattern, 70, source_module=self.mod)
                         if self._current_function_qname:
                             self.pattern_tracker.known_refs.add(
                                 self._current_function_qname.split(".")[-1]
