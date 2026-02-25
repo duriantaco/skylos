@@ -717,16 +717,16 @@ class TestApplyPenalties:
 
         skylos = Skylos()
 
-        test_visitor = Mock(spec=TestAwareVisitor)
-        test_visitor.is_test_file = True
-        test_visitor.test_decorated_lines = set()
-
         mock_def = mock_definition(
             name="TestMyClass.test_something",
             simple_name="test_something",
             type="method",
             confidence=100,
         )
+
+        test_visitor = Mock(spec=TestAwareVisitor)
+        test_visitor.is_test_file = True
+        test_visitor.test_decorated_lines = {mock_def.line}
 
         apply_penalties(skylos, mock_def, test_visitor, mock_framework_aware_visitor)
         assert mock_def.confidence == 0

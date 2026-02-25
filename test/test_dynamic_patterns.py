@@ -30,7 +30,7 @@ def run_export(data, fmt):
         v.visit(tree)
         v.finalize()
 
-        patterns = [p for _, _, p in tracker._compiled_patterns]
+        patterns = [entry[2] for entry in tracker._compiled_patterns]
         assert any("export_" in p for p in patterns)
 
     def test_inline_fstring_marks_matching_defs(self):
@@ -104,7 +104,7 @@ HANDLER_MAP = {a: globals()[f"handle_{a}"] for a in ("create", "delete")}
         v.visit(tree)
         v.finalize()
 
-        patterns = [p for _, _, p in tracker._compiled_patterns]
+        patterns = [entry[2] for entry in tracker._compiled_patterns]
         assert any("handle_" in p for p in patterns)
 
     def test_globals_fstring_marks_matching_defs(self):
