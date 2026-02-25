@@ -193,3 +193,25 @@ def test_normal_strings_ignored():
             generic_findings.append(f)
 
     assert len(generic_findings) == 0
+
+
+@pytest.mark.parametrize("line", [
+    '"integrity": "sha512-AbCdEfGh1234567890AbCdEfGh1234567890AABB"',
+    '"hash": "sha256-xYz1234567890AbCdEfGh1234567890AABB0011"',
+    '"checksum": "sha384-xYzAbCdEfGh1234567890AbCdEfGh1234567890"',
+    '"resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz"',
+    'commit = "da39a3ee5e6b4b0d3255bfef95601890afd80709"',
+    'digest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"',
+])
+def test_known_hashes_not_flagged_as_generic(line):
+    src = line + "\n"
+    ctx = _ctx_from_source(src, rel="package-lock.json")
+    generic = [f for f in scan_ctx(ctx) if f["provider"] == "generic"]
+    assert generic == []
+
+
+def test_real_secret_on_hash_line_still_caught_by_provider():
+    src = '"integrity": "ghp_1234567890abcdef1234567890abcdef1234"\n'
+    ctx = _ctx_from_source(src, rel="config.json")
+    providers = [f["provider"] for f in scan_ctx(ctx)]
+    assert "github" in providers
