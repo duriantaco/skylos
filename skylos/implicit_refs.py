@@ -25,10 +25,10 @@ class ImplicitRefTracker:
             f"'{type(self).__name__}' object has no attribute '{name}'"
         )
 
-    def add_pattern_ref(self, pattern, confidence):
+    def add_pattern_ref(self, pattern, confidence, source_module=None):
         self.pattern_refs.append((pattern, confidence))
         regex = re.compile("^" + pattern.replace("*", ".*") + "$")
-        self._compiled_patterns.append((regex, confidence, pattern))
+        self._compiled_patterns.append((regex, confidence, pattern, source_module))
 
     def should_mark_as_used(self, definition):
         if getattr(definition, "name", None) in self.known_qualified_refs:
@@ -39,7 +39,12 @@ class ImplicitRefTracker:
         if simple_name in self.known_refs:
             return True, 95, "dynamic reference"
 
-        for regex, confidence, pattern in self._compiled_patterns:
+        def_qname = getattr(definition, "name", "")
+        for entry in self._compiled_patterns:
+            regex, confidence, pattern = entry[0], entry[1], entry[2]
+            source_module = entry[3] if len(entry) > 3 else None
+            if source_module and not def_qname.startswith(source_module + "."):
+                continue
             if regex.match(simple_name):
                 return True, confidence, f"pattern '{pattern}'"
 

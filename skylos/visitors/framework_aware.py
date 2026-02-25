@@ -47,6 +47,20 @@ FRAMEWORK_DECORATORS = [
     "@*.task",
     "@*.signal",
     "@*.lifespan",
+    "@pre_load",
+    "@post_load",
+    "@pre_dump",
+    "@post_dump",
+    "@validates",
+    "@validates_schema",
+    "@*.pre_load",
+    "@*.post_load",
+    "@*.pre_dump",
+    "@*.post_dump",
+    "@*.validates",
+    "@*.validates_schema",
+    "@*.listens_for",
+    "@listens_for",
 ]
 
 FRAMEWORK_FUNCTIONS = [
@@ -108,6 +122,15 @@ FRAMEWORK_IMPORTS = {
     "celery",
     "starlette",
     "uvicorn",
+    "marshmallow",
+    "tornado",
+    "sanic",
+    "aiohttp",
+    "falcon",
+    "bottle",
+    "typer",
+    "click",
+    "sqlalchemy",
 }
 
 ROUTE_METHODS = {

@@ -488,6 +488,7 @@ class SkylosApp(App):
                         for k, label in CATEGORIES
                     ],
                     id="category-list",
+                    can_focus=False,
                 )
             with Vertical(id="main-area"):
                 yield OverviewPanel(
@@ -655,6 +656,11 @@ class SkylosApp(App):
         self._focus_main()
 
     # ── Events ──────────────────────────────────────────────────────────
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        item = event.item
+        if isinstance(item, CategoryItem):
+            self._show_category(item.cat_key)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         item = event.item
