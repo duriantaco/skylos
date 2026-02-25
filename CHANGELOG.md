@@ -1,5 +1,18 @@
 ## Changelog
 
+## [3.4.3] - 2026-02-25
+
+### Added
+- Multi-path CLI support — `skylos app/ tests/` analyzes all paths with deduplication
+- Module-scoped f-string pattern matching (`export_*` no longer leaks across modules)
+- `@abstractmethod` declarations suppressed as dead code
+- Framework dictionaries for Starlette, Flask-RESTful, Tornado, Marshmallow, SQLAlchemy, Celery, Click
+
+### Fixed
+- Pattern tracker double-counting refs from redundant per-module loop
+- `private_name` penalty 80→60 for correct threshold behavior at `--confidence 20`
+- TUI sidebar no longer focusable by arrow keys — tab switching via TAB/SHIFT+TAB and 1-7 only
+
 ## [3.4.2] - 2026-02-22
 
 ### Added
