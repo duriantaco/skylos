@@ -94,6 +94,44 @@ _ALL_NEXTJS_CONFIG_EXPORTS: set[str] = (
 
 _REACT_WRAPPERS: set[str] = {"memo", "forwardRef"}
 
+# ---------------------------------------------------------------------------
+# Module-level compiled query cache
+# ---------------------------------------------------------------------------
+_QUERY_CACHE: dict[tuple[int, str], Query] = {}
+
+_FW_PATTERN = """
+(import_statement source: (string) @import_src)
+(export_statement (function_declaration name: (identifier) @export_func_name))
+(export_statement (class_declaration name: (type_identifier) @export_class_name))
+(export_statement (identifier) @export_default_ident)
+(export_statement (lexical_declaration (variable_declarator name: (identifier) @export_var_name)))
+(export_specifier name: (identifier) @export_spec_name)
+(function_declaration name: (identifier) @func_name)
+(variable_declarator name: (identifier) @var_name)
+(class_declaration name: (type_identifier) @class_name)
+"""
+
+
+def _get_query(lang: Language, key: str, pattern: str) -> Query | None:
+    cache_key = (id(lang), key)
+    if cache_key not in _QUERY_CACHE:
+        try:
+            _QUERY_CACHE[cache_key] = Query(lang, pattern)
+        except Exception:
+            _QUERY_CACHE[cache_key] = None
+    return _QUERY_CACHE[cache_key]
+
+
+def _run_batch(root_node, lang: Language, key: str, pattern: str) -> dict[str, list]:
+    query = _get_query(lang, key, pattern)
+    if query is None:
+        return {}
+    try:
+        cursor = QueryCursor(query)
+        return cursor.captures(root_node)
+    except Exception:
+        return {}
+
 
 class TSFrameworkVisitor:
     def __init__(self) -> None:
@@ -122,6 +160,9 @@ class TSFrameworkVisitor:
         self._file_path = file_path
         self._basename = Path(file_path).name
 
+        # Run 1 batch query instead of 15+
+        self._captures = _run_batch(root_node, lang, "framework", _FW_PATTERN)
+
         self._detect_frameworks()
         self._scan_file_conventions()
         self._scan_nextjs_config_exports()
@@ -131,22 +172,11 @@ class TSFrameworkVisitor:
     def _get_text(self, node) -> str:
         return self._source[node.start_byte : node.end_byte].decode("utf-8")
 
-    def _run_query(self, pattern: str, capture_name: str) -> list:
-        try:
-            query = Query(self._lang, pattern)
-            cursor = QueryCursor(query)
-            captures = cursor.captures(self._root)
-            return captures.get(capture_name, [])
-        except Exception:
-            return []
-
     def _line_of(self, node) -> int:
         return node.start_point[0] + 1
 
     def _detect_frameworks(self) -> None:
-        for src_node in self._run_query(
-            "(import_statement source: (string) @src)", "src"
-        ):
+        for src_node in self._captures.get("import_src", []):
             raw = self._get_text(src_node).strip("'\"")
             if raw == "next" or raw.startswith("next/"):
                 self.detected_frameworks.add("next")
@@ -168,10 +198,7 @@ class TSFrameworkVisitor:
             self._mark_named_exports(_INSTRUMENTATION_EXPORTS)
 
     def _mark_default_export(self) -> None:
-        for node in self._run_query(
-            "(export_statement (function_declaration name: (identifier) @name))",
-            "name",
-        ):
+        for node in self._captures.get("export_func_name", []):
             export_stmt = node.parent
             if export_stmt:
                 export_stmt = export_stmt.parent  # export_statement
@@ -179,10 +206,7 @@ class TSFrameworkVisitor:
                 self.framework_decorated_lines.add(self._line_of(node))
                 return
 
-        for node in self._run_query(
-            "(export_statement (class_declaration name: (type_identifier) @name))",
-            "name",
-        ):
+        for node in self._captures.get("export_class_name", []):
             export_stmt = node.parent
             if export_stmt:
                 export_stmt = export_stmt.parent
@@ -190,7 +214,7 @@ class TSFrameworkVisitor:
                 self.framework_decorated_lines.add(self._line_of(node))
                 return
 
-        for node in self._run_query("(export_statement (identifier) @name)", "name"):
+        for node in self._captures.get("export_default_ident", []):
             export_stmt = node.parent
             if export_stmt and "default" in self._get_text(export_stmt)[:30]:
                 target_name = self._get_text(node)
@@ -198,45 +222,31 @@ class TSFrameworkVisitor:
                 return
 
     def _mark_named_exports(self, names: set[str]) -> None:
-        for node in self._run_query(
-            "(export_statement (function_declaration name: (identifier) @name))",
-            "name",
-        ):
+        for node in self._captures.get("export_func_name", []):
             if self._get_text(node) in names:
                 self.framework_decorated_lines.add(self._line_of(node))
 
-        for node in self._run_query(
-            "(export_statement (lexical_declaration (variable_declarator name: (identifier) @name)))",
-            "name",
-        ):
+        for node in self._captures.get("export_var_name", []):
             if self._get_text(node) in names:
                 self.framework_decorated_lines.add(self._line_of(node))
 
-        for node in self._run_query(
-            "(export_specifier name: (identifier) @name)", "name"
-        ):
+        for node in self._captures.get("export_spec_name", []):
             text = self._get_text(node)
             if text in names:
                 self._mark_definition_by_name(text)
 
     def _mark_definition_by_name(self, name: str) -> None:
-        for node in self._run_query(
-            "(function_declaration name: (identifier) @name)", "name"
-        ):
+        for node in self._captures.get("func_name", []):
             if self._get_text(node) == name:
                 self.framework_decorated_lines.add(self._line_of(node))
                 return
 
-        for node in self._run_query(
-            "(variable_declarator name: (identifier) @name)", "name"
-        ):
+        for node in self._captures.get("var_name", []):
             if self._get_text(node) == name:
                 self.framework_decorated_lines.add(self._line_of(node))
                 return
 
-        for node in self._run_query(
-            "(class_declaration name: (type_identifier) @name)", "name"
-        ):
+        for node in self._captures.get("class_name", []):
             if self._get_text(node) == name:
                 self.framework_decorated_lines.add(self._line_of(node))
                 return
@@ -254,9 +264,7 @@ class TSFrameworkVisitor:
         ):
             return
 
-        for node in self._run_query(
-            "(variable_declarator name: (identifier) @name)", "name"
-        ):
+        for node in self._captures.get("var_name", []):
             var_decl = node.parent
             if not var_decl:
                 continue
@@ -285,16 +293,10 @@ class TSFrameworkVisitor:
         ):
             return
 
-        for node in self._run_query(
-            "(export_statement (function_declaration name: (identifier) @name))",
-            "name",
-        ):
+        for node in self._captures.get("export_func_name", []):
             if self._get_text(node).startswith("use") and len(self._get_text(node)) > 3:
                 self.framework_decorated_lines.add(self._line_of(node))
 
-        for node in self._run_query(
-            "(export_statement (lexical_declaration (variable_declarator name: (identifier) @name)))",
-            "name",
-        ):
+        for node in self._captures.get("export_var_name", []):
             if self._get_text(node).startswith("use") and len(self._get_text(node)) > 3:
                 self.framework_decorated_lines.add(self._line_of(node))

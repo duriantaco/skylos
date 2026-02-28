@@ -32,6 +32,76 @@ _LIFECYCLE_METHODS: set[str] = {
     "ngAfterViewInit",
 }
 
+# ---------------------------------------------------------------------------
+# Module-level compiled query cache (keyed by language id + purpose)
+# ---------------------------------------------------------------------------
+_QUERY_CACHE: dict[tuple[int, str], Query] = {}
+_PARSER_CACHE: dict[int, Parser] = {}
+
+_DEFS_PATTERN = """
+(function_declaration name: (identifier) @func_def)
+(class_declaration name: (type_identifier) @class_def)
+(interface_declaration name: (type_identifier) @iface_def)
+(enum_declaration name: (identifier) @enum_def)
+(type_alias_declaration name: (type_identifier) @type_def)
+(decorator (identifier) @dec_ident)
+(decorator (call_expression function: (identifier) @dec_call))
+(method_definition name: (property_identifier) @method_prop_def)
+(variable_declarator name: (identifier) @var_def)
+(import_statement source: (string) @import_src)
+(export_statement source: (string) @export_src)
+"""
+
+# TS-only pattern (invalid in TSX grammar — gracefully returns empty)
+_DEFS_TS_ONLY_PATTERN = "(method_definition name: (identifier) @method_ident_def)"
+
+_REFS_PATTERN = """
+(call_expression function: (identifier) @ref)
+(new_expression constructor: (identifier) @ref)
+(member_expression property: (property_identifier) @ref)
+(arguments (identifier) @ref)
+(variable_declarator value: (identifier) @ref)
+(array (identifier) @ref)
+(return_statement (identifier) @ref)
+(binary_expression right: (identifier) @ref)
+(binary_expression left: (identifier) @ref)
+(assignment_expression right: (identifier) @ref)
+(spread_element (identifier) @ref)
+(member_expression object: (identifier) @ref)
+(pair value: (identifier) @ref)
+(unary_expression (identifier) @ref)
+(template_substitution (identifier) @ref)
+(shorthand_property_identifier) @ref
+(decorator (identifier) @ref)
+(decorator (call_expression function: (identifier) @ref))
+(export_specifier name: (identifier) @ref)
+(extends_clause (identifier) @ref)
+(type_identifier) @type_ref
+"""
+
+_IMPORTS_PATTERN = """
+(import_clause (named_imports (import_specifier name: (identifier) @import_name)))
+(import_clause (identifier) @import_name)
+(import_clause (namespace_import (identifier) @import_name))
+"""
+
+
+def _get_query(lang: Language, key: str, pattern: str) -> Query | None:
+    cache_key = (id(lang), key)
+    if cache_key not in _QUERY_CACHE:
+        try:
+            _QUERY_CACHE[cache_key] = Query(lang, pattern)
+        except Exception:
+            _QUERY_CACHE[cache_key] = None
+    return _QUERY_CACHE[cache_key]
+
+
+def _get_parser(lang: Language) -> Parser:
+    lang_id = id(lang)
+    if lang_id not in _PARSER_CACHE:
+        _PARSER_CACHE[lang_id] = Parser(lang)
+    return _PARSER_CACHE[lang_id]
+
 
 class TypeScriptCore:
     """
@@ -52,7 +122,7 @@ class TypeScriptCore:
             self.lang = TS_LANG
 
         if self.lang:
-            self.parser = Parser(self.lang)
+            self.parser = _get_parser(self.lang)
             self.tree = self.parser.parse(source_bytes)
             self.root_node = self.tree.root_node
         else:
@@ -62,19 +132,17 @@ class TypeScriptCore:
     def _get_text(self, node) -> str:
         return self.source[node.start_byte : node.end_byte].decode("utf-8")
 
-    def _run_query(self, pattern: str, capture_name: str) -> list:
+    def _run_batch(self, key: str, pattern: str) -> dict[str, list]:
         if not self.root_node or not self.lang:
-            return []
-
+            return {}
+        query = _get_query(self.lang, key, pattern)
+        if query is None:
+            return {}
         try:
-            query = Query(self.lang, pattern)
             cursor = QueryCursor(query)
-            captures = cursor.captures(self.root_node)
-
-            return captures.get(capture_name, [])
-
+            return cursor.captures(self.root_node)
         except Exception:
-            return []
+            return {}
 
     _SELF_REF_CONTAINERS: set[str] = {
         "function_declaration",
@@ -109,6 +177,15 @@ class TypeScriptCore:
             self.raw_imports: list[dict] = []
             return
 
+        # Run 3-4 batch queries: 3-4 tree traversals instead of 35+
+        self._defs_captures = self._run_batch("defs", _DEFS_PATTERN)
+        # TS-only pattern (gracefully returns empty for TSX)
+        ts_only = self._run_batch("defs_ts_only", _DEFS_TS_ONLY_PATTERN)
+        for k, v in ts_only.items():
+            self._defs_captures.setdefault(k, []).extend(v)
+        self._refs_captures = self._run_batch("refs", _REFS_PATTERN)
+        self._imports_captures = self._run_batch("imports", _IMPORTS_PATTERN)
+
         self._scan_defs()
         self._scan_refs()
         self._scan_imports()
@@ -116,32 +193,24 @@ class TypeScriptCore:
         self._build_call_graph()
 
     def _scan_defs(self) -> None:
-        for node in self._run_query(
-            "(function_declaration name: (identifier) @def)", "def"
-        ):
+        c = self._defs_captures
+
+        for node in c.get("func_def", []):
             self._add_def(node, "function")
 
-        for node in self._run_query(
-            "(class_declaration name: (type_identifier) @def)", "def"
-        ):
+        for node in c.get("class_def", []):
             self._add_def(node, "class")
 
-        for node in self._run_query(
-            "(interface_declaration name: (type_identifier) @def)", "def"
-        ):
+        for node in c.get("iface_def", []):
             self._add_def(node, "class")
 
-        for node in self._run_query(
-            "(enum_declaration name: (identifier) @def)", "def"
-        ):
+        for node in c.get("enum_def", []):
             self._add_def(node, "class")
 
-        for node in self._run_query(
-            "(type_alias_declaration name: (type_identifier) @def)", "def"
-        ):
+        for node in c.get("type_def", []):
             self._add_def(node, "class")
 
-        for node in self._run_query("(decorator (identifier) @dec)", "dec"):
+        for node in c.get("dec_ident", []):
             class_node = node.parent
             if class_node:
                 class_node = class_node.parent
@@ -150,9 +219,7 @@ class TypeScriptCore:
                 if name_node:
                     self._add_ref_forced(name_node)
 
-        for node in self._run_query(
-            "(decorator (call_expression function: (identifier) @dec))", "dec"
-        ):
+        for node in c.get("dec_call", []):
             decorator_node = node.parent  # call_expression
             if decorator_node:
                 decorator_node = decorator_node.parent  # decorator
@@ -165,18 +232,12 @@ class TypeScriptCore:
                 if name_node:
                     self._add_ref_forced(name_node)
 
-        for node in self._run_query(
-            "(method_definition name: (property_identifier) @def)", "def"
-        ):
+        for node in c.get("method_prop_def", []):
             self._add_def(node, "method")
-        for node in self._run_query(
-            "(method_definition name: (identifier) @def)", "def"
-        ):
+        for node in c.get("method_ident_def", []):
             self._add_def(node, "method")
 
-        for node in self._run_query(
-            "(variable_declarator name: (identifier) @def)", "def"
-        ):
+        for node in c.get("var_def", []):
             var_decl = node.parent  # variable_declarator
             if var_decl:
                 value_node = var_decl.child_by_field_name("value")
@@ -188,62 +249,6 @@ class TypeScriptCore:
             elif self._is_top_level(node):
                 self._add_def(node, "variable")
 
-    def _scan_refs(self) -> None:
-        call_ref_patterns: list[tuple[str, str]] = [
-            ("(call_expression function: (identifier) @ref)", "ref"),
-            ("(new_expression constructor: (identifier) @ref)", "ref"),
-            ("(member_expression property: (property_identifier) @ref)", "ref"),
-        ]
-
-        value_ref_patterns: list[tuple[str, str]] = [
-            ("(arguments (identifier) @ref)", "ref"),
-            ("(variable_declarator value: (identifier) @ref)", "ref"),
-            ("(array (identifier) @ref)", "ref"),
-            ("(return_statement (identifier) @ref)", "ref"),
-            ("(binary_expression right: (identifier) @ref)", "ref"),
-            ("(binary_expression left: (identifier) @ref)", "ref"),
-            ("(assignment_expression right: (identifier) @ref)", "ref"),
-            ("(spread_element (identifier) @ref)", "ref"),
-            ("(member_expression object: (identifier) @ref)", "ref"),
-            ("(pair value: (identifier) @ref)", "ref"),
-            ("(unary_expression (identifier) @ref)", "ref"),
-            ("(template_substitution (identifier) @ref)", "ref"),
-        ]
-
-        shorthand_patterns: list[tuple[str, str]] = [
-            ("(shorthand_property_identifier) @ref", "ref"),
-        ]
-
-        type_ref_patterns: list[tuple[str, str]] = []
-        self._scan_type_refs()
-
-        decorator_patterns: list[tuple[str, str]] = [
-            ("(decorator (identifier) @ref)", "ref"),
-            ("(decorator (call_expression function: (identifier) @ref))", "ref"),
-        ]
-
-        export_patterns: list[tuple[str, str]] = [
-            ("(export_specifier name: (identifier) @ref)", "ref"),
-        ]
-
-        inheritance_patterns: list[tuple[str, str]] = [
-            ("(extends_clause (identifier) @ref)", "ref"),
-        ]
-
-        all_patterns = (
-            call_ref_patterns
-            + value_ref_patterns
-            + shorthand_patterns
-            + type_ref_patterns
-            + decorator_patterns
-            + export_patterns
-            + inheritance_patterns
-        )
-
-        for pattern, cap_name in all_patterns:
-            for node in self._run_query(pattern, cap_name):
-                self._add_ref(node)
-
     _TYPE_DEF_PARENTS: set[str] = {
         "class_declaration",
         "interface_declaration",
@@ -251,8 +256,14 @@ class TypeScriptCore:
         "type_alias_declaration",
     }
 
-    def _scan_type_refs(self) -> None:
-        for node in self._run_query("(type_identifier) @ref", "ref"):
+    def _scan_refs(self) -> None:
+        c = self._refs_captures
+
+        for node in c.get("ref", []):
+            self._add_ref(node)
+
+        # type_identifier refs — skip if parent is a type definition
+        for node in c.get("type_ref", []):
             parent = node.parent
             if parent and parent.type in self._TYPE_DEF_PARENTS:
                 continue
@@ -316,28 +327,22 @@ class TypeScriptCore:
         return False
 
     def _scan_imports(self) -> None:
-        import_patterns = [
-            "(import_clause (named_imports (import_specifier name: (identifier) @name)))",
-            "(import_clause (identifier) @name)",
-            "(import_clause (namespace_import (identifier) @name))",
-        ]
+        c = self._imports_captures
 
-        for pattern in import_patterns:
-            for node in self._run_query(pattern, "name"):
-                name = self._get_text(node)
-                line = node.start_point[0] + 1
-                d = Definition(name, "import", self.file_path, line)
-                self.defs.append(d)
-                self.imports.append(
-                    {"name": name, "file": str(self.file_path), "line": line}
-                )
+        for node in c.get("import_name", []):
+            name = self._get_text(node)
+            line = node.start_point[0] + 1
+            d = Definition(name, "import", self.file_path, line)
+            self.defs.append(d)
+            self.imports.append(
+                {"name": name, "file": str(self.file_path), "line": line}
+            )
 
     def _scan_raw_imports(self) -> None:
         self.raw_imports: list[dict] = []
+        c = self._defs_captures
 
-        for src_node in self._run_query(
-            "(import_statement source: (string) @src)", "src"
-        ):
+        for src_node in c.get("import_src", []):
             source_path = self._get_text(src_node).strip("'\"")
             import_stmt = src_node.parent
             if import_stmt:
@@ -350,9 +355,7 @@ class TypeScriptCore:
                     }
                 )
 
-        for src_node in self._run_query(
-            "(export_statement source: (string) @src)", "src"
-        ):
+        for src_node in c.get("export_src", []):
             source_path = self._get_text(src_node).strip("'\"")
             export_stmt = src_node.parent
             if export_stmt:
@@ -397,10 +400,9 @@ class TypeScriptCore:
 
     def _build_call_graph(self) -> None:
         self.call_pairs: list[tuple[str, str]] = []
+        c = self._defs_captures
 
-        for name_node in self._run_query(
-            "(function_declaration name: (identifier) @name)", "name"
-        ):
+        for name_node in c.get("func_def", []):
             caller_name = self._get_text(name_node)
             func_node = name_node.parent
             if func_node:
@@ -408,9 +410,7 @@ class TypeScriptCore:
                 if body:
                     self._collect_calls_in_body(caller_name, body)
 
-        for name_node in self._run_query(
-            "(variable_declarator name: (identifier) @name)", "name"
-        ):
+        for name_node in c.get("var_def", []):
             var_decl = name_node.parent
             if var_decl:
                 value = var_decl.child_by_field_name("value")
@@ -420,9 +420,7 @@ class TypeScriptCore:
                     if body:
                         self._collect_calls_in_body(caller_name, body)
 
-        for name_node in self._run_query(
-            "(method_definition name: (property_identifier) @name)", "name"
-        ):
+        for name_node in c.get("method_prop_def", []):
             method_name = self._get_text(name_node)
             class_name = self._find_containing_class(name_node)
             if class_name:

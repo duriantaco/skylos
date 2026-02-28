@@ -55,7 +55,7 @@ def scan_typescript_file(file_path: str, config: dict | None = None) -> tuple:
 
     d_findings: list[dict] = scan_danger(core.root_node, file_path, lang=core.lang)
     q_findings: list[dict] = scan_quality(
-        core.root_node, source, file_path, threshold=complexity_limit
+        core.root_node, source, file_path, threshold=complexity_limit, lang=core.lang
     )
 
     return (
