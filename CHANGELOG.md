@@ -29,6 +29,7 @@
 - `threading.Thread.run()` overrides suppressed
 - Test classes and mock objects in test files suppressed
 - Score badge auto-copied to clipboard
+- Added new Go Language
 
 ### Fixed
 - TUI category list is now focusable again
