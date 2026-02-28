@@ -796,7 +796,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print(grade_table)
         badge_url = generate_badge_url(overall["letter"], o_score)
-        badge_markdown = f"[![Skylos Grade]({badge_url})](https://github.com/duriantaco/skylos)"
+        badge_markdown = (
+            f"[![Skylos Grade]({badge_url})](https://github.com/duriantaco/skylos)"
+        )
 
         console.print()
         console.print(

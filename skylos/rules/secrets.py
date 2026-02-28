@@ -76,13 +76,13 @@ _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 KNOWN_HASH_RE = re.compile(
     r"(?i)"
-    r"(?:sha(?:1|224|256|384|512)[-:])"       # sha256-..., sha512:...
-    r"|(?:\b[0-9a-f]{40}\b)"                  # git SHA-1 (exactly 40 hex)
-    r"|(?:\b[0-9a-f]{64}\b)"                  # SHA-256 hex digest (exactly 64 hex)
-    r"|(?:\"integrity\"\s*:)"                  # npm integrity field
-    r"|(?:\"hash\"\s*:\s*\")"                  # generic hash field in JSON
-    r"|(?:\"checksum\"\s*:)"                   # checksum field
-    r"|(?:\"resolved\"\s*:\s*\"https?://)"     # npm resolved URL
+    r"(?:sha(?:1|224|256|384|512)[-:])"  # sha256-..., sha512:...
+    r"|(?:\b[0-9a-f]{40}\b)"  # git SHA-1 (exactly 40 hex)
+    r"|(?:\b[0-9a-f]{64}\b)"  # SHA-256 hex digest (exactly 64 hex)
+    r"|(?:\"integrity\"\s*:)"  # npm integrity field
+    r"|(?:\"hash\"\s*:\s*\")"  # generic hash field in JSON
+    r"|(?:\"checksum\"\s*:)"  # checksum field
+    r"|(?:\"resolved\"\s*:\s*\"https?://)"  # npm resolved URL
 )
 
 IGNORE_DIRECTIVE = "skylos: ignore[SKY-S101]"

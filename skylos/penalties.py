@@ -154,19 +154,43 @@ def apply_penalties(
         ):
             def_obj.confidence = 0
             return
-        
+
         _ADMIN_ATTRS = {
-            "list_display", "list_display_links", "list_filter",
-            "list_select_related", "list_per_page", "list_max_show_all",
-            "list_editable", "search_fields", "search_help_text",
-            "date_hierarchy", "ordering", "readonly_fields",
-            "fieldsets", "fields", "exclude", "filter_horizontal",
-            "filter_vertical", "radio_fields", "prepopulated_fields",
-            "raw_id_fields", "autocomplete_fields",
-            "actions", "actions_on_top", "actions_on_bottom",
-            "inlines", "form", "model",
-            "extra", "max_num", "min_num", "can_delete",
-            "fk_name", "formset", "verbose_name", "verbose_name_plural",
+            "list_display",
+            "list_display_links",
+            "list_filter",
+            "list_select_related",
+            "list_per_page",
+            "list_max_show_all",
+            "list_editable",
+            "search_fields",
+            "search_help_text",
+            "date_hierarchy",
+            "ordering",
+            "readonly_fields",
+            "fieldsets",
+            "fields",
+            "exclude",
+            "filter_horizontal",
+            "filter_vertical",
+            "radio_fields",
+            "prepopulated_fields",
+            "raw_id_fields",
+            "autocomplete_fields",
+            "actions",
+            "actions_on_top",
+            "actions_on_bottom",
+            "inlines",
+            "form",
+            "model",
+            "extra",
+            "max_num",
+            "min_num",
+            "can_delete",
+            "fk_name",
+            "formset",
+            "verbose_name",
+            "verbose_name_plural",
         }
         if def_obj.type == "variable" and simple_name in _ADMIN_ATTRS:
             if "." in def_obj.name:
@@ -175,28 +199,46 @@ def apply_penalties(
                 if parent in class_defs:
                     cls_node = class_defs[parent]
                     for base in getattr(cls_node, "bases", []):
-                        base_name = getattr(base, "id", None) or getattr(base, "attr", None)
+                        base_name = getattr(base, "id", None) or getattr(
+                            base, "attr", None
+                        )
                         if base_name in DJANGO_ADMIN_BASES:
                             def_obj.confidence = 0
                             return
 
         _META_ATTRS = {
-            "ordering", "verbose_name", "verbose_name_plural",
-            "db_table", "abstract", "app_label", "proxy",
-            "unique_together", "index_together", "indexes",
-            "constraints", "permissions", "default_permissions",
-            "default_related_name", "get_latest_by",
-            "managed", "default_manager_name",
+            "ordering",
+            "verbose_name",
+            "verbose_name_plural",
+            "db_table",
+            "abstract",
+            "app_label",
+            "proxy",
+            "unique_together",
+            "index_together",
+            "indexes",
+            "constraints",
+            "permissions",
+            "default_permissions",
+            "default_related_name",
+            "get_latest_by",
+            "managed",
+            "default_manager_name",
         }
         if def_obj.type == "variable" and simple_name in _META_ATTRS:
             if "." in def_obj.name and "Meta" in def_obj.name:
                 def_obj.confidence = 0
                 return
-            
+
         if simple_name in UNITTEST_METHODS and has_base_class(
             def_obj,
-            {"TestCase", "SimpleTestCase", "TransactionTestCase",
-             "LiveServerTestCase", "StaticLiveServerTestCase"},
+            {
+                "TestCase",
+                "SimpleTestCase",
+                "TransactionTestCase",
+                "LiveServerTestCase",
+                "StaticLiveServerTestCase",
+            },
             framework,
         ):
             def_obj.confidence = 0
@@ -213,13 +255,13 @@ def apply_penalties(
         ):
             def_obj.confidence = 0
             return
-        
+
         if simple_name.startswith("validate_") and has_base_class(
             def_obj, DRF_SERIALIZER_BASES, framework
         ):
             def_obj.confidence = 0
             return
-        
+
         if simple_name.startswith("get_") and has_base_class(
             def_obj, DRF_SERIALIZER_BASES, framework
         ):
@@ -230,11 +272,18 @@ def apply_penalties(
         ):
             def_obj.confidence = 0
             return
-  
-        _DRF_BACKEND_METHODS = {"filter_queryset", "get_schema_fields",
-                                "get_schema_operation_parameters"}
-        _DRF_BACKEND_BASES = {"BaseFilterBackend", "FilterSet",
-                              "BaseThrottle", "BasePermission"}
+
+        _DRF_BACKEND_METHODS = {
+            "filter_queryset",
+            "get_schema_fields",
+            "get_schema_operation_parameters",
+        }
+        _DRF_BACKEND_BASES = {
+            "BaseFilterBackend",
+            "FilterSet",
+            "BaseThrottle",
+            "BasePermission",
+        }
         if simple_name in _DRF_BACKEND_METHODS and has_base_class(
             def_obj, _DRF_BACKEND_BASES, framework
         ):

@@ -748,7 +748,9 @@ def upload_report(
                 credits_left = data.get("credits_remaining")
                 if not quiet and credits_left is not None:
                     if credits_left < 50:
-                        print(f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing")
+                        print(
+                            f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
+                        )
                     else:
                         print(f"\n💰 Credits remaining: {credits_left}")
 
@@ -785,7 +787,10 @@ def upload_report(
                     pass
                 return {
                     "success": False,
-                    "error": data.get("error", "No credits remaining. Buy more at skylos.dev/dashboard/credits"),
+                    "error": data.get(
+                        "error",
+                        "No credits remaining. Buy more at skylos.dev/dashboard/credits",
+                    ),
                     "code": "NO_CREDITS",
                 }
 

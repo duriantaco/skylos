@@ -206,8 +206,8 @@ class Skylos:
                 continue
             if not def_obj.in_init:
                 continue
-             # e.g. "requests.api.get"
-            target_name = def_obj.name 
+            # e.g. "requests.api.get"
+            target_name = def_obj.name
             if target_name:
                 simple = target_name.split(".")[-1]
             else:
@@ -235,7 +235,9 @@ class Skylos:
                 if "." not in def_obj.name:
                     continue
                 parent = def_obj.name.rsplit(".", 1)[0]
-                if parent in exported_classes and not def_obj.simple_name.startswith("_"):
+                if parent in exported_classes and not def_obj.simple_name.startswith(
+                    "_"
+                ):
                     def_obj.is_exported = True
                     def_obj.references = max(def_obj.references, 1)
 
@@ -366,8 +368,7 @@ class Skylos:
             # e.g. sessions.py imports Mapping from compat.py, compat.py
             # imports Mapping from collections.abc
             import_cands = [
-                k for k in import_by_simple.get(simple, [])
-                if k != import_def_key
+                k for k in import_by_simple.get(simple, []) if k != import_def_key
             ]
             if len(import_cands) == 1:
                 return import_cands[0]
@@ -663,7 +664,11 @@ class Skylos:
                 continue
 
             if defn.type == "function" and defn.simple_name in (
-                "main", "cli", "run", "app", "create_app"
+                "main",
+                "cli",
+                "run",
+                "app",
+                "create_app",
             ):
                 entry_points.add(defn.name)
                 continue
@@ -1402,7 +1407,6 @@ class Skylos:
                 traceback.print_exc()
 
         return json.dumps(result, indent=2)
-
 
 
 def _is_truly_empty_or_docstring_only(tree):

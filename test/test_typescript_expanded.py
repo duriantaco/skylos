@@ -805,13 +805,7 @@ class TestNewQualityRules:
 
     def test_no_unreachable_code(self, tmp_path):
         """Normal function should NOT trigger SKY-UC002."""
-        code = (
-            "function ok() {\n"
-            "    console.log('hello');\n"
-            "    return 1;\n"
-            "}\n"
-            "ok();\n"
-        )
+        code = "function ok() {\n    console.log('hello');\n    return 1;\n}\nok();\n"
         _, _, quality, _ = _scan_ts(tmp_path, code)
         uc002 = [f for f in quality if f["rule_id"] == "SKY-UC002"]
         assert len(uc002) == 0
@@ -1115,31 +1109,31 @@ class TestLocalStorageTokens:
 
 class TestErrorDisclosure:
     def test_res_json_error_stack(self, tmp_path):
-        code = 'res.json({ error: err.stack });\n'
+        code = "res.json({ error: err.stack });\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D271" in ids
 
     def test_res_send_error_stack(self, tmp_path):
-        code = 'res.send(error.stack);\n'
+        code = "res.send(error.stack);\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D271" in ids
 
     def test_res_json_sql_message(self, tmp_path):
-        code = 'res.json({ detail: err.sqlMessage });\n'
+        code = "res.json({ detail: err.sqlMessage });\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D271" in ids
 
     def test_res_write_sql_state(self, tmp_path):
-        code = 'response.write(dbErr.sqlState);\n'
+        code = "response.write(dbErr.sqlState);\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D271" in ids
 
     def test_res_end_sql(self, tmp_path):
-        code = 'res.end(JSON.stringify({ sql: err.sql }));\n'
+        code = "res.end(JSON.stringify({ sql: err.sql }));\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D271" in ids
@@ -1153,21 +1147,21 @@ class TestErrorDisclosure:
 
     def test_res_json_safe_property(self, tmp_path):
         """err.message (not stack/sql) should NOT trigger."""
-        code = 'res.json({ error: err.message });\n'
+        code = "res.json({ error: err.message });\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D271" not in ids
 
     def test_console_log_stack_safe(self, tmp_path):
         """Logging error.stack (not in response) should NOT trigger D271."""
-        code = 'console.error(err.stack);\n'
+        code = "console.error(err.stack);\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D271" not in ids
 
     def test_finding_message_mentions_prop(self, tmp_path):
         """Finding message should name the specific dangerous property."""
-        code = 'res.json({ trace: err.stack });\n'
+        code = "res.json({ trace: err.stack });\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         d271 = [f for f in danger if f["rule_id"] == "SKY-D271"]
         assert len(d271) == 1

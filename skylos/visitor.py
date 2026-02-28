@@ -1344,8 +1344,9 @@ class Visitor(ast.NodeVisitor):
             self.visit(node.target)
         self.visit(node.value)
 
-    def _process_target_for_def(self, target_node: ast.expr,
-                                _in_tuple_unpack: bool = False) -> None:
+    def _process_target_for_def(
+        self, target_node: ast.expr, _in_tuple_unpack: bool = False
+    ) -> None:
         if isinstance(target_node, ast.Name):
             name_simple = target_node.id
 
@@ -1499,7 +1500,9 @@ class Visitor(ast.NodeVisitor):
                             self.pattern_tracker.known_refs.add(val)
 
                 if fstring_pattern:
-                    self.pattern_tracker.add_pattern_ref(fstring_pattern, 70, source_module=self.mod)
+                    self.pattern_tracker.add_pattern_ref(
+                        fstring_pattern, 70, source_module=self.mod
+                    )
                     if self._current_function_qname:
                         self.pattern_tracker.known_refs.add(
                             self._current_function_qname.split(".")[-1]
@@ -1517,7 +1520,9 @@ class Visitor(ast.NodeVisitor):
                 elif isinstance(parent.slice, ast.JoinedStr):
                     pattern = self._extract_fstring_pattern(parent.slice)
                     if pattern:
-                        self.pattern_tracker.add_pattern_ref(pattern, 70, source_module=self.mod)
+                        self.pattern_tracker.add_pattern_ref(
+                            pattern, 70, source_module=self.mod
+                        )
                         if self._current_function_qname:
                             self.pattern_tracker.known_refs.add(
                                 self._current_function_qname.split(".")[-1]
