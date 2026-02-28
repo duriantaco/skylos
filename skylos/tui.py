@@ -180,7 +180,6 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
         dep_raw.append(item)
     data["dependencies"] = (dep_cols, dep_rows, dep_raw)
 
-    # -- Suppressed --
     sup_cols = ["Category", "Name / Rule", "Reason", "File:Line"]
     sup_rows, sup_raw = [], []
     for item in result.get("suppressed") or []:
@@ -194,14 +193,7 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
     return data
 
 
-# ---------------------------------------------------------------------------
-# Widgets
-# ---------------------------------------------------------------------------
-
-
 class CategoryItem(ListItem):
-    """Sidebar entry with label + count badge."""
-
     def __init__(self, cat_key: str, label: str, count: int) -> None:
         super().__init__()
         self.cat_key = cat_key
@@ -214,8 +206,6 @@ class CategoryItem(ListItem):
 
 
 class OverviewPanel(VerticalScroll):
-    """Summary dashboard for the Overview tab."""
-
     def __init__(self, result: dict, category_data: dict, **kw) -> None:
         super().__init__(**kw)
         self.result = result
@@ -239,7 +229,6 @@ class OverviewPanel(VerticalScroll):
             lines.append(f"  [{style}]{label:15s} {n}[/{style}]")
         yield Static("\n".join(lines) + "\n")
 
-        # Severity breakdown (security + deps) — horizontal bar chart
         sev_counts: dict[str, int] = {}
         for cat in ("security", "dependencies"):
             _, _, raw = self.category_data.get(cat, ([], [], []))
@@ -262,7 +251,6 @@ class OverviewPanel(VerticalScroll):
                 sev_lines.append(f"    [{color}]{s:10s} {bar} {c} ({pct}%)[/{color}]")
             yield Static("\n".join(sev_lines) + "\n")
 
-        # Languages detected
         languages = summ.get("languages") or {}
         if languages:
             lang_lines = ["  [bold]Languages Detected[/bold]"]
@@ -272,7 +260,6 @@ class OverviewPanel(VerticalScroll):
                 )
             yield Static("\n".join(lang_lines) + "\n")
 
-        # Top affected files
         file_counts: dict[str, int] = {}
         for cat_key in ("dead_code", "security", "secrets", "quality", "dependencies"):
             _, _, raw = self.category_data.get(cat_key, ([], [], []))
@@ -290,8 +277,6 @@ class OverviewPanel(VerticalScroll):
 
 
 class DetailPanel(Static):
-    """Expandable detail view for a selected finding."""
-
     def show_detail(self, category: str, item: dict, root_path=None) -> None:
         lines: list[str] = []
         file_path = item.get("file", "?")
@@ -375,14 +360,7 @@ class DetailPanel(Static):
         self.update("\n".join(lines))
 
 
-# ---------------------------------------------------------------------------
-# Main App
-# ---------------------------------------------------------------------------
-
-
 class SkylosApp(App):
-    """Interactive findings dashboard."""
-
     TITLE = "Skylos"
 
     CSS = """
@@ -488,7 +466,6 @@ class SkylosApp(App):
                         for k, label in CATEGORIES
                     ],
                     id="category-list",
-                    can_focus=False,
                 )
             with Vertical(id="main-area"):
                 yield OverviewPanel(
@@ -567,8 +544,6 @@ class SkylosApp(App):
                 t.stylize(SEVERITY_COLORS[upper])
             cells.append(t)
         return cells
-
-    # ── Actions ─────────────────────────────────────────────────────────
 
     def _search_active(self) -> bool:
         return self.query_one("#search-input", Input).has_class("visible")
@@ -655,8 +630,6 @@ class SkylosApp(App):
                 self._populate_table(self.active_category)
         self._focus_main()
 
-    # ── Events ──────────────────────────────────────────────────────────
-
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         item = event.item
         if isinstance(item, CategoryItem):
@@ -691,12 +664,6 @@ class SkylosApp(App):
         bar.update(f" Findings: {total}  │  Severity: {sev}  │  {cat}")
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-
 def run_tui(result: dict, root_path=None) -> None:
-    """Launch the interactive TUI dashboard."""
     app = SkylosApp(result, root_path=root_path)
     app.run()

@@ -198,7 +198,6 @@ def apply_penalties(
             reduction = reduction // 4
 
         confidence -= reduction
-        break
 
     PYTEST_HOOKS_LOCAL = {
         "pytest_configure",
