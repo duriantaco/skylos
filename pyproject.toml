@@ -4,10 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "3.4.3"
+version = "3.5.0"
 requires-python = ">=3.10"
-description = "An analysis tool for Python codebases"
+description = "Find dead code, security vulnerabilities, and quality issues in Python, TypeScript, and Go. AI-powered static analysis with quality gates for CI/CD."
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
+readme = "README.md"
+license = {text = "Apache-2.0"}
+keywords = [
+    "static-analysis",
+    "dead-code",
+    "security",
+    "linter",
+    "code-quality",
+    "sast",
+    "vulnerability-scanner",
+    "python-linter",
+    "typescript-linter",
+    "quality-gate",
+    "ci-cd",
+    "code-review",
+    "secrets-detection",
+    "mcp",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -16,9 +34,22 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Testing",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://skylos.dev"
+Documentation = "https://docs.skylos.dev"
+Repository = "https://github.com/duriantaco/skylos"
+Changelog = "https://github.com/duriantaco/skylos/blob/main/CHANGELOG.md"
+"Bug Tracker" = "https://github.com/duriantaco/skylos/issues"
+Discord = "https://discord.gg/Ftn9t9tErf"
 dependencies = [
     "inquirer>=3.0.3",
     "libcst>=1.8.2",

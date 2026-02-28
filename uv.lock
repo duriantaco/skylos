@@ -2251,7 +2251,7 @@ wheels = [
 
 [[package]]
 name = "skylos"
-version = "3.4.3"
+version = "3.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "inquirer" },
