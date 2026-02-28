@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "3.5.0"
+version = "3.5.1"
 requires-python = ">=3.10"
 description = "Find dead code, security vulnerabilities, and quality issues in Python, TypeScript, and Go. AI-powered static analysis with quality gates for CI/CD."
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
