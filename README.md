@@ -20,7 +20,27 @@
 
 💬 Join the Discord (support + contributors): https://discord.gg/Ftn9t9tErf
 
-# What is Skylos? 
+📖 **[Website](https://skylos.dev)** · **[Documentation](https://docs.skylos.dev)** · **[Blog](https://skylos.dev/blog)** · **[VS Code Extension](https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension)**
+
+---
+
+### Why Skylos over Vulture?
+
+| | Skylos | Vulture |
+|:---|:---|:---|
+| **Recall** | **98.1%** (51/52) | 84.6% (44/52) |
+| **False Positives** | **220** | 644 |
+| **Framework-aware** (FastAPI, Django, pytest) | Yes | No |
+| **Security scanning** (secrets, SQLi, SSRF) | Yes | No |
+| **AI-powered analysis** | Yes | No |
+| **CI/CD quality gates** | Yes | No |
+| **TypeScript + Go support** | Yes | No |
+
+> Benchmarked on 9 popular open-source repos (350k+ combined stars). Every finding manually verified. [Full case study →](#skylos-vs-vulture-benchmark)
+
+---
+
+# What is Skylos?
 
 > Skylos is a privacy-first SAST tool for Python, TypeScript, and Go that bridges the gap between traditional static analysis and AI agents. It detects dead code, security vulnerabilities (SQLi, SSRF, Secrets), and code quality issues with high precision.
 
@@ -160,18 +180,34 @@ No Node.js required — TypeScript parser is built-in via Tree-sitter. Languages
 | Imports | - | Unused named, default, and namespace imports |
 | Methods | - | Unused methods (lifecycle methods excluded) |
 | **Security** | | |
-| eval() | SKY-D501 | `eval()` usage |
-| innerHTML | SKY-D502 | Unsafe `innerHTML` assignment |
-| document.write | SKY-D503 | XSS via `document.write()` |
-| new Function() | SKY-D504 | Equivalent to `eval()` |
-| setTimeout string | SKY-D505 | `setTimeout`/`setInterval` with string argument |
-| child_process.exec | SKY-D506 | Command injection via `child_process.exec()` |
-| outerHTML | SKY-D507 | Unsafe `outerHTML` assignment |
+| eval() | SKY-D201 | `eval()` usage |
+| Dynamic exec | SKY-D202 | `exec()`, `new Function()`, `setTimeout` with string |
+| XSS | SKY-D226 | `innerHTML`, `outerHTML`, `document.write()`, `dangerouslySetInnerHTML` |
+| SQL injection | SKY-D211 | Template literal / f-string in SQL query |
+| Command injection | SKY-D212 | `child_process.exec()`, `os.system()` |
+| SSRF | SKY-D216 | `fetch()`/`axios` with variable URL |
+| Open redirect | SKY-D230 | `res.redirect()` with variable argument |
+| Weak hash | SKY-D207/D208 | MD5 / SHA1 usage |
+| Prototype pollution | SKY-D510 | `__proto__` access |
+| Dynamic require | SKY-D245 | `require()` with variable argument |
+| JWT bypass | SKY-D246 | `jwt.decode()` without verification |
+| CORS wildcard | SKY-D247 | `cors({ origin: '*' })` |
+| Internal URL | SKY-D248 | Hardcoded `localhost`/`127.0.0.1` URLs |
+| Insecure random | SKY-D250 | `Math.random()` for security-sensitive ops |
+| Sensitive logs | SKY-D251 | Passwords/tokens passed to `console.log()` |
+| Insecure cookie | SKY-D252 | Missing `httpOnly`/`secure` flags |
+| Timing attack | SKY-D253 | `===`/`==` comparison of secrets |
+| Storage tokens | SKY-D270 | Sensitive data in `localStorage`/`sessionStorage` |
+| Error disclosure | SKY-D271 | `error.stack`/`.sql` sent in HTTP response |
+| Secrets | SKY-S101 | Hardcoded API keys + high-entropy strings |
 | **Quality** | | |
-| Complexity | SKY-Q601 | Cyclomatic complexity exceeds threshold |
-| Nesting depth | SKY-Q602 | Too many nested levels |
-| Function length | SKY-Q603 | Function exceeds line limit |
-| Too many params | SKY-Q604 | Function has too many parameters |
+| Complexity | SKY-Q301 | Cyclomatic complexity exceeds threshold |
+| Nesting depth | SKY-Q302 | Too many nested levels |
+| Function length | SKY-C304 | Function exceeds line limit |
+| Too many params | SKY-C303 | Function has too many parameters |
+| Duplicate condition | SKY-Q305 | Identical condition in if-else-if chain |
+| Await in loop | SKY-Q402 | `await` inside for/while loop |
+| Unreachable code | SKY-UC002 | Code after return/throw/break/continue |
 
 **Framework-aware:** Next.js convention exports (`page.tsx`, `layout.tsx`, `route.ts`, `middleware.ts`), config exports (`getServerSideProps`, `generateMetadata`, `revalidate`), React patterns (`memo`, `forwardRef`), and exported custom hooks (`use*`) are automatically excluded from dead code reports.
 
@@ -226,20 +262,67 @@ After installation, we recommend:
 
 ## Skylos vs. Vulture Benchmark
 
-We benchmarked Skylos against Vulture (the standard for dead code detection) on a realistic FastAPI application containing dynamic patterns, framework wiring, and hidden dependencies.
+We benchmarked Skylos against Vulture on **9 of the most popular Python repositories on GitHub** — 350k+ combined stars, covering HTTP clients, web frameworks, CLI tools, data validation, terminal UIs, and progress bars. Every single finding was **manually verified** against the source code. No automated labelling, no cherry-picking.
 
-**The Results (Confidence Level 20 / Aggressive Mode):**
+### Why These 9 Repos?
 
-| Feature | Skylos | Vulture | Impact |
-| :--- | :--- | :--- | :--- |
-| **Recall** | **100%** | 82.8% | Skylos found *all* dead code; Vulture missed ~17%. |
-| **Precision** | **76.3%** | 55.8% | Vulture flagged 2x more false positives (noise). |
-| **True Positives** | **29** | 24 | Skylos detected 5 more actual dead functions. |
-| **False Negatives** | **0** | 5 | Skylos missed nothing. |
+We deliberately chose projects that stress-test dead code detection in different ways:
 
-> **Key Takeaway:** Skylos provides significantly higher coverage (Recall) with far less noise (Precision) than traditional tools.
+| Repository | Stars | What It Tests |
+|:---|---:|:---|
+| [psf/requests](https://github.com/psf/requests) | 53k | `__init__.py` re-exports, Sphinx conf, pytest classes |
+| [pallets/click](https://github.com/pallets/click) | 17k | IO protocol methods (`io.RawIOBase` subclasses), nonlocal closures |
+| [encode/starlette](https://github.com/encode/starlette) | 10k | ASGI interface params, polymorphic dispatch, public API methods |
+| [Textualize/rich](https://github.com/Textualize/rich) | 51k | `__rich_console__` protocol, sentinel vars via `f_locals`, metaclasses |
+| [encode/httpx](https://github.com/encode/httpx) | 14k | Transport/auth protocol methods, zero dead code (pure FP test) |
+| [pallets/flask](https://github.com/pallets/flask) | 69k | Jinja2 template globals, Werkzeug protocol methods, extension hooks |
+| [pydantic/pydantic](https://github.com/pydantic/pydantic) | 23k | Mypy plugin hooks, hypothesis `@resolves`, `__getattr__` config |
+| [fastapi/fastapi](https://github.com/fastapi/fastapi) | 82k | 100+ OpenAPI spec model fields, Starlette base class overrides |
+| [tqdm/tqdm](https://github.com/tqdm/tqdm) | 30k | Keras/Dask callbacks, Rich column rendering, pandas monkey-patching |
+
+No repo was excluded for having unfavorable results. We include repos where Vulture beats Skylos (click, starlette, tqdm).
+
+### Results
+
+| Repository | Dead Items | Skylos TP | Skylos FP | Vulture TP | Vulture FP |
+|:---|---:|---:|---:|---:|---:|
+| psf/requests | 6 | 6 | 35 | 6 | 58 |
+| pallets/click | 7 | 7 | 8 | 6 | 6 |
+| encode/starlette | 1 | 1 | 4 | 1 | 2 |
+| Textualize/rich | 13 | 13 | 14 | 10 | 8 |
+| encode/httpx | 0 | 0 | 6 | 0 | 59 |
+| pallets/flask | 7 | 7 | 12 | 6 | 260 |
+| pydantic/pydantic | 11 | 11 | 93 | 10 | 112 |
+| fastapi/fastapi | 6 | 6 | 30 | 4 | 102 |
+| tqdm/tqdm | 1 | 0 | 18 | 1 | 37 |
+| **Total** | **52** | **51** | **220** | **44** | **644** |
+
+| Metric | Skylos | Vulture |
+|:---|:---|:---|
+| **Recall** | **98.1%** (51/52) | 84.6% (44/52) |
+| **False Positives** | **220** | 644 |
+| **Dead items found** | **51** | 44 |
+
+Skylos finds **7 more dead items** than Vulture with **3x fewer false positives**.
+
+### Why Skylos Produces Fewer False Positives
+
+Vulture uses flat name matching — if the bare name `X` appears anywhere as a string or identifier, all definitions named `X` are considered used. This works well for simple cases but drowns in noise on framework-heavy codebases:
+
+- **Flask** (260 Vulture FP): Vulture flags every Jinja2 template global, Werkzeug protocol method, and Flask extension hook. Skylos recognizes Flask/Werkzeug patterns.
+- **Pydantic** (112 Vulture FP): Vulture flags all config class annotations, `TYPE_CHECKING` imports, and mypy plugin hooks. Skylos understands Pydantic model fields and `__getattr__` dynamic access.
+- **FastAPI** (102 Vulture FP): Vulture flags 100+ OpenAPI spec model fields (Pydantic `BaseModel` attributes like `maxLength`, `exclusiveMinimum`). Skylos recognizes these as schema definitions.
+- **httpx** (59 Vulture FP): Vulture flags every transport and auth protocol method. Skylos suppresses interface implementations.
+
+### Where Skylos Still Loses (Honestly)
+
+- **click** (8 vs 6 FP): IO protocol methods (`readable`, `readinto`) on `io.RawIOBase` subclasses — called by Python's IO stack, not by direct call sites.
+- **starlette** (4 vs 2 FP): Instance method calls across files (`obj.method()`) not resolved back to class definitions.
+- **tqdm** (18 vs 37 FP, 0 vs 1 TP): Skylos misses 1 dead function in `__init__.py` because it suppresses `__init__.py` definitions as potential re-exports.
+
+> *Reproduce any benchmark: `cd real_life_examples/{repo} && python3 ../benchmark_{repo}.py`*
 >
-> *See the full methodology and breakdown in [BENCHMARK.md](BENCHMARK.md).*
+> *Full methodology and per-repo breakdowns in the [skylos-demo](https://github.com/duriantaco/skylos-demo) repository.*
 
 ---
 
