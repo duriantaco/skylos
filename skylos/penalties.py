@@ -1,6 +1,6 @@
 import ast
 from typing import Any, Optional
-from skylos.constants import PENALTIES
+from skylos.constants import PENALTIES, is_test_path
 from skylos.config import is_whitelisted
 from skylos.known_patterns import (
     HARD_ENTRYPOINTS,
@@ -20,6 +20,7 @@ from skylos.known_patterns import (
     DJANGO_APPCONFIG_BASES,
     DJANGO_MIDDLEWARE_METHODS,
     DJANGO_MIDDLEWARE_BASES,
+    DJANGO_SIGNAL_METHODS,
     DRF_VIEWSET_METHODS,
     DRF_VIEWSET_BASES,
     DRF_SERIALIZER_METHODS,
@@ -57,6 +58,20 @@ def apply_penalties(
         def_obj.confidence = 0
         def_obj.skip_reason = "inline ignore comment"
         return
+
+    fname = str(def_obj.filename)
+    if (
+        def_obj.type == "variable"
+        and fname.endswith("conf.py")
+        and ("/docs/" in fname or "/doc/" in fname)
+    ):
+        def_obj.confidence = 0
+        return
+
+    if "/docs/" in fname or "/doc/" in fname:
+        if "_theme" in fname or "theme_support" in fname:
+            def_obj.confidence = 0
+            return
 
     if getattr(framework, "version_conditional_lines", None):
         if def_obj.line in framework.version_conditional_lines:
@@ -118,6 +133,12 @@ def apply_penalties(
         ):
             def_obj.confidence = 0
             return
+
+        if simple_name.startswith("clean_") and has_base_class(
+            def_obj, DJANGO_FORM_BASES, framework
+        ):
+            def_obj.confidence = 0
+            return
         if simple_name in DJANGO_COMMAND_METHODS and has_base_class(
             def_obj, DJANGO_COMMAND_BASES, framework
         ):
@@ -133,6 +154,53 @@ def apply_penalties(
         ):
             def_obj.confidence = 0
             return
+        
+        _ADMIN_ATTRS = {
+            "list_display", "list_display_links", "list_filter",
+            "list_select_related", "list_per_page", "list_max_show_all",
+            "list_editable", "search_fields", "search_help_text",
+            "date_hierarchy", "ordering", "readonly_fields",
+            "fieldsets", "fields", "exclude", "filter_horizontal",
+            "filter_vertical", "radio_fields", "prepopulated_fields",
+            "raw_id_fields", "autocomplete_fields",
+            "actions", "actions_on_top", "actions_on_bottom",
+            "inlines", "form", "model",
+            "extra", "max_num", "min_num", "can_delete",
+            "fk_name", "formset", "verbose_name", "verbose_name_plural",
+        }
+        if def_obj.type == "variable" and simple_name in _ADMIN_ATTRS:
+            if "." in def_obj.name:
+                parent = def_obj.name.rsplit(".", 1)[0].split(".")[-1]
+                class_defs = getattr(framework, "class_defs", {})
+                if parent in class_defs:
+                    cls_node = class_defs[parent]
+                    for base in getattr(cls_node, "bases", []):
+                        base_name = getattr(base, "id", None) or getattr(base, "attr", None)
+                        if base_name in DJANGO_ADMIN_BASES:
+                            def_obj.confidence = 0
+                            return
+
+        _META_ATTRS = {
+            "ordering", "verbose_name", "verbose_name_plural",
+            "db_table", "abstract", "app_label", "proxy",
+            "unique_together", "index_together", "indexes",
+            "constraints", "permissions", "default_permissions",
+            "default_related_name", "get_latest_by",
+            "managed", "default_manager_name",
+        }
+        if def_obj.type == "variable" and simple_name in _META_ATTRS:
+            if "." in def_obj.name and "Meta" in def_obj.name:
+                def_obj.confidence = 0
+                return
+            
+        if simple_name in UNITTEST_METHODS and has_base_class(
+            def_obj,
+            {"TestCase", "SimpleTestCase", "TransactionTestCase",
+             "LiveServerTestCase", "StaticLiveServerTestCase"},
+            framework,
+        ):
+            def_obj.confidence = 0
+            return
 
     if "rest_framework" in detected:
         if simple_name in DRF_VIEWSET_METHODS and has_base_class(
@@ -145,8 +213,30 @@ def apply_penalties(
         ):
             def_obj.confidence = 0
             return
+        
+        if simple_name.startswith("validate_") and has_base_class(
+            def_obj, DRF_SERIALIZER_BASES, framework
+        ):
+            def_obj.confidence = 0
+            return
+        
+        if simple_name.startswith("get_") and has_base_class(
+            def_obj, DRF_SERIALIZER_BASES, framework
+        ):
+            def_obj.confidence = 0
+            return
         if simple_name in DRF_PERMISSION_METHODS and has_base_class(
             def_obj, DRF_PERMISSION_BASES, framework
+        ):
+            def_obj.confidence = 0
+            return
+  
+        _DRF_BACKEND_METHODS = {"filter_queryset", "get_schema_fields",
+                                "get_schema_operation_parameters"}
+        _DRF_BACKEND_BASES = {"BaseFilterBackend", "FilterSet",
+                              "BaseThrottle", "BasePermission"}
+        if simple_name in _DRF_BACKEND_METHODS and has_base_class(
+            def_obj, _DRF_BACKEND_BASES, framework
         ):
             def_obj.confidence = 0
             return
@@ -171,6 +261,12 @@ def apply_penalties(
 
     if simple_name in TORNADO_HANDLER_METHODS and has_base_class(
         def_obj, TORNADO_HANDLER_BASES, framework
+    ):
+        def_obj.confidence = 0
+        return
+
+    if simple_name == "run" and has_base_class(
+        def_obj, {"Thread", "threading.Thread"}, framework
     ):
         def_obj.confidence = 0
         return
@@ -397,6 +493,25 @@ def apply_penalties(
 
     if def_obj.line in visitor.test_decorated_lines:
         confidence -= PENALTIES["test_related"]
+
+    if (
+        def_obj.type == "class"
+        and simple_name.startswith("Test")
+        and is_test_path(def_obj.filename)
+    ):
+        def_obj.confidence = 0
+        return
+
+    if (
+        def_obj.type in ("function", "method")
+        and is_test_path(def_obj.filename)
+        and "." in def_obj.name
+    ):
+        parts = def_obj.name.split(".")
+        for part in parts[:-1]:
+            if part.startswith("test_"):
+                def_obj.confidence = 0
+                return
 
     if def_obj.type == "variable" and getattr(framework, "dataclass_fields", None):
         if def_obj.name in framework.dataclass_fields:
