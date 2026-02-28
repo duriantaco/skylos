@@ -17,6 +17,7 @@ from skylos.constants import AUTO_CALLED
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.languages.typescript import scan_typescript_file
+from skylos.visitors.languages.go import scan_go_file
 
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 
@@ -195,6 +196,49 @@ class Skylos:
                     ):
                         def_obj.is_exported = True
 
+        non_import_by_simple = defaultdict(list)
+        for k, d in self.defs.items():
+            if d.type != "import":
+                non_import_by_simple[d.simple_name].append(d)
+
+        for def_key, def_obj in self.defs.items():
+            if def_obj.type != "import":
+                continue
+            if not def_obj.in_init:
+                continue
+             # e.g. "requests.api.get"
+            target_name = def_obj.name 
+            if target_name:
+                simple = target_name.split(".")[-1]
+            else:
+                simple = ""
+            if not simple:
+                continue
+            if target_name in self.defs and self.defs[target_name].type != "import":
+                self.defs[target_name].references += 1
+                self.defs[target_name].is_exported = True
+                continue
+            for candidate in non_import_by_simple.get(simple, []):
+                candidate.references += 1
+                candidate.is_exported = True
+
+        # propogate exports to methods of exported classes
+        exported_classes = set()
+        for def_name, def_obj in self.defs.items():
+            if def_obj.type == "class" and def_obj.is_exported:
+                exported_classes.add(def_obj.name)
+
+        if exported_classes:
+            for def_name, def_obj in self.defs.items():
+                if def_obj.type not in ("function", "method"):
+                    continue
+                if "." not in def_obj.name:
+                    continue
+                parent = def_obj.name.rsplit(".", 1)[0]
+                if parent in exported_classes and not def_obj.simple_name.startswith("_"):
+                    def_obj.is_exported = True
+                    def_obj.references = max(def_obj.references, 1)
+
     def _resolve_ts_module(self, source: str, importer: str) -> str | None:
         if not source.startswith("."):
             return None
@@ -291,9 +335,20 @@ class Skylos:
 
         non_import_defs = {k: v for k, v in self.defs.items() if v.type != "import"}
 
+        type_def_lookup = defaultdict(list)
+        for k, d in non_import_defs.items():
+            if d.type in ("method", "variable") and "." in d.name:
+                parts = d.name.rsplit(".", 1)
+                type_def_lookup[parts[0]].append((parts[1], d))
+
         simple_to_keys = defaultdict(list)
         for k, d in non_import_defs.items():
             simple_to_keys[d.simple_name].append(k)
+
+        import_by_simple = defaultdict(list)
+        for k, d in self.defs.items():
+            if d.type == "import":
+                import_by_simple[d.simple_name].append(k)
 
         def _resolve_import_target(import_def_key: str, import_def_obj) -> str | None:
             target_fqn = import_def_obj.name
@@ -308,14 +363,28 @@ class Skylos:
             if len(cands) == 1:
                 return cands[0]
 
+            # e.g. sessions.py imports Mapping from compat.py, compat.py
+            # imports Mapping from collections.abc
+            import_cands = [
+                k for k in import_by_simple.get(simple, [])
+                if k != import_def_key
+            ]
+            if len(import_cands) == 1:
+                return import_cands[0]
+            if import_cands and target_fqn:
+                for ik in import_cands:
+                    if target_fqn in ik or ik.endswith(f":{target_fqn}"):
+                        return ik
+
             return None
 
         for def_key, def_obj in self.defs.items():
             if def_obj.type != "import":
                 continue
             resolved = _resolve_import_target(def_key, def_obj)
-            if resolved:
+            if resolved and resolved != def_key:
                 import_to_original[def_key] = resolved
+                self.defs[resolved].references += 1
 
         simple_name_lookup = defaultdict(list)
         for definition in self.defs.values():
@@ -388,20 +457,42 @@ class Skylos:
                 continue
 
             if len(candidates) > 1:
-                if not ref_mod or ref_mod in ("self", "cls"):
-                    for d in candidates:
-                        d.references += 1
+                if ref_mod in ("self", "cls"):
+                    same_file_cands = [
+                        d for d in candidates if str(d.filename) == str(ref_file)
+                    ]
+                    if same_file_cands:
+                        for d in same_file_cands:
+                            d.references += 1
+                    continue
+                if not ref_mod:
                     continue
 
-            non_import_defs = []
+            # when ref_mod is a type we know about ..look up members of that type directly
+            if ref_mod and ref_mod not in ("self", "cls") and len(candidates) != 1:
+                type_members = type_def_lookup.get(ref_mod)
+                if type_members:
+                    for member_name, member_def in type_members:
+                        if member_name == simple:
+                            member_def.references += 1
+                    continue
 
-            non_import_defs = []
+                resolved_type = self._global_type_map.get(ref_mod)
+                if resolved_type:
+                    type_members = type_def_lookup.get(resolved_type)
+                    if type_members:
+                        for member_name, member_def in type_members:
+                            if member_name == simple:
+                                member_def.references += 1
+                        continue
+
+            non_import_defs_fallback = []
             for d in simple_name_lookup.get(simple, []):
                 if d.type != "import":
-                    non_import_defs.append(d)
+                    non_import_defs_fallback.append(d)
 
-            if len(non_import_defs) == 1:
-                non_import_defs[0].references += 1
+            if len(non_import_defs_fallback) == 1:
+                non_import_defs_fallback[0].references += 1
                 continue
 
             if "." in ref:
@@ -417,6 +508,11 @@ class Skylos:
                         m.references += 1
                     continue
 
+                if non_import_defs_fallback:
+                    for d in non_import_defs_fallback:
+                        d.references += 1
+                    continue
+
         from skylos.implicit_refs import pattern_tracker as global_tracker
 
         if (
@@ -430,6 +526,20 @@ class Skylos:
                 should_mark, _, reason = global_tracker.should_mark_as_used(def_obj)
                 if should_mark:
                     def_obj.references += 1
+
+        used_attr_names = getattr(self, "_all_used_attr_names", set())
+        if used_attr_names:
+            for defn in self.defs.values():
+                if defn.references > 0:
+                    continue
+                if defn.type in ("method", "function"):
+                    pass  # always eligible
+                elif defn.type == "variable" and "." in defn.name:
+                    pass  # class-level attribute, eligible
+                else:
+                    continue
+                if defn.simple_name in used_attr_names:
+                    defn.references += 1
 
     def _get_base_classes(self, class_name):
         if class_name not in self.defs:
@@ -487,6 +597,102 @@ class Skylos:
                     if defn.return_type in registry_simple_names:
                         defn.references += 1
 
+    def _resolve_hierarchy_refs(self):
+        children_of = defaultdict(set)
+        for name, defn in self.defs.items():
+            if defn.type != "class":
+                continue
+            for base_qname in getattr(defn, "base_classes", []):
+                children_of[base_qname].add(name)
+
+        if not children_of:
+            return
+
+        class_methods = defaultdict(dict)
+        for name, defn in self.defs.items():
+            if defn.type == "method" and "." in defn.name:
+                parts = defn.name.rsplit(".", 1)
+                class_methods[parts[0]][parts[1]] = defn
+
+        for class_qname, methods in class_methods.items():
+            if class_qname not in children_of:
+                continue
+
+            for method_name, method_def in methods.items():
+                if method_def.references == 0:
+                    continue
+
+                stack = list(children_of[class_qname])
+                visited = set()
+                while stack:
+                    child = stack.pop()
+                    if child in visited:
+                        continue
+                    visited.add(child)
+
+                    child_methods = class_methods.get(child, {})
+                    if method_name in child_methods:
+                        child_methods[method_name].references += 1
+
+                    stack.extend(children_of.get(child, set()))
+
+    def _apply_entry_reachability(self):
+        call_graph = defaultdict(set)
+        for defn in self.defs.values():
+            calls = getattr(defn, "calls", None)
+            if calls and isinstance(calls, (set, list, frozenset)):
+                call_graph[defn.name].update(calls)
+
+        entry_points = set()
+        for name, defn in self.defs.items():
+            # __main__.py functions
+            if str(defn.filename).endswith("__main__.py"):
+                entry_points.add(defn.name)
+                continue
+
+            if defn.type == "function" and defn.is_exported:
+                entry_points.add(defn.name)
+                continue
+
+            if defn.references > 0 and defn.type in ("function", "method"):
+                entry_points.add(defn.name)
+                continue
+
+            if defn.simple_name.startswith("test_"):
+                entry_points.add(defn.name)
+                continue
+
+            if defn.type == "function" and defn.simple_name in (
+                "main", "cli", "run", "app", "create_app"
+            ):
+                entry_points.add(defn.name)
+                continue
+
+        if not entry_points:
+            return
+
+        reachable = set()
+        stack = list(entry_points)
+        while stack:
+            current = stack.pop()
+            if current in reachable:
+                continue
+            reachable.add(current)
+            for callee in call_graph.get(current, []):
+                if callee not in reachable:
+                    stack.append(callee)
+
+        for name, defn in self.defs.items():
+            if defn.type not in ("function", "method"):
+                continue
+            if defn.references > 0:
+                continue
+            if defn.is_exported:
+                continue
+
+            if name in reachable:
+                defn.references += 1
+
     def analyze(
         self,
         path,
@@ -513,7 +719,6 @@ class Skylos:
                         all_files.append(fp)
                 roots.append(r)
             files = all_files
-            # Common root of all paths
             if roots:
                 root = Path(os.path.commonpath(roots))
             else:
@@ -600,6 +805,9 @@ class Skylos:
         pattern_trackers = {}
         all_raw_imports = {}
         ts_raw_imports = {}
+        all_inferred_types = {}
+        all_instance_attr_types = {}
+        all_used_attr_names = set()
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -649,6 +857,10 @@ class Skylos:
                     file_suppressed = out[14]
                 else:
                     file_suppressed = []
+
+                file_inferred_types = out[15] if len(out) > 15 else {}
+                file_instance_attr_types = out[16] if len(out) > 16 else {}
+                file_used_attr_names = out[17] if len(out) > 17 else set()
                 (
                     defs,
                     refs,
@@ -677,6 +889,13 @@ class Skylos:
 
                 if pattern_tracker_obj:
                     pattern_trackers[mod] = pattern_tracker_obj
+
+                if file_inferred_types:
+                    all_inferred_types.update(file_inferred_types)
+                if file_instance_attr_types:
+                    all_instance_attr_types.update(file_instance_attr_types)
+                if file_used_attr_names:
+                    all_used_attr_names.update(file_used_attr_names)
 
                 for definition in defs:
                     if definition.type == "import":
@@ -974,9 +1193,18 @@ class Skylos:
 
         self._build_ts_import_graph(ts_raw_imports)
 
+        self._global_type_map = {}
+        self._global_type_map.update(all_inferred_types)
+        self._global_type_map.update(all_instance_attr_types)
+        self._all_used_attr_names = all_used_attr_names
+
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
         self._mark_refs(progress_callback=progress_callback)
+
+        if progress_callback:
+            progress_callback(0, 1, Path("PHASE: hierarchy refs"))
+        self._resolve_hierarchy_refs()
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: heuristics"))
@@ -987,6 +1215,10 @@ class Skylos:
         self._mark_exports()
 
         self._demote_unconsumed_ts_exports()
+
+        if progress_callback:
+            progress_callback(0, 1, Path("PHASE: entry reachability"))
+        self._apply_entry_reachability()
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: transitive dead code"))
@@ -1172,6 +1404,7 @@ class Skylos:
         return json.dumps(result, indent=2)
 
 
+
 def _is_truly_empty_or_docstring_only(tree):
     if not isinstance(tree, ast.Module):
         return False
@@ -1199,24 +1432,16 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
     cfg = load_config(file)
 
     if str(file).endswith((".ts", ".tsx")):
-        ts_out = scan_typescript_file(file)
-        if isinstance(ts_out, tuple) and len(ts_out) == 10:
-            return (*ts_out, None, cfg, [])
-        if isinstance(ts_out, tuple) and len(ts_out) == 11:
-            return (*ts_out, cfg, [])
-        if isinstance(ts_out, tuple) and len(ts_out) >= 13:
-            return ts_out[:13]
-        if isinstance(ts_out, tuple) and len(ts_out) == 12:
-            return (*ts_out, [])
-        return (*ts_out, None, cfg, [])
+        out = scan_typescript_file(file, cfg)
+        if isinstance(out, tuple) and len(out) < 13:
+            return (*out, *([None] * (13 - len(out))))
+        return out[:13]
 
     if str(file).endswith(".go"):
-        from skylos.visitors.languages.go.go import scan_go_file
-
-        go_out = scan_go_file(file, cfg)
-        if isinstance(go_out, tuple) and len(go_out) < 13:
-            return (*go_out, *([None] * (13 - len(go_out))))
-        return go_out
+        out = scan_go_file(file, cfg)
+        if isinstance(out, tuple) and len(out) < 13:
+            return (*out, *([None] * (13 - len(out))))
+        return out[:13]
 
     try:
         source = Path(file).read_text(encoding="utf-8")
@@ -1461,6 +1686,9 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
             raw_imports,
             ignore_lines,
             suppressed_findings,
+            v.inferred_types,
+            v.instance_attr_types,
+            getattr(v, "_used_attr_names", set()),
         )
 
     except Exception as e:
@@ -1486,6 +1714,9 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
             [],
             set(),
             [],
+            {},
+            {},
+            set(),
         )
 
 

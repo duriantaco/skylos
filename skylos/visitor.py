@@ -328,6 +328,7 @@ class Visitor(ast.NodeVisitor):
         self.slotted_classes = set()
         self.property_chains = defaultdict(dict)
         self.version_conditional_lines = set()
+        self._used_attr_names = set()
 
     def add_def(
         self, name: str, t: str, line: int, node: Optional[ast.AST] = None, **extra: Any
@@ -1160,6 +1161,27 @@ class Visitor(ast.NodeVisitor):
         if self._current_function_qname:
             self._free_vars[self._current_function_qname].update(node.names)
 
+        for name in node.names:
+            outer_qname = None
+            for outer_params in reversed(self._param_stack):
+                for param_name, param_full_name in outer_params:
+                    if name == param_name:
+                        outer_qname = param_full_name
+                        break
+                if outer_qname:
+                    break
+            if not outer_qname and self.local_var_maps:
+                for scope_map in reversed(self.local_var_maps[:-1]):
+                    if name in scope_map:
+                        outer_qname = scope_map[name]
+                        break
+            if not outer_qname:
+                outer_qname = self.qual(name)
+
+            self.add_ref(outer_qname)
+            if self.current_function_scope and self.local_var_maps:
+                self.local_var_maps[-1][name] = outer_qname
+
     def _bind_target(self, target: ast.expr, lineno: int) -> None:
         if isinstance(target, ast.Name):
             name_simple = target.id
@@ -1228,6 +1250,9 @@ class Visitor(ast.NodeVisitor):
 
         for target in node.targets:
             self._process_target_for_def(target)
+
+        if isinstance(node.value, ast.Dict):
+            self._track_dict_dispatch(node)
 
         self._process_dunder_all_exports(node)
         self._try_infer_types_from_call(node)
@@ -1319,11 +1344,19 @@ class Visitor(ast.NodeVisitor):
             self.visit(node.target)
         self.visit(node.value)
 
-    def _process_target_for_def(self, target_node: ast.expr) -> None:
+    def _process_target_for_def(self, target_node: ast.expr,
+                                _in_tuple_unpack: bool = False) -> None:
         if isinstance(target_node, ast.Name):
             name_simple = target_node.id
 
             if self._should_skip_variable_def(name_simple):
+                return
+
+            if (
+                _in_tuple_unpack
+                and name_simple.startswith("_")
+                and not name_simple.startswith("__")
+            ):
                 return
 
             var_name = self._compute_variable_name(name_simple)
@@ -1341,7 +1374,7 @@ class Visitor(ast.NodeVisitor):
 
         elif isinstance(target_node, (ast.Tuple, ast.List)):
             for elt in target_node.elts:
-                self._process_target_for_def(elt)
+                self._process_target_for_def(elt, _in_tuple_unpack=True)
 
     def _process_dunder_all_exports(self, node: ast.Assign) -> None:
         for target in node.targets:
@@ -1448,6 +1481,13 @@ class Visitor(ast.NodeVisitor):
                 fstring_pattern = None
                 if isinstance(node.args[1], ast.JoinedStr):
                     fstring_pattern = self._extract_fstring_pattern(node.args[1])
+                elif isinstance(node.args[1], ast.BinOp) and isinstance(
+                    node.args[1].op, ast.Add
+                ):
+                    if isinstance(node.args[1].left, ast.Constant) and isinstance(
+                        node.args[1].left.value, str
+                    ):
+                        fstring_pattern = node.args[1].left.value + "*"
                 elif isinstance(node.args[1], ast.Name):
                     var_name = node.args[1].id
                     fstring_pattern = self.pattern_tracker.f_string_patterns.get(
@@ -1488,6 +1528,29 @@ class Visitor(ast.NodeVisitor):
             if self.mod:
                 root_mod = self.mod.split(".")[0]
             self.dyn.add(root_mod)
+
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "import_module"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in ("importlib", "__import__")
+        ):
+            if node.args:
+                arg = node.args[0]
+                mod_name = extract_constant_string(arg)
+                if mod_name:
+                    root = mod_name.split(".")[0]
+                    self.dyn.add(root)
+                elif isinstance(arg, ast.JoinedStr):
+                    pattern = self._extract_fstring_pattern(arg)
+                    if pattern:
+                        static_prefix = pattern.split("*")[0]
+                        if static_prefix and "." in static_prefix:
+                            root = static_prefix.split(".")[0]
+                            self.dyn.add(root)
+                        self.pattern_tracker.add_pattern_ref(
+                            pattern, 60, source_module=self.mod
+                        )
 
         elif (
             isinstance(node.func, ast.Attribute)
@@ -1597,6 +1660,26 @@ class Visitor(ast.NodeVisitor):
                 attr_key = f"{owner}.{target.attr}"
                 self.instance_attr_types[attr_key] = qualified_class
 
+    def _track_dict_dispatch(self, node: ast.Assign) -> None:
+        dict_node = node.value
+        for val in dict_node.values:
+            if val is None:
+                continue
+            if isinstance(val, ast.Name):
+                self.add_ref(self.qual(val.id))
+            elif isinstance(val, ast.Attribute):
+                chain = self._get_attr_chain(val)
+                if chain:
+                    self.add_ref(chain)
+            elif isinstance(val, (ast.List, ast.Tuple)):
+                for elt in val.elts:
+                    if isinstance(elt, ast.Name):
+                        self.add_ref(self.qual(elt.id))
+                    elif isinstance(elt, ast.Attribute):
+                        chain = self._get_attr_chain(elt)
+                        if chain:
+                            self.add_ref(chain)
+
     def _process_textual_bindings(self, node: ast.Assign) -> None:
         for target in node.targets:
             if not isinstance(target, ast.Name):
@@ -1686,6 +1769,8 @@ class Visitor(ast.NodeVisitor):
 
         if not isinstance(node.ctx, ast.Load):
             return
+
+        self._used_attr_names.add(node.attr)
 
         if isinstance(node.value, ast.Name):
             base = node.value.id

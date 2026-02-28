@@ -114,8 +114,10 @@ DJANGO_MODEL_METHODS = {
     "validate_unique",
     "full_clean",
     "get_absolute_url",
+    "get_queryset",
+    "natural_key",
 }
-DJANGO_MODEL_BASES = {"Model"}
+DJANGO_MODEL_BASES = {"Model", "Manager", "QuerySet"}
 
 DJANGO_VIEW_METHODS = {
     "dispatch",
@@ -147,6 +149,11 @@ DJANGO_VIEW_BASES = {
     "DeleteView",
     "FormView",
     "RedirectView",
+    "ArchiveIndexView",
+    "YearArchiveView",
+    "MonthArchiveView",
+    "DayArchiveView",
+    "DateDetailView",
 }
 
 DJANGO_ADMIN_METHODS = {
@@ -154,17 +161,45 @@ DJANGO_ADMIN_METHODS = {
     "get_list_filter",
     "get_search_fields",
     "get_readonly_fields",
+    "get_fieldsets",
+    "get_fields",
+    "get_exclude",
+    "get_ordering",
+    "get_prepopulated_fields",
+    "get_queryset",
+    "get_inline_instances",
+    "get_urls",
+    "get_form",
+    "get_changelist",
+    "get_changelist_form",
+    "get_formsets_with_inlines",
     "has_add_permission",
     "has_change_permission",
     "has_delete_permission",
     "has_view_permission",
+    "has_module_permission",
     "save_model",
     "delete_model",
+    "save_formset",
+    "save_related",
+    "formfield_for_dbfield",
+    "formfield_for_foreignkey",
+    "formfield_for_manytomany",
+    "formfield_for_choice_field",
+    "response_add",
+    "response_change",
+    "response_delete",
+    "changelist_view",
+    "add_view",
+    "change_view",
+    "delete_view",
+    "history_view",
+    "lookup_allowed",
 }
-DJANGO_ADMIN_BASES = {"ModelAdmin"}
+DJANGO_ADMIN_BASES = {"ModelAdmin", "TabularInline", "StackedInline", "InlineModelAdmin"}
 
-DJANGO_FORM_METHODS = {"clean"}
-DJANGO_FORM_BASES = {"Form", "ModelForm"}
+DJANGO_FORM_METHODS = {"clean", "is_valid", "save"}
+DJANGO_FORM_BASES = {"Form", "ModelForm", "BaseForm", "BaseModelForm"}
 
 DJANGO_COMMAND_METHODS = {"add_arguments", "handle"}
 DJANGO_COMMAND_BASES = {"BaseCommand", "Command"}
@@ -179,7 +214,9 @@ DJANGO_MIDDLEWARE_METHODS = {
     "process_exception",
     "process_template_response",
 }
-DJANGO_MIDDLEWARE_BASES = {"MiddlewareMixin"}
+DJANGO_MIDDLEWARE_BASES = {"MiddlewareMixin", "SecurityMiddleware", "SessionMiddleware",
+                          "CommonMiddleware", "CsrfViewMiddleware", "AuthenticationMiddleware",
+                          "MessageMiddleware"}
 
 DJANGO_SIGNAL_METHODS = {
     "pre_save",
@@ -207,11 +244,29 @@ DRF_VIEWSET_METHODS = {
     "get_object",
     "get_serializer",
     "get_serializer_class",
+    "get_serializer_context",
     "perform_create",
     "perform_update",
     "perform_destroy",
+    "get_permissions",
+    "get_throttles",
+    "get_authenticators",
+    "get_renderers",
+    "get_parsers",
+    "get_paginated_response",
+    "paginate_queryset",
+    "filter_queryset",
+    "get_exception_handler",
+    "initial",
+    "finalize_response",
+    "permission_denied",
+    "throttled",
 }
-DRF_VIEWSET_BASES = {"APIView", "ViewSet", "ModelViewSet", "GenericViewSet"}
+DRF_VIEWSET_BASES = {"APIView", "ViewSet", "ModelViewSet", "GenericViewSet",
+                     "GenericAPIView", "CreateAPIView", "ListAPIView",
+                     "RetrieveAPIView", "DestroyAPIView", "UpdateAPIView",
+                     "ListCreateAPIView", "RetrieveUpdateAPIView",
+                     "RetrieveDestroyAPIView", "RetrieveUpdateDestroyAPIView"}
 
 DRF_SERIALIZER_METHODS = {
     "to_representation",
@@ -219,8 +274,16 @@ DRF_SERIALIZER_METHODS = {
     "validate",
     "create",
     "update",
+    "save",
+    "is_valid",
+    "run_validators",
+    "get_fields",
+    "get_validators",
+    "get_initial",
+    "get_value",
 }
-DRF_SERIALIZER_BASES = {"Serializer", "ModelSerializer"}
+DRF_SERIALIZER_BASES = {"Serializer", "ModelSerializer", "ListSerializer",
+                        "BaseSerializer", "HyperlinkedModelSerializer"}
 
 DRF_PERMISSION_METHODS = {"has_permission", "has_object_permission"}
 DRF_PERMISSION_BASES = {"BasePermission"}

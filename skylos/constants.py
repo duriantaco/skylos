@@ -1,9 +1,8 @@
 import re
 
 PENALTIES = {
-    "private_name": 60,
+    "private_name": 10,
     "dunder_or_magic": 100,
-    "underscored_var": 100,
     "in_init_file": 15,
     "dynamic_module": 10,
     "test_related": 100,

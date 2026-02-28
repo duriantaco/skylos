@@ -67,7 +67,7 @@ COMPLIANCE_MAPPINGS = {
         {"framework": "OWASP_TOP10", "requirement": "A03:2021", "title": "Injection"},
         {"framework": "PCI_DSS_4", "requirement": "6.2.4", "title": "Code Injection"},
     ],
-    "SKY-D502": [
+    "SKY-D226": [
         {"framework": "OWASP_TOP10", "requirement": "A03:2021", "title": "Injection"},
         {
             "framework": "PCI_DSS_4",
