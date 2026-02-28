@@ -80,7 +80,7 @@ class TestGitHubAnnotations:
         result = {
             "danger": [
                 {
-                    "rule_id": "SKY-D501",
+                    "rule_id": "SKY-D201",
                     "severity": "CRITICAL",
                     "file": "x.py",
                     "line": 1,
