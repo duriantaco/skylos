@@ -269,7 +269,6 @@ class TestConstants:
         expected_keys = {
             "private_name",
             "dunder_or_magic",
-            "underscored_var",
             "in_init_file",
             "dynamic_module",
             "test_related",

@@ -23,8 +23,8 @@ def func(x: int) -> int:
         )
         assert "ast" in import_names, "Regular unused import should also be flagged"
 
-    def test_underscore_items_not_flagged(self):
-        """items starting with _ should not be reported as unused"""
+    def test_underscore_items_flagged_with_small_penalty(self):
+        """_ items get a small penalty (10) but are still flagged when truly unused"""
         code = """
 _private_var = "private"
 
@@ -40,22 +40,21 @@ class Example:
 """
         result = self._analyze(code)
 
+        # private functions/vars with zero refs ARE flagged (conf=90, threshold=60)
         function_names = [f["name"] for f in result["unused_functions"]]
-        underscore_funcs = [name for name in function_names if name.startswith("_")]
-        assert len(underscore_funcs) == 0, (
-            f"Underscore functions incorrectly flagged: {underscore_funcs}"
+        assert "_private_func" in function_names, (
+            "Unused private function should be flagged"
         )
 
         variable_names = [v["name"] for v in result["unused_variables"]]
-        underscore_vars = [name for name in variable_names if name.startswith("_")]
-        assert len(underscore_vars) == 0, (
-            f"Underscore variables incorrectly flagged: {underscore_vars}"
+        assert "_private_var" in variable_names, (
+            "Unused private variable should be flagged"
         )
 
+        # underscore params with zero refs are also flagged (conf=90)
         param_names = [p["name"] for p in result["unused_parameters"]]
-        underscore_params = [name for name in param_names if name.startswith("_")]
-        assert len(underscore_params) == 0, (
-            f"Underscore parameters incorrectly flagged: {underscore_params}"
+        assert "_private_param" in param_names, (
+            "Unused underscore parameter should be flagged"
         )
 
     def test_unittest_magic_methods_not_flagged(self):
@@ -139,11 +138,10 @@ def regular_func(_param: str):
             "Regular unused import should be flagged"
         )
 
-        # should not flag _ items
+        # private funcs with zero refs are flagged (small penalty, conf=90)
         function_names = [f["name"] for f in result["unused_functions"]]
-        underscore_funcs = [name for name in function_names if name.startswith("_")]
-        assert len(underscore_funcs) == 0, (
-            f"Underscore functions flagged: {underscore_funcs}"
+        assert "_private_func" in function_names, (
+            "Unused private function should be flagged"
         )
 
         # should not flag test methods
@@ -151,11 +149,10 @@ def regular_func(_param: str):
         flagged_magic = [method for method in magic_methods if method in function_names]
         assert len(flagged_magic) == 0, f"Test methods flagged: {flagged_magic}"
 
-        # should not flag _ param
+        # underscore params with zero refs are also flagged (conf=90)
         param_names = [p["name"] for p in result["unused_parameters"]]
-        underscore_params = [name for name in param_names if name.startswith("_")]
-        assert len(underscore_params) == 0, (
-            f"Underscore parameters flagged: {underscore_params}"
+        assert "_param" in param_names, (
+            "Unused underscore parameter should be flagged"
         )
 
     def _analyze(self, code: str, filename: str = "example.py") -> dict:
@@ -289,8 +286,15 @@ class TestPrivateNamePenalty:
             s = Skylos()
             return json.loads(s.analyze(str(d), thr=thr))
 
-    def test_private_func_hidden_at_default_threshold(self):
+    def test_private_func_visible_at_default_threshold(self):
+        """With penalty=10, conf=90 so visible at thr=60."""
         result = self._analyze("def _secret(): pass\n", thr=60)
+        names = [f["simple_name"] for f in result["unused_functions"]]
+        assert "_secret" in names
+
+    def test_private_func_hidden_at_high_threshold(self):
+        """With penalty=10, conf=90 so hidden at thr=95."""
+        result = self._analyze("def _secret(): pass\n", thr=95)
         names = [f["simple_name"] for f in result["unused_functions"]]
         assert "_secret" not in names
 
@@ -299,10 +303,11 @@ class TestPrivateNamePenalty:
         names = [f["simple_name"] for f in result["unused_functions"]]
         assert "_secret" in names
 
-    def test_private_var_hidden_at_default_threshold(self):
+    def test_private_var_visible_at_default_threshold(self):
+        """With penalty=10, conf=90 so visible at thr=60."""
         result = self._analyze("_hidden = 42\n", thr=60)
         names = [v["simple_name"] for v in result["unused_variables"]]
-        assert "_hidden" not in names
+        assert "_hidden" in names
 
     def test_private_var_visible_at_low_threshold(self):
         result = self._analyze("_hidden = 42\n", thr=20)
@@ -320,7 +325,8 @@ class TestPrivateNamePenalty:
         names = [f["simple_name"] for f in result["unused_functions"]]
         assert "__repr__" not in names
 
-    def test_private_confidence_between_20_and_60(self):
+    def test_private_confidence_is_90(self):
+        """With penalty=10, a private func with no refs gets conf=90."""
         code = "def _internal(): pass\n"
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "mod.py").write_text(code)
@@ -328,8 +334,8 @@ class TestPrivateNamePenalty:
             s.analyze(str(d), thr=1)
             for defn in s.defs.values():
                 if defn.simple_name == "_internal":
-                    assert 20 < defn.confidence < 60, (
-                        f"Private confidence should be (20,60), got {defn.confidence}"
+                    assert defn.confidence == 90, (
+                        f"Private confidence should be 90, got {defn.confidence}"
                     )
                     break
             else:

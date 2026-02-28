@@ -256,7 +256,8 @@ class TestSkylos:
         skylos._mark_refs()
 
         assert mock_import.references == 1
-        assert mock_original.references == 1
+        # original gets 2: one from the import statement itself, one from usage
+        assert mock_original.references == 2
 
 
 class TestHeuristics:
@@ -487,6 +488,9 @@ class TestClass:
                         raw_imports,
                         ignore_lines,
                         suppressed_findings,
+                        inferred_types,
+                        instance_attr_types,
+                        used_attr_names,
                     ) = proc_file(f.name, "test_module")
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
@@ -528,6 +532,9 @@ class TestClass:
                     raw_imports,
                     ignore_lines,
                     suppressed_findings,
+                    inferred_types,
+                    instance_attr_types,
+                    used_attr_names,
                 ) = proc_file(f.name, "test_module")
 
                 assert defs == []
@@ -591,6 +598,9 @@ class TestClass:
                         raw_imports,
                         ignore_lines,
                         suppressed_findings,
+                        inferred_types,
+                        instance_attr_types,
+                        used_attr_names,
                     ) = proc_file((f.name, "test_module"))
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)

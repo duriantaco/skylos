@@ -36,7 +36,7 @@ def test_typescript_scanner_defaults(tmp_path):
     assert "unusedLegacyFunction" not in ref_names
     assert "runUnsafe" in ref_names
 
-    eval_findings = [f for f in danger if f["rule_id"] == "SKY-D501"]
+    eval_findings = [f for f in danger if f["rule_id"] == "SKY-D201"]
     assert len(eval_findings) == 1
 
     assert len(quality) == 0
@@ -54,4 +54,4 @@ def test_typescript_config_override(tmp_path):
     _, _, _, _, _, _, quality, _, _, _, _, _, _ = results
 
     assert len(quality) > 0
-    assert quality[0]["rule_id"] == "SKY-Q601"
+    assert quality[0]["rule_id"] == "SKY-Q301"

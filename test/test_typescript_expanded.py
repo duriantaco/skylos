@@ -38,64 +38,64 @@ class TestTSDangerRules:
     def test_eval_detected(self, tmp_path):
         _, _, _, danger = _scan_ts(tmp_path, 'eval("alert(1)");')
         ids = {f["rule_id"] for f in danger}
-        assert "SKY-D501" in ids
+        assert "SKY-D201" in ids
 
     def test_innerhtml_detected(self, tmp_path):
         code = 'document.getElementById("x")!.innerHTML = "<b>xss</b>";'
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
-        assert "SKY-D502" in ids
+        assert "SKY-D226" in ids
 
     def test_new_function_detected(self, tmp_path):
         code = 'const f = new Function("return 1");'
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
-        assert "SKY-D504" in ids
+        assert "SKY-D202" in ids
 
     def test_settimeout_string_detected(self, tmp_path):
         code = 'setTimeout("alert(1)", 1000);'
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
-        assert "SKY-D505" in ids
+        assert "SKY-D202" in ids
 
     def test_setinterval_string_detected(self, tmp_path):
         code = 'setInterval("document.write(1)", 5000);'
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
-        assert "SKY-D505" in ids
+        assert "SKY-D202" in ids
 
     def test_outerhtml_detected(self, tmp_path):
         code = 'document.getElementById("x")!.outerHTML = "<div>replaced</div>";'
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
-        assert "SKY-D507" in ids
+        assert "SKY-D226" in ids
 
     def test_settimeout_callback_safe(self, tmp_path):
         code = 'setTimeout(() => { console.log("ok"); }, 100);'
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
-        assert "SKY-D505" not in ids
+        assert "SKY-D202" not in ids
 
     def test_regex_exec_not_flagged(self, tmp_path):
-        """regex.exec() is safe — should NOT trigger SKY-D506."""
+        """regex.exec() is safe — should NOT trigger SKY-D212."""
         code = 'const regex = /hello/g;\nconst m = regex.exec("hello world");'
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
-        assert "SKY-D506" not in ids
+        assert "SKY-D212" not in ids
 
     def test_db_exec_not_flagged(self, tmp_path):
-        """db.exec() / stmt.exec() should NOT trigger SKY-D506."""
+        """db.exec() / stmt.exec() should NOT trigger SKY-D212."""
         code = 'const db = getDB();\ndb.exec("SELECT 1");'
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
-        assert "SKY-D506" not in ids
+        assert "SKY-D212" not in ids
 
     def test_child_process_exec_flagged(self, tmp_path):
-        """child_process.exec() SHOULD trigger SKY-D506."""
+        """child_process.exec() SHOULD trigger SKY-D212."""
         code = 'import cp from "child_process";\ncp.exec("rm -rf /");'
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
-        assert "SKY-D506" in ids
+        assert "SKY-D212" in ids
 
 
 class TestTSQualityRules:
@@ -126,7 +126,7 @@ class TestTSQualityRules:
         )
         _, _, quality, _ = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in quality}
-        assert "SKY-Q601" in ids
+        assert "SKY-Q301" in ids
 
     def test_nesting_depth(self, tmp_path):
         code = (
@@ -145,7 +145,7 @@ class TestTSQualityRules:
             "deep(1);\n"
         )
         _, _, quality, _ = _scan_ts(tmp_path, code)
-        nesting = [f for f in quality if f["rule_id"] == "SKY-Q602"]
+        nesting = [f for f in quality if f["rule_id"] == "SKY-Q302"]
         assert len(nesting) > 0
 
     def test_too_many_params(self, tmp_path):
@@ -156,7 +156,7 @@ class TestTSQualityRules:
             "many(1, 2, 'x', true, null, {});\n"
         )
         _, _, quality, _ = _scan_ts(tmp_path, code)
-        param_findings = [f for f in quality if f["rule_id"] == "SKY-Q604"]
+        param_findings = [f for f in quality if f["rule_id"] == "SKY-C303"]
         assert len(param_findings) == 1
         assert "6 parameters" in param_findings[0]["message"]
 
@@ -408,7 +408,7 @@ class TestMixedRepoIntegration:
         result = json.loads(result_json)
 
         danger_rules = {f["rule_id"] for f in result.get("danger", [])}
-        assert "SKY-D501" in danger_rules
+        assert "SKY-D201" in danger_rules
 
     def test_mixed_repo_quality_from_ts(self, tmp_path):
         from skylos.analyzer import analyze
@@ -434,7 +434,7 @@ class TestMixedRepoIntegration:
         result = json.loads(result_json)
 
         quality_rules = {f.get("rule_id") for f in result.get("quality", [])}
-        assert "SKY-Q602" in quality_rules
+        assert "SKY-Q302" in quality_rules
 
 
 class TestHardBenchmark:
@@ -614,3 +614,561 @@ class TestRealisticBenchmark:
     def test_no_false_positives(self):
         for name in self.EXPECTED_ALIVE:
             assert name not in self.unused, f"{name} is alive but was flagged"
+
+
+# =========================================================================
+# New danger rules (Step 5)
+# =========================================================================
+
+
+class TestNewDangerRules:
+    def test_require_with_variable(self, tmp_path):
+        """SKY-D245: require() with variable argument."""
+        code = 'const mod = "fs";\nconst fs = require(mod);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D245" in ids
+
+    def test_require_with_string_safe(self, tmp_path):
+        """require() with string literal should NOT trigger SKY-D245."""
+        code = 'const fs = require("fs");\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D245" not in ids
+
+    def test_jwt_decode_flagged(self, tmp_path):
+        """SKY-D246: jwt.decode() without verify."""
+        code = 'import jwt from "jsonwebtoken";\nconst payload = jwt.decode(token);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D246" in ids
+
+    def test_non_jwt_decode_safe(self, tmp_path):
+        """base64.decode() should NOT trigger SKY-D246."""
+        code = "const result = base64.decode(data);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D246" not in ids
+
+    def test_cors_wildcard_origin(self, tmp_path):
+        """SKY-D247: cors({ origin: '*' })."""
+        code = "import cors from 'cors';\nconst handler = cors({ origin: '*' });\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D247" in ids
+
+    def test_cors_specific_origin_safe(self, tmp_path):
+        """cors() with specific origin should NOT trigger SKY-D247."""
+        code = "import cors from 'cors';\nconst handler = cors({ origin: 'https://example.com' });\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D247" not in ids
+
+    def test_hardcoded_localhost_url(self, tmp_path):
+        """SKY-D248: Hardcoded localhost URL."""
+        code = 'const API = "http://localhost:3000/api/v1";\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D248" in ids
+
+    def test_hardcoded_127_url(self, tmp_path):
+        """SKY-D248: Hardcoded 127.0.0.1 URL."""
+        code = 'const API = "http://127.0.0.1:8080/health";\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D248" in ids
+
+    def test_normal_url_safe(self, tmp_path):
+        """Normal external URL should NOT trigger SKY-D248."""
+        code = 'const API = "https://api.example.com/v1";\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D248" not in ids
+
+    def test_entropy_secret_detection(self, tmp_path):
+        """High-entropy strings should trigger SKY-S101."""
+        code = 'const token = "aB3dEfGhIjKlMnOpQrStUvWxYz012345";\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        s101 = [f for f in danger if f["rule_id"] == "SKY-S101"]
+        assert len(s101) > 0
+
+    def test_low_entropy_safe(self, tmp_path):
+        """Low-entropy string should NOT trigger entropy-based SKY-S101."""
+        code = 'const msg = "aaaaaaaaaaaaaaaaaaaaaa";\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        s101 = [f for f in danger if f["rule_id"] == "SKY-S101"]
+        assert len(s101) == 0
+
+
+# =========================================================================
+# New quality rules (Steps 6-7)
+# =========================================================================
+
+
+class TestNewQualityRules:
+    def test_duplicate_condition_if_else(self, tmp_path):
+        """SKY-Q305: Duplicate condition in if-else chain."""
+        code = (
+            "function check(x: number) {\n"
+            "    if (x > 10) { return 1; }\n"
+            "    else if (x < 0) { return -1; }\n"
+            "    else if (x > 10) { return 2; }\n"
+            "    return 0;\n"
+            "}\n"
+            "check(5);\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in quality}
+        assert "SKY-Q305" in ids
+
+    def test_no_duplicate_condition(self, tmp_path):
+        """No duplicate conditions should not trigger SKY-Q305."""
+        code = (
+            "function check(x: number) {\n"
+            "    if (x > 10) { return 1; }\n"
+            "    else if (x < 0) { return -1; }\n"
+            "    else { return 0; }\n"
+            "}\n"
+            "check(5);\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        q305 = [f for f in quality if f["rule_id"] == "SKY-Q305"]
+        assert len(q305) == 0
+
+    def test_await_in_for_loop(self, tmp_path):
+        """SKY-Q402: await inside for loop."""
+        code = (
+            "async function fetchAll(urls: string[]) {\n"
+            "    for (const url of urls) {\n"
+            "        await fetch(url);\n"
+            "    }\n"
+            "}\n"
+            "fetchAll([]);\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in quality}
+        assert "SKY-Q402" in ids
+
+    def test_await_in_while_loop(self, tmp_path):
+        """SKY-Q402: await inside while loop."""
+        code = (
+            "async function poll() {\n"
+            "    let done = false;\n"
+            "    while (!done) {\n"
+            "        done = await checkStatus();\n"
+            "    }\n"
+            "}\n"
+            "poll();\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in quality}
+        assert "SKY-Q402" in ids
+
+    def test_await_outside_loop_safe(self, tmp_path):
+        """await outside loop should NOT trigger SKY-Q402."""
+        code = (
+            "async function fetchOne() {\n"
+            "    const result = await fetch('https://example.com');\n"
+            "    return result;\n"
+            "}\n"
+            "fetchOne();\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        q402 = [f for f in quality if f["rule_id"] == "SKY-Q402"]
+        assert len(q402) == 0
+
+    def test_unreachable_after_return(self, tmp_path):
+        """SKY-UC002: Code after return statement."""
+        code = (
+            "function dead() {\n"
+            "    return 1;\n"
+            "    console.log('unreachable');\n"
+            "}\n"
+            "dead();\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in quality}
+        assert "SKY-UC002" in ids
+
+    def test_unreachable_after_throw(self, tmp_path):
+        """SKY-UC002: Code after throw statement."""
+        code = (
+            "function fail() {\n"
+            "    throw new Error('fail');\n"
+            "    console.log('unreachable');\n"
+            "}\n"
+            "fail();\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in quality}
+        assert "SKY-UC002" in ids
+
+    def test_no_unreachable_code(self, tmp_path):
+        """Normal function should NOT trigger SKY-UC002."""
+        code = (
+            "function ok() {\n"
+            "    console.log('hello');\n"
+            "    return 1;\n"
+            "}\n"
+            "ok();\n"
+        )
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        uc002 = [f for f in quality if f["rule_id"] == "SKY-UC002"]
+        assert len(uc002) == 0
+
+
+# =========================================================================
+# New danger rules: D250, D251, D252, D253
+# =========================================================================
+
+
+class TestInsecureRandomness:
+    """SKY-D250: Math.random() is not cryptographically secure."""
+
+    def test_math_random_flagged(self, tmp_path):
+        code = "const id = Math.random().toString(36);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D250" in ids
+
+    def test_math_random_in_expression(self, tmp_path):
+        code = "const roll = Math.floor(Math.random() * 6) + 1;\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D250" in ids
+
+    def test_crypto_random_safe(self, tmp_path):
+        """crypto.getRandomValues() should NOT trigger SKY-D250."""
+        code = "const arr = new Uint8Array(16);\ncrypto.getRandomValues(arr);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D250" not in ids
+
+    def test_math_floor_safe(self, tmp_path):
+        """Math.floor() alone should NOT trigger SKY-D250."""
+        code = "const x = Math.floor(3.7);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D250" not in ids
+
+
+class TestSensitiveDataInLogs:
+    """SKY-D251: Sensitive data passed to console logging methods."""
+
+    def test_console_log_password(self, tmp_path):
+        code = 'const password = "hunter2";\nconsole.log(password);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" in ids
+
+    def test_console_error_token(self, tmp_path):
+        code = "const userToken = getToken();\nconsole.error(userToken);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" in ids
+
+    def test_console_log_property(self, tmp_path):
+        """console.log(user.password) — property access with sensitive name."""
+        code = "console.log(user.password);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" in ids
+
+    def test_console_log_template_literal(self, tmp_path):
+        """console.log(`Token: ${token}`) — sensitive data in template."""
+        code = "const token = getToken();\nconsole.log(`Auth: ${token}`);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" in ids
+
+    def test_console_warn_api_key(self, tmp_path):
+        code = "const apiKey = process.env.KEY;\nconsole.warn(apiKey);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" in ids
+
+    def test_console_log_string_safe(self, tmp_path):
+        """console.log with string literal should NOT trigger."""
+        code = 'console.log("Application started");\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" not in ids
+
+    def test_console_log_safe_variable(self, tmp_path):
+        """console.log with non-sensitive variable should NOT trigger."""
+        code = "const count = 42;\nconsole.log(count);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" not in ids
+
+    def test_console_log_username_safe(self, tmp_path):
+        """'username' should NOT trigger (not a secret)."""
+        code = "const username = 'admin';\nconsole.log(username);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" not in ids
+
+    def test_console_time_safe(self, tmp_path):
+        """console.time() is not a logging method — should NOT trigger."""
+        code = "const token = 'abc';\nconsole.time(token);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D251" not in ids
+
+
+class TestInsecureCookies:
+    """SKY-D252: Cookie set without httpOnly or secure flags."""
+
+    def test_cookie_no_options(self, tmp_path):
+        """res.cookie() with no options object."""
+        code = 'res.cookie("session", token);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        d252 = [f for f in danger if f["rule_id"] == "SKY-D252"]
+        assert len(d252) == 1
+        assert "httpOnly" in d252[0]["message"]
+        assert "secure" in d252[0]["message"]
+
+    def test_cookie_missing_httponly(self, tmp_path):
+        """Options with secure but missing httpOnly."""
+        code = 'res.cookie("session", token, { secure: true });\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        d252 = [f for f in danger if f["rule_id"] == "SKY-D252"]
+        assert len(d252) == 1
+        assert "httpOnly" in d252[0]["message"]
+        assert "secure" not in d252[0]["message"] or "httpOnly" in d252[0]["message"]
+
+    def test_cookie_missing_secure(self, tmp_path):
+        """Options with httpOnly but missing secure."""
+        code = 'res.cookie("session", token, { httpOnly: true });\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        d252 = [f for f in danger if f["rule_id"] == "SKY-D252"]
+        assert len(d252) == 1
+        assert "secure" in d252[0]["message"]
+
+    def test_cookie_both_flags_safe(self, tmp_path):
+        """Both httpOnly and secure present — should NOT trigger."""
+        code = 'res.cookie("session", token, { httpOnly: true, secure: true });\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        d252 = [f for f in danger if f["rule_id"] == "SKY-D252"]
+        assert len(d252) == 0
+
+    def test_cookie_all_flags_safe(self, tmp_path):
+        """All three flags present — should NOT trigger."""
+        code = 'res.cookie("sid", token, { httpOnly: true, secure: true, sameSite: "strict" });\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        d252 = [f for f in danger if f["rule_id"] == "SKY-D252"]
+        assert len(d252) == 0
+
+    def test_cookie_dynamic_options_safe(self, tmp_path):
+        """Variable options — can't analyze, should NOT trigger."""
+        code = "res.cookie('session', token, cookieOpts);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        d252 = [f for f in danger if f["rule_id"] == "SKY-D252"]
+        assert len(d252) == 0
+
+
+class TestTimingUnsafeComparison:
+    """SKY-D253: Direct comparison of security-sensitive variables."""
+
+    def test_password_triple_eq(self, tmp_path):
+        code = (
+            "function verify(password: string, stored: string) {\n"
+            "    return password === stored;\n"
+            "}\n"
+            "verify('a', 'b');\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" in ids
+
+    def test_token_double_eq(self, tmp_path):
+        code = "if (apiToken == expectedToken) { grant(); }\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" in ids
+
+    def test_hash_comparison(self, tmp_path):
+        code = "if (computedHash === storedHash) { return true; }\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" in ids
+
+    def test_secret_not_equal(self, tmp_path):
+        """!== with secret is also timing-unsafe."""
+        code = "if (secret !== expected) { throw new Error('invalid'); }\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" in ids
+
+    def test_member_expr_password(self, tmp_path):
+        """user.password === input — property access."""
+        code = "if (user.password === input) { auth(); }\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" in ids
+
+    def test_number_comparison_safe(self, tmp_path):
+        """Numeric comparison should NOT trigger."""
+        code = "if (count === 42) { doStuff(); }\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" not in ids
+
+    def test_string_literal_comparison_safe(self, tmp_path):
+        """String literal comparison should NOT trigger."""
+        code = 'if (status === "active") { proceed(); }\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" not in ids
+
+    def test_length_comparison_safe(self, tmp_path):
+        """arr.length === 0 should NOT trigger."""
+        code = "if (items.length === 0) { return; }\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D253" not in ids
+
+
+# ---------------------------------------------------------------------------
+# SKY-D270: Sensitive data in localStorage/sessionStorage
+# ---------------------------------------------------------------------------
+
+
+class TestLocalStorageTokens:
+    def test_localstorage_token(self, tmp_path):
+        code = 'localStorage.setItem("auth_token", token);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D270" in ids
+
+    def test_localstorage_jwt(self, tmp_path):
+        code = 'localStorage.setItem("jwt", data.jwt);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D270" in ids
+
+    def test_sessionstorage_password(self, tmp_path):
+        code = 'sessionStorage.setItem("password", pw);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D270" in ids
+
+    def test_localstorage_access_token(self, tmp_path):
+        code = 'localStorage.setItem("accessToken", resp.token);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D270" in ids
+
+    def test_localstorage_apikey(self, tmp_path):
+        code = 'localStorage.setItem("api_key", key);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D270" in ids
+
+    def test_sessionstorage_refresh_token(self, tmp_path):
+        code = 'sessionStorage.setItem("refresh-token", rt);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D270" in ids
+
+    def test_csrf_token_safe(self, tmp_path):
+        """CSRF tokens in storage should NOT trigger."""
+        code = 'localStorage.setItem("csrf_token", csrfToken);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D270" not in ids
+
+    def test_xsrf_token_safe(self, tmp_path):
+        """XSRF tokens in storage should NOT trigger."""
+        code = 'localStorage.setItem("xsrf-token", token);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D270" not in ids
+
+    def test_non_sensitive_key_safe(self, tmp_path):
+        """Non-sensitive keys should NOT trigger."""
+        code = 'localStorage.setItem("theme", "dark");\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D270" not in ids
+
+    def test_locale_setting_safe(self, tmp_path):
+        """Ordinary settings should NOT trigger."""
+        code = 'sessionStorage.setItem("locale", "en-US");\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D270" not in ids
+
+    def test_message_mentions_storage_type(self, tmp_path):
+        """Finding message should mention the correct storage type."""
+        code = 'sessionStorage.setItem("auth_token", t);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        d270 = [f for f in danger if f["rule_id"] == "SKY-D270"]
+        assert len(d270) == 1
+        assert "sessionStorage" in d270[0]["message"]
+
+
+# ---------------------------------------------------------------------------
+# SKY-D271: Error information disclosure in HTTP responses
+# ---------------------------------------------------------------------------
+
+
+class TestErrorDisclosure:
+    def test_res_json_error_stack(self, tmp_path):
+        code = 'res.json({ error: err.stack });\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D271" in ids
+
+    def test_res_send_error_stack(self, tmp_path):
+        code = 'res.send(error.stack);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D271" in ids
+
+    def test_res_json_sql_message(self, tmp_path):
+        code = 'res.json({ detail: err.sqlMessage });\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D271" in ids
+
+    def test_res_write_sql_state(self, tmp_path):
+        code = 'response.write(dbErr.sqlState);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D271" in ids
+
+    def test_res_end_sql(self, tmp_path):
+        code = 'res.end(JSON.stringify({ sql: err.sql }));\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D271" in ids
+
+    def test_generic_error_message_safe(self, tmp_path):
+        """Sending a generic message should NOT trigger."""
+        code = 'res.json({ error: "Something went wrong" });\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D271" not in ids
+
+    def test_res_json_safe_property(self, tmp_path):
+        """err.message (not stack/sql) should NOT trigger."""
+        code = 'res.json({ error: err.message });\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D271" not in ids
+
+    def test_console_log_stack_safe(self, tmp_path):
+        """Logging error.stack (not in response) should NOT trigger D271."""
+        code = 'console.error(err.stack);\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D271" not in ids
+
+    def test_finding_message_mentions_prop(self, tmp_path):
+        """Finding message should name the specific dangerous property."""
+        code = 'res.json({ trace: err.stack });\n'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        d271 = [f for f in danger if f["rule_id"] == "SKY-D271"]
+        assert len(d271) == 1
+        assert "stack" in d271[0]["message"]
