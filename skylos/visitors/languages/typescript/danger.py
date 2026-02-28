@@ -47,15 +47,43 @@ _JSX_PATTERN = '(jsx_attribute (property_identifier) @dangerously (#eq? @dangero
 
 _SIMPLE_MAP: dict[str, tuple[str, str, str]] = {
     "eval": ("SKY-D201", "CRITICAL", "Use of eval() detected"),
-    "innerHTML": ("SKY-D226", "HIGH", "Unsafe innerHTML assignment — XSS vulnerability"),
-    "doc_write": ("SKY-D226", "HIGH", "document.write() can lead to XSS vulnerabilities"),
+    "innerHTML": (
+        "SKY-D226",
+        "HIGH",
+        "Unsafe innerHTML assignment — XSS vulnerability",
+    ),
+    "doc_write": (
+        "SKY-D226",
+        "HIGH",
+        "document.write() can lead to XSS vulnerabilities",
+    ),
     "new_func": ("SKY-D202", "CRITICAL", "new Function() is equivalent to eval()"),
-    "timeout_str": ("SKY-D202", "HIGH", "setTimeout() with string argument is equivalent to eval()"),
-    "interval_str": ("SKY-D202", "HIGH", "setInterval() with string argument is equivalent to eval()"),
-    "outerHTML": ("SKY-D226", "HIGH", "Unsafe outerHTML assignment — XSS vulnerability"),
-    "dangerously": ("SKY-D226", "HIGH", "dangerouslySetInnerHTML bypasses React's XSS protections"),
+    "timeout_str": (
+        "SKY-D202",
+        "HIGH",
+        "setTimeout() with string argument is equivalent to eval()",
+    ),
+    "interval_str": (
+        "SKY-D202",
+        "HIGH",
+        "setInterval() with string argument is equivalent to eval()",
+    ),
+    "outerHTML": (
+        "SKY-D226",
+        "HIGH",
+        "Unsafe outerHTML assignment — XSS vulnerability",
+    ),
+    "dangerously": (
+        "SKY-D226",
+        "HIGH",
+        "dangerouslySetInnerHTML bypasses React's XSS protections",
+    ),
     "proto": ("SKY-D510", "HIGH", "Prototype pollution via __proto__ access"),
-    "math_random": ("SKY-D250", "MEDIUM", "Math.random() is not cryptographically secure. Use crypto.getRandomValues() or crypto.randomUUID()."),
+    "math_random": (
+        "SKY-D250",
+        "MEDIUM",
+        "Math.random() is not cryptographically secure. Use crypto.getRandomValues() or crypto.randomUUID().",
+    ),
 }
 
 # Complex danger patterns: need post-processing logic
@@ -88,26 +116,61 @@ _INTERNAL_URL_PREFIXES = (
     "https://0.0.0.0",
 )
 
-_BASE64_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=-_")
+_BASE64_CHARS = set(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=-_"
+)
 
 _LOG_METHODS = {"log", "warn", "error", "info", "debug", "trace"}
 
 _LOG_SENSITIVE_SUFFIXES = (
-    "password", "passwd", "pwd", "secret", "token", "apikey",
-    "credential", "credentials", "authorization", "privatekey",
-    "accesstoken", "refreshtoken", "sessionid", "ssn", "creditcard",
-    "cardnumber", "cvv", "pin",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "apikey",
+    "credential",
+    "credentials",
+    "authorization",
+    "privatekey",
+    "accesstoken",
+    "refreshtoken",
+    "sessionid",
+    "ssn",
+    "creditcard",
+    "cardnumber",
+    "cvv",
+    "pin",
 )
 
 _TIMING_SENSITIVE_SUFFIXES = (
-    "password", "passwd", "pwd", "secret", "token", "hash",
-    "digest", "hmac", "signature", "apikey",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "hash",
+    "digest",
+    "hmac",
+    "signature",
+    "apikey",
 )
 
 _STORAGE_SENSITIVE_SUFFIXES = (
-    "token", "auth", "jwt", "secret", "password", "passwd",
-    "credential", "apikey", "bearer", "accesstoken", "refreshtoken",
-    "sessionid", "sessionkey", "privatekey",
+    "token",
+    "auth",
+    "jwt",
+    "secret",
+    "password",
+    "passwd",
+    "credential",
+    "apikey",
+    "bearer",
+    "accesstoken",
+    "refreshtoken",
+    "sessionid",
+    "sessionkey",
+    "privatekey",
 )
 
 _STORAGE_SAFE_PREFIXES = ("csrf", "xsrf")

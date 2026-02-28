@@ -9,7 +9,7 @@ requires-python = ">=3.10"
 description = "Find dead code, security vulnerabilities, and quality issues in Python, TypeScript, and Go. AI-powered static analysis with quality gates for CI/CD."
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 keywords = [
     "static-analysis",
     "dead-code",
@@ -29,7 +29,6 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -42,14 +41,6 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
-
-[project.urls]
-Homepage = "https://skylos.dev"
-Documentation = "https://docs.skylos.dev"
-Repository = "https://github.com/duriantaco/skylos"
-Changelog = "https://github.com/duriantaco/skylos/blob/main/CHANGELOG.md"
-"Bug Tracker" = "https://github.com/duriantaco/skylos/issues"
-Discord = "https://discord.gg/Ftn9t9tErf"
 dependencies = [
     "inquirer>=3.0.3",
     "libcst>=1.8.2",
@@ -64,6 +55,14 @@ dependencies = [
     "networkx",
     "pyperclip"
 ]
+
+[project.urls]
+Homepage = "https://skylos.dev"
+Documentation = "https://docs.skylos.dev"
+Repository = "https://github.com/duriantaco/skylos"
+Changelog = "https://github.com/duriantaco/skylos/blob/main/CHANGELOG.md"
+"Bug Tracker" = "https://github.com/duriantaco/skylos/issues"
+Discord = "https://discord.gg/Ftn9t9tErf"
 
 [project.optional-dependencies]
 web = ["flask>=2.1.1", "flask-cors>=3.0.3"]

@@ -151,9 +151,7 @@ def regular_func(_param: str):
 
         # underscore params with zero refs are also flagged (conf=90)
         param_names = [p["name"] for p in result["unused_parameters"]]
-        assert "_param" in param_names, (
-            "Unused underscore parameter should be flagged"
-        )
+        assert "_param" in param_names, "Unused underscore parameter should be flagged"
 
     def _analyze(self, code: str, filename: str = "example.py") -> dict:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -171,7 +169,9 @@ class TestMultiPath:
         with tempfile.TemporaryDirectory() as d:
             app = Path(d) / "app"
             app.mkdir()
-            (app / "main.py").write_text("def used(): pass\ndef dead_func(): pass\nused()\n")
+            (app / "main.py").write_text(
+                "def used(): pass\ndef dead_func(): pass\nused()\n"
+            )
 
             s = Skylos()
             result = json.loads(s.analyze(str(app), thr=20))
@@ -182,7 +182,9 @@ class TestMultiPath:
         with tempfile.TemporaryDirectory() as d:
             app = Path(d) / "app"
             app.mkdir()
-            (app / "main.py").write_text("def used(): pass\ndef dead_func(): pass\nused()\n")
+            (app / "main.py").write_text(
+                "def used(): pass\ndef dead_func(): pass\nused()\n"
+            )
 
             s = Skylos()
             result = json.loads(s.analyze([str(app)], thr=20))
@@ -245,7 +247,9 @@ class TestMultiPath:
             names = [f["simple_name"] for f in result["unused_functions"]]
             assert "top_dead" in names
             assert "bot_dead" in names
-            assert names.count("bot_dead") == 1, "Child path files should be deduplicated"
+            assert names.count("bot_dead") == 1, (
+                "Child path files should be deduplicated"
+            )
 
     def test_empty_path_in_list(self):
         with tempfile.TemporaryDirectory() as d:
@@ -379,8 +383,12 @@ class SqlRepository(Repository):
 """
         result = self._analyze(code, thr=1)
         names = [f["simple_name"] for f in result["unused_functions"]]
-        assert "create" not in names, "Abstract/implemented 'create' should not be flagged"
-        assert "delete" not in names, "Abstract/implemented 'delete' should not be flagged"
+        assert "create" not in names, (
+            "Abstract/implemented 'create' should not be flagged"
+        )
+        assert "delete" not in names, (
+            "Abstract/implemented 'delete' should not be flagged"
+        )
 
     def test_abstract_class_methods_suppressed(self):
         code = """

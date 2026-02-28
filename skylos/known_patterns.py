@@ -196,7 +196,12 @@ DJANGO_ADMIN_METHODS = {
     "history_view",
     "lookup_allowed",
 }
-DJANGO_ADMIN_BASES = {"ModelAdmin", "TabularInline", "StackedInline", "InlineModelAdmin"}
+DJANGO_ADMIN_BASES = {
+    "ModelAdmin",
+    "TabularInline",
+    "StackedInline",
+    "InlineModelAdmin",
+}
 
 DJANGO_FORM_METHODS = {"clean", "is_valid", "save"}
 DJANGO_FORM_BASES = {"Form", "ModelForm", "BaseForm", "BaseModelForm"}
@@ -214,9 +219,15 @@ DJANGO_MIDDLEWARE_METHODS = {
     "process_exception",
     "process_template_response",
 }
-DJANGO_MIDDLEWARE_BASES = {"MiddlewareMixin", "SecurityMiddleware", "SessionMiddleware",
-                          "CommonMiddleware", "CsrfViewMiddleware", "AuthenticationMiddleware",
-                          "MessageMiddleware"}
+DJANGO_MIDDLEWARE_BASES = {
+    "MiddlewareMixin",
+    "SecurityMiddleware",
+    "SessionMiddleware",
+    "CommonMiddleware",
+    "CsrfViewMiddleware",
+    "AuthenticationMiddleware",
+    "MessageMiddleware",
+}
 
 DJANGO_SIGNAL_METHODS = {
     "pre_save",
@@ -262,11 +273,22 @@ DRF_VIEWSET_METHODS = {
     "permission_denied",
     "throttled",
 }
-DRF_VIEWSET_BASES = {"APIView", "ViewSet", "ModelViewSet", "GenericViewSet",
-                     "GenericAPIView", "CreateAPIView", "ListAPIView",
-                     "RetrieveAPIView", "DestroyAPIView", "UpdateAPIView",
-                     "ListCreateAPIView", "RetrieveUpdateAPIView",
-                     "RetrieveDestroyAPIView", "RetrieveUpdateDestroyAPIView"}
+DRF_VIEWSET_BASES = {
+    "APIView",
+    "ViewSet",
+    "ModelViewSet",
+    "GenericViewSet",
+    "GenericAPIView",
+    "CreateAPIView",
+    "ListAPIView",
+    "RetrieveAPIView",
+    "DestroyAPIView",
+    "UpdateAPIView",
+    "ListCreateAPIView",
+    "RetrieveUpdateAPIView",
+    "RetrieveDestroyAPIView",
+    "RetrieveUpdateDestroyAPIView",
+}
 
 DRF_SERIALIZER_METHODS = {
     "to_representation",
@@ -282,8 +304,13 @@ DRF_SERIALIZER_METHODS = {
     "get_initial",
     "get_value",
 }
-DRF_SERIALIZER_BASES = {"Serializer", "ModelSerializer", "ListSerializer",
-                        "BaseSerializer", "HyperlinkedModelSerializer"}
+DRF_SERIALIZER_BASES = {
+    "Serializer",
+    "ModelSerializer",
+    "ListSerializer",
+    "BaseSerializer",
+    "HyperlinkedModelSerializer",
+}
 
 DRF_PERMISSION_METHODS = {"has_permission", "has_object_permission"}
 DRF_PERMISSION_BASES = {"BasePermission"}
