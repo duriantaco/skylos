@@ -745,8 +745,12 @@ def upload_report(
                             f"\n🔗 View details: {BASE_URL}/dashboard/scans/{scan_id}"
                         )
 
-                if not quiet and data.get("credits_warning"):
-                    print("\n Low credits. Top up at skylos.dev/dashboard/billing")
+                credits_left = data.get("credits_remaining")
+                if not quiet and credits_left is not None:
+                    if credits_left < 50:
+                        print(f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing")
+                    else:
+                        print(f"\n💰 Credits remaining: {credits_left}")
 
                 if not passed:
                     if strict and (not is_forced):
@@ -771,6 +775,18 @@ def upload_report(
                 return {
                     "success": False,
                     "error": "Invalid API token. Run 'skylos sync connect' to reconnect.",
+                }
+
+            if response.status_code == 402:
+                data = {}
+                try:
+                    data = response.json()
+                except Exception:
+                    pass
+                return {
+                    "success": False,
+                    "error": data.get("error", "No credits remaining. Buy more at skylos.dev/dashboard/credits"),
+                    "code": "NO_CREDITS",
                 }
 
             last_err = f"Server Error {response.status_code}: {response.text}"

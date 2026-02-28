@@ -796,7 +796,28 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print(grade_table)
         badge_url = generate_badge_url(overall["letter"], o_score)
-        console.print(f"[muted]Badge: ![Skylos Grade]({badge_url})[/muted]")
+        badge_markdown = f"[![Skylos Grade]({badge_url})](https://github.com/duriantaco/skylos)"
+
+        console.print()
+        console.print(
+            Panel.fit(
+                "[bold cyan]Score Badge for your README.md:[/bold cyan]\n\n"
+                f"[yellow]{badge_markdown}[/yellow]",
+                title="[cyan]Score Badge[/cyan]",
+                border_style="cyan",
+            )
+        )
+
+        try:
+            import pyperclip
+
+            pyperclip.copy(badge_markdown)
+            console.print("[good]Copied to clipboard![/good]")
+        except ImportError:
+            console.print(
+                "[muted]Install pyperclip for auto-copy: pip install pyperclip[/muted]"
+            )
+
         console.print()
 
     def _display_cap(items):
