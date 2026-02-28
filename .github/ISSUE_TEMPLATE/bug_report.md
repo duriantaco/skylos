@@ -25,7 +25,7 @@ What actually happened. Include the full error output if applicable.
 **Environment**
 - OS: [e.g. macOS 14, Ubuntu 22.04]
 - Python version: [e.g. 3.11]
-- Skylos version: [e.g. 3.5.0] (`skylos --version`)
+- Skylos version: [e.g. 3.5.1] (`skylos --version`)
 
 **Additional context**
 Any other context — screenshots, logs, related issues.

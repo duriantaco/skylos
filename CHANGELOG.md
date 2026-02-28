@@ -1,6 +1,6 @@
 ## Changelog
 
-## [3.5.0] - 2026-02-28
+## [3.5.1] - 2026-02-28
 
 ### Added
 - TypeScript analysis 6.7x faster — batched ~77 per-file tree-sitter queries into 3-4 module-level compiled queries
