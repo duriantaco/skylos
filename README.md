@@ -36,7 +36,7 @@
 | **CI/CD quality gates** | Yes | No |
 | **TypeScript + Go support** | Yes | No |
 
-> Benchmarked on 9 popular open-source repos (350k+ combined stars). Every finding manually verified. [Full case study →](#skylos-vs-vulture-benchmark)
+> Benchmarked on 9 popular Python repos (350k+ combined stars) + TypeScript ([consola](https://github.com/unjs/consola)). Every finding manually verified. [Full case study →](#skylos-vs-vulture-benchmark)
 
 ---
 
@@ -323,6 +323,25 @@ Vulture uses flat name matching — if the bare name `X` appears anywhere as a s
 > *Reproduce any benchmark: `cd real_life_examples/{repo} && python3 ../benchmark_{repo}.py`*
 >
 > *Full methodology and per-repo breakdowns in the [skylos-demo](https://github.com/duriantaco/skylos-demo) repository.*
+
+### Skylos vs. Knip (TypeScript)
+
+We also benchmarked Skylos against [Knip](https://knip.dev) on a real-world TypeScript library:
+
+| | [unjs/consola](https://github.com/unjs/consola) (7k stars, 21 files, ~2,050 LOC) |
+|:---|:---|
+| **Dead items** | 4 (entire orphaned `src/utils/format.ts` module) |
+
+| Metric | Skylos | Knip |
+|:---|:---|:---|
+| **Recall** | **100%** (4/4) | **100%** (4/4) |
+| **Precision** | **36.4%** | 7.5% |
+| **F1 Score** | **53.3%** | 14.0% |
+| **Speed** | **6.83s** | 11.08s |
+
+Both tools find all dead code. Skylos has **~5x better precision** — Knip incorrectly flags package entry points as dead files (its `package.json` exports point to `dist/` not `src/`) and reports public API re-exports as unused.
+
+> *Reproduce: `cd real_life_examples/consola && python3 ../benchmark_consola.py`*
 
 ---
 

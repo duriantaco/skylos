@@ -9,6 +9,7 @@ import (
 
 	"skylos/engines/go/internal/analyzer"
 	"skylos/engines/go/internal/output"
+	"skylos/engines/go/internal/symbols"
 )
 
 const engineID = "skylos-go"
@@ -94,10 +95,44 @@ func analyze(args []string) {
 		findings = []output.Finding{}
 	}
 
+	// Extract symbols for dead code detection.
+	symResult, symErr := symbols.Extract(absRoot)
+	if symErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: symbol extraction encountered errors: %v\n", symErr)
+	}
+
+	var symData *output.SymbolData
+	if symResult != nil {
+		symData = &output.SymbolData{}
+		for _, d := range symResult.Defs {
+			symData.Defs = append(symData.Defs, output.SymbolDef{
+				Name:       d.Name,
+				Type:       d.Type,
+				File:       d.File,
+				Line:       d.Line,
+				IsExported: d.IsExported,
+				Receiver:   d.Receiver,
+			})
+		}
+		for _, r := range symResult.Refs {
+			symData.Refs = append(symData.Refs, output.SymbolRef{
+				Name: r.Name,
+				File: r.File,
+			})
+		}
+		for _, c := range symResult.CallPairs {
+			symData.CallPairs = append(symData.CallPairs, output.SymbolCallPair{
+				Caller: c.Caller,
+				Callee: c.Callee,
+			})
+		}
+	}
+
 	out := output.EngineOutput{
 		Engine:   engineID,
 		Version:  skylosVersion,
 		Findings: findings,
+		Symbols:  symData,
 	}
 
 	var b []byte

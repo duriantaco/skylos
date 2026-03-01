@@ -1,5 +1,5 @@
 from __future__ import annotations
 
-from .go import scan_go_file
+from .go import scan_go_file, clear_go_cache
 
-__all__ = ["scan_go_file"]
+__all__ = ["scan_go_file", "clear_go_cache"]

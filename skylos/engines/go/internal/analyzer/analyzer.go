@@ -128,8 +128,6 @@ func (a *Analyzer) analyzeFile(path string) {
 func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 	pkg, funcName := a.getFuncInfo(call.Fun)
 
-	// Check SQL injection: match by import alias OR by common variable names
-	// calling known SQL methods (db.Query, tx.Exec, conn.QueryRow, etc.)
 	sqlMatched := false
 	if funcs, ok := sqlSinks[pkg]; ok && contains(funcs, funcName) {
 		sqlMatched = true
@@ -394,9 +392,6 @@ func isSQLMethodName(name string) bool {
 	return sqlMethodNames[name]
 }
 
-// isSQLReceiver checks if the call receiver looks like a database variable
-// (e.g., db.Query, tx.Exec, conn.QueryRow). Since we can't do type resolution
-// without go/types, we use common naming conventions as a heuristic.
 func (a *Analyzer) isSQLReceiver(expr ast.Expr) bool {
 	sel, ok := expr.(*ast.SelectorExpr)
 	if !ok {
@@ -407,7 +402,6 @@ func (a *Analyzer) isSQLReceiver(expr ast.Expr) bool {
 		return false
 	}
 	name := strings.ToLower(id.Name)
-	// Common names for sql.DB, sql.Tx, sql.Conn variables
 	switch name {
 	case "db", "tx", "conn", "sqldb", "database", "stmt", "row", "rows":
 		return true
@@ -415,7 +409,6 @@ func (a *Analyzer) isSQLReceiver(expr ast.Expr) bool {
 	return false
 }
 
-// checkDeferInLoop flags defer statements inside for/range loops (SKY-G203).
 func (a *Analyzer) checkDeferInLoop(body *ast.BlockStmt, path string) {
 	ast.Inspect(body, func(n ast.Node) bool {
 		isLoop := false
@@ -428,7 +421,6 @@ func (a *Analyzer) checkDeferInLoop(body *ast.BlockStmt, path string) {
 		if !isLoop {
 			return true
 		}
-		// Walk loop body for defer statements
 		ast.Inspect(n, func(inner ast.Node) bool {
 			if inner == n {
 				return true
@@ -446,7 +438,6 @@ func (a *Analyzer) checkDeferInLoop(body *ast.BlockStmt, path string) {
 	})
 }
 
-// checkUnclosedResource flags os.Open/sql.Open without a matching defer .Close() (SKY-G260).
 func (a *Analyzer) checkUnclosedResource(body *ast.BlockStmt, path string) {
 	openVars := make(map[string]ast.Node)
 	closedVars := make(map[string]bool)

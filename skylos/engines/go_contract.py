@@ -35,4 +35,13 @@ def validate_go_engine_output(obj):
         if type(f) is not dict:
             raise ValueError("Go engine findings must be objects")
 
+    symbols = obj.get("symbols")
+    if symbols is not None:
+        if type(symbols) is not dict:
+            raise ValueError("Go engine symbols must be a JSON object")
+        if type(symbols.get("defs")) is not list:
+            raise ValueError("Go engine symbols missing/invalid defs list")
+        if type(symbols.get("refs")) is not list:
+            raise ValueError("Go engine symbols missing/invalid refs list")
+
     return obj
