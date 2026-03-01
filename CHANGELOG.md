@@ -1,5 +1,19 @@
 ## Changelog
 
+## [3.5.2] - 2026-03-01
+
+### Added
+- Go dead code detection now live
+- Go module caching to avoid redundant binary invocations per file
+
+### Changed
+- Go engine output now returns symbols alongside findings
+- Go engine contract validates symbol data structure
+- README: added Skylos vs Knip (TS) benchmark on consola
+
+### Fixed
+- Added `__init__.py` inside `engines/__init__.py`
+
 ## [3.5.1] - 2026-02-28
 
 ### Added

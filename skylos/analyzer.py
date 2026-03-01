@@ -17,7 +17,7 @@ from skylos.constants import AUTO_CALLED
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.languages.typescript import scan_typescript_file
-from skylos.visitors.languages.go import scan_go_file
+from skylos.visitors.languages.go import scan_go_file, clear_go_cache
 
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 
@@ -711,6 +711,8 @@ class Skylos:
         custom_rules_data=None,
         changed_files=None,
     ):
+        clear_go_cache()
+
         if isinstance(path, (list, tuple)):
             all_files = []
             seen = set()
@@ -1336,9 +1338,9 @@ class Skylos:
                 result["unused_functions"].append(u)
             elif u["type"] == "import":
                 result["unused_imports"].append(u)
-            elif u["type"] == "class":
+            elif u["type"] in ("class", "type"):
                 result["unused_classes"].append(u)
-            elif u["type"] == "variable":
+            elif u["type"] in ("variable", "constant"):
                 result["unused_variables"].append(u)
             elif u["type"] == "parameter":
                 result["unused_parameters"].append(u)
