@@ -14,6 +14,8 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+mcp = pytest.importorskip("mcp", reason="mcp not installed")
+
 from skylos_mcp.auth import (
     AuthSession,
     TOOL_CREDIT_MAP,
