@@ -699,8 +699,13 @@ def upload_report(
         payload["project_id"] = link["project_id"]
 
     last_err = None
-    for _ in range(3):
+    for attempt in range(3):
         try:
+            if not quiet:
+                if attempt == 0:
+                    print("Uploading scan results...", end="", flush=True)
+                else:
+                    print(f" retrying ({attempt + 1}/3)...", end="", flush=True)
             response = requests.post(
                 REPORT_URL,
                 json=payload,
@@ -717,7 +722,7 @@ def upload_report(
                 plan = data.get("plan", "free")
 
                 if not quiet:
-                    print(f"✓ Scan uploaded")
+                    print(f" done!\n✓ Scan uploaded")
                     if grade_data:
                         g = grade_data["overall"]
                         print(f"Grade: {g['letter']} ({g['score']}/100)")
@@ -772,6 +777,9 @@ def upload_report(
                     "plan": plan,
                     "credits_warning": data.get("credits_warning", False),
                 }
+
+            if not quiet:
+                print(" failed." if response.status_code >= 400 else "")
 
             if response.status_code == 401:
                 return {
