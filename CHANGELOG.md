@@ -1,5 +1,20 @@
 ## Changelog
 
+## [3.5.3] - 2026-03-03
+
+### Added
+- CVE reachability analysis for Python SCA findings via ca9 engine — proves whether vulnerable dependency code is actually reachable, eliminating false positives
+- "Reachability" column in SCA table output (red=Reachable, green=Unreachable, yellow=Inconclusive)
+- Auto-discovery of `coverage.json` for dynamic reachability analysis
+- `ca9` added as a core dependency
+- `skylos whoami` command — shows org, project, and plan info
+
+### Fixed
+- `--json -o <file>` now writes JSON to the output file instead of only printing to stdout
+- CI/CD workflow generator: `agent review` step uses `--format json` instead of invalid `--json` flag
+- CI/CD workflow generator: auto-adds `ANTHROPIC_API_KEY` env when model name contains "claude"
+- LLM agent review pipeline now includes `explanation` and `suggestion` fields in output
+
 ## [3.5.2] - 2026-03-01
 
 ### Added
