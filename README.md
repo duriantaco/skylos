@@ -112,6 +112,7 @@ git add .github/workflows/skylos.yml && git push
 | **Automated Repair** | `skylos agent analyze . --fix` | Let the LLM fix what it found |
 | **Auto-Remediate** | `skylos agent remediate . --auto-pr` | Scan, fix, test, and open a PR — end to end |
 | **PR Review** | `skylos agent review` | Analyze only git-changed files |
+| **PR Review (JSON)** | `skylos agent review . --model claude-sonnet-4-20250514 --format json -o results.json` | LLM review with code-level fix suggestions |
 | **Local LLM** | `skylos agent analyze . --base-url http://localhost:11434/v1 --model codellama` | Use Ollama/LM Studio (no API key needed) |
 | **Secure the Gate** | `skylos --gate` | Block risky code from merging |
 | **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
@@ -474,7 +475,7 @@ Research shows LLMs find vulnerabilities that static analysis misses, while stat
 | `skylos agent analyze PATH` | Hybrid analysis with full project context |
 | `skylos agent security-audit PATH` | Security audit with interactive file selection |
 | `skylos agent fix PATH` | Generate fix for specific issue |
-| `skylos agent review` | Analyze only git-changed files |
+| `skylos agent review` | Analyze only git-changed files with code-level fix suggestions |
 | `skylos agent remediate PATH` | End-to-end: scan, fix, test, and create PR |
 
 ### Provider Configuration
@@ -523,6 +524,25 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export SKYLOS_LLM_PROVIDER=openai
 export SKYLOS_LLM_BASE_URL=http://localhost:11434/v1
 ```
+
+### LLM PR Review
+
+`skylos agent review` analyzes git-changed files, runs static analysis, then uses the LLM to generate code-level fix suggestions for every finding (security, quality, and dead code).
+
+```bash
+# Run LLM review and output JSON
+skylos agent review . --model claude-sonnet-4-20250514 --format json -o llm-results.json
+
+# Use with cicd review to post inline comments on PRs
+skylos cicd review --input results.json --llm-input llm-results.json
+```
+
+The pipeline runs 3 phases:
+1. **Static analysis** — finds security, quality, and dead code issues
+2. **LLM verification** — verifies dead code findings, scans for additional issues
+3. **Code fix generation** — for each finding, generates the problematic code snippet and a corrected version
+
+Each PR comment shows the exact vulnerable lines and a drop-in replacement fix.
 
 ### What LLM Analysis Detects
 
@@ -605,6 +625,14 @@ That's it! Your next PR will have:
 - Inline PR comments with clickable file:line links
 - Quality gate that fails builds on critical issues
 
+**Want AI-powered code fixes on PRs?**
+
+```bash
+skylos cicd init --llm --model claude-sonnet-4-20250514
+```
+
+This adds an LLM step that generates code-level fix suggestions — showing the vulnerable code and the corrected version inline on your PR.
+
 ## Commands
 
 ### `skylos cicd init`
@@ -671,6 +699,25 @@ skylos cicd review --input results.json --pr 20
 skylos cicd review --input results.json --summary-only
 skylos cicd review --input results.json --max-comments 10
 skylos cicd review --input results.json --diff-base origin/develop
+
+# With LLM-generated code fixes (vulnerable code → fixed code)
+skylos cicd review --input results.json --llm-input llm-results.json
+```
+
+When `--llm-input` is provided, each inline comment shows the problematic code and the corrected version:
+
+```
+🔴 CRITICAL SKY-D211
+
+Possible SQL injection: tainted or string-built query.
+
+Why: User input is concatenated directly into the SQL query string.
+
+Vulnerable code:
+  results = conn.execute(f"SELECT * FROM users WHERE name LIKE '%{q}%'").fetchall()
+
+Fixed code:
+  results = conn.execute("SELECT * FROM users WHERE name LIKE ?", (f"%{q}%",)).fetchall()
 ```
 
 In GitHub Actions, PR number and repo are auto-detected. Requires `GH_TOKEN`.
@@ -1405,7 +1452,7 @@ Commands:
   skylos cicd init             Generate GitHub Actions workflow
   skylos cicd gate             Check findings against quality gate
   skylos cicd annotate         Emit GitHub Actions annotations
-  skylos cicd review           Post inline PR review comments
+  skylos cicd review           Post inline PR review comments (supports --llm-input)
   skylos init                  Initialize pyproject.toml config
   skylos key                   Manage API keys (add/remove/list)
   skylos whitelist PATTERN     Add pattern to whitelist

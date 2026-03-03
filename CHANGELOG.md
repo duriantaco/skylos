@@ -1,5 +1,17 @@
 ## Changelog
 
+## [3.5.4] - 2026-03-03
+
+### Added
+- LLM now generates code-level fix suggestions. It shows the problematic code snippet and the corrected version with 2 lines of context before/after
+- PR inline comments render vulnerable code and fixed code in fenced code blocks
+- PR summary "Top Issues" section uses collapsible `<details>` blocks for code fixes
+- Fallback to rule-based text suggestions (`_RULE_SUGGESTIONS`) when LLM is not used
+
+### Fixed
+- Phase 3 matching: findings without `rule_id` (dead code) now match by line number alone
+- `_merge_llm_findings` passes through `vulnerable_code` and `fixed_code` fields
+
 ## [3.5.3] - 2026-03-03
 
 ### Added
@@ -14,6 +26,7 @@
 - CI/CD workflow generator: `agent review` step uses `--format json` instead of invalid `--json` flag
 - CI/CD workflow generator: auto-adds `ANTHROPIC_API_KEY` env when model name contains "claude"
 - LLM agent review pipeline now includes `explanation` and `suggestion` fields in output
+- CI/CD PR review: inline comments now match findings to diff correctly (absolute vs relative path mismatch)
 
 ## [3.5.2] - 2026-03-01
 
