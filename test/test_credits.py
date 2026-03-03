@@ -54,7 +54,8 @@ class TestGetCreditBalance:
         result = get_credit_balance("test-token")
         assert result is None
 
-    def test_returns_none_when_no_token(self):
+    @patch("skylos.api.get_project_token", return_value=None)
+    def test_returns_none_when_no_token(self, mock_token):
         result = get_credit_balance(None)
         assert result is None
 
