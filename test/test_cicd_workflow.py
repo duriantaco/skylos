@@ -59,14 +59,14 @@ def test_workflow_with_llm():
     assert "SKYLOS_API_KEY" in content
 
 
-def test_workflow_baseline_flag():
-    content = generate_workflow(use_baseline=True)
-    assert "--baseline" in content
+def test_workflow_claude_model_adds_anthropic_key():
+    content = generate_workflow(use_llm=True, model="claude-sonnet-4-20250514")
+    assert "ANTHROPIC_API_KEY" in content
 
 
-def test_workflow_no_baseline():
-    content = generate_workflow(use_baseline=False)
-    assert "--baseline" not in content
+def test_workflow_non_claude_model_no_anthropic_key():
+    content = generate_workflow(use_llm=True, model="gpt-4.1")
+    assert "ANTHROPIC_API_KEY" not in content
 
 
 def test_workflow_permissions():
