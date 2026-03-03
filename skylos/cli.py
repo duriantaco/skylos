@@ -1205,6 +1205,7 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
         table.add_column("Package", style="yellow", width=22)
         table.add_column("Vuln ID", width=18)
         table.add_column("Severity", width=9)
+        table.add_column("Reachability", width=14)
         table.add_column("Message", overflow="fold")
         table.add_column("Fix", style="good", width=14, overflow="fold")
 
@@ -1218,7 +1219,16 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             sev = (v.get("severity") or "MEDIUM").title()
             msg = v.get("message") or "Known vulnerability"
             fix = meta.get("fixed_version") or "-"
-            table.add_row(str(i), pkg, vuln_id, sev, msg, fix)
+            rv = meta.get("reachability_verdict", "")
+            if rv == "reachable":
+                reach = "[red]Reachable[/red]"
+            elif rv.startswith("unreachable"):
+                reach = "[green]Unreachable[/green]"
+            elif rv == "inconclusive":
+                reach = "[yellow]Inconclusive[/yellow]"
+            else:
+                reach = "[dim]-[/dim]"
+            table.add_row(str(i), pkg, vuln_id, sev, reach, msg, fix)
 
         console.print(table)
         if overflow:
@@ -1736,6 +1746,31 @@ def main():
 
     if len(sys.argv) > 1 and sys.argv[1] == "clean":
         _run_clean_command()
+        sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "whoami":
+        from skylos.api import get_project_token, get_project_info
+
+        console = Console()
+        token = get_project_token()
+        if not token:
+            console.print(
+                "[red]Not connected.[/red] Run [bold]skylos login[/bold] first."
+            )
+            sys.exit(1)
+
+        info = get_project_info(token)
+        if not info or not info.get("ok"):
+            console.print("[red]Could not fetch account info.[/red]")
+            sys.exit(1)
+
+        project = info.get("project", {})
+        org = info.get("organization", {}) or info.get("org", {})
+        console.print()
+        console.print(f"[bold]{org.get('name', 'Unknown')}[/bold]")
+        console.print(f"  Project:  {project.get('name', 'Unknown')}")
+        console.print(f"  Plan:     {info.get('plan', 'free')}")
+        console.print()
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] == "login":
@@ -2939,6 +2974,11 @@ sys.exit(ret)
 
                 sca_findings = scan_dependencies(project_root)
                 if sca_findings:
+                    try:
+                        from skylos.rules.sca.reachability import enrich_with_reachability
+                        sca_findings = enrich_with_reachability(sca_findings, project_root)
+                    except Exception:
+                        pass
                     result["dependency_vulnerabilities"] = sca_findings
                     result.setdefault("analysis_summary", {})["sca_count"] = len(
                         sca_findings
@@ -3116,7 +3156,10 @@ sys.exit(ret)
                 _json.dump(sarif_data, _sf, indent=2)
 
         if args.json:
-            print(result_json)
+            if args.output:
+                pathlib.Path(args.output).write_text(result_json)
+            else:
+                print(result_json)
             return
 
         if args.github:
@@ -3306,7 +3349,7 @@ sys.exit(ret)
             else:
                 console.print("[muted]No items selected.[/muted]")
 
-    if args.tree or args.table:
+    if args.tree or args.table or args.upload:
         display_result = result
         _cli_severity = getattr(args, "severity", None)
         _cli_category = getattr(args, "category", None)
@@ -3433,9 +3476,11 @@ sys.exit(ret)
             console.print(f"    └─ {item['file']}:{item['line']}")
 
     if args.upload and not args.json:
+        from skylos.api import get_project_token as _check_token
+
         has_link, using_env = _print_upload_destination(console, project_root)
 
-        if (not has_link) and (not using_env):
+        if (not has_link) and (not using_env) and (not _check_token()):
             if _is_tty() and not _is_ci():
                 console.print(
                     "\n[bold yellow]No Skylos token found.[/bold yellow] "
@@ -3447,7 +3492,6 @@ sys.exit(ret)
                 if login_result is None:
                     console.print("[dim]Upload cancelled.[/dim]")
                     raise SystemExit(0)
-                has_link, using_env = _print_upload_destination(console, project_root)
             elif _is_ci():
                 console.print(
                     "[warn]No SKYLOS_TOKEN set. To upload from CI, add SKYLOS_TOKEN to your environment.[/warn]"

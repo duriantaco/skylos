@@ -35,20 +35,21 @@ def generate_workflow(
     if analysis_flags:
         analysis_flags = " " + analysis_flags
 
-    baseline_flag = ""
-    if use_baseline:
-        baseline_flag = " --baseline"
-
     llm_env = ""
     llm_step = ""
     if use_llm:
         model_str = model or "gpt-4.1"
-        llm_step = f"""
-      - name: Skylos Agent Review (LLM)
-        if: github.event_name == 'pull_request'
-        run: skylos agent review . --model {model_str} --json -o skylos-llm-results.json
-        env:
-          SKYLOS_API_KEY: ${{{{ secrets.SKYLOS_API_KEY }}}}"""
+        api_key_env = ""
+        if model_str and "claude" in model_str.lower():
+            api_key_env = "\n          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}"
+        llm_step = "\n".join([
+            "",
+            "      - name: Skylos Agent Review (LLM)",
+            "        if: github.event_name == 'pull_request'",
+            f"        run: skylos agent review . --model {model_str} --format json -o skylos-llm-results.json",
+            "        env:",
+            "          SKYLOS_API_KEY: ${{ secrets.SKYLOS_API_KEY }}" + api_key_env,
+        ])
         llm_env = """
           SKYLOS_API_KEY: ${{ secrets.SKYLOS_API_KEY }}"""
 
@@ -79,7 +80,7 @@ jobs:
         run: pip install skylos
 
       - name: Run Skylos Analysis
-        run: skylos .{analysis_flags}{baseline_flag} --json --diff-base origin/${{{{ github.base_ref || 'main' }}}} -o skylos-results.json
+        run: skylos .{analysis_flags} --json -o skylos-results.json
 {llm_step}
       - name: Quality Gate
         run: skylos cicd gate --input skylos-results.json --summary

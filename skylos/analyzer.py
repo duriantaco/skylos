@@ -1194,6 +1194,12 @@ class Skylos:
                 sca_findings = scan_dependencies(scan_root)
                 if sca_findings:
                     all_sca.extend(sca_findings)
+                    try:
+                        from skylos.rules.sca.reachability import enrich_with_reachability
+                        all_sca = enrich_with_reachability(all_sca, scan_root)
+                    except Exception:
+                        if os.getenv("SKYLOS_DEBUG"):
+                            logger.error(traceback.format_exc())
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())

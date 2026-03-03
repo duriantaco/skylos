@@ -500,7 +500,6 @@ class SkylosApp(App):
             overview.display = False
             table.display = True
             self._populate_table(cat_key)
-            table.focus()
 
         self._update_status()
 
@@ -639,6 +638,8 @@ class SkylosApp(App):
         item = event.item
         if isinstance(item, CategoryItem):
             self._show_category(item.cat_key)
+            if item.cat_key != "overview":
+                self.query_one("#findings-table", DataTable).focus()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search-input":

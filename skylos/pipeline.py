@@ -395,6 +395,8 @@ def run_pipeline(
                             if hasattr(finding.confidence, "value")
                             else str(finding.confidence)
                         ),
+                        "explanation": finding.explanation,
+                        "suggestion": finding.suggestion,
                         "_source": "llm",
                         "_category": issue_type,
                         "_confidence": "medium",
