@@ -332,7 +332,9 @@ class TestDeductCredits:
                 deduct_credits(tool)
 
             sent_key = mock_req.post.call_args[1]["json"]["feature_key"]
-            assert sent_key == feature_key, f"{tool} should send {feature_key}, got {sent_key}"
+            assert sent_key == feature_key, (
+                f"{tool} should send {feature_key}, got {sent_key}"
+            )
 
 
 # ---------------------------------------------------------------------------

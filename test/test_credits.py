@@ -166,15 +166,33 @@ class TestUploadReportCredits:
         "secrets": [],
     }
 
-    @patch("skylos.api.detect_ai_code", return_value={"detected": False, "indicators": [], "ai_files": [], "confidence": "low"})
+    @patch(
+        "skylos.api.detect_ai_code",
+        return_value={
+            "detected": False,
+            "indicators": [],
+            "ai_files": [],
+            "confidence": "low",
+        },
+    )
     @patch("skylos.api.get_git_info", return_value=("abc123", "main", "user", None))
-    @patch("skylos.api.get_project_info", return_value={"ok": True, "plan": "pro", "project": {"name": "test"}})
+    @patch(
+        "skylos.api.get_project_info",
+        return_value={"ok": True, "plan": "pro", "project": {"name": "test"}},
+    )
     @patch("skylos.api.get_project_token", return_value="test-token")
     @patch("skylos.api.requests")
     @patch("skylos.api._load_repo_link")
     @patch("skylos.api.get_git_root", return_value="/fake/repo")
     def test_402_returns_no_credits_error(
-        self, mock_git, mock_link, mock_requests, mock_token, mock_info, mock_gitinfo, mock_ai
+        self,
+        mock_git,
+        mock_link,
+        mock_requests,
+        mock_token,
+        mock_info,
+        mock_gitinfo,
+        mock_ai,
     ):
         from skylos.api import upload_report
 
@@ -193,15 +211,33 @@ class TestUploadReportCredits:
         assert result.get("code") == "NO_CREDITS"
         assert "credits" in result["error"].lower() or "Credits" in result["error"]
 
-    @patch("skylos.api.detect_ai_code", return_value={"detected": False, "indicators": [], "ai_files": [], "confidence": "low"})
+    @patch(
+        "skylos.api.detect_ai_code",
+        return_value={
+            "detected": False,
+            "indicators": [],
+            "ai_files": [],
+            "confidence": "low",
+        },
+    )
     @patch("skylos.api.get_git_info", return_value=("abc123", "main", "user", None))
-    @patch("skylos.api.get_project_info", return_value={"ok": True, "plan": "pro", "project": {"name": "test"}})
+    @patch(
+        "skylos.api.get_project_info",
+        return_value={"ok": True, "plan": "pro", "project": {"name": "test"}},
+    )
     @patch("skylos.api.get_project_token", return_value="test-token")
     @patch("skylos.api.requests")
     @patch("skylos.api._load_repo_link")
     @patch("skylos.api.get_git_root", return_value="/fake/repo")
     def test_successful_upload_includes_credits_remaining(
-        self, mock_git, mock_link, mock_requests, mock_token, mock_info, mock_gitinfo, mock_ai
+        self,
+        mock_git,
+        mock_link,
+        mock_requests,
+        mock_token,
+        mock_info,
+        mock_gitinfo,
+        mock_ai,
     ):
         from skylos.api import upload_report
 
@@ -222,15 +258,33 @@ class TestUploadReportCredits:
         assert result["success"] is True
         assert result["credits_warning"] is False
 
-    @patch("skylos.api.detect_ai_code", return_value={"detected": False, "indicators": [], "ai_files": [], "confidence": "low"})
+    @patch(
+        "skylos.api.detect_ai_code",
+        return_value={
+            "detected": False,
+            "indicators": [],
+            "ai_files": [],
+            "confidence": "low",
+        },
+    )
     @patch("skylos.api.get_git_info", return_value=("abc123", "main", "user", None))
-    @patch("skylos.api.get_project_info", return_value={"ok": True, "plan": "pro", "project": {"name": "test"}})
+    @patch(
+        "skylos.api.get_project_info",
+        return_value={"ok": True, "plan": "pro", "project": {"name": "test"}},
+    )
     @patch("skylos.api.get_project_token", return_value="test-token")
     @patch("skylos.api.requests")
     @patch("skylos.api._load_repo_link")
     @patch("skylos.api.get_git_root", return_value="/fake/repo")
     def test_credits_warning_flag_passed_through(
-        self, mock_git, mock_link, mock_requests, mock_token, mock_info, mock_gitinfo, mock_ai
+        self,
+        mock_git,
+        mock_link,
+        mock_requests,
+        mock_token,
+        mock_info,
+        mock_gitinfo,
+        mock_ai,
     ):
         from skylos.api import upload_report
 

@@ -15,6 +15,7 @@ class _GoDummyVisitor:
         self.first_read_lineno = {}
         self.framework_decorated_lines = set()
 
+
 # Remap Go-specific rule IDs to unified cross-language IDs.
 # Go-only rules (no Python/TS equivalent) keep their original IDs.
 _GO_RULE_REMAP = {
@@ -99,9 +100,7 @@ def scan_go_file(file_path, cfg):
     # Extract security findings for this file.
     findings = result.get("findings", [])
     file_findings = [
-        f
-        for f in findings
-        if Path(f.get("file", "")).resolve() == file_path.resolve()
+        f for f in findings if Path(f.get("file", "")).resolve() == file_path.resolve()
     ]
 
     for f in file_findings:
@@ -114,19 +113,19 @@ def scan_go_file(file_path, cfg):
     defs, refs = _convert_symbols(symbols_data, str(file_path.resolve()))
 
     return (
-        defs,              # 0: definitions
-        refs,              # 1: references
-        set(),             # 2: dynamic refs
-        set(),             # 3: exports
-        _GoDummyVisitor(), # 4: test_flags
-        _GoDummyVisitor(), # 5: framework_flags
-        [],                # 6: quality findings
-        file_findings,     # 7: danger/security findings
-        [],                # 8: pro_finds
-        None,              # 9: pattern_tracker
-        None,              # 10: empty_file_finding
-        cfg,               # 11: config
-        [],                # 12: raw_imports
+        defs,  # 0: definitions
+        refs,  # 1: references
+        set(),  # 2: dynamic refs
+        set(),  # 3: exports
+        _GoDummyVisitor(),  # 4: test_flags
+        _GoDummyVisitor(),  # 5: framework_flags
+        [],  # 6: quality findings
+        file_findings,  # 7: danger/security findings
+        [],  # 8: pro_finds
+        None,  # 9: pattern_tracker
+        None,  # 10: empty_file_finding
+        cfg,  # 11: config
+        [],  # 12: raw_imports
     )
 
 

@@ -77,9 +77,7 @@ def _discover_coverage(root: Path) -> Path | None:
     return None
 
 
-def enrich_with_reachability(
-    findings: list[dict], repo_path: Path
-) -> list[dict]:
+def enrich_with_reachability(findings: list[dict], repo_path: Path) -> list[dict]:
     """Enrich SCA findings with ca9 reachability verdicts.
 
     Only PyPI findings are analyzed. Non-PyPI findings pass through unchanged.
@@ -124,9 +122,7 @@ def enrich_with_reachability(
         indices = vuln_id_to_indices.get(vr.vulnerability.id, [])
         for idx in indices:
             meta = pypi_findings[idx].setdefault("metadata", {})
-            meta["reachability_verdict"] = verdict_map.get(
-                vr.verdict, "inconclusive"
-            )
+            meta["reachability_verdict"] = verdict_map.get(vr.verdict, "inconclusive")
             meta["reachability_reason"] = vr.reason
             if vr.imported_as:
                 meta["reachability_imported_as"] = vr.imported_as

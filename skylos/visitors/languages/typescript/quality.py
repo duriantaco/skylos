@@ -49,7 +49,6 @@ _TERMINATOR_TYPES: set[str] = {
     "continue_statement",
 }
 
-# Module-level query cache
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 
 _FUNC_PATTERN = """
@@ -266,10 +265,8 @@ def _check_duplicate_conditions(
                 if cond:
                     cond_text = _get_text(source, cond)
                     conditions.append((cond_text, cond.start_point[0] + 1))
-                # Find else clause → else if
                 alt = current.child_by_field_name("alternative")
                 if alt and alt.type == "else_clause":
-                    # else_clause has children: 'else' keyword + the consequent
                     inner = None
                     for child in alt.children:
                         if child.type == "if_statement":
@@ -314,7 +311,6 @@ def _check_await_in_loop(
         return
 
     for node in captures.get("await_expr", []):
-        # Walk up parents. If we hit a loop before a function boundary, flag it.
         current = node.parent
         while current:
             if current.type in _FUNC_BOUNDARY_NODES:
@@ -357,7 +353,7 @@ def _check_unreachable_code(
                             "col": 0,
                         }
                     )
-                    break  # Only flag once per block
+                    break
                 if child.type in _TERMINATOR_TYPES:
                     found_terminator = True
         for child in node.children:
