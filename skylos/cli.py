@@ -1405,14 +1405,7 @@ def run_whitelist(pattern=None, reason=None, show=False):
 
 
 def get_git_changed_files(root_path):
-    try:
-        subprocess.check_output(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=root_path,
-            stderr=subprocess.DEVNULL,
-        )
-        cmd = ["git", "diff", "--name-only", "HEAD"]
-        output = subprocess.check_output(cmd, cwd=root_path).decode("utf-8")
+    def _collect_py(output):
         files = []
         for line in output.splitlines():
             if line.endswith(".py"):
@@ -1420,6 +1413,35 @@ def get_git_changed_files(root_path):
                 if full_path.exists():
                     files.append(full_path)
         return files
+
+    try:
+        subprocess.check_output(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=root_path,
+            stderr=subprocess.DEVNULL,
+        )
+        # Try uncommitted changes first
+        output = subprocess.check_output(
+            ["git", "diff", "--name-only", "HEAD"],
+            cwd=root_path,
+        ).decode("utf-8")
+        files = _collect_py(output)
+        if files:
+            return files
+
+        # No uncommitted .py files — try CI context (PR base branch)
+        base_ref = os.environ.get("GITHUB_BASE_REF")
+        if base_ref:
+            cmd = ["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"]
+        else:
+            cmd = ["git", "diff", "--name-only", "origin/main...HEAD"]
+        try:
+            output = subprocess.check_output(
+                cmd, cwd=root_path, stderr=subprocess.DEVNULL
+            ).decode("utf-8")
+            return _collect_py(output)
+        except Exception:
+            return []
     except Exception:
         return []
 
@@ -1860,6 +1882,7 @@ def main():
         p_ci_rev.add_argument("--summary-only", action="store_true")
         p_ci_rev.add_argument("--max-comments", type=int, default=25)
         p_ci_rev.add_argument("--diff-base", default="origin/main")
+        p_ci_rev.add_argument("--llm-input", help="LLM agent review results JSON file")
 
         cicd_argv = sys.argv[2:]
         if not cicd_argv:
@@ -1923,6 +1946,16 @@ def main():
             from skylos.cicd.review import run_pr_review
 
             results = _cicd_load_results(cicd_args)
+
+            llm_findings = None
+            if getattr(cicd_args, "llm_input", None):
+                try:
+                    llm_findings = json.loads(
+                        pathlib.Path(cicd_args.llm_input).read_text()
+                    )
+                except Exception as e:
+                    console.print(f"[yellow]Could not read LLM results: {e}[/yellow]")
+
             run_pr_review(
                 results,
                 pr_number=cicd_args.pr,
@@ -1930,6 +1963,7 @@ def main():
                 summary_only=cicd_args.summary_only,
                 max_comments=cicd_args.max_comments,
                 diff_base=cicd_args.diff_base,
+                llm_findings=llm_findings,
             )
 
         else:
@@ -2370,10 +2404,11 @@ def main():
                 sys.exit(0)
 
             console.print(f"Found {len(files)} changed files")
-            if INTERACTIVE_AVAILABLE and not inquirer.confirm(
-                "Run hybrid review (static + LLM)?", default=True
-            ):
-                sys.exit(0)
+            if INTERACTIVE_AVAILABLE and _is_tty():
+                if not inquirer.confirm(
+                    "Run hybrid review (static + LLM)?", default=True
+                ):
+                    sys.exit(0)
 
             project_root = find_project_root(path)
 
@@ -2737,7 +2772,6 @@ Run 'skylos <command> --help' for more information on each command.
     if project_root.is_file():
         project_root = project_root.parent
     if len(args.path) > 1:
-        # Multiple paths: find common parent
         all_resolved = [pathlib.Path(p).resolve() for p in args.path]
         project_root = pathlib.Path(os.path.commonpath(all_resolved))
 
@@ -2975,8 +3009,13 @@ sys.exit(ret)
                 sca_findings = scan_dependencies(project_root)
                 if sca_findings:
                     try:
-                        from skylos.rules.sca.reachability import enrich_with_reachability
-                        sca_findings = enrich_with_reachability(sca_findings, project_root)
+                        from skylos.rules.sca.reachability import (
+                            enrich_with_reachability,
+                        )
+
+                        sca_findings = enrich_with_reachability(
+                            sca_findings, project_root
+                        )
                     except Exception:
                         pass
                     result["dependency_vulnerabilities"] = sca_findings

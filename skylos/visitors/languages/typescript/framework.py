@@ -94,9 +94,6 @@ _ALL_NEXTJS_CONFIG_EXPORTS: set[str] = (
 
 _REACT_WRAPPERS: set[str] = {"memo", "forwardRef"}
 
-# ---------------------------------------------------------------------------
-# Module-level compiled query cache
-# ---------------------------------------------------------------------------
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 
 _FW_PATTERN = """

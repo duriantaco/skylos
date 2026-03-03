@@ -75,7 +75,6 @@ def resolve_go_engine_bin():
     if found:
         return found
 
-    # Fallback: look next to this package's source (engines/go/skylos-go).
     pkg_dir = Path(__file__).resolve().parent / "go" / exe
     if pkg_dir.is_file():
         return str(pkg_dir)

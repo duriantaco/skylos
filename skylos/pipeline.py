@@ -8,6 +8,115 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+_SUGGEST_PROMPT = """You are a code reviewer. Given the source code and a list of findings (security, quality, dead code), provide the problematic code snippet and the fixed code snippet for each finding.
+
+SOURCE CODE ({file}):
+```python
+{source}
+```
+
+FINDINGS:
+{findings_text}
+
+For each finding, respond with a JSON array. Each element:
+{{
+  "line": <int>,
+  "rule_id": "<str>",
+  "explanation": "<1-2 sentences: why this is a problem in this specific context>",
+  "vulnerable_code": "<the problematic line(s) with 2 lines before and 2 lines after for context>",
+  "fixed_code": "<the corrected version of the same snippet, same 2 lines before and after>"
+}}
+
+RULES:
+- vulnerable_code: copy the EXACT problematic line(s) from the source, plus 2 lines before and 2 lines after for context. Do NOT include the entire function or file.
+- fixed_code: show the same snippet with ONLY the problematic line(s) changed. The 2 context lines before/after stay the same.
+- For dead code / unused imports: the fix is to remove the unused line(s).
+- For quality issues: show the improved version.
+- Keep the same variable/function names.
+Output ONLY the JSON array, no markdown."""
+
+
+def _enrich_with_llm_suggestions(
+    findings: list[dict],
+    source_cache: dict[str, str],
+    model: str,
+    api_key: str,
+) -> None:
+    from litellm import completion
+
+    by_file: dict[str, list[dict]] = {}
+    for f in findings:
+        fp = f.get("file", "")
+        by_file.setdefault(fp, []).append(f)
+
+    for filepath, file_findings in by_file.items():
+        source = source_cache.get(_norm(filepath), "")
+        if not source:
+            try:
+                source = pathlib.Path(filepath).read_text(
+                    encoding="utf-8", errors="ignore"
+                )
+            except Exception:
+                continue
+
+        findings_text = "\n".join(
+            f"- Line {f.get('line')}: [{f.get('rule_id', '')}] {f.get('message', '')}"
+            for f in file_findings
+        )
+
+        prompt = _SUGGEST_PROMPT.format(
+            file=pathlib.Path(filepath).name,
+            source=source,
+            findings_text=findings_text,
+        )
+
+        try:
+            resp = completion(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                api_key=api_key,
+                temperature=0,
+                max_tokens=4000,
+            )
+            raw = resp.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1]
+                raw = raw.rsplit("```", 1)[0]
+
+            suggestions = json.loads(raw)
+            logger.debug(
+                "LLM returned %d suggestions for %s", len(suggestions), filepath
+            )
+
+            for s in suggestions:
+                matched = False
+                for f in file_findings:
+                    if f.get("fixed_code"):
+                        continue
+                    s_rule = s.get("rule_id", "")
+                    f_rule = f.get("rule_id", "")
+                    same_line = f.get("line") == s.get("line")
+                    same_rule = f_rule and s_rule and f_rule == s_rule
+                    if same_line and (same_rule or not f_rule or not s_rule):
+                        if s.get("explanation"):
+                            f["explanation"] = s["explanation"]
+                        if s.get("vulnerable_code"):
+                            f["vulnerable_code"] = s["vulnerable_code"]
+                        if s.get("fixed_code"):
+                            f["fixed_code"] = s["fixed_code"]
+                        matched = True
+                        break
+                if not matched:
+                    logger.debug(
+                        "No match for suggestion line=%s rule=%s (findings: %s)",
+                        s.get("line"),
+                        s.get("rule_id"),
+                        [(f.get("line"), f.get("rule_id")) for f in file_findings],
+                    )
+        except Exception as e:
+            logger.warning(f"LLM suggestion failed for {filepath}: {e}")
+
+
 def _norm(p) -> str:
     try:
         return str(Path(p).resolve())
@@ -258,7 +367,6 @@ def run_pipeline(
 
     dead_code_findings = static_findings.get("dead_code", [])
 
-    # DEBUG: Check for low-confidence findings
     low_conf = [f for f in dead_code_findings if f.get("confidence", 100) < 20]
     if low_conf:
         logger.info(f"DEBUG: Found {len(low_conf)} findings with conf < 20:")
@@ -278,7 +386,6 @@ def run_pipeline(
             verifier_config = AgentConfig(model=model, api_key=api_key)
             verifier = DeadCodeVerifierAgent(verifier_config)
 
-            # Pre-flight check: test API connection before processing all findings
             console.print("[brand]Testing LLM API connection...[/brand]")
             api_ok, api_message = verifier.test_api_connection()
             if not api_ok:
@@ -287,7 +394,6 @@ def run_pipeline(
                 console.print(
                     "[dim]Tip: Run 'skylos key' to configure your API key[/dim]"
                 )
-                # Skip verification, just use static findings
                 for f in dead_code_findings:
                     f["_confidence"] = "medium"
                     f["_llm_skipped"] = True
@@ -302,7 +408,7 @@ def run_pipeline(
                 confidence_range=(
                     10,
                     100,
-                ),  # Lowered from 20 to verify low-conf findings
+                ),
             )
 
             tp = sum(1 for f in verified if f.get("_llm_verdict") == "TRUE_POSITIVE")
@@ -317,18 +423,15 @@ def run_pipeline(
             for f in verified:
                 verdict = f.get("_llm_verdict", "UNCERTAIN")
                 if verdict == "TRUE_POSITIVE":
-                    # LLM explicitly agrees with static — highest confidence
                     f["_source"] = "static+llm"
                     f["_confidence"] = "high"
                     f["_suppressed"] = False
                 elif verdict == "UNCERTAIN":
-                    # LLM couldn't verify (API error, parse fail, etc) — keep as static-only
                     f["_source"] = "static"
                     f["_confidence"] = "medium"
                     f["_suppressed"] = False
                     f["_llm_uncertain"] = True
                 elif verdict == "FALSE_POSITIVE":
-                    # LLM claims it's alive — demote but keep (LLM may be wrong)
                     f["_source"] = "static"
                     f["_confidence"] = "low"
                     f["_suppressed"] = False
@@ -404,7 +507,15 @@ def run_pipeline(
                         "_ci_blocking": False,
                     }
 
-                    if not _is_duplicate(llm_finding, all_findings):
+                    dup = _find_duplicate(llm_finding, all_findings)
+                    if dup is not None:
+                        if llm_finding.get("suggestion") and not dup.get("suggestion"):
+                            dup["suggestion"] = llm_finding["suggestion"]
+                        if llm_finding.get("explanation") and not dup.get(
+                            "explanation"
+                        ):
+                            dup["explanation"] = llm_finding["explanation"]
+                    else:
                         all_findings.append(llm_finding)
                         llm_only_count += 1
 
@@ -416,6 +527,22 @@ def run_pipeline(
         except Exception as e:
             console.print(f"[warn]LLM analysis failed: {e}[/warn]")
 
+    enrich_findings = [f for f in all_findings if not f.get("fixed_code")]
+    if enrich_findings and not getattr(agent_args, "static_only", False):
+        console.print(
+            f"[brand]Phase 3:[/brand] LLM generating fix suggestions for "
+            f"{len(enrich_findings)} findings..."
+        )
+        try:
+            _enrich_with_llm_suggestions(enrich_findings, source_cache, model, api_key)
+            enriched = sum(1 for f in enrich_findings if f.get("fixed_code"))
+            console.print(
+                f"[good]✓ Suggestions:[/good] {enriched}/{len(enrich_findings)} "
+                f"findings enriched with fix advice"
+            )
+        except Exception as e:
+            console.print(f"[warn]LLM suggestion generation failed: {e}[/warn]")
+
     def sort_key(f):
         conf_order = 0 if f.get("_confidence") == "high" else 1
         return (conf_order, f.get("file", ""), f.get("line", 0))
@@ -425,7 +552,7 @@ def run_pipeline(
     return all_findings
 
 
-def _is_duplicate(new_finding, existing_findings, line_tolerance=3):
+def _find_duplicate(new_finding, existing_findings, line_tolerance=3):
     new_file = _norm(new_finding.get("file", ""))
     new_line = new_finding.get("line", 0)
     new_msg = new_finding.get("message", "")[:40].lower()
@@ -437,8 +564,12 @@ def _is_duplicate(new_finding, existing_findings, line_tolerance=3):
         if abs(existing.get("line", 0) - new_line) > line_tolerance:
             continue
         if new_rule and new_rule == existing.get("rule_id", ""):
-            return True
+            return existing
         if new_msg and new_msg in existing.get("message", "").lower():
-            return True
+            return existing
 
-    return False
+    return None
+
+
+def _is_duplicate(new_finding, existing_findings, line_tolerance=3):
+    return _find_duplicate(new_finding, existing_findings, line_tolerance) is not None

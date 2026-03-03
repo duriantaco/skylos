@@ -24,12 +24,9 @@ _SAFE_EXEC_OBJECTS: set[str] = {
     "connection",
 }
 
-# ---------------------------------------------------------------------------
-# Module-level compiled query cache
-# ---------------------------------------------------------------------------
+
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 
-# Simple danger patterns (no JSX — works in both TS and TSX grammars)
 _SIMPLE_PATTERN = """
 (call_expression function: (identifier) @eval (#eq? @eval "eval"))
 (assignment_expression left: (member_expression property: (property_identifier) @innerHTML (#eq? @innerHTML "innerHTML")))
@@ -42,7 +39,6 @@ _SIMPLE_PATTERN = """
 (call_expression function: (member_expression object: (identifier) @math_random_obj (#eq? @math_random_obj "Math") property: (property_identifier) @math_random (#eq? @math_random "random")))
 """
 
-# JSX-only pattern (may fail compilation on plain TS grammar — that's OK)
 _JSX_PATTERN = '(jsx_attribute (property_identifier) @dangerously (#eq? @dangerously "dangerouslySetInnerHTML"))'
 
 _SIMPLE_MAP: dict[str, tuple[str, str, str]] = {
@@ -86,7 +82,6 @@ _SIMPLE_MAP: dict[str, tuple[str, str, str]] = {
     ),
 }
 
-# Complex danger patterns: need post-processing logic
 _COMPLEX_PATTERN = """
 (call_expression function: (member_expression object: (identifier) @exec_obj property: (property_identifier) @exec_prop (#eq? @exec_prop "exec")))
 (string) @string_node
@@ -205,7 +200,6 @@ def _get_text(source: bytes, node) -> str:
 
 
 def _is_sensitive_name(name: str) -> bool:
-    """Check if a variable name refers to sensitive data (for log detection)."""
     normalized = name.lower().replace("_", "")
     for suffix in _LOG_SENSITIVE_SUFFIXES:
         if normalized == suffix or normalized.endswith(suffix):
@@ -214,7 +208,6 @@ def _is_sensitive_name(name: str) -> bool:
 
 
 def _is_timing_sensitive(name: str) -> bool:
-    """Check if a variable name is security-sensitive (for timing comparison)."""
     normalized = name.lower().replace("_", "")
     for suffix in _TIMING_SENSITIVE_SUFFIXES:
         if normalized == suffix or normalized.endswith(suffix):
@@ -223,7 +216,6 @@ def _is_timing_sensitive(name: str) -> bool:
 
 
 def _extract_var_name(node, source_bytes: bytes) -> str | None:
-    """Extract the relevant name from an identifier or member expression property."""
     if node.type == "identifier":
         return _get_text(source_bytes, node)
     if node.type == "member_expression":
@@ -263,16 +255,13 @@ def scan_danger(
 
     source_bytes: bytes = root_node.text
 
-    # Run 3 batch queries instead of 26+ individual ones
     simple_captures = _run_batch(root_node, lang, "danger_simple", _SIMPLE_PATTERN)
     jsx_captures = _run_batch(root_node, lang, "danger_jsx", _JSX_PATTERN)
     complex_captures = _run_batch(root_node, lang, "danger_complex", _COMPLEX_PATTERN)
 
-    # Merge JSX captures into simple captures
     for k, v in jsx_captures.items():
         simple_captures.setdefault(k, []).extend(v)
 
-    # --- Simple checks: direct capture → finding ---
     for cap_name, (rule_id, severity, message) in _SIMPLE_MAP.items():
         for node in simple_captures.get(cap_name, []):
             findings.append(
@@ -286,7 +275,6 @@ def scan_danger(
                 }
             )
 
-    # --- exec check (SKY-D212) ---
     for prop_node in complex_captures.get("exec_prop", []):
         call_node = prop_node.parent
         if call_node is None:
@@ -308,7 +296,7 @@ def scan_danger(
             }
         )
 
-    # --- Hardcoded secrets (SKY-S101) via batched string captures ---
+    # (SKY-S101) via batched string captures
     is_test_file = any(
         p in str(file_path)
         for p in ("/test/", "/tests/", "/__tests__/", ".test.", ".spec.")
@@ -338,7 +326,6 @@ def scan_danger(
                         )
                         found_prefix = True
                         break
-                # Entropy-based secret detection
                 if (
                     not found_prefix
                     and len(text) >= 20
@@ -356,7 +343,7 @@ def scan_danger(
                         }
                     )
 
-            # Hardcoded internal URL (SKY-D248) — skip test files
+            # Hardcoded internal URL (SKY-D248)
             if not is_test_file and len(text) >= 16:
                 text_lower = text.lower()
                 for url_prefix in _INTERNAL_URL_PREFIXES:
@@ -494,7 +481,6 @@ def scan_danger(
 
     # --- CORS wildcard (SKY-D247) ---
     for node in complex_captures.get("cors_args", []):
-        # Look for cors({ origin: '*' }) or cors({ origin: true })
         first_arg = _first_real_arg(node)
         if first_arg and first_arg.type == "object":
             for child in first_arg.children:
@@ -531,10 +517,10 @@ def scan_danger(
         method_name = _get_text(source_bytes, method_node)
         if method_name not in _LOG_METHODS:
             continue
-        # Check arguments for sensitive variable names
         for child in args_node.children:
             if child.type in ("(", ")", ","):
                 continue
+
             var_name = _extract_var_name(child, source_bytes)
             if var_name and _is_sensitive_name(var_name):
                 findings.append(
@@ -547,8 +533,8 @@ def scan_danger(
                         "col": 0,
                     }
                 )
-                break  # One finding per log call
-            # Template string with sensitive interpolation
+                break
+
             if child.type == "template_string":
                 found_sensitive = False
                 for sub in child.children:
@@ -578,7 +564,7 @@ def scan_danger(
     for args_node in complex_captures.get("cookie_set_args", []):
         children = [c for c in args_node.children if c.type not in ("(", ")", ",")]
         if len(children) < 2:
-            continue  # Not a cookie set call (need at least name + value)
+            continue
 
         missing = []
         if len(children) < 3:
@@ -657,7 +643,6 @@ def _check_timing_comparison(
     while stack:
         node = stack.pop()
         if node.type == "binary_expression":
-            # Check if operator is == or === (or != / !==)
             has_eq = False
             for child in node.children:
                 if not child.is_named and child.type in ("==", "===", "!=", "!=="):
@@ -717,7 +702,6 @@ def _check_error_disclosure(
 
 
 def _find_error_prop(node, source_bytes: bytes) -> str | None:
-    """Walk a subtree looking for .stack/.sql member access. Returns the prop name or None."""
     stack = [node]
     while stack:
         n = stack.pop()

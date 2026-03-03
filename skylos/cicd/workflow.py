@@ -41,15 +41,19 @@ def generate_workflow(
         model_str = model or "gpt-4.1"
         api_key_env = ""
         if model_str and "claude" in model_str.lower():
-            api_key_env = "\n          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}"
-        llm_step = "\n".join([
-            "",
-            "      - name: Skylos Agent Review (LLM)",
-            "        if: github.event_name == 'pull_request'",
-            f"        run: skylos agent review . --model {model_str} --format json -o skylos-llm-results.json",
-            "        env:",
-            "          SKYLOS_API_KEY: ${{ secrets.SKYLOS_API_KEY }}" + api_key_env,
-        ])
+            api_key_env = (
+                "\n          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}"
+            )
+        llm_step = "\n".join(
+            [
+                "",
+                "      - name: Skylos Agent Review (LLM)",
+                "        if: github.event_name == 'pull_request'",
+                f"        run: skylos agent review . --model {model_str} --format json -o skylos-llm-results.json",
+                "        env:",
+                "          SKYLOS_API_KEY: ${{ secrets.SKYLOS_API_KEY }}" + api_key_env,
+            ]
+        )
         llm_env = """
           SKYLOS_API_KEY: ${{ secrets.SKYLOS_API_KEY }}"""
 
@@ -91,7 +95,7 @@ jobs:
 
       - name: PR Review Comments
         if: github.event_name == 'pull_request' && always()
-        run: skylos cicd review --input skylos-results.json --diff-base origin/${{{{ github.base_ref || 'main' }}}}
+        run: skylos cicd review --input skylos-results.json{" --llm-input skylos-llm-results.json" if use_llm else ""} --diff-base origin/${{{{ github.base_ref || 'main' }}}}
         env:
           GH_TOKEN: ${{{{ github.token }}}}
 """

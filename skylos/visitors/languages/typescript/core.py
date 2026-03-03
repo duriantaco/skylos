@@ -32,9 +32,6 @@ _LIFECYCLE_METHODS: set[str] = {
     "ngAfterViewInit",
 }
 
-# ---------------------------------------------------------------------------
-# Module-level compiled query cache (keyed by language id + purpose)
-# ---------------------------------------------------------------------------
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 _PARSER_CACHE: dict[int, Parser] = {}
 
@@ -52,7 +49,6 @@ _DEFS_PATTERN = """
 (export_statement source: (string) @export_src)
 """
 
-# TS-only pattern (invalid in TSX grammar — gracefully returns empty)
 _DEFS_TS_ONLY_PATTERN = "(method_definition name: (identifier) @method_ident_def)"
 
 _REFS_PATTERN = """
@@ -104,11 +100,6 @@ def _get_parser(lang: Language) -> Parser:
 
 
 class TypeScriptCore:
-    """
-    High level wrapper around a tree-sitter TS parse tree that extracts symbol
-    definitions and reference occurrences from a single source file.
-    """
-
     def __init__(self, file_path: str, source_bytes: bytes) -> None:
         self.file_path: str = file_path
         self.source: bytes = source_bytes

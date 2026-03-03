@@ -20,6 +20,7 @@ def run_pr_review(
     diff_base: str = "origin/main",
     grade: dict | None = None,
     previous_grade: dict | None = None,
+    llm_findings: list[dict] | None = None,
 ) -> None:
     pr_number = pr_number or _detect_pr_number()
     repo = repo or os.environ.get("GITHUB_REPOSITORY")
@@ -44,6 +45,9 @@ def run_pr_review(
         previous_grade = _fetch_previous_grade(repo, diff_base)
 
     all_findings = _flatten_findings(results)
+
+    if llm_findings:
+        all_findings = _merge_llm_findings(all_findings, llm_findings)
 
     if not summary_only:
         changed_ranges = get_changed_line_ranges(diff_base)
@@ -125,6 +129,11 @@ def filter_findings_to_diff(
         line = finding.get("line", 0)
 
         file_ranges = ranges_by_file.get(file, [])
+        if not file_ranges:
+            for diff_file, ranges in ranges_by_file.items():
+                if file.endswith("/" + diff_file) or diff_file.endswith("/" + file):
+                    file_ranges = ranges
+                    break
         for start, end in file_ranges:
             if start <= line <= end:
                 filtered.append(finding)
@@ -155,6 +164,66 @@ def _flatten_findings(results: dict) -> list[dict]:
     return findings
 
 
+def _merge_llm_findings(
+    static_findings: list[dict], llm_findings: list[dict]
+) -> list[dict]:
+    llm_by_loc: dict[tuple, dict] = {}
+    for f in llm_findings:
+        file = f.get("file", "")
+        line = f.get("line", 0)
+        key = (os.path.basename(file), line)
+        llm_by_loc[key] = f
+
+    matched_keys = set()
+    for finding in static_findings:
+        file = finding.get("file", "")
+        line = finding.get("line", 0)
+        key = (os.path.basename(file), line)
+        if key in llm_by_loc:
+            llm = llm_by_loc[key]
+            if llm.get("suggestion"):
+                finding["suggestion"] = llm["suggestion"]
+            if llm.get("explanation"):
+                finding["explanation"] = llm["explanation"]
+            if llm.get("vulnerable_code"):
+                finding["vulnerable_code"] = llm["vulnerable_code"]
+            if llm.get("fixed_code"):
+                finding["fixed_code"] = llm["fixed_code"]
+            matched_keys.add(key)
+
+    for key, llm in llm_by_loc.items():
+        if key not in matched_keys:
+            static_findings.append(
+                {
+                    "file": llm.get("file", ""),
+                    "line": llm.get("line", 0),
+                    "message": llm.get("message", ""),
+                    "rule_id": llm.get("rule_id", ""),
+                    "severity": llm.get("severity", "MEDIUM"),
+                    "category": llm.get("_category", "security"),
+                    "suggestion": llm.get("suggestion"),
+                    "explanation": llm.get("explanation"),
+                    "vulnerable_code": llm.get("vulnerable_code"),
+                    "fixed_code": llm.get("fixed_code"),
+                    "_source": "llm",
+                }
+            )
+
+    return static_findings
+
+
+_RULE_SUGGESTIONS: dict[str, str] = {
+    "SKY-D201": "Replace `eval()` with `json.loads()`, `ast.literal_eval()`, or a safe parser. Never evaluate untrusted input.",
+    "SKY-D203": "Replace `os.system()` with `subprocess.run()` with `shell=False`. Pass arguments as a list.",
+    "SKY-D211": "Use parameterized queries: `cursor.execute('SELECT * FROM t WHERE x = ?', (val,))` instead of f-strings.",
+    "SKY-D212": "Sanitize input before passing to shell commands, or use `subprocess.run()` with `shell=False` and argument lists.",
+    "SKY-D215": "Validate file paths against an allowed directory: `Path(path).resolve().relative_to(allowed_dir)`.",
+    "SKY-D216": "Validate URLs against an allowlist of domains. Block internal IPs (`127.0.0.1`, `169.254.x.x`, `10.x.x.x`).",
+    "SKY-D223": "Add the package to `requirements.txt` or `pyproject.toml`, or remove the import if unused.",
+    "SKY-S101": "Move secrets to environment variables: `os.getenv('SECRET_KEY')`. Never hardcode credentials.",
+}
+
+
 def _format_review_comment(finding: dict) -> str:
     severity = finding.get("severity", "MEDIUM")
     badge = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵"}.get(
@@ -164,9 +233,55 @@ def _format_review_comment(finding: dict) -> str:
     message = finding.get("message", "")
     rule_str = f" `{rule_id}`" if rule_id else ""
 
-    footer = "\n\n---\n_🤖 Analyzed by [Skylos](https://github.com/duriantaco/skylos) • [Add to your repo](https://github.com/duriantaco/skylos#cicd)_"
+    parts = [f"{badge} **{severity}**{rule_str}", "", message]
 
-    return f"{badge} **{severity}**{rule_str}\n\n{message}{footer}"
+    explanation = finding.get("explanation")
+    if explanation:
+        parts.extend(["", f"**Why:** {explanation}"])
+
+    vulnerable_code = finding.get("vulnerable_code")
+    fixed_code = finding.get("fixed_code")
+
+    if vulnerable_code and fixed_code:
+        parts.extend(
+            [
+                "",
+                "**Vulnerable code:**",
+                "```python",
+                vulnerable_code,
+                "```",
+                "",
+                "**Fixed code:**",
+                "```python",
+                fixed_code,
+                "```",
+            ]
+        )
+    else:
+        suggestion = finding.get("suggestion") or _RULE_SUGGESTIONS.get(rule_id)
+        if suggestion:
+            parts.extend(["", f"**Fix:** {suggestion}"])
+
+    footer = "\n\n---\n_🤖 Analyzed by [Skylos](https://github.com/duriantaco/skylos) • [Add to your repo](https://github.com/duriantaco/skylos#cicd)_"
+    parts.append(footer)
+
+    return "\n".join(parts)
+
+
+def _to_relative_path(filepath: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            root = result.stdout.strip()
+            if filepath.startswith(root):
+                return filepath[len(root) :].lstrip("/")
+    except Exception:
+        pass
+    return filepath
 
 
 def _post_pr_review(findings: list[dict], pr_number: int, repo: str) -> None:
@@ -176,7 +291,7 @@ def _post_pr_review(findings: list[dict], pr_number: int, repo: str) -> None:
             continue
         comments.append(
             {
-                "path": f["file"],
+                "path": _to_relative_path(f["file"]),
                 "line": f["line"],
                 "body": _format_review_comment(f),
             }
@@ -262,6 +377,43 @@ def _post_summary_comment(
             count = by_category.get(cat, 0)
             if count > 0:
                 lines.append(f"| {cat} | {count} |")
+
+    critical_findings = [
+        f for f in diff_findings if f.get("severity") in ("CRITICAL", "HIGH")
+    ]
+    if critical_findings:
+        lines.extend(["", "### Top Issues", ""])
+        for f in critical_findings[:5]:
+            sev = f.get("severity", "MEDIUM")
+            badge = {"CRITICAL": "🔴", "HIGH": "🟠"}.get(sev, "🟡")
+            rule = f" `{f['rule_id']}`" if f.get("rule_id") else ""
+            file = os.path.basename(f.get("file", ""))
+            line_no = f.get("line", "")
+            loc = f" ({file}:{line_no})" if file else ""
+            lines.append(f"- {badge} **{sev}**{rule}{loc}: {f.get('message', '')}")
+
+            vuln_code = f.get("vulnerable_code")
+            fix_code = f.get("fixed_code")
+            if vuln_code and fix_code:
+                lines.append("")
+                lines.append("  <details><summary>View fix</summary>")
+                lines.append("")
+                lines.append("  **Vulnerable:**")
+                lines.append("  ```python")
+                for code_line in vuln_code.splitlines():
+                    lines.append(f"  {code_line}")
+                lines.append("  ```")
+                lines.append("  **Fixed:**")
+                lines.append("  ```python")
+                for code_line in fix_code.splitlines():
+                    lines.append(f"  {code_line}")
+                lines.append("  ```")
+                lines.append("  </details>")
+                lines.append("")
+            else:
+                fix = f.get("suggestion") or _RULE_SUGGESTIONS.get(f.get("rule_id", ""))
+                if fix:
+                    lines.append(f"  - **Fix:** {fix}")
 
     if grade:
         overall = grade["overall"]

@@ -22,10 +22,6 @@ from textual.widgets import (
 )
 from rich.text import Text
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 SEVERITY_COLORS = {
     "CRITICAL": "red bold",
     "HIGH": "#ff8800",
@@ -52,11 +48,6 @@ DEAD_CODE_KEYS = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _shorten(path, root_path=None):
     if not path:
         return "?"
@@ -72,15 +63,9 @@ def _loc(item, root_path=None):
     return f"{_shorten(item.get('file'), root_path)}:{item.get('line', '?')}"
 
 
-# ---------------------------------------------------------------------------
-# Data preparation  (pure, runs once)
-# ---------------------------------------------------------------------------
-
-
 def prepare_category_data(result: dict, root_path=None) -> dict:
     data = {}
 
-    # -- Dead Code --
     dc_cols = ["Type", "Name", "File:Line", "Confidence"]
     dc_rows, dc_raw = [], []
     for key, type_label in DEAD_CODE_KEYS:
@@ -92,7 +77,6 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
             dc_raw.append({**item, "_type_label": type_label})
     data["dead_code"] = (dc_cols, dc_rows, dc_raw)
 
-    # -- Security --
     sec_cols = ["Rule", "Severity", "Message", "File:Line", "Symbol"]
     sec_rows, sec_raw = [], []
     for item in result.get("danger") or []:
@@ -108,7 +92,6 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
         sec_raw.append(item)
     data["security"] = (sec_cols, sec_rows, sec_raw)
 
-    # -- Secrets --
     secret_cols = ["Provider", "Message", "File:Line"]
     secret_rows, secret_raw = [], []
     for item in result.get("secrets") or []:
@@ -122,7 +105,6 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
         secret_raw.append(item)
     data["secrets"] = (secret_cols, secret_rows, secret_raw)
 
-    # -- Quality (+ circular deps + custom rules) --
     q_cols = ["Type", "Function", "Detail", "File:Line"]
     q_rows, q_raw = [], []
     for item in result.get("quality") or []:
@@ -158,7 +140,6 @@ def prepare_category_data(result: dict, root_path=None) -> dict:
         q_raw.append(item)
     data["quality"] = (q_cols, q_rows, q_raw)
 
-    # -- Dependencies (SCA) --
     dep_cols = ["Package", "Vuln ID", "Severity", "Message", "Fix"]
     dep_rows, dep_raw = [], []
     for item in result.get("dependency_vulnerabilities") or []:
@@ -220,12 +201,14 @@ class OverviewPanel(VerticalScroll):
             f"  Files analyzed: [bold]{total_files}[/bold]\n"
         )
 
-        # Per-category counts
         lines = []
         for cat_key, label in CATEGORIES[1:]:
             _, rows, _ = self.category_data.get(cat_key, ([], [], []))
             n = len(rows)
-            style = "bold red" if n > 0 else "dim"
+            if n > 0:
+                style = "bold red"
+            else:
+                style = "dim"
             lines.append(f"  [{style}]{label:15s} {n}[/{style}]")
         yield Static("\n".join(lines) + "\n")
 
@@ -245,8 +228,15 @@ class OverviewPanel(VerticalScroll):
                 if c == 0:
                     continue
                 color = SEVERITY_COLORS.get(s, "white")
-                filled = max(1, round(c / total * bar_width)) if total else 0
-                pct = round(c / total * 100) if total else 0
+                if total:
+                    filled = max(1, round(c / total * bar_width))
+                else:
+                    filled = 0
+
+                if total:
+                    pct = round(c / total * 100)
+                else:
+                    pct = 0
                 bar = "█" * filled + "░" * (bar_width - filled)
                 sev_lines.append(f"    [{color}]{s:10s} {bar} {c} ({pct}%)[/{color}]")
             yield Static("\n".join(sev_lines) + "\n")
@@ -267,6 +257,7 @@ class OverviewPanel(VerticalScroll):
                 f = item.get("file")
                 if f:
                     file_counts[f] = file_counts.get(f, 0) + 1
+
         if file_counts:
             top = sorted(file_counts.items(), key=lambda x: -x[1])[:8]
             lines = ["  [bold]Top Affected Files[/bold]"]
@@ -484,8 +475,6 @@ class SkylosApp(App):
         self._update_status()
         self.query_one("#category-list", ListView).focus()
 
-    # ── Category switching ──────────────────────────────────────────────
-
     def _show_category(self, cat_key: str) -> None:
         self.active_category = cat_key
         overview = self.query_one("#overview-panel", OverviewPanel)
@@ -646,8 +635,6 @@ class SkylosApp(App):
             self.search_query = event.value
             if self.active_category != "overview":
                 self._populate_table(self.active_category)
-
-    # ── Helpers ─────────────────────────────────────────────────────────
 
     def _focus_main(self) -> None:
         if self.active_category == "overview":
