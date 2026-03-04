@@ -38,6 +38,9 @@ from skylos.rules.quality.logic import (
     TryBlockPatternsRule,
     UnusedExceptVarRule,
     ReturnConsistencyRule,
+    EmptyErrorHandlerRule,
+    MissingResourceCleanupRule,
+    DebugLeftoverRule,
 )
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
@@ -1179,6 +1182,31 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
+        if enable_quality:
+            try:
+                from skylos.rules.quality.unused_deps import scan_unused_dependencies
+
+                _ud_py_files = [
+                    f for f in files if str(f).endswith((".py", ".pyi", ".pyw"))
+                ]
+                if _ud_py_files:
+                    _ud_root = Path(
+                        os.path.commonpath([str(p.resolve()) for p in _ud_py_files])
+                    )
+                    if _ud_root.is_file():
+                        _ud_root = _ud_root.parent
+
+                    _ud_cfg = load_config(
+                        path[0] if isinstance(path, (list, tuple)) else path
+                    )
+                    if "SKY-U005" not in _ud_cfg.get("ignore", []):
+                        ud_findings = scan_unused_dependencies(_ud_root, _ud_py_files)
+                        if ud_findings:
+                            all_quality.extend(ud_findings)
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error(traceback.format_exc())
+
         all_sca = []
         if enable_danger:
             try:
@@ -1565,6 +1593,12 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
                 q_rules.append(UnusedExceptVarRule())
             if "SKY-L006" not in cfg["ignore"]:
                 q_rules.append(ReturnConsistencyRule())
+            if "SKY-L007" not in cfg["ignore"]:
+                q_rules.append(EmptyErrorHandlerRule())
+            if "SKY-L008" not in cfg["ignore"]:
+                q_rules.append(MissingResourceCleanupRule())
+            if "SKY-L009" not in cfg["ignore"]:
+                q_rules.append(DebugLeftoverRule())
             if "SKY-Q501" not in cfg["ignore"]:
                 q_rules.append(GodClassRule())
             if "SKY-Q701" not in cfg["ignore"]:
