@@ -203,11 +203,17 @@ def deduct_credits(tool_name: str) -> tuple[bool, str]:
             session.record_call(tool_name)
             return (True, "")
 
-        logger.warning("Credit deduction returned %d", resp.status_code)
-        session.record_call(tool_name)
-        return (True, "")
+        logger.warning("Credit deduction returned %d — denying call", resp.status_code)
+        return (
+            False,
+            f"Credit check failed (status {resp.status_code}). "
+            f"Please try again or check your account at {CLOUD_BASE_URL}/dashboard/billing",
+        )
 
     except Exception as e:
-        logger.warning("Credit deduction failed: %s — allowing call", e)
-        session.record_call(tool_name)
-        return (True, "")
+        logger.warning("Credit deduction failed: %s — denying call", e)
+        return (
+            False,
+            f"Credit check unavailable. Please try again later. "
+            f"If this persists, check {CLOUD_BASE_URL}/dashboard/billing",
+        )
