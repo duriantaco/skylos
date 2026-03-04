@@ -22,6 +22,7 @@ def generate_workflow(
     use_baseline: bool = True,
     use_llm: bool = False,
     model: Optional[str] = None,
+    use_claude_security: bool = False,
 ) -> str:
     triggers = triggers or ["pull_request", "push"]
     analysis_types = analysis_types or ["dead-code", "security", "quality", "secrets"]
@@ -57,14 +58,18 @@ def generate_workflow(
         llm_env = """
           SKYLOS_API_KEY: ${{ secrets.SKYLOS_API_KEY }}"""
 
+    permissions_block = """permissions:
+  contents: read
+  pull-requests: write
+  checks: write"""
+    if use_claude_security:
+        permissions_block += "\n  security-events: write"
+
     workflow = f"""name: Skylos Analysis
 
 {trigger_block}
 
-permissions:
-  contents: read
-  pull-requests: write
-  checks: write
+{permissions_block}
 
 jobs:
   skylos:
@@ -98,8 +103,73 @@ jobs:
         run: skylos cicd review --input skylos-results.json{" --llm-input skylos-llm-results.json" if use_llm else ""} --diff-base origin/${{{{ github.base_ref || 'main' }}}}
         env:
           GH_TOKEN: ${{{{ github.token }}}}
-"""
+{"" if not use_claude_security else '''
+      - name: Upload Skylos Results for Cross-Reference
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skylos-results
+          path: skylos-results.json
+'''}"""
+
+    if use_claude_security:
+        workflow += _build_claude_security_jobs(python_version)
+
     return workflow
+
+
+def _build_claude_security_jobs(python_version: str) -> str:
+    return f"""
+  claude-security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Code Security Review
+        uses: anthropics/claude-code-action@main
+        with:
+          anthropic_api_key: ${{{{ secrets.ANTHROPIC_API_KEY }}}}
+          direct_prompt: "/review --output-file claude-security-results.json"
+
+      - name: Upload Claude Security Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-security-results
+          path: claude-security-results.json
+
+  upload-claude-findings:
+    runs-on: ubuntu-latest
+    needs: [skylos, claude-security]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '{python_version}'
+
+      - name: Install Skylos
+        run: pip install skylos
+
+      - name: Download Claude Security Results
+        uses: actions/download-artifact@v4
+        with:
+          name: claude-security-results
+
+      - name: Download Skylos Results
+        uses: actions/download-artifact@v4
+        with:
+          name: skylos-results
+
+      - name: Ingest Claude Security Findings
+        run: skylos ingest claude-security --input claude-security-results.json --cross-reference skylos-results.json
+        env:
+          SKYLOS_TOKEN: ${{{{ secrets.SKYLOS_TOKEN }}}}
+"""
 
 
 def _build_trigger_block(triggers: list[str]) -> str:

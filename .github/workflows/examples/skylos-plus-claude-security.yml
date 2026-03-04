@@ -1,0 +1,120 @@
+# Skylos + Claude Code Security — Combined Workflow
+#
+# This workflow runs Skylos dead code / quality / security analysis in parallel
+# with Anthropic's Claude Code Security review. Claude Security findings are
+# then ingested into the Skylos dashboard with cross-reference analysis showing
+# which security findings are in dead code (removable) and which are corroborated
+# by both tools (high confidence).
+#
+# Required secrets:
+#   SKYLOS_TOKEN       — from skylos.dev dashboard → project settings
+#   ANTHROPIC_API_KEY  — from console.anthropic.com
+#
+# Generate automatically:  skylos cicd init --claude-security
+
+name: Skylos + Claude Code Security
+
+"on":
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  security-events: write
+
+jobs:
+  # ── Job 1: Skylos Analysis (runs in parallel with claude-security) ────────
+  skylos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Skylos
+        run: pip install skylos
+
+      - name: Run Skylos Analysis
+        run: skylos . --danger --quality --secrets --json -o skylos-results.json
+
+      - name: Quality Gate
+        run: skylos cicd gate --input skylos-results.json --summary
+
+      - name: GitHub Annotations
+        if: always()
+        run: skylos cicd annotate --input skylos-results.json
+
+      - name: PR Review Comments
+        if: github.event_name == 'pull_request' && always()
+        run: skylos cicd review --input skylos-results.json --diff-base origin/${{ github.base_ref || 'main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Upload Skylos Results for Cross-Reference
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skylos-results
+          path: skylos-results.json
+
+  # ── Job 2: Claude Code Security Review (runs in parallel with skylos) ─────
+  claude-security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Code Security Review
+        uses: anthropics/claude-code-action@main
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: "/review --output-file claude-security-results.json"
+
+      - name: Upload Claude Security Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-security-results
+          path: claude-security-results.json
+
+  # ── Job 3: Cross-reference + ingest (after both jobs) ────────────────────
+  upload-claude-findings:
+    runs-on: ubuntu-latest
+    needs: [skylos, claude-security]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Skylos
+        run: pip install skylos
+
+      - name: Download Claude Security Results
+        uses: actions/download-artifact@v4
+        with:
+          name: claude-security-results
+
+      - name: Download Skylos Results
+        uses: actions/download-artifact@v4
+        with:
+          name: skylos-results
+
+      - name: Ingest Claude Security Findings
+        run: skylos ingest claude-security --input claude-security-results.json --cross-reference skylos-results.json
+        env:
+          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}
