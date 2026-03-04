@@ -1,5 +1,20 @@
 ## Changelog
 
+## [3.5.5] - 2026-03-04
+
+### Added
+- Claude Code Security integration — ingest Anthropic's AI vulnerability scanner findings into Skylos dashboard
+- `skylos ingest claude-security` CLI subcommand (--input, --token, --no-upload, --json)
+- `skylos cicd init --claude-security` generates a 3-job GitHub Actions workflow (Skylos + Claude Security in parallel, upload sequential)
+- Blue "Claude Security" badges on scans list, scan detail, and issues list pages
+- Example workflow: `.github/workflows/examples/skylos-plus-claude-security.yml`
+- Integration docs: `docs/integrations/claude-code-security.mdx`
+
+### Changed
+- `normalizeIncomingReport()` in report route now detects Claude Security format (after SARIF check)
+- `generate_workflow()` accepts `use_claude_security` parameter
+- Credit deduction in report route is now format-aware (2 credits for Claude Security, 1 for native)
+
 ## [3.5.4] - 2026-03-03
 
 ### Added

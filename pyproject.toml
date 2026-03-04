@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "3.5.4"
+version = "3.5.5"
 requires-python = ">=3.10"
 description = "Find dead code, security vulnerabilities, and quality issues in Python, TypeScript, and Go. AI-powered static analysis with quality gates for CI/CD."
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
@@ -25,6 +25,10 @@ keywords = [
     "code-review",
     "secrets-detection",
     "mcp",
+    "mcp-server",
+    "ai-agent",
+    "ai-tool",
+    "coding-agent",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -64,6 +68,7 @@ Repository = "https://github.com/duriantaco/skylos"
 Changelog = "https://github.com/duriantaco/skylos/blob/main/CHANGELOG.md"
 "Bug Tracker" = "https://github.com/duriantaco/skylos/issues"
 Discord = "https://discord.gg/Ftn9t9tErf"
+"MCP Server" = "https://github.com/duriantaco/skylos/tree/main/skylos_mcp"
 
 [project.optional-dependencies]
 web = ["flask>=2.1.1", "flask-cors>=3.0.3"]
