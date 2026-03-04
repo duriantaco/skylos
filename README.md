@@ -73,6 +73,30 @@ git add .github/workflows/skylos.yml && git push
 
 ---
 
+### Works with Claude Code Security
+
+Skylos integrates with [Claude Code Security](https://www.anthropic.com/research/claude-code-security) — Anthropic's AI-powered vulnerability scanner. Run both tools in parallel and get unified results in your Skylos dashboard.
+
+**Dead code is attack surface. Clean before you scan.**
+
+```bash
+# Generate a combined workflow (Skylos + Claude Code Security in parallel)
+skylos cicd init --claude-security
+
+# Or ingest Claude Security results manually
+skylos ingest claude-security --input claude-security-results.json
+```
+
+**What this gives you:**
+- Skylos finds dead code, quality issues, and secrets (Claude Security doesn't)
+- Claude Security finds deep vulnerability patterns with exploit scenarios
+- Both results appear in one dashboard with unified quality gates
+- 2 credits per Claude Security ingestion (vs 1 for native scans)
+
+See the [integration guide](https://docs.skylos.dev/integrations/claude-code-security) for setup details.
+
+---
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)
@@ -87,6 +111,7 @@ git add .github/workflows/skylos.yml && git push
 - [Baseline Tracking](#baseline-tracking)
 - [Gating](#gating)
 - [VS Code Extension](#vsc-extension)
+- [Claude Code Security Integration](#works-with-claude-code-security)
 - [Integration and Ecosystem](#integration-and-ecosystem)
 - [Auditing and Precision](#auditing-and-precision)
 - [Coverage Integration](#coverage-integration)
@@ -632,6 +657,18 @@ skylos cicd init --llm --model claude-sonnet-4-20250514
 ```
 
 This adds an LLM step that generates code-level fix suggestions — showing the vulnerable code and the corrected version inline on your PR.
+
+**Required GitHub Secrets:**
+
+You must add these secrets in your repo settings (**Settings > Secrets and variables > Actions**):
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `ANTHROPIC_API_KEY` | If using Claude models | Your Anthropic API key |
+| `OPENAI_API_KEY` | If using GPT models | Your OpenAI API key |
+| `SKYLOS_API_KEY` | For Skylos Cloud features | Get from [skylos.dev](https://skylos.dev) |
+
+`GH_TOKEN` is automatically provided by GitHub Actions — no setup needed for PR comments.
 
 ## Commands
 
