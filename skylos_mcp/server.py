@@ -50,11 +50,9 @@ def _store_result(result: dict, tool: str, path: str) -> str:
         "result": result,
     }
 
-    # in-memory
     _results_cache[run_id] = envelope
     _results_cache["latest"] = envelope
 
-    # disk
     try:
         (RESULTS_DIR / f"{run_id}.json").write_text(json.dumps(envelope, indent=2))
         (RESULTS_DIR / "latest.json").write_text(json.dumps(envelope, indent=2))
@@ -101,7 +99,6 @@ def _list_runs() -> list[dict]:
         except Exception:
             continue
 
-    # in-memory additions
     for rid, data in _results_cache.items():
         if rid == "latest" or rid in seen:
             continue
@@ -180,7 +177,6 @@ def _make_summary(result: dict, focus: str | None = None) -> dict:
 
 
 def _gate(tool_name: str) -> str | None:
-    """Check auth + credits for a tool call. Returns error JSON or None if OK."""
     allowed, err = check_tool_access(tool_name)
     if not allowed:
         return json.dumps({"error": err})
@@ -290,11 +286,6 @@ def _register_tools(mcp):
         test_cmd: str | None = None,
         severity: str | None = None,
     ) -> str:
-        """Scan for security/quality issues, generate fixes, validate with tests.
-
-        Returns a remediation plan with status of each fix attempt.
-        Set dry_run=False to actually apply fixes to disk.
-        """
         gate_err = _gate("remediate")
         if gate_err:
             return gate_err
@@ -340,15 +331,19 @@ def main():
     try:
         from mcp.server.fastmcp import FastMCP
 
-        session = initialize_auth()
-        if session.authenticated:
-            logger.info("MCP server starting (authenticated, plan=%s)", session.plan)
-        else:
-            logger.info("MCP server starting (local-only mode, limited)")
+        initialize_auth()
 
-        mcp = FastMCP(name="skylos")
-        _register_tools(mcp)
-        mcp.run(transport="stdio")
+        transport = os.getenv("MCP_TRANSPORT", "stdio")
+
+        if transport in ("sse", "streamable-http"):
+            host = "0.0.0.0"
+            port = int(os.getenv("PORT", "8080"))
+            mcp_server = FastMCP(name="skylos", host=host, port=port)
+        else:
+            mcp_server = FastMCP(name="skylos")
+
+        _register_tools(mcp_server)
+        mcp_server.run(transport=transport)
     except Exception:
         import sys
         import traceback
