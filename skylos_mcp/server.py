@@ -8,8 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
-
 from skylos_mcp.auth import (
     initialize_auth,
     check_tool_access,
@@ -181,9 +179,6 @@ def _make_summary(result: dict, focus: str | None = None) -> dict:
     return out
 
 
-mcp = FastMCP(name="skylos")
-
-
 def _gate(tool_name: str) -> str | None:
     """Check auth + credits for a tool call. Returns error JSON or None if OK."""
     allowed, err = check_tool_access(tool_name)
@@ -197,161 +192,168 @@ def _gate(tool_name: str) -> str | None:
     return None
 
 
-@mcp.tool()
-def analyze(
-    path: str,
-    confidence: int = 60,
-    exclude_folders: list[str] | None = None,
-) -> str:
-    gate_err = _gate("analyze")
-    if gate_err:
-        return gate_err
+def _register_tools(mcp):
+    """Register all MCP tools and resources. Called inside main() after FastMCP is created."""
 
-    result = _run_analysis(
-        path,
-        confidence=confidence,
-        exclude_folders=exclude_folders,
-        enable_secrets=False,
-        enable_danger=False,
-        enable_quality=False,
-    )
-    summary = _make_summary(result, focus="dead_code")
-    run_id = _store_result(result, "analyze", path)
-    summary["_run_id"] = run_id
-    return json.dumps(summary, indent=2)
+    @mcp.tool()
+    def analyze(
+        path: str,
+        confidence: int = 60,
+        exclude_folders: list[str] | None = None,
+    ) -> str:
+        gate_err = _gate("analyze")
+        if gate_err:
+            return gate_err
 
-
-@mcp.tool()
-def security_scan(
-    path: str,
-    confidence: int = 60,
-    exclude_folders: list[str] | None = None,
-) -> str:
-    gate_err = _gate("security_scan")
-    if gate_err:
-        return gate_err
-
-    result = _run_analysis(
-        path,
-        confidence=confidence,
-        exclude_folders=exclude_folders,
-        enable_danger=True,
-    )
-    summary = _make_summary(result, focus="security")
-    run_id = _store_result(result, "security_scan", path)
-    summary["_run_id"] = run_id
-    return json.dumps(summary, indent=2)
-
-
-@mcp.tool()
-def quality_check(
-    path: str,
-    confidence: int = 60,
-    exclude_folders: list[str] | None = None,
-) -> str:
-    gate_err = _gate("quality_check")
-    if gate_err:
-        return gate_err
-
-    result = _run_analysis(
-        path,
-        confidence=confidence,
-        exclude_folders=exclude_folders,
-        enable_quality=True,
-    )
-    summary = _make_summary(result, focus="quality")
-    run_id = _store_result(result, "quality_check", path)
-    summary["_run_id"] = run_id
-    return json.dumps(summary, indent=2)
-
-
-@mcp.tool()
-def secrets_scan(
-    path: str,
-    confidence: int = 60,
-    exclude_folders: list[str] | None = None,
-) -> str:
-    gate_err = _gate("secrets_scan")
-    if gate_err:
-        return gate_err
-
-    result = _run_analysis(
-        path,
-        confidence=confidence,
-        exclude_folders=exclude_folders,
-        enable_secrets=True,
-    )
-    summary = _make_summary(result, focus="secrets")
-    run_id = _store_result(result, "secrets_scan", path)
-    summary["_run_id"] = run_id
-    return json.dumps(summary, indent=2)
-
-
-@mcp.tool()
-def remediate(
-    path: str,
-    max_fixes: int = 5,
-    dry_run: bool = True,
-    model: str = "gpt-4.1",
-    test_cmd: str | None = None,
-    severity: str | None = None,
-) -> str:
-    """Scan for security/quality issues, generate fixes, validate with tests.
-
-    Returns a remediation plan with status of each fix attempt.
-    Set dry_run=False to actually apply fixes to disk.
-    """
-    gate_err = _gate("remediate")
-    if gate_err:
-        return gate_err
-
-    try:
-        from skylos.llm.orchestrator import RemediationAgent
-
-        agent = RemediationAgent(
-            model=model,
-            test_cmd=test_cmd,
-            severity_filter=severity,
-        )
-        summary = agent.run(
+        result = _run_analysis(
             path,
-            dry_run=dry_run,
-            max_fixes=max_fixes,
-            quiet=True,
+            confidence=confidence,
+            exclude_folders=exclude_folders,
+            enable_secrets=False,
+            enable_danger=False,
+            enable_quality=False,
         )
+        summary = _make_summary(result, focus="dead_code")
+        run_id = _store_result(result, "analyze", path)
+        summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
 
+    @mcp.tool()
+    def security_scan(
+        path: str,
+        confidence: int = 60,
+        exclude_folders: list[str] | None = None,
+    ) -> str:
+        gate_err = _gate("security_scan")
+        if gate_err:
+            return gate_err
 
-@mcp.resource("skylos://results/latest")
-def get_latest_result() -> str:
-    data = _load_result("latest")
-    if data is None:
-        return json.dumps({"error": "No analysis has been run yet."})
-    return json.dumps(data, indent=2)
+        result = _run_analysis(
+            path,
+            confidence=confidence,
+            exclude_folders=exclude_folders,
+            enable_danger=True,
+        )
+        summary = _make_summary(result, focus="security")
+        run_id = _store_result(result, "security_scan", path)
+        summary["_run_id"] = run_id
+        return json.dumps(summary, indent=2)
 
+    @mcp.tool()
+    def quality_check(
+        path: str,
+        confidence: int = 60,
+        exclude_folders: list[str] | None = None,
+    ) -> str:
+        gate_err = _gate("quality_check")
+        if gate_err:
+            return gate_err
 
-@mcp.resource("skylos://results/{run_id}")
-def get_result_by_id(run_id: str) -> str:
-    data = _load_result(run_id)
-    if data is None:
-        return json.dumps({"error": f"Run '{run_id}' not found."})
-    return json.dumps(data, indent=2)
+        result = _run_analysis(
+            path,
+            confidence=confidence,
+            exclude_folders=exclude_folders,
+            enable_quality=True,
+        )
+        summary = _make_summary(result, focus="quality")
+        run_id = _store_result(result, "quality_check", path)
+        summary["_run_id"] = run_id
+        return json.dumps(summary, indent=2)
 
+    @mcp.tool()
+    def secrets_scan(
+        path: str,
+        confidence: int = 60,
+        exclude_folders: list[str] | None = None,
+    ) -> str:
+        gate_err = _gate("secrets_scan")
+        if gate_err:
+            return gate_err
 
-@mcp.resource("skylos://results")
-def list_results() -> str:
-    return json.dumps(_list_runs(), indent=2)
+        result = _run_analysis(
+            path,
+            confidence=confidence,
+            exclude_folders=exclude_folders,
+            enable_secrets=True,
+        )
+        summary = _make_summary(result, focus="secrets")
+        run_id = _store_result(result, "secrets_scan", path)
+        summary["_run_id"] = run_id
+        return json.dumps(summary, indent=2)
+
+    @mcp.tool()
+    def remediate(
+        path: str,
+        max_fixes: int = 5,
+        dry_run: bool = True,
+        model: str = "gpt-4.1",
+        test_cmd: str | None = None,
+        severity: str | None = None,
+    ) -> str:
+        """Scan for security/quality issues, generate fixes, validate with tests.
+
+        Returns a remediation plan with status of each fix attempt.
+        Set dry_run=False to actually apply fixes to disk.
+        """
+        gate_err = _gate("remediate")
+        if gate_err:
+            return gate_err
+
+        try:
+            from skylos.llm.orchestrator import RemediationAgent
+
+            agent = RemediationAgent(
+                model=model,
+                test_cmd=test_cmd,
+                severity_filter=severity,
+            )
+            summary = agent.run(
+                path,
+                dry_run=dry_run,
+                max_fixes=max_fixes,
+                quiet=True,
+            )
+            return json.dumps(summary, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.resource("skylos://results/latest")
+    def get_latest_result() -> str:
+        data = _load_result("latest")
+        if data is None:
+            return json.dumps({"error": "No analysis has been run yet."})
+        return json.dumps(data, indent=2)
+
+    @mcp.resource("skylos://results/{run_id}")
+    def get_result_by_id(run_id: str) -> str:
+        data = _load_result(run_id)
+        if data is None:
+            return json.dumps({"error": f"Run '{run_id}' not found."})
+        return json.dumps(data, indent=2)
+
+    @mcp.resource("skylos://results")
+    def list_results() -> str:
+        return json.dumps(_list_runs(), indent=2)
 
 
 def main():
-    session = initialize_auth()
-    if session.authenticated:
-        logger.info("MCP server starting (authenticated, plan=%s)", session.plan)
-    else:
-        logger.info("MCP server starting (local-only mode, limited)")
-    mcp.run()
+    try:
+        from mcp.server.fastmcp import FastMCP
+
+        session = initialize_auth()
+        if session.authenticated:
+            logger.info("MCP server starting (authenticated, plan=%s)", session.plan)
+        else:
+            logger.info("MCP server starting (local-only mode, limited)")
+
+        mcp = FastMCP(name="skylos")
+        _register_tools(mcp)
+        mcp.run(transport="stdio")
+    except Exception:
+        import sys
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        raise
 
 
 if __name__ == "__main__":
