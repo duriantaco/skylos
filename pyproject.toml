@@ -13,6 +13,8 @@ license = "Apache-2.0"
 keywords = [
     "static-analysis",
     "dead-code",
+    "unused-code",
+    "unused-imports",
     "security",
     "linter",
     "code-quality",
@@ -29,6 +31,10 @@ keywords = [
     "ai-agent",
     "ai-tool",
     "coding-agent",
+    "vulture-alternative",
+    "bandit-alternative",
+    "code-scanner",
+    "devsecops",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -58,7 +64,8 @@ dependencies = [
     "litellm>=1.81.3",
     "networkx",
     "pyperclip",
-    "ca9>=0.1.0"
+    "ca9>=0.1.0",
+    "mcp>=1.0.0"
 ]
 
 [project.urls]
