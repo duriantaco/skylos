@@ -181,7 +181,7 @@ def _make_summary(result: dict, focus: str | None = None) -> dict:
     return out
 
 
-mcp = FastMCP(name="skylos", port=8080)
+mcp = FastMCP(name="skylos")
 
 
 def _gate(tool_name: str) -> str | None:
