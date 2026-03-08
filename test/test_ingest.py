@@ -94,7 +94,10 @@ class TestIsClaudeSecurityReport:
         assert is_claude_security_report({}) is False
 
     def test_detects_empty_findings_with_tool_key(self):
-        assert is_claude_security_report({"tool": "claude-code-security", "findings": []}) is True
+        assert (
+            is_claude_security_report({"tool": "claude-code-security", "findings": []})
+            is True
+        )
 
     def test_rejects_empty_findings_without_tool_key(self):
         assert is_claude_security_report({"findings": []}) is False
@@ -108,10 +111,11 @@ class TestNormalizeClaudeSecurity:
     def test_rule_id_prefix(self):
         result = normalize_claude_security(SAMPLE_CCS_REPORT)
         for f in result["danger"]:
-            assert f["rule_id"].startswith("CCS:"), f"rule_id {f['rule_id']} missing CCS: prefix"
+            assert f["rule_id"].startswith("CCS:"), (
+                f"rule_id {f['rule_id']} missing CCS: prefix"
+            )
 
     def test_no_double_prefix(self):
-        """If input already has CCS: prefix, don't double it."""
         data = {
             "findings": [
                 {
@@ -140,19 +144,18 @@ class TestNormalizeClaudeSecurity:
     def test_file_path_extraction(self):
         result = normalize_claude_security(SAMPLE_CCS_REPORT)
         assert result["danger"][0]["file_path"] == "app/db.py"
-        # Third finding uses "file" key instead of "file_path"
         assert result["danger"][2]["file_path"] == "utils/crypto.py"
 
     def test_line_number_extraction(self):
         result = normalize_claude_security(SAMPLE_CCS_REPORT)
         assert result["danger"][0]["line_number"] == 42
-        # Third finding uses "line" key
         assert result["danger"][2]["line_number"] == 7
 
     def test_message_extraction(self):
         result = normalize_claude_security(SAMPLE_CCS_REPORT)
-        assert result["danger"][0]["message"] == "SQL injection via unsanitized user input"
-        # Third finding uses "description" key
+        assert (
+            result["danger"][0]["message"] == "SQL injection via unsanitized user input"
+        )
         assert result["danger"][2]["message"] == "MD5 used for password hashing"
 
     def test_snippet_preserved(self):
@@ -326,9 +329,6 @@ class TestWorkflowClaudeSecurity:
         assert "Skylos Agent Review (LLM)" in yaml
 
 
-# ── Cross-reference tests ────────────────────────────────────────────────────
-
-# Simulated Skylos native output with dead code + security findings
 SAMPLE_SKYLOS_RESULT = {
     "unused_functions": [
         {"file_path": "app/views.py", "name": "old_handler", "line_number": 10},
@@ -340,9 +340,13 @@ SAMPLE_SKYLOS_RESULT = {
     "unused_variables": [],
     "unused_classes": [],
     "danger": [
-        # Skylos also found SQL injection at the same location as Claude
-        {"file_path": "app/db.py", "line_number": 42, "rule_id": "SKY-D211",
-         "message": "SQL injection", "severity": "HIGH"},
+        {
+            "file_path": "app/db.py",
+            "line_number": 42,
+            "rule_id": "SKY-D211",
+            "message": "SQL injection",
+            "severity": "HIGH",
+        },
     ],
 }
 
@@ -353,36 +357,37 @@ class TestCrossReference:
 
     def test_identifies_dead_code_findings(self):
         xref = cross_reference(self._claude_findings(), SAMPLE_SKYLOS_RESULT)
-        # app/views.py and utils/crypto.py and settings.py are dead code files
-        # Claude findings in those files: xss-reflected (app/views.py),
-        #   weak-crypto (utils/crypto.py), debug-enabled (settings.py)
         assert xref["in_dead_code"] == 3
 
     def test_identifies_corroborated_findings(self):
         xref = cross_reference(self._claude_findings(), SAMPLE_SKYLOS_RESULT)
-        # app/db.py:42 is flagged by both Skylos (SKY-D211) and Claude (CCS:sql-injection)
         assert xref["corroborated_by_skylos"] == 1
 
     def test_identifies_unique_findings(self):
         xref = cross_reference(self._claude_findings(), SAMPLE_SKYLOS_RESULT)
-        # All 4 findings: 3 in dead code + 1 corroborated = 0 unique
         assert xref["unique_to_claude"] == 0
 
     def test_attack_surface_reduction_percentage(self):
         xref = cross_reference(self._claude_findings(), SAMPLE_SKYLOS_RESULT)
-        # 3 out of 4 findings are in dead code = 75%
         assert xref["attack_surface_reduction_pct"] == 75.0
 
     def test_totals_add_up(self):
         xref = cross_reference(self._claude_findings(), SAMPLE_SKYLOS_RESULT)
         assert (
-            xref["in_dead_code"] + xref["corroborated_by_skylos"] + xref["unique_to_claude"]
+            xref["in_dead_code"]
+            + xref["corroborated_by_skylos"]
+            + xref["unique_to_claude"]
             == xref["total_claude_findings"]
         )
 
     def test_no_dead_code(self):
-        skylos_no_dead = {"unused_functions": [], "unused_imports": [],
-                          "unused_variables": [], "unused_classes": [], "danger": []}
+        skylos_no_dead = {
+            "unused_functions": [],
+            "unused_imports": [],
+            "unused_variables": [],
+            "unused_classes": [],
+            "danger": [],
+        }
         xref = cross_reference(self._claude_findings(), skylos_no_dead)
         assert xref["in_dead_code"] == 0
         assert xref["attack_surface_reduction_pct"] == 0.0
@@ -394,32 +399,56 @@ class TestCrossReference:
         assert xref["attack_surface_reduction_pct"] == 0.0
 
     def test_all_corroborated(self):
-        """When Skylos finds the exact same locations as Claude."""
-        claude = [{"file_path": "app/db.py", "line_number": 42, "message": "sqli", "severity": "HIGH"}]
-        skylos = {"unused_functions": [], "unused_imports": [],
-                  "unused_variables": [], "unused_classes": [],
-                  "danger": [{"file_path": "app/db.py", "line_number": 42}]}
+        claude = [
+            {
+                "file_path": "app/db.py",
+                "line_number": 42,
+                "message": "sqli",
+                "severity": "HIGH",
+            }
+        ]
+        skylos = {
+            "unused_functions": [],
+            "unused_imports": [],
+            "unused_variables": [],
+            "unused_classes": [],
+            "danger": [{"file_path": "app/db.py", "line_number": 42}],
+        }
         xref = cross_reference(claude, skylos)
         assert xref["corroborated_by_skylos"] == 1
         assert xref["unique_to_claude"] == 0
 
     def test_path_normalization(self):
-        """Leading ./ should not prevent matching."""
-        claude = [{"file_path": "./src/app.py", "line_number": 10, "message": "vuln", "severity": "HIGH"}]
-        skylos = {"unused_functions": [{"file_path": "src/app.py", "name": "dead_fn", "line_number": 1}],
-                  "unused_imports": [], "unused_variables": [], "unused_classes": [], "danger": []}
+        claude = [
+            {
+                "file_path": "./src/app.py",
+                "line_number": 10,
+                "message": "vuln",
+                "severity": "HIGH",
+            }
+        ]
+        skylos = {
+            "unused_functions": [
+                {"file_path": "src/app.py", "name": "dead_fn", "line_number": 1}
+            ],
+            "unused_imports": [],
+            "unused_variables": [],
+            "unused_classes": [],
+            "danger": [],
+        }
         xref = cross_reference(claude, skylos)
         assert xref["in_dead_code"] == 1
 
     def test_cross_reference_via_ingest(self, tmp_path):
-        """E2E: --cross-reference flag produces xref in result."""
         ccs_file = tmp_path / "ccs.json"
         ccs_file.write_text(json.dumps(SAMPLE_CCS_REPORT))
         skylos_file = tmp_path / "skylos.json"
         skylos_file.write_text(json.dumps(SAMPLE_SKYLOS_RESULT))
 
         result = ingest_claude_security(
-            str(ccs_file), upload=False, quiet=True,
+            str(ccs_file),
+            upload=False,
+            quiet=True,
             cross_reference_path=str(skylos_file),
         )
         assert result["success"] is True
@@ -432,7 +461,9 @@ class TestCrossReference:
         ccs_file = tmp_path / "ccs.json"
         ccs_file.write_text(json.dumps(SAMPLE_CCS_REPORT))
         result = ingest_claude_security(
-            str(ccs_file), upload=False, quiet=True,
+            str(ccs_file),
+            upload=False,
+            quiet=True,
             cross_reference_path="/nonexistent/skylos.json",
         )
         assert result["success"] is False

@@ -21,7 +21,6 @@ except ImportError:
 
 from skylos.server import app, start_server
 
-# Restore real constants so other test files aren't affected
 if _original_constants is not None:
     sys.modules["skylos.constants"] = _original_constants
 else:
@@ -107,7 +106,7 @@ class TestSkylosWebApp(unittest.TestCase):
 
         if mock_run.called:
             mock_run.assert_called_with(
-                debug=False, host="0.0.0.0", port=5090, use_reloader=False
+                debug=False, host="127.0.0.1", port=5090, use_reloader=False
             )
             mock_timer.assert_called()
 
