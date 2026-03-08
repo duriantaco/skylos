@@ -587,7 +587,7 @@ def test_main_interactive_dry_run_does_not_modify(monkeypatch):
         "secrets": [],
     }
 
-    test_args = ["skylos", ".", "--interactive", "--dry-run", "--table"]
+    test_args = ["skylos", ".", "--interactive", "--dry-run"]
     monkeypatch.setattr(cli.sys, "argv", test_args)
 
     fake_logger = Mock()
@@ -631,7 +631,7 @@ def test_main_interactive_comment_out_uses_comment_functions(monkeypatch):
         "secrets": [],
     }
 
-    test_args = ["skylos", ".", "--interactive", "--comment-out", "--table"]
+    test_args = ["skylos", ".", "--interactive", "--comment-out"]
     monkeypatch.setattr(cli.sys, "argv", test_args)
 
     fake_logger = Mock()

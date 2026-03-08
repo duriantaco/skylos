@@ -234,15 +234,15 @@ def calc(req: In):
 
 
 class TestDetectFrameworkUsage:
-    def test_decorated_endpoint_confidence_is_one(self):
+    def test_decorated_endpoint_confidence_is_zero(self):
         d = Mock()
         d.line = 10
         d.simple_name = "get_users"
         d.type = "function"
-        v = Mock()
+        v = FrameworkAwareVisitor()
         v.framework_decorated_lines = {10}
         v.is_framework_file = True
-        assert detect_framework_usage(d, visitor=v) == 1
+        assert detect_framework_usage(d, visitor=v) == 0
 
     def test_undecorated_function_in_framework_file_returns_none(self):
         d = Mock()

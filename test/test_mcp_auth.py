@@ -1,13 +1,3 @@
-"""Tests for MCP server auth gating and credit deduction.
-
-Covers:
-- AuthSession state management (rate limits, unauth limits, expiry)
-- check_tool_access (unauthenticated vs authenticated, tool restrictions)
-- deduct_credits (success, insufficient credits, enterprise bypass, network failure)
-- initialize_auth (no key, invalid key, valid key with plan tiers)
-- _gate integration (auth + credits combined)
-"""
-
 import json
 import time
 from unittest.mock import patch, MagicMock
@@ -19,18 +9,12 @@ mcp = pytest.importorskip("mcp", reason="mcp not installed")
 from skylos_mcp.auth import (
     AuthSession,
     TOOL_CREDIT_MAP,
-    UNAUTHENTICATED_TOOLS,
     UNAUTH_DAILY_LIMIT,
     check_tool_access,
     deduct_credits,
     initialize_auth,
     get_session,
 )
-
-
-# ---------------------------------------------------------------------------
-# AuthSession unit tests
-# ---------------------------------------------------------------------------
 
 
 class TestAuthSession:
@@ -99,14 +83,8 @@ class TestAuthSession:
         assert len(s._unauth_calls) == 1
 
 
-# ---------------------------------------------------------------------------
-# check_tool_access tests
-# ---------------------------------------------------------------------------
-
-
 class TestCheckToolAccess:
     def _set_session(self, **kwargs):
-        """Replace global session for testing."""
         import skylos_mcp.auth as auth_mod
 
         auth_mod._session = AuthSession(**kwargs)
@@ -178,11 +156,6 @@ class TestCheckToolAccess:
         assert "Rate limit exceeded" in err
 
 
-# ---------------------------------------------------------------------------
-# deduct_credits tests
-# ---------------------------------------------------------------------------
-
-
 class TestDeductCredits:
     def _set_session(self, **kwargs):
         import skylos_mcp.auth as auth_mod
@@ -193,7 +166,6 @@ class TestDeductCredits:
         self._set_session(authenticated=False)
         ok, err = deduct_credits("analyze")
         assert ok is True
-        # Should record the unauth call
         assert len(get_session()._unauth_calls) == 1
 
     def test_enterprise_no_deduction(self):
@@ -205,7 +177,6 @@ class TestDeductCredits:
         )
         ok, err = deduct_credits("security_scan")
         assert ok is True
-        # Should record the call but no HTTP request
         assert len(get_session()._call_counts.get("_all", [])) == 1
 
     def test_unknown_tool_no_deduction(self):
@@ -306,7 +277,6 @@ class TestDeductCredits:
         assert ok is True
 
     def test_correct_feature_keys_sent(self):
-        """Each tool maps to the correct feature_key in the API call."""
         expected = {
             "analyze": "mcp_analyze",
             "security_scan": "mcp_security_scan",
@@ -335,11 +305,6 @@ class TestDeductCredits:
             assert sent_key == feature_key, (
                 f"{tool} should send {feature_key}, got {sent_key}"
             )
-
-
-# ---------------------------------------------------------------------------
-# initialize_auth tests
-# ---------------------------------------------------------------------------
 
 
 class TestInitializeAuth:
@@ -397,14 +362,7 @@ class TestInitializeAuth:
             assert session.rate_limit_per_hour == 5000
 
 
-# ---------------------------------------------------------------------------
-# _gate integration tests (auth + credits combined)
-# ---------------------------------------------------------------------------
-
-
 class TestGateIntegration:
-    """Tests for the _gate() function in server.py that combines auth + credits."""
-
     def _set_session(self, **kwargs):
         import skylos_mcp.auth as auth_mod
 
@@ -415,7 +373,7 @@ class TestGateIntegration:
 
         self._set_session(authenticated=False)
         result = _gate("analyze")
-        assert result is None  # None = no error, proceed
+        assert result is None
 
     def test_gate_unauthenticated_security_scan_blocked(self):
         from skylos_mcp.server import _gate
@@ -478,7 +436,7 @@ class TestGateIntegration:
             authenticated=True,
             plan="enterprise",
             api_key="ent-key",
-            credits=0,  # doesn't matter for enterprise
+            credits=0,
             rate_limit_per_hour=5000,
             validated_at=time.time(),
         )

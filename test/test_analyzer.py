@@ -123,22 +123,18 @@ class TestSkylos:
     def test_module_name_generation(self, skylos):
         root = Path("/project")
 
-        # test a regular Python file
         file_path = Path("/project/src/module.py")
         result = skylos._module(root, file_path)
         assert result == "module"
 
-        # test __init__.py file
         file_path = Path("/project/src/__init__.py")
         result = skylos._module(root, file_path)
         assert result == ""
 
-        # nested module
         file_path = Path("/project/src/package/submodule.py")
         result = skylos._module(root, file_path)
         assert result == "package.submodule"
 
-        # root level file
         file_path = Path("/project/main.py")
         result = skylos._module(root, file_path)
         assert result == "main"
@@ -256,7 +252,6 @@ class TestSkylos:
         skylos._mark_refs()
 
         assert mock_import.references == 1
-        # original gets 2: one from the import statement itself, one from usage
         assert mock_original.references == 2
 
 
@@ -430,7 +425,6 @@ class TestAnalyze:
                 result_json = skylos.analyze("/fake/path", thr=60)
                 result = json.loads(result_json)
 
-                # include only high confidence
                 assert len(result["unused_functions"]) == 1
                 assert result["unused_functions"][0]["name"] == "high_conf"
 
@@ -491,6 +485,8 @@ class TestClass:
                         inferred_types,
                         instance_attr_types,
                         used_attr_names,
+                        used_attr_context,
+                        source_lines,
                     ) = proc_file(f.name, "test_module")
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
@@ -535,6 +531,8 @@ class TestClass:
                     inferred_types,
                     instance_attr_types,
                     used_attr_names,
+                    used_attr_context,
+                    source_lines,
                 ) = proc_file(f.name, "test_module")
 
                 assert defs == []
@@ -601,6 +599,8 @@ class TestClass:
                         inferred_types,
                         instance_attr_types,
                         used_attr_names,
+                        used_attr_context,
+                        source_lines,
                     ) = proc_file((f.name, "test_module"))
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
@@ -608,15 +608,12 @@ class TestClass:
                 Path(f.name).unlink()
 
     def test_empty_file_reporting(self, tmp_path):
-        # should be reported
         empty = tmp_path / "empty_module.py"
         empty.write_text("")
 
-        # should be skipped
-        (tmp_path / "main.py").write_text("")  # skip main.py
+        (tmp_path / "main.py").write_text("")
         pkg = tmp_path / "mypkg"
         pkg.mkdir()
-        # skip __init__.py
         (pkg / "__init__.py").write_text('"""package init docstring"""')
 
         result_json = analyze(str(tmp_path), conf=0)
@@ -645,10 +642,7 @@ class TestApplyPenalties:
         mock_test_aware_visitor,
         mock_framework_aware_visitor,
     ):
-        """private names get penalized."""
-        mock_detect_framework.return_value = (
-            None  # or whatever confidence value here that can change later on
-        )
+        mock_detect_framework.return_value = None
 
         skylos = Skylos()
         mock_def = mock_definition(
@@ -785,12 +779,10 @@ used()
         result_json = analyze(str(tmp_path), conf=0)
         result = json.loads(result_json)
 
-        # collect names of functions flagged as unreachable
         unreachable = {
             item["name"].split(".")[-1] for item in result["unused_functions"]
         }
 
-        # expectations
         assert "unused_no_ignore" in unreachable
         assert "unused_ignore" not in unreachable
         assert "used" not in unreachable
