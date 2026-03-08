@@ -1,5 +1,5 @@
 import ast
-import os
+import re
 from pathlib import Path
 from skylos.rules.base import SkylosRule
 
@@ -475,7 +475,10 @@ class EmptyErrorHandlerRule(SkylosRule):
                     func = ctx_expr.func
                     is_suppress = False
                     if isinstance(func, ast.Attribute) and func.attr == "suppress":
-                        if isinstance(func.value, ast.Name) and func.value.id == "contextlib":
+                        if (
+                            isinstance(func.value, ast.Name)
+                            and func.value.id == "contextlib"
+                        ):
                             is_suppress = True
                     if isinstance(func, ast.Name) and func.id == "suppress":
                         is_suppress = True
@@ -500,7 +503,9 @@ class EmptyErrorHandlerRule(SkylosRule):
                                         "threshold": 0,
                                         "message": f"contextlib.suppress({arg_name}) silently swallows all errors.",
                                         "file": context.get("filename"),
-                                        "basename": Path(context.get("filename", "")).name,
+                                        "basename": Path(
+                                            context.get("filename", "")
+                                        ).name,
                                         "line": node.lineno,
                                         "col": node.col_offset,
                                     }
@@ -527,11 +532,18 @@ class EmptyErrorHandlerRule(SkylosRule):
 
 
 RESOURCE_FUNCTIONS = {
-    "open", "sqlite3.connect", "socket.socket",
-    "requests.Session", "tempfile.NamedTemporaryFile",
-    "tempfile.TemporaryFile", "tempfile.SpooledTemporaryFile",
-    "psycopg2.connect", "pymysql.connect", "cx_Oracle.connect",
-    "urllib3.PoolManager", "http.client.HTTPConnection",
+    "open",
+    "sqlite3.connect",
+    "socket.socket",
+    "requests.Session",
+    "tempfile.NamedTemporaryFile",
+    "tempfile.TemporaryFile",
+    "tempfile.SpooledTemporaryFile",
+    "psycopg2.connect",
+    "pymysql.connect",
+    "cx_Oracle.connect",
+    "urllib3.PoolManager",
+    "http.client.HTTPConnection",
     "http.client.HTTPSConnection",
 }
 
@@ -623,7 +635,9 @@ class MissingResourceCleanupRule(SkylosRule):
                                 return
                             if self._has_close_in_finally(var_name, scope_body):
                                 return
-                        findings.append(self._make_finding(stmt, context, resource_name))
+                        findings.append(
+                            self._make_finding(stmt, context, resource_name)
+                        )
 
         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
             resource_name = _call_matches_resource(stmt.value)
@@ -809,3 +823,950 @@ class DebugLeftoverRule(SkylosRule):
 
     def _has_main_guard(self, context):
         return context.get("_has_main_guard", False)
+
+
+_SECURITY_TODO_RE = re.compile(
+    r"#\s*(?:TODO|FIXME|HACK|XXX|TEMP)\b[:\s].*?"
+    r"(?:auth|authenticat|authori[sz]|login|permission|credential|password|secret"
+    r"|token|csrf|xss|inject|sanitiz|validat|escap|encrypt|decrypt|ssl|tls"
+    r"|verify|cert|cors|session|cookie|jwt|oauth|api.?key|firewall"
+    r"|rate.?limit|brute.?force|acl|rbac|security|vulnerable|exploit"
+    r"|unsafe|insecure|disable|bypass|hack|workaround|temporary|fixme"
+    r"|hardcod)",
+    re.IGNORECASE,
+)
+
+
+class SecurityTodoRule(SkylosRule):
+    rule_id = "SKY-L010"
+    name = "Security TODO Marker"
+
+    def visit_node(self, node, context):
+        if not isinstance(node, ast.Module):
+            return None
+
+        filename = context.get("filename", "")
+        src = context.get("_source")
+        if not src:
+            try:
+                src = Path(filename).read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                return None
+
+        findings = []
+        for i, line in enumerate(src.splitlines(), start=1):
+            m = _SECURITY_TODO_RE.search(line)
+            if m:
+                comment = m.group(0).strip()
+                if len(comment) > 120:
+                    comment = comment[:117] + "..."
+                findings.append(
+                    {
+                        "rule_id": self.rule_id,
+                        "kind": "logic",
+                        "severity": "MEDIUM",
+                        "type": "comment",
+                        "name": "security_todo",
+                        "simple_name": "security_todo",
+                        "value": "unfulfilled",
+                        "threshold": 0,
+                        "message": f"Security-related TODO left in code: {comment}",
+                        "file": filename,
+                        "basename": Path(filename).name,
+                        "line": i,
+                        "col": m.start(),
+                    }
+                )
+
+        return findings if findings else None
+
+
+_DISABLED_SECURITY_PATTERNS = {
+    "verify": "Requests TLS verification disabled (verify=False).",
+    "check_hostname": "TLS hostname verification disabled (check_hostname=False).",
+}
+
+_DANGEROUS_CALLS = {
+    "_create_unverified_context": "ssl._create_unverified_context() disables certificate verification.",
+    "_create_default_https_context": None,
+}
+
+_DANGEROUS_DECORATORS = {
+    "csrf_exempt": "CSRF protection disabled via @csrf_exempt.",
+    "login_not_required": "Authentication bypassed via @login_not_required.",
+}
+
+_DANGEROUS_ASSIGNMENTS = {
+    "DEBUG": (True, "DEBUG = True left in code. Disable in production."),
+    "ALLOWED_HOSTS": (
+        None,
+        'ALLOWED_HOSTS contains wildcard "*". Restrict in production.',
+    ),
+    "SECRET_KEY": (None, None),
+}
+
+
+class DisabledSecurityRule(SkylosRule):
+    rule_id = "SKY-L011"
+    name = "Disabled Security Control"
+
+    def visit_node(self, node, context):
+        findings = []
+        filename = context.get("filename", "")
+        basename = Path(filename).name
+
+        if _is_test_file(filename):
+            return None
+
+        if isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if kw.arg in _DISABLED_SECURITY_PATTERNS:
+                    if isinstance(kw.value, ast.Constant) and kw.value.value is False:
+                        findings.append(
+                            {
+                                "rule_id": self.rule_id,
+                                "kind": "logic",
+                                "severity": "HIGH",
+                                "type": "call",
+                                "name": kw.arg,
+                                "simple_name": kw.arg,
+                                "value": "disabled",
+                                "threshold": 0,
+                                "message": _DISABLED_SECURITY_PATTERNS[kw.arg],
+                                "file": filename,
+                                "basename": basename,
+                                "line": kw.value.lineno,
+                                "col": kw.value.col_offset,
+                            }
+                        )
+
+            func = node.func
+            func_name = None
+            if isinstance(func, ast.Attribute):
+                func_name = func.attr
+            elif isinstance(func, ast.Name):
+                func_name = func.id
+            if func_name in _DANGEROUS_CALLS:
+                msg = _DANGEROUS_CALLS[func_name]
+                if msg:
+                    findings.append(
+                        {
+                            "rule_id": self.rule_id,
+                            "kind": "logic",
+                            "severity": "HIGH",
+                            "type": "call",
+                            "name": func_name,
+                            "simple_name": func_name,
+                            "value": "disabled",
+                            "threshold": 0,
+                            "message": msg,
+                            "file": filename,
+                            "basename": basename,
+                            "line": node.lineno,
+                            "col": node.col_offset,
+                        }
+                    )
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for dec in node.decorator_list:
+                dec_name = None
+                if isinstance(dec, ast.Name):
+                    dec_name = dec.id
+                elif isinstance(dec, ast.Attribute):
+                    dec_name = dec.attr
+                if dec_name in _DANGEROUS_DECORATORS:
+                    findings.append(
+                        {
+                            "rule_id": self.rule_id,
+                            "kind": "logic",
+                            "severity": "HIGH",
+                            "type": "decorator",
+                            "name": dec_name,
+                            "simple_name": dec_name,
+                            "value": "disabled",
+                            "threshold": 0,
+                            "message": _DANGEROUS_DECORATORS[dec_name],
+                            "file": filename,
+                            "basename": basename,
+                            "line": dec.lineno,
+                            "col": dec.col_offset,
+                        }
+                    )
+
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name) and target.id in _DANGEROUS_ASSIGNMENTS:
+                expected_val, msg = _DANGEROUS_ASSIGNMENTS[target.id]
+                if msg is None:
+                    pass
+                elif target.id == "ALLOWED_HOSTS":
+                    if isinstance(node.value, ast.List):
+                        for elt in node.value.elts:
+                            if isinstance(elt, ast.Constant) and elt.value == "*":
+                                findings.append(
+                                    {
+                                        "rule_id": self.rule_id,
+                                        "kind": "logic",
+                                        "severity": "HIGH",
+                                        "type": "assignment",
+                                        "name": target.id,
+                                        "simple_name": target.id,
+                                        "value": "wildcard",
+                                        "threshold": 0,
+                                        "message": msg,
+                                        "file": filename,
+                                        "basename": basename,
+                                        "line": node.lineno,
+                                        "col": node.col_offset,
+                                    }
+                                )
+                elif (
+                    isinstance(node.value, ast.Constant)
+                    and node.value.value == expected_val
+                ):
+                    findings.append(
+                        {
+                            "rule_id": self.rule_id,
+                            "kind": "logic",
+                            "severity": "MEDIUM",
+                            "type": "assignment",
+                            "name": target.id,
+                            "simple_name": target.id,
+                            "value": "insecure",
+                            "threshold": 0,
+                            "message": msg,
+                            "file": filename,
+                            "basename": basename,
+                            "line": node.lineno,
+                            "col": node.col_offset,
+                        }
+                    )
+
+        return findings if findings else None
+
+
+_PHANTOM_SECURITY_NAMES = {
+    "sanitize_input",
+    "sanitize_html",
+    "sanitize_sql",
+    "sanitize_query",
+    "sanitize_string",
+    "sanitize_data",
+    "sanitize_url",
+    "sanitize_path",
+    "sanitize_output",
+    "sanitize_request",
+    "sanitize_params",
+    "sanitize_user_input",
+    "validate_token",
+    "validate_jwt",
+    "validate_session",
+    "validate_auth",
+    "validate_credentials",
+    "validate_api_key",
+    "escape_html",
+    "escape_sql",
+    "escape_input",
+    "escape_output",
+    "escape_string",
+    "escape_query",
+    "check_permission",
+    "check_permissions",
+    "check_auth",
+    "check_authorization",
+    "check_access",
+    "check_role",
+    "verify_token",
+    "verify_jwt",
+    "verify_signature",
+    "verify_auth",
+    "require_auth",
+    "require_login",
+    "require_permission",
+    "encrypt_password",
+    "hash_password",
+    "secure_random",
+    "clean_input",
+    "clean_html",
+    "clean_data",
+    "filter_xss",
+    "prevent_injection",
+    "prevent_xss",
+    "rate_limit",
+    "throttle_request",
+}
+
+
+class PhantomCallRule(SkylosRule):
+    rule_id = "SKY-L012"
+    name = "Phantom Function Call"
+
+    def __init__(self):
+        self._defined_names = None
+        self._current_file = None
+
+    def visit_node(self, node, context):
+        filename = context.get("filename", "")
+
+        if isinstance(node, ast.Module):
+            self._current_file = filename
+            self._defined_names = set()
+            self._imported_names = set()
+            for child in ast.walk(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    self._defined_names.add(child.name)
+                elif isinstance(child, ast.ClassDef):
+                    self._defined_names.add(child.name)
+                    for item in child.body:
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            self._defined_names.add(item.name)
+                elif isinstance(child, ast.ImportFrom):
+                    if child.names:
+                        for alias in child.names:
+                            name = alias.asname if alias.asname else alias.name
+                            self._imported_names.add(name)
+                elif isinstance(child, ast.Import):
+                    for alias in child.names:
+                        name = alias.asname if alias.asname else alias.name
+                        self._imported_names.add(name.split(".")[0])
+            return None
+
+        if self._defined_names is None:
+            return None
+
+        if not isinstance(node, ast.Call):
+            return None
+
+        func = node.func
+        func_name = None
+
+        if isinstance(func, ast.Name):
+            func_name = func.id
+        elif isinstance(func, ast.Attribute):
+            return None
+
+        if not func_name:
+            return None
+
+        if func_name not in _PHANTOM_SECURITY_NAMES:
+            return None
+
+        if func_name in self._defined_names:
+            return None
+        if func_name in self._imported_names:
+            return None
+
+        basename = Path(filename).name
+        return [
+            {
+                "rule_id": self.rule_id,
+                "kind": "logic",
+                "severity": "CRITICAL",
+                "type": "call",
+                "name": func_name,
+                "simple_name": func_name,
+                "value": "phantom",
+                "threshold": 0,
+                "message": (
+                    f"Call to '{func_name}()' but this function is never defined or imported. "
+                    f"AI-generated code often hallucinates security functions."
+                ),
+                "file": filename,
+                "basename": basename,
+                "line": node.lineno,
+                "col": node.col_offset,
+            }
+        ]
+
+
+_SECURITY_VAR_KEYWORDS = {
+    "token",
+    "secret",
+    "key",
+    "password",
+    "nonce",
+    "session",
+    "otp",
+    "salt",
+    "csrf",
+    "auth",
+    "code",
+    "pin",
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "reset_token",
+    "verification",
+    "confirm",
+}
+
+_INSECURE_RANDOM_FUNCS = {
+    "randint",
+    "choice",
+    "choices",
+    "random",
+    "randrange",
+    "sample",
+    "shuffle",
+    "randbytes",
+    "getrandbits",
+    "uniform",
+}
+
+
+def _var_name_is_security(name):
+    lower = name.lower()
+    for kw in _SECURITY_VAR_KEYWORDS:
+        if kw in lower:
+            return True
+    return False
+
+
+class InsecureRandomRule(SkylosRule):
+    rule_id = "SKY-L013"
+    name = "Insecure Randomness"
+
+    def visit_node(self, node, context):
+        if not isinstance(node, ast.Assign):
+            return None
+
+        filename = context.get("filename", "")
+        if _is_test_file(filename):
+            return None
+
+        call = node.value
+        if not isinstance(call, ast.Call):
+            return None
+
+        func = call.func
+        func_name = None
+        is_random_module = False
+
+        if isinstance(func, ast.Attribute):
+            if isinstance(func.value, ast.Name) and func.value.id == "random":
+                if func.attr in _INSECURE_RANDOM_FUNCS:
+                    func_name = f"random.{func.attr}"
+                    is_random_module = True
+        elif isinstance(func, ast.Name):
+            if func.id in _INSECURE_RANDOM_FUNCS:
+                func_name = func.id
+
+        if not func_name or not is_random_module:
+            return None
+
+        for target in node.targets:
+            var_name = None
+            if isinstance(target, ast.Name):
+                var_name = target.id
+            elif isinstance(target, ast.Attribute):
+                var_name = target.attr
+            elif isinstance(target, ast.Subscript) and isinstance(
+                target.value, ast.Name
+            ):
+                var_name = target.value.id
+
+            if var_name and _var_name_is_security(var_name):
+                basename = Path(filename).name
+                return [
+                    {
+                        "rule_id": self.rule_id,
+                        "kind": "logic",
+                        "severity": "HIGH",
+                        "type": "call",
+                        "name": func_name,
+                        "simple_name": func_name,
+                        "value": "insecure_random",
+                        "threshold": 0,
+                        "message": (
+                            f"'{func_name}()' used for security-sensitive value '{var_name}'. "
+                            f"Use 'secrets' module instead (e.g. secrets.token_urlsafe())."
+                        ),
+                        "file": filename,
+                        "basename": basename,
+                        "line": node.lineno,
+                        "col": node.col_offset,
+                    }
+                ]
+
+        return None
+
+
+_CREDENTIAL_VAR_NAMES = {
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "api_key",
+    "apikey",
+    "auth_token",
+    "access_token",
+    "refresh_token",
+    "db_password",
+    "database_url",
+    "connection_string",
+    "db_url",
+    "dsn",
+    "private_key",
+    "secret_key",
+    "encryption_key",
+    "signing_key",
+    "client_secret",
+    "app_secret",
+}
+
+_CREDENTIAL_VAR_SUFFIXES = {
+    "_password",
+    "_passwd",
+    "_secret",
+    "_token",
+    "_key",
+    "_api_key",
+    "_apikey",
+}
+
+_CREDENTIAL_DSN_RE = re.compile(
+    r"[a-zA-Z][a-zA-Z0-9+.-]*://[^:]+:[^@]+@",
+)
+
+_PLACEHOLDER_VALUES = {
+    "changeme",
+    "your_api_key_here",
+    "replace_me",
+    "todo",
+    "xxx",
+    "yyy",
+    "zzz",
+    "placeholder",
+    "example",
+    "test",
+    "dummy",
+    "fake",
+    "sample",
+    "your_password_here",
+    "insert_key_here",
+    "your_secret_here",
+}
+
+
+def _is_credential_var(name):
+    lower = name.lower()
+    if lower in _CREDENTIAL_VAR_NAMES:
+        return True
+    for suffix in _CREDENTIAL_VAR_SUFFIXES:
+        if lower.endswith(suffix):
+            return True
+    return False
+
+
+def _is_env_lookup(node):
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            if isinstance(func.value, ast.Name):
+                if func.value.id == "os" and func.attr in ("getenv", "environ"):
+                    return True
+            if isinstance(func.value, ast.Attribute):
+                if hasattr(func.value, "attr") and func.value.attr == "environ":
+                    return True
+        if isinstance(func, ast.Name) and func.id == "getenv":
+            return True
+    if isinstance(func if isinstance(node, ast.Call) else node, ast.Subscript):
+        val = node.value if isinstance(node, ast.Subscript) else None
+        if val and isinstance(val, ast.Attribute):
+            if hasattr(val, "attr") and val.attr == "environ":
+                return True
+    return False
+
+
+class HardcodedCredentialRule(SkylosRule):
+    rule_id = "SKY-L014"
+    name = "Hardcoded Credential"
+
+    def visit_node(self, node, context):
+        filename = context.get("filename", "")
+        if _is_test_file(filename):
+            return None
+
+        findings = []
+        basename = Path(filename).name
+
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            var_name = None
+            if isinstance(target, ast.Name):
+                var_name = target.id
+            elif isinstance(target, ast.Attribute):
+                var_name = target.attr
+
+            if var_name and _is_credential_var(var_name):
+                value = node.value
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    str_val = value.value
+                    if not str_val or str_val.strip() == "":
+                        return None
+                    try:
+                        if _is_env_lookup(value):
+                            return None
+                    except Exception:
+                        pass
+
+                    severity = "HIGH"
+                    if str_val.lower() in _PLACEHOLDER_VALUES:
+                        severity = "MEDIUM"
+
+                    findings.append(
+                        {
+                            "rule_id": self.rule_id,
+                            "kind": "logic",
+                            "severity": severity,
+                            "type": "assignment",
+                            "name": var_name,
+                            "simple_name": var_name,
+                            "value": "hardcoded",
+                            "threshold": 0,
+                            "message": (
+                                f"Hardcoded credential in '{var_name}'. "
+                                f"Use environment variables or a secrets manager instead."
+                            ),
+                            "file": filename,
+                            "basename": basename,
+                            "line": node.lineno,
+                            "col": node.col_offset,
+                        }
+                    )
+
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    if _CREDENTIAL_DSN_RE.search(value.value):
+                        findings.append(
+                            {
+                                "rule_id": self.rule_id,
+                                "kind": "logic",
+                                "severity": "HIGH",
+                                "type": "assignment",
+                                "name": var_name,
+                                "simple_name": var_name,
+                                "value": "hardcoded_dsn",
+                                "threshold": 0,
+                                "message": (
+                                    f"Connection string in '{var_name}' contains embedded credentials. "
+                                    f"Use environment variables for database URLs."
+                                ),
+                                "file": filename,
+                                "basename": basename,
+                                "line": node.lineno,
+                                "col": node.col_offset,
+                            }
+                        )
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for arg, default in _iter_arg_defaults(node):
+                if hasattr(arg, "arg"):
+                    arg_name = arg.arg
+                else:
+                    arg_name = str(arg)
+
+                if _is_credential_var(arg_name):
+                    if isinstance(default, ast.Constant) and isinstance(
+                        default.value, str
+                    ):
+                        str_val = default.value
+                        if str_val and str_val.strip():
+                            severity = "HIGH"
+                            if str_val.lower() in _PLACEHOLDER_VALUES:
+                                severity = "MEDIUM"
+                            findings.append(
+                                {
+                                    "rule_id": self.rule_id,
+                                    "kind": "logic",
+                                    "severity": severity,
+                                    "type": "default",
+                                    "name": arg_name,
+                                    "simple_name": arg_name,
+                                    "value": "hardcoded_default",
+                                    "threshold": 0,
+                                    "message": (
+                                        f"Hardcoded credential in default argument '{arg_name}'. "
+                                        f"Use environment variables or None with runtime lookup."
+                                    ),
+                                    "file": filename,
+                                    "basename": basename,
+                                    "line": default.lineno,
+                                    "col": default.col_offset,
+                                }
+                            )
+
+        return findings if findings else None
+
+
+def _iter_arg_defaults(func_node):
+    args = func_node.args
+    num_defaults = len(args.defaults)
+    num_args = len(args.args)
+    offset = num_args - num_defaults
+
+    for i, default in enumerate(args.defaults):
+        if default:
+            yield args.args[offset + i], default
+    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+        if default:
+            yield arg, default
+
+
+_HTTP_RESPONSE_CONSTRUCTORS = {
+    "JsonResponse",
+    "jsonify",
+    "Response",
+    "HTMLResponse",
+    "JSONResponse",
+    "PlainTextResponse",
+    "make_response",
+    "HttpResponse",
+    "HttpResponseBadRequest",
+    "HttpResponseServerError",
+}
+
+_HTTP_RETURN_KEYS = {"error", "message", "detail", "msg", "reason"}
+
+
+class ErrorDisclosureRule(SkylosRule):
+    rule_id = "SKY-L017"
+    name = "Error Information Disclosure"
+
+    def visit_node(self, node, context):
+        if not isinstance(node, ast.ExceptHandler):
+            return None
+
+        filename = context.get("filename", "")
+        if _is_test_file(filename):
+            return None
+
+        exc_var = node.name
+        if not exc_var:
+            return None
+
+        findings = []
+        basename = Path(filename).name
+
+        for child in ast.walk(node):
+            if isinstance(child, ast.Return) and child.value:
+                self._check_disclosure(
+                    child.value, exc_var, child, filename, basename, findings
+                )
+
+            if isinstance(child, ast.Call):
+                func = child.func
+                func_name = None
+                if isinstance(func, ast.Name):
+                    func_name = func.id
+                elif isinstance(func, ast.Attribute):
+                    func_name = func.attr
+                if func_name in _HTTP_RESPONSE_CONSTRUCTORS:
+                    for arg in child.args:
+                        self._check_disclosure(
+                            arg, exc_var, child, filename, basename, findings
+                        )
+                    for kw in child.keywords:
+                        self._check_disclosure(
+                            kw.value, exc_var, child, filename, basename, findings
+                        )
+
+        return findings if findings else None
+
+    def _check_disclosure(
+        self, value_node, exc_var, report_node, filename, basename, findings
+    ):
+        if self._is_exc_stringification(value_node, exc_var):
+            findings.append(
+                self._make_finding(report_node, filename, basename, exc_var)
+            )
+            return
+
+        if isinstance(value_node, ast.Dict):
+            for k, v in zip(value_node.keys, value_node.values):
+                if k and isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    if k.value.lower() in _HTTP_RETURN_KEYS:
+                        if self._is_exc_stringification(v, exc_var):
+                            findings.append(
+                                self._make_finding(
+                                    report_node, filename, basename, exc_var
+                                )
+                            )
+                            return
+
+        if isinstance(value_node, ast.JoinedStr):
+            for val in value_node.values:
+                if isinstance(val, ast.FormattedValue):
+                    if self._is_exc_stringification(val.value, exc_var):
+                        findings.append(
+                            self._make_finding(report_node, filename, basename, exc_var)
+                        )
+                        return
+                    if isinstance(val.value, ast.Name) and val.value.id == exc_var:
+                        findings.append(
+                            self._make_finding(report_node, filename, basename, exc_var)
+                        )
+                        return
+
+    def _is_exc_stringification(self, node, exc_var):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in ("str", "repr"):
+                if node.args and isinstance(node.args[0], ast.Name):
+                    if node.args[0].id == exc_var:
+                        return True
+
+            if isinstance(func, ast.Attribute) and func.attr == "format_exc":
+                if isinstance(func.value, ast.Name) and func.value.id == "traceback":
+                    return True
+
+        if isinstance(node, ast.Name) and node.id == exc_var:
+            return True
+        return False
+
+    def _make_finding(self, node, filename, basename, exc_var):
+        return {
+            "rule_id": self.rule_id,
+            "kind": "logic",
+            "severity": "MEDIUM",
+            "type": "block",
+            "name": "error_disclosure",
+            "simple_name": "error_disclosure",
+            "value": "exception_leaked",
+            "threshold": 0,
+            "message": (
+                f"Exception details ('{exc_var}') returned in HTTP response. "
+                f"This exposes internal stack traces to attackers. Return a generic error message instead."
+            ),
+            "file": filename,
+            "basename": basename,
+            "line": node.lineno,
+            "col": node.col_offset,
+        }
+
+
+_SENSITIVE_FILE_KEYWORDS = {
+    ".env",
+    ".pem",
+    ".key",
+    ".cert",
+    ".crt",
+    ".p12",
+    ".pfx",
+    "credentials",
+    "secrets",
+    "private",
+    "id_rsa",
+    "id_ed25519",
+    "keyfile",
+    "keystore",
+}
+
+
+def _is_sensitive_filename(name):
+    lower = name.lower()
+    for kw in _SENSITIVE_FILE_KEYWORDS:
+        if kw in lower:
+            return True
+    return False
+
+
+class BroadFilePermissionsRule(SkylosRule):
+    rule_id = "SKY-L020"
+    name = "Overly Broad File Permissions"
+
+    def visit_node(self, node, context):
+        if not isinstance(node, ast.Call):
+            return None
+
+        filename = context.get("filename", "")
+        if _is_test_file(filename):
+            return None
+
+        func = node.func
+        func_name = None
+
+        if isinstance(func, ast.Attribute) and func.attr == "chmod":
+            if isinstance(func.value, ast.Name) and func.value.id == "os":
+                func_name = "os.chmod"
+
+        if func_name != "os.chmod":
+            return None
+
+        if len(node.args) < 2:
+            return None
+
+        mode_node = node.args[1]
+        mode_val = None
+
+        if isinstance(mode_node, ast.Constant) and isinstance(mode_node.value, int):
+            mode_val = mode_node.value
+
+        if mode_val is None:
+            return None
+
+        basename = Path(filename).name
+
+        path_arg = node.args[0]
+        target_name = ""
+        if isinstance(path_arg, ast.Constant) and isinstance(path_arg.value, str):
+            target_name = path_arg.value
+        elif isinstance(path_arg, ast.Name):
+            target_name = path_arg.id
+
+        is_sensitive = _is_sensitive_filename(target_name)
+
+        if mode_val & 0o777 == 0o777:
+            return [
+                self._make_finding(
+                    node,
+                    filename,
+                    basename,
+                    mode_val,
+                    "HIGH",
+                    f"os.chmod() with mode {oct(mode_val)} grants full access to all users.",
+                )
+            ]
+
+        if mode_val & 0o002:
+            return [
+                self._make_finding(
+                    node,
+                    filename,
+                    basename,
+                    mode_val,
+                    "HIGH",
+                    f"os.chmod() with mode {oct(mode_val)} is world-writable.",
+                )
+            ]
+
+        if is_sensitive and mode_val & 0o077:
+            return [
+                self._make_finding(
+                    node,
+                    filename,
+                    basename,
+                    mode_val,
+                    "HIGH",
+                    f"os.chmod() with mode {oct(mode_val)} on sensitive file. Use 0o600 for private keys and credentials.",
+                )
+            ]
+
+        return None
+
+    def _make_finding(self, node, filename, basename, mode_val, severity, message):
+        return {
+            "rule_id": self.rule_id,
+            "kind": "logic",
+            "severity": severity,
+            "type": "call",
+            "name": "os.chmod",
+            "simple_name": "os.chmod",
+            "value": oct(mode_val),
+            "threshold": 0,
+            "message": message,
+            "file": filename,
+            "basename": basename,
+            "line": node.lineno,
+            "col": node.col_offset,
+        }

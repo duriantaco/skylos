@@ -1,7 +1,7 @@
 <div align="center">
     <img src="assets/DOG_1.png" alt="Skylos - Python SAST and Dead Code Detection Tool" width="300">
     <h1>Skylos: Python SAST, Dead Code Detection & Security Auditor</h1>
-    <h3>The hybrid static analysis tool for Python. Finds dead code, security leaks, quality rot with agentic AI options and MCP integration.</h3>
+    <h3>The hybrid static analysis tool for Python. Finds dead code, security leaks, vibe coding failures, and quality rot with agentic AI options and MCP integration.</h3>
 </div>
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
@@ -156,6 +156,12 @@ Backup (GitHub): https://github.com/duriantaco/skylos/discussions/82
 * **Taint Analysis:** Traces untrusted input from API endpoints to databases to prevent SQL Injection and XSS.
 * **Secrets Detection:** Hunts down hardcoded API keys (AWS, Stripe, OpenAI) and private credentials before commit.
 * **Vulnerability Checks:** Flags dangerous patterns like `eval()`, unsafe `pickle`, and weak cryptography.
+
+### Vibe Coding Guardrails
+* **Phantom Call Detection:** Catches calls to security functions (`sanitize_input`, `validate_token`, `check_permission`, etc.) that are never defined or imported — AI hallucinates these constantly.
+* **Security TODO Scanners:** Flags `# TODO: add auth` placeholders that AI left behind and nobody finished.
+* **Disabled Security Controls:** Detects `verify=False`, `@csrf_exempt`, `DEBUG=True`, and `ALLOWED_HOSTS=["*"]`.
+* **Credential & Randomness Checks:** Catches hardcoded passwords and `random.choice()` used for security-sensitive values like tokens and OTPs.
 
 ### Dead Code Detection & Cleanup
 * **Find Unused Code:** Identifies unreachable functions, orphan classes, and unused imports with confidence scoring.
@@ -1045,7 +1051,7 @@ Control how you consume the watchdog's findings.
 
 | Flag | Format | Primary Use |
 |------|--------|-------------|
-| `--table` | Rich Table | Classic Rich table output instead of TUI. |
+| `--tui` | TUI Dashboard | Launch the interactive TUI dashboard. |
 | `--tree` | Logic Tree | Visualizes code hierarchy and structural dependencies. |
 | `--json` | Machine Raw | Piping results to `jq`, custom scripts, or log aggregators. |
 | `--sarif` | SARIF | GitHub Code Scanning, IDE integration |
@@ -1416,7 +1422,7 @@ Options:
   -h, --help                   Show this help message and exit
   --json                       Output raw JSON instead of formatted text  
   --tree                       Output results in tree format
-  --table                      Rich table output instead of TUI
+  --tui                        Launch interactive TUI dashboard
   --sarif                      Output SARIF format for GitHub/IDE integration
   -c, --confidence LEVEL       Confidence threshold 0-100 (default: 60)
   --comment-out                Comment out code instead of deleting
