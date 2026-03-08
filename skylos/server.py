@@ -13,7 +13,12 @@ from threading import Timer
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 
 app = Flask(__name__)
-CORS(app)
+_cors_origins = os.getenv("SKYLOS_CORS_ORIGINS")
+if _cors_origins:
+    origins = [o.strip() for o in _cors_origins.split(",") if o.strip()]
+    CORS(app, origins=origins)
+else:
+    CORS(app)
 
 
 @app.route("/")
@@ -557,7 +562,8 @@ def start_server(exclude_folders=None):
 
     Timer(1.5, open_browser).start()
 
-    app.run(debug=False, host="0.0.0.0", port=5090, use_reloader=False)
+    bind_host = os.getenv("SKYLOS_BIND", "127.0.0.1")
+    app.run(debug=False, host=bind_host, port=5090, use_reloader=False)
 
 
 if __name__ == "__main__":
