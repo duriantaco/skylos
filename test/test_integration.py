@@ -130,7 +130,6 @@ class TestSkylosIntegration:
             yield project_path
 
     def test_basic_analysis(self, temp_project):
-        """Test basic unused code detection"""
         result_json = skylos.analyze(
             str(temp_project), exclude_folders=list(DEFAULT_EXCLUDE_FOLDERS)
         )
@@ -160,7 +159,6 @@ class TestSkylosIntegration:
         assert "main" not in unused_function_names
 
     def test_unused_imports_detection(self, temp_project):
-        """Test detection of unused imports"""
         result_json = skylos.analyze(str(temp_project))
         result = json.loads(result_json)
 
@@ -191,7 +189,6 @@ class TestSkylosIntegration:
             f"UsedClass was incorrectly flagged as unused: {used_classes_flagged}"
         )
 
-        # publicclass should not be flagged because it's exported via __init__.py
         public_classes_flagged = [name for name in class_names if "PublicClass" in name]
         assert len(public_classes_flagged) == 0, (
             f"PublicClass was incorrectly flagged as unused: {public_classes_flagged}"
@@ -200,10 +197,8 @@ class TestSkylosIntegration:
     def test_exclude_folders(self, temp_project):
         result1 = skylos.analyze(str(temp_project))
 
-        # exclude the mypackage folder
         result2 = skylos.analyze(str(temp_project), exclude_folders=["mypackage"])
 
-        # it'll find fewer items when excluding a folder
         data1 = json.loads(result1)
         data2 = json.loads(result2)
 
@@ -298,7 +293,6 @@ class TestSkylosIntegration:
         result_json = skylos.analyze(str(main_file))
         result = json.loads(result_json)
 
-        # should still detect unused items in the single file
         assert len(result["unused_functions"]) > 0
         assert len(result["unused_imports"]) > 0
 
@@ -347,11 +341,8 @@ class TestSkylosIntegration:
             assert result["analysis_summary"]["total_files"] == 0
 
     def test_threshold_filtering(self, temp_project):
-        """Test that confidence threshold filtering works"""
-        # high threshold = find fewer items
         result_high = json.loads(skylos.analyze(str(temp_project), conf=95))
 
-        # low threshold = should find more items
         result_low = json.loads(skylos.analyze(str(temp_project), conf=10))
 
         assert len(result_high["unused_functions"]) <= len(

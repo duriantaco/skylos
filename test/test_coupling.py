@@ -1,18 +1,9 @@
-"""Tests for CBO (Coupling Between Objects) metric - SKY-Q701."""
-
 import ast
-import pytest
 from skylos.rules.quality.coupling import CBORule, analyze_coupling, _extract_type_names
-
-
-# ── Helper ──
 
 
 def _parse(code: str) -> ast.AST:
     return ast.parse(code)
-
-
-# ── _extract_type_names ──
 
 
 class TestExtractTypeNames:
@@ -38,9 +29,6 @@ class TestExtractTypeNames:
     def test_none(self):
         names = _extract_type_names(None)
         assert names == set()
-
-
-# ── analyze_coupling ──
 
 
 class TestAnalyzeCoupling:
@@ -141,7 +129,6 @@ class C(A):
 """
         result = analyze_coupling(_parse(code), "test.py")
         c = result["classes"]["C"]
-        # C depends on A and B (Ce=2), nobody depends on C (Ca=0)
         assert c["efferent_coupling"] >= 2
         assert c["instability"] > 0.5
 
@@ -156,9 +143,6 @@ class B(A):
         result = analyze_coupling(_parse(code), "test.py")
         graph = result["coupling_graph"]
         assert "A" in graph["B"]
-
-
-# ── CBORule ──
 
 
 class TestCBORule:
@@ -176,7 +160,6 @@ class Foo:
                 assert result is None
 
     def test_high_coupling_generates_finding(self):
-        # Create a class that depends on many others
         code = """
 class A: pass
 class B: pass

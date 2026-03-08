@@ -157,7 +157,6 @@ class TestCircularDependencyAnalyzer:
     def test_get_core_infrastructure(self):
         analyzer = CircularDependencyAnalyzer()
         analyzer.modules = {"a": "a.py", "b": "b.py", "c": "c.py"}
-        # a is in two cycles: a<->b and a<->c
         analyzer.dependencies = {
             "a": {"b", "c"},
             "b": {"a"},
@@ -244,11 +243,6 @@ class TestConvenienceFunction:
 
         assert len(findings) == 1
         assert findings[0]["cycle_length"] == 2
-
-
-# =============================================================================
-# UNIT TESTS - Severity
-# =============================================================================
 
 
 class TestSeverity:

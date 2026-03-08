@@ -167,7 +167,6 @@ def test_multiple_decorators():
         visitor = TestAwareVisitor()
         visitor.visit(tree)
 
-        # should be detected as test
         assert 5 in visitor.test_decorated_lines
 
     @patch("skylos.visitors.test_aware.TEST_IMPORT_RE")
@@ -197,7 +196,6 @@ import unittest
         visitor.is_test_file = False
         visitor.visit(tree)
 
-        #  no call regex match for imports
         assert mock_test_import_re.match.call_count == 0
 
     @patch("skylos.visitors.test_aware.TEST_IMPORT_RE")
@@ -213,7 +211,6 @@ from unittest.mock import Mock
         visitor.is_test_file = True
         visitor.visit(tree)
 
-        # should call regex match from-imports
         assert mock_test_import_re.match.call_count >= 2
 
     def test_complex_test_class(self):

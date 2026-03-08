@@ -276,7 +276,6 @@ def deduplicate_findings(findings):
 
         is_dup = False
 
-        # +-2 line tolerance
         offset = -2
         while offset <= 2:
             key = (f.location.file, f.location.line + offset, msg_key)

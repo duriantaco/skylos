@@ -4,19 +4,54 @@ import re
 RULE_ID = "SKY-U005"
 
 CLI_ONLY_PACKAGES = {
-    "black", "ruff", "mypy", "pytest", "flake8", "pylint", "isort",
-    "pre-commit", "tox", "nox", "coverage", "sphinx", "mkdocs",
-    "twine", "build", "setuptools", "wheel", "pip", "pipx",
-    "autopep8", "bandit", "pyflakes", "pycodestyle", "pydocstyle",
-    "pytest-cov", "pytest-xdist", "pytest-mock", "pytest-asyncio",
+    "black",
+    "ruff",
+    "mypy",
+    "pytest",
+    "flake8",
+    "pylint",
+    "isort",
+    "pre-commit",
+    "tox",
+    "nox",
+    "coverage",
+    "sphinx",
+    "mkdocs",
+    "twine",
+    "build",
+    "setuptools",
+    "wheel",
+    "pip",
+    "pipx",
+    "autopep8",
+    "bandit",
+    "pyflakes",
+    "pycodestyle",
+    "pydocstyle",
+    "pytest-cov",
+    "pytest-xdist",
+    "pytest-mock",
+    "pytest-asyncio",
 }
 
 RUNTIME_PLUGIN_PACKAGES = {
-    "pytest-cov", "pytest-xdist", "pytest-mock", "pytest-asyncio",
-    "pytest-django", "pytest-flask", "pytest-celery",
-    "flask-cors", "flask-login", "flask-migrate", "flask-sqlalchemy",
-    "django-cors-headers", "django-filter", "django-extensions",
-    "celery", "gunicorn", "uvicorn",
+    "pytest-cov",
+    "pytest-xdist",
+    "pytest-mock",
+    "pytest-asyncio",
+    "pytest-django",
+    "pytest-flask",
+    "pytest-celery",
+    "flask-cors",
+    "flask-login",
+    "flask-migrate",
+    "flask-sqlalchemy",
+    "django-cors-headers",
+    "django-filter",
+    "django-extensions",
+    "celery",
+    "gunicorn",
+    "uvicorn",
 }
 
 IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z_][\w.]*)", re.MULTILINE)
@@ -91,7 +126,9 @@ def _collect_declared_deps(repo_root):
         req_path = current / "requirements.txt"
         if req_path.exists():
             try:
-                for line in req_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                for line in req_path.read_text(
+                    encoding="utf-8", errors="ignore"
+                ).splitlines():
                     line = line.strip()
                     if not line or line.startswith("#") or line.startswith("-"):
                         continue
@@ -109,7 +146,7 @@ def _collect_declared_deps(repo_root):
                 if name_match and not project_name:
                     project_name = name_match.group(1)
 
-                dep_block = re.search(r'(?m)^\s*dependencies\s*=\s*\[', txt)
+                dep_block = re.search(r"(?m)^\s*dependencies\s*=\s*\[", txt)
                 if dep_block:
                     start = dep_block.end()
                     depth = 1
@@ -120,7 +157,7 @@ def _collect_declared_deps(repo_root):
                         elif txt[pos] == "]":
                             depth -= 1
                         pos += 1
-                    block = txt[start:pos - 1]
+                    block = txt[start : pos - 1]
                     for item in re.findall(r'["\']([^"\']+)["\']', block):
                         m = req_line_re.match(item.strip())
                         if m:
@@ -150,7 +187,7 @@ def _collect_declared_deps(repo_root):
                         elif txt[pos] == "]":
                             depth -= 1
                         pos += 1
-                    block = txt[start:pos - 1]
+                    block = txt[start : pos - 1]
                     for item in re.findall(r'["\']([^"\']+)["\']', block):
                         rm = req_line_re.match(item.strip())
                         if rm:
@@ -162,7 +199,9 @@ def _collect_declared_deps(repo_root):
         if req_dir.exists() and req_dir.is_dir():
             for req_file in req_dir.glob("*.txt"):
                 try:
-                    for line in req_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    for line in req_file.read_text(
+                        encoding="utf-8", errors="ignore"
+                    ).splitlines():
                         line = line.strip()
                         if not line or line.startswith("#") or line.startswith("-"):
                             continue

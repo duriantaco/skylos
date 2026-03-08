@@ -64,12 +64,10 @@ def test_parse_unified_diff():
     ranges = _parse_unified_diff(SAMPLE_DIFF)
     assert len(ranges) == 2
 
-    # app.py: +11,3 means lines 11-13
     assert ranges[0]["file"] == "app.py"
     assert ranges[0]["start"] == 11
     assert ranges[0]["end"] == 13
 
-    # utils.py: +5 (single line change)
     assert ranges[1]["file"] == "utils.py"
     assert ranges[1]["start"] == 5
     assert ranges[1]["end"] == 5
@@ -80,12 +78,10 @@ def test_filter_findings_to_diff(sample_results):
     findings = _flatten_findings(sample_results)
     filtered = filter_findings_to_diff(findings, ranges)
 
-    # app.py line 12 is in range 11-13, utils.py line 5 is in range 5-5
     assert len(filtered) == 2
     files = {f["file"] for f in filtered}
     assert "app.py" in files
     assert "utils.py" in files
-    # other.py line 50 is NOT in any changed range
     assert "other.py" not in files
 
 

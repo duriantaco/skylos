@@ -4,8 +4,6 @@ from skylos.visitor import Definition
 
 
 class _GoDummyVisitor:
-    """Placeholder visitor for Go files to satisfy the pipeline tuple format."""
-
     def __init__(self):
         self.is_test_file = False
         self.test_decorated_lines = set()
@@ -16,8 +14,6 @@ class _GoDummyVisitor:
         self.framework_decorated_lines = set()
 
 
-# Remap Go-specific rule IDs to unified cross-language IDs.
-# Go-only rules (no Python/TS equivalent) keep their original IDs.
 _GO_RULE_REMAP = {
     "SKY-G211": "SKY-D211",  # SQL injection
     "SKY-G212": "SKY-D212",  # Command injection
@@ -29,18 +25,14 @@ _GO_RULE_REMAP = {
     "SKY-G220": "SKY-D230",  # Open redirect
 }
 
-# Module-level cache: Go binary runs once per module, results cached.
-# Key: module_root (Path), Value: {"findings": [...], "symbols": {...}}
 _go_module_cache = {}
 
 
 def clear_go_cache():
-    """Clear the Go module cache. Call at start of each analysis run."""
     _go_module_cache.clear()
 
 
 def _get_module_result(module_root):
-    """Run Go engine for a module (cached)."""
     key = str(module_root)
     if key not in _go_module_cache:
         try:
@@ -55,7 +47,6 @@ def _get_module_result(module_root):
 
 
 def _convert_symbols(symbols_data, file_path):
-    """Convert Go binary symbol output to Definition objects + ref tuples for a single file."""
     if not symbols_data:
         return [], []
 
@@ -63,7 +54,6 @@ def _convert_symbols(symbols_data, file_path):
     defs = []
     refs = []
 
-    # Convert defs for this file.
     for d in symbols_data.get("defs", []):
         if d.get("file") != file_str:
             continue
@@ -78,8 +68,6 @@ def _convert_symbols(symbols_data, file_path):
             defn.references = 1
         defs.append(defn)
 
-    # Convert refs from this file only. Cross-file refs will be added
-    # when those other files are processed.
     for r in symbols_data.get("refs", []):
         if r.get("file") == file_str:
             refs.append((r["name"], r["file"]))
@@ -97,7 +85,6 @@ def scan_go_file(file_path, cfg):
 
     result = _get_module_result(module_root)
 
-    # Extract security findings for this file.
     findings = result.get("findings", [])
     file_findings = [
         f for f in findings if Path(f.get("file", "")).resolve() == file_path.resolve()
@@ -108,7 +95,6 @@ def scan_go_file(file_path, cfg):
         if rid in _GO_RULE_REMAP:
             f["rule_id"] = _GO_RULE_REMAP[rid]
 
-    # Convert symbols to defs/refs.
     symbols_data = result.get("symbols")
     defs, refs = _convert_symbols(symbols_data, str(file_path.resolve()))
 

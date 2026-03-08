@@ -1,13 +1,7 @@
-"""Tests for the Skylos DevOps Agent (planner, executor, orchestrator)."""
-
 from __future__ import annotations
 
-import os
-import textwrap
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
-import pytest
+from unittest.mock import patch
 
 from skylos.llm.planner import (
     RemediationPlanner,
@@ -15,15 +9,11 @@ from skylos.llm.planner import (
     FindingItem,
     FixBatch,
     SEVERITY_PRIORITY,
-    AUTO_FIXABLE,
 )
-from skylos.llm.executor import RemediationExecutor, TestResult, VerifyResult
+from skylos.llm.executor import RemediationExecutor
 from skylos.llm.prompts import build_pr_description
 
 
-# ====================================================================
-# Planner tests
-# ====================================================================
 class TestRemediationPlanner:
     def _make_results(self, findings):
         return {"danger": findings, "quality": [], "secrets": []}
@@ -130,7 +120,6 @@ class TestRemediationPlanner:
         ]
         planner = RemediationPlanner(severity_filter="high")
         plan = planner.create_plan(self._make_results(findings), max_fixes=10)
-        # Only CRITICAL (priority 0) passes — HIGH (priority 1) also passes
         severities = {f.severity for b in plan.batches for f in b.findings}
         assert "LOW" not in severities
         assert "MEDIUM" not in severities
@@ -155,7 +144,6 @@ class TestRemediationPlanner:
         planner = RemediationPlanner()
         plan = planner.create_plan(self._make_results(findings), max_fixes=10)
         batch = plan.batches[0]
-        # D206 is auto-fixable, D211 is not — D206 should come first
         assert batch.findings[0].rule_id == "SKY-D206"
 
     def test_summary(self):
@@ -198,7 +186,7 @@ class TestRemediationPlanner:
         s = plan.summary()
         assert s["fixed"] == 1
         assert s["failed"] == 1
-        assert s["skipped"] == 3 + 0  # skipped_findings + skipped batches
+        assert s["skipped"] == 3 + 0
         assert s["total_findings"] == 5
 
     def test_finding_item_from_dict(self):
@@ -250,9 +238,6 @@ class TestRemediationPlanner:
         assert plan.total_findings == 3
 
 
-# ====================================================================
-# Executor tests
-# ====================================================================
 class TestRemediationExecutor:
     def test_apply_and_revert(self, tmp_path):
         f = tmp_path / "test.py"
@@ -322,19 +307,14 @@ class TestRemediationExecutor:
         assert result.passed is False
 
     def test_verify_fix(self, tmp_path):
-        # Write a file with a known dangerous call (eval)
         f = tmp_path / "test_verify.py"
         f.write_text("x = 1 + 2\n")
 
         executor = RemediationExecutor(project_root=tmp_path)
         result = executor.verify_fix(str(f), ["SKY-D201"])
-        # No eval in file → finding resolved
         assert result.finding_resolved is True
 
 
-# ====================================================================
-# PR description tests
-# ====================================================================
 class TestPRDescription:
     def test_basic_description(self):
         summary = {
@@ -385,12 +365,8 @@ class TestPRDescription:
         assert "Skylos" in body
 
 
-# ====================================================================
-# Orchestrator integration tests (mocked)
-# ====================================================================
 class TestOrchestrator:
     def test_dry_run_no_changes(self, tmp_path):
-        """Dry run should scan and plan but not modify any files."""
         test_file = tmp_path / "vuln.py"
         test_file.write_text("import hashlib\nhashlib.md5(b'data')\n")
 
@@ -398,7 +374,6 @@ class TestOrchestrator:
 
         agent = RemediationAgent(model="gpt-4.1")
 
-        # Mock the scan to return a known finding
         mock_results = {
             "danger": [
                 {
@@ -417,14 +392,12 @@ class TestOrchestrator:
         with patch.object(agent, "_scan", return_value=mock_results):
             summary = agent.run(str(tmp_path), dry_run=True, quiet=True)
 
-        # File should be unchanged
         assert test_file.read_text() == "import hashlib\nhashlib.md5(b'data')\n"
         assert summary["total_findings"] == 1
         assert summary["planned"] == 1
-        assert summary["fixed"] == 0  # dry run → nothing fixed
+        assert summary["fixed"] == 0
 
     def test_zero_findings(self, tmp_path):
-        """No findings → clean exit."""
         from skylos.llm.orchestrator import RemediationAgent
 
         agent = RemediationAgent()

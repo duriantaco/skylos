@@ -241,7 +241,7 @@ class TestPrepareCategoryData:
         data = prepare_category_data(result)
         _, rows, _ = data["suppressed"]
         assert len(rows) == 1
-        assert rows[0][0] == "Dead Code"  # category title-cased
+        assert rows[0][0] == "Dead Code"
         assert rows[0][1] == "old_func"
         assert rows[0][2] == "whitelisted"
 
@@ -350,7 +350,6 @@ class TestSkylosAppInit:
         assert app.category_counts["security"] == 1
         assert app.category_counts["secrets"] == 0
         assert app.category_counts["quality"] == 0
-        # overview = sum of all non-overview counts
         assert app.category_counts["overview"] == 3
 
     def test_root_path_stored(self, sample_result, tmp_path):

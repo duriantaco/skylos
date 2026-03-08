@@ -119,7 +119,6 @@ def create_sample_project(base_path: Path):
     config_py = config_dir / "settings.py"
     config_py.write_text(
         dedent("""
-        # Configuration file with potentially unused imports
         import os
         import logging
         

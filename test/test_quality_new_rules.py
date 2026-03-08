@@ -14,9 +14,6 @@ def check_code(rule, code, filename="test.py"):
     return findings
 
 
-# ── UnusedExceptVarRule (SKY-L005) ──────────────────────────────────
-
-
 class TestUnusedExceptVar:
     def test_unused_exception_variable(self):
         code = "try:\n    pass\nexcept ValueError as e:\n    print('oops')\n"
@@ -37,7 +34,6 @@ class TestUnusedExceptVar:
 
     def test_underscore_convention(self):
         code = "try:\n    pass\nexcept ValueError as _:\n    print('ignored')\n"
-        # _ is still flagged — no special-casing (user can suppress via skylos:ignore)
         findings = check_code(UnusedExceptVarRule(), code)
         assert len(findings) == 1
 
@@ -51,7 +47,6 @@ class TestUnusedExceptVar:
             "    print(e2)\n"
         )
         findings = check_code(UnusedExceptVarRule(), code)
-        # e is unused, e2 is used
         assert len(findings) == 1
         assert findings[0]["name"] == "e"
 
@@ -67,12 +62,8 @@ class TestUnusedExceptVar:
         assert len(findings) == 0
 
 
-# ── ReturnConsistencyRule (SKY-L006) ────────────────────────────────
-
-
 class TestReturnConsistency:
     def test_inconsistent_explicit_return_vs_bare_return(self):
-        """return value on one path, bare return on another."""
         code = "def f(x):\n    if x > 0:\n        return x * 2\n    return\n"
         findings = check_code(ReturnConsistencyRule(), code)
         assert len(findings) == 1
@@ -112,22 +103,16 @@ class TestReturnConsistency:
         assert len(findings) == 0
 
     def test_only_implicit_return_no_flag(self):
-        """Only one return path + implicit None — rule doesn't detect implicit."""
         code = "def f(x):\n    if x > 0:\n        return x * 2\n"
         findings = check_code(ReturnConsistencyRule(), code)
         assert len(findings) == 0
 
 
-# ── GodClassRule (SKY-Q501) ─────────────────────────────────────────
-
-
 class TestGodClass:
     def _make_big_class(self, method_count, attr_count):
-        """Generate a class with method_count methods, each setting a unique attr."""
         methods = ""
         for i in range(method_count):
             methods += f"    def m{i}(self):\n        self.attr{i} = {i}\n"
-        # If we need more attrs than methods, pack extras into __init__
         if attr_count > method_count:
             init_body = ""
             for i in range(method_count, attr_count):
@@ -172,7 +157,6 @@ class TestGodClass:
     def test_custom_thresholds(self):
         code = self._make_big_class(method_count=6, attr_count=4)
         findings = check_code(GodClassRule(max_methods=5, max_attributes=3), code)
-        # 6 methods > 5 limit, 6 attrs > 3 limit
         method_findings = [
             f
             for f in findings

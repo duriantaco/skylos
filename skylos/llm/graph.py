@@ -280,7 +280,6 @@ class CodeGraph:
                         continue
 
                     for node in descendants:
-                        # Safety: ensure node is a string before using 'in'
                         if not isinstance(node, str):
                             continue
                         if any(sink in node for sink in self.taint_sinks):
@@ -370,7 +369,6 @@ class DataFlowVisitor(ast.NodeVisitor):
             self.visit(stmt)
 
     def visit_For(self, node):
-        # Track loop variable assignment
         if isinstance(node.target, ast.Name):
             sources = self._extract_names(node.iter)
             for src in sources:

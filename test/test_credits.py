@@ -1,21 +1,8 @@
-"""Tests for CLI credit balance, credit status display, and upload credit gating.
-
-Covers:
-- get_credit_balance (success, failure, no token)
-- print_credit_status (enterprise, low balance, normal)
-- upload_report credit handling (402 no credits, credits_warning, normal deduction)
-"""
-
 from unittest.mock import patch, MagicMock
 
 import pytest
 
 from skylos.api import get_credit_balance, print_credit_status
-
-
-# ---------------------------------------------------------------------------
-# get_credit_balance tests
-# ---------------------------------------------------------------------------
 
 
 class TestGetCreditBalance:
@@ -90,11 +77,6 @@ class TestGetCreditBalance:
         assert url.endswith("/api/credits/balance")
 
 
-# ---------------------------------------------------------------------------
-# print_credit_status tests
-# ---------------------------------------------------------------------------
-
-
 class TestPrintCreditStatus:
     @patch("skylos.api.get_credit_balance")
     def test_enterprise_shows_unlimited(self, mock_balance, capsys):
@@ -144,18 +126,7 @@ class TestPrintCreditStatus:
         assert result is None
 
 
-# ---------------------------------------------------------------------------
-# upload_report credit gating tests
-# ---------------------------------------------------------------------------
-
-
 class TestUploadReportCredits:
-    """Tests for credit-related behavior in upload_report().
-
-    upload_report() does heavy processing (SARIF conversion, git info, etc.)
-    before hitting the API, so we mock at multiple levels.
-    """
-
     MINIMAL_RESULT = {
         "unused_functions": [],
         "unused_imports": [],
