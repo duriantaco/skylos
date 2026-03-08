@@ -100,17 +100,23 @@ jobs:
 
       - name: PR Review Comments
         if: github.event_name == 'pull_request' && always()
-        run: skylos cicd review --input skylos-results.json{" --llm-input skylos-llm-results.json" if use_llm else ""} --diff-base origin/${{{{ github.base_ref || 'main' }}}}
+        run: skylos cicd review --input skylos-results.json{
+        " --llm-input skylos-llm-results.json" if use_llm else ""
+    } --diff-base origin/${{{{ github.base_ref || 'main' }}}}
         env:
           GH_TOKEN: ${{{{ github.token }}}}
-{"" if not use_claude_security else '''
+{
+        ""
+        if not use_claude_security
+        else '''
       - name: Upload Skylos Results for Cross-Reference
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: skylos-results
           path: skylos-results.json
-'''}"""
+'''
+    }"""
 
     if use_claude_security:
         workflow += _build_claude_security_jobs(python_version)
