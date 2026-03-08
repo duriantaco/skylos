@@ -36,21 +36,17 @@ from pathlib import Path  # unused import
 from collections import defaultdict
 
 def used_function():
-    """This function is used"""
     return "used"
 
 def unused_function():
-    """This function is not used"""
     return "unused"
 
 def another_used_function():
-    """Another used function"""
     result = used_function()
     data = defaultdict(list)
     return json.dumps({"result": result})
 
 class UsedClass:
-    """This class is used"""
     def __init__(self):
         self.value = "used"
         
@@ -62,7 +58,6 @@ class UnusedClass:
     def __init__(self):
         self.value = "unused"
 
-# Usage
 instance = UsedClass()
 result = another_used_function()
 '''
@@ -86,28 +81,22 @@ class TestClass(unittest.TestCase):
         pass
 
 class RegularClass:
-    """Regular class with magic methods"""
     
     def __init__(self, value):
         self.value = value
         
     def __str__(self):
-        """Magic method - should be ignored"""
         return str(self.value)
         
     def __eq__(self, other):
-        """Magic method - should be ignored"""
         return self.value == other.value
         
     def regular_method(self):
-        """Regular method"""
         return self.value * 2
         
     def unused_method(self):
-        """Unused regular method"""
         return "unused"
 
-# Only create instance, don't call regular_method
 obj = RegularClass(42)
 print(obj)  # This calls __str__
 '''
@@ -173,7 +162,6 @@ def utility_function():
     """Utility function used internally"""
     return "utility"
 
-# Internal usage
 _internal = NonExportedClass()
 result = utility_function()
 '''
@@ -182,7 +170,6 @@ result = utility_function()
 """Complex scenarios test file"""
 import importlib
 
-# Dynamic import - makes analysis uncertain
 module_name = "json"
 json_module = importlib.import_module(module_name)
 
@@ -212,11 +199,9 @@ class DerivedClass(BaseClass):
     def unused_derived_method(self):
         return "unused derived"
 
-# Create instance but only use inherited method
 derived = DerivedClass()
 result = derived.base_method()
 
-# Simulate dynamic function call without using sys
 func_name = "function_with_dynamic_usage"
 if hasattr(globals(), func_name):
     globals()[func_name]()
@@ -241,7 +226,6 @@ if hasattr(globals(), func_name):
             f.write(test3_content)
 
     def run_analyzer(self, confidence_threshold=60):
-        """Run the Skylos analyzer on the test directory"""
         print(
             f"\nRunning Skylos analyzer with confidence threshold: {confidence_threshold}"
         )
@@ -262,11 +246,9 @@ if hasattr(globals(), func_name):
         
         class_def = self.defs[class_name]
         
-        # If the class definition has base class information, return it
         if hasattr(class_def, 'base_classes'):
             return class_def.base_classes
         
-        # For now, return empty list as simplified implementation
         return []
                 """)
                 print(
@@ -277,7 +259,6 @@ if hasattr(globals(), func_name):
                 raise
 
     def assert_contains(self, items, name_pattern, description):
-        """Helper to check if a pattern exists in the results"""
         found = any(item.get("name", "") == name_pattern for item in items)
         if found:
             print(f"✓ PASS: {description}")
@@ -291,7 +272,6 @@ if hasattr(globals(), func_name):
         return found
 
     def assert_not_contains(self, items, name_pattern, description):
-        """Helper to check if a pattern does NOT exist in the results"""
         found = any(item.get("name", "") == name_pattern for item in items)
         if not found:
             print(f"✓ PASS: {description}")
@@ -308,7 +288,6 @@ if hasattr(globals(), func_name):
         return not found
 
     def test_basic_unused_detection(self, results):
-        """Test basic unused function/class/import detection"""
         print("\n=== Testing Basic Unused Detection ===")
 
         unused_functions = results.get("unused_functions", [])
@@ -343,7 +322,6 @@ if hasattr(globals(), func_name):
         )
 
     def test_magic_and_test_methods(self, results):
-        """Test that magic methods and test methods are ignored"""
         print("\n=== Testing Magic Methods and Test Methods ===")
 
         unused_functions = results.get("unused_functions", [])
@@ -372,7 +350,6 @@ if hasattr(globals(), func_name):
         )
 
     def test_package_exports(self, results):
-        """Test package export detection"""
         print("\n=== Testing Package Exports ===")
 
         unused_functions = results.get("unused_functions", [])
@@ -396,7 +373,6 @@ if hasattr(globals(), func_name):
         )
 
     def test_confidence_threshold(self):
-        """Test different confidence thresholds"""
         print("\n=== Testing Confidence Thresholds ===")
 
         results_high = self.run_analyzer(90)
@@ -449,7 +425,6 @@ if hasattr(globals(), func_name):
             )
 
     def run_all_tests(self):
-        """Run all tests"""
         try:
             print("Starting Skylos Analyzer Tests...")
             self.setup_test_directory()
@@ -496,7 +471,6 @@ if hasattr(globals(), func_name):
 
 
 def main():
-    """Main test runner"""
     test_runner = SkylosTest()
     test_runner.run_all_tests()
 

@@ -45,17 +45,14 @@ class TestDefinition(unittest.TestCase):
         self.assertEqual(result, expected)
 
     def test_definition_to_dict_method(self):
-        """Test to_dict method for methods."""
         definition = Definition("mymodule.MyClass.my_method", "method", "test.py", 15)
         result = definition.to_dict()
 
-        # show last two parts for methods
         self.assertEqual(result["name"], "MyClass.my_method")
         self.assertEqual(result["full_name"], "mymodule.MyClass.my_method")
         self.assertEqual(result["simple_name"], "my_method")
 
     def test_definition_to_dict_method_deep_nesting(self):
-        """Test to_dict method for deeply nested methods."""
         definition = Definition(
             "mymodule.OuterClass.InnerClass.deep_method", "method", "test.py", 20
         )
@@ -68,7 +65,6 @@ class TestDefinition(unittest.TestCase):
         self.assertEqual(result["simple_name"], "deep_method")
 
     def test_init_file_detection(self):
-        """Test detection of __init__.py files."""
         definition = Definition("pkg.func", "function", "/path/to/__init__.py", 1)
         self.assertTrue(definition.in_init)
 
@@ -76,7 +72,6 @@ class TestDefinition(unittest.TestCase):
         self.assertFalse(definition2.in_init)
 
     def test_definition_types(self):
-        """Test all definition types."""
         types = ["function", "method", "class", "variable", "parameter", "import"]
         for def_type in types:
             definition = Definition(f"test.{def_type}", def_type, "test.py", 1)
@@ -157,7 +152,6 @@ class MyClass:
             method_names, {"__init__", "method", "static_method", "class_method"}
         )
 
-        # static_method has no params, so only 3 total: self (2x) + cls (1x)
         self.assertTrue(len(param_defs) >= 3)
 
     def test_imports_basic(self):
@@ -174,7 +168,6 @@ import sys as system
         self.assertEqual(visitor.alias["system"], "sys")
 
     def test_imports_from(self):
-        """Test from-import statement detection."""
         code = """
 from pathlib import Path
 from collections import defaultdict, Counter
@@ -455,7 +448,6 @@ class MultipleInheritance(Parent, object):
             ref_names.add(ref[0])
 
         self.assertIn("test_module.Parent", ref_names)
-        # object gets qualified too
         found_object = "object" in ref_names or "test_module.object" in ref_names
         self.assertTrue(found_object, "object not found in refs")
 
@@ -539,7 +531,6 @@ def use_star_import():
         imports = [d for d in visitor.defs if d.type == "import"]
         import_names = {i.name for i in imports}
 
-        # have the explicit import
         self.assertIn("collections.defaultdict", import_names)
 
     def test_exception_handling(self):
@@ -556,8 +547,6 @@ def test_exceptions():
     finally:
         cleanup()
 """
-
-        # our current visitor can't really handle exception variables it's is a feature gap
 
     def test_context_managers(self):
         code = """
@@ -576,7 +565,6 @@ def test_context_managers():
         variables = [d for d in visitor.defs if d.type == "variable"]
         var_names = {v.simple_name for v in variables}
 
-        # just check some basic variables, later then improve on visitor
         basic_vars = {"content", "data"}
         found_basic = basic_vars & var_names
 
@@ -585,9 +573,7 @@ def test_context_managers():
 
 class TestConstants(unittest.TestCase):
     def test_python_builtins_completeness(self):
-        """Test that important builtins are included."""
         important_builtins = {
-            # basic types
             "str",
             "int",
             "float",
@@ -611,7 +597,6 @@ class TestConstants(unittest.TestCase):
             "reversed",
             "all",
             "any",
-            # more advance stuff
             "open",
             "super",
             "getattr",
@@ -625,12 +610,10 @@ class TestConstants(unittest.TestCase):
         self.assertTrue(important_builtins.issubset(PYTHON_BUILTINS))
 
     def test_dynamic_patterns(self):
-        """Test dynamic pattern constants."""
         expected_patterns = {"getattr", "globals", "eval", "exec"}
         self.assertTrue(expected_patterns.issubset(DYNAMIC_PATTERNS))
 
     def test_builtins_are_strings(self):
-        """Test that all builtins are strings."""
         for builtin in PYTHON_BUILTINS:
             self.assertIsInstance(builtin, str)
             self.assertTrue(builtin.isidentifier())
@@ -647,7 +630,6 @@ class TestEdgeCases(unittest.TestCase):
         Path(self.temp_file.name).unlink()
 
     def parse_and_visit(self, code):
-        """Helper to parse code and visit with the visitor."""
         tree = ast.parse(code)
         self.visitor.visit(tree)
         return self.visitor
@@ -712,14 +694,12 @@ def use_aliases():
         )
         self.assertEqual(visitor.alias["dd"], "collections.defaultdict")
 
-        # should be the actual import, not the local alias
         import_defs = [d for d in visitor.defs if d.type == "import"]
         import_names = {d.name for d in import_defs}
 
         self.assertIn("selenium.webdriver.support.expected_conditions", import_names)
         self.assertIn("collections.defaultdict", import_names)
 
-        # the local aliases should not be defined as imports
         self.assertNotIn("test_module.EC", import_names)
         self.assertNotIn("test_module.dd", import_names)
 
@@ -1407,7 +1387,6 @@ def test_getattr_uses_fstring_pattern_tracker(tmp_path):
     old_pr = list(getattr(pt, "pattern_refs", []))
     old_known = set(getattr(pt, "known_refs", set()))
     try:
-        # reset to clean slate for this test
         pt.f_string_patterns = {}
         pt.pattern_refs = []
         pt.known_refs = set()

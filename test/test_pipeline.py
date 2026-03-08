@@ -270,7 +270,6 @@ class TestRunStaticOnFiles:
 
         assert len(result["unused_functions"]) == 1
         assert len(result["danger"]) == 1
-        # b.py quality finding filtered out
         assert len(result["quality"]) == 0
 
     @patch(P_CUSTOM, return_value=None)
@@ -491,7 +490,6 @@ class TestPipelinePhase2a:
 
         dead = [f for f in findings if f.get("_category") == "dead_code"]
         assert len(dead) == 1
-        # UNCERTAIN = LLM couldn't verify → keep as static-only medium confidence
         assert dead[0]["_confidence"] == "medium"
         assert dead[0]["_source"] == "static"
 
@@ -525,7 +523,7 @@ class TestPipelinePhase2a:
             )
 
         dead = [f for f in findings if f["_category"] == "dead_code"]
-        assert len(dead) == 2  # unused_functions + unused_imports
+        assert len(dead) == 2
         assert all(f["_confidence"] == "medium" for f in dead)
 
     def test_verifier_failure_falls_back_gracefully(self, tmp_path):
@@ -629,7 +627,6 @@ class TestPipelinePhase2b:
         )
 
         llm = [f for f in findings if f["_source"] == "llm"]
-        # All 4 findings should now be included (dead code no longer dropped)
         assert len(llm) == 4
 
     def test_deduplicates_against_static(self, tmp_path):
@@ -902,7 +899,6 @@ class TestPipelineIntegration:
 
         dead = [f for f in findings if f.get("_category") == "dead_code"]
         dead_names = [f.get("name") for f in dead]
-        # "os" is now kept (demoted to low confidence, not dropped)
         assert "os" in dead_names
         os_finding = [f for f in dead if f.get("name") == "os"][0]
         assert os_finding["_confidence"] == "low"

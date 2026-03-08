@@ -157,7 +157,6 @@ class TSFrameworkVisitor:
         self._file_path = file_path
         self._basename = Path(file_path).name
 
-        # Run 1 batch query instead of 15+
         self._captures = _run_batch(root_node, lang, "framework", _FW_PATTERN)
 
         self._detect_frameworks()

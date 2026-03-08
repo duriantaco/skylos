@@ -109,8 +109,6 @@ class MyService:
         findings = get_findings(code)
         assert len(findings) == 1
 
-    # === SHOULD NOT FLAG ===
-
     def test_sync_function_ok(self):
         code = """
 import time

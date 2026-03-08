@@ -616,11 +616,6 @@ class TestRealisticBenchmark:
             assert name not in self.unused, f"{name} is alive but was flagged"
 
 
-# =========================================================================
-# New danger rules (Step 5)
-# =========================================================================
-
-
 class TestNewDangerRules:
     def test_require_with_variable(self, tmp_path):
         """SKY-D245: require() with variable argument."""
@@ -698,11 +693,6 @@ class TestNewDangerRules:
         _, _, _, danger = _scan_ts(tmp_path, code)
         s101 = [f for f in danger if f["rule_id"] == "SKY-S101"]
         assert len(s101) == 0
-
-
-# =========================================================================
-# New quality rules (Steps 6-7)
-# =========================================================================
 
 
 class TestNewQualityRules:
@@ -809,11 +799,6 @@ class TestNewQualityRules:
         _, _, quality, _ = _scan_ts(tmp_path, code)
         uc002 = [f for f in quality if f["rule_id"] == "SKY-UC002"]
         assert len(uc002) == 0
-
-
-# =========================================================================
-# New danger rules: D250, D251, D252, D253
-# =========================================================================
 
 
 class TestInsecureRandomness:
@@ -1023,11 +1008,6 @@ class TestTimingUnsafeComparison:
         assert "SKY-D253" not in ids
 
 
-# ---------------------------------------------------------------------------
-# SKY-D270: Sensitive data in localStorage/sessionStorage
-# ---------------------------------------------------------------------------
-
-
 class TestLocalStorageTokens:
     def test_localstorage_token(self, tmp_path):
         code = 'localStorage.setItem("auth_token", token);\n'
@@ -1100,11 +1080,6 @@ class TestLocalStorageTokens:
         d270 = [f for f in danger if f["rule_id"] == "SKY-D270"]
         assert len(d270) == 1
         assert "sessionStorage" in d270[0]["message"]
-
-
-# ---------------------------------------------------------------------------
-# SKY-D271: Error information disclosure in HTTP responses
-# ---------------------------------------------------------------------------
 
 
 class TestErrorDisclosure:

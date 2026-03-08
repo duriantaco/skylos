@@ -1,17 +1,10 @@
-"""Tests for Martin's Architectural Metrics - SKY-Q801/A802/A803/A804."""
-
 import ast
-import pytest
 from skylos.architecture import (
     analyze_architecture,
     get_architecture_findings,
     _compute_abstractness,
     _classify_zone,
-    ModuleMetrics,
 )
-
-
-# ── _compute_abstractness ──
 
 
 class TestComputeAbstractness:
@@ -62,7 +55,7 @@ class Container:
 """)
         result = _compute_abstractness(tree)
         assert result["type_vars"] == 2
-        assert result["abstractness"] > 0.0  # TypeVar bonus
+        assert result["abstractness"] > 0.0
 
     def test_type_checking_bonus(self):
         tree = ast.parse("""
@@ -74,32 +67,23 @@ class Baz:
     pass
 """)
         result = _compute_abstractness(tree)
-        assert result["abstractness"] > 0.0  # TYPE_CHECKING bonus
-
-
-# ── _classify_zone ──
+        assert result["abstractness"] > 0.0
 
 
 class TestClassifyZone:
     def test_main_sequence(self):
-        # A + I ≈ 1.0, not in extreme zones
         assert _classify_zone(0.5, 0.5) == "main_sequence"
         assert _classify_zone(0.4, 0.6) == "main_sequence"
         assert _classify_zone(0.6, 0.4) == "main_sequence"
 
     def test_zone_of_pain(self):
-        # High abstractness, low instability
         assert _classify_zone(0.9, 0.0) == "zone_of_pain"
 
     def test_zone_of_uselessness(self):
-        # Low abstractness, high instability
         assert _classify_zone(0.0, 0.9) == "zone_of_uselessness"
 
     def test_healthy(self):
         assert _classify_zone(0.5, 0.2) == "healthy"
-
-
-# ── analyze_architecture ──
 
 
 class TestAnalyzeArchitecture:
@@ -133,8 +117,8 @@ class TestAnalyzeArchitecture:
         app = result.modules["app"]
         lib = result.modules["lib"]
 
-        assert app.ce == 1  # app depends on lib
-        assert app.ca == 0  # nobody depends on app
+        assert app.ce == 1
+        assert app.ca == 0
         assert lib.ca == 1  # app depends on lib
         assert lib.ce == 0  # lib depends on nothing
 
@@ -142,14 +126,13 @@ class TestAnalyzeArchitecture:
         assert lib.instability == 0.0  # fully stable
 
     def test_dip_violation_detected(self):
-        # Stable module depending on unstable module
         result = analyze_architecture(
             dependency_graph={
                 "core": {"utils"},  # core is stable, depends on utils
-                "utils": {"core"},  # utils is unstable (self-referential for Ca)
-                "app": {"core"},  # app depends on core (making core stable)
+                "utils": {"core"},
+                "app": {"core"},
                 "cli": {"core"},  # another dependent of core
-                "web": {"utils"},  # utils depends on nothing important
+                "web": {"utils"},
             },
             module_files={
                 "core": "/p/core.py",
@@ -159,9 +142,7 @@ class TestAnalyzeArchitecture:
                 "web": "/p/web.py",
             },
         )
-        # Check that DIP violations are detected for appropriate conditions
-        # core has Ca >= 2 (app, cli depend on it), Ce = 1 (depends on utils)
-        # so core.instability < 0.5 (stable)
+
         core = result.modules["core"]
         assert core.ca >= 2
 
@@ -222,9 +203,6 @@ class Concrete:
         assert a.abstractness > b.abstractness
 
 
-# ── get_architecture_findings ──
-
-
 class TestGetArchitectureFindings:
     def test_returns_findings_and_summary(self):
         findings, summary = get_architecture_findings(
@@ -237,7 +215,6 @@ class TestGetArchitectureFindings:
         assert "module_metrics" in summary
 
     def test_high_distance_generates_finding(self):
-        # Module with high abstractness and high instability -> high distance
         tree_a = ast.parse("""
 from abc import ABC, abstractmethod
 class Base(ABC):
@@ -252,6 +229,4 @@ class Base2(ABC):
             module_files={"a": "/p/a.py", "b": "/p/b.py", "c": "/p/c.py"},
             module_trees={"a": tree_a},
         )
-        # Check we get findings list (may or may not have high-distance findings
-        # depending on the specific A+I values)
         assert isinstance(findings, list)

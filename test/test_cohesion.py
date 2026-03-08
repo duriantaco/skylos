@@ -1,11 +1,6 @@
-"""Tests for LCOM (Lack of Cohesion of Methods) metric - SKY-Q702."""
-
 import ast
 import pytest
 from skylos.rules.quality.cohesion import LCOMRule, analyze_cohesion, _UnionFind
-
-
-# ── Helper ──
 
 
 def _parse(code: str) -> ast.ClassDef:
@@ -14,9 +9,6 @@ def _parse(code: str) -> ast.ClassDef:
         if isinstance(node, ast.ClassDef):
             return node
     raise ValueError("No class found")
-
-
-# ── UnionFind ──
 
 
 class TestUnionFind:
@@ -36,7 +28,7 @@ class TestUnionFind:
         uf.union("a", "b")
         uf.union("c", "d")
         comps = uf.components()
-        assert len(comps) == 3  # {a,b}, {c,d}, {e}
+        assert len(comps) == 3
 
     def test_path_compression(self):
         uf = _UnionFind()
@@ -45,14 +37,10 @@ class TestUnionFind:
         uf.union("a", "b")
         uf.union("b", "c")
         uf.union("c", "d")
-        # After find with path compression, all should point to root
         root = uf.find("d")
         assert uf.find("a") == root
         assert uf.find("b") == root
         assert uf.find("c") == root
-
-
-# ── analyze_cohesion ──
 
 
 class TestAnalyzeCohesion:
@@ -63,7 +51,7 @@ class Foo:
         self.x = 1
 """)
         result = analyze_cohesion(node)
-        assert result is None  # < 2 methods
+        assert result is None
 
     def test_perfectly_cohesive(self):
         node = _parse("""
@@ -82,7 +70,7 @@ class Foo:
 """)
         result = analyze_cohesion(node)
         assert result is not None
-        assert result["lcom4"] == 1  # All methods share x and y
+        assert result["lcom4"] == 1
 
     def test_completely_uncohesive(self):
         node = _parse("""
@@ -98,7 +86,7 @@ class Foo:
 """)
         result = analyze_cohesion(node)
         assert result is not None
-        assert result["lcom4"] == 3  # Three disconnected groups
+        assert result["lcom4"] == 3
 
     def test_self_calls_connect_methods(self):
         node = _parse("""
@@ -112,7 +100,7 @@ class Foo:
 """)
         result = analyze_cohesion(node)
         assert result is not None
-        assert result["lcom4"] == 1  # Connected via self.method_a()
+        assert result["lcom4"] == 1
 
     def test_static_methods_excluded(self):
         node = _parse("""
@@ -129,7 +117,7 @@ class Foo:
 """)
         result = analyze_cohesion(node)
         assert result is not None
-        assert result["method_count"] == 2  # Static excluded
+        assert result["method_count"] == 2
 
     def test_classmethod_cls_attrs(self):
         node = _parse("""
@@ -161,7 +149,6 @@ class Foo:
 """)
         result = analyze_cohesion(node)
         assert result is not None
-        # __init__, value property, and set_value all share _value
         assert result["lcom4"] == 1
 
     def test_dataclass_exemption(self):
@@ -229,12 +216,7 @@ class Foo:
 """)
         result = analyze_cohesion(node)
         assert result is not None
-        # __init__ and __str__ should be connected (share self.name)
-        # unrelated is separate
         assert result["lcom4"] == 2
-
-
-# ── LCOMRule ──
 
 
 class TestLCOMRule:
@@ -253,7 +235,7 @@ class Cohesive:
         rule = LCOMRule()
         node = _parse(code)
         result = rule.visit_node(node, {"filename": "test.py"})
-        assert result is None  # LCOM4 = 1, below threshold
+        assert result is None
 
     def test_uncohesive_class_generates_finding(self):
         code = """
@@ -297,5 +279,4 @@ class Config:
         rule = LCOMRule(low_threshold=2, high_threshold=4)
         node = _parse(code)
         result = rule.visit_node(node, {"filename": "test.py"})
-        # Dataclass with LCOM4=3 should be exempted (threshold+2 = 6)
         assert result is None

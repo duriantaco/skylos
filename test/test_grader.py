@@ -1,4 +1,3 @@
-import pytest
 from pathlib import Path
 
 from skylos.grader import (
@@ -153,13 +152,11 @@ class TestScoreDeadCode:
 
     def test_moderate_density(self):
         result = _empty_result(unused_functions=[{"name": f"f{i}"} for i in range(10)])
-        # 10 dead in 2000 LOC = 5/1K = score 85
         score, _ = score_dead_code(result, 2000)
         assert score == 85
 
     def test_high_density_low_score(self):
         result = _empty_result(unused_functions=[{"name": f"f{i}"} for i in range(50)])
-        # 50 dead in 1000 LOC = 50/1K
         score, _ = score_dead_code(result, 1000)
         assert score == 0
 

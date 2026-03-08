@@ -45,7 +45,6 @@ def test_annotations_priority_order(sample_results, capsys):
     _emit_github_annotations(sample_results)
     output = capsys.readouterr().out
     lines = output.strip().splitlines()
-    # CRITICAL should come first
     assert "::error" in lines[0]
     assert "SQL injection" in lines[0]
 
@@ -71,7 +70,6 @@ def test_severity_filter(sample_results, capsys):
     _emit_github_annotations(sample_results, severity_filter="high")
     output = capsys.readouterr().out
     lines = output.strip().splitlines()
-    # Should only have CRITICAL and HIGH (2 findings)
     assert len(lines) == 2
     assert "::notice" not in output
     assert "::warning" not in output

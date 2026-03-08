@@ -1,10 +1,5 @@
-"""Tests for MCP server security rules (SKY-D240 through SKY-D244)."""
-
 import ast
 from pathlib import Path
-
-import pytest
-
 from skylos.rules.danger.danger_mcp.mcp_flow import scan
 
 
@@ -19,9 +14,6 @@ def _ids(findings: list[dict]) -> list[str]:
     return [f["rule_id"] for f in findings]
 
 
-# ====================================================================
-# D240 — Tool Description Poisoning
-# ====================================================================
 class TestD240ToolPoisoning:
     def test_injection_tag_in_docstring(self):
         code = '''
@@ -127,9 +119,6 @@ def bad(q: str) -> str:
         assert d240[0]["severity"] == "CRITICAL"
 
 
-# ====================================================================
-# D241 — Unauthenticated Network Transport
-# ====================================================================
 class TestD241UnauthTransport:
     def test_sse_without_auth(self):
         code = """
@@ -177,9 +166,6 @@ server.run()
         assert "SKY-D241" not in _ids(findings)
 
 
-# ====================================================================
-# D242 — Overly Permissive Resource URI
-# ====================================================================
 class TestD242PermissiveResourceURI:
     def test_file_uri_with_path_template(self):
         code = '''
@@ -218,7 +204,6 @@ def read_doc(name: str) -> str:
     return ""
 '''
         findings = _scan(code)
-        # The {name} param is not a path/file template, should not flag
         assert "SKY-D242" not in _ids(findings)
 
     def test_resource_with_fixed_path(self):
@@ -235,9 +220,6 @@ def get_settings() -> str:
         assert "SKY-D242" not in _ids(findings)
 
 
-# ====================================================================
-# D243 — Network-Exposed MCP Server
-# ====================================================================
 class TestD243NetworkExposed:
     def test_bind_all_interfaces_no_auth(self):
         code = """
@@ -280,9 +262,6 @@ server.run(host="0.0.0.0", transport="sse")
         assert "SKY-D243" in ids
 
 
-# ====================================================================
-# D244 — Hardcoded Secrets in Tool Parameter Defaults
-# ====================================================================
 class TestD244SecretDefaults:
     def test_openai_key_default(self):
         code = '''
@@ -365,9 +344,6 @@ def fetch(url: str, *, api_key: str = "sk-ant-1234567890abcdefghijklmnop") -> st
         assert "SKY-D244" in _ids(findings)
 
 
-# ====================================================================
-# Async function support
-# ====================================================================
 class TestAsyncMCPTools:
     def test_async_tool_poisoning(self):
         code = '''
@@ -396,9 +372,6 @@ async def fetch(url: str, key: str = "sk_live_abc123def456ghi789jkl012mno") -> s
         assert "SKY-D244" in _ids(findings)
 
 
-# ====================================================================
-# Alternative MCP import patterns
-# ====================================================================
 class TestAlternativeImports:
     def test_import_mcp_server(self):
         code = '''

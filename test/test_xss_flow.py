@@ -85,7 +85,7 @@ def test_rule_sky_d226_mark_safe():
         ('"hello |safe"', True),
         ('"{% autoescape false %}hi"', True),
         ('"{{ x }}"', False),
-        ("tmpl", False),  # not a const literal
+        ("tmpl", False),
     ],
 )
 def test_rule_sky_d227(tmpl, expect):

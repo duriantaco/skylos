@@ -236,9 +236,7 @@ export function helperFn() { return 42; }
 export function getServerSideProps() { return {}; }
 """
     defs, fw = _scan(tmp_path, "helpers.ts", code)
-    # getServerSideProps should still be marked because "next" is detected
     assert "getServerSideProps" in _decorated_names(defs, fw)
-    # helperFn should NOT be marked
     assert "helperFn" not in _decorated_names(defs, fw)
 
 

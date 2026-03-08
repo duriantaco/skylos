@@ -40,7 +40,6 @@ class Example:
 """
         result = self._analyze(code)
 
-        # private functions/vars with zero refs ARE flagged (conf=90, threshold=60)
         function_names = [f["name"] for f in result["unused_functions"]]
         assert "_private_func" in function_names, (
             "Unused private function should be flagged"
@@ -51,7 +50,6 @@ class Example:
             "Unused private variable should be flagged"
         )
 
-        # underscore params with zero refs are also flagged (conf=90)
         param_names = [p["name"] for p in result["unused_parameters"]]
         assert "_private_param" in param_names, (
             "Unused underscore parameter should be flagged"
@@ -131,25 +129,21 @@ def regular_func(_param: str):
 """
         result = self._analyze(code, "test_comprehensive.py")
 
-        # should not flag __future__ imports
         import_names = [i["simple_name"] for i in result["unused_imports"]]
         assert "annotations" not in import_names, "__future__ annotations flagged"
         assert "unused_import" in import_names, (
             "Regular unused import should be flagged"
         )
 
-        # private funcs with zero refs are flagged (small penalty, conf=90)
         function_names = [f["name"] for f in result["unused_functions"]]
         assert "_private_func" in function_names, (
             "Unused private function should be flagged"
         )
 
-        # should not flag test methods
         magic_methods = ["setUp", "tearDown", "test_something"]
         flagged_magic = [method for method in magic_methods if method in function_names]
         assert len(flagged_magic) == 0, f"Test methods flagged: {flagged_magic}"
 
-        # underscore params with zero refs are also flagged (conf=90)
         param_names = [p["name"] for p in result["unused_parameters"]]
         assert "_param" in param_names, "Unused underscore parameter should be flagged"
 

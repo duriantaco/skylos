@@ -88,13 +88,11 @@ class TestCoverageFlag:
             except SystemExit:
                 pass
 
-        # Check that cwd was passed to subprocess.run
         call_kwargs = mock_run.call_args_list[0][1]
         assert "cwd" in call_kwargs
 
     @patch("skylos.cli.run_analyze")
     def test_no_coverage_flag_skips_coverage(self, mock_analyze):
-        """Without --coverage flag, coverage should not run."""
         from skylos.cli import main
 
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'

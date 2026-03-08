@@ -168,9 +168,7 @@ class TypeScriptCore:
             self.raw_imports: list[dict] = []
             return
 
-        # Run 3-4 batch queries: 3-4 tree traversals instead of 35+
         self._defs_captures = self._run_batch("defs", _DEFS_PATTERN)
-        # TS-only pattern (gracefully returns empty for TSX)
         ts_only = self._run_batch("defs_ts_only", _DEFS_TS_ONLY_PATTERN)
         for k, v in ts_only.items():
             self._defs_captures.setdefault(k, []).extend(v)
@@ -253,7 +251,6 @@ class TypeScriptCore:
         for node in c.get("ref", []):
             self._add_ref(node)
 
-        # type_identifier refs — skip if parent is a type definition
         for node in c.get("type_ref", []):
             parent = node.parent
             if parent and parent.type in self._TYPE_DEF_PARENTS:

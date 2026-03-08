@@ -35,7 +35,6 @@ def main():
         visitor.finalize()
 
         assert visitor.is_framework_file
-        # def main line
         assert 6 in visitor.framework_decorated_lines
 
     def test_typer_app_command(self):
@@ -54,7 +53,6 @@ def hello(name: str):
         visitor.finalize()
 
         assert visitor.is_framework_file
-        # def hello line
         assert 6 in visitor.framework_decorated_lines
 
     def test_click_command(self):
@@ -77,7 +75,6 @@ def init():
 
         assert visitor.is_framework_file
         assert 5 in visitor.framework_decorated_lines
-        # def init line
         assert 9 in visitor.framework_decorated_lines
 
     def test_app_callback(self):
