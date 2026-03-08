@@ -526,6 +526,53 @@ def detect_ai_code(git_root=None):
     }
 
 
+def _get_blame_map(findings: list, git_root: str | None) -> dict:
+    if not git_root:
+        return {}
+
+    from collections import defaultdict
+
+    files_lines = defaultdict(set)
+    for f in findings:
+        fp = f.get("file_path", "")
+        ln = f.get("line_number", 0)
+        if fp and ln and ln > 0:
+            files_lines[fp].add(ln)
+
+    blame_map = {}
+    for file_path, lines in files_lines.items():
+        abs_path = os.path.join(git_root, file_path)
+        if not os.path.isfile(abs_path):
+            continue
+
+        cmd = ["git", "blame", "--porcelain"]
+        for ln in sorted(lines):
+            cmd.extend(["-L", f"{ln},{ln}"])
+        cmd.extend(["--", file_path])
+
+        try:
+            out = subprocess.check_output(
+                cmd, cwd=git_root, stderr=subprocess.DEVNULL, timeout=15
+            ).decode("utf-8", errors="ignore")
+        except Exception:
+            continue
+
+        current_line = None
+        for raw in out.splitlines():
+            parts = raw.split()
+            if len(parts) >= 3 and len(parts[0]) == 40:
+                try:
+                    current_line = int(parts[2])
+                except ValueError:
+                    current_line = None
+            elif raw.startswith("author-mail ") and current_line is not None:
+                email = raw[len("author-mail ") :].strip().strip("<>")
+                if email and email != "not.committed.yet":
+                    blame_map[(file_path, current_line)] = email
+
+    return blame_map
+
+
 def upload_report(
     result_json, is_forced=False, quiet=False, strict=False, analysis_mode="static"
 ):
@@ -670,6 +717,14 @@ def upload_report(
             "SKY-SCA-000",
         )
     )
+
+    blame_map = _get_blame_map(all_findings, git_root)
+    for f in all_findings:
+        email = blame_map.get((f["file_path"], f.get("line_number", 0)))
+        if email:
+            meta = f.get("metadata") or {}
+            meta["blame_email"] = email
+            f["metadata"] = meta
 
     exporter = SarifExporter(all_findings, tool_name="Skylos")
     payload = exporter.generate()

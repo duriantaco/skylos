@@ -336,7 +336,7 @@ def main():
         transport = os.getenv("MCP_TRANSPORT", "stdio")
 
         if transport in ("sse", "streamable-http"):
-            host = "0.0.0.0"
+            host = os.getenv("MCP_BIND", "127.0.0.1")
             port = int(os.getenv("PORT", "8080"))
             mcp_server = FastMCP(name="skylos", host=host, port=port)
         else:
@@ -347,6 +347,7 @@ def main():
     except Exception:
         import sys
         import traceback
+
         traceback.print_exc(file=sys.stderr)
         raise
 

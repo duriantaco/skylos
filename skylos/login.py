@@ -302,14 +302,18 @@ def run_login(console=None, base_url=None):
         console.print(f"  Project:      {result.project_name}")
         console.print(f"  Organization: {result.org_name}")
         console.print(f"  Plan:         {result.plan.capitalize()}")
+        console.print(f"\n  Scans will auto-upload on every run.")
+        console.print(f"  Use [bold]--no-upload[/bold] to skip.")
         console.print(
-            f"\n  Run: [bold cyan]skylos . --upload[/bold cyan] to scan and upload"
+            f"\n  [dim]For MCP/AI agents: export SKYLOS_API_KEY={result.token}[/dim]"
         )
     else:
         print(f"\nConnected to Skylos Cloud!")
         print(f"  Project:      {result.project_name}")
         print(f"  Organization: {result.org_name}")
         print(f"  Plan:         {result.plan.capitalize()}")
-        print(f"\n  Run: skylos . --upload  to scan and upload")
+        print(f"\n  Scans will auto-upload on every run.")
+        print(f"  Use --no-upload to skip.")
+        print(f"\n  For MCP/AI agents: export SKYLOS_API_KEY={result.token}")
 
     return result

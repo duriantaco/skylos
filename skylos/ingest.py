@@ -23,10 +23,11 @@ def _map_severity(raw: str | None) -> str:
         return "MEDIUM"
     return _CCS_SEVERITY_MAP.get(raw.lower().strip(), "MEDIUM")
 
+
 def is_claude_security_report(data: Any) -> bool:
     if not isinstance(data, dict):
         return False
-    
+
     findings = None
     for key in ("findings", "vulnerabilities", "results"):
         val = data.get(key)
@@ -36,12 +37,12 @@ def is_claude_security_report(data: Any) -> bool:
 
     if findings is None:
         return False
-    
+
     tool_str = data.get("tool") or data.get("scanner") or ""
     has_tool_key = bool(tool_str) or "scan_metadata" in data
     if not findings:
         return has_tool_key
-    
+
     sample = findings[0]
     return isinstance(sample, dict) and (
         "confidence_score" in sample
@@ -54,10 +55,7 @@ def is_claude_security_report(data: Any) -> bool:
 
 def normalize_claude_security(data: dict) -> dict:
     findings_raw = (
-        data.get("findings")
-        or data.get("vulnerabilities")
-        or data.get("results")
-        or []
+        data.get("findings") or data.get("vulnerabilities") or data.get("results") or []
     )
 
     danger: list[dict] = []
@@ -70,7 +68,11 @@ def normalize_claude_security(data: dict) -> dict:
         if not rule_id.startswith("CCS:"):
             rule_id = f"CCS:{rule_id}"
 
-        file_path = f.get("file_path") or f.get("file") or f.get("location", {}).get("file", "unknown")
+        file_path = (
+            f.get("file_path")
+            or f.get("file")
+            or f.get("location", {}).get("file", "unknown")
+        )
         line_raw = (
             f.get("line_number")
             or f.get("line")
@@ -89,9 +91,7 @@ def normalize_claude_security(data: dict) -> dict:
             or "Security issue"
         )
 
-        severity = _map_severity(
-            f.get("severity") or f.get("level")
-        )
+        severity = _map_severity(f.get("severity") or f.get("level"))
 
         snippet = f.get("snippet") or f.get("code") or f.get("vulnerable_code") or None
 
@@ -142,7 +142,12 @@ def normalize_claude_security(data: dict) -> dict:
 
 def _extract_dead_code_files(skylos_result: dict) -> set[str]:
     files: set[str] = set()
-    for key in ("unused_functions", "unused_imports", "unused_variables", "unused_classes"):
+    for key in (
+        "unused_functions",
+        "unused_imports",
+        "unused_variables",
+        "unused_classes",
+    ):
         for item in skylos_result.get(key, []):
             fp = item.get("file_path") or item.get("file") or ""
             if fp:
@@ -198,7 +203,7 @@ def cross_reference(
     unique_count = len(unique_to_claude)
 
     if total > 0:
-        reduction_pct = (dead_count / total * 100)
+        reduction_pct = dead_count / total * 100
     else:
         reduction_pct = 0.0
 
@@ -225,8 +230,12 @@ def print_cross_reference_report(xref: dict) -> None:
     console.print()
     console.print("[bold]Cross-Reference Report: Skylos x Claude Code Security[/bold]")
     console.print(f"  Claude findings total:    {total}")
-    console.print(f"  In dead code (removable): [bold red]{dead}[/bold red]  ({pct}% of findings)")
-    console.print(f"  Corroborated by Skylos:   [bold yellow]{corr}[/bold yellow]  (high confidence)")
+    console.print(
+        f"  In dead code (removable): [bold red]{dead}[/bold red]  ({pct}% of findings)"
+    )
+    console.print(
+        f"  Corroborated by Skylos:   [bold yellow]{corr}[/bold yellow]  (high confidence)"
+    )
     console.print(f"  Unique to Claude:         [bold]{unique}[/bold]  (new insights)")
     console.print()
 
@@ -261,7 +270,6 @@ def ingest_claude_security(
     token: str | None = None,
     cross_reference_path: str | None = None,
 ) -> dict:
-
     path = Path(input_path)
     if not path.exists():
         return {"success": False, "error": f"File not found: {input_path}"}
@@ -289,7 +297,10 @@ def ingest_claude_security(
     if cross_reference_path:
         xref_path = Path(cross_reference_path)
         if not xref_path.exists():
-            return {"success": False, "error": f"Skylos results not found: {cross_reference_path}"}
+            return {
+                "success": False,
+                "error": f"Skylos results not found: {cross_reference_path}",
+            }
         try:
             skylos_data = json.loads(xref_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
@@ -301,7 +312,11 @@ def ingest_claude_security(
             print_cross_reference_report(xref)
 
     if not upload:
-        out: dict[str, Any] = {"success": True, "findings_count": findings_count, "result": result}
+        out: dict[str, Any] = {
+            "success": True,
+            "findings_count": findings_count,
+            "result": result,
+        }
         if xref:
             out["cross_reference"] = xref
         return out

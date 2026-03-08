@@ -203,7 +203,9 @@ def deduct_credits(tool_name: str) -> tuple[bool, str]:
             session.record_call(tool_name)
             return (True, "")
 
-        logger.warning("Credit deduction returned %d — allowing call (fail-open)", resp.status_code)
+        logger.warning(
+            "Credit deduction returned %d — allowing call (fail-open)", resp.status_code
+        )
         session.record_call(tool_name)
         return (True, "")
 
