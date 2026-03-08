@@ -363,10 +363,10 @@ def _print_upload_destination(console: Console, project_root: Path):
     has_link = link_path is not None
 
     if using_env:
-        console.print("[brand]Upload destination:[/brand] SKYLOS_TOKEN override")
+        console.print("[brand]Auto-uploading:[/brand] SKYLOS_TOKEN")
     elif has_link:
         console.print(
-            f"[brand]Upload destination:[/brand] linked project ([muted]{link_path}[/muted])"
+            f"[brand]Auto-uploading:[/brand] linked project ([muted]{link_path}[/muted])"
         )
     else:
         console.print(
@@ -1823,23 +1823,31 @@ def main():
             "claude-security", help="Ingest Claude Code Security JSON"
         )
         p_ccs.add_argument(
-            "--input", "-i", required=True, dest="input_file",
+            "--input",
+            "-i",
+            required=True,
+            dest="input_file",
             help="Path to Claude Code Security JSON output",
         )
         p_ccs.add_argument(
-            "--token", default=None,
+            "--token",
+            default=None,
             help="API token (falls back to SKYLOS_TOKEN / keyring)",
         )
         p_ccs.add_argument(
-            "--no-upload", action="store_true",
+            "--no-upload",
+            action="store_true",
             help="Normalize only, don't upload to dashboard",
         )
         p_ccs.add_argument(
-            "--json", action="store_true", dest="output_json",
+            "--json",
+            action="store_true",
+            dest="output_json",
             help="Output normalized result as JSON",
         )
         p_ccs.add_argument(
-            "--cross-reference", dest="cross_ref",
+            "--cross-reference",
+            dest="cross_ref",
             help="Skylos results JSON to cross-reference (shows attack surface reduction)",
         )
 
@@ -2646,6 +2654,11 @@ Run 'skylos <command> --help' for more information on each command.
         help="Upload results to skylos.dev dashboard",
     )
     parser.add_argument(
+        "--no-upload",
+        action="store_true",
+        help="Skip automatic upload even if connected to Skylos Cloud",
+    )
+    parser.add_argument(
         "--verify",
         action="store_true",
         help="(PRO) Verify findings with neuro-symbolic prover. Requires paid plan.",
@@ -2680,9 +2693,9 @@ Run 'skylos <command> --help' for more information on each command.
         "--fix", action="store_true", help="Attempt to auto-fix issues using AI"
     )
     parser.add_argument(
-        "--table",
+        "--tui",
         action="store_true",
-        help="Show findings in Rich table format instead of TUI",
+        help="Launch interactive TUI dashboard",
     )
     parser.add_argument(
         "--tree", action="store_true", help="Show findings in tree format"
@@ -2796,6 +2809,16 @@ Run 'skylos <command> --help' for more information on each command.
         "but quality/danger/secrets rules are skipped on them.",
     )
     parser.add_argument(
+        "--diff",
+        type=str,
+        default=None,
+        nargs="?",
+        const="auto",
+        metavar="BASE_REF",
+        help="Only report findings in lines changed since BASE_REF (e.g. --diff origin/main). "
+        "Use --diff without a value to auto-detect (GITHUB_BASE_REF or origin/main).",
+    )
+    parser.add_argument(
         "--github",
         action="store_true",
         help="Output GitHub Actions annotations (::warning / ::error) for inline PR comments.",
@@ -2841,9 +2864,16 @@ Run 'skylos <command> --help' for more information on each command.
 
     parser.add_argument("command", nargs="*", help="Command to run if gate passes")
 
-    args, _extra = parser.parse_known_args()
-    if _extra:
-        args.command = (args.command or []) + _extra
+    _argv = sys.argv[1:]
+    if "--" in _argv:
+        _split = _argv.index("--")
+        _main_argv = _argv[:_split]
+        _cmd_argv = _argv[_split + 1 :]
+    else:
+        _main_argv = _argv
+        _cmd_argv = []
+    args, _extra = parser.parse_known_args(_main_argv)
+    args.command = _cmd_argv + (_extra or [])
     project_root = pathlib.Path(args.path[0]).resolve()
     if project_root.is_file():
         project_root = project_root.parent
@@ -3135,6 +3165,48 @@ sys.exit(ret)
                         if str((project_root / item.get("file", "")).resolve())
                         in changed_files
                     ]
+
+        if getattr(args, "diff", None):
+            from skylos.cicd.review import (
+                get_changed_line_ranges,
+                filter_findings_to_diff,
+            )
+
+            base_ref = args.diff
+            if base_ref == "auto":
+                base_ref = os.environ.get("GITHUB_BASE_REF", "origin/main")
+                if base_ref and not base_ref.startswith("origin/"):
+                    base_ref = f"origin/{base_ref}"
+
+            changed_ranges = get_changed_line_ranges(base_ref)
+            if changed_ranges:
+                for category in [
+                    "unused_functions",
+                    "unused_imports",
+                    "unused_classes",
+                    "unused_variables",
+                    "unused_parameters",
+                    "unused_files",
+                    "danger",
+                    "quality",
+                    "secrets",
+                    "custom_rules",
+                ]:
+                    items = result.get(category, [])
+                    if items:
+                        result[category] = filter_findings_to_diff(
+                            items, changed_ranges
+                        )
+                result_json = json.dumps(result)
+                if not args.json:
+                    console.print(
+                        f"[brand]--diff:[/brand] filtered to {len(changed_ranges)} changed line ranges "
+                        f"from {base_ref}"
+                    )
+            elif not args.json:
+                console.print(
+                    f"[warn]--diff: no changed lines found vs {base_ref}[/warn]"
+                )
 
         if args.pytest_fixtures:
             report_path = project_root / ".skylos_unused_fixtures.json"
@@ -3464,7 +3536,11 @@ sys.exit(ret)
             else:
                 console.print("[muted]No items selected.[/muted]")
 
-    if args.tree or args.table or args.upload:
+    if args.tui:
+        from skylos.tui import run_tui
+
+        run_tui(result, root_path=project_root)
+    elif not args.upload:
         display_result = result
         _cli_severity = getattr(args, "severity", None)
         _cli_category = getattr(args, "category", None)
@@ -3484,10 +3560,6 @@ sys.exit(ret)
             root_path=project_root,
             limit=_cli_limit,
         )
-    else:
-        from skylos.tui import run_tui
-
-        run_tui(result, root_path=project_root)
 
     unused_total = sum(
         len(result.get(k, []))
@@ -3549,29 +3621,11 @@ sys.exit(ret)
                 "[dim]💡 Show others you maintain quality code: [/dim][bold cyan]skylos badge[/bold cyan]"
             )
 
-            no_prompt = bool(config.get("no_upload_prompt"))
-            if (not no_prompt) and _has_high_intent_findings(result) and _is_tty():
-                try:
-                    ans = (
-                        input("  Upload this scan to Skylos Cloud? [Y/n/never] ")
-                        .strip()
-                        .lower()
-                    )
-                except (KeyboardInterrupt, EOFError):
-                    ans = "n"
-
-                if ans in ("", "y", "yes"):
-                    args.upload = True
-                elif ans == "never":
-                    ok = _set_no_upload_prompt(project_root, True)
-                    if ok:
-                        console.print(
-                            "[muted]Okay. Run 'skylos . --upload' anytime to upload manually.[/muted]"
-                        )
-                    else:
-                        console.print(
-                            "[warn]Could not persist preference (no pyproject.toml).[/warn]"
-                        )
+    if not args.upload and not getattr(args, "no_upload", False) and not args.json:
+        is_linked = _detect_link_file(project_root) is not None
+        has_env_token = bool(os.getenv("SKYLOS_TOKEN"))
+        if is_linked or has_env_token:
+            args.upload = True
 
     forgotten = result.get("forgotten", [])
     if forgotten:
@@ -3658,6 +3712,13 @@ sys.exit(ret)
             passed = upload_resp.get("quality_gate_passed")
             if passed is None:
                 passed = (upload_resp.get("quality_gate") or {}).get("passed", True)
+
+            qg = upload_resp.get("quality_gate") or {}
+            new_v = qg.get("new_violations", 0)
+            if new_v > 0:
+                console.print(
+                    f"[bold red]  {new_v} new violation{'s' if new_v != 1 else ''}[/bold red]"
+                )
 
             if passed is False and not args.force:
                 raise SystemExit(1)

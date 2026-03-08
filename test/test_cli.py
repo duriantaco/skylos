@@ -334,7 +334,7 @@ class TestMainFunction:
 
     def test_main_verbose_output(self, mock_skylos_result):
         """with verbose"""
-        test_args = ["cli.py", "test_path", "--verbose", "--table"]
+        test_args = ["cli.py", "test_path", "--verbose"]
 
         with (
             patch("sys.argv", test_args),
@@ -686,10 +686,7 @@ def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
         "secrets": [],
     }
 
-    # Add --upload and --strict flags
-    monkeypatch.setattr(
-        cli.sys, "argv", ["skylos", ".", "--upload", "--strict", "--table"]
-    )
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--upload", "--strict"])
 
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -730,7 +727,7 @@ def test_main_upload_gate_failed_does_not_exit_when_forced(monkeypatch):
         "secrets": [],
     }
 
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--force", "--table"])
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--force"])
 
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -770,7 +767,7 @@ def test_main_command_exec_success_exits_zero(monkeypatch):
         "secrets": [],
     }
 
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--table", "--", "echo", "hi"])
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--", "echo", "hi"])
 
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -815,7 +812,7 @@ def test_main_command_exec_failure_exits_with_code(monkeypatch):
         "secrets": [],
     }
 
-    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--table", "--", "false"])
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--", "false"])
 
     fake_logger = Mock()
     fake_logger.console = Mock()
@@ -842,6 +839,193 @@ def test_main_command_exec_failure_exits_with_code(monkeypatch):
             cli.main()
 
     assert e.value.code == 7
+
+
+class TestDiffFlag:
+    """Tests for --diff line-level filtering."""
+
+    def test_diff_flag_parses_with_explicit_ref(self, monkeypatch):
+        """--diff origin/main sets args.diff to 'origin/main'."""
+        monkeypatch.setattr(
+            cli.sys, "argv", ["skylos", ".", "--diff", "origin/develop"]
+        )
+
+        result = {
+            "analysis_summary": {"total_files": 1},
+            "unused_functions": [],
+            "unused_imports": [],
+            "unused_variables": [],
+            "unused_classes": [],
+            "unused_parameters": [],
+            "danger": [],
+            "quality": [],
+            "secrets": [],
+        }
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cli.render_results"),
+            patch("skylos.cli.print_badge"),
+            patch(
+                "skylos.cli.upload_report",
+                return_value={"success": False, "error": "No token found"},
+            ),
+            patch("skylos.cicd.review.subprocess.run") as mock_git,
+        ):
+            mock_git.return_value = Mock(returncode=0, stdout="")
+            cli.main()
+            diff_calls = [
+                c for c in mock_git.call_args_list if c.args[0][:2] == ["git", "diff"]
+            ]
+            assert len(diff_calls) == 1
+            assert diff_calls[0].args[0] == [
+                "git",
+                "diff",
+                "--unified=0",
+                "origin/develop...HEAD",
+            ]
+
+    def test_diff_flag_without_value_defaults_to_auto(self, monkeypatch):
+        """--diff without value uses 'auto' which resolves to origin/main."""
+        monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--diff"])
+        monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+
+        result = {
+            "analysis_summary": {"total_files": 1},
+            "unused_functions": [],
+            "unused_imports": [],
+            "unused_variables": [],
+            "unused_classes": [],
+            "unused_parameters": [],
+            "danger": [],
+            "quality": [],
+            "secrets": [],
+        }
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cli.render_results"),
+            patch("skylos.cli.print_badge"),
+            patch(
+                "skylos.cli.upload_report",
+                return_value={"success": False, "error": "No token found"},
+            ),
+            patch("skylos.cicd.review.subprocess.run") as mock_git,
+        ):
+            mock_git.return_value = Mock(returncode=0, stdout="")
+            cli.main()
+            diff_calls = [
+                c for c in mock_git.call_args_list if c.args[0][:2] == ["git", "diff"]
+            ]
+            assert len(diff_calls) == 1
+            assert diff_calls[0].args[0] == [
+                "git",
+                "diff",
+                "--unified=0",
+                "origin/main...HEAD",
+            ]
+
+    def test_diff_auto_uses_github_base_ref(self, monkeypatch):
+        """--diff auto-detection picks up GITHUB_BASE_REF env var."""
+        monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--diff"])
+        monkeypatch.setenv("GITHUB_BASE_REF", "develop")
+
+        result = {
+            "analysis_summary": {"total_files": 1},
+            "unused_functions": [],
+            "unused_imports": [],
+            "unused_variables": [],
+            "unused_classes": [],
+            "unused_parameters": [],
+            "danger": [],
+            "quality": [],
+            "secrets": [],
+        }
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cli.render_results"),
+            patch("skylos.cli.print_badge"),
+            patch(
+                "skylos.cli.upload_report",
+                return_value={"success": False, "error": "No token found"},
+            ),
+            patch("skylos.cicd.review.subprocess.run") as mock_git,
+        ):
+            mock_git.return_value = Mock(returncode=0, stdout="")
+            cli.main()
+            diff_calls = [
+                c for c in mock_git.call_args_list if c.args[0][:2] == ["git", "diff"]
+            ]
+            assert len(diff_calls) == 1
+            assert diff_calls[0].args[0] == [
+                "git",
+                "diff",
+                "--unified=0",
+                "origin/develop...HEAD",
+            ]
+
+    def test_diff_filters_findings_to_changed_lines(self, monkeypatch):
+        """--diff filters findings to only those in changed line ranges."""
+        monkeypatch.setattr(
+            cli.sys, "argv", ["skylos", ".", "--diff", "origin/main", "--json"]
+        )
+
+        result = {
+            "analysis_summary": {"total_files": 1},
+            "unused_functions": [
+                {"name": "foo", "file": "src/app.py", "line": 10},
+                {"name": "bar", "file": "src/app.py", "line": 50},
+            ],
+            "unused_imports": [],
+            "unused_variables": [],
+            "unused_classes": [],
+            "unused_parameters": [],
+            "danger": [
+                {
+                    "rule_id": "SKY-D201",
+                    "file": "src/app.py",
+                    "line": 12,
+                    "message": "eval",
+                },
+            ],
+            "quality": [],
+            "secrets": [],
+        }
+
+        diff_output = (
+            "diff --git a/src/app.py b/src/app.py\n"
+            "--- a/src/app.py\n"
+            "+++ b/src/app.py\n"
+            "@@ -8,5 +8,7 @@ some context\n"
+            "+new line\n"
+        )
+
+        git_result = Mock(returncode=0, stdout=diff_output)
+
+        captured_output = []
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cicd.review.subprocess.run", return_value=git_result),
+            patch("builtins.print", side_effect=lambda x: captured_output.append(x)),
+        ):
+            cli.main()
+
+        assert len(captured_output) == 1
+        output = json.loads(captured_output[0])
+        assert len(output["unused_functions"]) == 1
+        assert output["unused_functions"][0]["name"] == "foo"
+        assert len(output["danger"]) == 1
+        assert output["danger"][0]["line"] == 12
 
 
 if __name__ == "__main__":
