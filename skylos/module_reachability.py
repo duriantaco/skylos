@@ -153,6 +153,39 @@ class ModuleReachabilityAnalyzer:
             for mod in self.all_modules:
                 if mod.startswith(prefix):
                     self.graph[pkg].add(mod)
+        self._refine_getattr_expansion()
+
+    def _refine_getattr_expansion(self) -> None:
+        for pkg in self._getattr_packages:
+            prefix = pkg + "."
+            pkg_depth = pkg.count(".") + 1
+
+            direct_children = set()
+            for mod in self.all_modules:
+                if mod.startswith(prefix):
+                    mod_depth = mod.count(".")
+                    if mod_depth == pkg_depth:
+                        direct_children.add(mod)
+
+            to_remove = set()
+            for mod in list(self.graph.get(pkg, set())):
+                if not mod.startswith(prefix):
+                    continue
+                mod_depth = mod.count(".")
+                if mod_depth <= pkg_depth:
+                    continue
+
+                has_import_edge = False
+                for child in direct_children:
+                    if mod in self.graph.get(child, set()):
+                        has_import_edge = True
+                        break
+
+                if not has_import_edge:
+                    to_remove.add(mod)
+
+            for mod in to_remove:
+                self.graph[pkg].discard(mod)
 
     def find_unreachable(self) -> Set[str]:
         if not self.all_modules:

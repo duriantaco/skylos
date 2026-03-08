@@ -117,7 +117,6 @@ class Skylos:
                     if part.endswith(exclude_normalized.replace("*", "")):
                         return True
             elif "/" in exclude_normalized:
-                # Try the exclude path as-is against the relative path
                 if rel_path_str == exclude_normalized:
                     return True
                 if rel_path_str.startswith(exclude_normalized + "/"):
@@ -173,11 +172,9 @@ class Skylos:
         root = p
         exts = {".py", ".go", ".ts", ".tsx"}
 
-        # Single-pass walk to reduce filesystem traversal overhead.
         all_files = []
         try:
             for dirpath, dirnames, filenames in os.walk(p):
-                # Opportunistically prune excluded directories to avoid descending.
                 if exclude_folders:
                     pruned = []
                     for d in list(dirnames):
@@ -187,7 +184,6 @@ class Skylos:
                                 pruned.append(d)
 
                         except Exception:
-                            # On any edge cases, keep walking rather than fail.
                             pass
                     if pruned:
                         for d in pruned:
@@ -201,7 +197,6 @@ class Skylos:
                     if fpath.suffix.lower() in exts:
                         all_files.append(fpath)
         except Exception:
-            # Fallback to the previous, slightly more expensive glob approach
             for ext in exts:
                 all_files.extend(p.glob(f"**/*{ext}"))
 
@@ -606,9 +601,9 @@ class Skylos:
                 if defn.references > 0:
                     continue
                 if defn.type in ("method", "function"):
-                    pass  # always eligible
+                    pass
                 elif defn.type == "variable" and "." in defn.name:
-                    pass  # class-level attribute, eligible
+                    pass
                 else:
                     continue
                 if defn.simple_name in used_attr_names:
@@ -763,7 +758,6 @@ class Skylos:
 
         entry_points = set()
         for name, defn in self.defs.items():
-            # __main__.py functions
             if str(defn.filename).endswith("__main__.py"):
                 entry_points.add(defn.name)
                 continue
@@ -1880,7 +1874,6 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
             v.instance_attr_types,
             getattr(v, "_used_attr_names", set()),
             getattr(v, "_used_attr_names_with_context", set()),
-            # Pre-split source lines to avoid re-reading file in secrets scan
             source.splitlines(True),
         )
 

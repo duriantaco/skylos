@@ -22,9 +22,9 @@ class TestTestFileRegex:
             "tests/test_something.py",  # in the tests dir
             "test/unit_tests.py",  # in test dir
             "/path/to/tests/helper.py",  # in tests dir
-            "src/tests/integration/test_api.py",  # also in tests dir
-            "Tests/TestCase.py",  # test with captal T
-            "TESTS/MODULE_TEST.PY",  # all caps tests dir
+            "src/tests/integration/test_api.py",
+            "Tests/TestCase.py",
+            "TESTS/MODULE_TEST.PY",
             "/project/test/conftest.py",
             "C:\\project\\tests\\test_file.py",  # windows path
             "project\\test\\helper.py",
@@ -35,7 +35,6 @@ class TestTestFileRegex:
             assert TEST_FILE_RE.search(path), f"Should match test path: {path}"
 
     def test_non_test_file_patterns_dont_match(self):
-        """Test that TEST_FILE_RE doesn't match non-test files"""
         non_test_paths = [
             "test_module.py",
             "module.py",
@@ -138,7 +137,6 @@ class TestTestDecoratorRegex:
 
 class TestTestMethodPattern:
     def test_test_method_pattern_matches(self):
-        """Test that TEST_METHOD_PATTERN matches test method names"""
         test_methods = [
             "test_something",
             "test_user_creation",
@@ -156,10 +154,9 @@ class TestTestMethodPattern:
 
     def test_test_method_pattern_doesnt_match(self):
         non_test_methods = [
-            "test",  # No _
+            "test",
             "test_",
             "testing_something",
-            # dont start with test
             "my_test_method",
             "testSomething",
             "Test_something",
@@ -265,7 +262,6 @@ class TestHelperFunctions:
 
 class TestConstants:
     def test_penalties_structure(self):
-        """Test that penalities contains expected keys and reasonable values"""
         expected_keys = {
             "private_name",
             "dunder_or_magic",
@@ -371,6 +367,15 @@ class TestConstants:
             "*.egg-info",
             "venv",
             ".venv",
+            "node_modules",
+            ".hg",
+            ".svn",
+            "vendor",
+            ".next",
+            ".nuxt",
+            ".turbo",
+            ".idea",
+            ".vscode",
         }
         assert expected_folders.issubset(DEFAULT_EXCLUDE_FOLDERS)
 

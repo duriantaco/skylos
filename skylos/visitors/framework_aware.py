@@ -556,5 +556,24 @@ def detect_framework_usage(
     if not visitor:
         return None
     if definition.line in visitor.framework_decorated_lines:
-        return 1
+        objects_with_routes = getattr(visitor, "objects_with_routes", None)
+        if isinstance(objects_with_routes, dict) and objects_with_routes:
+            for obj_name, route_lines in objects_with_routes.items():
+                if definition.line in route_lines:
+                    objects_passed = getattr(visitor, "objects_passed_as_args", set())
+                    objects_created = getattr(visitor, "objects_created_by_call", set())
+                    has_evidence = (
+                        obj_name in objects_passed or obj_name in objects_created
+                    )
+                    if not has_evidence:
+                        why_reduced = getattr(
+                            definition, "why_confidence_reduced", None
+                        )
+                        if isinstance(why_reduced, list):
+                            why_reduced.append("unregistered_router")
+                        fw_signals = getattr(definition, "framework_signals", None)
+                        if isinstance(fw_signals, list):
+                            fw_signals.append(f"route_on_{obj_name}")
+                        return 20
+        return 0
     return None

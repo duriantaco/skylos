@@ -194,6 +194,12 @@ class Definition:
         "complexity",
         "skip_reason",
         "base_classes",
+        "heuristic_refs",
+        "dynamic_signals",
+        "framework_signals",
+        "why_unused",
+        "why_confidence_reduced",
+        "_attr_name_ref_count",
     )
 
     def __init__(
@@ -226,6 +232,12 @@ class Definition:
         self.decorators = []
         self.complexity = 1
         self.base_classes = []
+        self.heuristic_refs = {}
+        self.dynamic_signals = []
+        self.framework_signals = []
+        self.why_unused = []
+        self.why_confidence_reduced = []
+        self._attr_name_ref_count = 0
 
     def to_dict(self) -> dict[str, Any]:
         if self.type == "method" and "." in self.name:
@@ -265,6 +277,16 @@ class Definition:
             result["is_descriptor"] = True
         if self.decorators:
             result["decorators"] = self.decorators
+        if self.heuristic_refs:
+            result["heuristic_refs"] = dict(self.heuristic_refs)
+        if self.dynamic_signals:
+            result["dynamic_signals"] = list(self.dynamic_signals)
+        if self.framework_signals:
+            result["framework_signals"] = list(self.framework_signals)
+        if self.why_unused:
+            result["why_unused"] = list(self.why_unused)
+        if self.why_confidence_reduced:
+            result["why_confidence_reduced"] = list(self.why_confidence_reduced)
 
         return result
 
@@ -329,6 +351,7 @@ class Visitor(ast.NodeVisitor):
         self.property_chains = defaultdict(dict)
         self.version_conditional_lines = set()
         self._used_attr_names = set()
+        self._used_attr_names_with_context = set()
 
     def add_def(
         self, name: str, t: str, line: int, node: Optional[ast.AST] = None, **extra: Any
@@ -1489,6 +1512,11 @@ class Visitor(ast.NodeVisitor):
                         node.args[1].left.value, str
                     ):
                         fstring_pattern = node.args[1].left.value + "*"
+                    # Phase 2C: right-side concat: var + "_suffix"
+                    elif isinstance(node.args[1].right, ast.Constant) and isinstance(
+                        node.args[1].right.value, str
+                    ):
+                        fstring_pattern = "*" + node.args[1].right.value
                 elif isinstance(node.args[1], ast.Name):
                     var_name = node.args[1].id
                     fstring_pattern = self.pattern_tracker.f_string_patterns.get(
@@ -1498,6 +1526,15 @@ class Visitor(ast.NodeVisitor):
                         val = self.local_constants[-1].get(var_name)
                         if val:
                             self.pattern_tracker.known_refs.add(val)
+                elif (
+                    isinstance(node.args[1], ast.Call)
+                    and isinstance(node.args[1].func, ast.Attribute)
+                    and node.args[1].func.attr == "format"
+                    and isinstance(node.args[1].func.value, ast.Constant)
+                    and isinstance(node.args[1].func.value.value, str)
+                ):
+                    fmt_str = node.args[1].func.value.value
+                    fstring_pattern = re.sub(r"\{[^}]*\}", "*", fmt_str)
 
                 if fstring_pattern:
                     self.pattern_tracker.add_pattern_ref(
@@ -1508,7 +1545,7 @@ class Visitor(ast.NodeVisitor):
                             self._current_function_qname.split(".")[-1]
                         )
 
-        elif isinstance(node.func, ast.Name) and node.func.id == "globals":
+        elif isinstance(node.func, ast.Name) and node.func.id in ("globals", "locals"):
             parent = getattr(node, "parent", None)
             if isinstance(parent, ast.Subscript):
                 if isinstance(parent.slice, ast.Constant) and isinstance(
@@ -1559,6 +1596,26 @@ class Visitor(ast.NodeVisitor):
 
         elif (
             isinstance(node.func, ast.Attribute)
+            and node.func.attr == "getmembers"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "inspect"
+            and node.args
+        ):
+            self._handle_inspect_getmembers(node.args[0])
+
+        elif (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "getmembers"
+            and "inspect" in self.alias.get("getmembers", "")
+            and node.args
+        ):
+            self._handle_inspect_getmembers(node.args[0])
+
+        elif isinstance(node.func, ast.Name) and node.func.id == "dir":
+            self._handle_dir_call(node)
+
+        elif (
+            isinstance(node.func, ast.Attribute)
             and isinstance(node.func.value, ast.Call)
             and isinstance(node.func.value.func, ast.Name)
             and node.func.value.func.id == "super"
@@ -1571,6 +1628,56 @@ class Visitor(ast.NodeVisitor):
                 class_qname = f"{self.mod}.{self.cls}" if self.mod else self.cls
                 for base_qname in self.class_bases.get(class_qname, []):
                     self.add_ref(f"{base_qname}.{method_name}")
+
+    def _handle_inspect_getmembers(self, arg: ast.AST) -> None:
+        if isinstance(arg, ast.Name):
+            name = arg.id
+            if name in ("self", "cls"):
+                if self.cls:
+                    if self.mod:
+                        owner = f"{self.mod}.{self.cls}"
+                    else:
+                        owner = self.cls
+                    for d in self.defs:
+                        if d.name.startswith(owner + "."):
+                            d.dynamic_signals.append("inspect_getmembers")
+            elif name[0].isupper():
+                qname = self.qual(name)
+                for d in self.defs:
+                    if d.name.startswith(qname + "."):
+                        d.dynamic_signals.append("inspect_getmembers")
+            else:
+                root_mod = self.mod.split(".")[0] if self.mod else ""
+                if root_mod:
+                    self.dyn.add(root_mod)
+
+    def _handle_dir_call(self, node: ast.Call) -> None:
+        if not node.args:
+            if self.mod:
+                root_mod = self.mod.split(".")[0]
+            else:
+                root_mod = ""
+            if root_mod:
+                self.dyn.add(root_mod)
+            return
+
+        arg = node.args[0]
+        if isinstance(arg, ast.Name):
+            name = arg.id
+            if name in ("self", "cls"):
+                if self.cls:
+                    if self.mod:
+                        owner = f"{self.mod}.{self.cls}"
+                    else:
+                        owner = self.cls
+                    for d in self.defs:
+                        if d.name.startswith(owner + "."):
+                            d.dynamic_signals.append("dir_self")
+            elif name[0].isupper():
+                qname = self.qual(name)
+                for d in self.defs:
+                    if d.name.startswith(qname + "."):
+                        d.dynamic_signals.append("dir_class")
 
     def _get_call_type(self, call_node: ast.Call) -> Optional[str]:
         if isinstance(call_node.func, ast.Name):
@@ -1661,7 +1768,10 @@ class Visitor(ast.NodeVisitor):
                         )
 
             if qualified_class:
-                owner = f"{self.mod}.{self.cls}" if self.mod else self.cls
+                if self.mod:
+                    owner = f"{self.mod}.{self.cls}"
+                else:
+                    owner = self.cls
                 attr_key = f"{owner}.{target.attr}"
                 self.instance_attr_types[attr_key] = qualified_class
 
@@ -1776,6 +1886,9 @@ class Visitor(ast.NodeVisitor):
             return
 
         self._used_attr_names.add(node.attr)
+        self._used_attr_names_with_context.add(
+            (node.attr, self.mod, self.cls or "", node.lineno)
+        )
 
         if isinstance(node.value, ast.Name):
             base = node.value.id
@@ -1938,6 +2051,37 @@ class Visitor(ast.NodeVisitor):
             node.value.parent = node
         if isinstance(node.slice, ast.AST):
             node.slice.parent = node
+
+        if (
+            isinstance(node.value, ast.Attribute)
+            and node.value.attr == "__dict__"
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            key = node.slice.value
+            self.add_ref(key)
+            if isinstance(node.value.value, ast.Name):
+                base = node.value.value.id
+                if base in ("self", "cls") and self.cls:
+                    owner = f"{self.mod}.{self.cls}" if self.mod else self.cls
+                    self.add_ref(f"{owner}.{key}")
+
+        if (
+            isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "vars"
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            key = node.slice.value
+            self.add_ref(key)
+            if node.value.args and isinstance(node.value.args[0], ast.Name):
+                obj_name = node.value.args[0].id
+                if obj_name in ("self", "cls") and self.cls:
+                    owner = f"{self.mod}.{self.cls}" if self.mod else self.cls
+                    self.add_ref(f"{owner}.{key}")
+                else:
+                    self.add_ref(f"{self.qual(obj_name)}.{key}")
 
         self.visit(node.value)
         self.visit(node.slice)
