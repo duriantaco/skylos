@@ -84,6 +84,16 @@ Go rules that DO have equivalents (G211, G212, etc.) are remapped to their unifi
 | L004 | MEDIUM | Anti-pattern try block (too broad) | Python | — |
 | L005 | LOW | Unused exception variable | Python | — |
 | L006 | MEDIUM | Inconsistent return (some paths implicit None) | Python | — |
+| L007 | MEDIUM–HIGH | Empty error handler (except: pass, suppress(Exception)) | Python | — |
+| L008 | MEDIUM | Missing resource cleanup (no context manager) | Python | CWE-404 |
+| L009 | LOW–HIGH | Debug leftover (print, breakpoint, pdb.set_trace) | Python | — |
+| L010 | MEDIUM | Security TODO/FIXME marker left in code | Python | CWE-546 |
+| L011 | MEDIUM–HIGH | Disabled security control (verify=False, csrf_exempt, DEBUG=True) | Python | CWE-295 |
+| L012 | CRITICAL | Phantom function call (hallucinated security function) | Python | CWE-476 |
+| L013 | HIGH | Insecure randomness for security values (random.* for tokens/passwords) | Python | CWE-330 |
+| L014 | HIGH | Hardcoded credential (password="admin123", DSN with embedded creds) | Python | CWE-798 |
+| L017 | MEDIUM | Error information disclosure (str(e) in HTTP response) | Python | CWE-209 |
+| L020 | HIGH | Overly broad file permissions (chmod 0o777, sensitive file perms) | Python | CWE-732 |
 
 ## Quality (SKY-Q, SKY-C, SKY-P)
 
