@@ -5,24 +5,11 @@ import subprocess
 from pathlib import Path
 
 import skylos
+from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 from .go_contract import build_go_engine_args, validate_go_engine_output
 
 
-DEFAULT_SKIP_DIRS = {
-    ".git",
-    ".hg",
-    ".svn",
-    ".tox",
-    ".mypy_cache",
-    ".pytest_cache",
-    "__pycache__",
-    "node_modules",
-    "vendor",
-    ".venv",
-    "venv",
-    "dist",
-    "build",
-}
+DEFAULT_SKIP_DIRS = {d for d in DEFAULT_EXCLUDE_FOLDERS if "*" not in d}
 
 
 class GoEngineError(RuntimeError):

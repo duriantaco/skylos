@@ -77,6 +77,14 @@ DEFAULT_EXCLUDE_FOLDERS = {
     "venv",
     ".venv",
     "node_modules",
+    ".hg",
+    ".svn",
+    "vendor",
+    ".next",
+    ".nuxt",
+    ".turbo",
+    ".idea",
+    ".vscode",
 }
 
 

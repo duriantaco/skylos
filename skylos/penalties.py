@@ -706,4 +706,24 @@ def apply_penalties(
                 def_obj.skip_reason = "Duck-typed Protocol implementation"
                 return
 
+    try:
+        attr_ref_count = getattr(def_obj, "_attr_name_ref_count", 0)
+        if (
+            isinstance(attr_ref_count, int)
+            and attr_ref_count > 0
+            and def_obj.references > 0
+            and def_obj.references <= attr_ref_count
+        ):
+            heuristic = getattr(def_obj, "heuristic_refs", {})
+            if isinstance(heuristic, dict):
+                same_file = heuristic.get("same_file_attr", 0.0)
+                same_pkg = heuristic.get("same_pkg_attr", 0.0)
+                if same_file < 1.0 and same_pkg < 0.3:
+                    confidence -= 25
+                    why_reduced = getattr(def_obj, "why_confidence_reduced", None)
+                    if isinstance(why_reduced, list):
+                        why_reduced.append("only_global_attr_match")
+    except (TypeError, AttributeError):
+        pass
+
     def_obj.confidence = max(confidence, 0)
