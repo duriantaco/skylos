@@ -41,6 +41,13 @@ from skylos.rules.quality.logic import (
     EmptyErrorHandlerRule,
     MissingResourceCleanupRule,
     DebugLeftoverRule,
+    SecurityTodoRule,
+    DisabledSecurityRule,
+    PhantomCallRule,
+    InsecureRandomRule,
+    HardcodedCredentialRule,
+    ErrorDisclosureRule,
+    BroadFilePermissionsRule,
 )
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
@@ -103,13 +110,14 @@ class Skylos:
         rel_path_str = str(rel_path).replace("\\", "/")
 
         for exclude_folder in exclude_folders:
-            exclude_normalized = exclude_folder.replace("\\", "/")
+            exclude_normalized = exclude_folder.replace("\\", "/").rstrip("/")
 
-            if "*" in exclude_folder:
+            if "*" in exclude_normalized:
                 for part in path_parts:
-                    if part.endswith(exclude_folder.replace("*", "")):
+                    if part.endswith(exclude_normalized.replace("*", "")):
                         return True
             elif "/" in exclude_normalized:
+                # Try the exclude path as-is against the relative path
                 if rel_path_str == exclude_normalized:
                     return True
                 if rel_path_str.startswith(exclude_normalized + "/"):
@@ -117,8 +125,23 @@ class Skylos:
                 check = "/" + rel_path_str + "/"
                 if "/" + exclude_normalized + "/" in check:
                     return True
+                # Also try resolving the exclude path relative to CWD
+                # and then making it relative to root_path.
+                # This handles e.g. --exclude-folder app/alembic/ when
+                # analyzing app/ (root_path=app/, rel exclude=alembic)
+                try:
+                    exclude_abs = Path(exclude_normalized).resolve()
+                    exclude_rel = str(
+                        exclude_abs.relative_to(root_path.resolve())
+                    ).replace("\\", "/")
+                    if rel_path_str == exclude_rel:
+                        return True
+                    if rel_path_str.startswith(exclude_rel + "/"):
+                        return True
+                except (ValueError, OSError):
+                    pass
             else:
-                if exclude_folder in path_parts:
+                if exclude_normalized in path_parts:
                     return True
 
         return False
@@ -148,27 +171,50 @@ class Skylos:
             return [p], p.parent
 
         root = p
+        exts = {".py", ".go", ".ts", ".tsx"}
+
+        # Single-pass walk to reduce filesystem traversal overhead.
         all_files = []
+        try:
+            for dirpath, dirnames, filenames in os.walk(p):
+                # Opportunistically prune excluded directories to avoid descending.
+                if exclude_folders:
+                    pruned = []
+                    for d in list(dirnames):
+                        d_path = Path(dirpath) / d
+                        try:
+                            if self._should_exclude_file(d_path, root, exclude_folders):
+                                pruned.append(d)
 
-        extensions = {".py", ".go", ".ts", ".tsx"}
+                        except Exception:
+                            # On any edge cases, keep walking rather than fail.
+                            pass
+                    if pruned:
+                        for d in pruned:
+                            try:
+                                dirnames.remove(d)
+                            except ValueError:
+                                pass
 
-        for ext in extensions:
-            for f in p.glob(f"**/*{ext}"):
-                all_files.append(f)
+                for fname in filenames:
+                    fpath = Path(dirpath) / fname
+                    if fpath.suffix.lower() in exts:
+                        all_files.append(fpath)
+        except Exception:
+            # Fallback to the previous, slightly more expensive glob approach
+            for ext in exts:
+                all_files.extend(p.glob(f"**/*{ext}"))
 
         if exclude_folders:
             filtered_files = []
             excluded_count = 0
-
             for file_path in all_files:
                 if self._should_exclude_file(file_path, root, exclude_folders):
                     excluded_count += 1
                     continue
                 filtered_files.append(file_path)
-
             if excluded_count > 0:
                 logger.info(f"Excluded {excluded_count} files from analysis")
-
             return filtered_files, root
 
         return all_files, root
@@ -330,6 +376,29 @@ class Skylos:
             f"Transitive dead code propagation: {iterations} iterations, "
             f"{len(dead_set)} total dead functions"
         )
+
+        for name, defn in self.defs.items():
+            if name in dead_set:
+                continue
+            if defn.type not in ("function", "method"):
+                continue
+            if defn.references == 0 or defn.is_exported:
+                continue
+            if not defn.called_by:
+                continue
+
+            attr_count = getattr(defn, "_attr_name_ref_count", 0)
+            if attr_count <= 0:
+                continue
+
+            dead_callers = len([c for c in defn.called_by if c in dead_set])
+
+            effective_refs = defn.references - attr_count
+            if effective_refs <= dead_callers and dead_callers > 0:
+                why_reduced = getattr(defn, "why_confidence_reduced", None)
+                if why_reduced is not None:
+                    why_reduced.append("survived_propagation_via_attr_heuristic")
+                defn.confidence = min(defn.confidence, 40)
 
     def _mark_refs(self, progress_callback=None):
         total_refs = len(self.refs)
@@ -544,6 +613,51 @@ class Skylos:
                     continue
                 if defn.simple_name in used_attr_names:
                     defn.references += 1
+                    defn._attr_name_ref_count += 1
+
+        used_attr_context = getattr(self, "_all_used_attr_context", set())
+        if used_attr_context:
+            context_by_attr = defaultdict(list)
+            for attr_name, mod, cls_ctx, line_no in used_attr_context:
+                context_by_attr[attr_name].append((mod, cls_ctx, line_no))
+
+            for defn in self.defs.values():
+                if defn.type in ("method", "function"):
+                    pass
+                elif defn.type == "variable" and "." in defn.name:
+                    pass
+                else:
+                    continue
+
+                contexts = context_by_attr.get(defn.simple_name)
+                if not contexts:
+                    continue
+
+                if ".":
+                    defn_mod = defn.name.rsplit(".")[0]
+                else:
+                    defn_mod = ""
+
+                if defn_mod:
+                    defn_pkg = defn_mod.split(".")[0]
+                else:
+                    defn_pkg = ""
+
+                for ctx_mod, ctx_cls, ctx_line in contexts:
+                    ctx_pkg = ctx_mod.split(".")[0] if ctx_mod else ""
+
+                    if ctx_mod == defn_mod:
+                        defn.heuristic_refs["same_file_attr"] = (
+                            defn.heuristic_refs.get("same_file_attr", 0.0) + 1.0
+                        )
+                    elif ctx_pkg and defn_pkg and ctx_pkg == defn_pkg:
+                        defn.heuristic_refs["same_pkg_attr"] = (
+                            defn.heuristic_refs.get("same_pkg_attr", 0.0) + 0.3
+                        )
+                    else:
+                        defn.heuristic_refs["global_attr"] = (
+                            defn.heuristic_refs.get("global_attr", 0.0) + 0.1
+                        )
 
     def _get_base_classes(self, class_name):
         if class_name not in self.defs:
@@ -818,6 +932,7 @@ class Skylos:
         all_inferred_types = {}
         all_instance_attr_types = {}
         all_used_attr_names = set()
+        all_used_attr_context = set()
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -871,6 +986,7 @@ class Skylos:
                 file_inferred_types = out[15] if len(out) > 15 else {}
                 file_instance_attr_types = out[16] if len(out) > 16 else {}
                 file_used_attr_names = out[17] if len(out) > 17 else set()
+                file_used_attr_context = out[18] if len(out) > 18 else set()
                 (
                     defs,
                     refs,
@@ -906,6 +1022,8 @@ class Skylos:
                     all_instance_attr_types.update(file_instance_attr_types)
                 if file_used_attr_names:
                     all_used_attr_names.update(file_used_attr_names)
+                if file_used_attr_context:
+                    all_used_attr_context.update(file_used_attr_context)
 
                 for definition in defs:
                     if definition.type == "import":
@@ -937,10 +1055,18 @@ class Skylos:
                 if enable_secrets and _secrets_scan_ctx is not None:
                     if changed_files is None or str(file) in changed_files:
                         try:
-                            src = Path(file).read_text(
-                                encoding="utf-8", errors="ignore"
+                            file_source_lines = (
+                                out[19]
+                                if isinstance(out, tuple) and len(out) > 19
+                                else None
                             )
-                            src_lines = src.splitlines(True)
+                            if file_source_lines:
+                                src_lines = file_source_lines
+                            else:
+                                src = Path(file).read_text(
+                                    encoding="utf-8", errors="ignore"
+                                )
+                                src_lines = src.splitlines(True)
                             rel = str(Path(file).relative_to(root))
                             ctx = {"relpath": rel, "lines": src_lines, "tree": None}
                             findings = list(_secrets_scan_ctx(ctx))
@@ -1241,6 +1367,7 @@ class Skylos:
         self._global_type_map.update(all_inferred_types)
         self._global_type_map.update(all_instance_attr_types)
         self._all_used_attr_names = all_used_attr_names
+        self._all_used_attr_context = all_used_attr_context
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
@@ -1599,6 +1726,20 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
                 q_rules.append(MissingResourceCleanupRule())
             if "SKY-L009" not in cfg["ignore"]:
                 q_rules.append(DebugLeftoverRule())
+            if "SKY-L010" not in cfg["ignore"]:
+                q_rules.append(SecurityTodoRule())
+            if "SKY-L011" not in cfg["ignore"]:
+                q_rules.append(DisabledSecurityRule())
+            if "SKY-L012" not in cfg["ignore"]:
+                q_rules.append(PhantomCallRule())
+            if "SKY-L013" not in cfg["ignore"]:
+                q_rules.append(InsecureRandomRule())
+            if "SKY-L014" not in cfg["ignore"]:
+                q_rules.append(HardcodedCredentialRule())
+            if "SKY-L017" not in cfg["ignore"]:
+                q_rules.append(ErrorDisclosureRule())
+            if "SKY-L020" not in cfg["ignore"]:
+                q_rules.append(BroadFilePermissionsRule())
             if "SKY-Q501" not in cfg["ignore"]:
                 q_rules.append(GodClassRule())
             if "SKY-Q701" not in cfg["ignore"]:
@@ -1738,6 +1879,9 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
             v.inferred_types,
             v.instance_attr_types,
             getattr(v, "_used_attr_names", set()),
+            getattr(v, "_used_attr_names_with_context", set()),
+            # Pre-split source lines to avoid re-reading file in secrets scan
+            source.splitlines(True),
         )
 
     except Exception as e:
@@ -1766,6 +1910,8 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
             {},
             {},
             set(),
+            set(),
+            [],
         )
 
 
