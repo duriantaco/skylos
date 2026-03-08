@@ -1,4 +1,3 @@
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -95,34 +94,101 @@ class TestPathExclusion(unittest.TestCase):
 
     def test_cwd_relative_exclude_with_target_prefix(self):
         tmpdir = tempfile.mkdtemp()
-        original_cwd = os.getcwd()
         try:
             versions_dir = Path(tmpdir) / "app" / "alembic" / "versions"
             versions_dir.mkdir(parents=True)
-            test_file = versions_dir / "001.py"
-            test_file.touch()
+            (versions_dir / "001.py").touch()
+            (Path(tmpdir) / "app" / "alembic" / "env.py").touch()
 
-            os.chdir(tmpdir)
+            ok_dir = Path(tmpdir) / "app" / "models"
+            ok_dir.mkdir(parents=True, exist_ok=True)
+            (ok_dir / "user.py").touch()
+
             target_root = Path(tmpdir) / "app"
-
             excludes = ["app/alembic"]
 
-            abs_file = target_root / "alembic" / "versions" / "001.py"
             self.assertTrue(
-                self.analyzer._should_exclude_file(abs_file, target_root, excludes),
-                "CWD-relative exclude with target prefix failed to exclude",
+                self.analyzer._should_exclude_file(
+                    target_root / "alembic" / "versions" / "001.py",
+                    target_root,
+                    excludes,
+                ),
+                "app/alembic exclude failed on nested file",
             )
-
-            ok_dir = target_root / "models"
-            ok_dir.mkdir(parents=True, exist_ok=True)
-            ok_file = target_root / "models" / "user.py"
-            ok_file.touch()
+            self.assertTrue(
+                self.analyzer._should_exclude_file(
+                    target_root / "alembic" / "env.py",
+                    target_root,
+                    excludes,
+                ),
+                "app/alembic exclude failed on direct child",
+            )
             self.assertFalse(
-                self.analyzer._should_exclude_file(ok_file, target_root, excludes),
-                "CWD-relative exclude incorrectly excluded unrelated file",
+                self.analyzer._should_exclude_file(
+                    target_root / "models" / "user.py",
+                    target_root,
+                    excludes,
+                ),
+                "app/alembic exclude incorrectly excluded unrelated file",
             )
         finally:
-            os.chdir(original_cwd)
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_cwd_relative_exclude_with_trailing_slash(self):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            versions_dir = Path(tmpdir) / "app" / "alembic" / "versions"
+            versions_dir.mkdir(parents=True)
+            (versions_dir / "001_init.py").touch()
+            (Path(tmpdir) / "app" / "alembic" / "env.py").touch()
+            (Path(tmpdir) / "app" / "alembic" / "__init__.py").touch()
+
+            ok_dir = Path(tmpdir) / "app" / "models"
+            ok_dir.mkdir(parents=True, exist_ok=True)
+            (ok_dir / "user.py").touch()
+
+            target_root = Path(tmpdir) / "app"
+            excludes = ["app/alembic/"]
+
+            ## alembic files should be excluded
+            self.assertTrue(
+                self.analyzer._should_exclude_file(
+                    target_root / "alembic" / "versions" / "001_init.py",
+                    target_root,
+                    excludes,
+                ),
+                "app/alembic/ exclude failed on versions/001_init.py",
+            )
+            self.assertTrue(
+                self.analyzer._should_exclude_file(
+                    target_root / "alembic" / "env.py",
+                    target_root,
+                    excludes,
+                ),
+                "app/alembic/ exclude failed on env.py",
+            )
+            self.assertTrue(
+                self.analyzer._should_exclude_file(
+                    target_root / "alembic" / "__init__.py",
+                    target_root,
+                    excludes,
+                ),
+                "app/alembic/ exclude failed on __init__.py",
+            )
+
+            ## non-alembic files should NOT be excluded
+            self.assertFalse(
+                self.analyzer._should_exclude_file(
+                    target_root / "models" / "user.py",
+                    target_root,
+                    excludes,
+                ),
+                "app/alembic/ exclude incorrectly excluded models/user.py",
+            )
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 if __name__ == "__main__":
