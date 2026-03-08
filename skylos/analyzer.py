@@ -124,21 +124,18 @@ class Skylos:
                 check = "/" + rel_path_str + "/"
                 if "/" + exclude_normalized + "/" in check:
                     return True
-                # Also try resolving the exclude path relative to CWD
-                # and then making it relative to root_path.
-                # This handles e.g. --exclude-folder app/alembic/ when
-                # analyzing app/ (root_path=app/, rel exclude=alembic)
-                try:
-                    exclude_abs = Path(exclude_normalized).resolve()
-                    exclude_rel = str(
-                        exclude_abs.relative_to(root_path.resolve())
-                    ).replace("\\", "/")
-                    if rel_path_str == exclude_rel:
-                        return True
-                    if rel_path_str.startswith(exclude_rel + "/"):
-                        return True
-                except (ValueError, OSError):
-                    pass
+                # Handle --exclude-folder app/alembic/ when analyzing app/
+                # The exclude prefix (app/) matches root_path's dir name,
+                # so strip it and compare against the relative path.
+                root_name = root_path.resolve().name
+                exclude_parts = exclude_normalized.split("/")
+                if exclude_parts[0] == root_name:
+                    stripped = "/".join(exclude_parts[1:])
+                    if stripped:
+                        if rel_path_str == stripped:
+                            return True
+                        if rel_path_str.startswith(stripped + "/"):
+                            return True
             else:
                 if exclude_normalized in path_parts:
                     return True
