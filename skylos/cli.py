@@ -541,6 +541,90 @@ def print_badge(
     console.print("```")
 
 
+def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
+    """Generate an LLM-optimized report with code context for AI agents."""
+    sections = []
+    finding_num = 0
+
+    # Collect all findings into a flat list with categories
+    all_findings = []
+    for category, label in [
+        ("danger", "Security"),
+        ("secrets", "Secrets"),
+        ("quality", "Quality"),
+        ("custom_rules", "Custom Rules"),
+    ]:
+        for f in result.get(category, []):
+            all_findings.append((f, label))
+
+    # Dead code categories
+    for category, label in [
+        ("unused_functions", "Dead Code"),
+        ("unused_imports", "Dead Code"),
+        ("unused_classes", "Dead Code"),
+        ("unused_variables", "Dead Code"),
+        ("unused_parameters", "Dead Code"),
+        ("unused_files", "Dead Code"),
+    ]:
+        for f in result.get(category, []):
+            all_findings.append((f, label))
+
+    if not all_findings:
+        return "# Skylos Report\n\nNo findings.\n"
+
+    # Sort: CRITICAL > HIGH > MEDIUM > LOW
+    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    all_findings.sort(key=lambda x: severity_order.get(x[0].get("severity", "LOW"), 4))
+
+    header = (
+        f"# Skylos Report — {len(all_findings)} findings\n\n"
+        f"Fix each finding below. The code context shows the problematic lines.\n\n---\n"
+    )
+    sections.append(header)
+
+    for finding, label in all_findings:
+        finding_num += 1
+        rule_id = finding.get("rule_id", "")
+        severity = finding.get("severity", "INFO")
+        name = finding.get("name") or finding.get("simple_name", "")
+        file_path = finding.get("file", "")
+        line = finding.get("line", 0)
+        message = finding.get("message", "")
+
+        # Try to read code context from the file
+        code_block = ""
+        try:
+            abs_path = pathlib.Path(file_path)
+            if not abs_path.is_absolute():
+                abs_path = project_root / file_path
+            if abs_path.is_file():
+                src_lines = abs_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+                start = max(0, line - 3)
+                end = min(len(src_lines), line + 4)
+                context_lines = []
+                for i in range(start, end):
+                    marker = ">>>" if i == line - 1 else "   "
+                    context_lines.append(f"{marker} {i + 1:4d} | {src_lines[i]}")
+                if context_lines:
+                    code_block = "\n```\n" + "\n".join(context_lines) + "\n```\n"
+        except Exception:
+            pass
+
+        section = (
+            f"\n## {finding_num}. {rule_id} | {severity} | {label}\n"
+            f"File: {file_path}:{line}\n"
+            f"Name: {name}\n"
+            f"{code_block}\n"
+            f"Problem: {message}\n"
+            f"\n---\n"
+        )
+        sections.append(section)
+
+    return "".join(sections)
+
+
 def _emit_github_annotations(result, *, max_annotations=50, severity_filter=None):
     severity_map = {
         "CRITICAL": "error",
@@ -2727,6 +2811,11 @@ Run 'skylos <command> --help' for more information on each command.
     )
     parser.add_argument("--json", action="store_true", help="Output raw JSON")
     parser.add_argument(
+        "--llm",
+        action="store_true",
+        help="Output LLM-optimized report (structured findings with code context for AI agents to fix)",
+    )
+    parser.add_argument(
         "--comment-out",
         action="store_true",
         help="Comment out selected dead code instead of deleting item",
@@ -3354,6 +3443,16 @@ sys.exit(ret)
                 pathlib.Path(args.output).write_text(result_json)
             else:
                 print(result_json)
+            return
+
+        if args.llm:
+            llm_report = _generate_llm_report(result, project_root)
+            if args.output:
+                pathlib.Path(args.output).write_text(llm_report, encoding="utf-8")
+                if not args.json:
+                    console.print(f"[good]LLM report written to {args.output}[/good]")
+            else:
+                print(llm_report)
             return
 
         if args.github:
