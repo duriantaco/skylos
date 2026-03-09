@@ -2,6 +2,7 @@ import json
 import sys
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 _original_constants = sys.modules.get("skylos.constants")
@@ -29,8 +30,15 @@ else:
 
 class TestSkylosWebApp(unittest.TestCase):
     def setUp(self):
+        self.token = "test-token-for-tests"
+        app.config["WEB_API_TOKEN"] = self.token
+        app.config["ALLOWED_SCAN_ROOTS"] = [Path("/")]
         self.app = app.test_client()
         self.app.testing = True
+        self.auth_headers = {
+            "Content-Type": "application/json",
+            "X-Skylos-Web-Token": self.token,
+        }
 
     def test_serve_frontend(self):
         response = self.app.get("/")
@@ -43,7 +51,7 @@ class TestSkylosWebApp(unittest.TestCase):
         response = self.app.post(
             "/api/analyze",
             data=json.dumps({"confidence": 50}),
-            content_type="application/json",
+            headers=self.auth_headers,
         )
 
         self.assertEqual(response.status_code, 400)
@@ -55,7 +63,9 @@ class TestSkylosWebApp(unittest.TestCase):
 
         payload = {"path": "/non/existent/path"}
         response = self.app.post(
-            "/api/analyze", data=json.dumps(payload), content_type="application/json"
+            "/api/analyze",
+            data=json.dumps(payload),
+            headers=self.auth_headers,
         )
 
         self.assertEqual(response.status_code, 400)
@@ -74,7 +84,9 @@ class TestSkylosWebApp(unittest.TestCase):
 
         payload = {"path": "/real/path", "confidence": 80}
         response = self.app.post(
-            "/api/analyze", data=json.dumps(payload), content_type="application/json"
+            "/api/analyze",
+            data=json.dumps(payload),
+            headers=self.auth_headers,
         )
 
         self.assertEqual(response.status_code, 200)
@@ -92,7 +104,9 @@ class TestSkylosWebApp(unittest.TestCase):
 
         payload = {"path": "/real/path"}
         response = self.app.post(
-            "/api/analyze", data=json.dumps(payload), content_type="application/json"
+            "/api/analyze",
+            data=json.dumps(payload),
+            headers=self.auth_headers,
         )
 
         self.assertEqual(response.status_code, 500)
