@@ -116,14 +116,16 @@ def detect_homoglyphs(text: str) -> list[tuple[str, str, int]]:
         return []
 
     results: list[tuple[str, str, int]] = []
-    has_ascii_alpha = bool(re.search(r"[a-zA-Z]", text))
 
-    if not has_ascii_alpha:
-        return []
-
-    for match in _CONFUSABLE_RE.finditer(text):
-        char = match.group()
-        line_no = text[: match.start()].count("\n") + 1
-        results.append((char, _CONFUSABLES[char], line_no))
+    for line_no, line in enumerate(text.splitlines(), 1):
+        for word_match in re.finditer(r"\S+", line):
+            word = word_match.group()
+            has_ascii = bool(re.search(r"[a-zA-Z]", word))
+            has_confusable = bool(_CONFUSABLE_RE.search(word))
+            if not (has_ascii and has_confusable):
+                continue
+            for char_match in _CONFUSABLE_RE.finditer(word):
+                char = char_match.group()
+                results.append((char, _CONFUSABLES[char], line_no))
 
     return results
