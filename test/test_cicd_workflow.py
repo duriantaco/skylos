@@ -1,6 +1,4 @@
 import yaml
-import pytest
-
 from skylos.cicd.workflow import generate_workflow
 
 
@@ -81,3 +79,29 @@ def test_workflow_schedule_trigger():
     content = generate_workflow(triggers=["schedule"])
     parsed = yaml.safe_load(content)
     assert "schedule" in parsed.get("on") or parsed.get(True)
+
+
+def test_workflow_no_upload_by_default():
+    content = generate_workflow()
+    assert "--upload" not in content
+    assert "SKYLOS_TOKEN" not in content
+
+
+def test_workflow_with_upload():
+    content = generate_workflow(use_upload=True)
+    parsed = yaml.safe_load(content)
+    steps = parsed["jobs"]["skylos"]["steps"]
+    analysis_step = next(s for s in steps if s.get("name") == "Run Skylos Analysis")
+    assert "--upload" in analysis_step["run"]
+    assert analysis_step["env"]["SKYLOS_TOKEN"] == "${{ secrets.SKYLOS_TOKEN }}"
+
+
+def test_workflow_upload_with_llm():
+    content = generate_workflow(use_upload=True, use_llm=True, model="gpt-4.1")
+    parsed = yaml.safe_load(content)
+    steps = parsed["jobs"]["skylos"]["steps"]
+    analysis_step = next(s for s in steps if s.get("name") == "Run Skylos Analysis")
+    assert "--upload" in analysis_step["run"]
+    assert analysis_step["env"]["SKYLOS_TOKEN"] == "${{ secrets.SKYLOS_TOKEN }}"
+    llm_step = next(s for s in steps if s.get("name") == "Skylos Agent Review (LLM)")
+    assert "SKYLOS_API_KEY" in llm_step["env"]

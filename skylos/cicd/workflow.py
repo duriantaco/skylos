@@ -23,6 +23,7 @@ def generate_workflow(
     use_llm: bool = False,
     model: Optional[str] = None,
     use_claude_security: bool = False,
+    use_upload: bool = False,
 ) -> str:
     triggers = triggers or ["pull_request", "push"]
     analysis_types = analysis_types or ["dead-code", "security", "quality", "secrets"]
@@ -35,6 +36,14 @@ def generate_workflow(
     )
     if analysis_flags:
         analysis_flags = " " + analysis_flags
+
+    upload_flag = ""
+    upload_env_block = ""
+    if use_upload:
+        upload_flag = " --upload"
+        upload_env_block = (
+            "\n        env:\n          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}"
+        )
 
     llm_env = ""
     llm_step = ""
@@ -89,7 +98,9 @@ jobs:
         run: pip install skylos
 
       - name: Run Skylos Analysis
-        run: skylos .{analysis_flags} --json -o skylos-results.json
+        run: skylos .{analysis_flags}{upload_flag} --json -o skylos-results.json{
+        upload_env_block
+    }
 {llm_step}
       - name: Quality Gate
         run: skylos cicd gate --input skylos-results.json --summary

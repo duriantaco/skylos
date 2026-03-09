@@ -1,5 +1,3 @@
-"""Skylos interactive TUI dashboard powered by Textual."""
-
 from __future__ import annotations
 
 import os

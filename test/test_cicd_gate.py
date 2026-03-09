@@ -6,7 +6,6 @@ import pytest
 from skylos.gatekeeper import (
     check_gate,
     build_summary_markdown,
-    write_github_summary,
     run_gate_interaction,
 )
 

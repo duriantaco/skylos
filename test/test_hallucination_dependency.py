@@ -1,5 +1,4 @@
 import json
-import pytest
 
 import skylos.rules.danger.danger_hallucination.dependency_hallucination as dep
 

@@ -1,4 +1,3 @@
-import os
 import skylos.scale.parallel_static as ps
 
 

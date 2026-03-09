@@ -1,5 +1,4 @@
 import ast
-import pytest
 from skylos.rules.quality.cohesion import LCOMRule, analyze_cohesion, _UnionFind
 
 
