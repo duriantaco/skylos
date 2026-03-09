@@ -25,11 +25,11 @@ class GroupingMode(str, Enum):
 
 @dataclass(frozen=True)
 class CloneConfig:
-    min_lines: int = 5
+    min_lines: int = 8
     min_nodes: int = 10
     type1_threshold: float = 0.98
     type2_threshold: float = 0.95
-    type3_threshold: float = 0.80
+    type3_threshold: float = 0.88
     type4_threshold: float = 0.75
 
     similarity_threshold: float = 0.90
@@ -156,7 +156,23 @@ def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(a=a, b=b).ratio()
 
 
+# Test file basenames and dunder methods produce expected structural
+# duplication — skip them to avoid flooding the user with false positives.
+_SKIP_PREFIXES = ("test_", "conftest")
+_BOILERPLATE_METHODS = {
+    "__init__", "__repr__", "__str__", "__eq__", "__hash__",
+    "__lt__", "__le__", "__gt__", "__ge__", "__ne__",
+    "__len__", "__iter__", "__next__", "__contains__",
+    "__enter__", "__exit__", "__call__",
+    "setUp", "tearDown", "setUpClass", "tearDownClass",
+}
+
+
 def extract_fragments(py_path: Path, source: str, cfg: CloneConfig) -> List[Fragment]:
+    basename = py_path.name
+    if any(basename.startswith(p) for p in _SKIP_PREFIXES):
+        return []
+
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -220,6 +236,9 @@ def extract_fragments(py_path: Path, source: str, cfg: CloneConfig) -> List[Frag
             class_stack.pop()
 
         def visit_FunctionDef(self, node: ast.FunctionDef):
+            if node.name in _BOILERPLATE_METHODS:
+                self.generic_visit(node)
+                return
             if class_stack:
                 mk_fragment(node, "method", f"{class_stack[-1]}.{node.name}", node.body)
             else:
@@ -227,6 +246,9 @@ def extract_fragments(py_path: Path, source: str, cfg: CloneConfig) -> List[Frag
             self.generic_visit(node)
 
         def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+            if node.name in _BOILERPLATE_METHODS:
+                self.generic_visit(node)
+                return
             if class_stack:
                 mk_fragment(node, "method", f"{class_stack[-1]}.{node.name}", node.body)
             else:
