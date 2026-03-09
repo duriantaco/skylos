@@ -1,5 +1,19 @@
 ## Changelog
 
+## [0.5.0] - 2026-03-10
+
+### Added
+- **Local AI support**: new `"local"` provider option with dedicated `skylos.localBaseUrl` and `skylos.localModel` settings. Works with Ollama, LM Studio, LocalAI, vLLM, Kimi, or any OpenAI-compatible server. No API key required
+- **SARIF export**: `Skylos: Export Report` now offers SARIF v2.1.0 output for CI/code-scanning integrations (GitHub Code Scanning, GitLab SAST, Azure DevOps). Includes rule metadata with CWE, OWASP, and PCI-DSS tags
+- **Sidebar filters**: filter findings by severity, category, source (CLI vs AI), or file name via the funnel icon in the sidebar title bar. Filters stack and can be cleared with the X button
+- **Configurable delta base branch**: `skylos.diffBase` setting (default `origin/main`) replaces the hardcoded base ref for delta mode. Supports any git ref
+- **Safer AI fix workflow**: `skylos.fixPreviewFirst` (default `true`) enforces diff preview before applying fixes. `skylos.postFixCommand` runs tests/linter after each fix with one-click undo on failure
+- Clear warning when `"local"` provider is selected but no server URL is configured, with "Open Settings" action
+
+### Changed
+- AI provider dropdown now shows descriptive labels: "OpenAI (cloud)", "Anthropic (cloud)", "Local AI server"
+- Error messages are provider-specific — local provider tells you to set `localBaseUrl`, not an API key
+
 ## [0.4.1] - 2026-02-24
 
 ### Changed

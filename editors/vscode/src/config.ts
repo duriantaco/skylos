@@ -51,18 +51,34 @@ export function getAIProvider(): AIProvider {
   return cfg().get<AIProvider>("aiProvider", "openai");
 }
 
+export function getOpenAIBaseUrl(): string {
+  const provider = getAIProvider();
+  if (provider === "local") {
+    return (cfg().get<string>("localBaseUrl", "") || "").replace(/\/+$/, "");
+  }
+  return cfg().get<string>("openaiBaseUrl", "https://api.openai.com").replace(/\/+$/, "");
+}
+
+export function isLocalProvider(): boolean {
+  return getAIProvider() === "local";
+}
+
 export function getAIApiKey(): string | undefined {
   const provider = getAIProvider();
-  return provider === "anthropic"
-    ? cfg().get<string>("anthropicApiKey")
-    : cfg().get<string>("openaiApiKey");
+  if (provider === "anthropic") return cfg().get<string>("anthropicApiKey") || undefined;
+  if (provider === "local") {
+    const baseUrl = cfg().get<string>("localBaseUrl", "");
+    if (!baseUrl) return undefined;
+    return cfg().get<string>("openaiApiKey") || "local";
+  }
+  return cfg().get<string>("openaiApiKey") || undefined;
 }
 
 export function getAIModel(): string {
   const provider = getAIProvider();
-  return provider === "anthropic"
-    ? cfg().get<string>("anthropicModel", "claude-sonnet-4-20250514")
-    : cfg().get<string>("openaiModel", "gpt-4o");
+  if (provider === "anthropic") return cfg().get<string>("anthropicModel", "claude-sonnet-4-20250514");
+  if (provider === "local") return cfg().get<string>("localModel", "") || cfg().get<string>("openaiModel", "gpt-4o");
+  return cfg().get<string>("openaiModel", "gpt-4o");
 }
 
 export function isLanguageSupported(langId: string): boolean {
@@ -83,4 +99,16 @@ export function isDeadCodeEnabled(): boolean {
 
 export function isShowDeadParams(): boolean {
   return cfg().get<boolean>("showDeadParams", false);
+}
+
+export function getDiffBase(): string {
+  return cfg().get<string>("diffBase", "origin/main");
+}
+
+export function isFixPreviewFirst(): boolean {
+  return cfg().get<boolean>("fixPreviewFirst", true);
+}
+
+export function getPostFixCommand(): string {
+  return cfg().get<string>("postFixCommand", "");
 }

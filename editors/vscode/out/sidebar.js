@@ -75,7 +75,7 @@ class SkylosTreeProvider {
     }
     getChildren(element) {
         if (!element) {
-            const all = this.store.getAllFindings();
+            const all = this.store.hasActiveFilter ? this.store.getFilteredFindings() : this.store.getAllFindings();
             const byCategory = new Map();
             for (const f of all) {
                 const list = byCategory.get(f.category) ?? [];

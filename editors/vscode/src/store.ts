@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { SkylosFinding, CLIGrade, AnalysisSummary, CircularDependency, DependencyVulnerability } from "./types";
+import type { SkylosFinding, CLIGrade, AnalysisSummary, CircularDependency, DependencyVulnerability, FindingsFilter } from "./types";
 
 
 export class FindingsStore {
@@ -11,6 +11,7 @@ export class FindingsStore {
   private _circularDeps: CircularDependency[] = [];
   private _depVulns: DependencyVulnerability[] = [];
   private _deltaMode = false;
+  private _filter: FindingsFilter = {};
 
   private _onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChange = this._onDidChange.event;
@@ -47,6 +48,29 @@ export class FindingsStore {
 
   get deltaMode(): boolean { return this._deltaMode; }
   set deltaMode(v: boolean) { this._deltaMode = v; }
+
+  get filter(): FindingsFilter { return this._filter; }
+  set filter(f: FindingsFilter) {
+    this._filter = f;
+    this._onDidChange.fire();
+  }
+
+  get hasActiveFilter(): boolean {
+    return !!(this._filter.severity || this._filter.category || this._filter.source || this._filter.filePattern);
+  }
+
+  getFilteredFindings(): SkylosFinding[] {
+    let all = this.getAllFindings();
+    const f = this._filter;
+    if (f.severity) all = all.filter((x) => x.severity === f.severity);
+    if (f.category) all = all.filter((x) => x.category === f.category);
+    if (f.source) all = all.filter((x) => x.source === f.source);
+    if (f.filePattern) {
+      const pattern = f.filePattern.toLowerCase();
+      all = all.filter((x) => x.file.toLowerCase().includes(pattern));
+    }
+    return all;
+  }
 
   setAIFindings(filePath: string, findings: SkylosFinding[]): void {
     if (findings.length === 0) {

@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { SkylosFinding, ChatMessage } from "./types";
-import { getAIProvider, getAIApiKey, getAIModel } from "./config";
+import { getAIProvider, getAIApiKey, getAIModel, getOpenAIBaseUrl } from "./config";
 import { out } from "./scanner";
 
 export class SkylosChatViewProvider implements vscode.WebviewViewProvider {
@@ -188,7 +188,8 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
     systemPrompt: string,
     messages: ChatMessage[],
   ): Promise<void> {
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    const baseUrl = getOpenAIBaseUrl();
+    const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
