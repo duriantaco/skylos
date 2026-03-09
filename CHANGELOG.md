@@ -1,7 +1,19 @@
 ## Changelog
 
+## [3.5.8] - 2026-03-10
 
-## [3.5.7] - 2026-03-10
+### Fixed
+- SKY-D260: multiline HTML comments no longer produce duplicate findings — all spanned lines are excluded from prose scanning
+- SKY-D260: `scan_directory` now reuses project-wide `DEFAULT_EXCLUDE_FOLDERS` (adds `vendor`, `.next`, `.nuxt`, `.idea`, etc.)
+- SKY-D260: removed overly broad patterns (`system|assistant:` header, `when the AI reads this`), tightened prompt-key regex
+- SKY-D260: fenced code blocks and YAML front matter excluded from markdown prose scanning
+- SKY-D260: homoglyph detection only flags mixed-script words, not pure Cyrillic/Greek text
+- SKY-D260: removed `return`/`print` from exfil verbs, tightened `act as` to require sentence boundary
+- SKY-D260: fixed single-line string regex matching across newlines in `.py` files
+- SKY-Q301: now counts comprehension `for`/`if` and match case guards
+- SKY-Q301: threshold changed from `>=10` to `>10` (aligns with McCabe convention and TS engine)
+
+## [3.5.7] - 2026-03-09
 
 ### Added
 - `skylos cicd init --upload` flag for cloud dashboard upload workflows
@@ -16,15 +28,7 @@
 ### Fixed
 - SKY-C401 clone detection: reduced false positives (higher thresholds, skip tests/boilerplate)
 - Server tests updated for token auth and path allowlist
-- SKY-D260: multiline HTML comments no longer produce duplicate findings — all spanned lines are excluded from prose scanning
-- SKY-D260: `scan_directory` now reuses project-wide `DEFAULT_EXCLUDE_FOLDERS` (adds `vendor`, `.next`, `.nuxt`, `.idea`, etc.)
-- SKY-D260: removed overly broad patterns (`system|assistant:` header, `when the AI reads this`), tightened prompt-key regex
-- SKY-D260: fenced code blocks and YAML front matter excluded from markdown prose scanning
-- SKY-D260: homoglyph detection only flags mixed-script words, not pure Cyrillic/Greek text
-- SKY-D260: removed `return`/`print` from exfil verbs, tightened `act as` to require sentence boundary
-- SKY-D260: fixed single-line string regex matching across newlines in `.py` files
-- SKY-Q301: now counts comprehension `for`/`if` and match case guards
-- SKY-Q301: threshold changed from `>=10` to `>10` (aligns with McCabe convention and TS engine)
+
 
 ## [3.5.6] - 2026-03-07
 
