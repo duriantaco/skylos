@@ -17,8 +17,8 @@ import { FindingNavigator } from "./navigator";
 import { FindingDetailPanel } from "./detail";
 import { SkylosFileDecorationProvider } from "./filedecorations";
 import { exportReport } from "./export";
-import { isRunOnSave, isScanOnOpen, getIdleMs, isLanguageSupported, isShowPopup } from "./config";
-import type { AutoFixOptions } from "./types";
+import { isRunOnSave, isScanOnOpen, getIdleMs, isLanguageSupported, isShowPopup, getDiffBase, getAIProvider, getOpenAIBaseUrl } from "./config";
+import type { AutoFixOptions, Category, Severity } from "./types";
 
 export function activate(context: vscode.ExtensionContext) {
   out.appendLine("Skylos extension activated");
@@ -111,7 +111,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("skylos.scan", () => {
-      const diffBase = store.deltaMode ? "origin/main" : undefined;
+      const diffBase = store.deltaMode ? getDiffBase() : undefined;
       doScan(diffBase);
     }),
 
@@ -317,6 +317,64 @@ export function activate(context: vscode.ExtensionContext) {
       };
       await autoRemediator.fixAll(options);
     }),
+
+    vscode.commands.registerCommand("skylos.filterFindings", async () => {
+      const filterType = await vscode.window.showQuickPick(
+        [
+          { label: "$(warning) By Severity", value: "severity" },
+          { label: "$(symbol-class) By Category", value: "category" },
+          { label: "$(source-control) By Source (CLI vs AI)", value: "source" },
+          { label: "$(file) By File Name", value: "file" },
+        ],
+        { placeHolder: "Filter findings by..." },
+      );
+      if (!filterType) return;
+
+      if (filterType.value === "severity") {
+        const sev = await vscode.window.showQuickPick(
+          ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "WARN"],
+          { placeHolder: "Show only this severity" },
+        );
+        if (sev) store.filter = { ...store.filter, severity: sev as Severity };
+      } else if (filterType.value === "category") {
+        const cat = await vscode.window.showQuickPick(
+          [
+            { label: "Security", value: "security" },
+            { label: "Secrets", value: "secrets" },
+            { label: "Dead Code", value: "dead_code" },
+            { label: "Quality", value: "quality" },
+            { label: "AI Analysis", value: "ai" },
+          ].map((c) => ({ ...c, description: c.value })),
+          { placeHolder: "Show only this category" },
+        );
+        if (cat) store.filter = { ...store.filter, category: cat.value as Category };
+      } else if (filterType.value === "source") {
+        const src = await vscode.window.showQuickPick(
+          [
+            { label: "CLI (static analysis)", value: "cli" as const },
+            { label: "AI (real-time analysis)", value: "ai" as const },
+          ],
+          { placeHolder: "Show only this source" },
+        );
+        if (src) store.filter = { ...store.filter, source: src.value };
+      } else if (filterType.value === "file") {
+        const pattern = await vscode.window.showInputBox({
+          placeHolder: "e.g. auth.py, src/utils",
+          prompt: "Filter by file path (substring match)",
+        });
+        if (pattern) store.filter = { ...store.filter, filePattern: pattern };
+      }
+
+      vscode.commands.executeCommand("setContext", "skylos.filterActive", store.hasActiveFilter);
+      const label = store.hasActiveFilter ? "Filter active" : "No filter";
+      vscode.window.setStatusBarMessage(`Skylos: ${label}`, 3000);
+    }),
+
+    vscode.commands.registerCommand("skylos.clearFilter", () => {
+      store.filter = {};
+      vscode.commands.executeCommand("setContext", "skylos.filterActive", false);
+      vscode.window.setStatusBarMessage("Skylos: Filter cleared", 3000);
+    }),
   );
 
   if (isRunOnSave()) {
@@ -353,6 +411,17 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
   );
+
+  if (getAIProvider() === "local" && !getOpenAIBaseUrl()) {
+    vscode.window.showWarningMessage(
+      'Skylos: AI provider is "local" but no server URL set. Configure skylos.localBaseUrl (e.g. http://localhost:11434 for Ollama).',
+      "Open Settings",
+    ).then((action) => {
+      if (action === "Open Settings") {
+        vscode.commands.executeCommand("workbench.action.openSettings", "skylos.localBaseUrl");
+      }
+    });
+  }
 
   if (isScanOnOpen()) {
     vscode.commands.executeCommand("skylos.scan");

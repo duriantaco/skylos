@@ -10,6 +10,8 @@ exports.getIdleMs = getIdleMs;
 exports.getPopupCooldownMs = getPopupCooldownMs;
 exports.isShowPopup = isShowPopup;
 exports.getAIProvider = getAIProvider;
+exports.getOpenAIBaseUrl = getOpenAIBaseUrl;
+exports.isLocalProvider = isLocalProvider;
 exports.getAIApiKey = getAIApiKey;
 exports.getAIModel = getAIModel;
 exports.isLanguageSupported = isLanguageSupported;
@@ -17,6 +19,9 @@ exports.isStreamingEnabled = isStreamingEnabled;
 exports.getAutoFixMaxFindings = getAutoFixMaxFindings;
 exports.isDeadCodeEnabled = isDeadCodeEnabled;
 exports.isShowDeadParams = isShowDeadParams;
+exports.getDiffBase = getDiffBase;
+exports.isFixPreviewFirst = isFixPreviewFirst;
+exports.getPostFixCommand = getPostFixCommand;
 const vscode = require("vscode");
 const types_1 = require("./types");
 function cfg() {
@@ -55,17 +60,35 @@ function isShowPopup() {
 function getAIProvider() {
     return cfg().get("aiProvider", "openai");
 }
+function getOpenAIBaseUrl() {
+    const provider = getAIProvider();
+    if (provider === "local") {
+        return (cfg().get("localBaseUrl", "") || "").replace(/\/+$/, "");
+    }
+    return cfg().get("openaiBaseUrl", "https://api.openai.com").replace(/\/+$/, "");
+}
+function isLocalProvider() {
+    return getAIProvider() === "local";
+}
 function getAIApiKey() {
     const provider = getAIProvider();
-    return provider === "anthropic"
-        ? cfg().get("anthropicApiKey")
-        : cfg().get("openaiApiKey");
+    if (provider === "anthropic")
+        return cfg().get("anthropicApiKey") || undefined;
+    if (provider === "local") {
+        const baseUrl = cfg().get("localBaseUrl", "");
+        if (!baseUrl)
+            return undefined;
+        return cfg().get("openaiApiKey") || "local";
+    }
+    return cfg().get("openaiApiKey") || undefined;
 }
 function getAIModel() {
     const provider = getAIProvider();
-    return provider === "anthropic"
-        ? cfg().get("anthropicModel", "claude-sonnet-4-20250514")
-        : cfg().get("openaiModel", "gpt-4o");
+    if (provider === "anthropic")
+        return cfg().get("anthropicModel", "claude-sonnet-4-20250514");
+    if (provider === "local")
+        return cfg().get("localModel", "") || cfg().get("openaiModel", "gpt-4o");
+    return cfg().get("openaiModel", "gpt-4o");
 }
 function isLanguageSupported(langId) {
     return types_1.SUPPORTED_LANGUAGES.includes(langId);
@@ -81,4 +104,13 @@ function isDeadCodeEnabled() {
 }
 function isShowDeadParams() {
     return cfg().get("showDeadParams", false);
+}
+function getDiffBase() {
+    return cfg().get("diffBase", "origin/main");
+}
+function isFixPreviewFirst() {
+    return cfg().get("fixPreviewFirst", true);
+}
+function getPostFixCommand() {
+    return cfg().get("postFixCommand", "");
 }

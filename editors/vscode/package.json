@@ -2,7 +2,7 @@
   "name": "skylos-vscode-extension",
   "displayName": "Skylos",
   "description": "Dead code detection, security scanning, and AI analysis for Python, TypeScript, JavaScript, and Go.",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "publisher": "oha",
   "icon": "icon.png",
   "repository": { "type": "git", "url": "https://github.com/duriantaco/skylos" },
@@ -40,7 +40,9 @@
       { "command": "skylos.exportReport", "title": "Skylos: Export Report", "icon": "$(export)" },
       { "command": "skylos.scanFile", "title": "Skylos: Scan This File", "icon": "$(file-code)" },
       { "command": "skylos.toggleDelta", "title": "Skylos: Toggle Delta Mode", "icon": "$(git-compare)" },
-      { "command": "skylos.showFindingDetail", "title": "Skylos: Show Finding Detail", "icon": "$(info)" }
+      { "command": "skylos.showFindingDetail", "title": "Skylos: Show Finding Detail", "icon": "$(info)" },
+      { "command": "skylos.filterFindings", "title": "Skylos: Filter Findings", "icon": "$(filter)" },
+      { "command": "skylos.clearFilter", "title": "Skylos: Clear Filter", "icon": "$(close)" }
     ],
     "viewsContainers": {
       "activitybar": [
@@ -72,6 +74,8 @@
         { "command": "skylos.fixAll", "when": "view == skylosFindings", "group": "navigation" },
         { "command": "skylos.dashboard", "when": "view == skylosFindings", "group": "navigation" },
         { "command": "skylos.toggleDelta", "when": "view == skylosFindings", "group": "navigation" },
+        { "command": "skylos.filterFindings", "when": "view == skylosFindings", "group": "navigation" },
+        { "command": "skylos.clearFilter", "when": "view == skylosFindings && skylos.filterActive", "group": "navigation" },
         { "command": "skylos.clearChat", "when": "view == skylosChatPanel", "group": "navigation" }
       ],
       "view/item/context": [
@@ -180,19 +184,39 @@
         },
         "skylos.aiProvider": {
           "type": "string",
-          "enum": ["openai", "anthropic"],
+          "enum": ["openai", "anthropic", "local"],
           "default": "openai",
+          "enumDescriptions": [
+            "OpenAI (cloud)",
+            "Anthropic (cloud)",
+            "Local AI server (Ollama, LM Studio, LocalAI, vLLM — any OpenAI-compatible endpoint)"
+          ],
           "description": "AI provider for code analysis and fixes"
+        },
+        "skylos.openaiBaseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com",
+          "description": "Base URL for OpenAI API (only used when aiProvider is 'openai')"
         },
         "skylos.openaiApiKey": {
           "type": "string",
           "default": "",
-          "description": "OpenAI API key for AI features"
+          "description": "OpenAI API key"
         },
         "skylos.openaiModel": {
           "type": "string",
           "default": "gpt-4o",
           "description": "OpenAI model to use"
+        },
+        "skylos.localBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "URL of your local AI server (e.g. http://localhost:11434 for Ollama, http://localhost:1234 for LM Studio)"
+        },
+        "skylos.localModel": {
+          "type": "string",
+          "default": "",
+          "description": "Model name on your local server (e.g. llama3.1, deepseek-coder, kimi)"
         },
         "skylos.anthropicApiKey": {
           "type": "string",
@@ -225,6 +249,21 @@
           "minimum": 1,
           "maximum": 200,
           "description": "Maximum findings to auto-fix in one run (prevents API bill explosions)"
+        },
+        "skylos.diffBase": {
+          "type": "string",
+          "default": "origin/main",
+          "description": "Git ref used as the base for delta mode (e.g. origin/main, origin/develop, HEAD~5)"
+        },
+        "skylos.fixPreviewFirst": {
+          "type": "boolean",
+          "default": true,
+          "description": "Always show a diff preview before applying AI fixes"
+        },
+        "skylos.postFixCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Shell command to run after applying an AI fix (e.g. 'npm test', 'pytest -x'). Leave empty to skip."
         }
       }
     }

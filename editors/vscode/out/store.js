@@ -9,6 +9,7 @@ class FindingsStore {
         this._circularDeps = [];
         this._depVulns = [];
         this._deltaMode = false;
+        this._filter = {};
         this._onDidChange = new vscode.EventEmitter();
         this.onDidChange = this._onDidChange.event;
         this._onDidChangeAI = new vscode.EventEmitter();
@@ -35,6 +36,29 @@ class FindingsStore {
     get depVulns() { return this._depVulns; }
     get deltaMode() { return this._deltaMode; }
     set deltaMode(v) { this._deltaMode = v; }
+    get filter() { return this._filter; }
+    set filter(f) {
+        this._filter = f;
+        this._onDidChange.fire();
+    }
+    get hasActiveFilter() {
+        return !!(this._filter.severity || this._filter.category || this._filter.source || this._filter.filePattern);
+    }
+    getFilteredFindings() {
+        let all = this.getAllFindings();
+        const f = this._filter;
+        if (f.severity)
+            all = all.filter((x) => x.severity === f.severity);
+        if (f.category)
+            all = all.filter((x) => x.category === f.category);
+        if (f.source)
+            all = all.filter((x) => x.source === f.source);
+        if (f.filePattern) {
+            const pattern = f.filePattern.toLowerCase();
+            all = all.filter((x) => x.file.toLowerCase().includes(pattern));
+        }
+        return all;
+    }
     setAIFindings(filePath, findings) {
         if (findings.length === 0) {
             this.aiFindingsByFile.delete(filePath);

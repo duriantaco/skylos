@@ -124,7 +124,7 @@ export interface FunctionBlock {
   hash: string;
 }
 
-export type AIProvider = "openai" | "anthropic";
+export type AIProvider = "openai" | "anthropic" | "local";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -142,6 +142,13 @@ export interface FixResult {
 export interface AutoFixOptions {
   minSeverity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   dryRun: boolean;
+}
+
+export interface FindingsFilter {
+  severity?: Severity;
+  category?: Category;
+  source?: "cli" | "ai";
+  filePattern?: string;
 }
 
 export function getDocumentFilters(): vscode.DocumentFilter[] {

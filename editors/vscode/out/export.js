@@ -8,11 +8,24 @@ async function exportReport(store) {
     const pick = await vscode.window.showQuickPick([
         { label: "Markdown", description: "Human-readable report", format: "md" },
         { label: "JSON", description: "Machine-readable report", format: "json" },
+        { label: "SARIF", description: "For CI/code-scanning (GitHub, GitLab, Azure DevOps)", format: "sarif" },
     ], { placeHolder: "Export format" });
     if (!pick)
         return;
-    const content = pick.format === "md" ? buildMarkdown(store) : buildJson(store);
-    const lang = pick.format === "md" ? "markdown" : "json";
+    let content;
+    let lang;
+    if (pick.format === "md") {
+        content = buildMarkdown(store);
+        lang = "markdown";
+    }
+    else if (pick.format === "sarif") {
+        content = buildSarif(store);
+        lang = "json";
+    }
+    else {
+        content = buildJson(store);
+        lang = "json";
+    }
     const doc = await vscode.workspace.openTextDocument({ content, language: lang });
     await vscode.window.showTextDocument(doc);
 }
@@ -97,4 +110,76 @@ function buildJson(store) {
         },
     };
     return JSON.stringify(report, null, 2);
+}
+function buildSarif(store) {
+    const findings = store.getAllFindings();
+    const ws = vscode.workspace.workspaceFolders?.[0];
+    const wsRoot = ws?.uri.fsPath ?? "";
+    const ruleIds = [...new Set(findings.map((f) => f.ruleId))];
+    const rules = ruleIds.map((id) => {
+        const meta = (0, rules_1.getRuleMeta)(id);
+        const rule = {
+            id,
+            name: meta?.name ?? id,
+            shortDescription: { text: meta?.description ?? id },
+        };
+        if (meta?.fix) {
+            rule.help = { text: meta.fix, markdown: meta.fix };
+        }
+        const tags = [];
+        if (meta?.cwe)
+            tags.push(meta.cwe);
+        if (meta?.owasp)
+            tags.push(`OWASP:${meta.owasp}`);
+        if (meta?.pciDss)
+            tags.push(`PCI-DSS:${meta.pciDss}`);
+        if (tags.length > 0) {
+            rule.properties = { tags };
+        }
+        return rule;
+    });
+    const ruleIndex = new Map(ruleIds.map((id, i) => [id, i]));
+    const results = findings.map((f) => {
+        const relPath = f.file.startsWith(wsRoot) ? f.file.slice(wsRoot.length + 1) : f.file;
+        return {
+            ruleId: f.ruleId,
+            ruleIndex: ruleIndex.get(f.ruleId) ?? 0,
+            level: sarifLevel(f),
+            message: { text: f.message },
+            locations: [
+                {
+                    physicalLocation: {
+                        artifactLocation: { uri: relPath, uriBaseId: "%SRCROOT%" },
+                        region: { startLine: Math.max(1, f.line), startColumn: Math.max(1, f.col) },
+                    },
+                },
+            ],
+        };
+    });
+    const sarif = {
+        $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+        version: "2.1.0",
+        runs: [
+            {
+                tool: {
+                    driver: {
+                        name: "Skylos",
+                        informationUri: "https://github.com/duriantaco/skylos",
+                        rules,
+                    },
+                },
+                results,
+                originalUriBaseIds: wsRoot ? { "%SRCROOT%": { uri: `file://${wsRoot}/` } } : undefined,
+            },
+        ],
+    };
+    return JSON.stringify(sarif, null, 2);
+}
+function sarifLevel(f) {
+    const s = f.severity.toUpperCase();
+    if (s === "CRITICAL" || s === "HIGH")
+        return "error";
+    if (s === "MEDIUM" || s === "WARN")
+        return "warning";
+    return "note";
 }

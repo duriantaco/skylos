@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as crypto from "crypto";
 import type { FindingsStore } from "./store";
 import type { SkylosFinding, AIIssue, FunctionBlock, AIProvider } from "./types";
-import { getAIProvider, getAIApiKey, getAIModel, getPopupCooldownMs, isStreamingEnabled } from "./config";
+import { getAIProvider, getAIApiKey, getAIModel, getOpenAIBaseUrl, getPopupCooldownMs, isStreamingEnabled, isFixPreviewFirst, getPostFixCommand } from "./config";
 import { out } from "./scanner";
 
 
@@ -375,7 +375,8 @@ Do NOT report: style, missing docs, naming conventions.`;
     content = data.content?.[0]?.text ?? "[]";
   } else {
     const model = getAIModel();
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    const baseUrl = getOpenAIBaseUrl();
+    const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -478,7 +479,8 @@ Do NOT report: style, missing docs, naming conventions.`;
       }
     }
   } else {
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    const baseUrl = getOpenAIBaseUrl();
+    const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -544,8 +546,15 @@ export async function fixWithAI(
   const provider = getAIProvider();
   const apiKey = getAIApiKey();
   if (!apiKey) {
-    const keyName = provider === "anthropic" ? "anthropicApiKey" : "openaiApiKey";
-    vscode.window.showErrorMessage(`Set skylos.${keyName} first.`);
+    let msg: string;
+    if (provider === "anthropic") {
+      msg = "Set skylos.anthropicApiKey first.";
+    } else if (provider === "local") {
+      msg = "Set skylos.localBaseUrl to your local AI server (e.g. http://localhost:11434 for Ollama) and skylos.localModel to the model name.";
+    } else {
+      msg = 'Set skylos.openaiApiKey, or switch aiProvider to "local" and configure skylos.localBaseUrl.';
+    }
+    vscode.window.showErrorMessage(msg);
     return;
   }
 
@@ -587,18 +596,22 @@ export async function fixWithAI(
       return;
     }
 
-    const fixedDoc = await vscode.workspace.openTextDocument({
-      language: langId,
-      content: fixed,
-    });
-    await vscode.commands.executeCommand("vscode.diff", doc.uri, fixedDoc.uri, "Fix Preview");
+    const forcePreview = isFixPreviewFirst();
 
-    if (previewOnly) 
-      return;
+    if (forcePreview || previewOnly) {
+      const fixedDoc = await vscode.workspace.openTextDocument({
+        language: langId,
+        content: fixed,
+      });
+      await vscode.commands.executeCommand("vscode.diff", doc.uri, fixedDoc.uri, "Fix Preview");
 
-    const confirm = await vscode.window.showWarningMessage("Apply fix?", "Apply", "Cancel");
-    if (confirm !== "Apply") 
-      return;
+      if (previewOnly)
+        return;
+
+      const confirm = await vscode.window.showWarningMessage("Apply fix?", "Apply", "Cancel");
+      if (confirm !== "Apply")
+        return;
+    }
 
     const freshDoc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
     const freshEditor = await vscode.window.showTextDocument(freshDoc, { preview: false });
@@ -610,14 +623,55 @@ export async function fixWithAI(
       freshDoc.lineAt(blockEndLine).text.length,
     );
     await freshEditor.edit((eb) => eb.replace(blockRange, fixed));
+    await freshDoc.save();
+
+    const postFixCmd = getPostFixCommand();
+    if (postFixCmd) {
+      const result = await runPostFixValidation(postFixCmd);
+      if (!result.success) {
+        const revert = await vscode.window.showWarningMessage(
+          `Post-fix validation failed: ${result.output}`,
+          "Undo Fix",
+          "Keep Anyway",
+        );
+        if (revert === "Undo Fix") {
+          await vscode.commands.executeCommand("undo");
+          await freshDoc.save();
+          vscode.window.showInformationMessage("Fix reverted.");
+          return;
+        }
+      } else {
+        vscode.window.showInformationMessage("Fix applied and validated!");
+        return;
+      }
+    }
+
     vscode.window.showInformationMessage("Fix applied!");
   } catch (e) {
     vscode.window.showErrorMessage(`Fix failed: ${e}`);
   }
 }
 
+async function runPostFixValidation(command: string): Promise<{ success: boolean; output: string }> {
+  const ws = vscode.workspace.workspaceFolders?.[0];
+  if (!ws) return { success: false, output: "No workspace folder" };
+
+  const { exec } = await import("child_process");
+  return new Promise((resolve) => {
+    exec(command, { cwd: ws.uri.fsPath, timeout: 30000 }, (err, stdout, stderr) => {
+      if (err) {
+        const output = (stderr || stdout || err.message).trim().slice(0, 200);
+        resolve({ success: false, output });
+      } else {
+        resolve({ success: true, output: stdout.trim().slice(0, 200) });
+      }
+    });
+  });
+}
+
 export async function callOpenAIStreaming(apiKey: string, prompt: string, model: string): Promise<string> {
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+  const baseUrl = getOpenAIBaseUrl();
+  const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

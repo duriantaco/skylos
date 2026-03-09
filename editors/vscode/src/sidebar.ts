@@ -93,7 +93,7 @@ export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
   getChildren(element?: TreeNode): TreeNode[] {
     if (!element) {
-      const all = this.store.getAllFindings();
+      const all = this.store.hasActiveFilter ? this.store.getFilteredFindings() : this.store.getAllFindings();
       const byCategory = new Map<Category, SkylosFinding[]>();
       for (const f of all) {
         const list = byCategory.get(f.category) ?? [];

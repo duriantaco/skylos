@@ -152,7 +152,8 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
         this.history.push({ role: "assistant", content: fullResponse });
     }
     async streamOpenAI(apiKey, model, systemPrompt, messages) {
-        const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+        const baseUrl = (0, config_1.getOpenAIBaseUrl)();
+        const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
