@@ -40,9 +40,23 @@ Rule IDs are unified across languages — same vulnerability, same ID.
 | D251 | HIGH | Sensitive data in logs | TS | CWE-532 | — |
 | D252 | MEDIUM | Insecure cookie (missing httpOnly/secure) | TS | CWE-614 | — |
 | D253 | MEDIUM | Timing-unsafe comparison | TS | CWE-208 | — |
+| D260 | HIGH–CRITICAL | Prompt injection (AI Supply Chain Security) | All text files | — | — |
 | D270 | MEDIUM | Sensitive data in localStorage/sessionStorage | TS | CWE-922 | — |
 | D271 | MEDIUM | Error info disclosure in HTTP response | TS | CWE-209 | — |
 | D510 | HIGH | Prototype pollution (\_\_proto\_\_) | TS | CWE-1321 | — |
+
+### AI Supply Chain Security
+
+| ID | Severity | Name | File Types | Details |
+|----|----------|------|------------|---------|
+| D260 | HIGH–CRITICAL | Prompt Injection Scanner | .py, .md, .rst, .txt, .yaml, .yml, .json, .toml, .env | Multi-file scanner with text canonicalization |
+
+Finding types:
+- `literal_payload` — direct injection phrase (instruction override, role hijacking, suppression, exfiltration)
+- `hidden_char` — zero-width / invisible Unicode (U+200B–U+202E)
+- `obfuscated_payload` — base64-encoded string decodes to injection content
+- `mixed_script` — Cyrillic/Greek homoglyphs mixed with Latin text
+- `risky_placement` — injection in high-risk file (README) or prompt-related YAML/JSON field
 
 ### MCP Server Security
 
@@ -93,7 +107,11 @@ Go rules that DO have equivalents (G211, G212, etc.) are remapped to their unifi
 | L013 | HIGH | Insecure randomness for security values (random.* for tokens/passwords) | Python | CWE-330 |
 | L014 | HIGH | Hardcoded credential (password="admin123", DSN with embedded creds) | Python | CWE-798 |
 | L017 | MEDIUM | Error information disclosure (str(e) in HTTP response) | Python | CWE-209 |
+| L016 | MEDIUM | Undefined config — `os.getenv("ENABLE_X")` feature flag never defined | Python | — |
 | L020 | HIGH | Overly broad file permissions (chmod 0o777, sensitive file perms) | Python | CWE-732 |
+| L023 | HIGH | Phantom decorator — `@require_auth`, `@rate_limit` never defined/imported | Python | CWE-476 |
+| L024 | MEDIUM | Stale mock — `mock.patch("mod.func")` targets function that no longer exists | Python | — |
+| L026 | MEDIUM | Unfinished generation — function body is only `pass`, `...`, or `raise NotImplementedError` | Python | — |
 
 ## Quality (SKY-Q, SKY-C, SKY-P)
 

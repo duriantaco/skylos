@@ -142,6 +142,8 @@ See the [integration guide](https://docs.skylos.dev/integrations/claude-code-sec
 | **Secure the Gate** | `skylos --gate` | Block risky code from merging |
 | **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
 | **🚀 Setup CI/CD** | `skylos cicd init` | Generate GitHub Actions workflow in 30 seconds |
+| **CI/CD + Upload** | `skylos cicd init --upload` | Generate workflow with cloud dashboard upload |
+| **Diff Filtering** | `skylos . --diff origin/main` | Only show findings in changed lines |
 | **Quality Gate (CI)** | `skylos cicd gate -i results.json` | Fail builds when issues found |
 | **PR Review (CI)** | `skylos cicd review -i results.json` | Post inline comments on PRs |
 
@@ -158,10 +160,28 @@ Backup (GitHub): https://github.com/duriantaco/skylos/discussions/82
 * **Vulnerability Checks:** Flags dangerous patterns like `eval()`, unsafe `pickle`, and weak cryptography.
 
 ### Vibe Coding Guardrails
-* **Phantom Call Detection:** Catches calls to security functions (`sanitize_input`, `validate_token`, `check_permission`, etc.) that are never defined or imported — AI hallucinates these constantly.
+
+*What the AI got wrong.* Every vibe coding finding includes `vibe_category` and `ai_likelihood` (high/medium/low) metadata — so you can filter, sort, and report on AI-generated code issues as a product line.
+
+* **Phantom Call Detection:** Catches calls to security functions (`sanitize_input`, `validate_token`, `check_permission`, etc.) that are never defined or imported — AI hallucinates these constantly. `hallucinated_reference, high`
+* **Phantom Decorator Detection:** Catches security decorators (`@require_auth`, `@rate_limit`, `@authenticate`, etc.) that are never defined or imported. `hallucinated_reference, high`
+* **Unfinished Generation:** Detects functions with only `pass`, `...`, or `raise NotImplementedError` — AI-generated stubs that silently do nothing in production. `incomplete_generation, medium`
+* **Undefined Config:** Flags `os.getenv("ENABLE_X")` referencing feature flags that are never defined anywhere in the project. `ghost_config, medium`
+* **Stale Mock Detection:** Catches `mock.patch("app.email.send_email")` where `send_email` no longer exists — AI renames functions but leaves tests pointing at the old name. `stale_reference, medium`
 * **Security TODO Scanners:** Flags `# TODO: add auth` placeholders that AI left behind and nobody finished.
 * **Disabled Security Controls:** Detects `verify=False`, `@csrf_exempt`, `DEBUG=True`, and `ALLOWED_HOSTS=["*"]`.
 * **Credential & Randomness Checks:** Catches hardcoded passwords and `random.choice()` used for security-sensitive values like tokens and OTPs.
+
+### AI Supply Chain Security
+
+*What hostile content can do to AI systems.* Runs under `--danger` — no separate flag needed.
+
+* **Multi-File Prompt Injection Scanner:** Scans Python, Markdown, YAML, JSON, TOML, and `.env` files for hidden instruction payloads — instruction overrides ("ignore previous instructions"), role hijacking ("you are now"), AI-targeted suppression ("do not flag", "skip security"), data exfiltration prompts, and AI-targeting phrases.
+* **Text Canonicalization Engine:** NFKC normalization, whitespace folding, and confusable replacement neutralize obfuscation before pattern matching.
+* **Zero-Width & Invisible Unicode:** Detects zero-width spaces, joiners, BOM, and bidi overrides (U+200B–U+202E) that hide payloads from human reviewers.
+* **Base64 Obfuscation Detection:** Automatically decodes base64-encoded strings and re-scans for injection content.
+* **Homoglyph / Mixed-Script Detection:** Flags Cyrillic and Greek characters mixed with Latin text (e.g., Cyrillic 'а' in `password`) that bypass visual review.
+* **Location-Aware Severity:** Findings in README files, HTML comments, and YAML prompt fields get elevated severity. Test files are automatically skipped.
 
 ### Dead Code Detection & Cleanup
 * **Find Unused Code:** Identifies unreachable functions, orphan classes, and unused imports with confidence scoring.
@@ -673,6 +693,7 @@ You must add these secrets in your repo settings (**Settings > Secrets and varia
 | `ANTHROPIC_API_KEY` | If using Claude models | Your Anthropic API key |
 | `OPENAI_API_KEY` | If using GPT models | Your OpenAI API key |
 | `SKYLOS_API_KEY` | For Skylos Cloud features | Get from [skylos.dev](https://skylos.dev) |
+| `SKYLOS_TOKEN` | If using `--upload` | Upload token from [skylos.dev/dashboard/settings](https://skylos.dev/dashboard/settings) |
 
 `GH_TOKEN` is automatically provided by GitHub Actions — no setup needed for PR comments.
 
@@ -687,7 +708,9 @@ skylos cicd init
 skylos cicd init --triggers pull_request schedule
 skylos cicd init --analysis security quality
 skylos cicd init --python-version 3.11
-skylos cicd init --llm --model gpt-4.1 
+skylos cicd init --llm --model gpt-4.1
+skylos cicd init --upload                        # include --upload step + SKYLOS_TOKEN env
+skylos cicd init --upload --llm --model claude-sonnet-4-20250514  # upload + LLM
 skylos cicd init --no-baseline
 skylos cicd init -o .github/workflows/security.yml
 ```

@@ -1,5 +1,16 @@
 ## Changelog
 
+## [3.5.7] - 2026-03-09
+
+### Added
+- `skylos cicd init --upload` flag to generate workflows that upload scan results to the Skylos cloud dashboard. Adds `--upload` to the analysis step and `SKYLOS_TOKEN` env var
+- SKY-L016: Undefined Config — detects `os.getenv("ENABLE_X")` / `os.environ.get("FEATURE_Y")` referencing feature flags that are never defined in the project. Vibe category: `ghost_config`
+- SKY-L023: Phantom Decorator — detects security decorators (`@require_auth`, `@rate_limit`, `@authenticate`, etc.) that are never defined or imported. Extension of SKY-L012 for decorator patterns. Vibe category: `hallucinated_reference`
+- SKY-L024: Stale Mock — detects `mock.patch("app.module.func")` where the target function no longer exists at the patched path. Catches renamed/removed functions that make mocks silently ineffective. Vibe category: `stale_reference`
+- SKY-L026: Unfinished Generation — detects functions with only `pass`, `...`, or `raise NotImplementedError` in production code. Skips abstract methods, test files, and dunder methods. Vibe category: `incomplete_generation`
+- SKY-D260: AI Supply Chain Security — multi-file prompt injection scanner. Scans Python, Markdown, YAML, JSON, TOML, and `.env` files for hidden instruction payloads aimed at AI agents. Includes text canonicalization engine (NFKC normalization, zero-width character stripping, base64 decoding, Cyrillic/Greek homoglyph detection), location-aware severity scoring (README/prompt fields get elevated severity), and file-type-specific extraction (Python comments/strings, Markdown prose/HTML comments, YAML/JSON prompt-key fields, .env values). Finding types: `literal_payload`, `hidden_char`, `obfuscated_payload`, `mixed_script`, `risky_placement`
+- Vibe confidence metadata: all vibe coding rules now include `vibe_category` and `ai_likelihood` (high/medium/low) in findings
+
 ## [3.5.6] - 2026-03-07
 
 ### Added
