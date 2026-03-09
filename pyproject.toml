@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "skylos"
 version = "3.5.7"
 requires-python = ">=3.10"
-description = "Find dead code, security vulnerabilities, and quality issues in Python, TypeScript, and Go. AI-powered static analysis with quality gates for CI/CD."
+description = "Find dead code, security vulnerabilities, and vibe coding defects in Python, TypeScript, and Go. Prompt injection detection, AI supply chain security, and SAST with quality gates for CI/CD."
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
 readme = "README.md"
 license = "Apache-2.0"
@@ -35,6 +35,13 @@ keywords = [
     "bandit-alternative",
     "code-scanner",
     "devsecops",
+    "vibe-coding",
+    "ai-generated-code",
+    "prompt-injection",
+    "ai-supply-chain-security",
+    "phantom-function",
+    "hallucinated-dependency",
+    "copilot-review",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

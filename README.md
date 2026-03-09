@@ -1,7 +1,7 @@
 <div align="center">
-    <img src="assets/DOG_1.png" alt="Skylos - Python SAST and Dead Code Detection Tool" width="300">
-    <h1>Skylos: Python SAST, Dead Code Detection & Security Auditor</h1>
-    <h3>The hybrid static analysis tool for Python. Finds dead code, security leaks, vibe coding failures, and quality rot with agentic AI options and MCP integration.</h3>
+    <img src="assets/DOG_1.png" alt="Skylos - Security Scanner, Dead Code Detector & Vibe Coding Analyzer for Python, TypeScript, Go" width="300">
+    <h1>Skylos: Security Scanner, Dead Code Detector & Vibe Coding Analyzer</h1>
+    <h3>Find security vulnerabilities, dead code, and vibe coding defects in Python, TypeScript, and Go. Agentic AI fixes and MCP integration.</h3>
 </div>
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
