@@ -10,6 +10,10 @@ from skylos.rules.quality.logic import (
     SecurityTodoRule,
     DisabledSecurityRule,
     PhantomCallRule,
+    PhantomDecoratorRule,
+    UnfinishedGenerationRule,
+    UndefinedConfigRule,
+    StaleMockRule,
     InsecureRandomRule,
     HardcodedCredentialRule,
     ErrorDisclosureRule,
@@ -1089,3 +1093,407 @@ class TestBroadFilePermissions:
         )
         l020 = [f for f in findings if f["rule_id"] == "SKY-L020"]
         assert len(l020) == 0
+
+
+class TestPhantomDecorator:
+    def test_phantom_require_auth(self):
+        code = """
+        @require_auth
+        def secret_endpoint():
+            return "secret"
+        """
+        findings = check_code(PhantomDecoratorRule(), code)
+        assert any(f["rule_id"] == "SKY-L023" for f in findings)
+
+    def test_phantom_rate_limit_with_args(self):
+        code = """
+        @rate_limit(100)
+        def api_handler():
+            return "ok"
+        """
+        findings = check_code(PhantomDecoratorRule(), code)
+        assert any(f["rule_id"] == "SKY-L023" for f in findings)
+
+    def test_phantom_on_class(self):
+        code = """
+        @authenticate
+        class AdminView:
+            pass
+        """
+        findings = check_code(PhantomDecoratorRule(), code)
+        assert any(f["rule_id"] == "SKY-L023" for f in findings)
+
+    def test_defined_locally_not_flagged(self):
+        code = """
+        def require_auth(fn):
+            return fn
+
+        @require_auth
+        def secret():
+            return "secret"
+        """
+        findings = check_code(PhantomDecoratorRule(), code)
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 0
+
+    def test_imported_not_flagged(self):
+        code = """
+        from flask_login import login_required as require_auth
+
+        @require_auth
+        def secret():
+            return "secret"
+        """
+        findings = check_code(PhantomDecoratorRule(), code)
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 0
+
+    def test_method_decorator_not_flagged(self):
+        code = """
+        @app.require_auth
+        def secret():
+            return "secret"
+        """
+        findings = check_code(PhantomDecoratorRule(), code)
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 0
+
+    def test_non_security_decorator_not_flagged(self):
+        code = """
+        @my_custom_decorator
+        def handler():
+            pass
+        """
+        findings = check_code(PhantomDecoratorRule(), code)
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 0
+
+    def test_multiple_phantom_decorators(self):
+        code = """
+        @require_auth
+        @rate_limit(50)
+        def admin_endpoint():
+            return "admin"
+        """
+        findings = check_code(PhantomDecoratorRule(), code)
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 2
+
+
+class TestUnfinishedGeneration:
+    def test_pass_body(self):
+        code = """
+        def process_payment(amount):
+            pass
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        assert any(f["rule_id"] == "SKY-L026" for f in findings)
+        assert any(f["value"] == "pass" for f in findings if f["rule_id"] == "SKY-L026")
+
+    def test_ellipsis_body(self):
+        code = """
+        def validate_user(token):
+            ...
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        assert any(f["rule_id"] == "SKY-L026" for f in findings)
+
+    def test_not_implemented_error(self):
+        code = """
+        def send_notification(user, message):
+            raise NotImplementedError
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        assert any(f["rule_id"] == "SKY-L026" for f in findings)
+
+    def test_not_implemented_error_call(self):
+        code = """
+        def send_notification(user, message):
+            raise NotImplementedError("not done yet")
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        assert any(f["rule_id"] == "SKY-L026" for f in findings)
+
+    def test_docstring_then_pass(self):
+        code = """
+        def verify_payment(order):
+            \"\"\"Verify payment for the given order.\"\"\"
+            pass
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        assert any(f["rule_id"] == "SKY-L026" for f in findings)
+
+    def test_real_implementation_not_flagged(self):
+        code = """
+        def add(a, b):
+            return a + b
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert len(l026) == 0
+
+    def test_abstract_method_not_flagged(self):
+        code = """
+        from abc import abstractmethod
+
+        class Base:
+            @abstractmethod
+            def process(self):
+                pass
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert len(l026) == 0
+
+    def test_test_file_not_flagged(self):
+        code = """
+        def test_placeholder():
+            pass
+        """
+        findings = check_code(
+            UnfinishedGenerationRule(), code, filename="test_something.py"
+        )
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert len(l026) == 0
+
+    def test_init_file_not_flagged(self):
+        code = """
+        def setup():
+            pass
+        """
+        findings = check_code(UnfinishedGenerationRule(), code, filename="__init__.py")
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert len(l026) == 0
+
+    def test_dunder_method_not_flagged(self):
+        code = """
+        class MyClass:
+            def __repr__(self):
+                pass
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert len(l026) == 0
+
+    def test_async_function_flagged(self):
+        code = """
+        async def fetch_data(url):
+            pass
+        """
+        findings = check_code(UnfinishedGenerationRule(), code)
+        assert any(f["rule_id"] == "SKY-L026" for f in findings)
+
+
+class TestUndefinedConfig:
+    def test_getenv_feature_flag(self):
+        code = """
+        import os
+        if os.getenv("ENABLE_RATE_LIMIT"):
+            apply_rate_limit()
+        """
+        findings = check_code(UndefinedConfigRule(), code)
+        assert any(f["rule_id"] == "SKY-L016" for f in findings)
+
+    def test_environ_get_feature_flag(self):
+        code = """
+        import os
+        if os.environ.get("FEATURE_NEW_UI"):
+            show_new_ui()
+        """
+        findings = check_code(UndefinedConfigRule(), code)
+        assert any(f["rule_id"] == "SKY-L016" for f in findings)
+
+    def test_use_prefix_flag(self):
+        code = """
+        import os
+        use_cache = os.getenv("USE_REDIS_CACHE")
+        """
+        findings = check_code(UndefinedConfigRule(), code)
+        assert any(f["rule_id"] == "SKY-L016" for f in findings)
+
+    def test_well_known_env_not_flagged(self):
+        code = """
+        import os
+        db = os.getenv("DATABASE_URL")
+        """
+        findings = check_code(UndefinedConfigRule(), code)
+        l016 = [f for f in findings if f["rule_id"] == "SKY-L016"]
+        assert len(l016) == 0
+
+    def test_non_flag_env_not_flagged(self):
+        code = """
+        import os
+        api_url = os.getenv("API_BASE_URL")
+        """
+        findings = check_code(UndefinedConfigRule(), code)
+        l016 = [f for f in findings if f["rule_id"] == "SKY-L016"]
+        assert len(l016) == 0
+
+    def test_env_set_in_same_file_not_flagged(self):
+        code = """
+        import os
+        os.environ["ENABLE_CACHE"] = "1"
+        if os.getenv("ENABLE_CACHE"):
+            use_cache()
+        """
+        findings = check_code(UndefinedConfigRule(), code)
+        l016 = [f for f in findings if f["rule_id"] == "SKY-L016"]
+        assert len(l016) == 0
+
+
+def _check_stale_mock(test_code, module_path, module_code):
+    import shutil
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        (Path(tmpdir) / "pyproject.toml").write_text("[tool.skylos]\n")
+
+        parts = module_path.split(".")
+        if len(parts) > 1:
+            mod_dir = Path(tmpdir) / "/".join(parts[:-1])
+            mod_dir.mkdir(parents=True, exist_ok=True)
+            mod_file = mod_dir / (parts[-1] + ".py")
+        else:
+            mod_file = Path(tmpdir) / (parts[0] + ".py")
+        mod_file.write_text(textwrap.dedent(module_code))
+
+        test_file = Path(tmpdir) / "test_x.py"
+        dedented = textwrap.dedent(test_code)
+        test_file.write_text(dedented)
+
+        tree = ast.parse(dedented)
+        rule = StaleMockRule()
+        findings = []
+        context = {"filename": str(test_file), "mod": "test_x"}
+        for nd in ast.walk(tree):
+            res = rule.visit_node(nd, context)
+            if res:
+                findings.extend(res)
+        return findings
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+class TestStaleMock:
+    def test_stale_mock_renamed_function(self):
+        findings = _check_stale_mock(
+            test_code="""
+            from unittest.mock import patch
+
+            @patch("app.email.send_email")
+            def test_notify(mock_send):
+                pass
+            """,
+            module_path="app.email",
+            module_code="""
+            def notify_user(user, message):
+                pass
+            """,
+        )
+        l024 = [f for f in findings if f["rule_id"] == "SKY-L024"]
+        assert len(l024) == 1
+        assert "send_email" in l024[0]["message"]
+        assert l024[0]["vibe_category"] == "stale_reference"
+
+    def test_valid_mock_not_flagged(self):
+        findings = _check_stale_mock(
+            test_code="""
+            from unittest.mock import patch
+
+            @patch("app.email.send_email")
+            def test_send(mock_send):
+                pass
+            """,
+            module_path="app.email",
+            module_code="""
+            def send_email(to, subject, body):
+                pass
+            """,
+        )
+        l024 = [f for f in findings if f["rule_id"] == "SKY-L024"]
+        assert len(l024) == 0
+
+    def test_stale_mock_inline_patch(self):
+        findings = _check_stale_mock(
+            test_code="""
+            from unittest.mock import patch
+
+            def test_something():
+                with patch("app.email.send_notification"):
+                    pass
+            """,
+            module_path="app.email",
+            module_code="""
+            def send_email(to, body):
+                pass
+            """,
+        )
+        l024 = [f for f in findings if f["rule_id"] == "SKY-L024"]
+        assert len(l024) == 1
+
+    def test_mock_targets_imported_name(self):
+        findings = _check_stale_mock(
+            test_code="""
+            from unittest.mock import patch
+
+            @patch("app.email.smtplib")
+            def test_smtp(mock_smtp):
+                pass
+            """,
+            module_path="app.email",
+            module_code="""
+            import smtplib
+
+            def send_email():
+                smtplib.SMTP("localhost")
+            """,
+        )
+        l024 = [f for f in findings if f["rule_id"] == "SKY-L024"]
+        assert len(l024) == 0
+
+    def test_non_test_file_not_scanned(self):
+        findings = check_code(
+            StaleMockRule(),
+            """
+        from unittest.mock import patch
+        patch("app.nonexistent.function")
+        """,
+            filename="app.py",
+        )
+        l024 = [f for f in findings if f["rule_id"] == "SKY-L024"]
+        assert len(l024) == 0
+
+    def test_mock_targets_class(self):
+        findings = _check_stale_mock(
+            test_code="""
+            from unittest.mock import patch
+
+            @patch("app.email.EmailClient")
+            def test_client(mock_cls):
+                pass
+            """,
+            module_path="app.email",
+            module_code="""
+            class EmailClient:
+                pass
+            """,
+        )
+        l024 = [f for f in findings if f["rule_id"] == "SKY-L024"]
+        assert len(l024) == 0
+
+    def test_mock_targets_variable(self):
+        findings = _check_stale_mock(
+            test_code="""
+            from unittest.mock import patch
+
+            @patch("app.config.DEFAULT_TIMEOUT")
+            def test_timeout(mock_val):
+                pass
+            """,
+            module_path="app.config",
+            module_code="""
+            DEFAULT_TIMEOUT = 30
+            """,
+        )
+        l024 = [f for f in findings if f["rule_id"] == "SKY-L024"]
+        assert len(l024) == 0
