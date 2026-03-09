@@ -160,11 +160,27 @@ def _similarity(a: str, b: str) -> float:
 # duplication — skip them to avoid flooding the user with false positives.
 _SKIP_PREFIXES = ("test_", "conftest")
 _BOILERPLATE_METHODS = {
-    "__init__", "__repr__", "__str__", "__eq__", "__hash__",
-    "__lt__", "__le__", "__gt__", "__ge__", "__ne__",
-    "__len__", "__iter__", "__next__", "__contains__",
-    "__enter__", "__exit__", "__call__",
-    "setUp", "tearDown", "setUpClass", "tearDownClass",
+    "__init__",
+    "__repr__",
+    "__str__",
+    "__eq__",
+    "__hash__",
+    "__lt__",
+    "__le__",
+    "__gt__",
+    "__ge__",
+    "__ne__",
+    "__len__",
+    "__iter__",
+    "__next__",
+    "__contains__",
+    "__enter__",
+    "__exit__",
+    "__call__",
+    "setUp",
+    "tearDown",
+    "setUpClass",
+    "tearDownClass",
 }
 
 

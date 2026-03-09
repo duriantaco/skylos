@@ -75,9 +75,9 @@ SCANNABLE_EXTENSIONS = {
 
 _SKIP_PREFIXES = ("test_", "conftest")
 
-_DEFAULT_EXCLUDE_DIRS = {
-    d for d in DEFAULT_EXCLUDE_FOLDERS if "*" not in d
-} | {"site-packages"}
+_DEFAULT_EXCLUDE_DIRS = {d for d in DEFAULT_EXCLUDE_FOLDERS if "*" not in d} | {
+    "site-packages"
+}
 
 _HIGH_RISK_FILENAMES = {
     "readme.md",
