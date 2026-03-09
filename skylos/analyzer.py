@@ -48,6 +48,10 @@ from skylos.rules.quality.logic import (
     HardcodedCredentialRule,
     ErrorDisclosureRule,
     BroadFilePermissionsRule,
+    PhantomDecoratorRule,
+    UnfinishedGenerationRule,
+    UndefinedConfigRule,
+    StaleMockRule,
 )
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
@@ -1299,6 +1303,46 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
+            # --- SKY-D260: Prompt injection scanner (multi-file) ---
+            if "SKY-D260" not in cfg.get("ignore", []):
+                try:
+                    from skylos.injection_scanner import (
+                        scan_file as _injection_scan_file,
+                        SCANNABLE_EXTENSIONS,
+                    )
+
+                    _inj_root = Path(
+                        path[0] if isinstance(path, (list, tuple)) else path
+                    ).resolve()
+
+                    # Scan Python files already collected
+                    for f in files:
+                        if str(f).endswith(".py"):
+                            inj_hits = _injection_scan_file(f)
+                            if inj_hits:
+                                all_dangers.extend(inj_hits)
+
+                    # Also scan non-Python text files (md, yaml, json, toml, env, etc.)
+                    if _inj_root.is_dir():
+                        _non_py_exts = SCANNABLE_EXTENSIONS - {".py"}
+                        for dirpath, dirnames, filenames in os.walk(_inj_root):
+                            # Prune excluded/hidden dirs
+                            dirnames[:] = [
+                                d
+                                for d in dirnames
+                                if not d.startswith(".")
+                                and d not in (exclude_folders or [])
+                            ]
+                            for fname in filenames:
+                                fpath = Path(dirpath) / fname
+                                if fpath.suffix.lower() in _non_py_exts:
+                                    inj_hits = _injection_scan_file(fpath)
+                                    if inj_hits:
+                                        all_dangers.extend(inj_hits)
+                except Exception:
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error(traceback.format_exc())
+
         if enable_quality:
             try:
                 from skylos.rules.quality.unused_deps import scan_unused_dependencies
@@ -1731,6 +1775,16 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
                 q_rules.append(ErrorDisclosureRule())
             if "SKY-L020" not in cfg["ignore"]:
                 q_rules.append(BroadFilePermissionsRule())
+            if "SKY-L016" not in cfg["ignore"]:
+                q_rules.append(UndefinedConfigRule())
+            if "SKY-L024" not in cfg["ignore"]:
+                q_rules.append(StaleMockRule())
+            if "SKY-L023" not in cfg["ignore"]:
+                q_rules.append(PhantomDecoratorRule())
+            if "SKY-L026" not in cfg["ignore"]:
+                q_rules.append(UnfinishedGenerationRule())
+            # SKY-D260 (prompt injection) is now handled by injection_scanner,
+            # not as a LinterVisitor rule — see injection scanner integration below.
             if "SKY-Q501" not in cfg["ignore"]:
                 q_rules.append(GodClassRule())
             if "SKY-Q701" not in cfg["ignore"]:

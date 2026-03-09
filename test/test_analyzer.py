@@ -62,7 +62,6 @@ def mock_framework_aware_visitor():
 
 @pytest.fixture
 def temp_python_project():
-    """Create a temp Python project for testing"""
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
 
@@ -434,11 +433,11 @@ class TestProcFile:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("""
 def test_function():
-    pass
+    return 42
 
 class TestClass:
     def method(self):
-        pass
+        return "ok"
 """)
             f.flush()
 
