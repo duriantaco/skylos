@@ -1078,6 +1078,7 @@ Control how you consume the watchdog's findings.
 | `--tree` | Logic Tree | Visualizes code hierarchy and structural dependencies. |
 | `--json` | Machine Raw | Piping results to `jq`, custom scripts, or log aggregators. |
 | `--sarif` | SARIF | GitHub Code Scanning, IDE integration |
+| `--llm` | LLM Report | Structured findings with code context for Claude Code, Codex, or any AI agent. |
 | `-o, --output` | File Export | Save the audit report directly to a file instead of `stdout`. |
 
 
@@ -1447,6 +1448,7 @@ Options:
   --tree                       Output results in tree format
   --tui                        Launch interactive TUI dashboard
   --sarif                      Output SARIF format for GitHub/IDE integration
+  --llm                        Output LLM-optimized report with code context for AI agents
   -c, --confidence LEVEL       Confidence threshold 0-100 (default: 60)
   --comment-out                Comment out code instead of deleting
   -o, --output FILE            Write output to file instead of stdout
