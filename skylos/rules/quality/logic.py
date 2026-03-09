@@ -1179,6 +1179,517 @@ class PhantomCallRule(SkylosRule):
         ]
 
 
+_PHANTOM_SECURITY_DECORATORS = {
+    "requires_auth",
+    "require_auth",
+    "require_login",
+    "login_required",
+    "require_permission",
+    "require_permissions",
+    "require_admin",
+    "require_role",
+    "check_auth",
+    "check_access",
+    "check_permission",
+    "check_permissions",
+    "authenticate",
+    "authorize",
+    "authorized",
+    "validate_jwt",
+    "verify_token",
+    "verify_jwt",
+    "rate_limit",
+    "rate_limiter",
+    "throttle",
+    "throttle_request",
+    "sanitize_input",
+    "csrf_protect",
+    "csrf_required",
+    "cors_protect",
+    "secure",
+    "secured",
+    "permissions_required",
+    "roles_required",
+    "roles_accepted",
+    "auth_required",
+    "token_required",
+    "api_key_required",
+}
+
+
+class PhantomDecoratorRule(SkylosRule):
+    rule_id = "SKY-L023"
+    name = "Phantom Decorator"
+
+    def __init__(self):
+        self._defined_names = None
+        self._imported_names = None
+        self._current_file = None
+
+    def visit_node(self, node, context):
+        filename = context.get("filename", "")
+
+        if isinstance(node, ast.Module):
+            self._current_file = filename
+            self._defined_names = set()
+            self._imported_names = set()
+            for child in ast.walk(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    self._defined_names.add(child.name)
+                elif isinstance(child, ast.ClassDef):
+                    self._defined_names.add(child.name)
+                    for item in child.body:
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            self._defined_names.add(item.name)
+                elif isinstance(child, ast.ImportFrom):
+                    if child.names:
+                        for alias in child.names:
+                            name = alias.asname if alias.asname else alias.name
+                            self._imported_names.add(name)
+                elif isinstance(child, ast.Import):
+                    for alias in child.names:
+                        name = alias.asname if alias.asname else alias.name
+                        self._imported_names.add(name.split(".")[0])
+            return None
+
+        if self._defined_names is None:
+            return None
+
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return None
+
+        findings = []
+        for deco in node.decorator_list:
+            deco_name = self._extract_decorator_name(deco)
+            if not deco_name:
+                continue
+            if deco_name not in _PHANTOM_SECURITY_DECORATORS:
+                continue
+            if deco_name in self._defined_names:
+                continue
+            if deco_name in self._imported_names:
+                continue
+
+            basename = Path(filename).name
+            findings.append(
+                {
+                    "rule_id": self.rule_id,
+                    "kind": "logic",
+                    "severity": "CRITICAL",
+                    "type": "decorator",
+                    "name": deco_name,
+                    "simple_name": deco_name,
+                    "value": "phantom",
+                    "threshold": 0,
+                    "message": (
+                        f"Decorator '@{deco_name}' is used but never defined or imported. "
+                        f"AI-generated code often hallucinates security decorators."
+                    ),
+                    "file": filename,
+                    "basename": basename,
+                    "line": deco.lineno,
+                    "col": deco.col_offset,
+                    "vibe_category": "hallucinated_reference",
+                    "ai_likelihood": "high",
+                }
+            )
+
+        return findings if findings else None
+
+    @staticmethod
+    def _extract_decorator_name(deco):
+        if isinstance(deco, ast.Call):
+            return PhantomDecoratorRule._extract_decorator_name(deco.func)
+        if isinstance(deco, ast.Name):
+            return deco.id
+        if isinstance(deco, ast.Attribute):
+            return None
+        return None
+
+
+class UnfinishedGenerationRule(SkylosRule):
+    rule_id = "SKY-L026"
+    name = "Unfinished Generation"
+
+    def visit_node(self, node, context):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+
+        filename = context.get("filename", "")
+
+        for deco in node.decorator_list:
+            deco_name = None
+            if isinstance(deco, ast.Name):
+                deco_name = deco.id
+            elif isinstance(deco, ast.Attribute):
+                deco_name = deco.attr
+            if deco_name in ("abstractmethod", "overload"):
+                return None
+
+        basename = Path(filename).name
+        if basename == "__init__.py":
+            return None
+        if basename.startswith("test_") or basename.startswith("conftest"):
+            return None
+
+        if node.name.startswith("__") and node.name.endswith("__"):
+            return None
+
+        body = node.body
+        if not body:
+            return None
+
+        stmts = body
+        if isinstance(body[0], ast.Expr) and isinstance(
+            body[0].value, (ast.Constant, ast.Str)
+        ):
+            val = body[0].value
+            if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                stmts = body[1:]
+            elif isinstance(val, ast.Str):
+                stmts = body[1:]
+
+        if not stmts:
+            return None
+
+        if len(stmts) != 1:
+            return None
+
+        stmt = stmts[0]
+        marker = None
+        marker_line = stmt.lineno
+
+        if isinstance(stmt, ast.Pass):
+            marker = "pass"
+        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+            if stmt.value.value is ...:
+                marker = "..."
+        elif isinstance(stmt, ast.Raise):
+            exc = stmt.exc
+            if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
+                if exc.func.id == "NotImplementedError":
+                    marker = "NotImplementedError"
+            elif isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
+                marker = "NotImplementedError"
+
+        if not marker:
+            return None
+
+        return [
+            {
+                "rule_id": self.rule_id,
+                "kind": "logic",
+                "severity": "MEDIUM",
+                "type": "function",
+                "name": node.name,
+                "simple_name": node.name,
+                "value": marker,
+                "threshold": 0,
+                "message": (
+                    f"Function '{node.name}' has only `{marker}` in its body. "
+                    f"AI-generated code often leaves stub implementations that "
+                    f"silently do nothing in production."
+                ),
+                "file": filename,
+                "basename": basename,
+                "line": marker_line,
+                "col": stmt.col_offset,
+                "vibe_category": "incomplete_generation",
+                "ai_likelihood": "medium",
+            }
+        ]
+
+
+class UndefinedConfigRule(SkylosRule):
+    rule_id = "SKY-L016"
+    name = "Undefined Config"
+
+    def __init__(self):
+        self._env_refs = None
+        self._env_sets = None
+        self._current_file = None
+
+    def visit_node(self, node, context):
+        filename = context.get("filename", "")
+
+        if isinstance(node, ast.Module):
+            self._current_file = filename
+            self._env_refs = []
+            self._env_sets = set()
+            for child in ast.walk(node):
+                if isinstance(child, ast.Subscript):
+                    if (
+                        isinstance(child.value, ast.Attribute)
+                        and isinstance(child.value.value, ast.Name)
+                        and child.value.value.id == "os"
+                        and child.value.attr == "environ"
+                    ):
+                        if isinstance(child.slice, ast.Constant) and isinstance(
+                            child.slice.value, str
+                        ):
+                            self._env_sets.add(child.slice.value)
+            return None
+
+        if self._env_refs is None:
+            return None
+
+        if not isinstance(node, ast.Call):
+            return None
+
+        env_var_name = self._extract_env_var(node)
+        if not env_var_name:
+            return None
+
+        if env_var_name in _WELL_KNOWN_ENV_VARS:
+            return None
+
+        if env_var_name in self._env_sets:
+            return None
+
+        upper = env_var_name.upper()
+        is_flag = any(
+            upper.startswith(p)
+            for p in ("ENABLE_", "DISABLE_", "USE_", "FEATURE_", "FLAG_", "TOGGLE_")
+        )
+
+        if not is_flag:
+            return None
+
+        basename = Path(filename).name
+        return [
+            {
+                "rule_id": self.rule_id,
+                "kind": "logic",
+                "severity": "MEDIUM",
+                "type": "call",
+                "name": env_var_name,
+                "simple_name": env_var_name,
+                "value": "undefined",
+                "threshold": 0,
+                "message": (
+                    f"Feature flag '{env_var_name}' is checked but never defined in this file. "
+                    f"AI-generated code often references configuration that was never set up."
+                ),
+                "file": filename,
+                "basename": basename,
+                "line": node.lineno,
+                "col": node.col_offset,
+                "vibe_category": "ghost_config",
+                "ai_likelihood": "medium",
+            }
+        ]
+
+    @staticmethod
+    def _extract_env_var(node):
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            if (
+                func.attr == "getenv"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "os"
+            ):
+                if node.args and isinstance(node.args[0], ast.Constant):
+                    return node.args[0].value
+            if (
+                func.attr == "get"
+                and isinstance(func.value, ast.Attribute)
+                and func.value.attr == "environ"
+                and isinstance(func.value.value, ast.Name)
+                and func.value.value.id == "os"
+            ):
+                if node.args and isinstance(node.args[0], ast.Constant):
+                    return node.args[0].value
+        return None
+
+
+_WELL_KNOWN_ENV_VARS = {
+    "PATH",
+    "HOME",
+    "USER",
+    "SHELL",
+    "LANG",
+    "TERM",
+    "PWD",
+    "EDITOR",
+    "VIRTUAL_ENV",
+    "PYTHONPATH",
+    "PYTHONDONTWRITEBYTECODE",
+    "CI",
+    "DEBUG",
+    "LOG_LEVEL",
+    "TESTING",
+    "DATABASE_URL",
+    "REDIS_URL",
+    "SECRET_KEY",
+    "PORT",
+    "HOST",
+    "BIND",
+}
+
+
+class StaleMockRule(SkylosRule):
+    rule_id = "SKY-L024"
+    name = "Stale Mock"
+
+    def __init__(self):
+        self._current_file = None
+        self._is_test = False
+
+    def visit_node(self, node, context):
+        filename = context.get("filename", "")
+
+        if isinstance(node, ast.Module):
+            self._current_file = filename
+            basename = Path(filename).name
+            self._is_test = basename.startswith("test_") or basename.startswith(
+                "conftest"
+            )
+            return None
+
+        if not self._is_test:
+            return None
+
+        target_str = None
+        target_node = None
+
+        if isinstance(node, ast.Call):
+            target_str, target_node = self._extract_patch_target(node)
+
+        if not target_str or not target_node:
+            return None
+
+        parts = target_str.split(".")
+        if len(parts) < 2:
+            return None
+
+        attr_name = parts[-1]
+        module_parts = parts[:-1]
+
+        project_root = self._find_project_root(filename)
+        if not project_root:
+            return None
+
+        module_file = self._resolve_module(project_root, module_parts)
+        if not module_file:
+            return None
+
+        try:
+            source = module_file.read_text(errors="replace")
+            tree = ast.parse(source)
+        except (OSError, SyntaxError):
+            return None
+
+        defined_names = set()
+        for child in ast.walk(tree):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                defined_names.add(child.name)
+            elif isinstance(child, ast.ClassDef):
+                defined_names.add(child.name)
+            elif isinstance(child, ast.Assign):
+                for t in child.targets:
+                    if isinstance(t, ast.Name):
+                        defined_names.add(t.id)
+            elif isinstance(child, ast.ImportFrom):
+                if child.names:
+                    for alias in child.names:
+                        name = alias.asname if alias.asname else alias.name
+                        defined_names.add(name)
+            elif isinstance(child, ast.Import):
+                for alias in child.names:
+                    name = alias.asname if alias.asname else alias.name
+                    defined_names.add(name.split(".")[0])
+
+        if attr_name in defined_names:
+            return None
+
+        basename = Path(filename).name
+        return [
+            {
+                "rule_id": self.rule_id,
+                "kind": "logic",
+                "severity": "HIGH",
+                "type": "mock",
+                "name": target_str,
+                "simple_name": attr_name,
+                "value": "stale",
+                "threshold": 0,
+                "message": (
+                    f"mock.patch('{target_str}') references '{attr_name}' "
+                    f"but it does not exist in '{'.'.join(module_parts)}'. "
+                    f"The function may have been renamed or removed, "
+                    f"making this mock silently ineffective."
+                ),
+                "file": filename,
+                "basename": basename,
+                "line": target_node.lineno,
+                "col": target_node.col_offset,
+                "vibe_category": "stale_reference",
+                "ai_likelihood": "medium",
+            }
+        ]
+
+    @staticmethod
+    def _extract_patch_target(call_node):
+        func = call_node.func
+
+        is_patch = False
+        if isinstance(func, ast.Attribute) and func.attr == "patch":
+            is_patch = True
+        elif isinstance(func, ast.Name) and func.id == "patch":
+            is_patch = True
+        elif isinstance(func, ast.Attribute) and func.attr == "object":
+            return None, None
+
+        if not is_patch:
+            return None, None
+
+        if call_node.args and isinstance(call_node.args[0], ast.Constant):
+            if isinstance(call_node.args[0].value, str):
+                return call_node.args[0].value, call_node
+        return None, None
+
+    @staticmethod
+    def _find_project_root(filepath):
+        p = Path(filepath).resolve().parent
+        for _ in range(20):
+            if (p / "pyproject.toml").exists():
+                return p
+            if (p / "setup.py").exists():
+                return p
+            if (p / ".git").exists():
+                return p
+            parent = p.parent
+            if parent == p:
+                break
+            p = parent
+        return None
+
+    @staticmethod
+    def _resolve_module(project_root, module_parts):
+        pkg_path = project_root / "/".join(module_parts) / "__init__.py"
+        if pkg_path.is_file():
+            return pkg_path
+
+        mod_path = (
+            project_root / "/".join(module_parts[:-1]) / (module_parts[-1] + ".py")
+            if len(module_parts) > 1
+            else project_root / (module_parts[0] + ".py")
+        )
+        if mod_path.is_file():
+            return mod_path
+
+        if len(module_parts) >= 2:
+            flat_path = project_root / "/".join(module_parts) + ".py"
+            if Path(flat_path).is_file():
+                return Path(flat_path)
+
+        direct = project_root / "/".join(module_parts) + ".py"
+        if Path(direct).is_file():
+            return Path(direct)
+
+        return None
+
+
 _SECURITY_VAR_KEYWORDS = {
     "token",
     "secret",
