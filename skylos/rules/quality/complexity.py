@@ -47,6 +47,13 @@ def _func_complexity(fn_node: ast.AST) -> int:
             if hasattr(ast, "Match") and isinstance(node, ast.Match):
                 cases = getattr(node, "cases", []) or []
                 c += max(len(cases) - 1, 0)
+                for case in cases:
+                    if getattr(case, "guard", None) is not None:
+                        c += 1
+
+            if isinstance(node, ast.comprehension):
+                c += 1
+                c += len(node.ifs)
 
             for child in ast.iter_child_nodes(node):
                 self.visit(child)
@@ -87,7 +94,7 @@ class ComplexityRule(SkylosRule):
 
         complexity = _func_complexity(node)
 
-        if complexity < self.threshold:
+        if complexity <= self.threshold:
             return None
 
         if complexity < 15:
