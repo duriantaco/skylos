@@ -73,8 +73,6 @@ class DependencyGraphBuilder(ast.NodeVisitor):
                     )
                 )
         elif node.level > 0:
-            # relative import can create cycles we need to resolve relative imports properly
-            # for now just track as potential issues
             pass
 
     def _is_internal_module(self, module: str) -> bool:

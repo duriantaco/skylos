@@ -9,6 +9,10 @@ import skylos
 import json
 import os
 import webbrowser
+import hmac
+import ipaddress
+import secrets
+from pathlib import Path
 from threading import Timer
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 
@@ -16,14 +20,64 @@ app = Flask(__name__)
 _cors_origins = os.getenv("SKYLOS_CORS_ORIGINS")
 if _cors_origins:
     origins = [o.strip() for o in _cors_origins.split(",") if o.strip()]
-    CORS(app, origins=origins)
 else:
-    CORS(app)
+    origins = ["http://localhost:5090", "http://127.0.0.1:5090"]
+
+CORS(
+    app,
+    origins=origins,
+    methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Skylos-Web-Token"],
+)
+
+
+def _is_loopback_addr(addr):
+    if not addr:
+        return False
+    try:
+        return ipaddress.ip_address(addr).is_loopback
+    except ValueError:
+        return False
+
+
+def _get_allowed_scan_roots():
+    raw = os.getenv("SKYLOS_ALLOWED_ROOTS", "").strip()
+    roots = []
+
+    if raw:
+        for p in raw.split(","):
+            value = p.strip()
+            if value:
+                roots.append(Path(value).expanduser().resolve())
+    else:
+        roots.append(Path.cwd().resolve())
+
+    uniq = []
+    seen = set()
+    for root in roots:
+        key = str(root)
+        if key not in seen:
+            uniq.append(root)
+            seen.add(key)
+    return uniq
+
+
+def _is_allowed_scan_path(path_str):
+    allowed_roots = app.config.get("ALLOWED_SCAN_ROOTS") or []
+    try:
+        resolved = Path(path_str).expanduser().resolve()
+    except Exception:
+        return False, None, allowed_roots
+
+    for root in allowed_roots:
+        if resolved == root or root in resolved.parents:
+            return True, resolved, allowed_roots
+    return False, resolved, allowed_roots
 
 
 @app.route("/")
 def serve_frontend():
-    return """<!DOCTYPE html>
+    html = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -381,6 +435,7 @@ def serve_frontend():
     <script>
         let analysisData = null;
         let confidenceThreshold = 60;
+        const SKYLOS_WEB_TOKEN = "__SKYLOS_WEB_TOKEN__";
 
         const slider = document.getElementById('confidenceSlider');
         const confidenceValue = document.getElementById('confidenceValue');
@@ -424,6 +479,7 @@ def serve_frontend():
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
+                        'X-Skylos-Web-Token': SKYLOS_WEB_TOKEN,
                     },
                     body: JSON.stringify({
                         path: path,
@@ -521,20 +577,49 @@ def serve_frontend():
     </script>
 </body>
 </html>"""
+    return html.replace("__SKYLOS_WEB_TOKEN__", app.config.get("WEB_API_TOKEN", ""))
 
 
 @app.route("/api/analyze", methods=["POST"])
 def analyze_project():
     try:
-        data = request.json
-        path = data.get("path")
-        confidence = data.get("confidence", 60)
+        if not _is_loopback_addr(request.remote_addr):
+            return jsonify({"error": "Local requests only"}), 403
+
+        expected_token = app.config.get("WEB_API_TOKEN", "")
+        provided_token = request.headers.get("X-Skylos-Web-Token", "")
+        if not expected_token or not hmac.compare_digest(
+            provided_token, expected_token
+        ):
+            return jsonify({"error": "Unauthorized request"}), 401
+
+        data = request.get_json(silent=True) or {}
+        path = str(data.get("path", "")).strip()
+        try:
+            confidence = int(data.get("confidence", 60))
+        except (TypeError, ValueError):
+            confidence = 60
+        confidence = max(0, min(confidence, 100))
 
         if not path:
             return jsonify({"error": "Path is required"}), 400
 
         if not os.path.exists(path):
             return jsonify({"error": f"Path does not exist: {path}"}), 400
+
+        allowed, _resolved, roots = _is_allowed_scan_path(path)
+        if not allowed:
+            roots_hint = ", ".join(str(r) for r in roots)
+            return (
+                jsonify(
+                    {
+                        "error": "Path is outside allowed scan roots. "
+                        f"Allowed: {roots_hint}. "
+                        "Set SKYLOS_ALLOWED_ROOTS to override."
+                    }
+                ),
+                403,
+            )
 
         exclude_folders = app.config.get("EXCLUDE_FOLDERS", DEFAULT_EXCLUDE_FOLDERS)
 
@@ -553,6 +638,8 @@ def start_server(exclude_folders=None):
     if exclude_folders is None:
         exclude_folders = DEFAULT_EXCLUDE_FOLDERS
     app.config["EXCLUDE_FOLDERS"] = exclude_folders
+    app.config["ALLOWED_SCAN_ROOTS"] = _get_allowed_scan_roots()
+    app.config["WEB_API_TOKEN"] = os.getenv("SKYLOS_WEB_TOKEN") or secrets.token_hex(24)
 
     def open_browser():
         webbrowser.open("http://localhost:5090")

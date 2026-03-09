@@ -1922,6 +1922,12 @@ def main():
             help="Add parallel Claude Code Security scan job",
         )
         p_ci_init.add_argument(
+            "--upload",
+            action="store_true",
+            help="Include upload step to send scan results to the Skylos cloud dashboard. "
+            "Requires SKYLOS_TOKEN in repo secrets.",
+        )
+        p_ci_init.add_argument(
             "--output", "-o", default=".github/workflows/skylos.yml", help="Output path"
         )
 
@@ -2004,6 +2010,7 @@ def main():
                 use_llm=cicd_args.llm,
                 model=cicd_args.model,
                 use_claude_security=cicd_args.claude_security,
+                use_upload=cicd_args.upload,
             )
             write_workflow(yaml_content, cicd_args.output)
 

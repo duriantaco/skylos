@@ -467,17 +467,17 @@ def test_comment_out_unused_function_writes_when_changed():
     mock_write.assert_called_once_with("NEW", encoding="utf-8")
 
 
-@pytest.fixture
-def _sample_unused_items():
-    functions = [
-        {"name": "unused_func1", "file": "test1.py", "line": 10},
-        {"name": "unused_func2", "file": "test2.py", "line": 20},
-    ]
-    imports = [
-        {"name": "unused_import1", "file": "test1.py", "line": 1},
-        {"name": "unused_import2", "file": "test2.py", "line": 2},
-    ]
-    return functions, imports
+# @pytest.fixture
+# def _sample_unused_items():
+#     functions = [
+#         {"name": "unused_func1", "file": "test1.py", "line": 10},
+#         {"name": "unused_func2", "file": "test2.py", "line": 20},
+#     ]
+#     imports = [
+#         {"name": "unused_import1", "file": "test1.py", "line": 1},
+#         {"name": "unused_import2", "file": "test2.py", "line": 2},
+#     ]
+#     return functions, imports
 
 
 @patch("skylos.cli.inquirer")

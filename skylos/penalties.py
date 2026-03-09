@@ -35,7 +35,6 @@ from skylos.known_patterns import (
     FLASK_RESTFUL_BASES,
     TORNADO_HANDLER_METHODS,
     TORNADO_HANDLER_BASES,
-    PYDANTIC_VALIDATOR_DECORATORS,
     SOFT_PATTERNS,
     matches_pattern,
     has_base_class,
