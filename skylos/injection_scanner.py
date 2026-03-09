@@ -9,6 +9,7 @@ from skylos.canonicalize import (
     normalize,
     strip_zero_width,
 )
+from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 
 RULE_ID = "SKY-D260"
 
@@ -27,7 +28,7 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     ),
     (re.compile(r"override\s+(all\s+)?(previous|prior)\s+instructions?", re.I), "HIGH"),
     (re.compile(r"you\s+are\s+now\s+(a|an|the)\b", re.I), "HIGH"),
-    (re.compile(r"act\s+as\s+(a|an|the)\b", re.I), "HIGH"),
+    (re.compile(r"(?:^|\.\s+)act\s+as\s+(a|an|the)\b", re.I), "HIGH"),
     (re.compile(r"pretend\s+(you\s+are|to\s+be)\b", re.I), "HIGH"),
     (re.compile(r"new\s+instructions?:\s", re.I), "HIGH"),
     (re.compile(r"do\s+not\s+(flag|report|detect|scan|warn|alert)\b", re.I), "MEDIUM"),
@@ -45,25 +46,20 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     ),
     (
         re.compile(
-            r"(output|print|reveal|show|display|return|leak)\s+(all\s+)?"
-            r"(env|environment|secret|api|key|token|credential|password)",
+            r"(output|reveal|display|leak)\s+(all\s+)?"
+            r"(env\b|environment|secrets?|api.?keys?|tokens?|credentials?|passwords?)",
             re.I,
         ),
         "HIGH",
     ),
     (re.compile(r"send\s+(all\s+)?(data|content|file|code)\s+to\b", re.I), "HIGH"),
-    (re.compile(r"^\s*\[?(system|assistant|user)\]?\s*:", re.I | re.M), "MEDIUM"),
-    (
-        re.compile(
-            r"when\s+(the\s+)?(ai|llm|model|agent|claude|gpt|copilot)"
-            r"\s+(reads?|reviews?|sees?|analyzes?|scans?)\s+this\b",
-            re.I,
-        ),
-        "MEDIUM",
-    ),
 ]
 
 _HTML_COMMENT_RE = re.compile(r"<!--(.*?)-->", re.S)
+_FENCED_BLOCK_RE = re.compile(
+    r"^[ \t]*(`{3,}|~{3,}).*?\n.*?^[ \t]*\1[ \t]*$", re.M | re.S
+)
+_FRONT_MATTER_RE = re.compile(r"\A---\n.*?\n---\n", re.S)
 
 SCANNABLE_EXTENSIONS = {
     ".py",
@@ -79,6 +75,10 @@ SCANNABLE_EXTENSIONS = {
 
 _SKIP_PREFIXES = ("test_", "conftest")
 
+_DEFAULT_EXCLUDE_DIRS = {
+    d for d in DEFAULT_EXCLUDE_FOLDERS if "*" not in d
+} | {"site-packages"}
+
 _HIGH_RISK_FILENAMES = {
     "readme.md",
     "readme.rst",
@@ -92,8 +92,7 @@ _PROMPT_KEYS_RE = re.compile(
     r"""(?:^|\s|"|')"""
     r"(system_prompt|prompt|instructions|system_message|"
     r"user_prompt|assistant_prompt|template|prompt_template|"
-    r"system_template|description|role|content|system|"
-    r"tool_description|function_description)"
+    r"system_template|tool_description|function_description)"
     r"""(?:\s*[:=]|"|')""",
     re.I,
 )
@@ -163,6 +162,8 @@ def scan_file(filepath: str | Path) -> list[dict]:
     segments = _extract_segments(source, ext, filepath)
 
     is_high_risk_file = basename.lower() in _HIGH_RISK_FILENAMES
+    seen_findings: set[tuple[int, str]] = set()
+
     for text, line_no, segment_type in segments:
         normalized = normalize(text)
 
@@ -171,15 +172,21 @@ def scan_file(filepath: str | Path) -> list[dict]:
                 severity = _adjust_severity(
                     base_severity, segment_type, is_high_risk_file
                 )
-                snippet = text.strip()[:100]
-                if len(text.strip()) > 100:
-                    snippet += "..."
 
                 finding_type = "literal_payload"
                 if segment_type == "html_comment":
                     finding_type = "risky_placement"
                 elif segment_type == "prompt_field":
                     finding_type = "risky_placement"
+
+                dedup_key = (line_no, finding_type)
+                if dedup_key in seen_findings:
+                    break
+                seen_findings.add(dedup_key)
+
+                snippet = text.strip()[:100]
+                if len(text.strip()) > 100:
+                    snippet += "..."
 
                 findings.append(
                     _make_finding(
@@ -223,7 +230,7 @@ def scan_directory(
     root: str | Path, exclude_dirs: set[str] | None = None
 ) -> list[dict]:
     root = Path(root)
-    exclude_dirs = exclude_dirs or set()
+    all_excludes = _DEFAULT_EXCLUDE_DIRS | (exclude_dirs or set())
     findings: list[dict] = []
 
     for filepath in root.rglob("*"):
@@ -234,7 +241,7 @@ def scan_directory(
 
         rel = filepath.relative_to(root)
         parts = rel.parts
-        if any(p in exclude_dirs or p.startswith(".") for p in parts[:-1]):
+        if any(p in all_excludes or p.startswith(".") for p in parts[:-1]):
             continue
 
         findings.extend(scan_file(filepath))
@@ -259,20 +266,40 @@ def _extract_segments(
                 line_no = source[: match.start()].count("\n") + 1
                 segments.append((text, line_no, "string"))
 
-        for match in re.finditer(r'"([^"\\]{15,})"', source):
+        for match in re.finditer(r'"([^"\\"\n]{15,})"', source):
             line_no = source[: match.start()].count("\n") + 1
             segments.append((match.group(1), line_no, "string"))
 
     elif ext in (".md", ".rst", ".txt"):
-        for line_no, line in enumerate(source.splitlines(), 1):
-            if line.strip():
-                segments.append((line, line_no, "prose"))
+        fenced_lines: set[int] = set()
 
+        for match in _FRONT_MATTER_RE.finditer(source):
+            start_line = 1
+            end_line = source[: match.end()].count("\n") + 1
+            fenced_lines.update(range(start_line, end_line + 1))
+
+        for match in _FENCED_BLOCK_RE.finditer(source):
+            start_line = source[: match.start()].count("\n") + 1
+            end_line = source[: match.end()].count("\n") + 1
+            fenced_lines.update(range(start_line, end_line + 1))
+
+        html_comment_lines: set[int] = set()
         for match in _HTML_COMMENT_RE.finditer(source):
             text = match.group(1).strip()
             if text:
-                line_no = source[: match.start()].count("\n") + 1
-                segments.append((text, line_no, "html_comment"))
+                start_line = source[: match.start()].count("\n") + 1
+                end_line = source[: match.end()].count("\n") + 1
+                if start_line not in fenced_lines:
+                    html_comment_lines.update(range(start_line, end_line + 1))
+                    segments.append((text, start_line, "html_comment"))
+
+        for line_no, line in enumerate(source.splitlines(), 1):
+            if line_no in fenced_lines:
+                continue
+            if line_no in html_comment_lines:
+                continue
+            if line.strip():
+                segments.append((line, line_no, "prose"))
 
     elif ext in (".yaml", ".yml", ".json", ".toml"):
         for line_no, line in enumerate(source.splitlines(), 1):
@@ -308,7 +335,7 @@ def _adjust_severity(
 
     if is_high_risk_file and idx < len(levels) - 1:
         idx += 1
-    if segment_type in ("html_comment", "prompt_field") and idx < len(levels) - 1:
+    if segment_type == "html_comment" and idx < len(levels) - 1:
         idx += 1
 
     return levels[idx]
