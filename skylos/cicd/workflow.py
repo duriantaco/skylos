@@ -19,7 +19,7 @@ def generate_workflow(
     triggers: Optional[list[str]] = None,
     analysis_types: Optional[list[str]] = None,
     python_version: str = "3.12",
-    # use_baseline: bool = True,
+    use_baseline: bool = True,
     use_llm: bool = False,
     model: Optional[str] = None,
     use_claude_security: bool = False,
@@ -45,7 +45,7 @@ def generate_workflow(
             "\n        env:\n          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}"
         )
 
-    # llm_env = ""
+    llm_env = ""
     llm_step = ""
     if use_llm:
         model_str = model or "gpt-4.1"

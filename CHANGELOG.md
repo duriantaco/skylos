@@ -1,5 +1,12 @@
 ## Changelog
 
+## [3.5.9] - 2026-03-10
+
+Patch over 3.5.8.
+
+### Fixed
+- `skylos cicd init` no longer crashes with `TypeError: generate_workflow() got an unexpected keyword argument 'use_baseline'`
+
 ## [3.5.8] - 2026-03-10
 
 ### Fixed

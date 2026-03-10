@@ -2968,8 +2968,12 @@ Run 'skylos <command> --help' for more information on each command.
     else:
         _main_argv = _argv
         _cmd_argv = []
-    args, _extra = parser.parse_known_args(_main_argv)
-    args.command = _cmd_argv + (_extra or [])
+    if _cmd_argv:
+        args, _extra = parser.parse_known_args(_main_argv)
+        args.command = _cmd_argv + (_extra or [])
+    else:
+        args = parser.parse_args(_main_argv)
+        args.command = []
     project_root = pathlib.Path(args.path[0]).resolve()
     if project_root.is_file():
         project_root = project_root.parent
