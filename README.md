@@ -134,7 +134,6 @@ See the [integration guide](https://docs.skylos.dev/integrations/claude-code-sec
 | **Detect Unused Pytest Fixtures** | `skylos . --pytest-fixtures` | Find unused `@pytest.fixture` across tests + conftest |
 | **AI-Powered Analysis** | `skylos agent analyze . --model gpt-4.1` | Hybrid static + LLM analysis with project context |
 | **AI Audit** | `skylos agent security-audit .` | Deep LLM review with interactive file selection |
-| **Automated Repair** | `skylos agent analyze . --fix` | Let the LLM fix what it found |
 | **Auto-Remediate** | `skylos agent remediate . --auto-pr` | Scan, fix, test, and open a PR — end to end |
 | **PR Review** | `skylos agent review` | Analyze only git-changed files |
 | **PR Review (JSON)** | `skylos agent review . --model claude-sonnet-4-20250514 --format json -o results.json` | LLM review with code-level fix suggestions |
@@ -190,7 +189,6 @@ Backup (GitHub): https://github.com/duriantaco/skylos/discussions/82
 
 ### Agentic AI & Hybrid Analysis
 * **Context-Aware Audits:** Combines static analysis speed with LLM reasoning to validate findings and filter noise.
-* **Automated Fixes:** `skylos agent fix` autonomously patches security flaws and removes dead code.
 * **End-to-End Remediation:** `skylos agent remediate` scans, fixes, tests, and opens PRs — fully autonomous DevOps agent.
 * **100% Local Privacy:** Supports Ollama and Local LLMs so your code never leaves your machine.
 
@@ -525,7 +523,6 @@ Research shows LLMs find vulnerabilities that static analysis misses, while stat
 |---------|-------------|
 | `skylos agent analyze PATH` | Hybrid analysis with full project context |
 | `skylos agent security-audit PATH` | Security audit with interactive file selection |
-| `skylos agent fix PATH` | Generate fix for specific issue |
 | `skylos agent review` | Analyze only git-changed files with code-level fix suggestions |
 | `skylos agent remediate PATH` | End-to-end: scan, fix, test, and create PR |
 
@@ -1198,27 +1195,22 @@ max_args = 7           # Default: 5
 max_lines = 80  
 ```
 
-### Legacy AI Flags (These will be deprecated in the next updated)
-
-These flags work on the main `skylos` command for quick operations:
+### Legacy AI Flags
 
 ```bash
 # LLM-powered audit (single file)
 skylos . --audit
 
-# Auto-fix with LLM
-skylos . --fix
-
 # Specify model
 skylos . --audit --model claude-haiku-4-5-20251001
 ```
 
-> **Note:** For full project context and better results, use `skylos agent analyze` instead.
+> **Note:** For full project context and better results, use `skylos agent analyze` instead. For auto-fixing, use `skylos agent remediate`.
 
 ### Combine Everything
 ```bash
 skylos . --danger --secrets --quality  # All static scans
-skylos agent analyze . --fix           # Full AI-assisted cleanup
+skylos agent remediate . --dry-run    # Preview AI-assisted fixes
 ```
 
 ## Smart Tracing
@@ -1464,8 +1456,7 @@ Options:
   --danger                     Scan for dangerous code
   --quality                    Code complexity and maintainability
   --trace                      Run tests with coverage first
-  --audit                      LLM-powered logic review (legacy-will be deprecated)
-  --fix                        LLM auto-repair (legacy-will be deprecated)
+  --audit                      LLM-powered logic review (legacy)
   --model MODEL                LLM model (default: gpt-4.1)
   --gate                       Fail on threshold breach (for CI)
   --force                      Bypass quality gate (emergency override)
@@ -1478,8 +1469,8 @@ Usage: skylos agent <command> [OPTIONS] PATH
 Commands:
   analyze             Hybrid static + LLM analysis with project context
   security-audit      Deep LLM security audit
-  fix                 Generate fix for specific issue
   review              Analyze only git-changed files
+  remediate           Scan, fix, test, and create PR (end-to-end)
 
 Options (all agent commands):
   --model MODEL                LLM model to use (default: gpt-4.1)
@@ -1490,13 +1481,6 @@ Options (all agent commands):
 
 Agent analyze options:
   --min-confidence LEVEL       Filter: high, medium, low
-  --fix                        Generate fix proposals
-  --apply                      Apply fixes to files
-  --yes                        Auto-approve prompts
-
-Agent fix options:
-  --line, -l LINE              Line number of issue (required)
-  --message, -m MSG            Description of issue (required)
 
 Agent remediate options:
   --dry-run                    Show plan without applying fixes (safe preview)
@@ -1513,7 +1497,6 @@ Commands:
   skylos PATH                  Analyze a project (static analysis)
   skylos agent analyze PATH    Hybrid static + LLM analysis
   skylos agent security-audit PATH  Deep LLM audit with file selection
-  skylos agent fix PATH        Fix specific issue
   skylos agent review          Review git-changed files only
   skylos agent remediate PATH  End-to-end scan, fix, test, and PR
   skylos baseline PATH         Snapshot current findings for CI baselining

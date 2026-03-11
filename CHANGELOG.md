@@ -1,5 +1,21 @@
 ## Changelog
 
+## [3.5.10] - 2026-03-10
+
+### Changed
+- **Breaking:** Removed `skylos . --fix`, `skylos agent fix`, and `skylos agent analyze --fix`. Use `skylos agent remediate` instead
+- Removed legacy `Fixer` class in favor of `FixerAgent`
+
+### Fixed
+- `LiteLLMAdapter.complete()` now forwards `response_format` to litellm, fixing `TypeError` in `skylos agent remediate`
+- `create_llm_adapter()` now passes `base_url` from `AgentConfig`, fixing `--base-url` being silently ignored
+- Attribute context matching bug: `if "."` -> `if "." in defn.name` (dead branch producing incorrect results)
+- `_mark_refs()` fallback: replaced O(n) full scan with pre-built lookup for method resolution
+- Narrowed broad `except Exception` blocks to specific types (`OSError`, `SyntaxError`, `TypeError`, `ValueError`) across analyzer and API modules
+- Added debug logging to silent `except: pass` blocks in API and analyzer
+- Git subprocess calls now have timeouts to prevent indefinite hangs
+- File reads cached in LLM report generation
+
 ## [3.5.9] - 2026-03-10
 
 Patch over 3.5.8.

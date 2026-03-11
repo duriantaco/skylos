@@ -109,8 +109,8 @@ Go rules that DO have equivalents (G211, G212, etc.) are remapped to their unifi
 | L017 | MEDIUM | Error information disclosure (str(e) in HTTP response) | Python | CWE-209 |
 | L016 | MEDIUM | Undefined config — `os.getenv("ENABLE_X")` feature flag never defined | Python | — |
 | L020 | HIGH | Overly broad file permissions (chmod 0o777, sensitive file perms) | Python | CWE-732 |
-| L023 | HIGH | Phantom decorator — `@require_auth`, `@rate_limit` never defined/imported | Python | CWE-476 |
-| L024 | MEDIUM | Stale mock — `mock.patch("mod.func")` targets function that no longer exists | Python | — |
+| L023 | CRITICAL | Phantom decorator — `@require_auth`, `@rate_limit` never defined/imported | Python | CWE-476 |
+| L024 | HIGH | Stale mock — `mock.patch("mod.func")` targets function that no longer exists | Python | — |
 | L026 | MEDIUM | Unfinished generation — function body is only `pass`, `...`, or `raise NotImplementedError` | Python | — |
 
 ## Quality (SKY-Q, SKY-C, SKY-P)
