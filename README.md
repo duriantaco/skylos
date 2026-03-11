@@ -804,6 +804,8 @@ The gate and annotation logic lives in the core Skylos modules (`gatekeeper.py` 
 
 ## MCP Server
 
+mcp-name: io.github.duriantaco/skylos
+
 Skylos exposes its analysis capabilities as an MCP (Model Context Protocol) server, allowing AI assistants like Claude Desktop to scan your codebase directly.
 
 ### Setup
@@ -1656,3 +1658,5 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 - **Email**: aaronoh2015@gmail.com
 - **GitHub**: [@duriantaco](https://github.com/duriantaco)
 - **Discord**: https://discord.gg/Ftn9t9tErf
+
+<!-- mcp-name: io.github.duriantaco/skylos -->
