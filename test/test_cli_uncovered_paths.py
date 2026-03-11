@@ -205,7 +205,7 @@ def test_get_git_changed_files_returns_only_existing_py(tmp_path):
     (root / "a.py").write_text("x=1", encoding="utf-8")
     (root / "b.txt").write_text("no", encoding="utf-8")
 
-    def fake_check_output(cmd, cwd=None, stderr=None):
+    def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
         if cmd[:3] == ["git", "rev-parse", "--is-inside-work-tree"]:
             return b"true"
         if cmd[:3] == ["git", "diff", "--name-only"]:
