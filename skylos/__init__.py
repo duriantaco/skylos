@@ -1,4 +1,4 @@
-__version__ = "3.5.9"
+__version__ = "3.5.10"
 
 
 def analyze(*args, **kwargs):
