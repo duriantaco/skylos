@@ -1,4 +1,5 @@
 import os
+import logging
 import requests
 import subprocess
 from skylos.credentials import get_key
@@ -6,6 +7,8 @@ from skylos.sarif_exporter import SarifExporter
 import sys
 from pathlib import Path
 import json
+
+logger = logging.getLogger(__name__)
 
 LINK_FILE = ".skylos/link.json"
 GLOBAL_CREDS_FILE = Path.home() / ".skylos" / "credentials.json"
@@ -163,7 +166,7 @@ def _try_github_oidc_token():
             if jwt_token:
                 return f"oidc:{jwt_token}"
     except Exception:
-        pass
+        logger.debug("Failed to fetch GitHub OIDC token", exc_info=True)
     return None
 
 
@@ -211,7 +214,7 @@ def get_project_info(token):
         if resp.status_code == 200:
             return resp.json()
     except Exception:
-        pass
+        logger.debug("Failed to get project info", exc_info=True)
     return None
 
 
@@ -229,7 +232,7 @@ def get_credit_balance(token=None):
         if resp.status_code == 200:
             return resp.json()
     except Exception:
-        pass
+        logger.debug("Failed to get credit balance", exc_info=True)
     return None
 
 
@@ -505,10 +508,10 @@ def detect_ai_code(git_root=None):
                         if f.strip():
                             ai_files.add(f.strip())
                 except Exception:
-                    pass
+                    logger.debug("Failed to get git diff-tree for AI detection", exc_info=True)
 
     except Exception:
-        pass
+        logger.debug("Failed to detect AI code from git log", exc_info=True)
 
     detected = len(indicators) > 0
     if len(indicators) > 5:
@@ -614,7 +617,7 @@ def upload_report(
             line_raw = finding.get("line_number") or finding.get("line") or 1
             try:
                 line = int(line_raw)
-            except Exception:
+            except (TypeError, ValueError):
                 line = 1
             if line < 1:
                 line = 1
@@ -625,7 +628,7 @@ def upload_report(
                     finding["file_path"] = os.path.relpath(file_abs, git_root).replace(
                         "\\", "/"
                     )
-                except Exception:
+                except (ValueError, OSError):
                     finding["file_path"] = (
                         raw_path.replace("\\", "/") if raw_path else "unknown"
                     )
@@ -940,7 +943,7 @@ def verify_report(result_json, quiet=False):
             line_raw = finding.get("line_number") or finding.get("line") or 1
             try:
                 line = int(line_raw)
-            except Exception:
+            except (TypeError, ValueError):
                 line = 1
             if line < 1:
                 line = 1
@@ -951,7 +954,7 @@ def verify_report(result_json, quiet=False):
                     finding["file_path"] = os.path.relpath(file_abs, git_root).replace(
                         "\\", "/"
                     )
-                except Exception:
+                except (ValueError, OSError):
                     finding["file_path"] = (
                         raw_path.replace("\\", "/") if raw_path else "unknown"
                     )
@@ -1054,7 +1057,7 @@ def verify_report(result_json, quiet=False):
             line = it.get("line_number") or it.get("line") or 1
             try:
                 line = int(line)
-            except Exception:
+            except (TypeError, ValueError):
                 line = 1
             fid = f"{rule_id}::{file_path}::{line}"
             vr = by_id.get(fid)

@@ -184,7 +184,7 @@ class Skylos:
                             if self._should_exclude_file(d_path, root, exclude_folders):
                                 pruned.append(d)
 
-                        except Exception:
+                        except (OSError, ValueError):
                             pass
                     if pruned:
                         for d in pruned:
@@ -197,7 +197,7 @@ class Skylos:
                     fpath = Path(dirpath) / fname
                     if fpath.suffix.lower() in exts:
                         all_files.append(fpath)
-        except Exception:
+        except (OSError, PermissionError, TypeError):
             for ext in exts:
                 all_files.extend(p.glob(f"**/*{ext}"))
 
@@ -459,6 +459,12 @@ class Skylos:
         for definition in self.defs.values():
             simple_name_lookup[definition.simple_name].append(definition)
 
+        # Pre-build (filename, simple_name) → [methods] lookup for fallback path
+        _methods_by_file_and_name = defaultdict(list)
+        for d in self.defs.values():
+            if d.type == "method":
+                _methods_by_file_and_name[(str(d.filename), d.simple_name)].append(d)
+
         total_refs = len(self.refs)
         tick_every = int(os.getenv("SKYLOS_MARKREFS_TICK", "5000"))
 
@@ -566,11 +572,9 @@ class Skylos:
 
             if "." in ref:
                 ref_simple = ref.split(".")[-1]
-                same_file_methods = []
-                for d in self.defs.values():
-                    if d.type == "method" and d.simple_name == ref_simple:
-                        if str(d.filename) == str(ref_file):
-                            same_file_methods.append(d)
+                same_file_methods = _methods_by_file_and_name.get(
+                    (str(ref_file), ref_simple), []
+                )
 
                 if same_file_methods:
                     for m in same_file_methods:
@@ -629,7 +633,7 @@ class Skylos:
                 if not contexts:
                     continue
 
-                if ".":
+                if "." in defn.name:
                     defn_mod = defn.name.rsplit(".")[0]
                 else:
                     defn_mod = ""
@@ -898,7 +902,7 @@ class Skylos:
             for qname in extract_entrypoints(project_root):
                 global_pattern_tracker.known_qualified_refs.add(qname)
         except Exception:
-            pass
+            logger.debug("Failed to extract pyproject entrypoints", exc_info=True)
 
         coverage_path = project_root / ".coverage"
         if coverage_path.exists():
@@ -1084,7 +1088,7 @@ class Skylos:
                                     ]
                                 all_secrets.extend(findings)
                         except Exception:
-                            pass
+                            logger.debug("Secret scan failed for file", exc_info=True)
 
             if enable_secrets and _secrets_scan_ctx is not None:
                 _CONFIG_SUFFIXES = {
@@ -1114,7 +1118,7 @@ class Skylos:
                         if findings:
                             all_secrets.extend(findings)
                     except Exception:
-                        pass
+                        logger.debug("Secret scan failed for config file", exc_info=True)
 
         finally:
             if injected:
@@ -1577,7 +1581,7 @@ class Skylos:
                                     encoding="utf-8", errors="ignore"
                                 )
                                 mod_trees[mod] = ast.parse(src)
-                            except Exception:
+                            except (OSError, SyntaxError):
                                 pass
 
                         arch_findings, arch_summary = get_architecture_findings(
@@ -1850,7 +1854,7 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
             try:
                 scan_file_with_tree(tree, Path(file), taint_findings)
             except Exception:
-                pass
+                logger.debug("Taint analysis failed for %s", file, exc_info=True)
             if taint_findings:
                 danger_findings.extend(taint_findings)
 
