@@ -179,7 +179,7 @@ class LiteLLMAdapter(BaseAdapter):
 
         return "Error: {}".format(text)
 
-    def complete(self, system_prompt, user_prompt):
+    def complete(self, system_prompt, user_prompt, response_format=None):
         try:
             self._resolve_api_key()
 
@@ -218,6 +218,9 @@ class LiteLLMAdapter(BaseAdapter):
 
             if self._is_local():
                 kwargs["api_key"] = "not-needed"
+
+            if response_format is not None:
+                kwargs["response_format"] = response_format
 
             response = self.litellm.completion(**kwargs)
             return response.choices[0].message.content.strip()

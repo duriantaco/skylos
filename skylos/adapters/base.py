@@ -7,5 +7,5 @@ class BaseAdapter(ABC):
         self.api_key = api_key
 
     @abstractmethod
-    def complete(self, system_prompt, user_prompt):
+    def complete(self, system_prompt, user_prompt, response_format=None):
         pass
