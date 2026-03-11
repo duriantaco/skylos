@@ -5,7 +5,6 @@ import re
 import logging
 import os
 from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
-from skylos.fixer import Fixer
 from skylos.analyzer import analyze as run_analyze
 from skylos.codemods import (
     remove_unused_import_cst,
@@ -582,6 +581,8 @@ def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
     )
     sections.append(header)
 
+    _file_cache = {}
+
     for finding, label in all_findings:
         finding_num += 1
         rule_id = finding.get("rule_id", "")
@@ -597,10 +598,16 @@ def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
             abs_path = pathlib.Path(file_path)
             if not abs_path.is_absolute():
                 abs_path = project_root / file_path
-            if abs_path.is_file():
-                src_lines = abs_path.read_text(
-                    encoding="utf-8", errors="replace"
-                ).splitlines()
+            cache_key = str(abs_path)
+            if cache_key not in _file_cache:
+                if abs_path.is_file():
+                    _file_cache[cache_key] = abs_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).splitlines()
+                else:
+                    _file_cache[cache_key] = None
+            src_lines = _file_cache[cache_key]
+            if src_lines is not None:
                 start = max(0, line - 3)
                 end = min(len(src_lines), line + 4)
                 context_lines = []
@@ -987,16 +994,17 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         show, overflow = _display_cap(items)
         for i, quality in enumerate(show, 1):
-            kind = (quality.get("kind") or quality.get("metric") or "quality").title()
+            raw_kind = quality.get("kind") or quality.get("metric") or "quality"
+            kind = raw_kind.title()
             func = quality.get("name") or quality.get("simple_name") or "<?>"
             loc = f"{quality.get('basename', '?')}:{quality.get('line', '?')}"
             value = quality.get("value") or quality.get("complexity")
             thr = quality.get("threshold")
             length = quality.get("length")
 
-            if quality.get("kind") == "nesting":
+            if raw_kind == "nesting":
                 detail = f"Deep nesting: depth {value}"
-            elif quality.get("kind") == "structure":
+            elif raw_kind == "structure":
                 detail = f"Line count: {value}"
             else:
                 detail = f"{value}"
@@ -1503,11 +1511,13 @@ def get_git_changed_files(root_path):
             ["git", "rev-parse", "--is-inside-work-tree"],
             cwd=root_path,
             stderr=subprocess.DEVNULL,
+            timeout=10,
         )
         # Try uncommitted changes first
         output = subprocess.check_output(
             ["git", "diff", "--name-only", "HEAD"],
             cwd=root_path,
+            timeout=30,
         ).decode("utf-8")
         files = _collect_py(output)
         if files:
@@ -1521,7 +1531,7 @@ def get_git_changed_files(root_path):
             cmd = ["git", "diff", "--name-only", "origin/main...HEAD"]
         try:
             output = subprocess.check_output(
-                cmd, cwd=root_path, stderr=subprocess.DEVNULL
+                cmd, cwd=root_path, stderr=subprocess.DEVNULL, timeout=30
             ).decode("utf-8")
             return _collect_py(output)
         except Exception:
@@ -1895,6 +1905,229 @@ def main():
         sync_main(sys.argv[2:])
         sys.exit(0)
 
+    # ── skylos discover ──────────────────────────────────────────────
+    if len(sys.argv) > 1 and sys.argv[1] == "discover":
+        import argparse as disc_argparse
+
+        disc_parser = disc_argparse.ArgumentParser(
+            prog="skylos discover",
+            description="Discover LLM integrations in a codebase",
+        )
+        disc_parser.add_argument("path", nargs="?", default=".", help="Path to scan")
+        disc_parser.add_argument(
+            "--json", action="store_true", dest="output_json", help="Output as JSON"
+        )
+        disc_parser.add_argument(
+            "-o", "--output", dest="output_file", help="Write output to file"
+        )
+        disc_parser.add_argument(
+            "--exclude",
+            nargs="+",
+            default=None,
+            help="Additional folders to exclude",
+        )
+
+        disc_args = disc_parser.parse_args(sys.argv[2:])
+        console = Console()
+
+        from skylos.discover.detector import detect_integrations, _collect_python_files
+        from skylos.discover.report import format_table, format_json
+
+        target = Path(disc_args.path).resolve()
+        exclude = {
+            "node_modules", ".git", "__pycache__", ".venv", "venv",
+            ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+        }
+        if disc_args.exclude:
+            exclude.update(disc_args.exclude)
+
+        with Progress(
+            SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+            console=console, transient=True,
+        ) as progress:
+            progress.add_task("Discovering LLM integrations...", total=None)
+            files = _collect_python_files(target, exclude)
+            integrations, graph = detect_integrations(target, exclude_folders=exclude)
+
+        if disc_args.output_json:
+            output = format_json(integrations, graph, len(files), str(target))
+        else:
+            output = format_table(integrations, len(files), str(target))
+
+        if disc_args.output_file:
+            Path(disc_args.output_file).write_text(output, encoding="utf-8")
+            console.print(f"[green]Output written to {disc_args.output_file}[/green]")
+        elif disc_args.output_json:
+            print(output)
+        else:
+            console.print(output)
+
+        sys.exit(0)
+
+    # ── skylos defend ────────────────────────────────────────────────
+    if len(sys.argv) > 1 and sys.argv[1] == "defend":
+        import argparse as def_argparse
+
+        def_parser = def_argparse.ArgumentParser(
+            prog="skylos defend",
+            description="Check LLM integrations for missing defenses",
+        )
+        def_parser.add_argument("path", nargs="?", default=".", help="Path to scan")
+        def_parser.add_argument(
+            "--json", action="store_true", dest="output_json", help="Output as JSON"
+        )
+        def_parser.add_argument(
+            "-o", "--output", dest="output_file", help="Write output to file"
+        )
+        def_parser.add_argument(
+            "--min-severity",
+            choices=["critical", "high", "medium", "low"],
+            help="Minimum severity to include",
+        )
+        def_parser.add_argument(
+            "--fail-on",
+            choices=["critical", "high", "medium", "low"],
+            help="Exit 1 if any finding at or above this severity",
+        )
+        def_parser.add_argument(
+            "--min-score",
+            type=int,
+            help="Exit 1 if weighted score percentage below this value (0-100)",
+        )
+        def_parser.add_argument(
+            "--policy",
+            dest="policy_file",
+            help="Path to skylos-defend.yaml policy file",
+        )
+        def_parser.add_argument(
+            "--owasp",
+            dest="owasp_filter",
+            help="Comma-separated OWASP LLM IDs to filter (e.g. LLM01,LLM04)",
+        )
+        def_parser.add_argument(
+            "--exclude",
+            nargs="+",
+            default=None,
+            help="Additional folders to exclude",
+        )
+
+        def_args = def_parser.parse_args(sys.argv[2:])
+        console = Console()
+
+        from skylos.discover.detector import detect_integrations, _collect_python_files
+        from skylos.defend.engine import run_defense_checks
+        from skylos.defend.report import format_defense_table, format_defense_json
+        from skylos.defend.policy import load_policy, compute_owasp_coverage
+
+        target = Path(def_args.path).resolve()
+        exclude = {
+            "node_modules", ".git", "__pycache__", ".venv", "venv",
+            ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+        }
+        if def_args.exclude:
+            exclude.update(def_args.exclude)
+
+        # Load policy
+        policy = None
+        try:
+            policy = load_policy(def_args.policy_file)
+        except (FileNotFoundError, ValueError, ImportError) as e:
+            console.print(f"[bold red]Policy error: {e}[/bold red]")
+            sys.exit(1)
+
+        # Parse OWASP filter
+        owasp_filter = None
+        if def_args.owasp_filter:
+            owasp_filter = [s.strip().upper() for s in def_args.owasp_filter.split(",")]
+
+        with Progress(
+            SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+            console=console, transient=True,
+        ) as progress:
+            progress.add_task("Scanning for LLM integrations...", total=None)
+            files = _collect_python_files(target, exclude)
+            integrations, graph = detect_integrations(target, exclude_folders=exclude)
+
+        if not integrations:
+            if def_args.output_json:
+                import json as _json
+                empty = _json.dumps({
+                    "version": "1.0",
+                    "summary": {"integrations_found": 0, "total_checks": 0,
+                                "passed": 0, "failed": 0, "score_pct": 100,
+                                "risk_rating": "SECURE"},
+                    "findings": [],
+                    "ops_score": {"passed": 0, "total": 0,
+                                  "score_pct": 100, "rating": "EXCELLENT"},
+                }, indent=2)
+                if def_args.output_file:
+                    Path(def_args.output_file).write_text(empty, encoding="utf-8")
+                else:
+                    print(empty)
+            else:
+                console.print("[dim]No LLM integrations found.[/dim]")
+            sys.exit(0)
+
+        # Run defense checks
+        results, score, ops_score = run_defense_checks(
+            integrations,
+            graph,
+            policy=policy,
+            min_severity=def_args.min_severity,
+            owasp_filter=owasp_filter,
+        )
+
+        owasp_coverage = compute_owasp_coverage(results)
+
+        if def_args.output_json:
+            output = format_defense_json(
+                results, score, len(integrations), len(files),
+                str(target), owasp_coverage, ops_score,
+            )
+        else:
+            output = format_defense_table(
+                results, score, len(integrations), len(files), owasp_coverage,
+                ops_score,
+            )
+
+        if def_args.output_file:
+            Path(def_args.output_file).write_text(output, encoding="utf-8")
+            console.print(f"[green]Output written to {def_args.output_file}[/green]")
+        elif def_args.output_json:
+            # Bypass rich Console for JSON — it wraps long lines and corrupts output
+            print(output)
+        else:
+            console.print(output)
+
+        # Gating logic
+        exit_code = 0
+
+        # --fail-on: exit 1 if any failing result at or above the severity
+        fail_on = def_args.fail_on
+        if policy and policy.gate_fail_on and not fail_on:
+            fail_on = policy.gate_fail_on
+
+        if fail_on:
+            severity_order = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+            threshold = severity_order.get(fail_on, 0)
+            for r in results:
+                # Only defense results gate CI, not ops
+                if r.category != "defense":
+                    continue
+                if not r.passed and severity_order.get(r.severity, 0) >= threshold:
+                    exit_code = 1
+                    break
+
+        # --min-score: exit 1 if below threshold
+        min_score = def_args.min_score
+        if policy and policy.gate_min_score is not None and min_score is None:
+            min_score = policy.gate_min_score
+
+        if min_score is not None and score.score_pct < min_score:
+            exit_code = 1
+
+        sys.exit(exit_code)
+
     if len(sys.argv) > 1 and sys.argv[1] == "ingest":
         import argparse as ingest_argparse
 
@@ -2172,15 +2405,6 @@ def main():
         p_analyze.add_argument(
             "--llm-only", action="store_true", help="Skip static, run LLM only"
         )
-        p_analyze.add_argument(
-            "--fix", action="store_true", help="Generate fix proposals for findings"
-        )
-        p_analyze.add_argument(
-            "--apply", action="store_true", help="Apply approved fixes to files"
-        )
-        p_analyze.add_argument(
-            "--yes", action="store_true", help="Auto-approve prompts (use with --apply)"
-        )
         p_analyze.add_argument("--quiet", "-q", action="store_true")
         p_analyze.add_argument(
             "--provider",
@@ -2247,33 +2471,6 @@ def main():
             help="Force LLM provider",
         )
         p_sec_audit.add_argument(
-            "--base-url",
-            default=None,
-            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
-        )
-
-        p_fix = agent_sub.add_parser("fix", help="Generate fix for issue")
-        p_fix.add_argument("path", help="File path")
-        p_fix.add_argument("--line", "-l", type=int, required=False)
-        p_fix.add_argument("--message", "-m", required=False)
-        p_fix.add_argument("--model", default="gpt-4.1")
-        p_fix.add_argument(
-            "--provider",
-            choices=[
-                "openai",
-                "anthropic",
-                "google",
-                "mistral",
-                "groq",
-                "xai",
-                "together",
-                "deepseek",
-                "ollama",
-            ],
-            default=None,
-            help="Force LLM provider",
-        )
-        p_fix.add_argument(
             "--base-url",
             default=None,
             help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
@@ -2540,35 +2737,6 @@ def main():
             )
             sys.exit(1 if llm_result.has_blockers else 0)
 
-        elif cmd == "fix":
-            path = pathlib.Path(agent_args.path)
-            if not path.exists():
-                console.print(f"[bad]File not found: {path}[/bad]")
-                sys.exit(1)
-
-            config = AnalyzerConfig(model=model, api_key=api_key, quiet=False)
-            analyzer = SkylosLLM(config)
-            if agent_args.line and agent_args.message:
-                fix_result = analyzer.fix_issue(
-                    path, agent_args.line, agent_args.message
-                )
-                if fix_result:
-                    analyzer.ui.print_fix(fix_result)
-                    sys.exit(0)
-                console.print("[bad]Could not generate fix[/bad]")
-                sys.exit(1)
-
-            llm_result = analyzer.analyze_files(
-                [path], issue_types=["security", "quality", "dead_code"]
-            )
-
-            if not llm_result or not llm_result.findings:
-                console.print("[good]No issues found to fix.[/good]")
-                sys.exit(0)
-
-            analyzer.fix_all(llm_result.findings)
-            sys.exit(0)
-
         elif cmd == "review":
             path = pathlib.Path(agent_args.path)
             console.print("[brand]Finding git-changed files...[/brand]")
@@ -2779,9 +2947,6 @@ Run 'skylos <command> --help' for more information on each command.
         "--strict",
         action="store_true",
         help="Strict gate: fail if ANY issue is found",
-    )
-    parser.add_argument(
-        "--fix", action="store_true", help="Attempt to auto-fix issues using AI"
     )
     parser.add_argument(
         "--tui",
@@ -3483,98 +3648,6 @@ sys.exit(ret)
             summary=bool(getattr(args, "summary", False)),
         )
         sys.exit(exit_code)
-
-    if args.fix:
-        console.print("[brand]Auto-Fix Mode Enabled (GPT-5)[/brand]")
-
-        provider, api_key, base_url, _is_local = resolve_llm_runtime(
-            model=args.model or "gpt-4.1",
-            provider_override=None,
-            base_url_override=getattr(args, "api_base", None),
-            console=console,
-            allow_prompt=True,
-        )
-
-        if base_url:
-            os.environ["OPENAI_BASE_URL"] = base_url
-            os.environ["SKYLOS_LLM_BASE_URL"] = base_url
-
-        if api_key is None or (api_key == "" and not _is_local):
-            console.print("[bad]No API key provided. Exiting.[/bad]")
-            sys.exit(1)
-
-        fixer_model = args.model or "gpt-4.1"
-        fixer = Fixer(api_key=api_key, model=fixer_model)
-
-        defs_map = result.get("definitions", {})
-
-        all_findings = []
-        if result.get("danger"):
-            all_findings.extend(result["danger"])
-
-        if result.get("quality"):
-            all_findings.extend(result["quality"])
-
-        for k in [
-            "unused_functions",
-            "unused_imports",
-            "unused_classes",
-            "unused_variables",
-        ]:
-            for item in result.get(k, []):
-                name = item.get("name") or item.get("simple_name")
-                item_type = item.get("type", "item")
-                all_findings.append(
-                    {
-                        "file": item["file"],
-                        "line": item["line"],
-                        "message": f"Unused {item_type} '{name}' detected. Remove it safely.",
-                        "severity": "MEDIUM",
-                    }
-                )
-
-        if not all_findings:
-            console.print("[good]No security issues found to fix.[/good]")
-        else:
-            for finding in all_findings:
-                f_path = finding["file"]
-                f_line = finding["line"]
-                f_msg = finding["message"]
-
-                console.print(
-                    f"\n[warn]Attempting to fix:[/warn] {f_msg} in {f_path}:{f_line}"
-                )
-
-                try:
-                    p = pathlib.Path(f_path)
-                    src = p.read_text(encoding="utf-8")
-
-                    with console.status(
-                        f"[bold cyan]Fixing script {f_path} now...[/bold cyan]",
-                        spinner="dots",
-                    ):
-                        fixed_code = fixer.fix_bug(src, f_line, f_msg, defs_map)
-
-                    if "Error" in fixed_code:
-                        console.print(f"[bad]{fixed_code}[/bad]")
-                    else:
-                        problem = fixed_code.get("problem", "Issue detected")
-                        change = fixed_code.get("change", "Applied fix")
-                        fixed_code = fixed_code.get("code", "")
-
-                        console.print(f"\n[bold]File:[/bold] {f_path}:{f_line}")
-                        console.print(f"[bold red]Problem:[/bold red] {problem}")
-                        console.print(f"[bold green]Change:[/bold green]  {change}")
-                        console.print(
-                            Panel(
-                                fixed_code,
-                                title="[brand]Proposed Code[/brand]",
-                                border_style="cyan",
-                            )
-                        )
-
-                except Exception as e:
-                    console.print(f"[bad]Failed to fix: {e}[/bad]")
 
     if args.interactive:
         unused_functions = result.get("unused_functions", [])
