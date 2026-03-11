@@ -108,6 +108,8 @@ class AgentConfig:
         self.timeout = timeout
         self.stream = stream
         self.enable_cache = enable_cache
+        self.provider = None
+        self.base_url = None
 
     def is_rate_limited_model(self):
         m = (self.model or "").strip().lower()
@@ -123,7 +125,10 @@ def create_llm_adapter(config):
     from skylos.adapters.litellm_adapter import LiteLLMAdapter
 
     return LiteLLMAdapter(
-        model=config.model, api_key=config.api_key, enable_cache=config.enable_cache
+        model=config.model,
+        api_key=config.api_key,
+        api_base=getattr(config, "base_url", None),
+        enable_cache=config.enable_cache,
     )
 
 
