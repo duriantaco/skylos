@@ -188,6 +188,45 @@ def get_handler(name):
             assert "SlackHandler" not in unused_classes
 
 
+    def test_transitive_subclass_not_flagged_unused(self):
+        """Subclasses via intermediate base should also be suppressed."""
+        code = """
+_REGISTRY = {}
+
+class Base:
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        _REGISTRY[cls.name] = cls
+
+class Intermediate(Base):
+    pass
+
+class LeafA(Intermediate):
+    name = "a"
+
+class LeafB(Intermediate):
+    name = "b"
+
+def get(name):
+    return _REGISTRY.get(name)
+"""
+        from skylos.analyzer import Skylos
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "registry.py"
+            p.write_text(code)
+
+            s = Skylos()
+            result = json.loads(s.analyze(tmpdir, thr=0))
+            unused_classes = {
+                item["simple_name"] for item in result.get("unused_classes", [])
+            }
+
+            assert "LeafA" not in unused_classes
+            assert "LeafB" not in unused_classes
+            assert "Intermediate" not in unused_classes
+
+
 class TestEnumMemberDetection:
     def _get_unused(self, code):
         from skylos.analyzer import Skylos
@@ -587,3 +626,129 @@ class TestModuleReachabilityRefinement:
         assert "pkg.sub1" in analyzer.graph["pkg"]
         assert "pkg.sub2" in analyzer.graph["pkg"]
         assert "pkg.sub2.deep2" not in analyzer.graph["pkg"]
+
+
+class TestUnderscoreVarargSuppression:
+    """Regression: *_args and **_kwargs should not be flagged as unused."""
+
+    def _get_unused_params(self, code):
+        from skylos.analyzer import Skylos
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "mod.py"
+            p.write_text(code)
+            s = Skylos()
+            result = json.loads(s.analyze(tmpdir, thr=0))
+            return {
+                item["simple_name"]
+                for item in result.get("unused_parameters", [])
+            }
+
+    def test_underscore_args_not_flagged(self):
+        code = """
+def fail_render(*_args, **_kwargs):
+    raise AssertionError("should not be called")
+
+fail_render()
+"""
+        unused = self._get_unused_params(code)
+        assert "_args" not in unused
+        assert "_kwargs" not in unused
+
+    def test_bare_underscore_vararg_not_flagged(self):
+        code = """
+def noop(*_):
+    pass
+
+noop()
+"""
+        unused = self._get_unused_params(code)
+        assert "_" not in unused
+
+    def test_regular_args_still_flagged(self):
+        code = """
+def func(used, unused_param):
+    return used
+
+func(1, 2)
+"""
+        unused = self._get_unused_params(code)
+        assert "unused_param" in unused
+
+
+class TestSameFileVariableUsage:
+    """Regression: variables used in the same file must be tracked by AST,
+    not by grep.  BASE_URL used in an f-string on a later line is alive."""
+
+    def _get_unused(self, code):
+        from skylos.analyzer import Skylos
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "mod.py"
+            p.write_text(code)
+            s = Skylos()
+            result = json.loads(s.analyze(tmpdir, thr=0))
+            unused = set()
+            for cat in ["unused_functions", "unused_classes", "unused_variables"]:
+                for item in result.get(cat, []):
+                    unused.add(item["simple_name"])
+            return unused
+
+    def test_variable_in_fstring_not_flagged(self):
+        code = """
+BASE_URL = "https://example.com/"
+
+def build_url(slug):
+    return f"{BASE_URL}{slug}/"
+
+build_url("test")
+"""
+        unused = self._get_unused(code)
+        assert "BASE_URL" not in unused
+
+    def test_string_only_mention_does_not_suppress(self):
+        """A name appearing only inside a string literal must NOT keep it alive."""
+        code = """
+def entry():
+    pass
+
+NAME = "entry"
+"""
+        unused = self._get_unused(code)
+        assert "entry" in unused
+
+
+class TestRelativeImportResolution:
+    """Regression: `from .mod import X` should resolve and keep X alive."""
+
+    def _get_unused(self, files_dict):
+        from skylos.analyzer import Skylos
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for fname, code in files_dict.items():
+                p = Path(tmpdir) / fname
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(code)
+            s = Skylos()
+            result = json.loads(s.analyze(tmpdir, thr=0))
+            unused = set()
+            for cat in ["unused_functions", "unused_classes", "unused_variables"]:
+                for item in result.get(cat, []):
+                    unused.add(item["simple_name"])
+            return unused
+
+    def test_relative_import_keeps_constant_alive(self):
+        files = {
+            "pkg/__init__.py": "",
+            "pkg/rules.py": 'BASE_URL = "https://example.com/"\n',
+            "pkg/main.py": """
+from .rules import BASE_URL
+
+def build_url(slug):
+    return f"{BASE_URL}{slug}/"
+
+build_url("test")
+""",
+        }
+        unused = self._get_unused(files)
+        assert "BASE_URL" not in unused

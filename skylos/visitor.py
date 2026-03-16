@@ -200,6 +200,7 @@ class Definition:
         "why_unused",
         "why_confidence_reduced",
         "_attr_name_ref_count",
+        "conditional_import",
     )
 
     def __init__(
@@ -238,6 +239,7 @@ class Definition:
         self.why_unused = []
         self.why_confidence_reduced = []
         self._attr_name_ref_count = 0
+        self.conditional_import = False
 
     def to_dict(self) -> dict[str, Any]:
         if self.type == "method" and "." in self.name:
@@ -287,6 +289,8 @@ class Definition:
             result["why_unused"] = list(self.why_unused)
         if self.why_confidence_reduced:
             result["why_confidence_reduced"] = list(self.why_confidence_reduced)
+        if self.conditional_import:
+            result["conditional_import"] = True
 
         return result
 
@@ -352,6 +356,7 @@ class Visitor(ast.NodeVisitor):
         self.version_conditional_lines = set()
         self._used_attr_names = set()
         self._used_attr_names_with_context = set()
+        self._conditional_import_targets = set()
 
     def add_def(
         self, name: str, t: str, line: int, node: Optional[ast.AST] = None, **extra: Any
@@ -365,12 +370,16 @@ class Visitor(ast.NodeVisitor):
                 for k, v in extra.items():
                     if hasattr(d, k):
                         setattr(d, k, v)
+                if t == "import" and name in self._conditional_import_targets:
+                    d.conditional_import = True
                 break
         if not found:
             defn = Definition(name, t, self.file, line, node=node)
             for k, v in extra.items():
                 if hasattr(defn, k):
                     setattr(defn, k, v)
+            if t == "import" and name in self._conditional_import_targets:
+                defn.conditional_import = True
             self.defs.append(defn)
 
             if defn.simple_name.startswith("__") and defn.simple_name.endswith("__"):
@@ -408,6 +417,27 @@ class Visitor(ast.NodeVisitor):
             return f"{self.mod}.{name}"
         else:
             return name
+
+    def _import_targets_from_stmt(self, node: ast.stmt) -> list[str]:
+        targets: list[str] = []
+
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    targets.append(alias.name)
+                else:
+                    targets.append(alias.name.split(".", 1)[0])
+            return targets
+
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                targets.append(f"{module}.{alias.name}" if module else alias.name)
+            return targets
+
+        return targets
 
     def visit_Import(self, node: ast.Import) -> None:
         for a in node.names:
@@ -559,6 +589,10 @@ class Visitor(ast.NodeVisitor):
         )
 
         if is_import_error_handler:
+            for stmt in node.body:
+                for target in self._import_targets_from_stmt(stmt):
+                    self._conditional_import_targets.add(target)
+
             has_flag = False
             for stmt in node.body:
                 if isinstance(stmt, ast.Assign):
@@ -796,7 +830,7 @@ class Visitor(ast.NodeVisitor):
 
         for arg in all_args:
             param_name = f"{qualified_name}.{arg.arg}"
-            if not skip_params:
+            if not skip_params and arg.arg != "_":
                 self.add_def(
                     param_name, "parameter", getattr(arg, "lineno", node.lineno)
                 )
@@ -810,7 +844,7 @@ class Visitor(ast.NodeVisitor):
         if node.args.vararg:
             va = node.args.vararg
             param_name = f"{qualified_name}.{va.arg}"
-            if not skip_params:
+            if not skip_params and not va.arg.startswith("_"):
                 self.add_def(
                     param_name, "parameter", getattr(va, "lineno", node.lineno)
                 )
@@ -819,7 +853,7 @@ class Visitor(ast.NodeVisitor):
         if node.args.kwarg:
             ka = node.args.kwarg
             param_name = f"{qualified_name}.{ka.arg}"
-            if not skip_params:
+            if not skip_params and not ka.arg.startswith("_"):
                 self.add_def(
                     param_name, "parameter", getattr(ka, "lineno", node.lineno)
                 )
@@ -1512,7 +1546,6 @@ class Visitor(ast.NodeVisitor):
                         node.args[1].left.value, str
                     ):
                         fstring_pattern = node.args[1].left.value + "*"
-                    # Phase 2C: right-side concat: var + "_suffix"
                     elif isinstance(node.args[1].right, ast.Constant) and isinstance(
                         node.args[1].right.value, str
                     ):

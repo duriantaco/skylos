@@ -117,6 +117,20 @@ async def async_function():
         self.assertEqual(definition.type, "function")
         self.assertEqual(definition.simple_name, "async_function")
 
+    def test_try_except_import_marks_conditional_import(self):
+        code = """
+try:
+    import brotli
+except ImportError:
+    brotli = None
+"""
+        visitor = self.parse_and_visit(code)
+
+        imports = [d for d in visitor.defs if d.type == "import"]
+        self.assertEqual(len(imports), 1)
+        self.assertTrue(imports[0].conditional_import)
+        self.assertTrue(imports[0].to_dict()["conditional_import"])
+
     def test_class_with_methods(self):
         code = """
 class MyClass:
@@ -1464,3 +1478,27 @@ def f():
     v = _visit(code, tmp_path)
 
     assert "test_module" in v.dyn
+
+
+def test_underscore_vararg_suppressed(tmp_path):
+    """Regression: *_args and **_kwargs should not produce parameter defs."""
+    code = """
+def fail_render(*_args, **_kwargs):
+    raise AssertionError("should not be called")
+"""
+    v = _visit(code, tmp_path)
+    param_names = {d.simple_name for d in v.defs if d.type == "parameter"}
+    assert "_args" not in param_names
+    assert "_kwargs" not in param_names
+
+
+def test_regular_vararg_not_suppressed(tmp_path):
+    """Non-underscore *args and **kwargs should still produce defs."""
+    code = """
+def handler(*args, **kwargs):
+    pass
+"""
+    v = _visit(code, tmp_path)
+    param_names = {d.simple_name for d in v.defs if d.type == "parameter"}
+    assert "args" in param_names
+    assert "kwargs" in param_names
