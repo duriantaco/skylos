@@ -513,6 +513,119 @@ Respond with JSON array."""
         return ["TRUE_POSITIVE"] * len(findings)
 
 
+class DeadCodeAgent:
+    def __init__(self, config=None):
+        if config is None:
+            config = AgentConfig()
+        self.config = config
+        self._adapter = None
+
+    def get_adapter(self):
+        if self._adapter is None:
+            self._adapter = create_llm_adapter(self.config)
+        return self._adapter
+
+    def healthcheck(self) -> tuple[bool, str]:
+        try:
+            response = self.get_adapter().complete(
+                "You are a test assistant. Respond with exactly: OK", "Test"
+            )
+
+            response_lower = (response or "").lower()
+
+            if "error:" in response_lower or "quota" in response_lower or "exceeded" in response_lower:
+                return False, f"API error: {response}"
+
+            if "ratelimiterror" in response_lower or "unauthorized" in response_lower:
+                return False, f"API authentication failed: {response}"
+
+            if "missing" in response_lower and "key" in response_lower:
+                return False, f"API key missing: {response}"
+
+            if response and response.strip():
+                return True, "API connection successful"
+
+            return False, "API returned empty response"
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "quota" in error_msg or "exceeded" in error_msg or "ratelimit" in error_msg:
+                return False, f"API quota exceeded: {e}"
+            elif "unauthorized" in error_msg or "authentication" in error_msg or "api key" in error_msg:
+                return False, f"API authentication failed: {e}"
+            else:
+                return False, f"API connection failed: {e}"
+
+    def verify_candidates(
+        self,
+        findings,
+        defs_map,
+        project_root,
+        max_verify=50,
+        batch_mode=True,
+        quiet=False,
+        verification_mode="production",
+    ):
+        from skylos.llm.verify_orchestrator import run_verification
+
+        result = run_verification(
+            findings=findings,
+            defs_map=defs_map,
+            project_root=str(project_root),
+            model=self.config.model,
+            api_key=self.config.api_key,
+            provider=getattr(self.config, "provider", None),
+            base_url=getattr(self.config, "base_url", None),
+            max_verify=max_verify,
+            batch_mode=batch_mode,
+            quiet=quiet,
+            verification_mode=verification_mode,
+        )
+        return result
+
+    def challenge_survivors(
+        self,
+        survivors,
+        defs_map,
+        project_root,
+        max_challenge=20,
+        quiet=False,
+    ):
+        from skylos.llm.verify_orchestrator import run_verification
+
+        for s in survivors:
+            s["_is_survivor"] = True
+
+        result = run_verification(
+            findings=survivors,
+            defs_map=defs_map,
+            project_root=str(project_root),
+            model=self.config.model,
+            api_key=self.config.api_key,
+            provider=getattr(self.config, "provider", None),
+            base_url=getattr(self.config, "base_url", None),
+            max_verify=max_challenge,
+            enable_survivor_challenge=True,
+            batch_mode=True,
+            quiet=quiet,
+        )
+        return result
+
+
+def create_dead_code_agent(
+    model="gpt-4.1",
+    api_key=None,
+    provider=None,
+    base_url=None,
+) -> DeadCodeAgent:
+    config = AgentConfig(model=model, api_key=api_key)
+    if provider:
+        config.provider = provider
+    if base_url:
+        config.base_url = base_url
+    return DeadCodeAgent(config)
+
+
 AGENT_REGISTRY = {
     "security": SecurityAgent,
     "quality": QualityAgent,

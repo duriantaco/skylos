@@ -88,6 +88,7 @@ def _agent_args(**overrides):
         static_only=False,
         skip_verification=False,
         min_confidence="low",
+        verification_mode="judge_all",
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -126,6 +127,7 @@ P_LLM = "skylos.llm.analyzer.SkylosLLM"
 P_LLM_CONF = "skylos.llm.analyzer.AnalyzerConfig"
 P_CONF = "skylos.llm.schemas.Confidence"
 P_VERIFIER = "skylos.llm.dead_code_verifier.DeadCodeVerifierAgent"
+P_CREATE_DC_AGENT = "skylos.llm.agents.create_dead_code_agent"
 P_AGENTCFG = "skylos.llm.agents.AgentConfig"
 P_PROGRESS = "rich.progress.Progress"
 P_STATIC_FN = "skylos.pipeline.run_static_on_files"
@@ -415,15 +417,20 @@ class TestPipelinePhase2a:
         proj.mkdir()
         (proj / "a.py").write_text("def dead_func(): pass")
 
-        mock_verifier = MagicMock()
-        mock_verifier.test_api_connection.return_value = (True, "OK")
-        mock_verifier.annotate_findings.return_value = verified_results
+        mock_agent = MagicMock()
+        mock_agent.healthcheck.return_value = (True, "API connection successful")
+        mock_agent.verify_candidates.return_value = {
+            "verified_findings": verified_results,
+            "new_dead_code": [],
+            "entry_points": [],
+            "stats": {},
+        }
 
         with (
             patch(P_STATIC_FN, return_value=_fresh_static()),
             patch(P_PROGRESS),
             patch(P_LLM) as mock_llm,
-            patch(P_VERIFIER, return_value=mock_verifier),
+            patch(P_CREATE_DC_AGENT, return_value=mock_agent),
             patch(P_AGENTCFG),
         ):
             mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
@@ -437,7 +444,7 @@ class TestPipelinePhase2a:
                 changed_files=[str(proj / "a.py")],
             )
 
-        return findings, mock_verifier
+        return findings, mock_agent
 
     def test_true_positive_gets_high_confidence(self, tmp_path):
         verified = [
@@ -458,7 +465,7 @@ class TestPipelinePhase2a:
         assert dead[0]["_source"] == "static+llm"
         assert dead[0]["_confidence"] == "high"
 
-    def test_false_positive_demoted_not_dropped(self, tmp_path):
+    def test_false_positive_suppressed_from_output(self, tmp_path):
         verified = [
             {
                 "name": "dead_func",
@@ -472,11 +479,9 @@ class TestPipelinePhase2a:
         findings, _ = self._run_with_verifier(verified, tmp_path)
 
         dead = [f for f in findings if f.get("_category") == "dead_code"]
-        assert len(dead) == 1
-        assert dead[0]["_confidence"] == "low"
-        assert dead[0]["_llm_challenged"] is True
+        assert len(dead) == 0
 
-    def test_uncertain_treated_as_static_only(self, tmp_path):
+    def test_uncertain_suppressed_from_output(self, tmp_path):
         verified = [
             {
                 "name": "dead_func",
@@ -489,17 +494,15 @@ class TestPipelinePhase2a:
         findings, _ = self._run_with_verifier(verified, tmp_path)
 
         dead = [f for f in findings if f.get("_category") == "dead_code"]
-        assert len(dead) == 1
-        assert dead[0]["_confidence"] == "medium"
-        assert dead[0]["_source"] == "static"
+        assert len(dead) == 0
 
-    def test_verifier_receives_defs_map_and_source_cache(self, tmp_path):
-        _, mock_verifier = self._run_with_verifier([], tmp_path)
+    def test_verifier_receives_defs_map_and_project_root(self, tmp_path):
+        _, mock_agent = self._run_with_verifier([], tmp_path)
 
-        kwargs = mock_verifier.annotate_findings.call_args[1]
+        kwargs = mock_agent.verify_candidates.call_args[1]
         assert "defs_map" in kwargs
-        assert "source_cache" in kwargs
-        assert kwargs["confidence_range"] == (10, 100)
+        assert "project_root" in kwargs
+        assert kwargs["verification_mode"] == "judge_all"
 
     def test_skip_verification_passes_through(self, tmp_path):
         proj = tmp_path / "proj"
@@ -531,15 +534,15 @@ class TestPipelinePhase2a:
         proj.mkdir()
         (proj / "a.py").write_text("x = 1")
 
-        mock_verifier = MagicMock()
-        mock_verifier.test_api_connection.return_value = (True, "OK")
-        mock_verifier.annotate_findings.side_effect = Exception("LLM down")
+        mock_agent = MagicMock()
+        mock_agent.healthcheck.return_value = (True, "API connection successful")
+        mock_agent.verify_candidates.side_effect = Exception("LLM down")
 
         with (
             patch(P_STATIC_FN, return_value=_fresh_static()),
             patch(P_PROGRESS),
             patch(P_LLM) as mock_llm,
-            patch(P_VERIFIER, return_value=mock_verifier),
+            patch(P_CREATE_DC_AGENT, return_value=mock_agent),
             patch(P_AGENTCFG),
         ):
             mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
@@ -554,8 +557,80 @@ class TestPipelinePhase2a:
             )
 
         dead = [f for f in findings if f["_category"] == "dead_code"]
-        assert len(dead) == 2
-        assert all(f["_confidence"] == "medium" for f in dead)
+        assert len(dead) == 0
+
+    def test_healthcheck_failure_marks_skipped_without_duplicates(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a.py").write_text("x = 1")
+
+        mock_agent = MagicMock()
+        mock_agent.healthcheck.return_value = (False, "bad key")
+
+        with (
+            patch(P_STATIC_FN, return_value=_fresh_static()),
+            patch(P_PROGRESS),
+            patch(P_LLM) as mock_llm,
+            patch(P_CREATE_DC_AGENT, return_value=mock_agent),
+            patch(P_AGENTCFG),
+        ):
+            mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+            findings = run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(static_only=True),
+                console=_console(),
+                changed_files=[str(proj / "a.py")],
+            )
+
+        dead = [f for f in findings if f["_category"] == "dead_code"]
+        assert len(dead) == 0
+        mock_agent.verify_candidates.assert_not_called()
+
+
+    def test_provider_and_base_url_passed_to_agent(self, tmp_path):
+        """Verify that --provider and --base-url reach the dead code agent."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a.py").write_text("def dead_func(): pass")
+
+        mock_agent = MagicMock()
+        mock_agent.healthcheck.return_value = (True, "API connection successful")
+        mock_agent.verify_candidates.return_value = {
+            "verified_findings": [],
+            "new_dead_code": [],
+            "entry_points": [],
+            "stats": {},
+        }
+
+        args = _agent_args(static_only=True)
+        args.provider = "anthropic"
+        args.base_url = "https://custom.endpoint"
+
+        with (
+            patch(P_STATIC_FN, return_value=_fresh_static()),
+            patch(P_PROGRESS),
+            patch(P_LLM) as mock_llm,
+            patch(P_CREATE_DC_AGENT, return_value=mock_agent) as mock_factory,
+            patch(P_AGENTCFG),
+        ):
+            mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+            run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=args,
+                console=_console(),
+                changed_files=[str(proj / "a.py")],
+            )
+
+        # Verify factory was called with provider and base_url
+        call_kwargs = mock_factory.call_args[1]
+        assert call_kwargs["provider"] == "anthropic"
+        assert call_kwargs["base_url"] == "https://custom.endpoint"
 
 
 class TestPipelinePhase2b:
@@ -745,15 +820,20 @@ class TestPipelineOutput:
         proj.mkdir()
         (proj / "a.py").write_text("x = 1")
 
-        mock_verifier = MagicMock()
-        mock_verifier.test_api_connection.return_value = (True, "OK")
-        mock_verifier.annotate_findings.return_value = verified
+        mock_agent = MagicMock()
+        mock_agent.healthcheck.return_value = (True, "API connection successful")
+        mock_agent.verify_candidates.return_value = {
+            "verified_findings": verified,
+            "new_dead_code": [],
+            "entry_points": [],
+            "stats": {},
+        }
 
         with (
             patch(P_STATIC_FN, return_value=_fresh_static()),
             patch(P_PROGRESS),
             patch(P_LLM) as mock_llm,
-            patch(P_VERIFIER, return_value=mock_verifier),
+            patch(P_CREATE_DC_AGENT, return_value=mock_agent),
             patch(P_AGENTCFG),
         ):
             mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
@@ -857,9 +937,14 @@ class TestPipelineIntegration:
             },
         ]
 
-        mock_verifier = MagicMock()
-        mock_verifier.test_api_connection.return_value = (True, "OK")
-        mock_verifier.annotate_findings.return_value = verified
+        mock_agent = MagicMock()
+        mock_agent.healthcheck.return_value = (True, "API connection successful")
+        mock_agent.verify_candidates.return_value = {
+            "verified_findings": verified,
+            "new_dead_code": [],
+            "entry_points": [],
+            "stats": {},
+        }
 
         llm_sec = _llm_finding(
             file="/proj/a.py",
@@ -872,7 +957,7 @@ class TestPipelineIntegration:
             patch(P_STATIC_FN, return_value=_fresh_static()),
             patch(P_PROGRESS),
             patch(P_LLM) as mock_llm,
-            patch(P_VERIFIER, return_value=mock_verifier),
+            patch(P_CREATE_DC_AGENT, return_value=mock_agent),
             patch(P_AGENTCFG),
         ):
             mock_llm.return_value.analyze_files.return_value = MagicMock(
@@ -899,10 +984,8 @@ class TestPipelineIntegration:
 
         dead = [f for f in findings if f.get("_category") == "dead_code"]
         dead_names = [f.get("name") for f in dead]
-        assert "os" in dead_names
-        os_finding = [f for f in dead if f.get("name") == "os"][0]
-        assert os_finding["_confidence"] == "low"
-        assert os_finding["_llm_challenged"] is True
+        assert "dead_func" in dead_names
+        assert "os" not in dead_names
 
     def test_review_mode_calls_run_static_on_files(self, tmp_path):
         proj = tmp_path / "proj"

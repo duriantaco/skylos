@@ -236,6 +236,7 @@ def run_pipeline(
     exclude_folders=None,
 ):
     import sys
+    from concurrent.futures import ThreadPoolExecutor
     from rich.progress import Progress, SpinnerColumn, TextColumn
     from skylos.analyzer import analyze as run_analyze
     from skylos.llm.analyzer import SkylosLLM, AnalyzerConfig
@@ -373,52 +374,81 @@ def run_pipeline(
         for f in low_conf[:5]:
             logger.info(f"  {f.get('name')} conf={f.get('confidence')}")
 
-    if dead_code_findings and not getattr(agent_args, "skip_verification", False):
+    skip_2a = (
+        not dead_code_findings
+        or getattr(agent_args, "skip_verification", False)
+    )
+    skip_2b = getattr(agent_args, "static_only", False)
+    _2a_state = {"failed": False}
+
+    dead_code_agent = None
+    if not skip_2a:
         console.print(
             f"[brand]Phase 2a:[/brand] LLM verifying "
             f"{len(dead_code_findings)} dead-code findings..."
         )
-
         try:
-            from skylos.llm.agents import AgentConfig
-            from skylos.llm.dead_code_verifier import DeadCodeVerifierAgent
+            from skylos.llm.agents import create_dead_code_agent
 
-            verifier_config = AgentConfig(model=model, api_key=api_key)
-            verifier = DeadCodeVerifierAgent(verifier_config)
+            provider = getattr(agent_args, "provider", None)
+            base_url = getattr(agent_args, "base_url", None)
+            dead_code_agent = create_dead_code_agent(
+                model=model,
+                api_key=api_key,
+                provider=provider,
+                base_url=base_url,
+            )
 
             console.print("[brand]Testing LLM API connection...[/brand]")
-            api_ok, api_message = verifier.test_api_connection()
+            api_ok, api_message = dead_code_agent.healthcheck()
+
             if not api_ok:
                 console.print(f"[bad]✗ LLM API test failed:[/bad] {api_message}")
                 console.print("[bad]Cannot run LLM verification. Skipping...[/bad]")
                 console.print(
                     "[dim]Tip: Run 'skylos key' to configure your API key[/dim]"
                 )
-                for f in dead_code_findings:
-                    f["_confidence"] = "medium"
-                    f["_llm_skipped"] = True
-                    all_findings.append(f)
-                raise Exception("LLM API unavailable")
-            console.print(f"[good]✓[/good] {api_message}")
+                skip_2a = True
+                _2a_state["failed"] = True
+                dead_code_agent = None
+            else:
+                console.print(f"[good]✓[/good] {api_message}")
+        except Exception as e:
+            console.print(f"[warn]LLM verification setup failed: {e}[/warn]")
+            skip_2a = True
+            _2a_state["failed"] = True
 
-            verified = verifier.annotate_findings(
+    def _do_phase_2a():
+        results = []
+        try:
+            result = dead_code_agent.verify_candidates(
                 findings=dead_code_findings,
                 defs_map=defs_map,
-                source_cache=source_cache,
-                confidence_range=(
-                    10,
-                    100,
+                project_root=path if path.is_dir() else path.parent,
+                quiet=True,
+                verification_mode=getattr(
+                    agent_args,
+                    "verification_mode",
+                    "judge_all",
                 ),
             )
+            verified = result.get("verified_findings", dead_code_findings)
+            new_dead = result.get("new_dead_code", [])
 
             tp = sum(1 for f in verified if f.get("_llm_verdict") == "TRUE_POSITIVE")
             fp = sum(1 for f in verified if f.get("_llm_verdict") == "FALSE_POSITIVE")
             unc = sum(1 for f in verified if f.get("_llm_verdict") == "UNCERTAIN")
+            det = sum(1 for f in verified if f.get("_deterministically_suppressed"))
 
             console.print(
                 f"[good]✓ Verified:[/good] {tp} confirmed dead, "
-                f"{fp} likely alive (suppressed), {unc} uncertain"
+                f"{fp + det} suppressed as alive, {unc} suppressed as uncertain"
             )
+            if new_dead:
+                console.print(
+                    f"[good]✓ Survivors challenged:[/good] {len(new_dead)} "
+                    f"new dead code found"
+                )
 
             for f in verified:
                 verdict = f.get("_llm_verdict", "UNCERTAIN")
@@ -426,35 +456,41 @@ def run_pipeline(
                     f["_source"] = "static+llm"
                     f["_confidence"] = "high"
                     f["_suppressed"] = False
+                    results.append(f)
                 elif verdict == "UNCERTAIN":
                     f["_source"] = "static"
                     f["_confidence"] = "medium"
-                    f["_suppressed"] = False
+                    f["_suppressed"] = True
                     f["_llm_uncertain"] = True
                 elif verdict == "FALSE_POSITIVE":
                     f["_source"] = "static"
                     f["_confidence"] = "low"
-                    f["_suppressed"] = False
+                    f["_suppressed"] = True
                     f["_llm_challenged"] = True
-                all_findings.append(f)
+
+            for f in new_dead:
+                f["_confidence"] = "high"
+                f["_suppressed"] = False
+                results.append(f)
 
         except Exception as e:
             console.print(f"[warn]LLM verification failed: {e}[/warn]")
-            for f in dead_code_findings:
-                f["_confidence"] = "medium"
-                all_findings.append(f)
-    else:
-        for f in dead_code_findings:
-            f["_confidence"] = "medium"
-            all_findings.append(f)
+            console.print(
+                f"[dim]Suppressing {len(dead_code_findings)} dead-code findings "
+                f"because verification was unavailable.[/dim]"
+            )
+            _2a_state["failed"] = True
+        return results
 
-    for category in ["security", "quality", "secrets"]:
-        for f in static_findings.get(category, []):
-            f["_confidence"] = "medium"
-            all_findings.append(f)
-
-    if not getattr(agent_args, "static_only", False):
+    def _do_phase_2b():
+        results = []
         console.print("[brand]Phase 2b:[/brand] LLM security & quality analysis...")
+
+        _is_rate_limited = any(
+            (model or "").strip().lower().startswith(p)
+            for p in ("groq/", "gemini/", "ollama/", "mistral/")
+        )
+        _max_workers = 2 if _is_rate_limited else 4
 
         min_conf_map = {
             "high": Confidence.HIGH,
@@ -468,6 +504,8 @@ def run_pipeline(
             min_confidence=min_conf_map.get(
                 getattr(agent_args, "min_confidence", "low"), Confidence.LOW
             ),
+            parallel=True,
+            max_workers=_max_workers,
         )
         analyzer = SkylosLLM(config)
 
@@ -475,7 +513,6 @@ def run_pipeline(
             if files:
                 llm_result = analyzer.analyze_files(files, defs_map=defs_map)
 
-                llm_only_count = 0
                 for finding in llm_result.findings:
                     issue_type = (
                         finding.issue_type.value
@@ -506,29 +543,63 @@ def run_pipeline(
                         "_needs_review": True,
                         "_ci_blocking": False,
                     }
-
-                    dup = _find_duplicate(llm_finding, all_findings)
-                    if dup is not None:
-                        if llm_finding.get("suggestion") and not dup.get("suggestion"):
-                            dup["suggestion"] = llm_finding["suggestion"]
-                        if llm_finding.get("explanation") and not dup.get(
-                            "explanation"
-                        ):
-                            dup["explanation"] = llm_finding["explanation"]
-                    else:
-                        all_findings.append(llm_finding)
-                        llm_only_count += 1
+                    results.append(llm_finding)
 
                 console.print(
-                    f"[good]✓ LLM:[/good] {llm_only_count} additional findings "
+                    f"[good]✓ LLM:[/good] {len(results)} additional findings "
                     f"(all marked needs_review)"
                 )
 
         except Exception as e:
             console.print(f"[warn]LLM analysis failed: {e}[/warn]")
+        return results
+
+    for category in ["security", "quality", "secrets"]:
+        for f in static_findings.get(category, []):
+            f["_confidence"] = "medium"
+            all_findings.append(f)
+
+    phase_2a_findings = []
+    phase_2b_findings = []
+
+    if not skip_2a and not skip_2b:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_2a = executor.submit(_do_phase_2a)
+            future_2b = executor.submit(_do_phase_2b)
+            phase_2a_findings = future_2a.result()
+            phase_2b_findings = future_2b.result()
+    elif not skip_2a:
+        phase_2a_findings = _do_phase_2a()
+    elif not skip_2b:
+        phase_2b_findings = _do_phase_2b()
+
+    if phase_2a_findings:
+        for f in phase_2a_findings:
+            if not _is_duplicate(f, all_findings):
+                all_findings.append(f)
+    elif skip_2a and dead_code_findings and not _2a_state["failed"]:
+        for f in dead_code_findings:
+            f["_confidence"] = "medium"
+            all_findings.append(f)
+
+    llm_only_count = 0
+    for llm_f in phase_2b_findings:
+        dup = _find_duplicate(llm_f, all_findings)
+        if dup is not None:
+            if llm_f.get("suggestion") and not dup.get("suggestion"):
+                dup["suggestion"] = llm_f["suggestion"]
+            if llm_f.get("explanation") and not dup.get("explanation"):
+                dup["explanation"] = llm_f["explanation"]
+        else:
+            all_findings.append(llm_f)
+            llm_only_count += 1
 
     enrich_findings = [f for f in all_findings if not f.get("fixed_code")]
-    if enrich_findings and not getattr(agent_args, "static_only", False):
+    if (
+        enrich_findings
+        and not getattr(agent_args, "static_only", False)
+        and getattr(agent_args, "with_fixes", True)
+    ):
         console.print(
             f"[brand]Phase 3:[/brand] LLM generating fix suggestions for "
             f"{len(enrich_findings)} findings..."
@@ -557,6 +628,15 @@ def _find_duplicate(new_finding, existing_findings, line_tolerance=3):
     new_line = new_finding.get("line", 0)
     new_msg = new_finding.get("message", "")[:40].lower()
     new_rule = new_finding.get("rule_id", "")
+
+    new_full_name = new_finding.get("full_name", "")
+    new_type = new_finding.get("type", "")
+    if new_full_name and new_type:
+        for existing in existing_findings:
+            if (existing.get("full_name", "") == new_full_name
+                    and existing.get("type", "") == new_type
+                    and _norm(existing.get("file", "")) == new_file):
+                return existing
 
     for existing in existing_findings:
         if _norm(existing.get("file", "")) != new_file:
