@@ -82,6 +82,7 @@ logger = logging.getLogger("Skylos")
 _heuristic_weights = {"same_file_attr": 1.0, "same_pkg_attr": 0.3, "global_attr": 0.1}
 try:
     from skylos.llm.feedback import get_tuned_weights
+
     _heuristic_weights = get_tuned_weights()
 except Exception:
     pass
@@ -655,20 +656,17 @@ class Skylos:
                     ctx_pkg = ctx_mod.split(".")[0] if ctx_mod else ""
 
                     if ctx_mod == defn_mod:
-                        defn.heuristic_refs["same_file_attr"] = (
-                            defn.heuristic_refs.get("same_file_attr", 0.0)
-                            + _heuristic_weights.get("same_file_attr", 1.0)
-                        )
+                        defn.heuristic_refs["same_file_attr"] = defn.heuristic_refs.get(
+                            "same_file_attr", 0.0
+                        ) + _heuristic_weights.get("same_file_attr", 1.0)
                     elif ctx_pkg and defn_pkg and ctx_pkg == defn_pkg:
-                        defn.heuristic_refs["same_pkg_attr"] = (
-                            defn.heuristic_refs.get("same_pkg_attr", 0.0)
-                            + _heuristic_weights.get("same_pkg_attr", 0.3)
-                        )
+                        defn.heuristic_refs["same_pkg_attr"] = defn.heuristic_refs.get(
+                            "same_pkg_attr", 0.0
+                        ) + _heuristic_weights.get("same_pkg_attr", 0.3)
                     else:
-                        defn.heuristic_refs["global_attr"] = (
-                            defn.heuristic_refs.get("global_attr", 0.0)
-                            + _heuristic_weights.get("global_attr", 0.1)
-                        )
+                        defn.heuristic_refs["global_attr"] = defn.heuristic_refs.get(
+                            "global_attr", 0.0
+                        ) + _heuristic_weights.get("global_attr", 0.1)
 
     def _get_base_classes(self, class_name):
         if class_name not in self.defs:
@@ -742,9 +740,7 @@ class Skylos:
                     visited.add(ancestor)
                     if ancestor in registry_bases:
                         return True
-                    stack.extend(
-                        _resolve(b) for b in parents_of.get(ancestor, [])
-                    )
+                    stack.extend(_resolve(b) for b in parents_of.get(ancestor, []))
                 return False
 
             for name, defn in self.defs.items():
@@ -1159,7 +1155,9 @@ class Skylos:
                         if findings:
                             all_secrets.extend(findings)
                     except Exception:
-                        logger.debug("Secret scan failed for config file", exc_info=True)
+                        logger.debug(
+                            "Secret scan failed for config file", exc_info=True
+                        )
 
         finally:
             if injected:

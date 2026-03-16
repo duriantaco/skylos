@@ -9,9 +9,7 @@ class ToolSchemaPresentPlugin(DefensePlugin):
     name = "Tool Schema Present"
     severity = "critical"
     owasp_llm = "LLM04"
-    description = (
-        "Tool definitions must have explicit typed argument schemas"
-    )
+    description = "Tool definitions must have explicit typed argument schemas"
     remediation = (
         "Add type annotations to all tool function parameters. "
         "Use Pydantic models or typed schemas for tool argument validation."
@@ -20,7 +18,9 @@ class ToolSchemaPresentPlugin(DefensePlugin):
     def applies_to(self, integration: LLMIntegration) -> bool:
         return integration.integration_type == "agent" and len(integration.tools) > 0
 
-    def check(self, integration: LLMIntegration, graph: AIIntegrationGraph) -> DefenseResult:
+    def check(
+        self, integration: LLMIntegration, graph: AIIntegrationGraph
+    ) -> DefenseResult:
         untyped = [t for t in integration.tools if not t.has_typed_schema]
 
         if not untyped:

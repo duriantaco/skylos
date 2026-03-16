@@ -17,7 +17,9 @@ class NoDangerousSinkPlugin(DefensePlugin):
         "and sanitization before any dangerous operation."
     )
 
-    def check(self, integration: LLMIntegration, graph: AIIntegrationGraph) -> DefenseResult:
+    def check(
+        self, integration: LLMIntegration, graph: AIIntegrationGraph
+    ) -> DefenseResult:
         if not integration.output_sinks:
             return self._pass(
                 integration,

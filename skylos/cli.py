@@ -1966,15 +1966,25 @@ def main():
             sys.exit(1)
 
         exclude = {
-            "node_modules", ".git", "__pycache__", ".venv", "venv",
-            ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+            "node_modules",
+            ".git",
+            "__pycache__",
+            ".venv",
+            "venv",
+            ".tox",
+            ".mypy_cache",
+            ".pytest_cache",
+            "dist",
+            "build",
         }
         if disc_args.exclude:
             exclude.update(disc_args.exclude)
 
         with Progress(
-            SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-            console=console, transient=True,
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
         ) as progress:
             progress.add_task("Discovering LLM integrations...", total=None)
             files = _collect_python_files(target, exclude)
@@ -2045,7 +2055,8 @@ def main():
             help="Additional folders to exclude",
         )
         def_parser.add_argument(
-            "--upload", action="store_true",
+            "--upload",
+            action="store_true",
             help="Upload defense results to Skylos Cloud dashboard",
         )
 
@@ -2066,12 +2077,22 @@ def main():
             sys.exit(1)
 
         if def_args.min_score is not None and not 0 <= def_args.min_score <= 100:
-            console.print(f"[red]Error: --min-score must be 0-100, got {def_args.min_score}[/red]")
+            console.print(
+                f"[red]Error: --min-score must be 0-100, got {def_args.min_score}[/red]"
+            )
             sys.exit(1)
 
         exclude = {
-            "node_modules", ".git", "__pycache__", ".venv", "venv",
-            ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+            "node_modules",
+            ".git",
+            "__pycache__",
+            ".venv",
+            "venv",
+            ".tox",
+            ".mypy_cache",
+            ".pytest_cache",
+            "dist",
+            "build",
         }
         if def_args.exclude:
             exclude.update(def_args.exclude)
@@ -2086,6 +2107,7 @@ def main():
         owasp_filter = None
         if def_args.owasp_filter:
             from skylos.defend.policy import OWASP_LLM_MAPPING
+
             owasp_filter = [s.strip().upper() for s in def_args.owasp_filter.split(",")]
             for oid in owasp_filter:
                 if oid not in OWASP_LLM_MAPPING:
@@ -2096,8 +2118,10 @@ def main():
                     sys.exit(1)
 
         with Progress(
-            SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-            console=console, transient=True,
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
         ) as progress:
             progress.add_task("Scanning for LLM integrations...", total=None)
             files = _collect_python_files(target, exclude)
@@ -2106,15 +2130,28 @@ def main():
         if not integrations:
             if def_args.output_json:
                 import json as _json
-                empty = _json.dumps({
-                    "version": "1.0",
-                    "summary": {"integrations_found": 0, "total_checks": 0,
-                                "passed": 0, "failed": 0, "score_pct": 100,
-                                "risk_rating": "SECURE"},
-                    "findings": [],
-                    "ops_score": {"passed": 0, "total": 0,
-                                  "score_pct": 100, "rating": "EXCELLENT"},
-                }, indent=2)
+
+                empty = _json.dumps(
+                    {
+                        "version": "1.0",
+                        "summary": {
+                            "integrations_found": 0,
+                            "total_checks": 0,
+                            "passed": 0,
+                            "failed": 0,
+                            "score_pct": 100,
+                            "risk_rating": "SECURE",
+                        },
+                        "findings": [],
+                        "ops_score": {
+                            "passed": 0,
+                            "total": 0,
+                            "score_pct": 100,
+                            "rating": "EXCELLENT",
+                        },
+                    },
+                    indent=2,
+                )
                 if def_args.output_file:
                     Path(def_args.output_file).write_text(empty, encoding="utf-8")
                 else:
@@ -2137,13 +2174,22 @@ def main():
 
         if def_args.output_json:
             output = format_defense_json(
-                results, score, len(integrations), len(files),
-                str(target), owasp_coverage, ops_score,
+                results,
+                score,
+                len(integrations),
+                len(files),
+                str(target),
+                owasp_coverage,
+                ops_score,
                 integrations=integrations,
             )
         else:
             output = format_defense_table(
-                results, score, len(integrations), len(files), owasp_coverage,
+                results,
+                score,
+                len(integrations),
+                len(files),
+                owasp_coverage,
                 ops_score,
             )
 
@@ -2161,9 +2207,15 @@ def main():
 
         if def_args.upload:
             from skylos.api import upload_defense_report
+
             json_for_upload = format_defense_json(
-                results, score, len(integrations), len(files),
-                str(target), owasp_coverage, ops_score,
+                results,
+                score,
+                len(integrations),
+                len(files),
+                str(target),
+                owasp_coverage,
+                ops_score,
                 integrations=integrations,
             )
             upload_result = upload_defense_report(json_for_upload)
@@ -2623,7 +2675,9 @@ def main():
             help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
         )
 
-        p_review = agent_sub.add_parser("review", help="Review git-changed Python files")
+        p_review = agent_sub.add_parser(
+            "review", help="Review git-changed Python files"
+        )
         p_review.add_argument("path", nargs="?", default=".")
         p_review.add_argument("--model", default="gpt-4.1")
         p_review.add_argument(
@@ -2718,21 +2772,29 @@ def main():
         )
         p_verify.add_argument("path", help="File or directory to analyze")
         p_verify.add_argument("--model", default="gpt-4.1")
-        p_verify.add_argument("--conf", type=int, default=60, help="Static analysis confidence threshold")
         p_verify.add_argument(
-            "--max-verify", type=int, default=50,
+            "--conf", type=int, default=60, help="Static analysis confidence threshold"
+        )
+        p_verify.add_argument(
+            "--max-verify",
+            type=int,
+            default=50,
             help="Max findings to verify with LLM (default: 50)",
         )
         p_verify.add_argument(
-            "--max-challenge", type=int, default=20,
+            "--max-challenge",
+            type=int,
+            default=20,
             help="Max survivors to challenge with LLM (default: 20)",
         )
         p_verify.add_argument(
-            "--no-entry-discovery", action="store_true",
+            "--no-entry-discovery",
+            action="store_true",
             help="Skip entry point discovery pass",
         )
         p_verify.add_argument(
-            "--no-survivor-challenge", action="store_true",
+            "--no-survivor-challenge",
+            action="store_true",
             help="Skip survivor challenge pass",
         )
         p_verify.add_argument(
@@ -2742,21 +2804,31 @@ def main():
             help="Dead-code verifier mode: judge_all sends nearly every refs==0 candidate to the LLM",
         )
         p_verify.add_argument(
-            "--format", choices=["table", "json"], default="table",
+            "--format",
+            choices=["table", "json"],
+            default="table",
         )
         p_verify.add_argument("--output", "-o", help="Output file")
         p_verify.add_argument("--quiet", "-q", action="store_true")
         p_verify.add_argument(
             "--provider",
             choices=[
-                "openai", "anthropic", "google", "mistral",
-                "groq", "xai", "together", "deepseek", "ollama",
+                "openai",
+                "anthropic",
+                "google",
+                "mistral",
+                "groq",
+                "xai",
+                "together",
+                "deepseek",
+                "ollama",
             ],
             default=None,
             help="Force LLM provider",
         )
         p_verify.add_argument(
-            "--base-url", default=None,
+            "--base-url",
+            default=None,
             help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
         )
 
@@ -3035,6 +3107,7 @@ def main():
             console.print("[brand]Step 1/2: Running static analysis...[/brand]")
 
             from skylos.analyzer import analyze as run_static
+
             raw = run_static(
                 str(path),
                 conf=agent_args.conf,
@@ -3055,9 +3128,7 @@ def main():
                 console.print("[good]No dead code findings to verify![/good]")
                 sys.exit(0)
 
-            console.print(
-                f"  Found {len(all_findings)} dead code findings"
-            )
+            console.print(f"  Found {len(all_findings)} dead code findings")
 
             console.print("\n[brand]Step 2/2: LLM verification (4-pass)...[/brand]")
 
@@ -3096,19 +3167,34 @@ def main():
                 summary_table.add_column("Metric", style="cyan")
                 summary_table.add_column("Value", style="bold")
                 summary_table.add_row("Total findings", str(stats["total_findings"]))
-                summary_table.add_row("Confirmed dead (TRUE_POSITIVE)", f"[red]{stats['verified_true_positive']}[/red]")
-                summary_table.add_row("False positives removed", f"[green]{stats['verified_false_positive']}[/green]")
+                summary_table.add_row(
+                    "Confirmed dead (TRUE_POSITIVE)",
+                    f"[red]{stats['verified_true_positive']}[/red]",
+                )
+                summary_table.add_row(
+                    "False positives removed",
+                    f"[green]{stats['verified_false_positive']}[/green]",
+                )
                 summary_table.add_row("Uncertain", str(stats["uncertain"]))
-                summary_table.add_row("Entry points discovered", str(stats["entry_points_discovered"]))
-                summary_table.add_row("Survivors challenged", str(stats["survivors_challenged"]))
-                summary_table.add_row("New dead code found", f"[red]{stats['survivors_reclassified_dead']}[/red]")
+                summary_table.add_row(
+                    "Entry points discovered", str(stats["entry_points_discovered"])
+                )
+                summary_table.add_row(
+                    "Survivors challenged", str(stats["survivors_challenged"])
+                )
+                summary_table.add_row(
+                    "New dead code found",
+                    f"[red]{stats['survivors_reclassified_dead']}[/red]",
+                )
                 summary_table.add_row("LLM calls", str(stats["llm_calls"]))
                 summary_table.add_row("Time", f"{stats['elapsed_seconds']}s")
                 console.print(summary_table)
 
                 fps = [f for f in verified if f.get("_llm_verdict") == "FALSE_POSITIVE"]
                 if fps:
-                    console.print(f"\n[green]False positives removed ({len(fps)}):[/green]")
+                    console.print(
+                        f"\n[green]False positives removed ({len(fps)}):[/green]"
+                    )
                     fp_table = Table(expand=True)
                     fp_table.add_column("Name", style="green")
                     fp_table.add_column("File", style="dim")
@@ -3122,7 +3208,9 @@ def main():
                     console.print(fp_table)
 
                 if new_dead:
-                    console.print(f"\n[red]New dead code discovered ({len(new_dead)}):[/red]")
+                    console.print(
+                        f"\n[red]New dead code discovered ({len(new_dead)}):[/red]"
+                    )
                     nd_table = Table(expand=True)
                     nd_table.add_column("Name", style="red")
                     nd_table.add_column("File", style="dim")
@@ -3137,7 +3225,9 @@ def main():
 
                 eps = result.get("entry_points", [])
                 if eps:
-                    console.print(f"\n[cyan]Entry points discovered ({len(eps)}):[/cyan]")
+                    console.print(
+                        f"\n[cyan]Entry points discovered ({len(eps)}):[/cyan]"
+                    )
                     for ep in eps:
                         console.print(f"  - {ep['name']} (from {ep['source']})")
 

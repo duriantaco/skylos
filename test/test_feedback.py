@@ -191,13 +191,19 @@ def test_record_verification_results(feedback_dir):
 def test_record_multiple_runs_accumulates(feedback_dir):
     run1 = {
         "verified_findings": [
-            {"heuristic_refs": {"same_file_attr": 1.0}, "_llm_verdict": "TRUE_POSITIVE"},
+            {
+                "heuristic_refs": {"same_file_attr": 1.0},
+                "_llm_verdict": "TRUE_POSITIVE",
+            },
         ],
         "new_dead_code": [],
     }
     run2 = {
         "verified_findings": [
-            {"heuristic_refs": {"same_file_attr": 1.0}, "_llm_verdict": "TRUE_POSITIVE"},
+            {
+                "heuristic_refs": {"same_file_attr": 1.0},
+                "_llm_verdict": "TRUE_POSITIVE",
+            },
         ],
         "new_dead_code": [],
     }
@@ -279,18 +285,38 @@ def test_reset_feedback(feedback_dir):
 
 def test_batch_verify_findings():
     agent = MagicMock(spec=DeadCodeVerifierAgent)
-    agent._call_llm.return_value = json.dumps([
-        {"id": 1, "verdict": "TRUE_POSITIVE", "rationale": "no callers"},
-        {"id": 2, "verdict": "FALSE_POSITIVE", "rationale": "getattr dispatch"},
-    ])
+    agent._call_llm.return_value = json.dumps(
+        [
+            {"id": 1, "verdict": "TRUE_POSITIVE", "rationale": "no callers"},
+            {"id": 2, "verdict": "FALSE_POSITIVE", "rationale": "getattr dispatch"},
+        ]
+    )
 
     findings = [
-        {"name": "some_func", "simple_name": "some_func", "full_name": "mod.some_func",
-         "file": "a.py", "line": 1, "type": "function",
-         "confidence": 70, "references": 0, "calls": [], "called_by": []},
-        {"name": "other_func", "simple_name": "other_func", "full_name": "mod.other_func",
-         "file": "b.py", "line": 5, "type": "function",
-         "confidence": 65, "references": 0, "calls": [], "called_by": []},
+        {
+            "name": "some_func",
+            "simple_name": "some_func",
+            "full_name": "mod.some_func",
+            "file": "a.py",
+            "line": 1,
+            "type": "function",
+            "confidence": 70,
+            "references": 0,
+            "calls": [],
+            "called_by": [],
+        },
+        {
+            "name": "other_func",
+            "simple_name": "other_func",
+            "full_name": "mod.other_func",
+            "file": "b.py",
+            "line": 5,
+            "type": "function",
+            "confidence": 65,
+            "references": 0,
+            "calls": [],
+            "called_by": [],
+        },
     ]
 
     results = _batch_verify_findings(agent, findings, {}, {})
@@ -304,18 +330,38 @@ def test_batch_verify_findings():
 def test_batch_verify_skips_with_refs():
     agent = MagicMock(spec=DeadCodeVerifierAgent)
     # Only 1 finding will be sent to LLM (f1), f2 is skipped (has refs)
-    agent._call_llm.return_value = json.dumps([
-        {"verdict": "TRUE_POSITIVE", "rationale": "dead"},
-    ])
+    agent._call_llm.return_value = json.dumps(
+        [
+            {"verdict": "TRUE_POSITIVE", "rationale": "dead"},
+        ]
+    )
 
     findings = [
         # f2 comes first with refs — will be skipped before batching
-        {"name": "skip_func", "simple_name": "skip_func", "full_name": "mod.skip_func",
-         "file": "b.py", "line": 5, "type": "function",
-         "confidence": 70, "references": 3, "calls": [], "called_by": []},
-        {"name": "dead_func", "simple_name": "dead_func", "full_name": "mod.dead_func",
-         "file": "a.py", "line": 1, "type": "function",
-         "confidence": 70, "references": 0, "calls": [], "called_by": []},
+        {
+            "name": "skip_func",
+            "simple_name": "skip_func",
+            "full_name": "mod.skip_func",
+            "file": "b.py",
+            "line": 5,
+            "type": "function",
+            "confidence": 70,
+            "references": 3,
+            "calls": [],
+            "called_by": [],
+        },
+        {
+            "name": "dead_func",
+            "simple_name": "dead_func",
+            "full_name": "mod.dead_func",
+            "file": "a.py",
+            "line": 1,
+            "type": "function",
+            "confidence": 70,
+            "references": 0,
+            "calls": [],
+            "called_by": [],
+        },
     ]
 
     results = _batch_verify_findings(agent, findings, {}, {})
@@ -326,16 +372,42 @@ def test_batch_verify_skips_with_refs():
 
 def test_batch_challenge_survivors():
     agent = MagicMock(spec=DeadCodeVerifierAgent)
-    agent._call_llm.return_value = json.dumps([
-        {"id": 1, "is_dead": True, "rationale": "spurious", "heuristic_assessment": "spurious"},
-        {"id": 2, "is_dead": False, "rationale": "real call", "heuristic_assessment": "real"},
-    ])
+    agent._call_llm.return_value = json.dumps(
+        [
+            {
+                "id": 1,
+                "is_dead": True,
+                "rationale": "spurious",
+                "heuristic_assessment": "spurious",
+            },
+            {
+                "id": 2,
+                "is_dead": False,
+                "rationale": "real call",
+                "heuristic_assessment": "real",
+            },
+        ]
+    )
 
     survivors = [
-        {"name": "proc", "full_name": "mod.proc", "simple_name": "proc",
-         "file": "a.py", "line": 1, "confidence": 45, "heuristic_refs": {"same_file_attr": 1.0}},
-        {"name": "init", "full_name": "mod.init", "simple_name": "init",
-         "file": "b.py", "line": 10, "confidence": 40, "heuristic_refs": {"global_attr": 0.1}},
+        {
+            "name": "proc",
+            "full_name": "mod.proc",
+            "simple_name": "proc",
+            "file": "a.py",
+            "line": 1,
+            "confidence": 45,
+            "heuristic_refs": {"same_file_attr": 1.0},
+        },
+        {
+            "name": "init",
+            "full_name": "mod.init",
+            "simple_name": "init",
+            "file": "b.py",
+            "line": 10,
+            "confidence": 40,
+            "heuristic_refs": {"global_attr": 0.1},
+        },
     ]
 
     results = _batch_challenge_survivors(agent, survivors, {}, {})
@@ -353,15 +425,17 @@ def test_batch_challenge_survivors():
 def test_strip_markdown_fences():
     assert _strip_markdown_fences('```json\n{"a": 1}\n```') == '{"a": 1}'
     assert _strip_markdown_fences('{"a": 1}') == '{"a": 1}'
-    assert _strip_markdown_fences('  ```\n[1,2]\n```  ') == '[1,2]'
+    assert _strip_markdown_fences("  ```\n[1,2]\n```  ") == "[1,2]"
 
 
 def test_parse_batch_response_valid():
     agent = MagicMock(spec=DeadCodeVerifierAgent)
-    agent._call_llm.return_value = json.dumps([
-        {"verdict": "TRUE_POSITIVE", "rationale": "dead"},
-        {"verdict": "FALSE_POSITIVE", "rationale": "alive"},
-    ])
+    agent._call_llm.return_value = json.dumps(
+        [
+            {"verdict": "TRUE_POSITIVE", "rationale": "dead"},
+            {"verdict": "FALSE_POSITIVE", "rationale": "alive"},
+        ]
+    )
 
     results = _parse_batch_response(agent, "sys", "usr", 2)
     assert len(results) == 2
@@ -371,9 +445,11 @@ def test_parse_batch_response_valid():
 
 def test_parse_batch_response_missing_entries():
     agent = MagicMock(spec=DeadCodeVerifierAgent)
-    agent._call_llm.return_value = json.dumps([
-        {"verdict": "TRUE_POSITIVE", "rationale": "dead"},
-    ])
+    agent._call_llm.return_value = json.dumps(
+        [
+            {"verdict": "TRUE_POSITIVE", "rationale": "dead"},
+        ]
+    )
 
     results = _parse_batch_response(agent, "sys", "usr", 3)
     assert len(results) == 3
@@ -399,24 +475,44 @@ def test_parse_batch_response_bad_json():
 @patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
 def test_run_verification_batch_mode(MockAgent, tmp_path):
     mock_instance = MockAgent.return_value
-    mock_instance._call_llm.return_value = json.dumps([
-        {"verdict": "TRUE_POSITIVE", "rationale": "dead"},
-        {"verdict": "FALSE_POSITIVE", "rationale": "alive via decorator"},
-    ])
+    mock_instance._call_llm.return_value = json.dumps(
+        [
+            {"verdict": "TRUE_POSITIVE", "rationale": "dead"},
+            {"verdict": "FALSE_POSITIVE", "rationale": "alive via decorator"},
+        ]
+    )
 
     proj = tmp_path / "project"
     proj.mkdir()
-    (proj / "main.py").write_text("def compute_total(): pass\ndef format_output(): pass\n")
+    (proj / "main.py").write_text(
+        "def compute_total(): pass\ndef format_output(): pass\n"
+    )
 
     findings = [
-        {"name": "compute_total", "simple_name": "compute_total",
-         "full_name": "main.compute_total", "file": str(proj / "main.py"),
-         "line": 1, "confidence": 70, "references": 0, "type": "function",
-         "calls": [], "called_by": []},
-        {"name": "format_output", "simple_name": "format_output",
-         "full_name": "main.format_output", "file": str(proj / "main.py"),
-         "line": 2, "confidence": 70, "references": 0, "type": "function",
-         "calls": [], "called_by": []},
+        {
+            "name": "compute_total",
+            "simple_name": "compute_total",
+            "full_name": "main.compute_total",
+            "file": str(proj / "main.py"),
+            "line": 1,
+            "confidence": 70,
+            "references": 0,
+            "type": "function",
+            "calls": [],
+            "called_by": [],
+        },
+        {
+            "name": "format_output",
+            "simple_name": "format_output",
+            "full_name": "main.format_output",
+            "file": str(proj / "main.py"),
+            "line": 2,
+            "confidence": 70,
+            "references": 0,
+            "type": "function",
+            "calls": [],
+            "called_by": [],
+        },
     ]
 
     result = run_verification(
@@ -449,17 +545,35 @@ def test_run_verification_no_batch_mode(MockAgent, tmp_path):
 
     proj = tmp_path / "project"
     proj.mkdir()
-    (proj / "main.py").write_text("def compute_total(): pass\ndef format_output(): pass\n")
+    (proj / "main.py").write_text(
+        "def compute_total(): pass\ndef format_output(): pass\n"
+    )
 
     findings = [
-        {"name": "compute_total", "simple_name": "compute_total",
-         "full_name": "main.compute_total", "file": str(proj / "main.py"),
-         "line": 1, "confidence": 70, "references": 0, "type": "function",
-         "calls": [], "called_by": []},
-        {"name": "format_output", "simple_name": "format_output",
-         "full_name": "main.format_output", "file": str(proj / "main.py"),
-         "line": 2, "confidence": 70, "references": 0, "type": "function",
-         "calls": [], "called_by": []},
+        {
+            "name": "compute_total",
+            "simple_name": "compute_total",
+            "full_name": "main.compute_total",
+            "file": str(proj / "main.py"),
+            "line": 1,
+            "confidence": 70,
+            "references": 0,
+            "type": "function",
+            "calls": [],
+            "called_by": [],
+        },
+        {
+            "name": "format_output",
+            "simple_name": "format_output",
+            "full_name": "main.format_output",
+            "file": str(proj / "main.py"),
+            "line": 2,
+            "confidence": 70,
+            "references": 0,
+            "type": "function",
+            "calls": [],
+            "called_by": [],
+        },
     ]
 
     result = run_verification(
@@ -485,8 +599,14 @@ def test_run_verification_no_batch_mode(MockAgent, tmp_path):
 
 def test_estimate_batches_small():
     findings = [
-        {"name": f"some_func_{i}", "simple_name": f"some_func_{i}",
-         "file": f"{i}.py", "confidence": 70, "references": 0, "type": "function"}
+        {
+            "name": f"some_func_{i}",
+            "simple_name": f"some_func_{i}",
+            "file": f"{i}.py",
+            "confidence": 70,
+            "references": 0,
+            "type": "function",
+        }
         for i in range(3)
     ]
     count = _estimate_batches(findings, {}, {})
@@ -495,8 +615,14 @@ def test_estimate_batches_small():
 
 def test_estimate_batches_large():
     findings = [
-        {"name": f"some_func_{i}", "simple_name": f"some_func_{i}",
-         "file": f"{i}.py", "confidence": 70, "references": 0, "type": "function"}
+        {
+            "name": f"some_func_{i}",
+            "simple_name": f"some_func_{i}",
+            "file": f"{i}.py",
+            "confidence": 70,
+            "references": 0,
+            "type": "function",
+        }
         for i in range(20)
     ]
     count = _estimate_batches(findings, {}, {})

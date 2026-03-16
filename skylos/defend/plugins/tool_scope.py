@@ -9,9 +9,7 @@ class ToolScopePlugin(DefensePlugin):
     name = "Tool Scope Restricted"
     severity = "critical"
     owasp_llm = "LLM04"
-    description = (
-        "Tool functions must not have unrestricted access to shell, filesystem, or network"
-    )
+    description = "Tool functions must not have unrestricted access to shell, filesystem, or network"
     remediation = (
         "Wrap dangerous operations in tool functions with permission checks, "
         "allowlists, or sandboxing. Restrict tool capabilities to minimum required scope."
@@ -20,7 +18,9 @@ class ToolScopePlugin(DefensePlugin):
     def applies_to(self, integration: LLMIntegration) -> bool:
         return integration.integration_type == "agent" and len(integration.tools) > 0
 
-    def check(self, integration: LLMIntegration, graph: AIIntegrationGraph) -> DefenseResult:
+    def check(
+        self, integration: LLMIntegration, graph: AIIntegrationGraph
+    ) -> DefenseResult:
         dangerous_tools = []
         for tool in integration.tools:
             if tool.dangerous_calls:

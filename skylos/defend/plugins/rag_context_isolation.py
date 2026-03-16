@@ -21,7 +21,9 @@ class RagContextIsolationPlugin(DefensePlugin):
     def applies_to(self, integration: LLMIntegration) -> bool:
         return integration.has_rag_context
 
-    def check(self, integration: LLMIntegration, graph: AIIntegrationGraph) -> DefenseResult:
+    def check(
+        self, integration: LLMIntegration, graph: AIIntegrationGraph
+    ) -> DefenseResult:
         if integration.has_prompt_delimiter:
             return self._pass(
                 integration,

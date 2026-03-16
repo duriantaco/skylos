@@ -90,7 +90,11 @@ def record_verification_results(
 
         for htype in heuristic_refs:
             if htype not in feedback.observations:
-                feedback.observations[htype] = {"real": 0, "spurious": 0, "uncertain": 0}
+                feedback.observations[htype] = {
+                    "real": 0,
+                    "spurious": 0,
+                    "uncertain": 0,
+                }
 
             if verdict == "TRUE_POSITIVE":
                 feedback.observations[htype]["spurious"] += 1
@@ -101,7 +105,11 @@ def record_verification_results(
         heuristic_refs = new_dead.get("heuristic_refs", {})
         for htype in heuristic_refs:
             if htype not in feedback.observations:
-                feedback.observations[htype] = {"real": 0, "spurious": 0, "uncertain": 0}
+                feedback.observations[htype] = {
+                    "real": 0,
+                    "spurious": 0,
+                    "uncertain": 0,
+                }
             feedback.observations[htype]["spurious"] += 1
 
     feedback.total_runs += 1
@@ -113,7 +121,6 @@ def record_verification_results(
 
 
 def compute_tuned_weights(feedback: FeedbackData) -> dict[str, float]:
-
     tuned = {}
 
     for htype, default_w in DEFAULT_WEIGHTS.items():
@@ -166,7 +173,9 @@ def get_feedback_summary() -> dict[str, Any]:
             "accuracy_pct": round(100 * real / total, 1) if total > 0 else None,
             "default_weight": default_w,
             "tuned_weight": tuned_w,
-            "weight_change_pct": round(100 * (tuned_w - default_w) / default_w, 1) if default_w > 0 else 0,
+            "weight_change_pct": round(100 * (tuned_w - default_w) / default_w, 1)
+            if default_w > 0
+            else 0,
         }
 
     return summary

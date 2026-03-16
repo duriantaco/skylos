@@ -72,7 +72,9 @@ def generate_workflow(
     if use_defend:
         defend_env = ""
         if use_upload:
-            defend_env = "\n        env:\n          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}"
+            defend_env = (
+                "\n        env:\n          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}"
+            )
         defend_parts = [
             "",
             "      - name: AI Defense Check",

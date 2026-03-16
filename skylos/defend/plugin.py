@@ -31,7 +31,9 @@ class DefensePlugin(ABC):
     def applies_to(self, integration: LLMIntegration) -> bool:
         return True
 
-    def _pass(self, integration: LLMIntegration, location: str, message: str) -> DefenseResult:
+    def _pass(
+        self, integration: LLMIntegration, location: str, message: str
+    ) -> DefenseResult:
         return DefenseResult(
             plugin_id=self.id,
             passed=True,
@@ -45,7 +47,9 @@ class DefensePlugin(ABC):
             remediation="",
         )
 
-    def _fail(self, integration: LLMIntegration, location: str, message: str) -> DefenseResult:
+    def _fail(
+        self, integration: LLMIntegration, location: str, message: str
+    ) -> DefenseResult:
         return DefenseResult(
             plugin_id=self.id,
             passed=False,

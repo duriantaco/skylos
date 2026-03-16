@@ -80,9 +80,7 @@ class _TaintVisitor(ast.NodeVisitor):
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self._analyze_function(node)
 
-    def _analyze_function(
-        self, node: ast.FunctionDef | ast.AsyncFunctionDef
-    ) -> None:
+    def _analyze_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         prev_tainted = self._tainted_vars.copy()
         prev_sources = self._tainted_sources.copy()
         self._tainted_vars.clear()
@@ -138,9 +136,7 @@ class _TaintVisitor(ast.NodeVisitor):
                     self.flows.append(
                         TaintFlow(
                             source=self._tainted_vars[name],
-                            source_location=self._tainted_sources.get(
-                                name, "unknown"
-                            ),
+                            source_location=self._tainted_sources.get(name, "unknown"),
                             sink=call_name,
                             sink_location=f"{self.filepath}:{node.lineno}",
                             path=[name],
@@ -154,9 +150,7 @@ class _TaintVisitor(ast.NodeVisitor):
                     self.flows.append(
                         TaintFlow(
                             source=self._tainted_vars[name],
-                            source_location=self._tainted_sources.get(
-                                name, "unknown"
-                            ),
+                            source_location=self._tainted_sources.get(name, "unknown"),
                             sink=call_name,
                             sink_location=f"{self.filepath}:{node.lineno}",
                             path=[name],
@@ -168,7 +162,7 @@ class _TaintVisitor(ast.NodeVisitor):
             call_name = self._resolve_call(node.func)
             if call_name in self.TAINT_SOURCES:
                 return call_name
-            
+
             if isinstance(node.func, ast.Attribute):
                 obj_name = self._resolve_call(node.func.value)
                 if obj_name in self._tainted_vars:

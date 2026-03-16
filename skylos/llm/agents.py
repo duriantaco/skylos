@@ -533,7 +533,11 @@ class DeadCodeAgent:
 
             response_lower = (response or "").lower()
 
-            if "error:" in response_lower or "quota" in response_lower or "exceeded" in response_lower:
+            if (
+                "error:" in response_lower
+                or "quota" in response_lower
+                or "exceeded" in response_lower
+            ):
                 return False, f"API error: {response}"
 
             if "ratelimiterror" in response_lower or "unauthorized" in response_lower:
@@ -549,9 +553,17 @@ class DeadCodeAgent:
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "quota" in error_msg or "exceeded" in error_msg or "ratelimit" in error_msg:
+            if (
+                "quota" in error_msg
+                or "exceeded" in error_msg
+                or "ratelimit" in error_msg
+            ):
                 return False, f"API quota exceeded: {e}"
-            elif "unauthorized" in error_msg or "authentication" in error_msg or "api key" in error_msg:
+            elif (
+                "unauthorized" in error_msg
+                or "authentication" in error_msg
+                or "api key" in error_msg
+            ):
                 return False, f"API authentication failed: {e}"
             else:
                 return False, f"API connection failed: {e}"

@@ -18,7 +18,9 @@ class ModelPinnedPlugin(DefensePlugin):
         "claude-sonnet-4-20250514) to prevent unexpected behavior changes."
     )
 
-    def check(self, integration: LLMIntegration, graph: AIIntegrationGraph) -> DefenseResult:
+    def check(
+        self, integration: LLMIntegration, graph: AIIntegrationGraph
+    ) -> DefenseResult:
         if not integration.model_value:
             return self._fail(
                 integration,

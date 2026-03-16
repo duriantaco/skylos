@@ -234,7 +234,6 @@ class CircularDependencyAnalyzer:
         return {m for m, count in module_cycle_count.items() if count >= 2}
 
 
-
 class CircularDependencyRule:
     rule_id = "SKY-CIRC"
     name = "Circular Dependencies"
