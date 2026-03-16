@@ -1,6 +1,6 @@
 # Skylos for VS Code
 
-> Dead code detection, security scanning, and AI-powered code analysis for Python, TypeScript, JavaScript, and Go. Faster and better results than many alternatives like Flake8 and Pylint, and finding more dead code than Vulture in our tests with comparable speed.
+> Bring dead code detection, security scanning, and AI-assisted remediation into VS Code for Python, TypeScript, JavaScript, and Go. Catch risky code, AI-generated defects, and unused code without leaving the editor.
 
 <img src="media/vsce.gif" alt="Skylos VS Code Extension — inline dead code detection, security scanning, and CodeLens actions" width="800" />
 
