@@ -24,7 +24,7 @@ def openai_chat_project():
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         (root / "chat.py").write_text(
-            '''
+            """
 import openai
 
 client = openai.OpenAI()
@@ -38,7 +38,7 @@ def chat(user_message):
         ],
     )
     return response.choices[0].message.content
-'''
+"""
         )
         yield root
 
@@ -87,7 +87,7 @@ def flask_llm_project():
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         (root / "app.py").write_text(
-            '''
+            """
 from flask import Flask, request
 import openai
 import subprocess
@@ -113,7 +113,7 @@ def chat_endpoint():
     result = response.choices[0].message.content
     subprocess.run(result, shell=True)
     return result
-'''
+"""
         )
         yield root
 
@@ -159,7 +159,7 @@ def validated_output_project():
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         (root / "validated.py").write_text(
-            '''
+            """
 import openai
 import json
 from pydantic import BaseModel
@@ -179,7 +179,7 @@ def get_answer(question: str):
     parsed = json.loads(raw)
     validated = Response.model_validate(parsed)
     return validated
-'''
+"""
         )
         yield root
 
@@ -190,10 +190,10 @@ def empty_project():
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         (root / "main.py").write_text(
-            '''
+            """
 def hello():
     return "world"
-'''
+"""
         )
         yield root
 
@@ -204,7 +204,7 @@ def multi_integration_project():
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         (root / "chat.py").write_text(
-            '''
+            """
 import openai
 
 client = openai.OpenAI()
@@ -214,10 +214,10 @@ def chat(msg):
         model="gpt-4o-2024-08-06",
         messages=[{"role": "user", "content": msg}],
     )
-'''
+"""
         )
         (root / "embed.py").write_text(
-            '''
+            """
 import openai
 
 client = openai.OpenAI()
@@ -227,7 +227,7 @@ def embed(text):
         model="text-embedding-3-small",
         input=text,
     )
-'''
+"""
         )
         yield root
 
@@ -251,7 +251,9 @@ class TestDetectIntegrations:
     def test_detects_anthropic_agent(self, anthropic_agent_project):
         integrations, graph = detect_integrations(anthropic_agent_project)
         assert len(integrations) >= 1
-        agent_integs = [i for i in integrations if i.integration_type in ("agent", "chat")]
+        agent_integs = [
+            i for i in integrations if i.integration_type in ("agent", "chat")
+        ]
         assert len(agent_integs) >= 1
 
     def test_detects_flask_input_sources(self, flask_llm_project):
@@ -321,6 +323,7 @@ class TestIntegrationGraph:
 class TestModelPinning:
     def test_floating_alias_not_pinned(self):
         import ast
+
         visitor = _LLMDetectorVisitor("test.py", "")
         assert visitor._is_model_pinned("gpt-4o") is False
         assert visitor._is_model_pinned("claude-sonnet-4") is False
@@ -354,22 +357,22 @@ class TestReport:
 
 class TestTaintAnalysis:
     def test_taint_flow_detected(self):
-        source = '''
+        source = """
 def handler(request):
     user_input = request.get_json()
     eval(user_input)
-'''
+"""
         flows = analyze_taint_flows("test.py", source)
         # Taint tracking is intra-function, might not detect all flows
         # but should at least not crash
         assert isinstance(flows, list)
 
     def test_no_taint_in_safe_code(self):
-        source = '''
+        source = """
 def safe():
     x = 42
     return x + 1
-'''
+"""
         flows = analyze_taint_flows("test.py", source)
         assert len(flows) == 0
 

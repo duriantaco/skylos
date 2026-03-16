@@ -589,7 +589,6 @@ class TestPipelinePhase2a:
         assert len(dead) == 0
         mock_agent.verify_candidates.assert_not_called()
 
-
     def test_provider_and_base_url_passed_to_agent(self, tmp_path):
         """Verify that --provider and --base-url reach the dead code agent."""
         proj = tmp_path / "proj"

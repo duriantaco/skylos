@@ -75,10 +75,30 @@ LLM_CALL_PATTERNS: list[tuple[str, str, str]] = [
 _GENERIC_OBJS = {"client", "llm", "chain", "agent", "agent_executor"}
 
 _EXCLUDED_CALL_PREFIXES = {
-    "subprocess", "os", "sys", "shutil", "pathlib", "json", "re",
-    "logging", "http", "urllib", "socket", "threading", "multiprocessing",
-    "hashlib", "hmac", "base64", "struct", "io", "csv", "xml",
-    "collections", "itertools", "functools", "contextlib",
+    "subprocess",
+    "os",
+    "sys",
+    "shutil",
+    "pathlib",
+    "json",
+    "re",
+    "logging",
+    "http",
+    "urllib",
+    "socket",
+    "threading",
+    "multiprocessing",
+    "hashlib",
+    "hmac",
+    "base64",
+    "struct",
+    "io",
+    "csv",
+    "xml",
+    "collections",
+    "itertools",
+    "functools",
+    "contextlib",
 }
 
 FLOATING_MODEL_ALIASES = {
@@ -112,14 +132,23 @@ FLOATING_MODEL_ALIASES = {
 PINNED_MODEL_RE = re.compile(r"-\d{4}-?\d{2}-?\d{2}")
 
 _RAG_IMPORT_MODULES = (
-    "chromadb", "pinecone", "weaviate", "qdrant_client",
-    "faiss", "langchain_community.vectorstores",
-    "langchain.vectorstores", "llama_index.vector_stores",
-    "langchain_community.retrievers", "langchain.retrievers",
+    "chromadb",
+    "pinecone",
+    "weaviate",
+    "qdrant_client",
+    "faiss",
+    "langchain_community.vectorstores",
+    "langchain.vectorstores",
+    "llama_index.vector_stores",
+    "langchain_community.retrievers",
+    "langchain.retrievers",
 )
 _PII_IMPORT_MODULES = (
-    "presidio_analyzer", "presidio_anonymizer", "scrubadub",
-    "pii_tools", "commonregex",
+    "presidio_analyzer",
+    "presidio_anonymizer",
+    "scrubadub",
+    "pii_tools",
+    "commonregex",
 )
 
 _RATE_LIMIT_DECORATORS = {"limit", "rate_limit", "ratelimit", "throttle"}
@@ -157,7 +186,9 @@ INPUT_SOURCE_PATTERNS: dict[str, str] = {
 
 DELIMITER_PATTERNS = [
     re.compile(r"```"),
-    re.compile(r"<(user_input|user_message|input|context|query|document|retrieved|instructions)>"),
+    re.compile(
+        r"<(user_input|user_message|input|context|query|document|retrieved|instructions)>"
+    ),
     re.compile(r"<\w+>.*</\w+>", re.DOTALL),  # matched XML tags
     re.compile(r"\[INST\]"),  # Llama-style
     re.compile(r'"""'),  # triple quotes as delimiters
@@ -258,7 +289,6 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
         self._current_func_decorators: list[str] = []
         self._current_func_dangerous_calls: list[str] = []
         self._current_func_has_schema: bool = False
-
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -383,7 +413,6 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                 annotated += 1
         return total > 0 and annotated == total
 
-
     def visit_Call(self, node: ast.Call) -> None:
         self._detect_llm_call(node)
         self._detect_input_source(node)
@@ -409,13 +438,18 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                 prefix = call_chain.rsplit(f".{pattern_obj}.{pattern_method}", 1)[0]
                 provider = self._resolve_provider(prefix)
                 break
-            if call_chain.endswith(f".{pattern_method}") and len(call_chain.split(".")) >= 2:
+            if (
+                call_chain.endswith(f".{pattern_method}")
+                and len(call_chain.split(".")) >= 2
+            ):
                 parts = call_chain.split(".")
                 obj = parts[-2]
                 if parts[0] in _EXCLUDED_CALL_PREFIXES:
                     continue
                 if obj == pattern_obj or pattern_obj in _GENERIC_OBJS:
-                    if pattern_obj in _GENERIC_OBJS and not (self.detected_sdks or self.detected_frameworks):
+                    if pattern_obj in _GENERIC_OBJS and not (
+                        self.detected_sdks or self.detected_frameworks
+                    ):
                         continue
                     integration_type = itype
                     provider = self._resolve_provider(parts[0])
@@ -444,18 +478,20 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
             for kw in node.keywords
         )
 
-        self._raw_llm_calls.append({
-            "provider": provider,
-            "location": location,
-            "integration_type": integration_type,
-            "model_value": model_value or "",
-            "model_pinned": model_pinned,
-            "has_system_prompt": has_system,
-            "has_tools": tools_in_call,
-            "tool_names": tool_names,
-            "func_scope": self._func_scope(),
-            "has_max_tokens": has_max_tokens,
-        })
+        self._raw_llm_calls.append(
+            {
+                "provider": provider,
+                "location": location,
+                "integration_type": integration_type,
+                "model_value": model_value or "",
+                "model_pinned": model_pinned,
+                "has_system_prompt": has_system,
+                "has_tools": tools_in_call,
+                "tool_names": tool_names,
+                "func_scope": self._func_scope(),
+                "has_max_tokens": has_max_tokens,
+            }
+        )
 
     def finalize(self) -> None:
         for call in self._raw_llm_calls:
@@ -489,9 +525,7 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                     for var in referenced_vars:
                         for loc in self._module_prompt_vars.get(var, []):
                             referenced_locs.add(loc)
-                    scoped_prompts = [
-                        p for p in module_prompts if p in referenced_locs
-                    ]
+                    scoped_prompts = [p for p in module_prompts if p in referenced_locs]
                 else:
                     scoped_prompts = module_prompts
 
@@ -630,9 +664,7 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                 ):
                     return kw.value.value
                 if isinstance(kw.value, ast.Name):
-                    return self._string_constants.get(
-                        kw.value.id, kw.value.id
-                    )
+                    return self._string_constants.get(kw.value.id, kw.value.id)
         if node.args and isinstance(node.args[0], ast.Constant):
             val = node.args[0].value
             if isinstance(val, str) and any(
@@ -754,8 +786,12 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
 
         func_name = chain.split(".")[-1] if chain else ""
         unambiguous_simple = {
-            "model_validate", "parse_obj", "parse_raw",
-            "validate_python", "validate_json", "literal_eval",
+            "model_validate",
+            "parse_obj",
+            "parse_raw",
+            "validate_python",
+            "validate_json",
+            "literal_eval",
         }
         if func_name in unambiguous_simple:
             loc = f"{self.filepath}:{node.lineno}"
@@ -768,9 +804,18 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
             self._func_length_limit[self._func_scope()] = loc
 
     _LOGGING_FULL_PATTERNS = {
-        "logging.info", "logging.debug", "logging.warning", "logging.error",
-        "logger.info", "logger.debug", "logger.warning", "logger.error",
-        "log.info", "log.debug", "log.warning", "log.error",
+        "logging.info",
+        "logging.debug",
+        "logging.warning",
+        "logging.error",
+        "logger.info",
+        "logger.debug",
+        "logger.warning",
+        "logger.error",
+        "log.info",
+        "log.debug",
+        "log.warning",
+        "log.error",
         "structlog.get_logger",
     }
     _LOGGING_METHODS = {"info", "debug", "warning", "error", "msg"}
@@ -783,17 +828,29 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
         elif "." in chain and chain.rsplit(".", 1)[-1] in self._LOGGING_METHODS:
             obj_part = chain.rsplit(".", 1)[0].rsplit(".", 1)[-1].lower()
             if obj_part in self._LOGGING_OBJ_NAMES:
-                self._func_logging[self._func_scope()] = f"{self.filepath}:{node.lineno}"
+                self._func_logging[self._func_scope()] = (
+                    f"{self.filepath}:{node.lineno}"
+                )
 
     _RAG_UNAMBIGUOUS_METHODS = {
-        "similarity_search", "similarity_search_with_score",
-        "as_retriever", "get_relevant_documents",
+        "similarity_search",
+        "similarity_search_with_score",
+        "as_retriever",
+        "get_relevant_documents",
         "get_or_create_collection",
     }
     _RAG_GENERIC_METHODS = {"query", "search", "retrieve", "invoke"}
     _RAG_OBJECT_PREFIXES = {
-        "collection", "vectorstore", "vector_store", "retriever",
-        "index", "store", "chroma", "pinecone", "weaviate", "qdrant",
+        "collection",
+        "vectorstore",
+        "vector_store",
+        "retriever",
+        "index",
+        "store",
+        "chroma",
+        "pinecone",
+        "weaviate",
+        "qdrant",
         "faiss",
     }
 
@@ -804,18 +861,29 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
         method = chain.rsplit(".", 1)[-1] if "." in chain else chain
 
         if method in self._RAG_UNAMBIGUOUS_METHODS:
-            self._func_rag_context[self._func_scope()] = f"{self.filepath}:{node.lineno}"
+            self._func_rag_context[self._func_scope()] = (
+                f"{self.filepath}:{node.lineno}"
+            )
         elif method in self._RAG_GENERIC_METHODS and "." in chain:
             obj_part = chain.rsplit(".", 1)[0].rsplit(".", 1)[-1].lower()
             if any(obj_part.startswith(p) for p in self._RAG_OBJECT_PREFIXES):
-                self._func_rag_context[self._func_scope()] = f"{self.filepath}:{node.lineno}"
+                self._func_rag_context[self._func_scope()] = (
+                    f"{self.filepath}:{node.lineno}"
+                )
 
     _PII_METHODS = {
-        "analyze", "anonymize", "scrub", "redact",
-        "detect_pii", "clean_pii", "mask_pii",
+        "analyze",
+        "anonymize",
+        "scrub",
+        "redact",
+        "detect_pii",
+        "clean_pii",
+        "mask_pii",
     }
     _PII_CALL_PATTERNS = {
-        "AnalyzerEngine", "AnonymizerEngine", "Scrubber",
+        "AnalyzerEngine",
+        "AnonymizerEngine",
+        "Scrubber",
     }
 
     def _detect_pii_call(self, node: ast.Call) -> None:
@@ -825,7 +893,6 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
         method = chain.rsplit(".", 1)[-1] if "." in chain else chain
         if method in self._PII_METHODS or method in self._PII_CALL_PATTERNS:
             self._func_pii_filter[self._func_scope()] = f"{self.filepath}:{node.lineno}"
-
 
     def visit_Assign(self, node: ast.Assign) -> None:
         if (
@@ -957,7 +1024,6 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                         if loc not in scoped:
                             scoped.append(loc)
 
-
     def visit_Compare(self, node: ast.Compare) -> None:
         if isinstance(node.left, ast.Call):
             chain = self._resolve_call_chain(node.left.func)
@@ -981,7 +1047,6 @@ def detect_integrations(
     *,
     exclude_folders: set[str] | None = None,
 ) -> tuple[list[LLMIntegration], AIIntegrationGraph]:
-
     root = Path(path).resolve()
     if exclude_folders is None:
         exclude_folders = {
@@ -1023,9 +1088,7 @@ def detect_integrations(
     return integrations, graph
 
 
-def _collect_python_files(
-    root: Path, exclude_folders: set[str]
-) -> list[Path]:
+def _collect_python_files(root: Path, exclude_folders: set[str]) -> list[Path]:
     files = []
     for py_file in root.rglob("*.py"):
         parts = py_file.relative_to(root).parts
@@ -1050,7 +1113,10 @@ def _build_graph_from_visitor(
                 node_type=NodeType.LLM_CALL,
                 location=integration.location,
                 label=f"{integration.provider} {integration.integration_type}",
-                metadata={"provider": integration.provider, "type": integration.integration_type},
+                metadata={
+                    "provider": integration.provider,
+                    "type": integration.integration_type,
+                },
             )
         )
 

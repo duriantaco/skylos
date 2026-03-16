@@ -200,7 +200,9 @@ def test_build_repo_facts_parses_pytest_and_mkdocs(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_build_graph_context_basic(sample_finding, sample_defs_map, sample_source_cache):
+def test_build_graph_context_basic(
+    sample_finding, sample_defs_map, sample_source_cache
+):
     ctx = _build_graph_context(sample_finding, sample_defs_map, sample_source_cache)
     assert "mymodule.old_helper" in ctx
     assert "NOBODY calls this function" in ctx
@@ -244,8 +246,7 @@ def test_build_graph_context_includes_repo_facts_and_path_references(tmp_path):
     scripts.mkdir()
     hook_file = scripts / "mkdocs_hooks.py"
     hook_file.write_text(
-        "def on_nav(nav, *, config, files, **kwargs):\n"
-        "    return nav\n"
+        "def on_nav(nav, *, config, files, **kwargs):\n    return nav\n"
     )
 
     finding = {
@@ -555,7 +556,10 @@ def test_verify_graph_context_true_positive(sample_finding, sample_defs_map):
     )
 
     result = verify_with_graph_context(
-        agent, sample_finding, sample_defs_map, {sample_finding["file"]: "def old_helper(x):\n    return x * 2\n"}
+        agent,
+        sample_finding,
+        sample_defs_map,
+        {sample_finding["file"]: "def old_helper(x):\n    return x * 2\n"},
     )
     assert result.verdict == Verdict.TRUE_POSITIVE
     assert result.adjusted_confidence > result.original_confidence
@@ -564,12 +568,13 @@ def test_verify_graph_context_true_positive(sample_finding, sample_defs_map):
 def test_verify_graph_context_false_positive(sample_finding, sample_defs_map):
     agent = MagicMock(spec=DeadCodeVerifierAgent)
     agent._call_llm.return_value = json.dumps(
-        {"verdict": "FALSE_POSITIVE", "rationale": "Line 15: getattr(module, 'old_helper')"}
+        {
+            "verdict": "FALSE_POSITIVE",
+            "rationale": "Line 15: getattr(module, 'old_helper')",
+        }
     )
 
-    result = verify_with_graph_context(
-        agent, sample_finding, sample_defs_map, {}
-    )
+    result = verify_with_graph_context(agent, sample_finding, sample_defs_map, {})
     assert result.verdict == Verdict.FALSE_POSITIVE
     assert result.adjusted_confidence < result.original_confidence
 
@@ -611,7 +616,9 @@ def test_verify_graph_context_handles_bad_json(sample_finding, sample_defs_map):
 
 def test_verify_graph_context_strips_markdown_fences(sample_finding, sample_defs_map):
     agent = MagicMock(spec=DeadCodeVerifierAgent)
-    agent._call_llm.return_value = '```json\n{"verdict": "TRUE_POSITIVE", "rationale": "dead"}\n```'
+    agent._call_llm.return_value = (
+        '```json\n{"verdict": "TRUE_POSITIVE", "rationale": "dead"}\n```'
+    )
 
     result = verify_with_graph_context(agent, sample_finding, sample_defs_map, {})
     assert result.verdict == Verdict.TRUE_POSITIVE
@@ -627,9 +634,7 @@ def test_deterministic_suppress_pytest_collected_class(tmp_path):
     )
     test_file = proj / "test_sample.py"
     test_file.write_text(
-        "class TestSample:\n"
-        "    def test_case(self):\n"
-        "        assert True\n"
+        "class TestSample:\n    def test_case(self):\n        assert True\n"
     )
     finding = {
         "name": "TestSample",
@@ -689,7 +694,9 @@ def test_deterministic_suppress_mkdocs_hook(tmp_path):
     scripts = proj / "scripts"
     scripts.mkdir()
     hook_file = scripts / "mkdocs_hooks.py"
-    hook_file.write_text("def on_nav(nav, *, config, files, **kwargs):\n    return nav\n")
+    hook_file.write_text(
+        "def on_nav(nav, *, config, files, **kwargs):\n    return nav\n"
+    )
     finding = {
         "name": "on_nav",
         "full_name": "scripts.mkdocs_hooks.on_nav",
@@ -842,7 +849,9 @@ def test_challenge_survivor_dead(survivor_with_heuristic, sample_defs_map):
         agent,
         survivor_with_heuristic,
         sample_defs_map,
-        {"/tmp/test_project/mymodule.py": "class Handler:\n    def process(self): pass\n"},
+        {
+            "/tmp/test_project/mymodule.py": "class Handler:\n    def process(self): pass\n"
+        },
     )
     assert sv.verdict == Verdict.TRUE_POSITIVE
     assert sv.suggested_confidence > sv.original_confidence
@@ -858,9 +867,7 @@ def test_challenge_survivor_alive(survivor_with_heuristic, sample_defs_map):
         }
     )
 
-    sv = challenge_survivor(
-        agent, survivor_with_heuristic, sample_defs_map, {}
-    )
+    sv = challenge_survivor(agent, survivor_with_heuristic, sample_defs_map, {})
     assert sv.verdict == Verdict.FALSE_POSITIVE
     assert sv.suggested_confidence < sv.original_confidence
 
@@ -875,9 +882,7 @@ def test_challenge_survivor_uncertain(survivor_with_heuristic, sample_defs_map):
         }
     )
 
-    sv = challenge_survivor(
-        agent, survivor_with_heuristic, sample_defs_map, {}
-    )
+    sv = challenge_survivor(agent, survivor_with_heuristic, sample_defs_map, {})
     assert sv.verdict == Verdict.UNCERTAIN
     assert sv.suggested_confidence == sv.original_confidence
 
@@ -886,9 +891,7 @@ def test_challenge_survivor_handles_error(survivor_with_heuristic, sample_defs_m
     agent = MagicMock(spec=DeadCodeVerifierAgent)
     agent._call_llm.side_effect = Exception("timeout")
 
-    sv = challenge_survivor(
-        agent, survivor_with_heuristic, sample_defs_map, {}
-    )
+    sv = challenge_survivor(agent, survivor_with_heuristic, sample_defs_map, {})
     assert sv.verdict == Verdict.UNCERTAIN
 
 
@@ -909,7 +912,11 @@ def test_run_verification_full_pipeline(MockAgent, tmp_path):
             return json.dumps({"entry_points": []})
         if "survivor" in system.lower() or "heuristic" in system.lower():
             return json.dumps(
-                {"is_dead": True, "rationale": "spurious match", "heuristic_assessment": "spurious"}
+                {
+                    "is_dead": True,
+                    "rationale": "spurious match",
+                    "heuristic_assessment": "spurious",
+                }
             )
         return json.dumps({"verdict": "TRUE_POSITIVE", "rationale": "no callers"})
 
@@ -1010,7 +1017,9 @@ def test_run_verification_reopens_weak_llm_false_positive(MockAgent, tmp_path):
     mock_instance = MockAgent.return_value
     mock_instance._call_llm.side_effect = [
         json.dumps({"verdict": "FALSE_POSITIVE", "rationale": "weak dynamic mention"}),
-        json.dumps({"verdict": "TRUE_POSITIVE", "rationale": "alive evidence is speculative"}),
+        json.dumps(
+            {"verdict": "TRUE_POSITIVE", "rationale": "alive evidence is speculative"}
+        ),
     ]
 
     proj = tmp_path / "project"
@@ -1066,7 +1075,10 @@ def test_run_verification_reopens_soft_deterministic_suppression(
 ):
     mock_instance = MockAgent.return_value
     mock_instance._call_llm.return_value = json.dumps(
-        {"verdict": "TRUE_POSITIVE", "rationale": "test mention is not executable usage"}
+        {
+            "verdict": "TRUE_POSITIVE",
+            "rationale": "test mention is not executable usage",
+        }
     )
     mock_deterministic_suppress.return_value = SuppressionDecision(
         code="test_reference",
@@ -1231,9 +1243,7 @@ def test_run_verification_uses_repo_facts_for_pytest_class(MockAgent, tmp_path):
     )
     test_file = proj / "test_mark.py"
     test_file.write_text(
-        "class TestMark:\n"
-        "    def test_it(self):\n"
-        "        assert True\n"
+        "class TestMark:\n    def test_it(self):\n        assert True\n"
     )
 
     findings = [

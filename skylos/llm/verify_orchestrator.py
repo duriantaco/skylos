@@ -28,11 +28,13 @@ VALID_VERIFICATION_MODES = {
     VERIFICATION_MODE_JUDGE_ALL,
 }
 
+
 @dataclass
 class EntryPoint:
     name: str
     source: str
     reason: str
+
 
 @dataclass
 class EdgeResolution:
@@ -40,6 +42,7 @@ class EdgeResolution:
     callee: str
     is_real: bool
     reason: str
+
 
 @dataclass
 class SurvivorVerdict:
@@ -53,11 +56,13 @@ class SurvivorVerdict:
     original_confidence: int
     suggested_confidence: int
 
+
 @dataclass
 class SuppressionDecision:
     code: str
     rationale: str
     evidence: list[str] = field(default_factory=list)
+
 
 @dataclass
 class VerifyStats:
@@ -76,12 +81,14 @@ class VerifyStats:
     llm_calls: int = 0
     elapsed_seconds: float = 0.0
 
+
 @dataclass
 class RepoFacts:
     config_files: dict[str, str] = field(default_factory=dict)
     pytest_class_patterns: list[str] = field(default_factory=lambda: ["Test"])
     pytest_function_patterns: list[str] = field(default_factory=lambda: ["test"])
     mkdocs_hook_files: set[str] = field(default_factory=set)
+
 
 ENTRY_POINT_SYSTEM = """\
 You are a Python project analyst. Given project configuration files, identify ALL \
@@ -115,6 +122,7 @@ known list above. Focus on:
 
 JSON response:\
 """
+
 
 def _gather_config_files(project_root: Path) -> dict[str, str]:
     candidates = [
@@ -163,12 +171,14 @@ def _gather_config_files(project_root: Path) -> dict[str, str]:
 
     return configs
 
+
 def _repo_relative_path(file_path: str, project_root: str | Path) -> str:
     try:
         rel = Path(file_path).resolve().relative_to(Path(project_root).resolve())
         return rel.as_posix()
     except Exception:
         return Path(file_path).as_posix()
+
 
 def _module_candidates(file_path: str, project_root: str | Path) -> list[str]:
     rel = _repo_relative_path(file_path, project_root)
@@ -188,6 +198,7 @@ def _module_candidates(file_path: str, project_root: str | Path) -> list[str]:
         candidates.append(".".join(parts[1:]))
     return list(dict.fromkeys(candidates))
 
+
 def _load_pytest_patterns_from_text(raw_value: Any) -> list[str]:
     if isinstance(raw_value, list):
         return [str(v).strip() for v in raw_value if str(v).strip()]
@@ -199,6 +210,7 @@ def _load_pytest_patterns_from_text(raw_value: Any) -> list[str]:
         ]
         return lines
     return []
+
 
 def _parse_mkdocs_hook_files(configs: dict[str, str]) -> set[str]:
     hook_files: set[str] = set()
@@ -228,6 +240,7 @@ def _parse_mkdocs_hook_files(configs: dict[str, str]) -> set[str]:
                         hook_files.add(hook_path.replace("\\", "/"))
     return hook_files
 
+
 def _build_repo_facts(project_root: Path) -> RepoFacts:
     import configparser
     import tomllib
@@ -240,9 +253,15 @@ def _build_repo_facts(project_root: Path) -> RepoFacts:
         try:
             with pyproject_path.open("rb") as handle:
                 pyproject = tomllib.load(handle)
-            ini_options = pyproject.get("tool", {}).get("pytest", {}).get("ini_options", {})
-            class_patterns = _load_pytest_patterns_from_text(ini_options.get("python_classes"))
-            function_patterns = _load_pytest_patterns_from_text(ini_options.get("python_functions"))
+            ini_options = (
+                pyproject.get("tool", {}).get("pytest", {}).get("ini_options", {})
+            )
+            class_patterns = _load_pytest_patterns_from_text(
+                ini_options.get("python_classes")
+            )
+            function_patterns = _load_pytest_patterns_from_text(
+                ini_options.get("python_functions")
+            )
             if class_patterns:
                 facts.pytest_class_patterns = class_patterns
             if function_patterns:
@@ -279,6 +298,7 @@ def _build_repo_facts(project_root: Path) -> RepoFacts:
     facts.mkdocs_hook_files = _parse_mkdocs_hook_files(configs)
     return facts
 
+
 def _matches_pytest_pattern(name: str, patterns: list[str]) -> bool:
     import fnmatch
 
@@ -288,6 +308,7 @@ def _matches_pytest_pattern(name: str, patterns: list[str]) -> bool:
         if any(ch in pattern for ch in "*?[") and fnmatch.fnmatch(name, pattern):
             return True
     return False
+
 
 def _class_node_for_finding(source: str, finding: dict) -> Any | None:
     import ast
@@ -312,6 +333,7 @@ def _class_node_for_finding(source: str, finding: dict) -> Any | None:
             best_distance = distance
     return best
 
+
 def _base_name(expr: Any) -> str:
     if hasattr(expr, "id"):
         return str(expr.id)
@@ -319,7 +341,10 @@ def _base_name(expr: Any) -> str:
         return str(expr.attr)
     return ""
 
-def _is_collectible_test_class(finding: dict, source: str, repo_facts: RepoFacts) -> bool:
+
+def _is_collectible_test_class(
+    finding: dict, source: str, repo_facts: RepoFacts
+) -> bool:
     import ast
 
     if str(finding.get("type", "")).lower() != "class":
@@ -334,7 +359,9 @@ def _is_collectible_test_class(finding: dict, source: str, repo_facts: RepoFacts
 
     class_name = class_node.name
     base_names = {_base_name(base) for base in class_node.bases}
-    matches_pytest = _matches_pytest_pattern(class_name, repo_facts.pytest_class_patterns)
+    matches_pytest = _matches_pytest_pattern(
+        class_name, repo_facts.pytest_class_patterns
+    )
     matches_unittest = any(name.endswith("TestCase") for name in base_names if name)
     if not matches_pytest and not matches_unittest:
         return False
@@ -343,7 +370,10 @@ def _is_collectible_test_class(finding: dict, source: str, repo_facts: RepoFacts
         if isinstance(stmt, ast.Assign):
             for target in stmt.targets:
                 if isinstance(target, ast.Name) and target.id == "__test__":
-                    if isinstance(stmt.value, ast.Constant) and stmt.value.value is False:
+                    if (
+                        isinstance(stmt.value, ast.Constant)
+                        and stmt.value.value is False
+                    ):
                         return False
 
     method_names = {
@@ -358,6 +388,7 @@ def _is_collectible_test_class(finding: dict, source: str, repo_facts: RepoFacts
         if _matches_pytest_pattern(method_name, repo_facts.pytest_function_patterns):
             return True
     return False
+
 
 def _definition_executes_for_side_effect(finding: dict, source: str) -> bool:
     import re
@@ -378,6 +409,7 @@ def _definition_executes_for_side_effect(finding: dict, source: str) -> bool:
         or re.search(r"with\s+.*assertRaises\s*\(", nearby)
     )
 
+
 def _parameter_owner_name(finding: dict) -> str:
     if str(finding.get("type", "")).lower() != "parameter":
         return ""
@@ -385,6 +417,7 @@ def _parameter_owner_name(finding: dict) -> str:
     if "." not in full_name:
         return ""
     return full_name.rsplit(".", 1)[0]
+
 
 def _function_node_for_finding(source: str, finding: dict) -> Any | None:
     import ast
@@ -420,6 +453,7 @@ def _function_node_for_finding(source: str, finding: dict) -> Any | None:
             best_distance = distance
     return best
 
+
 def _function_body_is_stub(node: Any) -> bool:
     import ast
 
@@ -435,7 +469,9 @@ def _function_body_is_stub(node: Any) -> bool:
     stmt = body[0]
     if isinstance(stmt, ast.Pass):
         return True
-    if isinstance(stmt, ast.Expr) and isinstance(getattr(stmt, "value", None), ast.Constant):
+    if isinstance(stmt, ast.Expr) and isinstance(
+        getattr(stmt, "value", None), ast.Constant
+    ):
         return getattr(stmt.value, "value", None) is Ellipsis
     if isinstance(stmt, ast.Raise):
         exc = getattr(stmt, "exc", None)
@@ -443,6 +479,7 @@ def _function_body_is_stub(node: Any) -> bool:
             exc = exc.func
         return _base_name(exc) == "NotImplementedError"
     return False
+
 
 def _parameter_contract_evidence(
     finding: dict,
@@ -471,10 +508,13 @@ def _parameter_contract_evidence(
         and function_node is not None
         and _function_body_is_stub(function_node)
     ):
-        evidence.append("Owning method is an interface-style stub with matching override signatures")
+        evidence.append(
+            "Owning method is an interface-style stub with matching override signatures"
+        )
         evidence.extend(override_hits[:2])
 
     return evidence
+
 
 def discover_entry_points(
     agent: DeadCodeVerifierAgent,
@@ -524,6 +564,7 @@ def discover_entry_points(
     except (json.JSONDecodeError, Exception) as e:
         logger.warning(f"Entry point discovery failed: {e}")
         return []
+
 
 GRAPH_VERIFY_SYSTEM = """\
 You are verifying if code flagged as "unused" is actually dead or alive.
@@ -616,6 +657,7 @@ IMPORTANT: Respond with ONLY JSON. No explanations, no preamble.
 {"verdict": "TRUE_POSITIVE"|"FALSE_POSITIVE"|"UNCERTAIN", "rationale": "brief explanation"}\
 """
 
+
 def _find_git_root(path: Path) -> Path | None:
     current = path.resolve()
     for _ in range(10):
@@ -626,6 +668,7 @@ def _find_git_root(path: Path) -> Path | None:
             break
         current = parent
     return None
+
 
 def _run_grep(
     pattern: str,
@@ -639,8 +682,15 @@ def _run_grep(
 
     if include_globs is None:
         include_globs = [
-            "*.py", "*.rst", "*.md", "*.yaml", "*.yml",
-            "*.toml", "*.cfg", "*.ini", "*.txt",
+            "*.py",
+            "*.rst",
+            "*.md",
+            "*.yaml",
+            "*.yml",
+            "*.toml",
+            "*.cfg",
+            "*.ini",
+            "*.txt",
         ]
 
     grep_flags = ["-rn"]
@@ -657,9 +707,12 @@ def _run_grep(
         cmd = ["grep", *grep_flags, *includes, pattern, project_root]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         lines = result.stdout.strip().splitlines()
-        return [l for l in lines if "__pycache__" not in l and ".egg-info" not in l][:max_results]
+        return [l for l in lines if "__pycache__" not in l and ".egg-info" not in l][
+            :max_results
+        ]
     except Exception:
         return []
+
 
 def _is_definition_line(grep_line: str, finding: dict) -> bool:
     file_path = finding.get("file", "")
@@ -694,6 +747,7 @@ def _is_definition_line(grep_line: str, finding: dict) -> bool:
 
     return False
 
+
 def _filter_grep_results(
     lines: list[str],
     finding: dict,
@@ -706,6 +760,7 @@ def _filter_grep_results(
         else:
             usages.append(line)
     return definitions, usages
+
 
 def _is_substring_match(grep_line: str, simple_name: str) -> bool:
     import re
@@ -722,6 +777,7 @@ def _is_substring_match(grep_line: str, simple_name: str) -> bool:
         if before_ok and after_ok:
             return False
     return True
+
 
 def _read_context_around_match(grep_line: str, context_lines: int = 12) -> str | None:
     try:
@@ -752,6 +808,7 @@ def _read_context_around_match(grep_line: str, context_lines: int = 12) -> str |
     except Exception:
         return None
 
+
 def _enrich_search_results(
     search_results: dict[str, list[str]],
     max_contexts: int = 8,
@@ -760,12 +817,25 @@ def _enrich_search_results(
     total_contexts = 0
 
     enrich_strategies = [
-        "references", "imports", "conditional_import", "method_calls",
-        "cast_usage", "cast_protocol", "typevar_bound", "string_dispatch",
-        "exported_in_all", "sphinx_directive", "test_references",
-        "qualified_references", "file_path_references", "module_references",
-        "config_references", "compatibility_references", "callback_registrations",
-        "signature_overrides", "public_api_docs",
+        "references",
+        "imports",
+        "conditional_import",
+        "method_calls",
+        "cast_usage",
+        "cast_protocol",
+        "typevar_bound",
+        "string_dispatch",
+        "exported_in_all",
+        "sphinx_directive",
+        "test_references",
+        "qualified_references",
+        "file_path_references",
+        "module_references",
+        "config_references",
+        "compatibility_references",
+        "callback_registrations",
+        "signature_overrides",
+        "public_api_docs",
     ]
 
     for strategy in enrich_strategies:
@@ -789,6 +859,7 @@ def _enrich_search_results(
             break
 
     return enriched
+
 
 def _multi_strategy_search(
     finding: dict,
@@ -832,7 +903,9 @@ def _multi_strategy_search(
         if usages:
             results["references"] = usages
         elif _defs:
-            results["references_definition_only"] = ["(only the definition itself found, no usages)"]
+            results["references_definition_only"] = [
+                "(only the definition itself found, no usages)"
+            ]
 
     if full_name and full_name != simple_name:
         qualified_refs = _run_grep(full_name, project_root, fixed_string=True)
@@ -843,14 +916,18 @@ def _multi_strategy_search(
 
     if kind in ("method", "function"):
         call_pattern = rf"\.{simple_name}\("
-        call_refs = _run_grep(call_pattern, project_root, use_regex=True, include_globs=["*.py"])
+        call_refs = _run_grep(
+            call_pattern, project_root, use_regex=True, include_globs=["*.py"]
+        )
         if call_refs:
             _defs, usages = _filter_grep_results(call_refs, finding)
             if usages:
                 results["method_calls"] = usages
 
     import_pattern = rf"import.*\b{simple_name}\b"
-    import_refs = _run_grep(import_pattern, project_root, use_regex=True, include_globs=["*.py"])
+    import_refs = _run_grep(
+        import_pattern, project_root, use_regex=True, include_globs=["*.py"]
+    )
     if import_refs:
         _defs, usages = _filter_grep_results(import_refs, finding)
         if usages:
@@ -865,6 +942,7 @@ def _multi_strategy_search(
             results["imports"] = usages
 
     import re as _re
+
     dispatch_patterns = [
         rf'(?:getattr|setattr|hasattr|delattr)\s*\([^,]+,\s*["\x27]{_re.escape(simple_name)}["\x27]',
         rf'\[["\x27]{_re.escape(simple_name)}["\x27]\]',
@@ -874,28 +952,39 @@ def _multi_strategy_search(
     for dp in dispatch_patterns:
         dp_refs = _run_grep(dp, project_root, use_regex=True, include_globs=["*.py"])
         if dp_refs:
-            dp_refs = [r for r in dp_refs if not any(
-                pat in r for pat in ["TypeVar(", "TypeAlias", "Literal["]
-            )]
+            dp_refs = [
+                r
+                for r in dp_refs
+                if not any(pat in r for pat in ["TypeVar(", "TypeAlias", "Literal["])
+            ]
             _defs, usages = _filter_grep_results(dp_refs, finding)
             if usages:
                 results["string_dispatch"] = usages
                 break
 
-    all_refs = _run_grep(rf'__all__.*\b{simple_name}\b', project_root, use_regex=True, include_globs=["*.py"])
+    all_refs = _run_grep(
+        rf"__all__.*\b{simple_name}\b",
+        project_root,
+        use_regex=True,
+        include_globs=["*.py"],
+    )
     if all_refs:
         results["exported_in_all"] = all_refs
 
     if kind in ("import", "variable", "class"):
         cast_pattern = rf'cast\(\s*["\x27]{simple_name}["\x27]'
-        cast_refs = _run_grep(cast_pattern, project_root, use_regex=True, include_globs=["*.py"])
+        cast_refs = _run_grep(
+            cast_pattern, project_root, use_regex=True, include_globs=["*.py"]
+        )
         if cast_refs:
             _defs, usages = _filter_grep_results(cast_refs, finding)
             if usages:
                 results["cast_usage"] = usages
 
         bound_pattern = rf'bound\s*=\s*["\x27]{simple_name}["\x27]'
-        bound_refs = _run_grep(bound_pattern, project_root, use_regex=True, include_globs=["*.py"])
+        bound_refs = _run_grep(
+            bound_pattern, project_root, use_regex=True, include_globs=["*.py"]
+        )
         if bound_refs:
             _defs, usages = _filter_grep_results(bound_refs, finding)
             if usages:
@@ -906,8 +995,10 @@ def _multi_strategy_search(
         if len(method_parts) >= 2:
             parent_class = method_parts[-2]
             if len(parent_class) > 2:
-                cast_pattern = rf'cast\([^,]+,\s*[^)]*\b{parent_class}\b'
-                cast_refs = _run_grep(cast_pattern, project_root, use_regex=True, include_globs=["*.py"])
+                cast_pattern = rf"cast\([^,]+,\s*[^)]*\b{parent_class}\b"
+                cast_refs = _run_grep(
+                    cast_pattern, project_root, use_regex=True, include_globs=["*.py"]
+                )
                 if cast_refs:
                     _defs, usages = _filter_grep_results(cast_refs, finding)
                     if usages:
@@ -920,17 +1011,23 @@ def _multi_strategy_search(
             if len(class_name) > 2:
                 class_refs = _run_grep(
                     rf"\b{class_name}\b",
-                    project_root, use_regex=True, include_globs=["*.py"], max_results=15,
+                    project_root,
+                    use_regex=True,
+                    include_globs=["*.py"],
+                    max_results=15,
                 )
                 if class_refs:
                     import re as _re2
+
                     usage_lines = []
                     for cr in class_refs:
                         if ":" in cr:
                             line_text = cr.split(":", 2)[-1]
                         else:
                             line_text = cr
-                        if _re2.search(rf"^\s*class\s+{_re2.escape(class_name)}", line_text):
+                        if _re2.search(
+                            rf"^\s*class\s+{_re2.escape(class_name)}", line_text
+                        ):
                             continue
                         usage_lines.append(cr)
                     if usage_lines:
@@ -938,7 +1035,8 @@ def _multi_strategy_search(
 
     test_refs = _run_grep(
         rf"\b{simple_name}\b",
-        project_root, use_regex=True,
+        project_root,
+        use_regex=True,
         include_globs=["test_*.py", "*_test.py", "conftest.py"],
     )
     if test_refs:
@@ -967,7 +1065,9 @@ def _multi_strategy_search(
                 results["config_references"] = usages
 
     for module_name in module_names:
-        module_refs = _run_grep(module_name, project_root, fixed_string=True, max_results=15)
+        module_refs = _run_grep(
+            module_name, project_root, fixed_string=True, max_results=15
+        )
         if module_refs:
             _defs, usages = _filter_grep_results(module_refs, finding)
             if usages:
@@ -977,7 +1077,9 @@ def _multi_strategy_search(
     if kind == "parameter" and owner_simple_name:
         import re as _re3
 
-        callback_pattern = rf"callback\s*=\s*(?:[\w\.]+\.)*{_re3.escape(owner_simple_name)}\b"
+        callback_pattern = (
+            rf"callback\s*=\s*(?:[\w\.]+\.)*{_re3.escape(owner_simple_name)}\b"
+        )
         callback_refs = _run_grep(
             callback_pattern,
             project_root,
@@ -1021,7 +1123,8 @@ def _multi_strategy_search(
         doc_refs = [r for r in doc_refs if not _is_substring_match(r, simple_name)]
         if doc_refs:
             compatibility_refs = [
-                r for r in doc_refs
+                r
+                for r in doc_refs
                 if any(
                     keyword in r.lower()
                     for keyword in (
@@ -1039,18 +1142,38 @@ def _multi_strategy_search(
             ]
             if compatibility_refs:
                 results["compatibility_references"] = compatibility_refs
-            sphinx_refs = [r for r in doc_refs if any(
-                pat in r for pat in [":func:", ":meth:", ":class:", ":attr:",
-                                     "autofunction", "autoclass", "automethod",
-                                     "automodule", ".. function::", ".. method::"]
-            )]
+            sphinx_refs = [
+                r
+                for r in doc_refs
+                if any(
+                    pat in r
+                    for pat in [
+                        ":func:",
+                        ":meth:",
+                        ":class:",
+                        ":attr:",
+                        "autofunction",
+                        "autoclass",
+                        "automethod",
+                        "automodule",
+                        ".. function::",
+                        ".. method::",
+                    ]
+                )
+            ]
             if sphinx_refs:
                 results["sphinx_directive"] = sphinx_refs
             else:
                 results["doc_references"] = doc_refs
 
             if not simple_name.startswith("_"):
-                changelog_patterns = ["changelog", "changes", "history", "news", "release"]
+                changelog_patterns = [
+                    "changelog",
+                    "changes",
+                    "history",
+                    "news",
+                    "release",
+                ]
                 api_refs = []
                 for ref in doc_refs:
                     ref_path = ref.split(":", 1)[0].replace("\\", "/").lower()
@@ -1070,20 +1193,24 @@ def _multi_strategy_search(
 
     return results
 
+
 _pip_install_cache: dict[str, str | None] = {}
 _pip_temp_dirs: list = []
+
 
 def _pip_install_to_temp(pip_name: str) -> str | None:
     if pip_name in _pip_install_cache:
         return _pip_install_cache[pip_name]
     import subprocess as _sp
     import tempfile
+
     td = tempfile.mkdtemp(prefix=f"skylos_dep_{pip_name}_")
     _pip_temp_dirs.append(td)
     try:
         result = _sp.run(
             ["pip3", "install", "--target", td, pip_name],
-            capture_output=True, timeout=60,
+            capture_output=True,
+            timeout=60,
         )
         if result.returncode == 0:
             _pip_install_cache[pip_name] = td
@@ -1092,6 +1219,7 @@ def _pip_install_to_temp(pip_name: str) -> str | None:
         pass
     _pip_install_cache[pip_name] = None
     return None
+
 
 def _find_parent_class_info(
     finding: dict,
@@ -1134,14 +1262,19 @@ def _find_parent_class_info(
                 continue
             parent_method_refs = _run_grep(
                 rf"class\s+{re.escape(base_name)}",
-                project_root, use_regex=True, include_globs=["*.py"], max_results=3,
+                project_root,
+                use_regex=True,
+                include_globs=["*.py"],
+                max_results=3,
             )
             if parent_method_refs:
                 for ref in parent_method_refs:
                     parent_file = ref.split(":")[0]
                     method_in_parent = _run_grep(
                         rf"def\s+{re.escape(simple_name)}\s*\(",
-                        parent_file, use_regex=True, max_results=2,
+                        parent_file,
+                        use_regex=True,
+                        max_results=2,
                     )
                     if method_in_parent:
                         info += f"\n  CONFIRMED: Parent `{base_name}` defines `{simple_name}`:"
@@ -1154,13 +1287,15 @@ def _find_parent_class_info(
 
         if not found_in_parent:
             import subprocess as _sp
+
             for base in bases:
                 base_name = base.split(".")[-1].strip()
                 if base_name in ("object", "ABC", "Protocol"):
                     continue
                 import_match = re.search(
                     rf"from\s+([\w.]+)\s+import\s+\([^)]*\b{re.escape(base_name)}\b[^)]*\)",
-                    source, re.DOTALL,
+                    source,
+                    re.DOTALL,
                 ) or re.search(
                     rf"from\s+([\w.]+)\s+import\s+[^(\n]*\b{re.escape(base_name)}\b",
                     source,
@@ -1190,11 +1325,16 @@ def _find_parent_class_info(
                                 break
 
                         result = _sp.run(
-                            [python_cmd, "-c",
-                             f"import {module_path}; import inspect; "
-                             f"cls = getattr({module_path}, '{base_name}', None); "
-                             f"print('HAS_METHOD' if cls and hasattr(cls, '{simple_name}') else 'NO_METHOD')"],
-                            capture_output=True, text=True, timeout=10,
+                            [
+                                python_cmd,
+                                "-c",
+                                f"import {module_path}; import inspect; "
+                                f"cls = getattr({module_path}, '{base_name}', None); "
+                                f"print('HAS_METHOD' if cls and hasattr(cls, '{simple_name}') else 'NO_METHOD')",
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
                             cwd=project_root,
                         )
                         if "HAS_METHOD" in result.stdout:
@@ -1213,7 +1353,8 @@ def _find_parent_class_info(
                         continue
                     import_match = re.search(
                         rf"from\s+([\w.]+)\s+import\s+\([^)]*\b{re.escape(base_name)}\b[^)]*\)",
-                        source, re.DOTALL,
+                        source,
+                        re.DOTALL,
                     ) or re.search(
                         rf"from\s+([\w.]+)\s+import\s+[^(\n]*\b{re.escape(base_name)}\b",
                         source,
@@ -1227,9 +1368,12 @@ def _find_parent_class_info(
                     if _pyproject.exists():
                         try:
                             import tomllib
+
                             with open(_pyproject, "rb") as _f:
                                 _toml = tomllib.load(_f)
-                            _project_deps = _toml.get("project", {}).get("dependencies", [])
+                            _project_deps = _toml.get("project", {}).get(
+                                "dependencies", []
+                            )
                         except Exception:
                             pass
                     if not _project_deps:
@@ -1237,7 +1381,8 @@ def _find_parent_class_info(
                         if _req_file.exists():
                             try:
                                 _project_deps = [
-                                    line.strip() for line in _req_file.read_text().splitlines()
+                                    line.strip()
+                                    for line in _req_file.read_text().splitlines()
                                     if line.strip() and not line.startswith("#")
                                 ]
                             except Exception:
@@ -1249,7 +1394,14 @@ def _find_parent_class_info(
                         top_module = module_path.split(".")[0]
                         pip_name = top_module.replace("_", "-")
                         dep_match = any(
-                            pip_name.lower() in dep.lower().split("[")[0].split(">")[0].split("<")[0].split("=")[0].split("!")[0].strip()
+                            pip_name.lower()
+                            in dep.lower()
+                            .split("[")[0]
+                            .split(">")[0]
+                            .split("<")[0]
+                            .split("=")[0]
+                            .split("!")[0]
+                            .strip()
                             for dep in _project_deps
                         )
                         if not dep_match:
@@ -1259,12 +1411,17 @@ def _find_parent_class_info(
                             if not _td:
                                 continue
                             _check = _sp.run(
-                                ["python3", "-c",
-                                 f"import sys; sys.path.insert(0, '{_td}'); "
-                                 f"import {module_path}; "
-                                 f"cls = getattr({module_path}, '{base_name}', None); "
-                                 f"print('HAS_METHOD' if cls and hasattr(cls, '{simple_name}') else 'NO_METHOD')"],
-                                capture_output=True, text=True, timeout=10,
+                                [
+                                    "python3",
+                                    "-c",
+                                    f"import sys; sys.path.insert(0, '{_td}'); "
+                                    f"import {module_path}; "
+                                    f"cls = getattr({module_path}, '{base_name}', None); "
+                                    f"print('HAS_METHOD' if cls and hasattr(cls, '{simple_name}') else 'NO_METHOD')",
+                                ],
+                                capture_output=True,
+                                text=True,
+                                timeout=10,
                             )
                             if "HAS_METHOD" in _check.stdout:
                                 info += f"\n  CONFIRMED (pip install): Parent `{module_path}.{base_name}` defines `{simple_name}`"
@@ -1275,6 +1432,7 @@ def _find_parent_class_info(
 
             if not found_in_parent:
                 import sys
+
                 for site_dir in sys.path:
                     if "site-packages" not in site_dir:
                         continue
@@ -1284,14 +1442,19 @@ def _find_parent_class_info(
                             continue
                         parent_method_refs = _run_grep(
                             rf"def\s+{re.escape(simple_name)}\s*\(",
-                            site_dir, use_regex=True, include_globs=["*.py"], max_results=3,
+                            site_dir,
+                            use_regex=True,
+                            include_globs=["*.py"],
+                            max_results=3,
                         )
                         if parent_method_refs:
                             for pmr in parent_method_refs:
                                 parent_file = pmr.split(":")[0]
                                 class_in_file = _run_grep(
                                     rf"class\s+{re.escape(base_name)}",
-                                    parent_file, use_regex=True, max_results=1,
+                                    parent_file,
+                                    use_regex=True,
+                                    max_results=1,
                                 )
                                 if class_in_file:
                                     info += f"\n  CONFIRMED (external library): Parent `{base_name}` defines `{simple_name}`:"
@@ -1310,12 +1473,22 @@ def _find_parent_class_info(
             if source:
                 source_lines = source.splitlines()
                 method_start = max(0, finding.get("line", 1) - 1)
-                check_range = source_lines[method_start:min(method_start + 5, len(source_lines))]
+                check_range = source_lines[
+                    method_start : min(method_start + 5, len(source_lines))
+                ]
                 hint_text = " ".join(check_range).lower()
-                if any(hint in hint_text for hint in [
-                    "part of the abc", "abc override", "abstract", "pragma: no cover",
-                    "required by", "interface", "protocol",
-                ]):
+                if any(
+                    hint in hint_text
+                    for hint in [
+                        "part of the abc",
+                        "abc override",
+                        "abstract",
+                        "pragma: no cover",
+                        "required by",
+                        "interface",
+                        "protocol",
+                    ]
+                ):
                     info += f"\n  HINT: Code comments/pragmas suggest this is an ABC/interface override."
                     info += f"\n  Method `{simple_name}` is likely a required override — treat as NOT dead code."
                 else:
@@ -1326,6 +1499,7 @@ def _find_parent_class_info(
                 info += f"\n  Check if the parent framework/library defines this method externally."
 
     return info
+
 
 def _find_string_dispatch(
     simple_name: str,
@@ -1343,10 +1517,17 @@ def _find_string_dispatch(
     for pattern in patterns:
         try:
             cmd = [
-                "grep", "-rn", "--include=*.py", pattern, project_root,
+                "grep",
+                "-rn",
+                "--include=*.py",
+                pattern,
+                project_root,
             ]
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=10,
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             for line in result.stdout.strip().splitlines():
                 if "__pycache__" not in line and line not in results:
@@ -1355,6 +1536,7 @@ def _find_string_dispatch(
             pass
 
     return results[:max_results]
+
 
 def _build_graph_context(
     finding: dict,
@@ -1401,7 +1583,9 @@ def _build_graph_context(
         collectible_test_class = False
     definition_side_effect = _definition_executes_for_side_effect(finding, source)
     owner_full_name = _parameter_owner_name(finding)
-    parameter_contract_evidence = _parameter_contract_evidence(finding, source, search_results)
+    parameter_contract_evidence = _parameter_contract_evidence(
+        finding, source, search_results
+    )
     compatibility_evidence = search_results.get("compatibility_references", [])
     discovered_entry_point = finding.get("_judge_discovered_entry_point")
     prefilter_reason = finding.get("_judge_prefilter_reason")
@@ -1424,9 +1608,13 @@ def _build_graph_context(
     if why_unused:
         parts.append(f"- Why flagged: {', '.join(why_unused)}")
     if why_confidence_reduced:
-        parts.append(f"- Confidence reduced because: {', '.join(why_confidence_reduced)}")
+        parts.append(
+            f"- Confidence reduced because: {', '.join(why_confidence_reduced)}"
+        )
     if heuristic_refs:
-        parts.append(f"- Heuristic refs (unverified attribute matches): {heuristic_refs}")
+        parts.append(
+            f"- Heuristic refs (unverified attribute matches): {heuristic_refs}"
+        )
     parts.append("")
 
     parts.append("## Structured Evidence")
@@ -1448,14 +1636,26 @@ def _build_graph_context(
     )
     if _is_test_context(file_path):
         parts.append(f"- Pytest class patterns: {repo_facts.pytest_class_patterns}")
-        parts.append(f"- Pytest function patterns: {repo_facts.pytest_function_patterns}")
-    parts.append(f"- Collectible pytest test class: {'yes' if collectible_test_class else 'no'}")
-    parts.append(f"- Definition side effect: {'yes' if definition_side_effect else 'no'}")
-    parts.append(f"- Compatibility retention notes: {'yes' if compatibility_evidence else 'no'}")
+        parts.append(
+            f"- Pytest function patterns: {repo_facts.pytest_function_patterns}"
+        )
+    parts.append(
+        f"- Collectible pytest test class: {'yes' if collectible_test_class else 'no'}"
+    )
+    parts.append(
+        f"- Definition side effect: {'yes' if definition_side_effect else 'no'}"
+    )
+    parts.append(
+        f"- Compatibility retention notes: {'yes' if compatibility_evidence else 'no'}"
+    )
     if parameter_contract_evidence:
-        parts.append(f"- Parameter contract evidence: {parameter_contract_evidence[:3]}")
+        parts.append(
+            f"- Parameter contract evidence: {parameter_contract_evidence[:3]}"
+        )
     if prefilter_reason:
-        parts.append(f"- Prefilter fact: {prefilter_reason} ({prefilter_rationale or 'no rationale'})")
+        parts.append(
+            f"- Prefilter fact: {prefilter_reason} ({prefilter_rationale or 'no rationale'})"
+        )
         if prefilter_evidence:
             parts.append(f"- Prefilter evidence: {prefilter_evidence[:3]}")
     if guarded_import:
@@ -1499,7 +1699,9 @@ def _build_graph_context(
                 caller_file = caller_info.get("file", "")
                 caller_line = caller_info.get("line", 0)
                 caller_type = caller_info.get("type", "?")
-                parts.append(f"- Type: {caller_type}, File: `{caller_file}:{caller_line}`")
+                parts.append(
+                    f"- Type: {caller_type}, File: `{caller_file}:{caller_line}`"
+                )
 
                 caller_source = source_cache.get(caller_file, "")
                 if caller_source:
@@ -1520,11 +1722,15 @@ def _build_graph_context(
             parts.append(f"  - `{callee}`")
         parts.append("")
 
-    parent_info = _find_parent_class_info(finding, source_cache, project_root=project_root)
+    parent_info = _find_parent_class_info(
+        finding, source_cache, project_root=project_root
+    )
     if parent_info:
         parts.append("## Inheritance Context")
         parts.append(parent_info)
-        parts.append("NOTE: If this method overrides a parent/ABC method, it is NOT dead code.")
+        parts.append(
+            "NOTE: If this method overrides a parent/ABC method, it is NOT dead code."
+        )
         parts.append("")
 
     simple_name = finding.get("simple_name", finding.get("name", ""))
@@ -1532,20 +1738,32 @@ def _build_graph_context(
         for caller in called_by[:5]:
             caller_simple = caller.split(".")[-1]
             if caller_simple and len(caller_simple) > 2:
-                caller_dispatch = _find_string_dispatch(caller_simple, project_root, max_results=3)
+                caller_dispatch = _find_string_dispatch(
+                    caller_simple, project_root, max_results=3
+                )
                 if caller_dispatch:
-                    parts.append(f"## NOTE: Caller `{caller_simple}` is ALIVE via string dispatch:")
+                    parts.append(
+                        f"## NOTE: Caller `{caller_simple}` is ALIVE via string dispatch:"
+                    )
                     for sd in caller_dispatch:
                         parts.append(f"  {sd}")
-                    parts.append("Since a caller is alive via string dispatch, THIS function is also NOT dead code.")
+                    parts.append(
+                        "Since a caller is alive via string dispatch, THIS function is also NOT dead code."
+                    )
                     parts.append("")
 
     if project_root and simple_name and len(simple_name) > 1:
         if search_results:
             parts.append("## Search Results Across Entire Project")
-            parts.append("(Searched source, tests, docs, configs. Definition-only matches filtered out.)")
-            parts.append("Read each match carefully. Decide if it represents ACTUAL usage of this symbol,")
-            parts.append("or just a coincidental mention (kwarg value, comment, docstring, similar name).")
+            parts.append(
+                "(Searched source, tests, docs, configs. Definition-only matches filtered out.)"
+            )
+            parts.append(
+                "Read each match carefully. Decide if it represents ACTUAL usage of this symbol,"
+            )
+            parts.append(
+                "or just a coincidental mention (kwarg value, comment, docstring, similar name)."
+            )
             parts.append("")
 
             strategy_labels = {
@@ -1583,7 +1801,9 @@ def _build_graph_context(
             enriched = _enrich_search_results(search_results, max_contexts=8)
             if enriched:
                 parts.append("## File Context Around Matches")
-                parts.append("(Full source around each match — read to understand if it's a real usage)")
+                parts.append(
+                    "(Full source around each match — read to understand if it's a real usage)"
+                )
                 parts.append("")
                 for strategy, context_text in enriched.items():
                     label = strategy_labels.get(strategy, strategy)
@@ -1591,16 +1811,26 @@ def _build_graph_context(
                     parts.append(context_text)
                     parts.append("")
 
-            if "references_definition_only" in search_results and len(search_results) == 1:
-                parts.append("NOTE: Only the definition itself was found. No usages anywhere in the project.")
+            if (
+                "references_definition_only" in search_results
+                and len(search_results) == 1
+            ):
+                parts.append(
+                    "NOTE: Only the definition itself was found. No usages anywhere in the project."
+                )
         else:
             parts.append("## Multi-Strategy Search Results")
-            parts.append(f"  ZERO references to `{simple_name}` found anywhere in project.")
-            parts.append("  Searched: source code, tests, docs, configs, imports, string dispatch,")
+            parts.append(
+                f"  ZERO references to `{simple_name}` found anywhere in project."
+            )
+            parts.append(
+                "  Searched: source code, tests, docs, configs, imports, string dispatch,"
+            )
             parts.append("  __all__ exports, cast() usage, TypeVar bounds.")
             parts.append("")
 
     return "\n".join(parts)
+
 
 def verify_with_graph_context(
     agent: DeadCodeVerifierAgent,
@@ -1665,6 +1895,7 @@ def verify_with_graph_context(
         adjusted_confidence=adjusted,
     )
 
+
 def _should_audit_suppression(finding: dict) -> bool:
     if finding.get("_llm_verdict") != Verdict.FALSE_POSITIVE.value:
         return False
@@ -1679,6 +1910,7 @@ def _should_audit_suppression(finding: dict) -> bool:
 
     return True
 
+
 def _record_prefilter_fact(
     finding: dict,
     *,
@@ -1690,6 +1922,7 @@ def _record_prefilter_fact(
     finding["_judge_prefilter_rationale"] = rationale
     if evidence:
         finding["_judge_prefilter_evidence"] = list(evidence)
+
 
 def audit_suppressed_finding(
     agent: DeadCodeVerifierAgent,
@@ -1766,6 +1999,7 @@ def audit_suppressed_finding(
         original_confidence=raw_conf,
         adjusted_confidence=adjusted,
     )
+
 
 BATCH_VERIFY_SYSTEM = """\
 You are verifying if multiple code symbols flagged as "unused" are actually dead or alive.
@@ -1909,7 +2143,17 @@ _SOFT_SUPPRESSION_CODES = {
     "test_reference",
 }
 
-_NON_PACKAGE_DIRS = {"tests", "test", "docs", "doc", "scripts", "examples", "benchmarks", "bench", "tools"}
+_NON_PACKAGE_DIRS = {
+    "tests",
+    "test",
+    "docs",
+    "doc",
+    "scripts",
+    "examples",
+    "benchmarks",
+    "bench",
+    "tools",
+}
 
 
 def _is_public_library_symbol(finding: dict, project_root: str) -> bool:
@@ -1955,6 +2199,7 @@ def _is_public_library_symbol(finding: dict, project_root: str) -> bool:
 def _normalize_names(values: list[str] | None) -> list[str]:
     return [str(v).strip().lower() for v in (values or []) if str(v).strip()]
 
+
 def _is_test_context(file_path: str) -> bool:
     lower = (file_path or "").replace("\\", "/").lower()
     parts = [p for p in lower.split("/") if p]
@@ -1968,6 +2213,7 @@ def _is_test_context(file_path: str) -> bool:
         or base.endswith("_test.py")
         or "tests" in parts
     )
+
 
 def _conditional_import_reason(finding: dict, source: str) -> str | None:
     if finding.get("type") != "import" or not source:
@@ -1991,8 +2237,11 @@ def _conditional_import_reason(finding: dict, source: str) -> str | None:
         or "except modulenotfounderror" in nearby
         or "except exception" in nearby
     ):
-        return "Import is guarded by try/except fallback and may be loaded conditionally"
+        return (
+            "Import is guarded by try/except fallback and may be loaded conditionally"
+        )
     return None
+
 
 def _get_cached_search_results(
     finding: dict,
@@ -2010,6 +2259,7 @@ def _get_cached_search_results(
     finding["_search_results"] = results
     return results
 
+
 def _is_ambiguous_for_batching(finding: dict) -> bool:
     simple_name = str(finding.get("simple_name", finding.get("name", ""))).strip()
     kind = str(finding.get("type", "")).strip().lower()
@@ -2020,7 +2270,12 @@ def _is_ambiguous_for_batching(finding: dict) -> bool:
 
     if kind in {"method", "class", "import", "variable", "parameter"}:
         return True
-    if finding.get("heuristic_refs") or decorators or framework_signals or dynamic_signals:
+    if (
+        finding.get("heuristic_refs")
+        or decorators
+        or framework_signals
+        or dynamic_signals
+    ):
         return True
     if _is_test_context(finding.get("file", "")):
         return True
@@ -2031,6 +2286,7 @@ def _is_ambiguous_for_batching(finding: dict) -> bool:
     if len(simple_name) <= 4 or simple_name.lower() in _AMBIGUOUS_SYMBOL_NAMES:
         return True
     return False
+
 
 def _deterministic_suppress(
     finding: dict,
@@ -2194,9 +2450,22 @@ def _deterministic_suppress(
 
     if kind == "method":
         io_protocol_methods = {
-            "read", "readline", "readlines", "write", "writelines",
-            "seek", "tell", "truncate", "close", "flush", "fileno",
-            "isatty", "readable", "writable", "seekable", "readinto",
+            "read",
+            "readline",
+            "readlines",
+            "write",
+            "writelines",
+            "seek",
+            "tell",
+            "truncate",
+            "close",
+            "flush",
+            "fileno",
+            "isatty",
+            "readable",
+            "writable",
+            "seekable",
+            "readinto",
         }
         if simple_name in io_protocol_methods:
             parts = full_name.split(".")
@@ -2233,7 +2502,9 @@ def _deterministic_suppress(
             evidence=search_results["class_usage"][:3],
         )
 
-    if search_results.get("public_api_docs") and _is_public_library_symbol(finding, project_root):
+    if search_results.get("public_api_docs") and _is_public_library_symbol(
+        finding, project_root
+    ):
         if kind in ("function", "class", "variable", "import"):
             return SuppressionDecision(
                 code="documented_public_api",
@@ -2248,6 +2519,7 @@ def _deterministic_suppress(
             )
 
     return None
+
 
 def _batch_verify_findings(
     agent: DeadCodeVerifierAgent,
@@ -2271,7 +2543,9 @@ def _batch_verify_findings(
             f"### Symbol {i + 1}: `{f.get('full_name', f.get('name'))}`\n{ctx}"
             for i, (f, ctx) in enumerate(zip(batch, batch_contexts))
         )
-        user_prompt = f"{combined}\n\nVerify all {len(batch)} symbols above. JSON array response:"
+        user_prompt = (
+            f"{combined}\n\nVerify all {len(batch)} symbols above. JSON array response:"
+        )
 
         verdicts = _parse_batch_response(
             agent, BATCH_VERIFY_SYSTEM, user_prompt, len(batch)
@@ -2283,13 +2557,15 @@ def _batch_verify_findings(
             rationale = v_data.get("rationale", "")
             adjusted = apply_verdict(finding, verdict)
 
-            results.append(VerificationResult(
-                finding=finding,
-                verdict=verdict,
-                rationale=rationale,
-                original_confidence=raw_conf,
-                adjusted_confidence=adjusted,
-            ))
+            results.append(
+                VerificationResult(
+                    finding=finding,
+                    verdict=verdict,
+                    rationale=rationale,
+                    original_confidence=raw_conf,
+                    adjusted_confidence=adjusted,
+                )
+            )
 
         batch = []
         batch_contexts = []
@@ -2300,13 +2576,15 @@ def _batch_verify_findings(
         refs = _parse_int(finding.get("references", 0))
 
         if refs > 0:
-            results.append(VerificationResult(
-                finding=finding,
-                verdict=Verdict.UNCERTAIN,
-                rationale=f"Has {refs} references; skipped",
-                original_confidence=raw_conf,
-                adjusted_confidence=raw_conf,
-            ))
+            results.append(
+                VerificationResult(
+                    finding=finding,
+                    verdict=Verdict.UNCERTAIN,
+                    rationale=f"Has {refs} references; skipped",
+                    original_confidence=raw_conf,
+                    adjusted_confidence=raw_conf,
+                )
+            )
             continue
 
         if _is_ambiguous_for_batching(finding):
@@ -2332,7 +2610,9 @@ def _batch_verify_findings(
         )
         ctx_len = len(ctx)
 
-        if batch and (batch_size + ctx_len > MAX_BATCH_CONTEXT_CHARS or len(batch) >= 5):
+        if batch and (
+            batch_size + ctx_len > MAX_BATCH_CONTEXT_CHARS or len(batch) >= 5
+        ):
             _flush_batch()
 
         batch.append(finding)
@@ -2341,6 +2621,7 @@ def _batch_verify_findings(
 
     _flush_batch()
     return results
+
 
 def _batch_challenge_survivors(
     agent: DeadCodeVerifierAgent,
@@ -2389,17 +2670,19 @@ def _batch_challenge_survivors(
                 verdict = Verdict.UNCERTAIN
                 suggested = confidence
 
-            results.append(SurvivorVerdict(
-                name=name,
-                full_name=full_name,
-                file=surv.get("file", ""),
-                line=surv.get("line", 0),
-                heuristic_refs=surv.get("heuristic_refs", {}),
-                verdict=verdict,
-                rationale=rationale,
-                original_confidence=confidence,
-                suggested_confidence=suggested,
-            ))
+            results.append(
+                SurvivorVerdict(
+                    name=name,
+                    full_name=full_name,
+                    file=surv.get("file", ""),
+                    line=surv.get("line", 0),
+                    heuristic_refs=surv.get("heuristic_refs", {}),
+                    verdict=verdict,
+                    rationale=rationale,
+                    original_confidence=confidence,
+                    suggested_confidence=suggested,
+                )
+            )
 
         batch = []
         batch_contexts = []
@@ -2421,7 +2704,9 @@ def _batch_challenge_survivors(
         else:
             snippet = "(source not available)"
 
-        match_sites = _find_heuristic_match_sites(full_name, simple_name, source_cache, defs_map)
+        match_sites = _find_heuristic_match_sites(
+            full_name, simple_name, source_cache, defs_map
+        )
 
         ctx = (
             f"- File: `{file_path}:{line}`\n"
@@ -2432,7 +2717,9 @@ def _batch_challenge_survivors(
         )
         ctx_len = len(ctx)
 
-        if batch and (batch_size + ctx_len > MAX_BATCH_CONTEXT_CHARS or len(batch) >= 5):
+        if batch and (
+            batch_size + ctx_len > MAX_BATCH_CONTEXT_CHARS or len(batch) >= 5
+        ):
             _flush_batch()
 
         batch.append(surv)
@@ -2442,18 +2729,33 @@ def _batch_challenge_survivors(
     _flush_batch()
     return results
 
+
 def _is_error_response(response: str) -> bool:
     if response:
         lower = response.lower()
     else:
         lower = ""
-    return any(marker in lower for marker in [
-        "error:", "ratelimiterror", "rate_limit_error", "ratelimit",
-        "unauthorized", "quota", "exceeded", "apiconnectionerror",
-        "anthropicexception", "openaiexception",
-        "no api key found", "set openai_api_key", "set anthropic_api_key",
-        "timed out", "timeout",
-    ])
+    return any(
+        marker in lower
+        for marker in [
+            "error:",
+            "ratelimiterror",
+            "rate_limit_error",
+            "ratelimit",
+            "unauthorized",
+            "quota",
+            "exceeded",
+            "apiconnectionerror",
+            "anthropicexception",
+            "openaiexception",
+            "no api key found",
+            "set openai_api_key",
+            "set anthropic_api_key",
+            "timed out",
+            "timeout",
+        ]
+    )
+
 
 def _call_llm_with_retry(
     agent: DeadCodeVerifierAgent,
@@ -2465,14 +2767,17 @@ def _call_llm_with_retry(
         if not _is_error_response(response):
             return response
         if "rate_limit" in response.lower() or "ratelimit" in response.lower():
-            wait = RETRY_BACKOFF_BASE * (2 ** attempt)
-            logger.info(f"Rate limited, retrying in {wait}s (attempt {attempt + 1}/{MAX_LLM_RETRIES})")
+            wait = RETRY_BACKOFF_BASE * (2**attempt)
+            logger.info(
+                f"Rate limited, retrying in {wait}s (attempt {attempt + 1}/{MAX_LLM_RETRIES})"
+            )
             time.sleep(wait)
         else:
             logger.warning(f"LLM returned error: {response[:200]}")
             return ""
     logger.warning(f"LLM rate limited after {MAX_LLM_RETRIES} retries")
     return ""
+
 
 def _parse_batch_response(
     agent: DeadCodeVerifierAgent,
@@ -2483,7 +2788,9 @@ def _parse_batch_response(
     try:
         response = _call_llm_with_retry(agent, system, user)
         if not response:
-            return [{"verdict": Verdict.UNCERTAIN, "rationale": "LLM call failed"}] * expected_count
+            return [
+                {"verdict": Verdict.UNCERTAIN, "rationale": "LLM call failed"}
+            ] * expected_count
 
         logger.debug(f"Raw LLM response ({len(response)} chars): {response[:300]}")
         clean = _strip_markdown_fences(response)
@@ -2500,18 +2807,28 @@ def _parse_batch_response(
                         verdict = Verdict(verdict_str)
                     except (ValueError, KeyError):
                         verdict = Verdict.UNCERTAIN
-                    verdicts.append({
-                        "verdict": verdict,
-                        "rationale": item.get("rationale", ""),
-                    })
+                    verdicts.append(
+                        {
+                            "verdict": verdict,
+                            "rationale": item.get("rationale", ""),
+                        }
+                    )
                 else:
-                    verdicts.append({"verdict": Verdict.UNCERTAIN, "rationale": "Missing from batch response"})
+                    verdicts.append(
+                        {
+                            "verdict": Verdict.UNCERTAIN,
+                            "rationale": "Missing from batch response",
+                        }
+                    )
             return verdicts
 
     except (json.JSONDecodeError, Exception) as e:
         logger.warning(f"Batch verification parse failed: {e}")
 
-    return [{"verdict": Verdict.UNCERTAIN, "rationale": "Batch parse failed"}] * expected_count
+    return [
+        {"verdict": Verdict.UNCERTAIN, "rationale": "Batch parse failed"}
+    ] * expected_count
+
 
 def _parse_batch_survivor_response(
     agent: DeadCodeVerifierAgent,
@@ -2522,7 +2839,13 @@ def _parse_batch_survivor_response(
     try:
         response = _call_llm_with_retry(agent, system, user)
         if not response:
-            return [{"is_dead": False, "rationale": "LLM call failed", "heuristic_assessment": "uncertain"}] * expected_count
+            return [
+                {
+                    "is_dead": False,
+                    "rationale": "LLM call failed",
+                    "heuristic_assessment": "uncertain",
+                }
+            ] * expected_count
 
         clean = _strip_markdown_fences(response)
         data = json.loads(clean)
@@ -2533,13 +2856,26 @@ def _parse_batch_survivor_response(
                 if i < len(data):
                     results.append(data[i])
                 else:
-                    results.append({"is_dead": False, "rationale": "Missing", "heuristic_assessment": "uncertain"})
+                    results.append(
+                        {
+                            "is_dead": False,
+                            "rationale": "Missing",
+                            "heuristic_assessment": "uncertain",
+                        }
+                    )
             return results
 
     except (json.JSONDecodeError, Exception) as e:
         logger.warning(f"Batch survivor parse failed: {e}")
 
-    return [{"is_dead": False, "rationale": "Batch parse failed", "heuristic_assessment": "uncertain"}] * expected_count
+    return [
+        {
+            "is_dead": False,
+            "rationale": "Batch parse failed",
+            "heuristic_assessment": "uncertain",
+        }
+    ] * expected_count
+
 
 def _strip_markdown_fences(text: str) -> str:
     import re
@@ -2555,15 +2891,16 @@ def _strip_markdown_fences(text: str) -> str:
     if clean and clean[0] in "[{":
         return clean
 
-    match = re.search(r'\[[\s\S]*\]', clean)
+    match = re.search(r"\[[\s\S]*\]", clean)
     if match:
         return match.group(0)
 
-    match = re.search(r'\{[\s\S]*\}', clean)
+    match = re.search(r"\{[\s\S]*\}", clean)
     if match:
         return match.group(0)
 
     return clean
+
 
 SURVIVOR_SYSTEM = """\
 You are checking if a function is INCORRECTLY marked as alive by static analysis.
@@ -2599,6 +2936,7 @@ SPURIOUS matches (e.g. a different class has a method with the same name)?
 JSON response:\
 """
 
+
 def _find_heuristic_match_sites(
     name: str,
     simple_name: str,
@@ -2622,6 +2960,7 @@ def _find_heuristic_match_sites(
         return "\n".join(sites)
     else:
         return "  (no match sites found)"
+
 
 def challenge_survivor(
     agent: DeadCodeVerifierAgent,
@@ -2708,6 +3047,7 @@ def challenge_survivor(
         suggested_confidence=suggested,
     )
 
+
 def _build_source_cache(
     findings: list[dict],
     defs_map: dict[str, Any],
@@ -2740,6 +3080,7 @@ def _build_source_cache(
             pass
 
     return cache
+
 
 def run_verification(
     findings: list[dict],
@@ -2820,7 +3161,9 @@ def run_verification(
         should_judge = refs == 0 and (judge_all_mode or lo <= conf <= hi)
         if should_judge:
             full_name = f.get("full_name", f.get("name", ""))
-            matched_ep = next((ep for ep in discovered_eps if ep.name == full_name), None)
+            matched_ep = next(
+                (ep for ep in discovered_eps if ep.name == full_name), None
+            )
             if matched_ep is not None:
                 if judge_all_mode:
                     f["_judge_discovered_entry_point"] = (
@@ -2895,7 +3238,21 @@ def run_verification(
             project_root=grep_root,
             repo_facts=repo_facts,
         )
-        stats.llm_calls += max(1, (len([r for r in batch_results if r.rationale != f"Has {_parse_int(r.finding.get('references', 0))} references; skipped"]) + 4) // 5)
+        stats.llm_calls += max(
+            1,
+            (
+                len(
+                    [
+                        r
+                        for r in batch_results
+                        if r.rationale
+                        != f"Has {_parse_int(r.finding.get('references', 0))} references; skipped"
+                    ]
+                )
+                + 4
+            )
+            // 5,
+        )
 
         for finding, result in zip(to_verify, batch_results):
             finding["_llm_verdict"] = result.verdict.value
@@ -2938,7 +3295,9 @@ def run_verification(
                 reverify_candidates.append(finding)
 
         if reverify_candidates:
-            log(f"  Re-verifying {len(reverify_candidates)} batch TPs with rich evidence (individual mode)...")
+            log(
+                f"  Re-verifying {len(reverify_candidates)} batch TPs with rich evidence (individual mode)..."
+            )
             for finding in reverify_candidates:
                 result = verify_with_graph_context(
                     agent,
@@ -2995,8 +3354,7 @@ def run_verification(
 
     if enable_suppression_challenge:
         suppression_candidates = [
-            finding for finding in findings
-            if _should_audit_suppression(finding)
+            finding for finding in findings if _should_audit_suppression(finding)
         ][:max_suppression_audit]
         stats.suppression_challenged = len(suppression_candidates)
 
@@ -3021,7 +3379,9 @@ def run_verification(
 
                 if result.verdict == Verdict.TRUE_POSITIVE:
                     finding["_llm_verdict"] = Verdict.TRUE_POSITIVE.value
-                    finding["_llm_rationale"] = f"[suppression-audit] {result.rationale}"
+                    finding["_llm_rationale"] = (
+                        f"[suppression-audit] {result.rationale}"
+                    )
                     finding["_verified_by_llm"] = True
                     finding["_adjusted_confidence"] = result.adjusted_confidence
                     finding["_llm_challenged"] = True
@@ -3031,10 +3391,14 @@ def run_verification(
                         stats.deterministic_suppressed -= 1
                         finding["_deterministically_suppressed"] = False
                         if finding.get("_suppression_reason"):
-                            finding["_suppression_overruled_reason"] = finding.get("_suppression_reason")
+                            finding["_suppression_overruled_reason"] = finding.get(
+                                "_suppression_reason"
+                            )
                             finding.pop("_suppression_reason", None)
                         if finding.get("_suppression_evidence"):
-                            finding["_suppression_overruled_evidence"] = finding.get("_suppression_evidence")
+                            finding["_suppression_overruled_evidence"] = finding.get(
+                                "_suppression_evidence"
+                            )
                             finding.pop("_suppression_evidence", None)
                     else:
                         stats.verified_false_positive -= 1
@@ -3120,27 +3484,31 @@ def run_verification(
             source_cache.update(survivor_cache)
 
             if batch_mode and len(survivors) > 1:
-                batch_results = _batch_challenge_survivors(agent, survivors, defs_map, source_cache)
+                batch_results = _batch_challenge_survivors(
+                    agent, survivors, defs_map, source_cache
+                )
                 stats.llm_calls += max(1, (len(survivors) + 4) // 5)
 
                 for surv, sv in zip(survivors, batch_results):
                     if sv.verdict == Verdict.TRUE_POSITIVE:
                         stats.survivors_reclassified_dead += 1
-                        new_dead.append({
-                            "name": sv.name,
-                            "full_name": sv.full_name,
-                            "file": sv.file,
-                            "line": sv.line,
-                            "type": surv.get("type", "function"),
-                            "confidence": sv.suggested_confidence,
-                            "references": 0,
-                            "heuristic_refs": sv.heuristic_refs,
-                            "message": f"Unused {surv.get('type', 'function')}: {sv.name}",
-                            "_category": "dead_code",
-                            "_llm_verdict": "TRUE_POSITIVE",
-                            "_llm_rationale": sv.rationale,
-                            "_source": "llm_survivor_challenge",
-                        })
+                        new_dead.append(
+                            {
+                                "name": sv.name,
+                                "full_name": sv.full_name,
+                                "file": sv.file,
+                                "line": sv.line,
+                                "type": surv.get("type", "function"),
+                                "confidence": sv.suggested_confidence,
+                                "references": 0,
+                                "heuristic_refs": sv.heuristic_refs,
+                                "message": f"Unused {surv.get('type', 'function')}: {sv.name}",
+                                "_category": "dead_code",
+                                "_llm_verdict": "TRUE_POSITIVE",
+                                "_llm_rationale": sv.rationale,
+                                "_source": "llm_survivor_challenge",
+                            }
+                        )
             else:
                 for surv in survivors:
                     sv = challenge_survivor(agent, surv, defs_map, source_cache)
@@ -3148,21 +3516,23 @@ def run_verification(
 
                     if sv.verdict == Verdict.TRUE_POSITIVE:
                         stats.survivors_reclassified_dead += 1
-                        new_dead.append({
-                            "name": sv.name,
-                            "full_name": sv.full_name,
-                            "file": sv.file,
-                            "line": sv.line,
-                            "type": surv.get("type", "function"),
-                            "confidence": sv.suggested_confidence,
-                            "references": 0,
-                            "heuristic_refs": sv.heuristic_refs,
-                            "message": f"Unused {surv.get('type', 'function')}: {sv.name}",
-                            "_category": "dead_code",
-                            "_llm_verdict": "TRUE_POSITIVE",
-                            "_llm_rationale": sv.rationale,
-                            "_source": "llm_survivor_challenge",
-                        })
+                        new_dead.append(
+                            {
+                                "name": sv.name,
+                                "full_name": sv.full_name,
+                                "file": sv.file,
+                                "line": sv.line,
+                                "type": surv.get("type", "function"),
+                                "confidence": sv.suggested_confidence,
+                                "references": 0,
+                                "heuristic_refs": sv.heuristic_refs,
+                                "message": f"Unused {surv.get('type', 'function')}: {sv.name}",
+                                "_category": "dead_code",
+                                "_llm_verdict": "TRUE_POSITIVE",
+                                "_llm_rationale": sv.rationale,
+                                "_source": "llm_survivor_challenge",
+                            }
+                        )
 
             log(
                 f"  Challenged {len(survivors)}, "
@@ -3183,7 +3553,9 @@ def run_verification(
         f.setdefault("references", 0)
         f.setdefault("_source", "static")
         if not f.get("message"):
-            f["message"] = f"Unused {f.get('type', 'function')}: {f.get('name', 'unknown')}"
+            f["message"] = (
+                f"Unused {f.get('type', 'function')}: {f.get('name', 'unknown')}"
+            )
 
     for f in new_dead:
         f.setdefault("_category", "dead_code")
@@ -3193,7 +3565,9 @@ def run_verification(
         f.setdefault("references", 0)
         f.setdefault("_source", "llm_survivor_challenge")
         if not f.get("message"):
-            f["message"] = f"Unused {f.get('type', 'function')}: {f.get('name', 'unknown')}"
+            f["message"] = (
+                f"Unused {f.get('type', 'function')}: {f.get('name', 'unknown')}"
+            )
 
     output = {
         "verified_findings": findings,
@@ -3230,7 +3604,9 @@ def run_verification(
             if info["observations"] >= 5:
                 change = info["weight_change_pct"]
                 if abs(change) > 5:
-                    tuned_types.append(f"{htype}: {info['default_weight']} → {info['tuned_weight']} ({change:+.0f}%)")
+                    tuned_types.append(
+                        f"{htype}: {info['default_weight']} → {info['tuned_weight']} ({change:+.0f}%)"
+                    )
 
         if tuned_types:
             log("\nFeedback loop — heuristic weight adjustments:")
@@ -3242,6 +3618,7 @@ def run_verification(
         logger.debug(f"Feedback recording failed: {e}")
 
     return output
+
 
 def _find_survivors(
     defs_map: dict[str, Any],
@@ -3269,21 +3646,22 @@ def _find_survivors(
             continue
 
         total_heuristic = sum(
-            v if isinstance(v, (int, float)) else 0
-            for v in heuristic_refs.values()
+            v if isinstance(v, (int, float)) else 0 for v in heuristic_refs.values()
         )
         if total_heuristic > 0:
-            survivors.append({
-                "name": name.split(".")[-1],
-                "full_name": name,
-                "simple_name": name.split(".")[-1],
-                "file": str(info.get("file", "")),
-                "line": info.get("line", 0),
-                "type": info.get("type", "function"),
-                "confidence": info.get("confidence", 50),
-                "heuristic_refs": heuristic_refs,
-                "references": refs,
-            })
+            survivors.append(
+                {
+                    "name": name.split(".")[-1],
+                    "full_name": name,
+                    "simple_name": name.split(".")[-1],
+                    "file": str(info.get("file", "")),
+                    "line": info.get("line", 0),
+                    "type": info.get("type", "function"),
+                    "confidence": info.get("confidence", 50),
+                    "heuristic_refs": heuristic_refs,
+                    "references": refs,
+                }
+            )
 
     survivors.sort(
         key=lambda s: sum(
@@ -3294,6 +3672,7 @@ def _find_survivors(
     )
 
     return survivors
+
 
 def _estimate_batches(
     findings: list[dict],
@@ -3317,7 +3696,9 @@ def _estimate_batches(
             batch_count += 1
             continue
         est_size = 500 + len(source_cache.get(f.get("file", ""), "")) // 4
-        if items_in_batch > 0 and (total_size + est_size > MAX_BATCH_CONTEXT_CHARS or items_in_batch >= 5):
+        if items_in_batch > 0 and (
+            total_size + est_size > MAX_BATCH_CONTEXT_CHARS or items_in_batch >= 5
+        ):
             batch_count += 1
             total_size = 0
             items_in_batch = 0
@@ -3327,6 +3708,7 @@ def _estimate_batches(
     if items_in_batch == 0 and batch_count > 0:
         return batch_count - 1
     return batch_count
+
 
 def _logger(quiet: bool):
     if quiet:

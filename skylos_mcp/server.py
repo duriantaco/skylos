@@ -191,8 +191,8 @@ def _gate(tool_name: str) -> str | None:
 def _register_tools(mcp):
     """Register all MCP tools and resources. Called inside main() after FastMCP is created."""
 
-## all of these look like dead but they're all registered inside `_register_tools()` which is
-## called from main() .. please ignore the "unused function" warnings for these --- IGNORE ---
+    ## all of these look like dead but they're all registered inside `_register_tools()` which is
+    ## called from main() .. please ignore the "unused function" warnings for these --- IGNORE ---
     @mcp.tool()
     def analyze(
         path: str,
@@ -319,7 +319,6 @@ def _register_tools(mcp):
         max_challenge: int = 10,
         exclude_folders: str | None = None,
     ) -> str:
-
         gate_err = _gate("verify_dead_code")
         if gate_err:
             return gate_err
@@ -339,13 +338,20 @@ def _register_tools(mcp):
             static_result = json.loads(raw) if isinstance(raw, str) else raw
 
             all_findings = []
-            for key in ("unused_functions", "unused_classes", "unused_variables", "unused_imports"):
+            for key in (
+                "unused_functions",
+                "unused_classes",
+                "unused_variables",
+                "unused_imports",
+            ):
                 all_findings.extend(static_result.get(key, []))
 
             defs_map = static_result.get("definitions", {})
 
             if not all_findings:
-                return json.dumps({"message": "No dead code findings to verify", "stats": {}})
+                return json.dumps(
+                    {"message": "No dead code findings to verify", "stats": {}}
+                )
 
             from skylos.llm.verify_orchestrator import run_verification
 

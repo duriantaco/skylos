@@ -22,7 +22,9 @@ class RateLimitingPlugin(DefensePlugin):
     def applies_to(self, integration: LLMIntegration) -> bool:
         return bool(integration.input_sources)
 
-    def check(self, integration: LLMIntegration, graph: AIIntegrationGraph) -> DefenseResult:
+    def check(
+        self, integration: LLMIntegration, graph: AIIntegrationGraph
+    ) -> DefenseResult:
         if integration.has_rate_limiting:
             return self._pass(
                 integration,

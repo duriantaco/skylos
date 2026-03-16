@@ -18,7 +18,9 @@ class OutputValidationPlugin(DefensePlugin):
         "or similar parsing before consuming LLM responses."
     )
 
-    def check(self, integration: LLMIntegration, graph: AIIntegrationGraph) -> DefenseResult:
+    def check(
+        self, integration: LLMIntegration, graph: AIIntegrationGraph
+    ) -> DefenseResult:
         if integration.has_output_validation:
             loc = integration.output_validation_location or integration.location
             return self._pass(

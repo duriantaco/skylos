@@ -21,10 +21,11 @@ class UntrustedInputToPromptPlugin(DefensePlugin):
     def applies_to(self, integration: LLMIntegration) -> bool:
         return bool(integration.input_sources) and bool(integration.prompt_sites)
 
-    def check(self, integration: LLMIntegration, graph: AIIntegrationGraph) -> DefenseResult:
+    def check(
+        self, integration: LLMIntegration, graph: AIIntegrationGraph
+    ) -> DefenseResult:
         has_defense = (
-            integration.has_prompt_delimiter
-            or integration.has_input_length_limit
+            integration.has_prompt_delimiter or integration.has_input_length_limit
         )
 
         if has_defense:

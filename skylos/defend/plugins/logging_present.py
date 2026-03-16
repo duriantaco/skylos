@@ -18,7 +18,9 @@ class LoggingPresentPlugin(DefensePlugin):
         "Use Python logging, structlog, or an LLM observability platform."
     )
 
-    def check(self, integration: LLMIntegration, graph: AIIntegrationGraph) -> DefenseResult:
+    def check(
+        self, integration: LLMIntegration, graph: AIIntegrationGraph
+    ) -> DefenseResult:
         if integration.has_logging:
             return self._pass(
                 integration,

@@ -187,7 +187,6 @@ def get_handler(name):
             assert "EmailHandler" not in unused_classes
             assert "SlackHandler" not in unused_classes
 
-
     def test_transitive_subclass_not_flagged_unused(self):
         """Subclasses via intermediate base should also be suppressed."""
         code = """
@@ -639,10 +638,7 @@ class TestUnderscoreVarargSuppression:
             p.write_text(code)
             s = Skylos()
             result = json.loads(s.analyze(tmpdir, thr=0))
-            return {
-                item["simple_name"]
-                for item in result.get("unused_parameters", [])
-            }
+            return {item["simple_name"] for item in result.get("unused_parameters", [])}
 
     def test_underscore_args_not_flagged(self):
         code = """

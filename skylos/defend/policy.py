@@ -31,7 +31,12 @@ class DefensePolicy:
 OWASP_LLM_MAPPING: dict[str, dict[str, Any]] = {
     "LLM01": {
         "name": "Prompt Injection",
-        "plugins": ["prompt-delimiter", "input-length-limit", "untrusted-input-to-prompt", "rag-context-isolation"],
+        "plugins": [
+            "prompt-delimiter",
+            "input-length-limit",
+            "untrusted-input-to-prompt",
+            "rag-context-isolation",
+        ],
     },
     "LLM02": {
         "name": "Insecure Output Handling",
@@ -101,7 +106,9 @@ def load_policy(path: str | Path | None = None) -> Optional[DefensePolicy]:
 
     raw = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
-        raise ValueError(f"Invalid policy file: expected a YAML mapping, got {type(raw).__name__}")
+        raise ValueError(
+            f"Invalid policy file: expected a YAML mapping, got {type(raw).__name__}"
+        )
 
     return _parse_policy(raw)
 
@@ -134,10 +141,11 @@ def _parse_policy(raw: dict) -> DefensePolicy:
                     f"Valid plugins: {', '.join(sorted(valid_plugin_ids))}"
                 )
             if not isinstance(overrides, dict):
-                raise ValueError(
-                    f"Invalid rule for '{plugin_id}': expected a mapping"
-                )
-            if "severity" in overrides and overrides["severity"] not in valid_severities:
+                raise ValueError(f"Invalid rule for '{plugin_id}': expected a mapping")
+            if (
+                "severity" in overrides
+                and overrides["severity"] not in valid_severities
+            ):
                 raise ValueError(
                     f"Invalid severity '{overrides['severity']}' for '{plugin_id}'. "
                     f"Valid: {', '.join(sorted(valid_severities))}"

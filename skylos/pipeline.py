@@ -374,10 +374,7 @@ def run_pipeline(
         for f in low_conf[:5]:
             logger.info(f"  {f.get('name')} conf={f.get('confidence')}")
 
-    skip_2a = (
-        not dead_code_findings
-        or getattr(agent_args, "skip_verification", False)
-    )
+    skip_2a = not dead_code_findings or getattr(agent_args, "skip_verification", False)
     skip_2b = getattr(agent_args, "static_only", False)
     _2a_state = {"failed": False}
 
@@ -633,9 +630,11 @@ def _find_duplicate(new_finding, existing_findings, line_tolerance=3):
     new_type = new_finding.get("type", "")
     if new_full_name and new_type:
         for existing in existing_findings:
-            if (existing.get("full_name", "") == new_full_name
-                    and existing.get("type", "") == new_type
-                    and _norm(existing.get("file", "")) == new_file):
+            if (
+                existing.get("full_name", "") == new_full_name
+                and existing.get("type", "") == new_type
+                and _norm(existing.get("file", "")) == new_file
+            ):
                 return existing
 
     for existing in existing_findings:

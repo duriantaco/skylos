@@ -508,7 +508,9 @@ def detect_ai_code(git_root=None):
                         if f.strip():
                             ai_files.add(f.strip())
                 except Exception:
-                    logger.debug("Failed to get git diff-tree for AI detection", exc_info=True)
+                    logger.debug(
+                        "Failed to get git diff-tree for AI detection", exc_info=True
+                    )
 
     except Exception:
         logger.debug("Failed to detect AI code from git log", exc_info=True)

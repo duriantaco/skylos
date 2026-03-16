@@ -10,7 +10,7 @@ from skylos.discover.graph import AIIntegrationGraph
 def format_table(
     integrations: list[LLMIntegration],
     files_scanned: int = 0,
-    project_path: str = ".", ## its not unused 
+    project_path: str = ".",  ## its not unused
 ) -> str:
     if not integrations:
         return f"No LLM integrations found in {files_scanned} files."
@@ -23,9 +23,7 @@ def format_table(
         f"  {'Provider':<14} {'Type':<12} {'Location':<25} {'Input Sources':<20} "
         f"{'Tools':<6} {'Dangerous Sinks'}"
     )
-    lines.append(
-        f"  {'─' * 14} {'─' * 12} {'─' * 25} {'─' * 20} {'─' * 6} {'─' * 20}"
-    )
+    lines.append(f"  {'─' * 14} {'─' * 12} {'─' * 25} {'─' * 20} {'─' * 6} {'─' * 20}")
 
     for integ in integrations:
         input_src = ", ".join(integ.input_sources) if integ.input_sources else "none"

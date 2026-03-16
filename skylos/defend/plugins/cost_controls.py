@@ -19,7 +19,9 @@ class CostControlsPlugin(DefensePlugin):
         "to cap response length and control costs."
     )
 
-    def check(self, integration: LLMIntegration, graph: AIIntegrationGraph) -> DefenseResult:
+    def check(
+        self, integration: LLMIntegration, graph: AIIntegrationGraph
+    ) -> DefenseResult:
         if integration.has_max_tokens:
             return self._pass(
                 integration,
