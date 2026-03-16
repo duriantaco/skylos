@@ -541,11 +541,9 @@ def print_badge(
 
 
 def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
-    """Generate an LLM-optimized report with code context for AI agents."""
     sections = []
     finding_num = 0
 
-    # Collect all findings into a flat list with categories
     all_findings = []
     for category, label in [
         ("danger", "Security"),
@@ -556,7 +554,6 @@ def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
         for f in result.get(category, []):
             all_findings.append((f, label))
 
-    # Dead code categories
     for category, label in [
         ("unused_functions", "Dead Code"),
         ("unused_imports", "Dead Code"),
@@ -592,7 +589,6 @@ def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
         line = finding.get("line", 0)
         message = finding.get("message", "")
 
-        # Try to read code context from the file
         code_block = ""
         try:
             abs_path = pathlib.Path(file_path)
@@ -1513,7 +1509,6 @@ def get_git_changed_files(root_path):
             stderr=subprocess.DEVNULL,
             timeout=10,
         )
-        # Try uncommitted changes first
         output = subprocess.check_output(
             ["git", "diff", "--name-only", "HEAD"],
             cwd=root_path,
@@ -1523,7 +1518,6 @@ def get_git_changed_files(root_path):
         if files:
             return files
 
-        # No uncommitted .py files — try CI context (PR base branch)
         base_ref = os.environ.get("GITHUB_BASE_REF")
         if base_ref:
             cmd = ["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"]
@@ -1698,6 +1692,38 @@ def _run_clean_command():
         f"\n[green]Done![/green] Applied {applied} changes "
         f"({len(to_remove)} removed, {len(to_comment)} commented out)."
     )
+
+
+def _load_addopts():
+    import shlex
+
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib
+        except ImportError:
+            return []
+
+    current = Path.cwd()
+    while True:
+        toml_path = current / "pyproject.toml"
+        if toml_path.exists():
+            try:
+                with open(toml_path, "rb") as f:
+                    data = tomllib.load(f)
+                addopts = data.get("tool", {}).get("skylos", {}).get("addopts", [])
+                if isinstance(addopts, str):
+                    return shlex.split(addopts)
+                if isinstance(addopts, list):
+                    return list(addopts)
+            except Exception:
+                pass
+            break
+        if current.parent == current:
+            break
+        current = current.parent
+    return []
 
 
 def main():
@@ -1905,7 +1931,6 @@ def main():
         sync_main(sys.argv[2:])
         sys.exit(0)
 
-    # ── skylos discover ──────────────────────────────────────────────
     if len(sys.argv) > 1 and sys.argv[1] == "discover":
         import argparse as disc_argparse
 
@@ -1926,7 +1951,6 @@ def main():
             default=None,
             help="Additional folders to exclude",
         )
-
         disc_args = disc_parser.parse_args(sys.argv[2:])
         console = Console()
 
@@ -1934,6 +1958,13 @@ def main():
         from skylos.discover.report import format_table, format_json
 
         target = Path(disc_args.path).resolve()
+        if not target.exists():
+            console.print(f"[red]Error: path does not exist: {target}[/red]")
+            sys.exit(1)
+        if not target.is_dir():
+            console.print(f"[red]Error: path is not a directory: {target}[/red]")
+            sys.exit(1)
+
         exclude = {
             "node_modules", ".git", "__pycache__", ".venv", "venv",
             ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
@@ -1955,7 +1986,11 @@ def main():
             output = format_table(integrations, len(files), str(target))
 
         if disc_args.output_file:
-            Path(disc_args.output_file).write_text(output, encoding="utf-8")
+            try:
+                Path(disc_args.output_file).write_text(output, encoding="utf-8")
+            except OSError as e:
+                console.print(f"[red]Error writing output file: {e}[/red]")
+                sys.exit(1)
             console.print(f"[green]Output written to {disc_args.output_file}[/green]")
         elif disc_args.output_json:
             print(output)
@@ -1964,7 +1999,6 @@ def main():
 
         sys.exit(0)
 
-    # ── skylos defend ────────────────────────────────────────────────
     if len(sys.argv) > 1 and sys.argv[1] == "defend":
         import argparse as def_argparse
 
@@ -2010,6 +2044,10 @@ def main():
             default=None,
             help="Additional folders to exclude",
         )
+        def_parser.add_argument(
+            "--upload", action="store_true",
+            help="Upload defense results to Skylos Cloud dashboard",
+        )
 
         def_args = def_parser.parse_args(sys.argv[2:])
         console = Console()
@@ -2020,6 +2058,17 @@ def main():
         from skylos.defend.policy import load_policy, compute_owasp_coverage
 
         target = Path(def_args.path).resolve()
+        if not target.exists():
+            console.print(f"[red]Error: path does not exist: {target}[/red]")
+            sys.exit(1)
+        if not target.is_dir():
+            console.print(f"[red]Error: path is not a directory: {target}[/red]")
+            sys.exit(1)
+
+        if def_args.min_score is not None and not 0 <= def_args.min_score <= 100:
+            console.print(f"[red]Error: --min-score must be 0-100, got {def_args.min_score}[/red]")
+            sys.exit(1)
+
         exclude = {
             "node_modules", ".git", "__pycache__", ".venv", "venv",
             ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
@@ -2027,7 +2076,6 @@ def main():
         if def_args.exclude:
             exclude.update(def_args.exclude)
 
-        # Load policy
         policy = None
         try:
             policy = load_policy(def_args.policy_file)
@@ -2035,10 +2083,17 @@ def main():
             console.print(f"[bold red]Policy error: {e}[/bold red]")
             sys.exit(1)
 
-        # Parse OWASP filter
         owasp_filter = None
         if def_args.owasp_filter:
+            from skylos.defend.policy import OWASP_LLM_MAPPING
             owasp_filter = [s.strip().upper() for s in def_args.owasp_filter.split(",")]
+            for oid in owasp_filter:
+                if oid not in OWASP_LLM_MAPPING:
+                    console.print(
+                        f"[red]Error: unknown OWASP ID '{oid}'. "
+                        f"Valid: {', '.join(sorted(OWASP_LLM_MAPPING))}[/red]"
+                    )
+                    sys.exit(1)
 
         with Progress(
             SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
@@ -2066,9 +2121,10 @@ def main():
                     print(empty)
             else:
                 console.print("[dim]No LLM integrations found.[/dim]")
+            if def_args.upload:
+                console.print("[dim]No integrations found — skipping upload.[/dim]")
             sys.exit(0)
 
-        # Run defense checks
         results, score, ops_score = run_defense_checks(
             integrations,
             graph,
@@ -2083,6 +2139,7 @@ def main():
             output = format_defense_json(
                 results, score, len(integrations), len(files),
                 str(target), owasp_coverage, ops_score,
+                integrations=integrations,
             )
         else:
             output = format_defense_table(
@@ -2091,18 +2148,32 @@ def main():
             )
 
         if def_args.output_file:
-            Path(def_args.output_file).write_text(output, encoding="utf-8")
+            try:
+                Path(def_args.output_file).write_text(output, encoding="utf-8")
+            except OSError as e:
+                console.print(f"[red]Error writing output file: {e}[/red]")
+                sys.exit(1)
             console.print(f"[green]Output written to {def_args.output_file}[/green]")
         elif def_args.output_json:
-            # Bypass rich Console for JSON — it wraps long lines and corrupts output
             print(output)
         else:
             console.print(output)
 
-        # Gating logic
+        if def_args.upload:
+            from skylos.api import upload_defense_report
+            json_for_upload = format_defense_json(
+                results, score, len(integrations), len(files),
+                str(target), owasp_coverage, ops_score,
+                integrations=integrations,
+            )
+            upload_result = upload_defense_report(json_for_upload)
+            if not upload_result.get("success"):
+                console.print(
+                    f"[red]Upload failed: {upload_result.get('error', 'Unknown')}[/red]"
+                )
+
         exit_code = 0
 
-        # --fail-on: exit 1 if any failing result at or above the severity
         fail_on = def_args.fail_on
         if policy and policy.gate_fail_on and not fail_on:
             fail_on = policy.gate_fail_on
@@ -2111,14 +2182,12 @@ def main():
             severity_order = {"critical": 4, "high": 3, "medium": 2, "low": 1}
             threshold = severity_order.get(fail_on, 0)
             for r in results:
-                # Only defense results gate CI, not ops
                 if r.category != "defense":
                     continue
                 if not r.passed and severity_order.get(r.severity, 0) >= threshold:
                     exit_code = 1
                     break
 
-        # --min-score: exit 1 if below threshold
         min_score = def_args.min_score
         if policy and policy.gate_min_score is not None and min_score is None:
             min_score = policy.gate_min_score
@@ -2245,6 +2314,11 @@ def main():
             "Requires SKYLOS_TOKEN in repo secrets.",
         )
         p_ci_init.add_argument(
+            "--defend",
+            action="store_true",
+            help="Include AI Defense check step (skylos defend)",
+        )
+        p_ci_init.add_argument(
             "--output", "-o", default=".github/workflows/skylos.yml", help="Output path"
         )
 
@@ -2328,6 +2402,7 @@ def main():
                 model=cicd_args.model,
                 use_claude_security=cicd_args.claude_security,
                 use_upload=cicd_args.upload,
+                use_defend=cicd_args.defend,
             )
             write_workflow(yaml_content, cicd_args.output)
 
@@ -2440,11 +2515,83 @@ def main():
         p_analyze.add_argument(
             "--strict",
             action="store_true",
-            help="Exit with error code if quality gate fails",
+            help="Exit with error code if findings are reported",
+        )
+        p_analyze.add_argument(
+            "--verification-mode",
+            choices=["judge_all", "production"],
+            default="judge_all",
+            help="Dead-code verifier mode: judge_all sends nearly every refs==0 candidate to the LLM",
+        )
+
+        p_audit = agent_sub.add_parser(
+            "audit",
+            help="Full hybrid analysis (static + LLM) — dead code, security, quality",
+        )
+        p_audit.add_argument("path", help="File or directory to analyze")
+        p_audit.add_argument("--model", default="gpt-4.1")
+        p_audit.add_argument(
+            "--format", choices=["table", "tree", "json", "sarif"], default="table"
+        )
+        p_audit.add_argument("--output", "-o", help="Output file")
+        p_audit.add_argument(
+            "--min-confidence", choices=["high", "medium", "low"], default="low"
+        )
+        p_audit.add_argument(
+            "--llm-only", action="store_true", help="Skip static, run LLM only"
+        )
+        p_audit.add_argument("--quiet", "-q", action="store_true")
+        p_audit.add_argument(
+            "--provider",
+            choices=[
+                "openai",
+                "anthropic",
+                "google",
+                "mistral",
+                "groq",
+                "xai",
+                "together",
+                "deepseek",
+                "ollama",
+            ],
+            default=None,
+            help="Force LLM provider",
+        )
+        p_audit.add_argument(
+            "--base-url",
+            default=None,
+            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
+        )
+        p_audit.add_argument(
+            "--upload",
+            action="store_true",
+            help="Upload results to skylos.dev dashboard",
+        )
+        p_audit.add_argument(
+            "--force",
+            action="store_true",
+            help="Force upload even if quality gate fails",
+        )
+        p_audit.add_argument(
+            "--strict",
+            action="store_true",
+            help="Exit with error code if findings are reported",
+        )
+        p_audit.add_argument(
+            "--with-fixes",
+            action="store_true",
+            default=False,
+            help="Generate fix suggestions (off by default for speed)",
+        )
+        p_audit.add_argument(
+            "--verification-mode",
+            choices=["judge_all", "production"],
+            default="judge_all",
+            help="Dead-code verifier mode: judge_all sends nearly every refs==0 candidate to the LLM",
         )
 
         p_sec_audit = agent_sub.add_parser(
-            "security-audit", help="Security audit with LLM"
+            "security-audit", help="Security audit with LLM for Python files"
         )
         p_sec_audit.add_argument("path", help="File or directory")
         p_sec_audit.add_argument("--model", default="gpt-4.1")
@@ -2476,7 +2623,7 @@ def main():
             help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
         )
 
-        p_review = agent_sub.add_parser("review", help="Review git-changed files")
+        p_review = agent_sub.add_parser("review", help="Review git-changed Python files")
         p_review.add_argument("path", nargs="?", default=".")
         p_review.add_argument("--model", default="gpt-4.1")
         p_review.add_argument(
@@ -2565,14 +2712,77 @@ def main():
             help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
         )
 
+        p_verify = agent_sub.add_parser(
+            "verify",
+            help="LLM-verify dead code findings (reduce false positives, catch more dead code)",
+        )
+        p_verify.add_argument("path", help="File or directory to analyze")
+        p_verify.add_argument("--model", default="gpt-4.1")
+        p_verify.add_argument("--conf", type=int, default=60, help="Static analysis confidence threshold")
+        p_verify.add_argument(
+            "--max-verify", type=int, default=50,
+            help="Max findings to verify with LLM (default: 50)",
+        )
+        p_verify.add_argument(
+            "--max-challenge", type=int, default=20,
+            help="Max survivors to challenge with LLM (default: 20)",
+        )
+        p_verify.add_argument(
+            "--no-entry-discovery", action="store_true",
+            help="Skip entry point discovery pass",
+        )
+        p_verify.add_argument(
+            "--no-survivor-challenge", action="store_true",
+            help="Skip survivor challenge pass",
+        )
+        p_verify.add_argument(
+            "--verification-mode",
+            choices=["judge_all", "production"],
+            default="judge_all",
+            help="Dead-code verifier mode: judge_all sends nearly every refs==0 candidate to the LLM",
+        )
+        p_verify.add_argument(
+            "--format", choices=["table", "json"], default="table",
+        )
+        p_verify.add_argument("--output", "-o", help="Output file")
+        p_verify.add_argument("--quiet", "-q", action="store_true")
+        p_verify.add_argument(
+            "--provider",
+            choices=[
+                "openai", "anthropic", "google", "mistral",
+                "groq", "xai", "together", "deepseek", "ollama",
+            ],
+            default=None,
+            help="Force LLM provider",
+        )
+        p_verify.add_argument(
+            "--base-url", default=None,
+            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
+        )
+
         agent_args = agent_parser.parse_args(sys.argv[2:])
         console = Console()
 
         model = agent_args.model
 
+        _provider_override = getattr(agent_args, "provider", None)
+        if _provider_override and model == "gpt-4.1":
+            _provider_default_models = {
+                "anthropic": "claude-sonnet-4-20250514",
+                "google": "gemini/gemini-2.0-flash",
+                "mistral": "mistral/mistral-large-latest",
+                "groq": "groq/llama3-70b-8192",
+                "deepseek": "deepseek/deepseek-chat",
+                "xai": "xai/grok-2",
+                "together": "together/meta-llama/Meta-Llama-3-70B-Instruct-Turbo",
+                "ollama": "ollama/llama3",
+            }
+            if _provider_override in _provider_default_models:
+                model = _provider_default_models[_provider_override]
+
         provider, api_key, base_url, _is_local = resolve_llm_runtime(
             model=model,
-            provider_override=getattr(agent_args, "provider", None),
+            provider_override=_provider_override,
             base_url_override=getattr(agent_args, "base_url", None),
             console=console,
             allow_prompt=True,
@@ -2593,7 +2803,10 @@ def main():
         cmd = agent_args.agent_cmd
         agent_exclude_folders = list(parse_exclude_folders(use_defaults=True))
 
-        if cmd == "analyze":
+        if cmd in ("analyze", "audit"):
+            if cmd == "analyze" and not hasattr(agent_args, "with_fixes"):
+                agent_args.with_fixes = True
+
             path = pathlib.Path(agent_args.path)
             if not path.exists():
                 console.print(f"[bad]Path not found: {path}[/bad]")
@@ -2677,10 +2890,9 @@ def main():
                     analysis_mode="hybrid",
                 )
 
-            if merged_findings:
+            if merged_findings and getattr(agent_args, "strict", False):
                 sys.exit(1)
-            else:
-                sys.exit(0)
+            sys.exit(0)
 
         elif cmd == "security-audit":
             path = pathlib.Path(agent_args.path)
@@ -2722,7 +2934,11 @@ def main():
                 f"\n[brand]Audit:[/brand] {len(files)} files, ~{tokens:,} tokens, ~${cost:.4f}"
             )
 
-            if INTERACTIVE_AVAILABLE and not inquirer.confirm("Proceed?", default=True):
+            if (
+                INTERACTIVE_AVAILABLE
+                and _is_tty()
+                and not inquirer.confirm("Proceed?", default=True)
+            ):
                 sys.exit(0)
 
             config = AnalyzerConfig(
@@ -2810,6 +3026,134 @@ def main():
             console.print("[good]No issues found in changed files![/good]")
             sys.exit(0)
 
+        if cmd == "verify":
+            path = pathlib.Path(agent_args.path)
+            if not path.exists():
+                console.print(f"[bad]Path not found: {path}[/bad]")
+                sys.exit(1)
+
+            console.print("[brand]Step 1/2: Running static analysis...[/brand]")
+
+            from skylos.analyzer import analyze as run_static
+            raw = run_static(
+                str(path),
+                conf=agent_args.conf,
+                enable_danger=False,
+                enable_quality=False,
+                enable_secrets=False,
+                exclude_folders=agent_exclude_folders,
+            )
+            static_result = json.loads(raw) if isinstance(raw, str) else raw
+
+            from skylos.dead_code import collect_dead_code_findings
+
+            all_findings = collect_dead_code_findings(static_result)
+
+            defs_map = static_result.get("definitions", {})
+
+            if not all_findings:
+                console.print("[good]No dead code findings to verify![/good]")
+                sys.exit(0)
+
+            console.print(
+                f"  Found {len(all_findings)} dead code findings"
+            )
+
+            console.print("\n[brand]Step 2/2: LLM verification (4-pass)...[/brand]")
+
+            from skylos.llm.verify_orchestrator import run_verification
+
+            result = run_verification(
+                findings=all_findings,
+                defs_map=defs_map,
+                project_root=str(path if path.is_dir() else path.parent),
+                model=model,
+                api_key=api_key,
+                provider=provider,
+                base_url=base_url,
+                max_verify=agent_args.max_verify,
+                max_challenge=agent_args.max_challenge,
+                enable_entry_discovery=not agent_args.no_entry_discovery,
+                enable_survivor_challenge=not agent_args.no_survivor_challenge,
+                quiet=getattr(agent_args, "quiet", False),
+                verification_mode=getattr(agent_args, "verification_mode", "judge_all"),
+            )
+
+            stats = result["stats"]
+            verified = result["verified_findings"]
+            new_dead = result["new_dead_code"]
+
+            if agent_args.format == "json":
+                output = json.dumps(result, indent=2, default=str)
+                if agent_args.output:
+                    pathlib.Path(agent_args.output).write_text(output)
+                    console.print(f"[dim]Written to {agent_args.output}[/dim]")
+                else:
+                    print(output)
+            else:
+                console.print("\n[brand]Verification Summary[/brand]")
+                summary_table = Table(expand=False)
+                summary_table.add_column("Metric", style="cyan")
+                summary_table.add_column("Value", style="bold")
+                summary_table.add_row("Total findings", str(stats["total_findings"]))
+                summary_table.add_row("Confirmed dead (TRUE_POSITIVE)", f"[red]{stats['verified_true_positive']}[/red]")
+                summary_table.add_row("False positives removed", f"[green]{stats['verified_false_positive']}[/green]")
+                summary_table.add_row("Uncertain", str(stats["uncertain"]))
+                summary_table.add_row("Entry points discovered", str(stats["entry_points_discovered"]))
+                summary_table.add_row("Survivors challenged", str(stats["survivors_challenged"]))
+                summary_table.add_row("New dead code found", f"[red]{stats['survivors_reclassified_dead']}[/red]")
+                summary_table.add_row("LLM calls", str(stats["llm_calls"]))
+                summary_table.add_row("Time", f"{stats['elapsed_seconds']}s")
+                console.print(summary_table)
+
+                fps = [f for f in verified if f.get("_llm_verdict") == "FALSE_POSITIVE"]
+                if fps:
+                    console.print(f"\n[green]False positives removed ({len(fps)}):[/green]")
+                    fp_table = Table(expand=True)
+                    fp_table.add_column("Name", style="green")
+                    fp_table.add_column("File", style="dim")
+                    fp_table.add_column("Rationale", overflow="fold")
+                    for f in fps[:30]:
+                        fp_table.add_row(
+                            f.get("name", "?"),
+                            f"{f.get('file', '?')}:{f.get('line', '?')}",
+                            f.get("_llm_rationale", "")[:100],
+                        )
+                    console.print(fp_table)
+
+                if new_dead:
+                    console.print(f"\n[red]New dead code discovered ({len(new_dead)}):[/red]")
+                    nd_table = Table(expand=True)
+                    nd_table.add_column("Name", style="red")
+                    nd_table.add_column("File", style="dim")
+                    nd_table.add_column("Rationale", overflow="fold")
+                    for d in new_dead[:30]:
+                        nd_table.add_row(
+                            d.get("full_name", d.get("name", "?")),
+                            f"{d.get('file', '?')}:{d.get('line', '?')}",
+                            d.get("_llm_rationale", "")[:100],
+                        )
+                    console.print(nd_table)
+
+                eps = result.get("entry_points", [])
+                if eps:
+                    console.print(f"\n[cyan]Entry points discovered ({len(eps)}):[/cyan]")
+                    for ep in eps:
+                        console.print(f"  - {ep['name']} (from {ep['source']})")
+
+            total_removed = stats["verified_false_positive"]
+            total_added = stats["survivors_reclassified_dead"]
+            net = stats["total_findings"] - total_removed + total_added
+
+            console.print(
+                f"\n[brand]Net result:[/brand] {stats['total_findings']} findings "
+                f"→ [green]-{total_removed} FP[/green] "
+                f"[red]+{total_added} new[/red] "
+                f"= {net} verified findings"
+            )
+
+            sys.exit(0)
+
         if cmd == "remediate":
             from skylos.llm.orchestrator import RemediationAgent
 
@@ -2887,7 +3231,7 @@ def main():
             sys.exit(1)
 
     parser = argparse.ArgumentParser(
-        description="Detect unused functions and unused imports in a Python project",
+        description="Find dead code, secrets, and risky flows in Python, TypeScript, and Go",
         epilog="""
 Additional commands:
   skylos cicd init       Generate GitHub Actions workflow (30-second setup)
@@ -2901,7 +3245,7 @@ Additional commands:
 Run 'skylos <command> --help' for more information on each command.
         """,
     )
-    parser.add_argument("path", nargs="+", help="Path(s) to the Python project")
+    parser.add_argument("path", nargs="+", help="Path(s) to the project")
     parser.add_argument(
         "--gate",
         action="store_true",
@@ -3047,6 +3391,13 @@ Run 'skylos <command> --help' for more information on each command.
         action="store_true",
         help="Scan dependencies for known vulnerabilities (CVEs) via OSV.dev.",
     )
+    parser.add_argument(
+        "-a",
+        "--all",
+        action="store_true",
+        dest="all_checks",
+        help="Enable all checks: --danger --secrets --quality --sca",
+    )
 
     parser.add_argument(
         "--sarif",
@@ -3126,6 +3477,11 @@ Run 'skylos <command> --help' for more information on each command.
     parser.add_argument("command", nargs="*", help="Command to run if gate passes")
 
     _argv = sys.argv[1:]
+
+    _addopts = _load_addopts()
+    if _addopts:
+        _argv = _addopts + _argv
+
     if "--" in _argv:
         _split = _argv.index("--")
         _main_argv = _argv[:_split]
@@ -3139,6 +3495,13 @@ Run 'skylos <command> --help' for more information on each command.
     else:
         args = parser.parse_args(_main_argv)
         args.command = []
+
+    if getattr(args, "all_checks", False):
+        args.danger = True
+        args.secrets = True
+        args.quality = True
+        args.sca = True
+
     project_root = pathlib.Path(args.path[0]).resolve()
     if project_root.is_file():
         project_root = project_root.parent
