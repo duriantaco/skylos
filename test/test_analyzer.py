@@ -34,6 +34,8 @@ def mock_definition():
         mock.line = line
         mock.filename = Path("test.py")
         mock.skip_reason = None
+        mock.why_confidence_reduced = []
+        mock.conditional_import = False
         mock.to_dict.return_value = {
             "name": name,
             "type": type,
@@ -221,6 +223,9 @@ class TestSkylos:
 
     def test_mark_refs_direct_reference(self, skylos):
         mock_def = Mock()
+        mock_def.type = "function"
+        mock_def.simple_name = "function"
+        mock_def.name = "module.function"
         mock_def.references = 0
 
         skylos.defs = {"module.function": mock_def}
@@ -710,6 +715,32 @@ class TestApplyPenalties:
 
         assert mock_self.confidence == 0
         assert mock_cls.confidence == 0
+
+    @patch("skylos.penalties.detect_framework_usage")
+    def test_conditional_import_penalty_reduces_confidence(
+        self,
+        mock_detect_framework,
+        mock_definition,
+        mock_test_aware_visitor,
+        mock_framework_aware_visitor,
+    ):
+        mock_detect_framework.return_value = None
+        skylos = Skylos()
+
+        mock_def = mock_definition(
+            name="brotli",
+            simple_name="brotli",
+            type="import",
+            confidence=100,
+        )
+        mock_def.conditional_import = True
+
+        apply_penalties(
+            skylos, mock_def, mock_test_aware_visitor, mock_framework_aware_visitor
+        )
+
+        assert mock_def.confidence == 40
+        assert "conditional_import_fallback" in mock_def.why_confidence_reduced
 
     @patch("skylos.penalties.detect_framework_usage")
     def test_test_methods_confidence_zero(

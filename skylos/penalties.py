@@ -76,6 +76,12 @@ def apply_penalties(
         if def_obj.line in framework.version_conditional_lines:
             confidence -= 60
 
+    if def_obj.type == "import" and getattr(def_obj, "conditional_import", False):
+        confidence = min(confidence, 40)
+        why_reduced = getattr(def_obj, "why_confidence_reduced", None)
+        if isinstance(why_reduced, list):
+            why_reduced.append("conditional_import_fallback")
+
     if cfg:
         is_wl, reason, conf_reduction = is_whitelisted(
             def_obj.simple_name, str(def_obj.filename), cfg
