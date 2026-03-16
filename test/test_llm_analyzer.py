@@ -180,3 +180,17 @@ def test_analyze_files_builds_analysis_result_and_summary(tmp_path, monkeypatch)
     assert "Found 4 issues" in result.summary
     assert "high" in result.summary
     assert "low" in result.summary
+
+
+def test_dead_code_issue_type_raises_valueerror(tmp_path):
+    """SkylosLLM must fail fast when asked to do dead_code per-file analysis."""
+    import pytest
+
+    f = tmp_path / "a.py"
+    f.write_text("x = 1\n", encoding="utf-8")
+
+    cfg = AnalyzerConfig()
+    llm = SkylosLLM(cfg)
+
+    with pytest.raises(ValueError, match="not a per-file operation"):
+        llm.analyze_file(str(f), issue_types=["dead_code"])

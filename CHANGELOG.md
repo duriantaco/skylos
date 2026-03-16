@@ -1,5 +1,31 @@
 ## Changelog
 
+## [4.0.0] - 2026-03-15
+
+### Added
+- **`-a` / `--all` flag** — enables `--danger`, `--secrets`, `--quality`, and `--sca` in one shot. `skylos . -a` replaces `skylos . --danger --secrets --quality --sca`
+- **`addopts` config** — set default CLI flags in `pyproject.toml` under `[tool.skylos]`, just like pytest. Supports list (`["--quality", "--danger"]`) or string (`"--quality --danger"`) format. CLI flags override `addopts`
+- **LLM Verification Agent** — `skylos agent verify <path>` runs 3-pass dead code verification: entry point discovery, graph-aware finding verification, and survivor challenge
+- **Batch LLM Calls** — groups up to 8 findings per LLM call
+- **Confidence Feedback Loop** — auto-tunes heuristic weights based on LLM verdicts across runs (`~/.skylos/feedback.json`)
+- **MCP: `verify_dead_code` tool** — exposes LLM verification to AI agents
+- **`--verification-mode` flag** — added to `skylos agent analyze`, `skylos agent audit`, and `skylos agent verify` with `judge_all` and `production` modes
+- **AI Defense: Cloud Dashboard** — `skylos defend . --upload` sends defense results to the Skylos Cloud dashboard
+- **AI Defense: Dashboard Page** — dedicated AI Defense tab on project pages with defense score ring, OWASP LLM Top 10 grid, trend chart, findings breakdown, and ops checks
+- **CI/CD: `skylos cicd init --defend`** — generates workflow with AI Defense check step (`skylos defend . --fail-on critical --min-score 70`)
+- **Pre-commit: `skylos-defend` hook** — blocks commits with critical AI defense failures
+- **Public API Detection** — `skylos agent verify` now detects documented public API symbols in library packages.
+- **Deterministic suppression for documented public API** — top-level functions, classes, and variables with docs references are fully suppressed without LLM calls; methods require additional Sphinx/autodoc evidence
+
+### Changed
+- **Dead-code verifier contract** — `skylos agent analyze`, `skylos agent audit`, and `skylos agent verify` now default to `judge_all` mode, where static dead-code candidates remain the source of truth and the LLM reviews nearly every `references == 0`
+- **Deterministic suppressors as evidence** — in `judge_all` mode, entry-point discovery and deterministic suppressors are attached to findings as verifier evidence
+- **Benchmark fairness** — the real world dead-code benchmark now runs the verifier in `judge_all` mode so model quality is measured separately
+
+### Fixed
+- **CI/CD:** Quality Gate step now runs with `if: always()` so it reports even when defend step fails. Fixed trailing blank line in generated defend workflow step
+- **CLI:** `--upload` on empty project now prints "skipping upload" instead of silently doing nothing
+
 ## [3.5.10] - 2026-03-10
 
 ### Changed

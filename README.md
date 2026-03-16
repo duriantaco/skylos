@@ -1,28 +1,41 @@
 <div align="center">
-    <img src="assets/DOG_1.png" alt="Skylos - Security Scanner, Dead Code Detector & Vibe Coding Analyzer for Python, TypeScript, Go" width="300">
-    <h1>Skylos: Security Scanner, Dead Code Detector & Vibe Coding Analyzer</h1>
-    <h3>Find security vulnerabilities, dead code, and vibe coding defects in Python, TypeScript, and Go. Agentic AI fixes and MCP integration.</h3>
+    <img src="assets/DOG_1.png" alt="Skylos - Dead code, security, and AI defense for Python, TypeScript, and Go" width="300">
+    <h1>Skylos: Dead Code and Security PR Gate for Modern Codebases</h1>
+    <h3>Find dead code, secrets, and exploitable flows in Python, TypeScript, and Go. Add a pull request gate in minutes.</h3>
 </div>
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
-![Skylos](https://img.shields.io/badge/Skylos-PR%20Guard-2f80ed?style=flat&logo=github&logoColor=white)
-![100% Local](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
 ![CI/CD Ready](https://img.shields.io/badge/CI%2FCD-30s%20Setup-brightgreen?style=flat&logo=github-actions&logoColor=white)
 [![codecov](https://codecov.io/gh/duriantaco/skylos/branch/main/graph/badge.svg)](https://codecov.io/gh/duriantaco/skylos)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 ![PyPI version](https://img.shields.io/pypi/v/skylos)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
-![Security Policy](https://img.shields.io/badge/security-policy-brightgreen)
-![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
+![Skylos](https://img.shields.io/badge/Skylos-PR%20Guard-2f80ed?style=flat&logo=github&logoColor=white)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
-
-⭐ If Skylos saves you time (or has helped you in any way), please star the repo — it helps a lot.
-
-💬 Join the Discord (support + contributors): https://discord.gg/Ftn9t9tErf
 
 📖 **[Website](https://skylos.dev)** · **[Documentation](https://docs.skylos.dev)** · **[Blog](https://skylos.dev/blog)** · **[VS Code Extension](https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension)**
 
 ---
+
+# What is Skylos?
+
+Skylos is a local-first scanner for Python, TypeScript, and Go that helps teams catch dead code, secrets, and exploitable flows before they land in `main`.
+
+The core use case is straightforward: run it locally, add it to CI, and gate pull requests on real findings with GitHub annotations and review comments. Advanced features like AI defense, remediation agents, VS Code, MCP, and cloud upload are available, but you do not need any of them to get value from Skylos.
+
+### Start here
+
+| Goal | Command | What you get |
+|:---|:---|:---|
+| **Scan a repo** | `skylos . -a` | Dead code, risky flows, secrets, and code quality findings |
+| **Gate pull requests** | `skylos cicd init` | A GitHub Actions workflow with a quality gate and inline annotations |
+| **Audit an LLM app** | `skylos defend .` | Optional AI defense checks for Python LLM integrations |
+
+### Why teams adopt it
+
+1. **Better dead code signal on real frameworks:** Skylos understands FastAPI, Django, Flask, pytest, Next.js, React, and more, so dynamic code produces less noise.
+2. **One workflow instead of three tools:** Dead code, security scanning, and PR gating live in the same CLI and CI flow.
+3. **Local-first by default:** You can keep scans on your machine and add optional AI or cloud features later if you need them.
 
 ### Why Skylos over Vulture?
 
@@ -37,20 +50,6 @@
 | **TypeScript + Go support** | Yes | No |
 
 > Benchmarked on 9 popular Python repos (350k+ combined stars) + TypeScript ([consola](https://github.com/unjs/consola)). Every finding manually verified. [Full case study →](#skylos-vs-vulture-benchmark)
-
----
-
-# What is Skylos?
-
-> Skylos is a privacy-first SAST tool for Python, TypeScript, and Go that bridges the gap between traditional static analysis and AI agents. It detects dead code, security vulnerabilities (SQLi, SSRF, Secrets), and code quality issues with high precision.
-
-Unlike standard linters (like Vulture or Bandit) that struggle with dynamic Python patterns, Skylos uses a **hybrid engine** (AST + optional Local/Cloud LLM). This allows it to:
-
-1.  **Eliminate False Positives:** Distinguishes between truly dead code and framework magic (e.g., `pytest.fixture`, `FastAPI` routes).
-2.  **Verify via Runtime:** Optional `--trace` mode validates findings against actual runtime execution.
-3.  **Find Logic Bugs:** Goes beyond linting to find deep logic errors that regex-based tools miss.
-
----
 
 ### 🚀 **New to Skylos? Start with CI/CD Integration**
 
@@ -73,45 +72,21 @@ git add .github/workflows/skylos.yml && git push
 
 ---
 
-### Works with Claude Code Security
-
-Skylos integrates with [Claude Code Security](https://www.anthropic.com/research/claude-code-security) — Anthropic's AI-powered vulnerability scanner. Run both tools in parallel and get unified results in your Skylos dashboard.
-
-**Dead code is attack surface. Clean before you scan.**
-
-```bash
-# Generate a combined workflow (Skylos + Claude Code Security in parallel)
-skylos cicd init --claude-security
-
-# Or ingest Claude Security results manually
-skylos ingest claude-security --input claude-security-results.json
-```
-
-**What this gives you:**
-- Skylos finds dead code, quality issues, and secrets (Claude Security doesn't)
-- Claude Security finds deep vulnerability patterns with exploit scenarios
-- Both results appear in one dashboard with unified quality gates
-- 2 credits per Claude Security ingestion (vs 1 for native scans)
-
-See the [integration guide](https://docs.skylos.dev/integrations/claude-code-security) for setup details.
-
----
-
 ## Table of Contents
 
+- [What is Skylos?](#what-is-skylos)
 - [Quick Start](#quick-start)
-- [Features](#features)
+- [Key Capabilities](#key-capabilities)
 - [Installation](#installation)
 - [Skylos vs Vulture](#skylos-vs-vulture-benchmark)
 - [Projects Using Skylos](#projects-using-skylos)
 - [How It Works](#how-it-works)
-- [Agent Analysis](#agent-analysis)
+- [Advanced Workflows](#advanced-workflows)
 - [CI/CD](#cicd)
 - [MCP Server](#mcp-server)
 - [Baseline Tracking](#baseline-tracking)
 - [Gating](#gating)
-- [VS Code Extension](#vsc-extension)
-- [Claude Code Security Integration](#works-with-claude-code-security)
+- [VS Code Extension](#vs-code-extension)
 - [Integration and Ecosystem](#integration-and-ecosystem)
 - [Auditing and Precision](#auditing-and-precision)
 - [Coverage Integration](#coverage-integration)
@@ -126,25 +101,37 @@ See the [integration guide](https://docs.skylos.dev/integrations/claude-code-sec
 
 ## Quick Start
 
+If you are evaluating Skylos, start with the core workflow below. The LLM and AI defense commands are optional.
+
+### Core Workflow
+
 | Objective | Command | Outcome |
 | :--- | :--- | :--- |
-| **Hunt Dead Code** | `skylos .` | Prune unreachable functions and unused imports |
-| **Precise Hunt** | `skylos . --trace` | Cross-reference with runtime data |
-| **Audit Risk & Quality** | `skylos . --secrets --danger --quality` | Security leaks, taint tracking, code rot |
+| **First scan** | `skylos .` | Dead code findings with confidence scoring |
+| **Audit risk and quality** | `skylos . -a` | Dead code, risky flows, secrets, quality, and SCA findings |
+| **Higher-confidence dead code** | `skylos . --trace` | Cross-reference static findings with runtime activity |
+| **Review only changed lines** | `skylos . --diff origin/main` | Focus findings on active work instead of legacy debt |
+| **Gate locally** | `skylos --gate` | Fail on findings before code leaves your machine |
+| **Set up CI/CD** | `skylos cicd init` | Generate a GitHub Actions workflow in 30 seconds |
+| **Gate in CI** | `skylos cicd gate --input results.json` | Fail builds when issues cross your threshold |
+
+### Optional Workflows
+
+| Objective | Command | Outcome |
+| :--- | :--- | :--- |
 | **Detect Unused Pytest Fixtures** | `skylos . --pytest-fixtures` | Find unused `@pytest.fixture` across tests + conftest |
-| **AI-Powered Analysis** | `skylos agent analyze . --model gpt-4.1` | Hybrid static + LLM analysis with project context |
+| **AI-Powered Analysis** | `skylos agent analyze . --model gpt-4.1` | Static-first analysis plus judge-all LLM verification for dead code |
+| **Dead Code Verification** | `skylos agent verify . --model gpt-4.1` | Dead-code-only second pass: static findings reviewed by the LLM |
 | **AI Audit** | `skylos agent security-audit .` | Deep LLM review with interactive file selection |
 | **Auto-Remediate** | `skylos agent remediate . --auto-pr` | Scan, fix, test, and open a PR — end to end |
 | **PR Review** | `skylos agent review` | Analyze only git-changed files |
 | **PR Review (JSON)** | `skylos agent review . --model claude-sonnet-4-20250514 --format json -o results.json` | LLM review with code-level fix suggestions |
 | **Local LLM** | `skylos agent analyze . --base-url http://localhost:11434/v1 --model codellama` | Use Ollama/LM Studio (no API key needed) |
-| **Secure the Gate** | `skylos --gate` | Block risky code from merging |
-| **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
-| **🚀 Setup CI/CD** | `skylos cicd init` | Generate GitHub Actions workflow in 30 seconds |
-| **CI/CD + Upload** | `skylos cicd init --upload` | Generate workflow with cloud dashboard upload |
-| **Diff Filtering** | `skylos . --diff origin/main` | Only show findings in changed lines |
-| **Quality Gate (CI)** | `skylos cicd gate -i results.json` | Fail builds when issues found |
 | **PR Review (CI)** | `skylos cicd review -i results.json` | Post inline comments on PRs |
+| **AI Defense: Discover** | `skylos discover .` | Map all LLM integrations in your codebase |
+| **AI Defense: Defend** | `skylos defend .` | Check LLM integrations for missing guardrails |
+| **AI Defense: CI Gate** | `skylos defend . --fail-on critical --min-score 70` | Block PRs with critical AI defense gaps |
+| **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
 
 ### Demo
 [![Skylos demo](https://img.youtube.com/vi/BjMdSP2zZl8/0.jpg)](https://www.youtube.com/watch?v=BjMdSP2zZl8)
@@ -153,14 +140,16 @@ Backup (GitHub): https://github.com/duriantaco/skylos/discussions/82
 
 ## Key Capabilities
 
-### Python Security Scanner (SAST)
+The core product is dead code detection, security scanning, and PR gating. The AI-focused features below are optional layers on top of that baseline workflow.
+
+### Security Scanning (SAST)
 * **Taint Analysis:** Traces untrusted input from API endpoints to databases to prevent SQL Injection and XSS.
 * **Secrets Detection:** Hunts down hardcoded API keys (AWS, Stripe, OpenAI) and private credentials before commit.
 * **Vulnerability Checks:** Flags dangerous patterns like `eval()`, unsafe `pickle`, and weak cryptography.
 
-### Vibe Coding Guardrails
+### AI-Generated Code Guardrails
 
-*What the AI got wrong.* Every vibe coding finding includes `vibe_category` and `ai_likelihood` (high/medium/low) metadata — so you can filter, sort, and report on AI-generated code issues as a product line.
+Skylos can also flag common AI-generated code mistakes. Every finding includes `vibe_category` and `ai_likelihood` (high/medium/low) metadata so you can filter them separately if you want.
 
 * **Phantom Call Detection:** Catches calls to security functions (`sanitize_input`, `validate_token`, `check_permission`, etc.) that are never defined or imported — AI hallucinates these constantly. `hallucinated_reference, high`
 * **Phantom Decorator Detection:** Catches security decorators (`@require_auth`, `@rate_limit`, `@authenticate`, etc.) that are never defined or imported. `hallucinated_reference, high`
@@ -171,9 +160,9 @@ Backup (GitHub): https://github.com/duriantaco/skylos/discussions/82
 * **Disabled Security Controls:** Detects `verify=False`, `@csrf_exempt`, `DEBUG=True`, and `ALLOWED_HOSTS=["*"]`.
 * **Credential & Randomness Checks:** Catches hardcoded passwords and `random.choice()` used for security-sensitive values like tokens and OTPs.
 
-### AI Supply Chain Security
+### Prompt Injection and Content Scanning
 
-*What hostile content can do to AI systems.* Runs under `--danger` — no separate flag needed.
+These checks run under `--danger` and look for prompt injection patterns or obfuscated instructions in repository content.
 
 * **Multi-File Prompt Injection Scanner:** Scans Python, Markdown, YAML, JSON, TOML, and `.env` files for hidden instruction payloads — instruction overrides ("ignore previous instructions"), role hijacking ("you are now"), AI-targeted suppression ("do not flag", "skip security"), data exfiltration prompts, and AI-targeting phrases.
 * **Text Canonicalization Engine:** NFKC normalization, whitespace folding, and confusable replacement neutralize obfuscation before pattern matching.
@@ -182,17 +171,78 @@ Backup (GitHub): https://github.com/duriantaco/skylos/discussions/82
 * **Homoglyph / Mixed-Script Detection:** Flags Cyrillic and Greek characters mixed with Latin text (e.g., Cyrillic 'а' in `password`) that bypass visual review.
 * **Location-Aware Severity:** Findings in README files, HTML comments, and YAML prompt fields get elevated severity. Test files are automatically skipped.
 
+### Advanced: AI Defense for LLM Apps
+
+Static analysis for AI application security that maps every LLM call in your Python codebase and checks for missing guardrails. **Python only** (TypeScript/Go support planned).
+
+```bash
+# Discover all LLM integrations
+skylos discover .
+
+# Check defenses and get a scored report
+skylos defend .
+
+# CI gate: fail on critical gaps, require 70% defense score
+skylos defend . --fail-on critical --min-score 70
+
+# JSON output for dashboards and pipelines
+skylos defend . --json -o defense-report.json
+
+# Filter by OWASP LLM Top 10 category
+skylos defend . --owasp LLM01,LLM04
+```
+
+**13 checks across defense and ops:**
+
+| Check | Severity | OWASP | What it detects |
+|:---|:---|:---|:---|
+| `no-dangerous-sink` | Critical | LLM02 | LLM output flowing to eval/exec/subprocess |
+| `untrusted-input-to-prompt` | Critical | LLM01 | Raw user input in prompt with no processing |
+| `tool-scope` | Critical | LLM04 | Agent tools with dangerous system calls |
+| `tool-schema-present` | Critical | LLM04 | Agent tools without typed schemas |
+| `output-validation` | High | LLM02 | LLM output used without structured validation |
+| `prompt-delimiter` | High | LLM01 | User input in prompts without delimiters |
+| `rag-context-isolation` | High | LLM01 | RAG context injected without isolation |
+| `output-pii-filter` | High | LLM06 | No PII filtering on user-facing LLM output |
+| `model-pinned` | Medium | LLM03 | Model version not pinned (floating alias) |
+| `input-length-limit` | Low | LLM01 | No input length check before LLM call |
+| `logging-present` | Medium | Ops | No logging around LLM calls |
+| `cost-controls` | Medium | Ops | No max_tokens set on LLM calls |
+| `rate-limiting` | Medium | Ops | No rate limiting on LLM endpoints |
+
+**Defense and ops scores are tracked separately** — adding logging won't inflate your security score.
+
+**Custom policy** via `skylos-defend.yaml`:
+```yaml
+rules:
+  model-pinned:
+    severity: critical    # Upgrade severity
+  input-length-limit:
+    enabled: false        # Disable check
+gate:
+  min_score: 70
+  fail_on: high
+```
+
+Supports OpenAI, Anthropic, Google Gemini, Cohere, Mistral, Ollama, Together AI, Groq, Fireworks, Replicate, LiteLLM, LangChain, LlamaIndex, CrewAI, and AutoGen.
+
 ### Dead Code Detection & Cleanup
 * **Find Unused Code:** Identifies unreachable functions, orphan classes, and unused imports with confidence scoring.
 * **Smart Tracing:** Distinguishes between truly dead code and dynamic frameworks (Flask/Django routes, Pytest fixtures).
 * **Safe Pruning:** Uses LibCST to safely remove dead code without breaking syntax.
 
-### Agentic AI & Hybrid Analysis
-* **Context-Aware Audits:** Combines static analysis speed with LLM reasoning to validate findings and filter noise.
-* **End-to-End Remediation:** `skylos agent remediate` scans, fixes, tests, and opens PRs — fully autonomous DevOps agent.
-* **100% Local Privacy:** Supports Ollama and Local LLMs so your code never leaves your machine.
+### Advanced: Agents, Reviews, and Remediation
+* **Context-aware audits:** Combines static analysis speed with LLM reasoning to validate findings and filter noise.
+* **Remediation workflow:** `skylos agent remediate` can scan, generate fixes, run tests, and optionally open a PR.
+* **Local model support:** Supports Ollama and other OpenAI-compatible local endpoints if you want code to stay on your machine.
 
-### Codebase Optimization
+### CI/CD and PR Gating
+
+* **30-Second Workflow Setup:** `skylos cicd init` generates GitHub Actions workflows with sensible defaults.
+* **Diff-Aware Enforcement:** Gate only the lines that changed, fail on severity thresholds, and keep legacy debt manageable with baselines.
+* **PR-Native Feedback:** GitHub annotations, inline review comments, and optional dashboard upload keep findings where teams already work.
+
+### Safe Cleanup and Workflow Controls
 
 * **CST-safe removals:** Uses LibCST to remove selected imports or functions (handles multiline imports, aliases, decorators, async etc..)
 * **Logic Awareness**: Deep integration for Python frameworks (Django, Flask, FastAPI) and TypeScript (Tree-sitter) to identify active routes and dependencies.
@@ -295,16 +345,16 @@ After installation, we recommend:
    skylos . --danger --secrets           # Include security checks
    ```
 
-3. **Try AI-powered analysis:**
+3. **Keep scans focused on active work:**
    ```bash
-   skylos agent analyze . --model gpt-4.1
+   skylos . --diff origin/main
    ```
 
-4. **Add a badge to your README:**
-   ```markdown
-   [![Analyzed with Skylos](https://img.shields.io/badge/Analyzed%20with-Skylos-2f80ed?style=flat&logo=python&logoColor=white)](https://github.com/duriantaco/skylos)
+4. **Try advanced workflows only if you need them:**
+   ```bash
+   skylos agent review . --model gpt-4.1
+   skylos defend .
    ```
-   Shows others you maintain clean, secure code!
 
 [See all commands in the Quick Start table](#quick-start)
 
@@ -397,27 +447,20 @@ Both tools find all dead code. Skylos has **~5x better precision** — Knip inco
 
 ## Projects Using Skylos
 
-Show you're maintaining clean, secure code! Add your project:
+If you use Skylos in a public repository, open an issue and add it here. This list is based on self-submissions, so it will stay small until more teams opt in publicly.
 
 [![Analyzed with Skylos](https://img.shields.io/badge/Analyzed%20with-Skylos-2f80ed?style=flat&logo=python&logoColor=white)](https://github.com/duriantaco/skylos)
 
-**Featured Projects:**
-
-| Project | Description | Badge |
-|---------|-------------|-------|
-| [Skylos](https://github.com/duriantaco/skylos) | Python SAST & dead code detection | [![Skylos](https://img.shields.io/badge/Analyzed%20with-Skylos-2f80ed?style=flat&logo=python)](https://github.com/duriantaco/skylos) |
-| *Your project here* | [Add yours!](https://github.com/duriantaco/skylos/issues/new?title=Add%20my%20project%20to%20showcase&body=Project:%20%0AURL:%20%0ADescription:%20) | |
-
-**Why share?**
-- Show commitment to code quality
-- Get a backlink to your project
-- Join the community of quality-focused developers
+| Project | Description |
+|---------|-------------|
+| [Skylos](https://github.com/duriantaco/skylos) | Uses Skylos on itself for dead code, security, and CI gating |
+| *Your project here* | [Add yours](https://github.com/duriantaco/skylos/issues/new?title=Add%20my%20project%20to%20showcase&body=Project:%20%0AURL:%20%0ADescription:%20) |
 
 [Add your project →](https://github.com/duriantaco/skylos/issues/new?title=Add%20my%20project%20to%20showcase&body=Project:%20%0AURL:%20%0ADescription:%20)
 
 ---
 
-## How it works
+## How It Works
 
 Skylos builds a reference graph of your entire codebase - who defines what, who calls what, across all files.
 
@@ -501,7 +544,9 @@ skylos . --pytest-fixtures
 This includes fixtures inside conftest.py, since conftest.py is the standard place to store shared test fixtures.
 
 
-## Agent Analysis
+## Advanced Workflows
+
+These commands are optional. Use them when you want LLM-assisted review, remediation, or AI defense on top of the core scanner and CI gate.
 
 Skylos uses a **hybrid architecture** that combines static analysis with LLM reasoning:
 
@@ -513,15 +558,23 @@ Skylos uses a **hybrid architecture** that combines static analysis with LLM rea
 | LLM only | High | Medium | ✅ |
 | **Hybrid** | **Highest** | **High** | ✅ |
 
-Research shows LLMs find vulnerabilities that static analysis misses, while static analysis validates LLM suggestions. However, LLM is extremely prone to false positives in dead code because it doesn't actually do real symbol resolution. 
+Research shows LLMs find vulnerabilities that static analysis misses, while static analysis validates LLM suggestions. However, LLMs are prone to false positives in dead code if they are asked to invent findings from raw source alone.
 
-**Note**: Take dead code output from LLM solely with caution
+For dead code, Skylos now uses a stricter contract:
+- static analysis generates the candidate list
+- repo facts and graph evidence are gathered around each candidate
+- `skylos agent analyze`, `skylos agent audit`, and `skylos agent verify` send nearly every `references == 0` candidate through the LLM in `judge_all` mode
+- deterministic suppressors still exist, but in `judge_all` mode they are attached as evidence instead of silently deciding the outcome
+
+Use `--verification-mode production` if you want the cheaper deterministic-first path instead of the default judge-all review.
 
 ### Agent Commands
 
 | Command | Description |
 |---------|-------------|
-| `skylos agent analyze PATH` | Hybrid analysis with full project context |
+| `skylos agent analyze PATH` | Full hybrid pipeline with fix suggestions and judge-all dead-code verification |
+| `skylos agent audit PATH` | Same hybrid pipeline as `analyze`, but fix suggestions are off by default |
+| `skylos agent verify PATH` | Dead-code-only verification pass over static findings |
 | `skylos agent security-audit PATH` | Security audit with interactive file selection |
 | `skylos agent review` | Analyze only git-changed files with code-level fix suggestions |
 | `skylos agent remediate PATH` | End-to-end: scan, fix, test, and create PR |
@@ -542,6 +595,11 @@ skylos agent analyze . \
   --provider openai \
   --base-url http://localhost:11434/v1 \
   --model qwen2.5-coder:7b
+
+# Cheaper dead-code verification path
+skylos agent verify . \
+  --model claude-sonnet-4-20250514 \
+  --verification-mode production
 ```
 
 **Note**: You can use the `--model` flag to specify the model that you want. We support Gemini, Groq, Anthropic, ChatGPT and Mistral.
@@ -585,10 +643,11 @@ skylos agent review . --model claude-sonnet-4-20250514 --format json -o llm-resu
 skylos cicd review --input results.json --llm-input llm-results.json
 ```
 
-The pipeline runs 3 phases:
+The hybrid pipeline runs in stages:
 1. **Static analysis** — finds security, quality, and dead code issues
-2. **LLM verification** — verifies dead code findings, scans for additional issues
-3. **Code fix generation** — for each finding, generates the problematic code snippet and a corrected version
+2. **Dead-code verification** — the LLM judges static dead-code candidates using graph evidence, repo facts, and surrounding context
+3. **Additional LLM analysis** — scans for logic/security issues static analysis may miss
+4. **Code fix generation** — for each reported finding, generates the problematic code snippet and a corrected version
 
 Each PR comment shows the exact vulnerable lines and a drop-in replacement fix.
 
@@ -681,12 +740,12 @@ skylos cicd init --llm --model claude-sonnet-4-20250514
 
 This adds an LLM step that generates code-level fix suggestions — showing the vulnerable code and the corrected version inline on your PR.
 
-**Required GitHub Secrets:**
+**Optional GitHub Secrets**
 
-You must add these secrets in your repo settings (**Settings > Secrets and variables > Actions**):
+For the default `skylos cicd init` workflow, you do not need any Skylos-specific secrets. Add these only if you enable the matching feature in GitHub Actions (**Settings > Secrets and variables > Actions**):
 
-| Secret | Required | Description |
-|--------|----------|-------------|
+| Secret | When needed | Description |
+|--------|-------------|-------------|
 | `ANTHROPIC_API_KEY` | If using Claude models | Your Anthropic API key |
 | `OPENAI_API_KEY` | If using GPT models | Your OpenAI API key |
 | `SKYLOS_API_KEY` | For Skylos Cloud features | Get from [skylos.dev](https://skylos.dev) |
@@ -708,6 +767,8 @@ skylos cicd init --python-version 3.11
 skylos cicd init --llm --model gpt-4.1
 skylos cicd init --upload                        # include --upload step + SKYLOS_TOKEN env
 skylos cicd init --upload --llm --model claude-sonnet-4-20250514  # upload + LLM
+skylos cicd init --defend                        # add AI Defense check step
+skylos cicd init --defend --upload               # defend + upload results to cloud
 skylos cicd init --no-baseline
 skylos cicd init -o .github/workflows/security.yml
 ```
@@ -1194,8 +1255,26 @@ Tune thresholds and disable rules in `pyproject.toml`:
 complexity = 15        # Default: 10
 nesting = 4            # Default: 3
 max_args = 7           # Default: 5
-max_lines = 80  
+max_lines = 80
 ```
+
+### Default CLI Options (`addopts`)
+
+Set default flags in `pyproject.toml` so you don't have to type them every time — just like pytest's `addopts`:
+
+```toml
+[tool.skylos]
+addopts = ["--quality", "--danger", "--secrets"]
+```
+
+String format also works:
+
+```toml
+[tool.skylos]
+addopts = "--quality --danger --confidence=80"
+```
+
+CLI flags override `addopts`, so you can always narrow or widen a run without editing config.
 
 ### Legacy AI Flags
 
@@ -1211,7 +1290,7 @@ skylos . --audit --model claude-haiku-4-5-20251001
 
 ### Combine Everything
 ```bash
-skylos . --danger --secrets --quality  # All static scans
+skylos . -a                           # All static scans (danger + secrets + quality + sca)
 skylos agent remediate . --dry-run    # Preview AI-assisted fixes
 ```
 
@@ -1353,6 +1432,7 @@ ignore = [
 | Skip a folder | `--exclude-folder NAME` |
 | Skip a rule globally | `ignore = ["SKY-XXX"]` in pyproject.toml |
 | Include excluded folder | `--include-folder NAME` |
+| Run all checks | `-a` or `addopts` in pyproject.toml |
 | Scan everything | `--no-default-excludes` |
 
 ## Whitelist Configuration
@@ -1457,6 +1537,8 @@ Options:
   --secrets                    Scan for api keys/secrets
   --danger                     Scan for dangerous code
   --quality                    Code complexity and maintainability
+  --sca                        Scan dependencies for known CVEs (OSV.dev)
+  -a, --all                    Enable all checks: --danger --secrets --quality --sca
   --trace                      Run tests with coverage first
   --audit                      LLM-powered logic review (legacy)
   --model MODEL                LLM model (default: gpt-4.1)
@@ -1493,10 +1575,37 @@ Agent remediate options:
   --severity LEVEL             Min severity filter: critical, high, medium, low
 ```
 
+### AI Defense Command Flags
+```
+Usage: skylos discover [OPTIONS] PATH
+  Map all LLM integrations in a Python codebase.
+
+Options:
+  --json                       Output as JSON
+  -o, --output FILE            Write output to file
+  --exclude FOLDER [FOLDER...] Additional folders to exclude
+
+Usage: skylos defend [OPTIONS] PATH
+  Check LLM integrations for missing defenses.
+
+Options:
+  --json                       Output as JSON
+  -o, --output FILE            Write output to file
+  --min-severity LEVEL         Minimum severity to include (critical/high/medium/low)
+  --fail-on LEVEL              Exit 1 if any defense finding at or above this severity
+  --min-score N                Exit 1 if defense score below this percentage (0-100)
+  --policy FILE                Path to skylos-defend.yaml policy file
+  --owasp IDS                  Comma-separated OWASP LLM IDs (e.g. LLM01,LLM04)
+  --exclude FOLDER [FOLDER...] Additional folders to exclude
+  --upload                     Upload defense results to Skylos Cloud dashboard
+```
+
 ### Commands
 ```
 Commands:
   skylos PATH                  Analyze a project (static analysis)
+  skylos discover PATH         Map LLM integrations in a codebase
+  skylos defend PATH           Check LLM integrations for missing defenses
   skylos agent analyze PATH    Hybrid static + LLM analysis
   skylos agent security-audit PATH  Deep LLM audit with file selection
   skylos agent review          Review git-changed files only
@@ -1538,7 +1647,7 @@ The interactive mode lets you select specific functions and imports to remove:
 2. **Confirm changes**: Review selected items before applying
 3. **Auto-cleanup**: Files are automatically updated
 
-## FAQ 
+## FAQ
 
 **Q: Why doesn't Skylos find 100% of dead code?**
 A: Python's dynamic features (getattr, globals, etc.) can't be perfectly analyzed statically. No tool can achieve 100% accuracy. If they say they can, they're lying.
@@ -1565,7 +1674,10 @@ A: `conftest.py` is the standard place for shared fixtures. If a fixture is defi
 A: Yes. Coverage tracks execution, not pass/fail. Even failing tests provide coverage data.
 
 **Q: What's the difference between `skylos . --audit` and `skylos agent audit`?**
-A: `skylos agent audit` uses the new hybrid architecture with full project context (`defs_map`), enabling detection of hallucinations and cross-file issues. The `--audit` flag is legacy and lacks project context.
+A: `skylos agent audit` runs the full hybrid pipeline — static analysis, judge-all LLM dead-code verification, and LLM security/quality analysis. Fix suggestions are off by default (use `--with-fixes` to enable). `skylos agent analyze` is equivalent but includes fix suggestions by default. The `--audit` flag on the base command is the legacy static-only mode.
+
+**Q: What does `--verification-mode` do?**
+A: It controls how aggressively Skylos sends dead-code candidates to the LLM. `judge_all` is the default for `agent analyze`, `agent audit`, and `agent verify`; it sends nearly every `references == 0` static candidate to the LLM and treats deterministic suppressors as evidence. `production` is cheaper and lets more obvious alive cases get suppressed before the LLM sees them.
 
 **Q: Can I use local LLMs instead of OpenAI/Anthropic?**
 A: Yes! Use `--base-url` to point to Ollama, LM Studio, or any OpenAI-compatible endpoint. No API key needed for localhost.
@@ -1641,6 +1753,9 @@ We welcome contributions! Please read our [Contributing Guidelines](CONTRIBUTING
 - [x] Small integration with typescript
 - [x] Expanded TypeScript dead code detection (interfaces, enums, type aliases, 95% recall)
 - [ ] Expand and improve on capabilities of Skylos in various other languages
+- [x] AI Defense Engine: discover + defend commands with 13 checks, OWASP LLM Top 10 mapping, ops score
+- [x] AI Defense Cloud Dashboard: upload, trend chart, OWASP grid, per-integration cards, dedicated project page
+- [x] AI Defense CI/CD: `skylos cicd init --defend`, pre-commit hook
 - [x] Expand the providers for LLMs (OpenAI, Anthropic, Ollama, LM Studio, vLLM)
 - [x] Expand the LLM portion for detecting dead/dangerous code (hybrid architecture)
 - [x] Coverage integration for runtime verification

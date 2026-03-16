@@ -1,5 +1,5 @@
-name: "Skylos - Python SAST & Dead Code Detection"
-description: "Find dead code, security vulnerabilities, hardcoded secrets, and quality issues in your Python codebase."
+name: "Skylos - Dead Code & Security PR Gate"
+description: "Scan Python, TypeScript, and Go for dead code, secrets, and risky flows, then gate pull requests with annotations."
 author: "Skylos (founder@skylos.dev)"
 
 branding:
@@ -56,7 +56,7 @@ runs:
 
     - name: Install Skylos
       shell: bash
-      run: pip install skylos
+      run: python -m pip install "${{ github.action_path }}"
 
     - name: Run Skylos Scan
       id: scan
@@ -128,8 +128,8 @@ runs:
       if: always()
       shell: bash
       run: |
-        python -m skylos.cicd.cli annotate \
-          -i skylos-report.json \
+        python -m skylos.cli cicd annotate \
+          --input skylos-report.json \
           --max 50 || true
 
     - name: Post PR Review Comments
@@ -138,8 +138,8 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        python -m skylos.cicd.cli review \
-          -i skylos-report.json \
+        python -m skylos.cli cicd review \
+          --input skylos-report.json \
           --max-comments ${{ inputs.max-comments }} || true
 
     - name: Quality Gate
@@ -147,8 +147,8 @@ runs:
       if: inputs.mode == 'gate' || inputs.mode == 'review'
       shell: bash
       run: |
-        python -m skylos.cicd.cli gate \
-          -i skylos-report.json \
+        python -m skylos.cli cicd gate \
+          --input skylos-report.json \
           --summary
         RESULT=$?
         if [ $RESULT -eq 0 ]; then
