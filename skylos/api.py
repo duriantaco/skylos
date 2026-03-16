@@ -867,40 +867,107 @@ def upload_report(
     return {"success": False, "error": last_err or "Unknown error"}
 
 
-def upload_github_check(report_json, sha, repo_owner, repo_name):
+def upload_defense_report(defense_json_str, quiet=False):
+    """Upload defense scan results to the cloud dashboard."""
     token = get_project_token()
     if not token:
-        print("Error: No token. Run 'skylos sync connect'")
-        return False
+        return {
+            "success": False,
+            "error": "No token found. Run 'skylos login' or set SKYLOS_TOKEN.",
+        }
 
-    url = f"{BASE_URL}/api/github/check"
-
-    payload = {
-        "sha": sha,
-        "report": report_json,
-        "repo_owner": repo_owner,
-        "repo_name": repo_name,
-    }
+    import json as _json
 
     try:
-        response = requests.post(
-            url,
-            json=payload,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=30,
-        )
+        defense_data = _json.loads(defense_json_str)
+    except (ValueError, TypeError) as e:
+        return {"success": False, "error": f"Invalid defense JSON: {e}"}
 
-        if response.status_code == 200:
-            data = response.json()
-            print(f"✓ GitHub check created: {data['summary']}")
-            return data["conclusion"] == "success"
-        else:
-            print(f"✗ Failed to create check: {response.status_code}")
-            return False
+    commit, branch, actor, ci = get_git_info()
+    git_root = get_git_root()
 
-    except Exception as e:
-        print(f"✗ Error: {e}")
-        return False
+    link = _load_repo_link(git_root)
+
+    payload = {
+        "commit_hash": commit,
+        "branch": branch,
+        "actor": actor,
+        "tool": "skylos-defend",
+        "summary": {},
+        "findings": [],
+        "defense_score": defense_data.get("summary"),
+        "ops_score": defense_data.get("ops_score"),
+        "owasp_coverage": defense_data.get("owasp_coverage"),
+        "defense_findings": defense_data.get("findings", []),
+        "defense_integrations": defense_data.get("integrations", []),
+    }
+
+    if link.get("project_id"):
+        payload["project_id"] = link["project_id"]
+
+    if not quiet:
+        print("Uploading defense results...", end="", flush=True)
+
+    last_err = None
+    for attempt in range(3):
+        try:
+            if attempt > 0 and not quiet:
+                print(f" retrying ({attempt + 1}/3)...", end="", flush=True)
+            response = requests.post(
+                REPORT_URL,
+                json=payload,
+                headers=_build_auth_headers(token),
+                timeout=30,
+            )
+            if response.status_code in (200, 201):
+                data = response.json()
+                scan_id = data.get("scanId") or data.get("scan_id")
+
+                if not quiet:
+                    score = defense_data.get("summary", {})
+                    print(f" done!")
+                    print(f"✓ Defense scan uploaded")
+                    print(
+                        f"  Defense Score: {score.get('score_pct', 0)}% ({score.get('risk_rating', 'UNKNOWN')})"
+                    )
+                    if scan_id:
+                        print(f"\n🔗 View: {BASE_URL}/dashboard/scans/{scan_id}")
+
+                    credits_left = data.get("credits_remaining")
+                    if credits_left is not None and credits_left < 50:
+                        print(
+                            f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
+                        )
+
+                return {
+                    "success": True,
+                    "scan_id": scan_id,
+                }
+
+            if response.status_code == 401:
+                if not quiet:
+                    print(" failed.")
+                return {
+                    "success": False,
+                    "error": "Invalid API token. Run 'skylos sync connect' to reconnect.",
+                }
+
+            if response.status_code == 402:
+                if not quiet:
+                    print(" failed.")
+                return {
+                    "success": False,
+                    "error": "No credits remaining. Buy more at skylos.dev/dashboard/credits",
+                    "code": "NO_CREDITS",
+                }
+
+            last_err = f"Server Error {response.status_code}: {response.text}"
+        except Exception as e:
+            last_err = f"Connection Error: {str(e)}"
+
+    if not quiet:
+        print(" failed.")
+    return {"success": False, "error": last_err or "Unknown error"}
 
 
 def verify_report(result_json, quiet=False):
