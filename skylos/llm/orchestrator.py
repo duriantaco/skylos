@@ -68,7 +68,20 @@ class RemediationAgent:
             self._print_plan(plan, log)
             return plan.summary()
 
-        log("Step 3/5: Generating and applying fixes...")
+        branch_name = None
+        if auto_pr:
+            log("Step 3/6: Creating remediation branch...")
+            branch_name = self._prepare_pr_branch(
+                path if path.is_dir() else path.parent,
+                branch_prefix,
+                log,
+            )
+            if not branch_name:
+                summary = plan.summary()
+                summary["branch_error"] = "Could not create remediation branch"
+                return summary
+
+        log("Step 4/6: Generating and applying fixes...")
         executor = RemediationExecutor(
             test_cmd=self.test_cmd,
             project_root=path if path.is_dir() else path.parent,
@@ -92,18 +105,20 @@ class RemediationAgent:
 
         pr_url = None
         if auto_pr and fixed_files:
-            log("Step 4/5: Creating pull request...")
-            pr_url = self._create_pr(executor, plan, branch_prefix, log)
+            log("Step 5/6: Creating pull request...")
+            pr_url = self._create_pr(executor, plan, branch_name, log)
         else:
             if not fixed_files:
-                log("Step 4/5: No fixes applied — skipping PR.")
+                log("Step 5/6: No fixes applied — skipping PR.")
             else:
-                log("Step 4/5: Skipped (--auto-pr not set).")
+                log("Step 5/6: Skipped (--auto-pr not set).")
 
-        log("Step 5/5: Summary")
+        log("Step 6/6: Summary")
         summary = plan.summary()
         if pr_url:
             summary["pr_url"] = pr_url
+        if branch_name:
+            summary["branch"] = branch_name
         self._print_plan(plan, log)
 
         return summary
@@ -202,22 +217,30 @@ class RemediationAgent:
         desc = getattr(fix, "description", "")
         batch.fix_description = desc[:200] if desc else primary.message
 
+    def _prepare_pr_branch(
+        self,
+        project_root: Path,
+        branch_prefix: str,
+        log,
+    ) -> str | None:
+        executor = RemediationExecutor(project_root=project_root)
+        try:
+            branch = executor.create_branch(branch_prefix)
+            log(f"  Branch: {branch}")
+            return branch
+        except Exception as e:
+            log(f"  Failed to create branch: {e}")
+            return None
+
     def _create_pr(
         self,
         executor: RemediationExecutor,
         plan: RemediationPlan,
-        branch_prefix: str,
+        branch: str | None,
         log,
     ) -> str | None:
         fixed_batches = [b for b in plan.batches if b.status == "fixed"]
-        if not fixed_batches:
-            return None
-
-        try:
-            branch = executor.create_branch(branch_prefix)
-            log(f"  Branch: {branch}")
-        except Exception as e:
-            log(f"  Failed to create branch: {e}")
+        if not fixed_batches or not branch:
             return None
 
         files = [b.file for b in fixed_batches]
