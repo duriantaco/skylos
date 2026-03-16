@@ -64,7 +64,3 @@ def delete_key(provider):
         return True
     except Exception:
         return False
-
-
-def list_providers():
-    return list(PROVIDERS.keys())

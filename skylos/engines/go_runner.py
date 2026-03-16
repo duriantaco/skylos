@@ -126,21 +126,3 @@ def run_go_engine_for_module(module_root, timeout_s=60):
         "findings": list(out.get("findings", [])),
         "symbols": out.get("symbols"),
     }
-
-
-def run_go_engine(scan_root, timeout_s=60):
-    modules = discover_go_modules(scan_root)
-    if not modules:
-        return {"findings": [], "symbols": None}
-
-    all_findings = []
-    all_symbols = {"defs": [], "refs": [], "call_pairs": []}
-    for module_root in modules:
-        result = run_go_engine_for_module(module_root, timeout_s=timeout_s)
-        all_findings.extend(result["findings"])
-        symbols = result.get("symbols")
-        if symbols:
-            all_symbols["defs"].extend(symbols.get("defs", []))
-            all_symbols["refs"].extend(symbols.get("refs", []))
-            all_symbols["call_pairs"].extend(symbols.get("call_pairs", []))
-    return {"findings": all_findings, "symbols": all_symbols}

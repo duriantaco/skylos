@@ -128,45 +128,6 @@ class CircularDependencyAnalyzer:
                     self.dependencies[dep.from_module].add(dep.to_module)
                     self.all_deps.append(dep)
 
-    def find_cycles(self) -> List[List[str]]:
-        index_counter = [0]
-        stack = []
-        lowlinks = {}
-        index = {}
-        on_stack = {}
-        sccs = []
-
-        def strongconnect(node):
-            index[node] = index_counter[0]
-            lowlinks[node] = index_counter[0]
-            index_counter[0] += 1
-            stack.append(node)
-            on_stack[node] = True
-
-            for successor in self.dependencies.get(node, []):
-                if successor not in index:
-                    strongconnect(successor)
-                    lowlinks[node] = min(lowlinks[node], lowlinks[successor])
-                elif on_stack.get(successor, False):
-                    lowlinks[node] = min(lowlinks[node], index[successor])
-
-            if lowlinks[node] == index[node]:
-                scc = []
-                while True:
-                    w = stack.pop()
-                    on_stack[w] = False
-                    scc.append(w)
-                    if w == node:
-                        break
-                if len(scc) > 1:
-                    sccs.append(scc)
-
-        for node in self.modules:
-            if node not in index:
-                strongconnect(node)
-
-        return sccs
-
     def find_simple_cycles(self) -> List[List[str]]:
         cycles = []
         visited = set()
@@ -272,18 +233,6 @@ class CircularDependencyAnalyzer:
 
         return {m for m, count in module_cycle_count.items() if count >= 2}
 
-    def get_summary(self) -> Dict[str, Any]:
-        cycles = self.find_simple_cycles()
-
-        return {
-            "total_modules": len(self.modules),
-            "total_cycles": len(cycles),
-            "max_cycle_length": max((len(c) for c in cycles), default=0),
-            "avg_cycle_length": sum(len(c) for c in cycles) / len(cycles)
-            if cycles
-            else 0,
-            "core_infrastructure": list(self.get_core_infrastructure()),
-        }
 
 
 class CircularDependencyRule:
