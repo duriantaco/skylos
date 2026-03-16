@@ -409,3 +409,84 @@ class TestOrchestrator:
 
         assert summary["total_findings"] == 0
         assert summary["fixed"] == 0
+
+    def test_auto_pr_prepares_branch_before_processing_batches(self, tmp_path):
+        from skylos.llm.orchestrator import RemediationAgent
+
+        test_file = tmp_path / "vuln.py"
+        test_file.write_text("import hashlib\nhashlib.md5(b'data')\n")
+
+        agent = RemediationAgent()
+        events = []
+
+        mock_results = {
+            "danger": [
+                {
+                    "rule_id": "SKY-D206",
+                    "severity": "MEDIUM",
+                    "message": "Weak hash: md5",
+                    "file": str(test_file),
+                    "line": 2,
+                    "col": 0,
+                }
+            ],
+            "quality": [],
+            "secrets": [],
+        }
+
+        def fake_prepare_branch(project_root, branch_prefix, log):
+            events.append(("branch", branch_prefix))
+            return "skylos/fix-test"
+
+        def fake_process_batch(batch, fixer, executor, log):
+            events.append(("process", batch.file))
+            batch.status = "fixed"
+            batch.fix_description = "Fixed"
+
+        with (
+            patch.object(agent, "_scan", return_value=mock_results),
+            patch.object(agent, "_prepare_pr_branch", side_effect=fake_prepare_branch),
+            patch.object(agent, "_create_fixer", return_value=object()),
+            patch.object(agent, "_process_batch", side_effect=fake_process_batch),
+            patch.object(agent, "_create_pr", return_value="https://example.com/pr/1"),
+        ):
+            summary = agent.run(str(tmp_path), auto_pr=True, quiet=True)
+
+        assert summary["branch"] == "skylos/fix-test"
+        assert events[0] == ("branch", "skylos/fix")
+        assert events[1][0] == "process"
+
+    def test_auto_pr_aborts_before_changes_if_branch_creation_fails(self, tmp_path):
+        from skylos.llm.orchestrator import RemediationAgent
+
+        test_file = tmp_path / "vuln.py"
+        test_file.write_text("import hashlib\nhashlib.md5(b'data')\n")
+
+        agent = RemediationAgent()
+
+        mock_results = {
+            "danger": [
+                {
+                    "rule_id": "SKY-D206",
+                    "severity": "MEDIUM",
+                    "message": "Weak hash: md5",
+                    "file": str(test_file),
+                    "line": 2,
+                    "col": 0,
+                }
+            ],
+            "quality": [],
+            "secrets": [],
+        }
+
+        with (
+            patch.object(agent, "_scan", return_value=mock_results),
+            patch.object(agent, "_prepare_pr_branch", return_value=None),
+            patch.object(agent, "_create_fixer") as mock_create_fixer,
+            patch.object(agent, "_process_batch") as mock_process_batch,
+        ):
+            summary = agent.run(str(tmp_path), auto_pr=True, quiet=True)
+
+        assert summary["branch_error"] == "Could not create remediation branch"
+        mock_create_fixer.assert_not_called()
+        mock_process_batch.assert_not_called()
