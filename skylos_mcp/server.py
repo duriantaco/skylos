@@ -191,6 +191,8 @@ def _gate(tool_name: str) -> str | None:
 def _register_tools(mcp):
     """Register all MCP tools and resources. Called inside main() after FastMCP is created."""
 
+## all of these look like dead but they're all registered inside `_register_tools()` which is
+## called from main() .. please ignore the "unused function" warnings for these --- IGNORE ---
     @mcp.tool()
     def analyze(
         path: str,
@@ -305,6 +307,61 @@ def _register_tools(mcp):
                 quiet=True,
             )
             return json.dumps(summary, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    def verify_dead_code(
+        path: str,
+        confidence: int = 60,
+        model: str = "gpt-4.1",
+        max_verify: int = 30,
+        max_challenge: int = 10,
+        exclude_folders: str | None = None,
+    ) -> str:
+
+        gate_err = _gate("verify_dead_code")
+        if gate_err:
+            return gate_err
+
+        try:
+            run_analyze = _lazy_analyze()
+            parse_exclude_folders, _ = _lazy_constants()
+
+            excl = list(parse_exclude_folders(use_defaults=True))
+            if exclude_folders:
+                for f in exclude_folders.split(","):
+                    f = f.strip()
+                    if f:
+                        excl.append(f)
+
+            raw = run_analyze(str(path), conf=confidence, exclude_folders=excl)
+            static_result = json.loads(raw) if isinstance(raw, str) else raw
+
+            all_findings = []
+            for key in ("unused_functions", "unused_classes", "unused_variables", "unused_imports"):
+                all_findings.extend(static_result.get(key, []))
+
+            defs_map = static_result.get("definitions", {})
+
+            if not all_findings:
+                return json.dumps({"message": "No dead code findings to verify", "stats": {}})
+
+            from skylos.llm.verify_orchestrator import run_verification
+
+            result = run_verification(
+                findings=all_findings,
+                defs_map=defs_map,
+                project_root=str(path),
+                model=model,
+                max_verify=max_verify,
+                max_challenge=max_challenge,
+                quiet=True,
+            )
+
+            _store_result(result, "verify_dead_code", path)
+            return json.dumps(result, indent=2, default=str)
+
         except Exception as e:
             return json.dumps({"error": str(e)})
 
