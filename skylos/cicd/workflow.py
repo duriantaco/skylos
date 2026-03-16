@@ -24,6 +24,7 @@ def generate_workflow(
     model: Optional[str] = None,
     use_claude_security: bool = False,
     use_upload: bool = False,
+    use_defend: bool = False,
 ) -> str:
     triggers = triggers or ["pull_request", "push"]
     analysis_types = analysis_types or ["dead-code", "security", "quality", "secrets"]
@@ -67,6 +68,20 @@ def generate_workflow(
         llm_env = """
           SKYLOS_API_KEY: ${{ secrets.SKYLOS_API_KEY }}"""
 
+    defend_step = ""
+    if use_defend:
+        defend_env = ""
+        if use_upload:
+            defend_env = "\n        env:\n          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}"
+        defend_parts = [
+            "",
+            "      - name: AI Defense Check",
+            f"        run: skylos defend . --fail-on critical --min-score 70 --json -o defense-results.json{' --upload' if use_upload else ''}",
+        ]
+        if defend_env:
+            defend_parts.append(defend_env)
+        defend_step = "\n".join(defend_parts)
+
     permissions_block = """permissions:
   contents: read
   pull-requests: write
@@ -101,8 +116,9 @@ jobs:
         run: skylos .{analysis_flags}{upload_flag} --json -o skylos-results.json{
         upload_env_block
     }
-{llm_step}
+{llm_step}{defend_step}
       - name: Quality Gate
+        if: always()
         run: skylos cicd gate --input skylos-results.json --summary
 
       - name: GitHub Annotations
