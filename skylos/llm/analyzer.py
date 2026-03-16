@@ -193,6 +193,15 @@ class SkylosLLM:
             if not agent_types:
                 agent_types = ["security_audit"]
         else:
+            # Fail fast if caller asks for dead_code through per-file analysis
+            for t in issue_types:
+                if str(t).lower().strip() == "dead_code":
+                    raise ValueError(
+                        "Dead code analysis is not a per-file operation. "
+                        "Use DeadCodeAgent.verify_candidates() with static "
+                        "candidates instead (pipeline Phase 2a)."
+                    )
+
             agent_types = []
             for t in issue_types:
                 a = type_to_agent.get(str(t).lower().strip())
