@@ -325,3 +325,65 @@ def remove_unused_function_cst(code, func_name, line_number):
     tx = _RemoveFunctionAtLine(func_name, line_number)
     new_mod = wrapper.visit(tx)
     return new_mod.code, tx.changed
+
+
+class _RemoveClassAtLine(cst.CSTTransformer):
+    METADATA_DEPENDENCIES = (PositionProvider,)
+
+    def __init__(self, class_name, target_line):
+        self.class_name = class_name
+        self.target_line = target_line
+        self.changed = False
+
+    def _is_target(self, node: cst.CSTNode):
+        pos = self.get_metadata(PositionProvider, node, None)
+        return bool(pos and pos.start.line == self.target_line)
+
+    def leave_ClassDef(self, orig: cst.ClassDef, updated: cst.ClassDef):
+        target = self.class_name.split(".")[-1]
+        if self._is_target(orig) and (orig.name.value == target):
+            self.changed = True
+            return cst.RemoveFromParent()
+        return updated
+
+
+class _RemoveVariableAtLine(cst.CSTTransformer):
+    METADATA_DEPENDENCIES = (PositionProvider,)
+
+    def __init__(self, var_name, target_line):
+        self.var_name = var_name
+        self.target_line = target_line
+        self.changed = False
+
+    def _is_target_line(self, node: cst.CSTNode):
+        pos = self.get_metadata(PositionProvider, node, None)
+        return bool(pos and (pos.start.line <= self.target_line <= pos.end.line))
+
+    def leave_SimpleStatementLine(
+        self, orig: cst.SimpleStatementLine, updated: cst.SimpleStatementLine
+    ):
+        if not self._is_target_line(orig):
+            return updated
+        if len(updated.body) != 1:
+            return updated
+        stmt = updated.body[0]
+        if isinstance(stmt, (cst.Assign, cst.AnnAssign)):
+            self.changed = True
+            return cst.RemoveFromParent()
+        return updated
+
+
+def remove_unused_class_cst(code, class_name, line_number):
+    """Remove an unused class definition at the given line."""
+    wrapper = cst.MetadataWrapper(cst.parse_module(code))
+    tx = _RemoveClassAtLine(class_name, line_number)
+    new_mod = wrapper.visit(tx)
+    return new_mod.code, tx.changed
+
+
+def remove_unused_variable_cst(code, var_name, line_number):
+    """Remove an unused variable assignment at the given line."""
+    wrapper = cst.MetadataWrapper(cst.parse_module(code))
+    tx = _RemoveVariableAtLine(var_name, line_number)
+    new_mod = wrapper.visit(tx)
+    return new_mod.code, tx.changed
