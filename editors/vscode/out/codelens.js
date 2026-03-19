@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SkylosCodeLensProvider = void 0;
 const vscode = require("vscode");
 const types_1 = require("./types");
+const config_1 = require("./config");
 class SkylosCodeLensProvider {
     constructor(store) {
         this.store = store;
@@ -16,7 +17,7 @@ class SkylosCodeLensProvider {
     }
     provideCodeLenses(document) {
         const lenses = [];
-        const findings = this.store.getFindingsForFile(document.uri.fsPath);
+        const findings = this.store.getFindingsForFile(document.uri.fsPath, { max: (0, config_1.getMaxDecorationsPerFile)() });
         for (const f of findings) {
             const line = Math.max(0, f.line - 1);
             if (line >= document.lineCount)

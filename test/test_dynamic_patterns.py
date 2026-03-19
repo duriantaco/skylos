@@ -234,7 +234,7 @@ class TestEnumMemberDetection:
             p = Path(tmpdir) / "mod.py"
             p.write_text(code)
             s = Skylos()
-            result = json.loads(s.analyze(tmpdir, thr=0))
+            result = json.loads(s.analyze(tmpdir, thr=0, grep_verify=False))
             unused = set()
             for cat in ["unused_functions", "unused_classes", "unused_variables"]:
                 for item in result.get(cat, []):
@@ -581,7 +581,7 @@ class TestGetAttrScopeReduction:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(code)
             s = Skylos()
-            result = json.loads(s.analyze(tmpdir, thr=0))
+            result = json.loads(s.analyze(tmpdir, thr=0, grep_verify=False))
             unused = set()
             for cat in ["unused_functions", "unused_classes", "unused_variables"]:
                 for item in result.get(cat, []):
@@ -673,9 +673,6 @@ func(1, 2)
 
 
 class TestSameFileVariableUsage:
-    """Regression: variables used in the same file must be tracked by AST,
-    not by grep.  BASE_URL used in an f-string on a later line is alive."""
-
     def _get_unused(self, code):
         from skylos.analyzer import Skylos
 
@@ -683,7 +680,7 @@ class TestSameFileVariableUsage:
             p = Path(tmpdir) / "mod.py"
             p.write_text(code)
             s = Skylos()
-            result = json.loads(s.analyze(tmpdir, thr=0))
+            result = json.loads(s.analyze(tmpdir, thr=0, grep_verify=False))
             unused = set()
             for cat in ["unused_functions", "unused_classes", "unused_variables"]:
                 for item in result.get(cat, []):
@@ -715,8 +712,6 @@ NAME = "entry"
 
 
 class TestRelativeImportResolution:
-    """Regression: `from .mod import X` should resolve and keep X alive."""
-
     def _get_unused(self, files_dict):
         from skylos.analyzer import Skylos
 
@@ -726,7 +721,7 @@ class TestRelativeImportResolution:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(code)
             s = Skylos()
-            result = json.loads(s.analyze(tmpdir, thr=0))
+            result = json.loads(s.analyze(tmpdir, thr=0, grep_verify=False))
             unused = set()
             for cat in ["unused_functions", "unused_classes", "unused_variables"]:
                 for item in result.get(cat, []):

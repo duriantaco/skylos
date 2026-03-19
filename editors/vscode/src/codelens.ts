@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import { getDocumentFilters } from "./types";
+import { getMaxDecorationsPerFile } from "./config";
 
 export class SkylosCodeLensProvider implements vscode.CodeLensProvider {
   private _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
@@ -20,7 +21,7 @@ export class SkylosCodeLensProvider implements vscode.CodeLensProvider {
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     const lenses: vscode.CodeLens[] = [];
-    const findings = this.store.getFindingsForFile(document.uri.fsPath);
+    const findings = this.store.getFindingsForFile(document.uri.fsPath, { max: getMaxDecorationsPerFile() });
 
     for (const f of findings) {
       const line = Math.max(0, f.line - 1);

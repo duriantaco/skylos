@@ -638,6 +638,43 @@ class TestClass:
 
 
 class TestApplyPenalties:
+    @pytest.mark.parametrize(
+        ("filename", "def_type", "expected_reason"),
+        [
+            ("tests/test_api.py", "function", "test-only path"),
+            ("examples/demo.py", "function", "standalone example path"),
+            ("benchmarks/bench_api.py", "class", "benchmark entrypoint path"),
+        ],
+    )
+    @patch("skylos.penalties.detect_framework_usage")
+    def test_non_library_paths_suppress_dead_code_callables(
+        self,
+        mock_detect_framework,
+        filename,
+        def_type,
+        expected_reason,
+        mock_definition,
+        mock_test_aware_visitor,
+        mock_framework_aware_visitor,
+    ):
+        mock_detect_framework.return_value = None
+
+        skylos = Skylos()
+        mock_def = mock_definition(
+            name="demo.symbol",
+            simple_name="symbol",
+            type=def_type,
+            confidence=100,
+        )
+        mock_def.filename = Path(filename)
+
+        apply_penalties(
+            skylos, mock_def, mock_test_aware_visitor, mock_framework_aware_visitor
+        )
+
+        assert mock_def.confidence == 0
+        assert mock_def.skip_reason == expected_reason
+
     @patch("skylos.penalties.detect_framework_usage")
     def test_private_name_penalty(
         self,

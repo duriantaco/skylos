@@ -10,6 +10,7 @@ from skylos.constants import (
     UNITTEST_LIFECYCLE_METHODS,
     FRAMEWORK_FILE_RE,
     DEFAULT_EXCLUDE_FOLDERS,
+    get_non_library_dir_kind,
     is_test_path,
     is_framework_path,
 )
@@ -258,6 +259,32 @@ class TestHelperFunctions:
             assert is_framework_path(path) == is_framework, (
                 f"is_framework_path({path}) should be {is_framework}"
             )
+
+    def test_get_non_library_dir_kind(self):
+        assert get_non_library_dir_kind("/project/tests/test_api.py") == "test"
+        assert get_non_library_dir_kind("/project/test/conftest.py") == "test"
+        assert get_non_library_dir_kind("/project/__tests__/api.test.ts") == "test"
+        assert get_non_library_dir_kind("/project/test_example.py") == "test"
+        assert get_non_library_dir_kind("/project/conftest.py") == "test"
+        assert get_non_library_dir_kind("/project/examples/demo.py") == "example"
+        assert (
+            get_non_library_dir_kind("/project/benchmarks/bench_api.py") == "benchmark"
+        )
+        assert get_non_library_dir_kind("/project/src/app.py") is None
+
+    def test_get_non_library_dir_kind_uses_project_relative_path(self):
+        project_root = "/tmp/test/myproject"
+
+        assert (
+            get_non_library_dir_kind("/tmp/test/myproject/src/app.py", project_root)
+            is None
+        )
+        assert (
+            get_non_library_dir_kind(
+                "/tmp/test/myproject/examples/demo.py", project_root
+            )
+            == "example"
+        )
 
 
 class TestConstants:

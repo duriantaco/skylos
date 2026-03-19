@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Default Skylos Companion capability",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

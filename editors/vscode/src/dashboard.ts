@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
+import { getMaxProblems } from "./config";
 
 interface ScoreResult {
   score: number;
@@ -28,7 +29,7 @@ const SEVERITY_PENALTY: Record<string, number> = {
   CRITICAL: 15, HIGH: 8, MEDIUM: 3, WARN: 3, LOW: 1, INFO: 1,
 };
 
-export function computeSecurityScore(store: FindingsStore): ScoreResult {
+export function computeSecurityScore(store: FindingsStore, scope: "working" | "raw" = "working"): ScoreResult {
   const engineGrade = store.grade;
   if (engineGrade) {
     const letter = engineGrade.overall.letter;
@@ -37,7 +38,7 @@ export function computeSecurityScore(store: FindingsStore): ScoreResult {
     return { score, grade: letter, color };
   }
 
-  const counts = store.countBySeverity();
+  const counts = store.countBySeverity(scope);
   let score = 100;
   for (const [sev, count] of Object.entries(counts)) {
     score -= (SEVERITY_PENALTY[sev] ?? 1) * count;
@@ -110,6 +111,8 @@ export class SkylosDashboard {
     const catCounts = this.store.countByCategory();
     const allFindings = this.store.getAllFindings();
     const total = allFindings.length;
+    const rawTotal = this.store.getAllRawFindings().length;
+    const visibleSummary = this.store.getVisibleSummary(getMaxProblems());
     const summary = this.store.summary;
     const circularDeps = this.store.circularDeps;
     const depVulns = this.store.depVulns;
@@ -168,6 +171,18 @@ export class SkylosDashboard {
       }
     }
 
+    const scopeParts: string[] = [];
+    if (rawTotal !== total) {
+      scopeParts.push(`${total} finding(s) in current filter`);
+      scopeParts.push(`${rawTotal} total in repo`);
+    }
+    if (visibleSummary.visibleTotal < visibleSummary.workingTotal) {
+      scopeParts.push(`editor surfaces show top ${visibleSummary.visibleTotal}`);
+    }
+    const scopeHtml = scopeParts.length > 0
+      ? `<div class="scope-bar">${scopeParts.join('<span class="sep">|</span>')}</div>`
+      : "";
+
     let circularHtml = "";
     if (circularDeps.length > 0) {
       circularHtml = `
@@ -218,6 +233,7 @@ body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);backgr
 .full{grid-column:1/-1}
 
 .summary-bar{display:flex;gap:12px;align-items:center;font-size:12px;opacity:.6;margin-top:8px;flex-wrap:wrap}
+.scope-bar{display:flex;gap:12px;align-items:center;font-size:12px;margin-top:10px;flex-wrap:wrap;padding:10px 12px;border-radius:8px;background:var(--vscode-input-background);opacity:.8}
 .sep{opacity:.3}
 
 .score-wrap{display:flex;align-items:center;gap:32px}
@@ -267,6 +283,7 @@ td{padding:8px 6px;border-bottom:1px solid var(--vscode-widget-border,rgba(255,2
 <body>
 <h2>Security Dashboard</h2>
 ${summaryHtml}
+${scopeHtml}
 
 <div class="grid">
   <div class="card">

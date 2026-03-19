@@ -1,0 +1,49 @@
+name: Rust/Python parity check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - "skylos/**"
+      - "test/test_fast_parity.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - "skylos/**"
+      - "test/test_fast_parity.py"
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            rust/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: rust-parity-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Install skylos
+        run: pip install -e ".[test]"
+
+      - name: Install maturin and build skylos-fast
+        run: |
+          pip install maturin
+          cd rust && maturin develop --release
+
+      - name: Run parity tests
+        run: pytest test/test_fast_parity.py -v --tb=short

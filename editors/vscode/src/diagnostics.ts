@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import type { SkylosFinding, Severity } from "./types";
+import { getMaxProblems, getMaxProblemsPerFile, isShowDeadCodeInProblems } from "./config";
 
 export class DiagnosticsManager {
   private cliCollection: vscode.DiagnosticCollection;
@@ -21,30 +22,39 @@ export class DiagnosticsManager {
 
   private refreshCLI(): void {
     this.cliCollection.clear();
-    const files = this.store.getFilesWithFindings();
-    for (const file of files) {
-      const findings = this.store.getCLIFindingsForFile(file);
-      if (findings.length === 0) 
-        continue;
-      const uri = vscode.Uri.file(file);
-      this.cliCollection.set(uri, findings.map(toDiagnostic));
-    }
+    const findings = this.store.getVisibleFindings(getMaxProblems(), {
+      source: "cli",
+      includeDeadCode: isShowDeadCodeInProblems(),
+      maxPerFile: getMaxProblemsPerFile(),
+    });
+    this.publish(this.cliCollection, findings);
   }
 
   private refreshAI(): void {
     this.aiCollection.clear();
-    const files = this.store.getFilesWithFindings();
-    for (const file of files) {
-      const findings = this.store.getAIFindingsForFile(file);
-      if (findings.length === 0) 
-        continue;
-      const uri = vscode.Uri.file(file);
-      this.aiCollection.set(uri, findings.map(toDiagnostic));
-    }
+    const findings = this.store.getVisibleFindings(getMaxProblems(), {
+      source: "ai",
+      maxPerFile: getMaxProblemsPerFile(),
+    });
+    this.publish(this.aiCollection, findings);
   }
 
   dispose(): void {
     this.disposables.forEach((d) => d.dispose());
+  }
+
+  private publish(collection: vscode.DiagnosticCollection, findings: SkylosFinding[]): void {
+    const byFile = new Map<string, SkylosFinding[]>();
+    for (const finding of findings) {
+      const list = byFile.get(finding.file) ?? [];
+      list.push(finding);
+      byFile.set(finding.file, list);
+    }
+
+    for (const [file, items] of byFile) {
+      const uri = vscode.Uri.file(file);
+      collection.set(uri, items.map(toDiagnostic));
+    }
   }
 }
 

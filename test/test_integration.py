@@ -173,7 +173,6 @@ class TestSkylosIntegration:
             assert not any(used_import in name for name in import_names)
 
     def test_class_detection(self, temp_project):
-        """test detection of unused classes"""
         result_json = skylos.analyze(str(temp_project))
         result = json.loads(result_json)
 
@@ -236,6 +235,112 @@ class TestSkylosIntegration:
 
         excluded_files = [f for f in all_files if "custom_exclude" in f]
         assert len(excluded_files) == 0, f"Found excluded files: {excluded_files}"
+
+    def test_standalone_dirs_suppress_reachability_only(self, temp_project):
+        tests_dir = temp_project / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_api.py").write_text(
+            dedent("""
+            import math
+
+            def helper():
+                return 1
+
+            class HelperSuite:
+                pass
+        """)
+        )
+
+        examples_dir = temp_project / "examples"
+        examples_dir.mkdir()
+        (examples_dir / "demo.py").write_text(
+            dedent("""
+            def example_main():
+                return "demo"
+        """)
+        )
+
+        benchmarks_dir = temp_project / "benchmarks"
+        benchmarks_dir.mkdir()
+        (benchmarks_dir / "bench_api.py").write_text(
+            dedent("""
+            class BenchmarkSuite:
+                pass
+
+            def time_parse():
+                return 1
+        """)
+        )
+
+        (temp_project / "test_example.py").write_text(
+            dedent("""
+            def root_test_helper():
+                return 1
+        """)
+        )
+
+        (temp_project / "conftest.py").write_text(
+            dedent("""
+            def root_conftest_helper():
+                return 1
+        """)
+        )
+
+        result = json.loads(skylos.analyze(str(temp_project)))
+
+        unused_functions = {item["name"] for item in result["unused_functions"]}
+        unused_classes = {item["name"] for item in result["unused_classes"]}
+        unused_imports = {item["name"] for item in result["unused_imports"]}
+
+        assert "helper" not in unused_functions
+        assert "example_main" not in unused_functions
+        assert "time_parse" not in unused_functions
+        assert "root_test_helper" not in unused_functions
+        assert "root_conftest_helper" not in unused_functions
+        assert "HelperSuite" not in unused_classes
+        assert "BenchmarkSuite" not in unused_classes
+        assert "math" not in unused_imports
+
+        suppressed_reasons = {
+            item["reason"]
+            for item in result.get("whitelisted", [])
+            if "tests" in Path(item["file"]).parts
+        }
+        assert "test-only path" in suppressed_reasons
+
+    def test_transitive_export_propagation(self, temp_project):
+        pkg = temp_project / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("from pkg.events import Events\n")
+        (pkg / "events.py").write_text(
+            dedent("""
+            class EventHook:
+                def add_listener(self): pass
+                def remove_listener(self): pass
+                def _internal(self): pass
+
+            class Events:
+                request: EventHook
+                response: EventHook
+        """)
+        )
+        (temp_project / "app.py").write_text(
+            dedent("""
+            from pkg import Events
+
+            e = Events()
+            e.request.add_listener()
+        """)
+        )
+
+        result = json.loads(skylos.analyze(str(temp_project)))
+        unused_functions = {item["name"] for item in result["unused_functions"]}
+        unused_classes = {item["name"] for item in result["unused_classes"]}
+
+        assert "EventHook" not in unused_classes
+        assert "remove_listener" not in unused_functions
+        assert "add_listener" not in unused_functions
+        assert any("_internal" in name for name in unused_functions)
 
     def test_magic_methods_excluded(self, temp_project):
         magic_py = temp_project / "magic.py"
