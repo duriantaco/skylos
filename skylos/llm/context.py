@@ -368,7 +368,7 @@ class ContextBuilder:
                     end = getattr(node, "end_lineno", node.lineno)
                     import_lines.extend(lines[start:end])
             return "\n".join(import_lines)
-        except:
+        except Exception:
             return ""
 
     def _build_chunk_context(self, chunk, defs_map=None):

@@ -638,12 +638,48 @@ def create_dead_code_agent(
     return DeadCodeAgent(config)
 
 
+class CleanupAgent:
+    def __init__(self, config=None):
+        if config is None:
+            config = AgentConfig()
+        self.config = config
+        self._adapter = None
+
+    def get_adapter(self):
+        if self._adapter is None:
+            self._adapter = create_llm_adapter(self.config)
+        return self._adapter
+
+    def run(
+        self,
+        path,
+        *,
+        standards_path=None,
+        test_cmd=None,
+        max_fixes=20,
+        dry_run=False,
+        quiet=False,
+    ):
+        from skylos.llm.cleanup_orchestrator import CleanupOrchestrator
+
+        orchestrator = CleanupOrchestrator(
+            model=self.config.model,
+            api_key=self.config.api_key,
+            provider=getattr(self.config, "provider", None),
+            base_url=getattr(self.config, "base_url", None),
+            test_cmd=test_cmd,
+            standards_path=standards_path,
+        )
+        return orchestrator.run(path, max_fixes=max_fixes, dry_run=dry_run, quiet=quiet)
+
+
 AGENT_REGISTRY = {
     "security": SecurityAgent,
     "quality": QualityAgent,
     "security_audit": SecurityAuditAgent,
     "fixer": FixerAgent,
     "false_positive_filter": FalsePositiveFilterAgent,
+    "cleanup": CleanupAgent,
 }
 
 
