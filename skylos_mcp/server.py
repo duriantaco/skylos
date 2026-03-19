@@ -96,7 +96,7 @@ def _list_runs() -> list[dict]:
                         "timestamp": data.get("timestamp"),
                     }
                 )
-        except Exception:
+        except (OSError, json.JSONDecodeError, KeyError):
             continue
 
     for rid, data in _results_cache.items():
@@ -368,6 +368,135 @@ def _register_tools(mcp):
             _store_result(result, "verify_dead_code", path)
             return json.dumps(result, indent=2, default=str)
 
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    def provenance_scan(path: str, diff_base: str | None = None) -> str:
+        gate_err = _gate("provenance_scan")
+        if gate_err:
+            return gate_err
+
+        try:
+            from skylos.provenance import analyze_provenance
+            from skylos.api import get_git_root
+
+            target = os.path.abspath(path)
+            git_root = get_git_root() or target
+            report = analyze_provenance(git_root, base_ref=diff_base)
+            result = report.to_dict()
+            _store_result(result, "provenance_scan", path)
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    def generate_fix(
+        path: str,
+        mode: str = "delete",
+        min_safety: float = 0.0,
+        apply: bool = False,
+    ) -> str:
+        gate_err = _gate("generate_fix")
+        if gate_err:
+            return gate_err
+
+        try:
+            from skylos.analyzer import analyze as run_static
+            from skylos.dead_code import collect_dead_code_findings
+            from skylos.fixgen import (
+                generate_removal_plan,
+                generate_unified_diff,
+                apply_patches,
+                validate_patches,
+                generate_fix_summary,
+            )
+            from skylos.grep_verify import grep_verify_findings
+
+            target = os.path.abspath(path)
+            raw = run_static(
+                target,
+                conf=60,
+                enable_danger=False,
+                enable_quality=False,
+                enable_secrets=False,
+            )
+            static_result = json.loads(raw) if isinstance(raw, str) else raw
+            all_findings = collect_dead_code_findings(static_result)
+            defs_map = static_result.get("definitions", {})
+
+            # use grep verification to filter
+            verdicts = grep_verify_findings(all_findings, target, time_budget=30.0)
+            dead_findings = [
+                f
+                for f in all_findings
+                if f.get("full_name", f.get("name", "")) not in verdicts
+            ]
+
+            patches = generate_removal_plan(
+                dead_findings,
+                defs_map,
+                target,
+                mode=mode,
+                min_safety=min_safety,
+            )
+            errors = validate_patches(patches, target)
+            diff = generate_unified_diff(patches, target)
+            summary = generate_fix_summary(patches)
+
+            result = {
+                "patches": len(patches),
+                "summary": summary,
+                "errors": errors,
+                "diff": diff,
+                "applied": False,
+            }
+
+            if apply and not errors:
+                apply_patches(patches, target, dry_run=False)
+                result["applied"] = True
+
+            _store_result(result, "generate_fix", path)
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    def learn_triage(
+        path: str,
+        action_id: str,
+        action: str,
+    ) -> str:
+        gate_err = _gate("learn_triage")
+        if gate_err:
+            return gate_err
+
+        try:
+            from skylos.agent_service import AgentServiceController
+
+            controller = AgentServiceController(os.path.abspath(path))
+            result = controller.learn_triage(action_id, action)
+            _store_result(result, "learn_triage", path)
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    def get_triage_suggestions(
+        path: str,
+    ) -> str:
+
+        gate_err = _gate("get_triage_suggestions")
+        if gate_err:
+            return gate_err
+
+        try:
+            from skylos.agent_service import AgentServiceController
+
+            controller = AgentServiceController(os.path.abspath(path))
+            result = controller.get_suggestions()
+            _store_result(result, "get_triage_suggestions", path)
+            return json.dumps(result, indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)})
 

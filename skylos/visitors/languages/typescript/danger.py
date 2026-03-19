@@ -4,6 +4,13 @@ import math
 from tree_sitter import Language, Query, QueryCursor
 import tree_sitter_typescript as tsts
 
+from skylos.constants import (
+    ENTROPY_THRESHOLD,
+    MIN_LONG_SECRET_LENGTH,
+    MIN_SECRET_LENGTH,
+    get_non_library_dir_kind,
+)
+
 try:
     TS_LANG: Language | None = Language(tsts.language_typescript())
 except Exception:
@@ -297,10 +304,7 @@ def scan_danger(
         )
 
     # (SKY-S101) via batched string captures
-    is_test_file = any(
-        p in str(file_path)
-        for p in ("/test/", "/tests/", "/__tests__/", ".test.", ".spec.")
-    )
+    is_test_file = get_non_library_dir_kind(file_path) == "test"
     for cap_name in ("string_node", "template_node"):
         for node in complex_captures.get(cap_name, []):
             text = _get_text(source_bytes, node)
@@ -308,7 +312,7 @@ def scan_danger(
                 text = text[1:]
             if text and text[-1] in ("'", '"', "`"):
                 text = text[:-1]
-            if len(text) >= 16:
+            if len(text) >= MIN_SECRET_LENGTH:
                 found_prefix = False
                 for prefix in _SECRET_PREFIXES:
                     if text.startswith(prefix) or text.lower().startswith(
@@ -328,9 +332,9 @@ def scan_danger(
                         break
                 if (
                     not found_prefix
-                    and len(text) >= 20
+                    and len(text) >= MIN_LONG_SECRET_LENGTH
                     and all(c in _BASE64_CHARS for c in text)
-                    and _shannon_entropy(text) > 4.5
+                    and _shannon_entropy(text) > ENTROPY_THRESHOLD
                 ):
                     findings.append(
                         {
@@ -344,7 +348,7 @@ def scan_danger(
                     )
 
             # Hardcoded internal URL (SKY-D248)
-            if not is_test_file and len(text) >= 16:
+            if not is_test_file and len(text) >= MIN_SECRET_LENGTH:
                 text_lower = text.lower()
                 for url_prefix in _INTERNAL_URL_PREFIXES:
                     if text_lower.startswith(url_prefix):
