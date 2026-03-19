@@ -1,6 +1,12 @@
 from pathlib import Path
 from skylos.engines.go_runner import run_go_engine_for_module
 from skylos.visitor import Definition
+from skylos.visitors.languages.go.quality import scan_go_quality, GO_LANG
+
+try:
+    from tree_sitter import Parser
+except ImportError:
+    Parser = None
 
 
 class _GoDummyVisitor:
@@ -98,6 +104,28 @@ def scan_go_file(file_path, cfg):
     symbols_data = result.get("symbols")
     defs, refs = _convert_symbols(symbols_data, str(file_path.resolve()))
 
+    # Run tree-sitter-based quality checks
+    quality_findings = []
+    if Parser is not None and GO_LANG is not None:
+        try:
+            source = file_path.read_bytes()
+            parser = Parser(GO_LANG)
+            tree = parser.parse(source)
+            quality_findings = scan_go_quality(
+                tree.root_node,
+                source,
+                str(file_path),
+            )
+        except Exception:
+            import os
+
+            if os.getenv("SKYLOS_DEBUG"):
+                import traceback
+
+                print(
+                    f"Go quality scan failed for {file_path}: {traceback.format_exc()}"
+                )
+
     return (
         defs,  # 0: definitions
         refs,  # 1: references
@@ -105,7 +133,7 @@ def scan_go_file(file_path, cfg):
         set(),  # 3: exports
         _GoDummyVisitor(),  # 4: test_flags
         _GoDummyVisitor(),  # 5: framework_flags
-        [],  # 6: quality findings
+        quality_findings,  # 6: quality findings
         file_findings,  # 7: danger/security findings
         [],  # 8: pro_finds
         None,  # 9: pattern_tracker
