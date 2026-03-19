@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DecorationsManager = void 0;
 const vscode = require("vscode");
+const config_1 = require("./config");
 const deadCodeType = () => ({
     isWholeLine: true,
     opacity: "0.45",
@@ -158,7 +159,7 @@ class DecorationsManager {
     }
     applyToEditor(editor) {
         const filePath = editor.document.uri.fsPath;
-        const findings = this.store.getFindingsForFile(filePath);
+        const findings = this.store.getFindingsForFile(filePath, { max: (0, config_1.getMaxDecorationsPerFile)() });
         const byCat = new Map();
         for (const key of this.decoTypes.keys()) {
             byCat.set(key, []);

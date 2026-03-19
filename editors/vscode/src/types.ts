@@ -151,6 +151,67 @@ export interface FindingsFilter {
   filePattern?: string;
 }
 
+export interface AgentCommandCenterItem {
+  id: string;
+  title: string;
+  subtitle?: string;
+  file: string;
+  absolute_file?: string;
+  line: number;
+  severity: string;
+  category: string;
+  score: number;
+  reason?: string;
+  action_type?: string;
+  command_hint?: string;
+   rule_id?: string;
+   message?: string;
+   safe_fix?: string;
+}
+
+export interface AgentCommandCenterSummary {
+  headline: string;
+  subtitle?: string;
+  total_findings?: number;
+  new_findings?: number;
+  critical?: number;
+  high?: number;
+  medium?: number;
+  changed_file_count?: number;
+   dismissed?: number;
+   snoozed?: number;
+}
+
+export interface AgentCenterFinding {
+  fingerprint: string;
+  rule_id: string;
+  category: Category | string;
+  severity: Severity | string;
+  message: string;
+  file: string;
+  absolute_file?: string;
+  line: number;
+  confidence?: number;
+  triage_status?: string;
+  snoozed_until?: string;
+}
+
+export interface AgentCommandCenterState {
+  generated_at?: string;
+  project_root?: string;
+  baseline_present?: boolean;
+  changed_files?: string[];
+  summary?: AgentCommandCenterSummary;
+  actions?: AgentCommandCenterItem[];
+  findings?: AgentCenterFinding[];
+  triage?: Record<string, { status: string; updated_at?: string; snoozed_until?: string }>;
+  command_center?: {
+    headline: string;
+    subtitle?: string;
+    items: AgentCommandCenterItem[];
+  };
+}
+
 export function getDocumentFilters(): vscode.DocumentFilter[] {
   return SUPPORTED_LANGUAGES.map((lang) => ({ language: lang, scheme: "file" }));
 }

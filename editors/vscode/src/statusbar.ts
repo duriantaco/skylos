@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import { computeSecurityScore } from "./dashboard";
+import { getMaxProblems } from "./config";
 
 
 export class SkylosStatusBar {
@@ -38,6 +39,7 @@ export class SkylosStatusBar {
 
     const counts = this.store.countBySeverity();
     const total = Object.values(counts).reduce((s, n) => s + n, 0);
+    const summary = this.store.getVisibleSummary(getMaxProblems());
 
     if (total === 0) {
       this.item.text = "$(shield) Skylos";
@@ -64,7 +66,10 @@ export class SkylosStatusBar {
       this.item.backgroundColor = undefined;
     }
 
-    this.item.tooltip = `Critical: ${critical} | High: ${high} | Medium: ${medium} | Low: ${low}\nClick to open Security Dashboard`;
+    const scopeLine = summary.visibleTotal < summary.workingTotal
+      ? `Showing top ${summary.visibleTotal} of ${summary.workingTotal} findings in editor surfaces\n`
+      : "";
+    this.item.tooltip = `${scopeLine}Critical: ${critical} | High: ${high} | Medium: ${medium} | Low: ${low}\nClick to open Security Dashboard`;
   }
 
   dispose(): void {

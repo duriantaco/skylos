@@ -34,10 +34,10 @@ function getProjectName() {
     return ws?.name ?? "Unknown Project";
 }
 function buildMarkdown(store) {
-    const { score, grade } = (0, dashboard_1.computeSecurityScore)(store);
-    const counts = store.countBySeverity();
-    const catCounts = store.countByCategory();
-    const findings = store.getAllFindings();
+    const { score, grade } = (0, dashboard_1.computeSecurityScore)(store, "raw");
+    const counts = store.countBySeverity("raw");
+    const catCounts = store.countByCategory("raw");
+    const findings = store.getAllRawFindings();
     const date = new Date().toISOString().split("T")[0];
     let md = `# Skylos Security Report\n\n`;
     md += `**Project:** ${getProjectName()}  \n`;
@@ -83,9 +83,9 @@ function buildMarkdown(store) {
     return md;
 }
 function buildJson(store) {
-    const { score, grade } = (0, dashboard_1.computeSecurityScore)(store);
-    const counts = store.countBySeverity();
-    const findings = store.getAllFindings();
+    const { score, grade } = (0, dashboard_1.computeSecurityScore)(store, "raw");
+    const counts = store.countBySeverity("raw");
+    const findings = store.getAllRawFindings();
     const date = new Date().toISOString().split("T")[0];
     const report = {
         report: {
@@ -112,7 +112,7 @@ function buildJson(store) {
     return JSON.stringify(report, null, 2);
 }
 function buildSarif(store) {
-    const findings = store.getAllFindings();
+    const findings = store.getAllRawFindings();
     const ws = vscode.workspace.workspaceFolders?.[0];
     const wsRoot = ws?.uri.fsPath ?? "";
     const ruleIds = [...new Set(findings.map((f) => f.ruleId))];

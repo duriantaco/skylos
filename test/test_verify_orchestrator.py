@@ -1,25 +1,26 @@
-"""Tests for the dead-code verification orchestrator."""
-
 import json
 import pytest
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from skylos.llm.verify_orchestrator import (
     _gather_config_files,
     _build_repo_facts,
     _build_graph_context,
+    _build_haiku_context,
     _deterministic_suppress,
     _get_cached_search_results,
     _find_survivors,
     _build_source_cache,
+    _haiku_prefilter_exports,
     _is_public_library_symbol,
+    _finding_complexity_tier,
+    _entry_point_cache_path,
+    _config_files_hash,
     discover_entry_points,
     verify_with_graph_context,
     challenge_survivor,
     run_verification,
     EntryPoint,
-    EdgeResolution,
     RepoFacts,
     SuppressionDecision,
     SurvivorVerdict,
@@ -28,13 +29,7 @@ from skylos.llm.verify_orchestrator import (
 from skylos.llm.dead_code_verifier import (
     DeadCodeVerifierAgent,
     Verdict,
-    VerificationResult,
 )
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -152,11 +147,6 @@ def mock_agent():
     return agent
 
 
-# ---------------------------------------------------------------------------
-# Test _gather_config_files
-# ---------------------------------------------------------------------------
-
-
 def test_gather_config_files(tmp_path):
     (tmp_path / "pyproject.toml").write_text("[tool.poetry]\nname = 'test'")
     (tmp_path / "Dockerfile").write_text("FROM python:3.12\nCMD python app.py")
@@ -166,7 +156,7 @@ def test_gather_config_files(tmp_path):
     configs = _gather_config_files(tmp_path)
     assert "pyproject.toml" in configs
     assert "Dockerfile" in configs
-    assert "src/code.py" not in configs  # Not a config file
+    assert "src/code.py" not in configs
 
 
 def test_gather_config_files_empty(tmp_path):
@@ -193,11 +183,6 @@ def test_build_repo_facts_parses_pytest_and_mkdocs(tmp_path):
     assert facts.pytest_class_patterns == ["Test", "Acceptance"]
     assert facts.pytest_function_patterns == ["test"]
     assert "scripts/mkdocs_hooks.py" in facts.mkdocs_hook_files
-
-
-# ---------------------------------------------------------------------------
-# Test _build_graph_context
-# ---------------------------------------------------------------------------
 
 
 def test_build_graph_context_basic(
@@ -278,7 +263,7 @@ def test_build_graph_context_includes_repo_facts_and_path_references(tmp_path):
     )
 
     assert "MkDocs hook registration: yes" in ctx
-    assert "Config-file references" in ctx
+    assert "Config refs" in ctx or "File path refs" in ctx
 
 
 def test_build_graph_context_includes_file_path_references_for_cli_target(tmp_path):
@@ -327,7 +312,7 @@ def test_build_graph_context_includes_file_path_references_for_cli_target(tmp_pa
         repo_facts=_build_repo_facts(proj),
     )
 
-    assert "Repo-relative file path references" in ctx
+    assert "File path refs" in ctx
     assert "tests/assets/cli/func_other_name.py" in ctx
 
 
@@ -368,12 +353,7 @@ def test_build_graph_context_includes_compatibility_notes(tmp_path):
     )
 
     assert "Compatibility retention notes: yes" in ctx
-    assert "Compatibility-retention notes" in ctx
-
-
-# ---------------------------------------------------------------------------
-# Test _find_survivors
-# ---------------------------------------------------------------------------
+    assert "Compatibility notes" in ctx
 
 
 def test_find_survivors_basic():
@@ -403,9 +383,6 @@ def test_find_survivors_basic():
     }
 
     survivors = _find_survivors(defs_map, [])
-    # Should find mod.suspect (function with heuristic refs, low real refs)
-    # Should NOT find mod.variable (not a function/method)
-    # Should NOT find mod.alive_func (refs > 3)
     names = [s["full_name"] for s in survivors]
     assert "mod.suspect" in names
     assert "mod.variable" not in names
@@ -453,11 +430,6 @@ def test_find_survivors_sorted_by_heuristic_score():
     assert survivors[0]["full_name"] == "mod.high"
 
 
-# ---------------------------------------------------------------------------
-# Test _build_source_cache
-# ---------------------------------------------------------------------------
-
-
 def test_build_source_cache(tmp_path):
     f1 = tmp_path / "a.py"
     f1.write_text("def foo(): pass")
@@ -480,11 +452,6 @@ def test_build_source_cache_includes_caller_files(tmp_path):
     cache = _build_source_cache(findings, defs_map)
     assert str(f1) in cache
     assert str(f2) in cache
-
-
-# ---------------------------------------------------------------------------
-# Test discover_entry_points (mocked LLM)
-# ---------------------------------------------------------------------------
 
 
 def test_discover_entry_points_parses_response(tmp_path):
@@ -542,11 +509,6 @@ def test_discover_entry_points_no_configs(tmp_path):
     eps = discover_entry_points(agent, tmp_path, [])
     assert len(eps) == 0
     agent._call_llm.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Test verify_with_graph_context (mocked LLM)
-# ---------------------------------------------------------------------------
 
 
 def test_verify_graph_context_true_positive(sample_finding, sample_defs_map):
@@ -830,11 +792,6 @@ def test_deterministic_suppress_documented_public_api(tmp_path):
     ]
 
 
-# ---------------------------------------------------------------------------
-# Test challenge_survivor (mocked LLM)
-# ---------------------------------------------------------------------------
-
-
 def test_challenge_survivor_dead(survivor_with_heuristic, sample_defs_map):
     agent = MagicMock(spec=DeadCodeVerifierAgent)
     agent._call_llm.return_value = json.dumps(
@@ -895,14 +852,8 @@ def test_challenge_survivor_handles_error(survivor_with_heuristic, sample_defs_m
     assert sv.verdict == Verdict.UNCERTAIN
 
 
-# ---------------------------------------------------------------------------
-# Test run_verification (full pipeline, mocked LLM)
-# ---------------------------------------------------------------------------
-
-
 @patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
 def test_run_verification_full_pipeline(MockAgent, tmp_path):
-    # Setup mock
     mock_instance = MockAgent.return_value
     call_count = [0]
 
@@ -922,7 +873,6 @@ def test_run_verification_full_pipeline(MockAgent, tmp_path):
 
     mock_instance._call_llm.side_effect = mock_llm
 
-    # Create test project
     proj = tmp_path / "project"
     proj.mkdir()
     (proj / "pyproject.toml").write_text("[project]\nname='test'")
@@ -1208,7 +1158,7 @@ def test_run_verification_skips_high_confidence(MockAgent, tmp_path):
             "full_name": "mod.obvious_dead",
             "file": str(proj / "mod.py"),
             "line": 1,
-            "confidence": 101,  # Above default range (40, 100)
+            "confidence": 101,
             "references": 0,
             "type": "function",
         }
@@ -1225,7 +1175,6 @@ def test_run_verification_skips_high_confidence(MockAgent, tmp_path):
         enable_survivor_challenge=False,
     )
 
-    # Should skip verification (high confidence), no LLM calls for this finding
     verified = result["verified_findings"]
     assert verified[0].get("_llm_verdict") == "SKIPPED_HIGH_CONF"
 
@@ -1280,11 +1229,6 @@ def test_run_verification_uses_repo_facts_for_pytest_class(MockAgent, tmp_path):
     mock_instance._call_llm.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Test data classes
-# ---------------------------------------------------------------------------
-
-
 def test_verify_stats_defaults():
     stats = VerifyStats()
     assert stats.total_findings == 0
@@ -1311,3 +1255,403 @@ def test_survivor_verdict_dataclass():
     )
     assert sv.verdict == Verdict.TRUE_POSITIVE
     assert sv.suggested_confidence > sv.original_confidence
+
+
+def test_is_exported_in_graph_context():
+    finding = {
+        "name": "EventHook",
+        "full_name": "locust.event.EventHook",
+        "type": "class",
+        "file": "/tmp/test/event.py",
+        "line": 5,
+        "confidence": 90,
+        "references": 0,
+        "is_exported": True,
+    }
+    ctx = _build_graph_context(finding, {}, {})
+    assert "Export status" in ctx
+    assert "public API" in ctx
+
+
+def test_is_exported_false_not_in_graph_context():
+    finding = {
+        "name": "_helper",
+        "full_name": "mod._helper",
+        "type": "function",
+        "file": "/tmp/test/mod.py",
+        "line": 5,
+        "confidence": 90,
+        "references": 0,
+    }
+    ctx = _build_graph_context(finding, {}, {})
+    assert "Export status" not in ctx
+
+
+def test_build_haiku_context_with_export():
+    finding = {
+        "name": "remove_listener",
+        "full_name": "locust.event.EventHook.remove_listener",
+        "type": "method",
+        "file": "/tmp/test/event.py",
+        "line": 2,
+        "confidence": 90,
+        "references": 0,
+        "is_exported": True,
+        "decorators": ["staticmethod"],
+    }
+    source_cache = {
+        "/tmp/test/event.py": "class EventHook:\n    def remove_listener(self, handler):\n        self._handlers.remove(handler)\n"
+    }
+    ctx = _build_haiku_context(finding, source_cache)
+    assert "Exported: yes" in ctx
+    assert "remove_listener" in ctx
+    assert "staticmethod" in ctx
+
+
+def test_build_haiku_context_without_source():
+    finding = {
+        "name": "foo",
+        "full_name": "mod.foo",
+        "type": "function",
+        "file": "/tmp/missing.py",
+        "line": 1,
+        "confidence": 90,
+        "references": 0,
+        "is_exported": True,
+    }
+    ctx = _build_haiku_context(finding, {})
+    assert "Exported: yes" in ctx
+    assert "Definition:" not in ctx
+
+
+def test_haiku_prefilter_dismisses_public_api():
+    findings = [
+        {
+            "name": "remove_listener",
+            "full_name": "event.EventHook.remove_listener",
+            "type": "method",
+            "file": "/tmp/test/event.py",
+            "line": 10,
+            "confidence": 90,
+            "references": 0,
+            "is_exported": True,
+        },
+    ]
+    mock_agent = MagicMock(spec=DeadCodeVerifierAgent)
+    with patch(
+        "skylos.llm.verify_orchestrator._parse_batch_response",
+        return_value=[
+            {"public_api": "YES", "reason": "public method on exported class"}
+        ],
+    ):
+        kept, dismissed = _haiku_prefilter_exports(mock_agent, findings, {})
+
+    assert len(dismissed) == 1
+    assert len(kept) == 0
+    assert dismissed[0]["_llm_verdict"] == "FALSE_POSITIVE"
+    assert dismissed[0]["_haiku_prefiltered"] is True
+    assert "haiku-prefilter" in dismissed[0]["_llm_rationale"]
+
+
+def test_haiku_prefilter_keeps_internal_symbols():
+    findings = [
+        {
+            "name": "_cleanup",
+            "full_name": "mod._cleanup",
+            "type": "function",
+            "file": "/tmp/test/mod.py",
+            "line": 5,
+            "confidence": 90,
+            "references": 0,
+            "is_exported": True,
+        },
+    ]
+    mock_agent = MagicMock(spec=DeadCodeVerifierAgent)
+    with patch(
+        "skylos.llm.verify_orchestrator._parse_batch_response",
+        return_value=[{"public_api": "NO", "reason": "private implementation detail"}],
+    ):
+        kept, dismissed = _haiku_prefilter_exports(mock_agent, findings, {})
+
+    assert len(kept) == 1
+    assert len(dismissed) == 0
+    assert "_llm_verdict" not in kept[0]
+
+
+def test_haiku_prefilter_empty_input():
+    mock_agent = MagicMock(spec=DeadCodeVerifierAgent)
+    kept, dismissed = _haiku_prefilter_exports(mock_agent, [], {})
+    assert kept == []
+    assert dismissed == []
+
+
+def test_haiku_prefilter_handles_failure():
+    findings = [
+        {
+            "name": "foo",
+            "full_name": "mod.foo",
+            "type": "function",
+            "file": "/tmp/test/mod.py",
+            "line": 5,
+            "confidence": 90,
+            "references": 0,
+            "is_exported": True,
+        },
+    ]
+    mock_agent = MagicMock(spec=DeadCodeVerifierAgent)
+    with patch(
+        "skylos.llm.verify_orchestrator._parse_batch_response",
+        side_effect=RuntimeError("API error"),
+    ):
+        kept, dismissed = _haiku_prefilter_exports(mock_agent, findings, {})
+
+    assert len(kept) == 1
+    assert len(dismissed) == 0
+
+
+def test_haiku_prefilter_mixed_batch():
+    findings = [
+        {
+            "name": "connect",
+            "full_name": "db.connect",
+            "type": "function",
+            "file": "/tmp/db.py",
+            "line": 1,
+            "confidence": 90,
+            "references": 0,
+            "is_exported": True,
+        },
+        {
+            "name": "_init_pool",
+            "full_name": "db._init_pool",
+            "type": "function",
+            "file": "/tmp/db.py",
+            "line": 20,
+            "confidence": 90,
+            "references": 0,
+            "is_exported": True,
+        },
+    ]
+    mock_agent = MagicMock(spec=DeadCodeVerifierAgent)
+    with patch(
+        "skylos.llm.verify_orchestrator._parse_batch_response",
+        return_value=[
+            {"public_api": "YES", "reason": "main connection API"},
+            {"public_api": "NO", "reason": "internal pool setup"},
+        ],
+    ):
+        kept, dismissed = _haiku_prefilter_exports(mock_agent, findings, {})
+
+    assert len(dismissed) == 1
+    assert dismissed[0]["full_name"] == "db.connect"
+    assert len(kept) == 1
+    assert kept[0]["full_name"] == "db._init_pool"
+
+
+def test_verify_stats_haiku_prefiltered():
+    """VerifyStats should have haiku_prefiltered field."""
+    stats = VerifyStats()
+    assert stats.haiku_prefiltered == 0
+    stats.haiku_prefiltered = 5
+    assert stats.haiku_prefiltered == 5
+
+
+class TestFindingComplexityTier:
+    def test_tier1_trivially_dead(self):
+        """Plain function, zero evidence → tier 1."""
+        finding = {
+            "type": "function",
+            "decorators": [],
+            "framework_signals": [],
+            "dynamic_signals": [],
+            "heuristic_refs": {},
+            "called_by": [],
+        }
+        assert _finding_complexity_tier(finding, {}) == 1
+
+    def test_tier1_no_search_results(self):
+        finding = {
+            "type": "function",
+            "decorators": [],
+            "framework_signals": [],
+            "dynamic_signals": [],
+            "heuristic_refs": {},
+            "called_by": [],
+        }
+        assert _finding_complexity_tier(finding, None) == 1
+
+    def test_tier2_has_callers(self):
+        finding = {
+            "type": "function",
+            "decorators": [],
+            "framework_signals": [],
+            "dynamic_signals": [],
+            "heuristic_refs": {},
+            "called_by": ["a.b"],
+        }
+        assert _finding_complexity_tier(finding, {}) == 2
+
+    def test_tier2_few_search_hits(self):
+        finding = {
+            "type": "function",
+            "decorators": [],
+            "framework_signals": [],
+            "dynamic_signals": [],
+            "heuristic_refs": {},
+            "called_by": [],
+        }
+        assert _finding_complexity_tier(finding, {"refs": ["a.py:1:x"]}) == 2
+
+    def test_tier3_has_decorators(self):
+        finding = {
+            "type": "function",
+            "decorators": ["route"],
+            "framework_signals": [],
+            "dynamic_signals": [],
+            "heuristic_refs": {},
+            "called_by": [],
+        }
+        assert _finding_complexity_tier(finding, {}) == 3
+
+    def test_tier3_method_type(self):
+        finding = {
+            "type": "method",
+            "decorators": [],
+            "framework_signals": [],
+            "dynamic_signals": [],
+            "heuristic_refs": {},
+            "called_by": [],
+        }
+        assert _finding_complexity_tier(finding, {}) == 3
+
+    def test_tier3_exported(self):
+        finding = {
+            "type": "function",
+            "decorators": [],
+            "framework_signals": [],
+            "dynamic_signals": [],
+            "heuristic_refs": {},
+            "called_by": [],
+            "is_exported": True,
+        }
+        assert _finding_complexity_tier(finding, {}) == 3
+
+    def test_tier3_heuristic_refs(self):
+        finding = {
+            "type": "function",
+            "decorators": [],
+            "framework_signals": [],
+            "dynamic_signals": [],
+            "heuristic_refs": {"attr": 1.0},
+            "called_by": [],
+        }
+        assert _finding_complexity_tier(finding, {}) == 3
+
+    def test_tier3_many_search_hits(self):
+        finding = {
+            "type": "function",
+            "decorators": [],
+            "framework_signals": [],
+            "dynamic_signals": [],
+            "heuristic_refs": {},
+            "called_by": [],
+        }
+        hits = {"refs": ["a:1:x", "b:2:y", "c:3:z", "d:4:w"]}
+        assert _finding_complexity_tier(finding, hits) == 3
+
+    def test_tier3_framework_signals(self):
+        finding = {
+            "type": "function",
+            "decorators": [],
+            "framework_signals": ["flask"],
+            "dynamic_signals": [],
+            "heuristic_refs": {},
+            "called_by": [],
+        }
+        assert _finding_complexity_tier(finding, {}) == 3
+
+    def test_tier3_dynamic_signals(self):
+        finding = {
+            "type": "function",
+            "decorators": [],
+            "framework_signals": [],
+            "dynamic_signals": ["getattr"],
+            "heuristic_refs": {},
+            "called_by": [],
+        }
+        assert _finding_complexity_tier(finding, {}) == 3
+
+
+class TestEntryPointCache:
+    def test_cache_path(self, tmp_path):
+        path = _entry_point_cache_path(tmp_path)
+        assert path == tmp_path / ".skylos" / "cache" / "entry_points.json"
+
+    def test_config_hash_stable(self):
+        configs = {"pyproject.toml": "[tool.poetry]\nname = 'x'"}
+        h1 = _config_files_hash(configs)
+        h2 = _config_files_hash(configs)
+        assert h1 == h2
+        assert len(h1) == 16
+
+    def test_config_hash_changes(self):
+        h1 = _config_files_hash({"a.toml": "v1"})
+        h2 = _config_files_hash({"a.toml": "v2"})
+        assert h1 != h2
+
+    def test_discover_uses_cache(self, tmp_path):
+        configs = {"pyproject.toml": "[project]\nname = 'test'"}
+        cache_path = _entry_point_cache_path(tmp_path)
+        cache_path.parent.mkdir(parents=True)
+        current_hash = _config_files_hash(configs)
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "hash": current_hash,
+                    "entry_points": [
+                        {"name": "main", "source": "config", "reason": "entry"}
+                    ],
+                }
+            )
+        )
+
+        mock_agent = MagicMock(spec=DeadCodeVerifierAgent)
+        with patch(
+            "skylos.llm.verify_orchestrator._gather_config_files", return_value=configs
+        ):
+            results = discover_entry_points(mock_agent, tmp_path, [])
+
+        mock_agent.assert_not_called()
+        assert len(results) == 1
+        assert results[0].name == "main"
+
+    def test_discover_skips_stale_cache(self, tmp_path):
+        configs = {"pyproject.toml": "[project]\nname = 'changed'"}
+        cache_path = _entry_point_cache_path(tmp_path)
+        cache_path.parent.mkdir(parents=True)
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "hash": "stale_hash",
+                    "entry_points": [
+                        {"name": "old", "source": "config", "reason": "stale"}
+                    ],
+                }
+            )
+        )
+
+        mock_agent = MagicMock(spec=DeadCodeVerifierAgent)
+        with (
+            patch(
+                "skylos.llm.verify_orchestrator._gather_config_files",
+                return_value=configs,
+            ),
+            patch(
+                "skylos.llm.verify_orchestrator._call_llm_with_retry",
+                return_value='{"entry_points": [{"name": "new_ep", "source": "config", "reason": "fresh"}]}',
+            ),
+        ):
+            results = discover_entry_points(mock_agent, tmp_path, [])
+
+        assert len(results) == 1
+        assert results[0].name == "new_ep"

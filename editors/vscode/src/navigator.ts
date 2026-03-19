@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import type { SkylosFinding } from "./types";
+import { getMaxTreeFindings, getMaxTreeFindingsPerFile } from "./config";
 
 export class FindingNavigator {
   private findings: SkylosFinding[] = [];
@@ -24,7 +25,7 @@ export class FindingNavigator {
 
   private rebuild(): void {
     this.findings = this.store
-      .getAllFindings()
+      .getVisibleFindings(getMaxTreeFindings(), { maxPerFile: getMaxTreeFindingsPerFile() })
       .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
     if (this.findings.length === 0) {
       this.index = -1;

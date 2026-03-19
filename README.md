@@ -8,8 +8,12 @@
 ![CI/CD Ready](https://img.shields.io/badge/CI%2FCD-30s%20Setup-brightgreen?style=flat&logo=github-actions&logoColor=white)
 [![codecov](https://codecov.io/gh/duriantaco/skylos/branch/main/graph/badge.svg)](https://codecov.io/gh/duriantaco/skylos)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
-![PyPI version](https://img.shields.io/pypi/v/skylos)
+[![PyPI version](https://img.shields.io/pypi/v/skylos)](https://pypi.org/project/skylos/)
+[![Downloads/month](https://img.shields.io/pypi/dm/skylos)](https://pypistats.org/packages/skylos)
+[![Downloads total](https://static.pepy.tech/badge/skylos)](https://pypistats.org/packages/skylos)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
+[![GitHub stars](https://img.shields.io/github/stars/duriantaco/skylos)](https://github.com/duriantaco/skylos/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/duriantaco/skylos)](https://github.com/duriantaco/skylos/network)
 ![Skylos](https://img.shields.io/badge/Skylos-PR%20Guard-2f80ed?style=flat&logo=github&logoColor=white)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
 
@@ -120,13 +124,14 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 | Objective | Command | Outcome |
 | :--- | :--- | :--- |
 | **Detect Unused Pytest Fixtures** | `skylos . --pytest-fixtures` | Find unused `@pytest.fixture` across tests + conftest |
-| **AI-Powered Analysis** | `skylos agent analyze . --model gpt-4.1` | Static-first analysis plus judge-all LLM verification for dead code |
+| **AI-Powered Analysis** | `skylos agent scan . --model gpt-4.1` | Static-first analysis plus judge-all LLM verification for dead code |
 | **Dead Code Verification** | `skylos agent verify . --model gpt-4.1` | Dead-code-only second pass: static findings reviewed by the LLM |
-| **AI Audit** | `skylos agent security-audit .` | Deep LLM review with interactive file selection |
+| **Security Audit** | `skylos agent scan . --security` | Deep LLM security review with interactive file selection |
 | **Auto-Remediate** | `skylos agent remediate . --auto-pr` | Scan, fix, test, and open a PR — end to end |
-| **PR Review** | `skylos agent review` | Analyze only git-changed files |
-| **PR Review (JSON)** | `skylos agent review . --model claude-sonnet-4-20250514 --format json -o results.json` | LLM review with code-level fix suggestions |
-| **Local LLM** | `skylos agent analyze . --base-url http://localhost:11434/v1 --model codellama` | Use Ollama/LM Studio (no API key needed) |
+| **Code Cleanup** | `skylos agent remediate . --standards` | LLM-guided code quality cleanup against coding standards |
+| **PR Review** | `skylos agent scan . --changed` | Analyze only git-changed files |
+| **PR Review (JSON)** | `skylos agent scan . --changed --format json -o results.json` | LLM review with code-level fix suggestions |
+| **Local LLM** | `skylos agent scan . --base-url http://localhost:11434/v1 --model codellama` | Use Ollama/LM Studio (no API key needed) |
 | **PR Review (CI)** | `skylos cicd review -i results.json` | Post inline comments on PRs |
 | **AI Defense: Discover** | `skylos discover .` | Map all LLM integrations in your codebase |
 | **AI Defense: Defend** | `skylos defend .` | Check LLM integrations for missing guardrails |
@@ -321,12 +326,17 @@ TypeScript dead code detection tracks: callbacks, type annotations, generics, de
 ## from pypi
 pip install skylos
 
+## with Rust-accelerated analysis (up to 63x faster)
+pip install skylos[fast]
+
 ## or from source
 git clone https://github.com/duriantaco/skylos.git
 cd skylos
 
 pip install .
 ```
+
+> **`skylos[fast]`** installs an optional Rust backend that accelerates clone detection (63x), file discovery (5x), coupling analysis, and cycle detection. Same results, just faster. Pure Python works fine without it — the Rust module is auto-detected at runtime.
 
 ### 🎯 What's Next?
 
@@ -563,7 +573,7 @@ Research shows LLMs find vulnerabilities that static analysis misses, while stat
 For dead code, Skylos now uses a stricter contract:
 - static analysis generates the candidate list
 - repo facts and graph evidence are gathered around each candidate
-- `skylos agent analyze`, `skylos agent audit`, and `skylos agent verify` send nearly every `references == 0` candidate through the LLM in `judge_all` mode
+- `skylos agent scan` and `skylos agent verify` send nearly every `references == 0` candidate through the LLM in `judge_all` mode
 - deterministic suppressors still exist, but in `judge_all` mode they are attached as evidence instead of silently deciding the outcome
 
 Use `--verification-mode production` if you want the cheaper deterministic-first path instead of the default judge-all review.
@@ -572,12 +582,16 @@ Use `--verification-mode production` if you want the cheaper deterministic-first
 
 | Command | Description |
 |---------|-------------|
-| `skylos agent analyze PATH` | Full hybrid pipeline with fix suggestions and judge-all dead-code verification |
-| `skylos agent audit PATH` | Same hybrid pipeline as `analyze`, but fix suggestions are off by default |
+| `skylos agent scan PATH` | Full hybrid pipeline with fix suggestions and judge-all dead-code verification |
+| `skylos agent scan PATH --no-fixes` | Same pipeline, skip fix suggestions (faster) |
+| `skylos agent scan PATH --changed` | Analyze only git-changed files |
+| `skylos agent scan PATH --security` | Security-only LLM audit with interactive file selection |
 | `skylos agent verify PATH` | Dead-code-only verification pass over static findings |
-| `skylos agent security-audit PATH` | Security audit with interactive file selection |
-| `skylos agent review` | Analyze only git-changed files with code-level fix suggestions |
+| `skylos agent verify PATH --fix --pr` | Verify, generate removal patches, create branch and commit |
 | `skylos agent remediate PATH` | End-to-end: scan, fix, test, and create PR |
+| `skylos agent remediate PATH --standards` | LLM-guided cleanup with built-in standards (or `--standards custom.md`) |
+| `skylos agent triage suggest` | Show auto-triage candidates from learned patterns |
+| `skylos agent triage dismiss ID` | Dismiss a finding from the queue |
 
 ### Provider Configuration
 
@@ -585,13 +599,13 @@ Skylos supports cloud and local LLM providers:
 
 ```bash
 # Cloud - OpenAI (auto-detected from model name)
-skylos agent analyze . --model gpt-4.1
+skylos agent scan . --model gpt-4.1
 
 # Cloud - Anthropic (auto-detected from model name)
-skylos agent analyze . --model claude-sonnet-4-20250514
+skylos agent scan . --model claude-sonnet-4-20250514
 
 # Local - Ollama
-skylos agent analyze . \
+skylos agent scan . \
   --provider openai \
   --base-url http://localhost:11434/v1 \
   --model qwen2.5-coder:7b
@@ -633,11 +647,11 @@ export SKYLOS_LLM_BASE_URL=http://localhost:11434/v1
 
 ### LLM PR Review
 
-`skylos agent review` analyzes git-changed files, runs static analysis, then uses the LLM to generate code-level fix suggestions for every finding (security, quality, and dead code).
+`skylos agent scan --changed` analyzes git-changed files, runs static analysis, then uses the LLM to generate code-level fix suggestions for every finding (security, quality, and dead code).
 
 ```bash
 # Run LLM review and output JSON
-skylos agent review . --model claude-sonnet-4-20250514 --format json -o llm-results.json
+skylos agent scan . --changed --model claude-sonnet-4-20250514 --format json -o llm-results.json
 
 # Use with cicd review to post inline comments on PRs
 skylos cicd review --input results.json --llm-input llm-results.json
@@ -670,7 +684,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen2.5-coder:7b
 
 # Use with Skylos
-skylos agent analyze ./src \
+skylos agent scan ./src \
   --provider openai \
   --base-url http://localhost:11434/v1 \
   --model qwen2.5-coder:7b
@@ -897,6 +911,10 @@ Add to your Claude Desktop config (`~/.config/claude/claude_desktop_config.json`
 | `quality_check` | Code quality and complexity analysis (`--quality` equivalent) |
 | `secrets_scan` | Hardcoded secrets detection (`--secrets` equivalent) |
 | `remediate` | End-to-end: scan, generate LLM fixes, validate with tests |
+| `generate_fix` | Generate removal patches for confirmed dead code |
+| `verify_dead_code` | LLM-verify dead code findings (reduce false positives) |
+| `learn_triage` | Record a triage decision for pattern learning |
+| `get_triage_suggestions` | Get auto-triage candidates from learned patterns |
 
 ### Available Resources
 
@@ -1137,7 +1155,7 @@ Control how you consume the watchdog's findings.
 | `--tui` | TUI Dashboard | Launch the interactive TUI dashboard. |
 | `--tree` | Logic Tree | Visualizes code hierarchy and structural dependencies. |
 | `--json` | Machine Raw | Piping results to `jq`, custom scripts, or log aggregators. |
-| `--sarif` | SARIF | GitHub Code Scanning, IDE integration |
+| `--sarif` | SARIF | GitHub Code Scanning, IDE integration. Includes CWE taxonomy and per-rule CWE relationships |
 | `--llm` | LLM Report | Structured findings with code context for Claude Code, Codex, or any AI agent. |
 | `-o, --output` | File Export | Save the audit report directly to a file instead of `stdout`. |
 
@@ -1232,6 +1250,9 @@ skylos . --quality
 | Anti-pattern try block | SKY-L004 | Nested try, or try wrapping too much logic |
 | Unused exception var | SKY-L005 | `except Error as e:` where `e` is never referenced |
 | Inconsistent return | SKY-L006 | Function returns both values and `None` |
+| Duplicate string literal | SKY-L027 | Same string repeated 3+ times — extract to a constant |
+| Too many returns | SKY-L028 | Function has 5+ return statements |
+| Boolean trap | SKY-L029 | Boolean positional parameter harms call-site readability |
 | **Performance** | | |
 | Memory load | SKY-P401 | `.read()` / `.readlines()` loads entire file |
 | Pandas no chunk | SKY-P402 | `read_csv()` without `chunksize` |
@@ -1286,7 +1307,7 @@ skylos . --audit
 skylos . --audit --model claude-haiku-4-5-20251001
 ```
 
-> **Note:** For full project context and better results, use `skylos agent analyze` instead. For auto-fixing, use `skylos agent remediate`.
+> **Note:** For full project context and better results, use `skylos agent scan` instead. For auto-fixing, use `skylos agent remediate`.
 
 ### Combine Everything
 ```bash
@@ -1551,20 +1572,26 @@ Options:
 Usage: skylos agent <command> [OPTIONS] PATH
 
 Commands:
-  analyze             Hybrid static + LLM analysis with project context
-  security-audit      Deep LLM security audit
-  review              Analyze only git-changed files
+  scan                Hybrid static + LLM analysis (replaces analyze/audit/review/security-audit)
+  verify              LLM-verify dead code findings
   remediate           Scan, fix, test, and create PR (end-to-end)
+  watch               Continuous repo monitoring
+  pre-commit          Staged-files-only analysis for git hooks
+  triage              Manage finding triage (suggest/dismiss/snooze/restore)
+  status              Show active-agent summary
+  serve               Local HTTP API for editor integrations
 
-Options (all agent commands):
+Agent scan options:
   --model MODEL                LLM model to use (default: gpt-4.1)
   --provider PROVIDER          Force provider: openai or anthropic
   --base-url URL               Custom endpoint for local LLMs
   --format FORMAT              Output: table, tree, json, sarif
   -o, --output FILE            Write output to file
-
-Agent analyze options:
   --min-confidence LEVEL       Filter: high, medium, low
+  --no-fixes                   Skip fix suggestions (faster)
+  --changed                    Analyze only git-changed files
+  --security                   Security-only LLM audit mode
+  -i, --interactive            Interactive file selection (with --security)
 
 Agent remediate options:
   --dry-run                    Show plan without applying fixes (safe preview)
@@ -1573,6 +1600,7 @@ Agent remediate options:
   --branch-prefix PREFIX       Git branch prefix (default: skylos/fix)
   --test-cmd CMD               Custom test command (default: auto-detect)
   --severity LEVEL             Min severity filter: critical, high, medium, low
+  --standards [FILE]           Enable LLM cleanup mode (uses built-in standards, or pass custom .md)
 ```
 
 ### AI Defense Command Flags
@@ -1606,10 +1634,10 @@ Commands:
   skylos PATH                  Analyze a project (static analysis)
   skylos discover PATH         Map LLM integrations in a codebase
   skylos defend PATH           Check LLM integrations for missing defenses
-  skylos agent analyze PATH    Hybrid static + LLM analysis
-  skylos agent security-audit PATH  Deep LLM audit with file selection
-  skylos agent review          Review git-changed files only
+  skylos agent scan PATH       Hybrid static + LLM analysis
+  skylos agent verify PATH     LLM-verify dead code findings
   skylos agent remediate PATH  End-to-end scan, fix, test, and PR
+  skylos agent triage CMD      Manage finding triage
   skylos baseline PATH         Snapshot current findings for CI baselining
   skylos cicd init             Generate GitHub Actions workflow
   skylos cicd gate             Check findings against quality gate
@@ -1673,11 +1701,11 @@ A: `conftest.py` is the standard place for shared fixtures. If a fixture is defi
 **Q: My tests are failing. Can I still use `--trace`?**
 A: Yes. Coverage tracks execution, not pass/fail. Even failing tests provide coverage data.
 
-**Q: What's the difference between `skylos . --audit` and `skylos agent audit`?**
-A: `skylos agent audit` runs the full hybrid pipeline — static analysis, judge-all LLM dead-code verification, and LLM security/quality analysis. Fix suggestions are off by default (use `--with-fixes` to enable). `skylos agent analyze` is equivalent but includes fix suggestions by default. The `--audit` flag on the base command is the legacy static-only mode.
+**Q: What's the difference between `skylos . --audit` and `skylos agent scan`?**
+A: `skylos agent scan` runs the full hybrid pipeline — static analysis, judge-all LLM dead-code verification, and LLM security/quality analysis with fix suggestions. Use `--no-fixes` to skip fix generation. The `--audit` flag on the base command is the legacy static-only mode.
 
 **Q: What does `--verification-mode` do?**
-A: It controls how aggressively Skylos sends dead-code candidates to the LLM. `judge_all` is the default for `agent analyze`, `agent audit`, and `agent verify`; it sends nearly every `references == 0` static candidate to the LLM and treats deterministic suppressors as evidence. `production` is cheaper and lets more obvious alive cases get suppressed before the LLM sees them.
+A: It controls how aggressively Skylos sends dead-code candidates to the LLM. `judge_all` is the default for `agent scan` and `agent verify`; it sends nearly every `references == 0` static candidate to the LLM and treats deterministic suppressors as evidence. `production` is cheaper and lets more obvious alive cases get suppressed before the LLM sees them.
 
 **Q: Can I use local LLMs instead of OpenAI/Anthropic?**
 A: Yes! Use `--base-url` to point to Ollama, LM Studio, or any OpenAI-compatible endpoint. No API key needed for localhost.
@@ -1716,7 +1744,7 @@ A: Yes! Use `--base-url` to point to Ollama, LM Studio, or any OpenAI-compatible
    export ANTHROPIC_API_KEY="sk-ant-..."
    
    # For local LLMs (no key needed)
-   skylos agent analyze . --base-url http://localhost:11434/v1 --model codellama
+   skylos agent scan . --base-url http://localhost:11434/v1 --model codellama
    ```
 
 4. **Local LLM Connection Refused**

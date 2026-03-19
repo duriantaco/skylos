@@ -4,12 +4,13 @@ exports.SkylosHoverProvider = void 0;
 const vscode = require("vscode");
 const rules_1 = require("./rules");
 const types_1 = require("./types");
+const config_1 = require("./config");
 class SkylosHoverProvider {
     constructor(store) {
         this.store = store;
     }
     provideHover(document, position) {
-        const findings = this.store.getFindingsForFile(document.uri.fsPath);
+        const findings = this.store.getFindingsForFile(document.uri.fsPath, { max: (0, config_1.getMaxDecorationsPerFile)() });
         const lineFindings = findings.filter((f) => Math.max(0, f.line - 1) === position.line);
         if (lineFindings.length === 0)
             return undefined;

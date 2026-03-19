@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
+import { getMaxDecorationsPerFile } from "./config";
 
 export class SkylosFileDecorationProvider implements vscode.FileDecorationProvider {
   private _onDidChangeFileDecorations = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
@@ -15,7 +16,7 @@ export class SkylosFileDecorationProvider implements vscode.FileDecorationProvid
   }
 
   provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
-    const findings = this.store.getFindingsForFile(uri.fsPath);
+    const findings = this.store.getFindingsForFile(uri.fsPath, { max: getMaxDecorationsPerFile() });
     if (findings.length === 0) 
       return undefined;
 
