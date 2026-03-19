@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "4.0.0"
+version = "4.1.0"
 requires-python = ">=3.10"
 description = "Dead code and security PR gate for Python, TypeScript, and Go."
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
@@ -67,6 +67,7 @@ dependencies = [
     "requests",
     "tree-sitter>=0.25.2",
     "tree-sitter-typescript>=0.23.2",
+    "tree-sitter-go>=0.23.0",
     "pyyaml",
     "litellm>=1.81.3",
     "networkx",
@@ -85,9 +86,10 @@ Discord = "https://discord.gg/Ftn9t9tErf"
 "MCP Server" = "https://github.com/duriantaco/skylos/tree/main/skylos_mcp"
 
 [project.optional-dependencies]
+fast = ["skylos-fast>=0.1.0"]
 web = ["flask>=2.1.1", "flask-cors>=3.0.3"]
 test = ["pytest>=9.0.2"]
-all = ["flask>=2.1.1", "flask-cors>=3.0.3", "pytest>=9.0.2"]
+all = ["skylos-fast>=0.1.0", "flask>=2.1.1", "flask-cors>=3.0.3", "pytest>=9.0.2"]
 
 [project.scripts]
 skylos = "skylos.cli:main"

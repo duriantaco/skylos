@@ -1679,11 +1679,11 @@ class StaleMockRule(SkylosRule):
             return mod_path
 
         if len(module_parts) >= 2:
-            flat_path = project_root / "/".join(module_parts) + ".py"
+            flat_path = project_root / ("/".join(module_parts) + ".py")
             if Path(flat_path).is_file():
                 return Path(flat_path)
 
-        direct = project_root / "/".join(module_parts) + ".py"
+        direct = project_root / ("/".join(module_parts) + ".py")
         if Path(direct).is_file():
             return Path(direct)
 

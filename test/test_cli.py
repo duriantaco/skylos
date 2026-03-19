@@ -789,6 +789,7 @@ def test_main_command_exec_success_exits_zero(monkeypatch):
             return_value={"success": False, "error": "No token found"},
         ),
         patch("skylos.cli.subprocess.Popen", return_value=proc) as popen,
+        patch("skylos.api.get_project_token", return_value=None),
     ):
         with pytest.raises(SystemExit) as e:
             cli.main()
@@ -834,6 +835,7 @@ def test_main_command_exec_failure_exits_with_code(monkeypatch):
             return_value={"success": False, "error": "No token found"},
         ),
         patch("skylos.cli.subprocess.Popen", return_value=proc),
+        patch("skylos.api.get_project_token", return_value=None),
     ):
         with pytest.raises(SystemExit) as e:
             cli.main()
@@ -873,6 +875,7 @@ class TestDiffFlag:
                 return_value={"success": False, "error": "No token found"},
             ),
             patch("skylos.cicd.review.subprocess.run") as mock_git,
+            patch("skylos.api.get_project_token", return_value=None),
         ):
             mock_git.return_value = Mock(returncode=0, stdout="")
             cli.main()
@@ -915,6 +918,7 @@ class TestDiffFlag:
                 return_value={"success": False, "error": "No token found"},
             ),
             patch("skylos.cicd.review.subprocess.run") as mock_git,
+            patch("skylos.api.get_project_token", return_value=None),
         ):
             mock_git.return_value = Mock(returncode=0, stdout="")
             cli.main()
@@ -957,6 +961,7 @@ class TestDiffFlag:
                 return_value={"success": False, "error": "No token found"},
             ),
             patch("skylos.cicd.review.subprocess.run") as mock_git,
+            patch("skylos.api.get_project_token", return_value=None),
         ):
             mock_git.return_value = Mock(returncode=0, stdout="")
             cli.main()
