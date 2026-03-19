@@ -201,6 +201,8 @@ class Definition:
         "why_confidence_reduced",
         "_attr_name_ref_count",
         "conditional_import",
+        "suppression_code",
+        "folder_role",
     )
 
     def __init__(
@@ -240,6 +242,8 @@ class Definition:
         self.why_confidence_reduced = []
         self._attr_name_ref_count = 0
         self.conditional_import = False
+        self.suppression_code = None
+        self.folder_role = None
 
     def to_dict(self) -> dict[str, Any]:
         if self.type == "method" and "." in self.name:
@@ -291,6 +295,8 @@ class Definition:
             result["why_confidence_reduced"] = list(self.why_confidence_reduced)
         if self.conditional_import:
             result["conditional_import"] = True
+        if self.is_exported:
+            result["is_exported"] = True
 
         return result
 
