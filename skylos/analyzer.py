@@ -85,7 +85,7 @@ from skylos.rules.quality.clones import (
 from skylos.penalties import apply_penalties
 
 from skylos.scale.parallel_static import run_proc_file_parallel
-from skylos.rules.custom import load_custom_rules
+from skylos.rules.custom import load_custom_rules, load_community_rules
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -2084,6 +2084,19 @@ def proc_file(
                     logger.error(f"[DBG] {file}: FAILED to load custom rules: {e}")
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
+
+            # Load community rules from ~/.skylos/rules/
+            try:
+                community_rules_data = load_community_rules()
+                if community_rules_data:
+                    community_rules = load_custom_rules(community_rules_data)
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.info(
+                            f"[DBG] {file}: community rules -> {len(community_rules)} rules"
+                        )
+                    q_rules.extend(community_rules)
+            except Exception:
+                pass
 
             linter_q = LinterVisitor(q_rules, str(file))
             linter_q.visit(tree)

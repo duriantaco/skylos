@@ -346,6 +346,94 @@ def _merge_ranges(ranges):
     return merged
 
 
+def _line_in_ranges(line, ranges):
+    for start, end in ranges:
+        if start <= line <= end:
+            return True
+    return False
+
+
+def annotate_findings_with_provenance(
+    findings: list[dict],
+    provenance_report: "ProvenanceReport",
+) -> list[dict]:
+    for finding in findings:
+        file_path = finding.get("file")
+        if not file_path:
+            finding["ai_authored"] = False
+            finding["ai_agent"] = None
+            continue
+
+        file_prov = provenance_report.files.get(file_path)
+
+        if file_prov is None:
+            for prov_path, prov in provenance_report.files.items():
+                if file_path.endswith(prov_path) or prov_path.endswith(file_path):
+                    file_prov = prov
+                    break
+
+        if file_prov is None or not file_prov.agent_authored:
+            finding["ai_authored"] = False
+            finding["ai_agent"] = None
+            continue
+
+        line = finding.get("line")
+        if file_prov.agent_lines and line is not None:
+            if _line_in_ranges(line, file_prov.agent_lines):
+                finding["ai_authored"] = True
+                finding["ai_agent"] = file_prov.agent_name
+            else:
+                finding["ai_authored"] = False
+                finding["ai_agent"] = None
+        else:
+            finding["ai_authored"] = True
+            finding["ai_agent"] = file_prov.agent_name
+
+    return findings
+
+
+def compute_ai_security_stats(
+    findings: list[dict],
+) -> dict:
+    total = len(findings)
+    ai_count = sum(1 for f in findings if f.get("ai_authored"))
+    pct = (ai_count / total * 100) if total > 0 else 0.0
+
+    by_agent: dict[str, int] = {}
+    by_severity: dict[str, dict[str, int]] = {}
+    by_category: dict[str, dict[str, int]] = {}
+
+    for f in findings:
+        is_ai = bool(f.get("ai_authored"))
+        agent = f.get("ai_agent")
+        severity = (f.get("severity") or "UNKNOWN").upper()
+        category = (f.get("category") or "unknown").lower()
+
+        if is_ai and agent:
+            by_agent[agent] = by_agent.get(agent, 0) + 1
+
+        if severity not in by_severity:
+            by_severity[severity] = {"total": 0, "ai": 0}
+        by_severity[severity]["total"] += 1
+        if is_ai:
+            by_severity[severity]["ai"] += 1
+
+        if category not in by_category:
+            by_category[category] = {"total": 0, "ai": 0}
+        by_category[category]["total"] += 1
+        if is_ai:
+            by_category[category]["ai"] += 1
+
+    return {
+        "total_findings": total,
+        "ai_authored_findings": ai_count,
+        "ai_authored_pct": round(pct, 1),
+        "by_agent": by_agent,
+        "by_severity": by_severity,
+        "by_category": by_category,
+    }
+
+
 @dataclass
 class RiskIntersection:
     high_risk: list = field(default_factory=list)

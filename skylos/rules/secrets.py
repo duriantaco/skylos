@@ -4,6 +4,26 @@ from math import log2
 
 __all__ = ["scan_ctx"]
 
+CLIENT_PATHS = (
+    "/static/",
+    "/public/",
+    "/frontend/",
+    "/client/",
+    "/dist/",
+    "/build/",
+    "/assets/",
+    "/.next/",
+    "/out/",
+)
+
+CLIENT_ENV_RE = re.compile(
+    r"process\.env\."
+    r"(?!NEXT_PUBLIC_|REACT_APP_|VITE_|NUXT_PUBLIC_|EXPO_PUBLIC_)"
+    r"[A-Z_]*(SECRET|KEY|PASSWORD|TOKEN|PRIVATE|CREDENTIAL|AUTH)[A-Z_]*"
+)
+
+JS_TS_SUFFIXES = (".js", ".jsx", ".ts", ".tsx")
+
 ALLOWED_FILE_SUFFIXES = (
     ".py",
     ".pyi",
@@ -349,5 +369,37 @@ def scan_ctx(
                             "entropy": round(tok_entropy, 2),
                         }
                         findings.append(generic_finding)
+
+    # S102: Client-side secret exposure
+    norm_path = "/" + rel_path.replace("\\", "/")
+    is_client_path = any(seg in norm_path for seg in CLIENT_PATHS)
+
+    if is_client_path:
+        for f in findings:
+            if f["rule_id"] == "SKY-S101":
+                f["rule_id"] = "SKY-S102"
+                f["message"] = (
+                    f"Client-side secret exposure: "
+                    f"Secret exposed in client-accessible path: {rel_path}"
+                )
+
+    if rel_path.endswith(JS_TS_SUFFIXES):
+        for line_number, raw_line in enumerate(file_lines, start=1):
+            line_content = raw_line.rstrip("\n")
+            for m in CLIENT_ENV_RE.finditer(line_content):
+                col_pos = m.start()
+                findings.append(
+                    {
+                        "rule_id": "SKY-S102",
+                        "severity": "CRITICAL",
+                        "message": (
+                            f"Client-side secret exposure: "
+                            f"Non-public env var '{m.group(0)}' may be bundled into client code"
+                        ),
+                        "file": rel_path,
+                        "line": line_number,
+                        "col": col_pos,
+                    }
+                )
 
     return findings
