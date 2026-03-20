@@ -1019,11 +1019,31 @@ class Skylos:
         context_map = {}
         for name, d in self.defs.items():
             if d.type in ("class", "function", "method") and not name.startswith("_"):
+                loc = 1
+                node = getattr(d, "node", None)
+                if node is not None:
+                    start = getattr(node, "lineno", None)
+                    end = getattr(node, "end_lineno", None)
+                    if start is not None and end is not None:
+                        loc = max(1, end - start + 1)
+
+                is_dead = (
+                    d.references == 0
+                    and not d.is_exported
+                    and d.confidence > 0
+                    and d.confidence >= thr
+                )
+
                 context_map[name] = {
                     "name": d.name,
                     "file": str(d.filename),
                     "line": d.line,
                     "type": d.type,
+                    "loc": loc,
+                    "complexity": getattr(d, "complexity", 1),
+                    "calls": sorted(d.calls) if d.calls else [],
+                    "called_by": sorted(d.called_by) if d.called_by else [],
+                    "dead": is_dead,
                 }
 
         whitelisted = []
@@ -1567,7 +1587,39 @@ class Skylos:
                     }
                 )
 
-        # security regression detection
+        if changed_files is None and enable_quality:
+            try:
+                import subprocess
+
+                diff_result = subprocess.run(
+                    ["git", "diff", "--name-only", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    cwd=str(root),
+                )
+                if diff_result.returncode == 0 and diff_result.stdout.strip():
+                    changed_files = set()
+                    for line in diff_result.stdout.strip().splitlines():
+                        full_path = str((root / line).resolve())
+                        changed_files.add(full_path)
+                staged_result = subprocess.run(
+                    ["git", "diff", "--name-only", "--cached"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    cwd=str(root),
+                )
+                if staged_result.returncode == 0 and staged_result.stdout.strip():
+                    if changed_files is None:
+                        changed_files = set()
+                    for line in staged_result.stdout.strip().splitlines():
+                        full_path = str((root / line).resolve())
+                        changed_files.add(full_path)
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error("Auto-detect git changes failed", exc_info=True)
+
         if changed_files and enable_quality and "SKY-L021" not in cfg.get("ignore", []):
             from skylos.rules.quality.regression import detect_security_regressions
 
@@ -2085,7 +2137,6 @@ def proc_file(
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
 
-            # Load community rules from ~/.skylos/rules/
             try:
                 community_rules_data = load_community_rules()
                 if community_rules_data:

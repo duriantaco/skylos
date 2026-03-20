@@ -791,6 +791,9 @@ def upload_report(
     except (ImportError, subprocess.SubprocessError, OSError):
         logger.debug("Provenance detection failed", exc_info=True)
 
+    # Include definitions for Code City visualization
+    definitions = result_json.get("definitions")
+
     payload.update(
         {
             "commit_hash": commit,
@@ -801,6 +804,7 @@ def upload_report(
             "analysis_mode": analysis_mode,
             "ai_code": ai_code if ai_code.get("detected") else None,
             "provenance": provenance_data,
+            "definitions": definitions,
         }
     )
 
