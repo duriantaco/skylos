@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SkylosStatusBar = void 0;
 const vscode = require("vscode");
 const dashboard_1 = require("./dashboard");
+const config_1 = require("./config");
 class SkylosStatusBar {
     constructor(store) {
         this.store = store;
@@ -30,6 +31,7 @@ class SkylosStatusBar {
             return;
         const counts = this.store.countBySeverity();
         const total = Object.values(counts).reduce((s, n) => s + n, 0);
+        const summary = this.store.getVisibleSummary((0, config_1.getMaxProblems)());
         if (total === 0) {
             this.item.text = "$(shield) Skylos";
             this.item.backgroundColor = undefined;
@@ -53,7 +55,10 @@ class SkylosStatusBar {
         else {
             this.item.backgroundColor = undefined;
         }
-        this.item.tooltip = `Critical: ${critical} | High: ${high} | Medium: ${medium} | Low: ${low}\nClick to open Security Dashboard`;
+        const scopeLine = summary.visibleTotal < summary.workingTotal
+            ? `Showing top ${summary.visibleTotal} of ${summary.workingTotal} findings in editor surfaces\n`
+            : "";
+        this.item.tooltip = `${scopeLine}Critical: ${critical} | High: ${high} | Medium: ${medium} | Low: ${low}\nClick to open Security Dashboard`;
     }
     dispose() {
         this.disposables.forEach((d) => d.dispose());

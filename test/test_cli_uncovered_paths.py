@@ -609,6 +609,7 @@ def test_main_interactive_dry_run_does_not_modify(monkeypatch):
         patch("skylos.cli.comment_out_unused_function") as c_fn,
         patch("skylos.cli.comment_out_unused_import") as c_imp,
         patch("builtins.print"),
+        patch("skylos.api.get_project_token", return_value=None),
     ):
         cli.main()
 
@@ -655,6 +656,7 @@ def test_main_interactive_comment_out_uses_comment_functions(monkeypatch):
         patch("skylos.cli.comment_out_unused_function", return_value=True) as c_fn,
         patch("skylos.cli.comment_out_unused_import", return_value=True) as c_imp,
         patch("builtins.print"),
+        patch("skylos.api.get_project_token", return_value=None),
     ):
         cli.main()
 

@@ -4,6 +4,11 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple, Any
 from collections import defaultdict
 
+try:
+    from skylos_fast import find_cycles as _fast_find_cycles
+except ImportError:
+    _fast_find_cycles = None
+
 
 @dataclass
 class ModuleDependency:
@@ -129,6 +134,21 @@ class CircularDependencyAnalyzer:
                     self.all_deps.append(dep)
 
     def find_simple_cycles(self) -> List[List[str]]:
+        if _fast_find_cycles is not None:
+            return self._find_cycles_fast()
+        return self._find_cycles_py()
+
+    def _find_cycles_fast(self) -> List[List[str]]:
+        """Rust-accelerated cycle detection."""
+        edges = []
+        for frm, tos in self.dependencies.items():
+            for to in tos:
+                edges.append((frm, to))
+        modules = list(self.modules.keys())
+        return _fast_find_cycles(edges, modules)
+
+    def _find_cycles_py(self) -> List[List[str]]:
+        """Pure Python DFS cycle detection."""
         cycles = []
         visited = set()
 

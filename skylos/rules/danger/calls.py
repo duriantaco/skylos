@@ -55,6 +55,11 @@ DANGEROUS_CALLS = {
         "CRITICAL",
         "Untrusted deserialization via dill.load",
     ),
+    ".exec_command": (
+        "SKY-D235",
+        "HIGH",
+        "Remote command execution via exec_command (e.g., paramiko SSH)",
+    ),
 }
 
 
@@ -74,6 +79,8 @@ def _qualified_name_from_call(node: ast.Call):
 def _matches_rule(name, rule_key):
     if not name:
         return False
+    if rule_key.startswith("."):
+        return name.endswith(rule_key)
     if rule_key.endswith(".*"):
         return name.startswith(rule_key[:-2] + ".")
     return name == rule_key

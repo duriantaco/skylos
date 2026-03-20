@@ -412,6 +412,150 @@ STARLETTE_ENDPOINT_METHODS = {
 }
 STARLETTE_ENDPOINT_BASES = {"HTTPEndpoint", "WebSocketEndpoint"}
 
+
+PROTOCOL_METHODS = {
+    # collections.abc
+    "Set": {"_from_iterable", "_hash", "isdisjoint"},
+    "MutableSet": {"_from_iterable", "add", "discard"},
+    "Mapping": {"keys", "values", "items", "get", "__contains__", "__eq__", "__ne__"},
+    "MutableMapping": {"pop", "popitem", "clear", "update", "setdefault"},
+    "Sequence": {"index", "count", "__reversed__"},
+    "MutableSequence": {"append", "clear", "reverse", "extend", "pop", "insert"},
+    # io
+    "RawIOBase": {
+        "read",
+        "readall",
+        "readinto",
+        "write",
+        "seekable",
+        "readable",
+        "writable",
+        "isatty",
+        "fileno",
+        "flush",
+        "close",
+        "truncate",
+    },
+    "BufferedIOBase": {
+        "read",
+        "read1",
+        "readinto",
+        "readinto1",
+        "write",
+        "detach",
+        "seekable",
+        "readable",
+        "writable",
+        "flush",
+        "close",
+    },
+    "TextIOBase": {
+        "read",
+        "readline",
+        "write",
+        "detach",
+        "seekable",
+        "readable",
+        "writable",
+        "flush",
+        "close",
+    },
+    "IOBase": {
+        "seekable",
+        "readable",
+        "writable",
+        "isatty",
+        "fileno",
+        "flush",
+        "close",
+        "truncate",
+        "seek",
+        "tell",
+        "readlines",
+        "writelines",
+    },
+    # threading
+    "Thread": {"run", "start"},
+    # multiprocessing
+    "Process": {"run"},
+    # unittest
+    "TestCase": {"setUp", "tearDown", "setUpClass", "tearDownClass"},
+    # logging
+    "Handler": {
+        "emit",
+        "handle",
+        "flush",
+        "close",
+        "createLock",
+        "acquire",
+        "release",
+        "format",
+        "filter",
+    },
+    "Filter": {"filter"},
+    "Formatter": {"format", "formatTime", "formatException", "formatStack"},
+    # argparse
+    "Action": {"__call__", "format_usage"},
+    # ast
+    "NodeVisitor": {"visit", "generic_visit"},
+    "NodeTransformer": {"visit", "generic_visit"},
+    # cmd
+    "Cmd": {
+        "precmd",
+        "postcmd",
+        "preloop",
+        "postloop",
+        "emptyline",
+        "default",
+        "completedefault",
+        "completenames",
+        "parseline",
+        "onecmd",
+    },
+    # http.server
+    "BaseHTTPRequestHandler": {
+        "do_GET",
+        "do_POST",
+        "do_PUT",
+        "do_DELETE",
+        "do_HEAD",
+        "do_OPTIONS",
+        "do_PATCH",
+        "log_message",
+        "log_request",
+        "log_error",
+    },
+    # json
+    "JSONEncoder": {"default", "encode", "iterencode"},
+    "JSONDecoder": {"decode", "raw_decode"},
+    # pickle
+    "Pickler": {"reducer_override", "persistent_id"},
+    "Unpickler": {"persistent_load", "find_class"},
+    # xml.sax
+    "ContentHandler": {
+        "startDocument",
+        "endDocument",
+        "startElement",
+        "endElement",
+        "characters",
+        "startPrefixMapping",
+        "endPrefixMapping",
+    },
+    # contextlib
+    "AbstractContextManager": {"__enter__", "__exit__"},
+    "AbstractAsyncContextManager": {"__aenter__", "__aexit__"},
+    # typing protocols (common names)
+    "Protocol": {"__call__"},
+    # setuptools / hatch
+    "Command": {"run", "initialize_options", "finalize_options"},
+    "BuildHookInterface": {"initialize", "clean", "finalize"},
+}
+
+PROTOCOL_METHOD_TO_BASES: dict[str, set[str]] = {}
+for _base, _methods in PROTOCOL_METHODS.items():
+    for _method in _methods:
+        PROTOCOL_METHOD_TO_BASES.setdefault(_method, set()).add(_base)
+
 SOFT_PATTERNS = [
     ("test_*", 40, "test_file"),
     ("*_test", 40, "test_file"),

@@ -4,6 +4,11 @@ from typing import Any, Optional
 
 from skylos.rules.base import SkylosRule
 
+try:
+    from skylos_fast import analyze_coupling as _fast_analyze_coupling
+except ImportError:
+    _fast_analyze_coupling = None
+
 BUILTIN_TYPES = frozenset(
     {
         "int",
@@ -171,6 +176,9 @@ class _ClassInfo:
         self.methods: list[str] = []
 
 
+_DUMMY_CLASS = _ClassInfo("", 0, 0)
+
+
 def _get_decorator_name(node: ast.expr) -> str | None:
     if isinstance(node, ast.Name):
         return node.id
@@ -188,12 +196,11 @@ def _get_decorator_name(node: ast.expr) -> str | None:
     return None
 
 
-def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
+def _first_pass_collect(tree):
     classes: dict[str, _ClassInfo] = {}
     module_imports: dict[str, str] = {}
     known_classes: set[str] = set()
 
-    # first pass, collect all class definitions and imports
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             info = _ClassInfo(node.name, node.lineno, node.col_offset)
@@ -239,7 +246,10 @@ def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
                         f"{node.module}.{alias.name}"
                     )
 
-    # second pass analyze coupling for each class
+    return classes, module_imports, known_classes
+
+
+def _second_pass_analyze(tree, classes, known_classes):
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
@@ -292,10 +302,11 @@ def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
                     ):
                         info.attribute_deps.add(obj_name)
 
+
+def _compute_metrics(classes, known_classes):
     coupling_graph: dict[str, dict[str, set[str]]] = {}
 
     for class_name, info in classes.items():
-        all_efferent: set[str] = set()
         dep_breakdown: dict[str, set[str]] = {
             "inheritance": info.bases & known_classes,
             "type_hints": info.type_deps & known_classes,
@@ -313,16 +324,13 @@ def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
                 b
                 for b in shared_bases
                 if any(
-                    classes.get(b, _ClassInfo("", 0, 0)).is_protocol
-                    or classes.get(b, _ClassInfo("", 0, 0)).is_abc
+                    classes.get(b, _DUMMY_CLASS).is_protocol
+                    or classes.get(b, _DUMMY_CLASS).is_abc
                     for _ in [None]
                 )
             }
             if shared_protocols:
                 dep_breakdown["protocol_abc"].add(other_name)
-
-        for deps in dep_breakdown.values():
-            all_efferent.update(deps)
 
         coupling_graph[class_name] = dep_breakdown
 
@@ -344,36 +352,20 @@ def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
         ca = len(afferent.get(class_name, set()))
         total = ce + ca
 
-        result_classes[class_name] = {}
-
-        result_classes[class_name]["efferent_coupling"] = ce
-        result_classes[class_name]["afferent_coupling"] = ca
-        result_classes[class_name]["total_coupling"] = total
-
-        result_classes[class_name]["efferent_classes"] = sorted(all_efferent)
-
-        incoming = afferent.get(class_name)
-        if incoming is None:
-            incoming = set()
-        result_classes[class_name]["afferent_classes"] = sorted(incoming)
-
-        breakdown_sorted = {}
-        for k, v in breakdown.items():
-            breakdown_sorted[k] = sorted(v)
-        result_classes[class_name]["breakdown"] = breakdown_sorted
-
-        denom = ca + ce
-        if denom > 0:
-            instability = ce / denom
-        else:
-            instability = 0.0
-        result_classes[class_name]["instability"] = instability
-
-        result_classes[class_name]["is_protocol"] = info.is_protocol
-        result_classes[class_name]["is_abc"] = info.is_abc
-        result_classes[class_name]["is_dataclass"] = info.is_dataclass
-        result_classes[class_name]["line"] = info.lineno
-        result_classes[class_name]["methods"] = info.methods
+        result_classes[class_name] = {
+            "efferent_coupling": ce,
+            "afferent_coupling": ca,
+            "total_coupling": total,
+            "efferent_classes": sorted(all_efferent),
+            "afferent_classes": sorted(afferent.get(class_name) or set()),
+            "breakdown": {k: sorted(v) for k, v in breakdown.items()},
+            "instability": ce / (ca + ce) if (ca + ce) > 0 else 0.0,
+            "is_protocol": info.is_protocol,
+            "is_abc": info.is_abc,
+            "is_dataclass": info.is_dataclass,
+            "line": info.lineno,
+            "methods": info.methods,
+        }
 
     coupling_graph_out = {}
     for name, bd in coupling_graph.items():
@@ -386,6 +378,12 @@ def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
         "classes": result_classes,
         "coupling_graph": coupling_graph_out,
     }
+
+
+def analyze_coupling(tree: ast.AST, filename: str) -> dict[str, Any]:
+    classes, module_imports, known_classes = _first_pass_collect(tree)
+    _second_pass_analyze(tree, classes, known_classes)
+    return _compute_metrics(classes, known_classes)
 
 
 class CBORule(SkylosRule):
@@ -419,8 +417,11 @@ class CBORule(SkylosRule):
             file_data["_analyzed"] = True
             try:
                 source = Path(filename).read_text(encoding="utf-8", errors="ignore")
-                tree = ast.parse(source)
-                result = analyze_coupling(tree, filename)
+                if _fast_analyze_coupling is not None:
+                    result = _fast_analyze_coupling(source, filename)
+                else:
+                    tree = ast.parse(source)
+                    result = analyze_coupling(tree, filename)
                 file_data.update(result)
             except Exception:
                 return None

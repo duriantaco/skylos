@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FindingNavigator = void 0;
 const vscode = require("vscode");
+const config_1 = require("./config");
 class FindingNavigator {
     constructor(store) {
         this.store = store;
@@ -17,7 +18,7 @@ class FindingNavigator {
     }
     rebuild() {
         this.findings = this.store
-            .getAllFindings()
+            .getVisibleFindings((0, config_1.getMaxTreeFindings)(), { maxPerFile: (0, config_1.getMaxTreeFindingsPerFile)() })
             .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
         if (this.findings.length === 0) {
             this.index = -1;

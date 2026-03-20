@@ -47,6 +47,46 @@ export function isShowPopup(): boolean {
   return cfg().get<boolean>("showPopup", true);
 }
 
+export function getMaxProblems(): number {
+  return cfg().get<number>("maxProblems", 200);
+}
+
+export function getMaxProblemsPerFile(): number {
+  return cfg().get<number>("maxProblemsPerFile", 50);
+}
+
+export function getMaxTreeFindings(): number {
+  return cfg().get<number>("maxTreeFindings", 200);
+}
+
+export function getMaxTreeFindingsPerFile(): number {
+  return cfg().get<number>("maxTreeFindingsPerFile", 25);
+}
+
+export function getMaxDecorationsPerFile(): number {
+  return cfg().get<number>("maxDecorationsPerFile", 25);
+}
+
+export function isShowDeadCodeInProblems(): boolean {
+  return cfg().get<boolean>("showDeadCodeInProblems", false);
+}
+
+export function getCommandCenterLimit(): number {
+  return cfg().get<number>("commandCenterLimit", 10);
+}
+
+export function isCommandCenterRefreshOnOpen(): boolean {
+  return cfg().get<boolean>("commandCenterRefreshOnOpen", false);
+}
+
+export function isCommandCenterRefreshOnSave(): boolean {
+  return cfg().get<boolean>("commandCenterRefreshOnSave", false);
+}
+
+export function getCommandCenterStateFile(): string {
+  return cfg().get<string>("commandCenterStateFile", "").trim();
+}
+
 export function getAIProvider(): AIProvider {
   return cfg().get<AIProvider>("aiProvider", "openai");
 }

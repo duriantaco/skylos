@@ -40,10 +40,10 @@ function getProjectName(): string {
 }
 
 function buildMarkdown(store: FindingsStore): string {
-  const { score, grade } = computeSecurityScore(store);
-  const counts = store.countBySeverity();
-  const catCounts = store.countByCategory();
-  const findings = store.getAllFindings();
+  const { score, grade } = computeSecurityScore(store, "raw");
+  const counts = store.countBySeverity("raw");
+  const catCounts = store.countByCategory("raw");
+  const findings = store.getAllRawFindings();
   const date = new Date().toISOString().split("T")[0];
 
   let md = `# Skylos Security Report\n\n`;
@@ -92,9 +92,9 @@ function buildMarkdown(store: FindingsStore): string {
 }
 
 function buildJson(store: FindingsStore): string {
-  const { score, grade } = computeSecurityScore(store);
-  const counts = store.countBySeverity();
-  const findings = store.getAllFindings();
+  const { score, grade } = computeSecurityScore(store, "raw");
+  const counts = store.countBySeverity("raw");
+  const findings = store.getAllRawFindings();
   const date = new Date().toISOString().split("T")[0];
 
   const report = {
@@ -124,7 +124,7 @@ function buildJson(store: FindingsStore): string {
 }
 
 function buildSarif(store: FindingsStore): string {
-  const findings = store.getAllFindings();
+  const findings = store.getAllRawFindings();
   const ws = vscode.workspace.workspaceFolders?.[0];
   const wsRoot = ws?.uri.fsPath ?? "";
 

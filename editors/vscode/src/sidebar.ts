@@ -2,8 +2,18 @@ import * as vscode from "vscode";
 import * as path from "path";
 import type { FindingsStore } from "./store";
 import type { SkylosFinding, Category } from "./types";
+import { getMaxTreeFindings, getMaxTreeFindingsPerFile } from "./config";
 
-type TreeNode = CategoryNode | FileNode | FindingNode;
+type TreeNode = SummaryNode | CategoryNode | FileNode | FindingNode;
+
+class SummaryNode {
+  constructor(
+    public readonly workingTotal: number,
+    public readonly visibleTotal: number,
+    public readonly rawTotal: number,
+    public readonly filterActive: boolean,
+  ) {}
+}
 
 class CategoryNode {
   constructor(
@@ -40,7 +50,6 @@ const CATEGORY_ICONS: Record<Category, string> = {
   ai: "sparkle",
 };
 
-
 export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -54,10 +63,32 @@ export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {
+    if (element instanceof SummaryNode) {
+      const item = new vscode.TreeItem(
+        element.workingTotal === 0
+          ? (element.filterActive ? "No findings match the current filter" : "No findings in scope")
+          : `Showing ${element.visibleTotal} of ${element.workingTotal} findings`,
+        vscode.TreeItemCollapsibleState.None,
+      );
+      item.iconPath = new vscode.ThemeIcon("filter");
+      if (element.rawTotal !== element.workingTotal) {
+        item.description = `${element.rawTotal} total in repo`;
+      } else if (element.workingTotal > element.visibleTotal) {
+        item.description = "Refine with filters or open Dashboard";
+      } else if (element.filterActive) {
+        item.description = "Filter active";
+      }
+      item.command = {
+        title: "Filter findings",
+        command: element.filterActive ? "skylos.clearFilter" : "skylos.filterFindings",
+      };
+      return item;
+    }
+
     if (element instanceof CategoryNode) {
       const item = new vscode.TreeItem(
         `${element.label} (${element.findings.length})`,
-        vscode.TreeItemCollapsibleState.Expanded,
+        vscode.TreeItemCollapsibleState.Collapsed,
       );
       item.iconPath = new vscode.ThemeIcon(CATEGORY_ICONS[element.category]);
       return item;
@@ -93,7 +124,12 @@ export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
   getChildren(element?: TreeNode): TreeNode[] {
     if (!element) {
-      const all = this.store.hasActiveFilter ? this.store.getFilteredFindings() : this.store.getAllFindings();
+      const summary = this.store.getVisibleSummary(getMaxTreeFindings(), {
+        maxPerFile: getMaxTreeFindingsPerFile(),
+      });
+      const all = this.store.getVisibleFindings(getMaxTreeFindings(), {
+        maxPerFile: getMaxTreeFindingsPerFile(),
+      });
       const byCategory = new Map<Category, SkylosFinding[]>();
       for (const f of all) {
         const list = byCategory.get(f.category) ?? [];
@@ -109,7 +145,11 @@ export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
           nodes.push(new CategoryNode(cat, CATEGORY_LABELS[cat], findings));
         }
       }
-      return nodes;
+      return [new SummaryNode(summary.workingTotal, summary.visibleTotal, summary.rawTotal, this.store.hasActiveFilter), ...nodes];
+    }
+
+    if (element instanceof SummaryNode) {
+      return [];
     }
 
     if (element instanceof CategoryNode) {
@@ -120,13 +160,13 @@ export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         byFile.set(f.file, list);
       }
       return [...byFile.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
+        .sort((a, b) => compareFileBuckets(a[1], b[1]))
         .map(([filePath, findings]) => new FileNode(filePath, findings));
     }
 
     if (element instanceof FileNode) {
       return element.findings
-        .sort((a, b) => a.line - b.line)
+        .sort(compareFindingsInTree)
         .map((f) => new FindingNode(f));
     }
 
@@ -148,4 +188,37 @@ function getSeverityIcon(severity: string): vscode.ThemeIcon {
     return new vscode.ThemeIcon("warning", new vscode.ThemeColor("editorWarning.foreground"));
   }
   return new vscode.ThemeIcon("info", new vscode.ThemeColor("editorInfo.foreground"));
+}
+
+function compareFileBuckets(a: SkylosFinding[], b: SkylosFinding[]): number {
+  const severityDelta = maxSeverityRank(b) - maxSeverityRank(a);
+  if (severityDelta !== 0) return severityDelta;
+  return b.length - a.length || a[0].file.localeCompare(b[0].file);
+}
+
+function compareFindingsInTree(a: SkylosFinding, b: SkylosFinding): number {
+  const severityDelta = severityRank(b.severity) - severityRank(a.severity);
+  if (severityDelta !== 0) return severityDelta;
+  return a.line - b.line || a.message.localeCompare(b.message);
+}
+
+function maxSeverityRank(findings: SkylosFinding[]): number {
+  return findings.reduce((max, finding) => Math.max(max, severityRank(finding.severity)), 0);
+}
+
+function severityRank(severity: string): number {
+  switch (severity.toUpperCase()) {
+    case "CRITICAL":
+      return 5;
+    case "HIGH":
+      return 4;
+    case "MEDIUM":
+    case "WARN":
+      return 3;
+    case "LOW":
+      return 2;
+    case "INFO":
+    default:
+      return 1;
+  }
 }

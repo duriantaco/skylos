@@ -8,11 +8,16 @@ import traceback
 from pathlib import Path
 from collections import defaultdict
 
+try:
+    from skylos_fast import discover_files as _fast_discover
+except ImportError:
+    _fast_discover = None
+
 from skylos.visitor import Visitor
 
 from skylos.circular_deps import CircularDependencyRule
 
-from skylos.constants import AUTO_CALLED
+from skylos.constants import AUTO_CALLED, MARKREFS_TICK_DEFAULT
 
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
@@ -28,7 +33,7 @@ from skylos.config import get_all_ignore_lines, load_config
 
 from skylos.linter import LinterVisitor
 
-from skylos.rules.quality.complexity import ComplexityRule
+from skylos.rules.quality.complexity import ComplexityRule, CognitiveComplexityRule
 from skylos.rules.quality.nesting import NestingRule
 from skylos.rules.quality.structure import ArgCountRule, FunctionLengthRule
 from skylos.rules.quality.logic import (
@@ -52,6 +57,9 @@ from skylos.rules.quality.logic import (
     UnfinishedGenerationRule,
     UndefinedConfigRule,
     StaleMockRule,
+    DuplicateStringLiteralRule,
+    TooManyReturnsRule,
+    BooleanTrapRule,
 )
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
@@ -78,13 +86,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Skylos")
 
-# Load LLM-tuned heuristic weights if available, else use defaults
 _heuristic_weights = {"same_file_attr": 1.0, "same_pkg_attr": 0.3, "global_attr": 0.1}
 try:
     from skylos.llm.feedback import get_tuned_weights
 
     _heuristic_weights = get_tuned_weights()
-except Exception:
+except (ImportError, OSError, ValueError):
     pass
 
 
@@ -137,9 +144,7 @@ class Skylos:
                 check = "/" + rel_path_str + "/"
                 if "/" + exclude_normalized + "/" in check:
                     return True
-                # Handle --exclude-folder app/alembic/ when analyzing app/
-                # The exclude prefix (app/) matches root_path's dir name,
-                # so strip it and compare against the relative path.
+
                 root_name = root_path.resolve().name
                 exclude_parts = exclude_normalized.split("/")
                 if exclude_parts[0] == root_name:
@@ -181,18 +186,65 @@ class Skylos:
 
         root = p
         exts = {".py", ".go", ".ts", ".tsx"}
+        ext_list = ["py", "go", "ts", "tsx"]
 
+        # use rust file discovery when avail
+        if _fast_discover is not None and os.path.isdir(str(p)):
+            simple_excludes = [
+                "__pycache__",
+                ".git",
+                ".tox",
+                "dist",
+                "build",
+                ".mypy_cache",
+                ".pytest_cache",
+                "node_modules",
+                ".venv",
+                "venv",
+                ".eggs",
+                "*.egg-info",
+            ]
+            if exclude_folders:
+                for ef in exclude_folders:
+                    name = ef.replace("\\", "/").rstrip("/")
+                    # only simple dir names go to rust.. complex patterns stay in py
+                    if "/" not in name and "*" not in name:
+                        if name not in simple_excludes:
+                            simple_excludes.append(name)
+
+            try:
+                rust_files = _fast_discover(str(p), ext_list, simple_excludes)
+                all_files = [Path(f) for f in rust_files]
+            except Exception:
+                all_files = self._walk_python_files_py(p, exts, exclude_folders, root)
+        else:
+            all_files = self._walk_python_files_py(p, exts, exclude_folders, root)
+
+        if exclude_folders:
+            filtered_files = []
+            excluded_count = 0
+            for file_path in all_files:
+                if self._should_exclude_file(file_path, root, exclude_folders):
+                    excluded_count += 1
+                    continue
+                filtered_files.append(file_path)
+            if excluded_count > 0:
+                logger.info(f"Excluded {excluded_count} files from analysis")
+            return filtered_files, root
+
+        return all_files, root
+
+    def _walk_python_files_py(self, p, exts, exclude_folders=None, root=None):
         all_files = []
         try:
             for dirpath, dirnames, filenames in os.walk(p):
-                if exclude_folders:
+                if exclude_folders and root:
                     pruned = []
                     for d in list(dirnames):
                         d_path = Path(dirpath) / d
                         try:
                             if self._should_exclude_file(d_path, root, exclude_folders):
                                 pruned.append(d)
-
                         except (OSError, ValueError):
                             pass
                     if pruned:
@@ -209,20 +261,7 @@ class Skylos:
         except (OSError, PermissionError, TypeError):
             for ext in exts:
                 all_files.extend(p.glob(f"**/*{ext}"))
-
-        if exclude_folders:
-            filtered_files = []
-            excluded_count = 0
-            for file_path in all_files:
-                if self._should_exclude_file(file_path, root, exclude_folders):
-                    excluded_count += 1
-                    continue
-                filtered_files.append(file_path)
-            if excluded_count > 0:
-                logger.info(f"Excluded {excluded_count} files from analysis")
-            return filtered_files, root
-
-        return all_files, root
+        return all_files
 
     def _mark_exports(self):
         for name, definition in self.defs.items():
@@ -295,11 +334,63 @@ class Skylos:
                     def_obj.is_exported = True
                     def_obj.references = max(def_obj.references, 1)
 
+        if exported_classes and hasattr(self, "_global_type_map"):
+            # reverse lookup: simple class name -> set of qualified def names
+            class_by_simple: dict[str, set[str]] = defaultdict(set)
+            for def_name, def_obj in self.defs.items():
+                if def_obj.type == "class":
+                    class_by_simple[def_obj.simple_name].add(def_obj.name)
+
+            queue = list(exported_classes)
+            visited = set(exported_classes)
+            transitive_classes: set[str] = set()
+
+            while queue:
+                cls_name = queue.pop()
+                prefix = cls_name + "."
+                for attr_key, type_name in self._global_type_map.items():
+                    if not attr_key.startswith(prefix):
+                        continue
+                    candidates = class_by_simple.get(type_name, set())
+                    for candidate in candidates:
+                        if candidate not in visited:
+                            visited.add(candidate)
+                            transitive_classes.add(candidate)
+                            queue.append(candidate)
+
+            if transitive_classes:
+                for def_name, def_obj in self.defs.items():
+                    if def_obj.type == "class" and def_obj.name in transitive_classes:
+                        def_obj.is_exported = True
+                        def_obj.references = max(def_obj.references, 1)
+                    elif def_obj.type in ("function", "method") and "." in def_obj.name:
+                        parent = def_obj.name.rsplit(".", 1)[0]
+                        if (
+                            parent in transitive_classes
+                            and not def_obj.simple_name.startswith("_")
+                        ):
+                            def_obj.is_exported = True
+                            def_obj.references = max(def_obj.references, 1)
+
     def _resolve_ts_module(self, source: str, importer: str) -> str | None:
         if not source.startswith("."):
             return None
         base = os.path.dirname(importer)
         target = os.path.normpath(os.path.join(base, source))
+
+        # Handle .js/.jsx → .ts/.tsx remapping (node16/bundler moduleResolution)
+        if target.endswith(".js"):
+            ts_target = target[:-3] + ".ts"
+            if os.path.isfile(ts_target):
+                return ts_target
+            tsx_target = target[:-3] + ".tsx"
+            if os.path.isfile(tsx_target):
+                return tsx_target
+        elif target.endswith(".jsx"):
+            tsx_target = target[:-4] + ".tsx"
+            if os.path.isfile(tsx_target):
+                return tsx_target
+
         for suffix in (".ts", ".tsx", "/index.ts", "/index.tsx"):
             candidate = target + suffix
             if os.path.isfile(candidate):
@@ -316,10 +407,15 @@ class Skylos:
                 if resolved:
                     for name in imp["names"]:
                         self.ts_consumed_exports[resolved].add(name)
+                        # Connect import to the actual definition in the target file
+                        target_key = f"{resolved}:{name}"
+                        if target_key in self.defs:
+                            self.defs[target_key].references += 1
 
     def _demote_unconsumed_ts_exports(self):
         if not hasattr(self, "ts_consumed_exports"):
             return
+        self._ts_demoted_exports = []
         for name, defn in self.defs.items():
             if not defn.is_exported:
                 continue
@@ -331,6 +427,81 @@ class Skylos:
             consumed = self.ts_consumed_exports.get(str(defn.filename), set())
             if defn.simple_name not in consumed and "*" not in consumed:
                 defn.is_exported = False
+                self._ts_demoted_exports.append(defn)
+
+    def _find_dead_ts_files(self, files, exclude_folders):
+        """Find TS files that are never imported by any other file."""
+        if not hasattr(self, "ts_consumed_exports"):
+            return []
+
+        _TEST_SUFFIXES = (".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx")
+
+        ts_files = set()
+        for f in files:
+            sf = str(f)
+            if sf.endswith((".ts", ".tsx")) and not any(
+                ex in sf for ex in (exclude_folders or [])
+            ):
+                if sf.endswith(_TEST_SUFFIXES) or "/__tests__/" in sf:
+                    continue
+                if "/test/" in sf or "/tests/" in sf:
+                    continue
+                if sf.endswith(".d.ts"):
+                    continue
+                ts_files.add(os.path.realpath(sf))
+
+        imported_files = set()
+        for resolved_file in self.ts_consumed_exports:
+            imported_files.add(os.path.realpath(resolved_file))
+
+        entry_points = set()
+        for tf in ts_files:
+            basename = os.path.basename(tf)
+            if basename in ("index.ts", "index.tsx"):
+                entry_points.add(tf)
+
+        dead_files = []
+        for tf in sorted(ts_files - imported_files - entry_points):
+            dead_files.append(
+                {
+                    "rule_id": "SKY-E003",
+                    "message": "Unused TypeScript file (not imported by any other file)",
+                    "file": tf,
+                    "line": 1,
+                    "severity": "LOW",
+                    "category": "DEAD_CODE",
+                }
+            )
+
+        return dead_files
+
+    def _find_unused_ts_exports(self):
+        if not hasattr(self, "_ts_demoted_exports"):
+            return []
+        findings = []
+        for defn in self._ts_demoted_exports:
+            if defn.references <= 0:
+                continue
+            basename = os.path.basename(str(defn.filename))
+            if basename in ("index.ts", "index.tsx"):
+                continue
+            if defn.type == "method":
+                continue
+            if defn.type in ("type", "class") and defn.simple_name[0:1].isupper():
+                continue
+            findings.append(
+                {
+                    "rule_id": "SKY-E004",
+                    "name": defn.simple_name,
+                    "message": f"Unnecessary `export` on `{defn.simple_name}` (used internally but not imported by any other file)",
+                    "file": str(defn.filename),
+                    "line": defn.line,
+                    "type": defn.type,
+                    "severity": "LOW",
+                    "category": "DEAD_CODE",
+                }
+            )
+        return findings
 
     def _propagate_transitive_dead(self):
         dead_set = set()
@@ -405,6 +576,42 @@ class Skylos:
                     why_reduced.append("survived_propagation_via_attr_heuristic")
                 defn.confidence = min(defn.confidence, 40)
 
+    def _grep_verify(self):
+        """Post-pass: use grep strategies to rescue false-positive dead code."""
+        from skylos.grep_verify import grep_verify_findings
+
+        candidates = []
+        candidate_defs = {}
+        for name, defn in self.defs.items():
+            if defn.references == 0 and not defn.is_exported and defn.confidence > 0:
+                d = defn.to_dict()
+                candidates.append(d)
+                candidate_defs[d.get("full_name", d.get("name", ""))] = defn
+
+        if not candidates:
+            return
+
+        project_root = str(getattr(self, "_project_root", ""))
+        if not project_root:
+            return
+
+        verdicts = grep_verify_findings(candidates, project_root)
+
+        rescued = 0
+        for full_name, verdict in verdicts.items():
+            defn = candidate_defs.get(full_name)
+            if not defn:
+                continue
+            if verdict.alive:
+                defn.references += 1
+                defn.heuristic_refs["grep_verify"] = 1.0
+                if verdict.suppression_code:
+                    defn.suppression_code = verdict.suppression_code
+                rescued += 1
+
+        if rescued:
+            logger.info(f"Grep verify: rescued {rescued} findings from dead code")
+
     def _mark_refs(self, progress_callback=None):
         total_refs = len(self.refs)
         if progress_callback:
@@ -442,8 +649,6 @@ class Skylos:
             if len(cands) == 1:
                 return cands[0]
 
-            # e.g. sessions.py imports Mapping from compat.py, compat.py
-            # imports Mapping from collections.abc
             import_cands = [
                 k for k in import_by_simple.get(simple, []) if k != import_def_key
             ]
@@ -468,14 +673,13 @@ class Skylos:
         for definition in self.defs.values():
             simple_name_lookup[definition.simple_name].append(definition)
 
-        # Pre-build (filename, simple_name) → [methods] lookup for fallback path
         _methods_by_file_and_name = defaultdict(list)
         for d in self.defs.values():
             if d.type == "method":
                 _methods_by_file_and_name[(str(d.filename), d.simple_name)].append(d)
 
         total_refs = len(self.refs)
-        tick_every = int(os.getenv("SKYLOS_MARKREFS_TICK", "5000"))
+        tick_every = int(os.getenv("SKYLOS_MARKREFS_TICK", str(MARKREFS_TICK_DEFAULT)))
 
         for i, (ref, ref_file) in enumerate(self.refs, 1):
             if progress_callback and (i == 1 or i % tick_every == 0 or i == total_refs):
@@ -851,21 +1055,8 @@ class Skylos:
             if name in reachable:
                 defn.references += 1
 
-    def analyze(
-        self,
-        path,
-        thr=60,
-        exclude_folders=None,
-        enable_secrets=False,
-        enable_danger=False,
-        enable_quality=False,
-        extra_visitors=None,
-        progress_callback=None,
-        custom_rules_data=None,
-        changed_files=None,
-    ):
-        clear_go_cache()
-
+    def _discover_files(self, path, exclude_folders):
+        """Discover and deduplicate files to analyze, return (files, root) or None."""
         if isinstance(path, (list, tuple)):
             all_files = []
             seen = set()
@@ -885,6 +1076,234 @@ class Skylos:
                 root = Path(".").resolve()
         else:
             files, root = self._get_python_files(path, exclude_folders)
+
+        return files, root
+
+    def _build_result(
+        self,
+        files,
+        thr,
+        exclude_folders,
+        enable_secrets,
+        enable_danger,
+        enable_quality,
+        all_secrets,
+        all_dangers,
+        all_quality,
+        all_sca,
+        all_suppressed,
+        empty_files,
+        modmap,
+        all_raw_imports,
+        path,
+        unused_ts_exports=None,
+    ):
+        """Assemble the final result dict from analysis outputs."""
+        unused = []
+        for definition in self.defs.values():
+            if (
+                definition.references == 0
+                and not definition.is_exported
+                and definition.confidence > 0
+                and definition.confidence >= thr
+            ):
+                unused.append(definition.to_dict())
+
+        context_map = {}
+        for name, d in self.defs.items():
+            if d.type in ("class", "function", "method") and not name.startswith("_"):
+                context_map[name] = {
+                    "name": d.name,
+                    "file": str(d.filename),
+                    "line": d.line,
+                    "type": d.type,
+                }
+
+        whitelisted = []
+        for d in self.defs.values():
+            reason = getattr(d, "skip_reason", None)
+            if reason:
+                entry = {
+                    "name": d.simple_name,
+                    "file": str(d.filename),
+                    "line": d.line,
+                    "reason": d.skip_reason,
+                    "category": "dead_code",
+                    "suppression_code": getattr(d, "suppression_code", None),
+                    "folder_role": getattr(d, "folder_role", None),
+                }
+                whitelisted.append(entry)
+                if reason == "inline ignore comment":
+                    all_suppressed.append(entry)
+
+        result = {
+            "definitions": context_map,
+            "unused_functions": [],
+            "unused_imports": [],
+            "unused_classes": [],
+            "unused_variables": [],
+            "unused_parameters": [],
+            "unused_files": [],
+            "whitelisted": whitelisted,
+            "suppressed": all_suppressed,
+            "analysis_summary": {
+                "total_files": len(files),
+                "excluded_folders": exclude_folders or [],
+                "languages": self._count_languages(files),
+            },
+        }
+
+        if enable_secrets and all_secrets:
+            result["secrets"] = all_secrets
+            result["analysis_summary"]["secrets_count"] = len(all_secrets)
+
+        if enable_danger and all_dangers:
+            result["danger"] = all_dangers
+            result["analysis_summary"]["danger_count"] = len(all_dangers)
+
+        if all_sca:
+            result["dependency_vulnerabilities"] = all_sca
+            result["analysis_summary"]["sca_count"] = len(all_sca)
+
+        if enable_quality and all_quality:
+            custom_hits = []
+            core_quality = []
+
+            for f in all_quality:
+                rid = str(f.get("rule_id", ""))
+                if rid.startswith("CUSTOM-"):
+                    custom_hits.append(f)
+                else:
+                    core_quality.append(f)
+
+            if core_quality:
+                from skylos.rules.quality.standards import enrich_finding
+
+                for f in core_quality:
+                    enrich_finding(f)
+                result["quality"] = core_quality
+                result["analysis_summary"]["quality_count"] = len(core_quality)
+
+            if custom_hits:
+                result["custom_rules"] = custom_hits
+                result["analysis_summary"]["custom_rules_count"] = len(custom_hits)
+
+        if empty_files:
+            result["unused_files"] = empty_files
+            result["analysis_summary"]["unused_files_count"] = len(empty_files)
+
+        if enable_danger and result.get("danger"):
+            from skylos.rules.compliance import enrich_findings_with_compliance
+
+            result["danger"] = enrich_findings_with_compliance(result["danger"])
+
+        for u in unused:
+            if u["type"] in ("function", "method"):
+                result["unused_functions"].append(u)
+            elif u["type"] == "import":
+                result["unused_imports"].append(u)
+            elif u["type"] in ("class", "type"):
+                result["unused_classes"].append(u)
+            elif u["type"] in ("variable", "constant"):
+                result["unused_variables"].append(u)
+            elif u["type"] == "parameter":
+                result["unused_parameters"].append(u)
+
+        if unused_ts_exports:
+            if "unused_exports" not in result:
+                result["unused_exports"] = []
+            result["unused_exports"].extend(unused_ts_exports)
+            result["analysis_summary"]["unused_exports_count"] = len(unused_ts_exports)
+
+        project_cfg = load_config(path[0] if isinstance(path, (list, tuple)) else path)
+        if project_cfg.get("check_circular", True):
+            circular_rule = CircularDependencyRule()
+
+            for file in files:
+                if not str(file).endswith(".py"):
+                    continue
+                mod = modmap.get(file, "")
+                raw_imp = all_raw_imports.get(file, [])
+                circular_rule.add_file_imports(str(file), mod, raw_imp)
+
+            try:
+                circular_findings = circular_rule.analyze()
+                if circular_findings:
+                    result["circular_dependencies"] = circular_findings
+
+                if enable_quality and "SKY-Q802" not in project_cfg.get("ignore", []):
+                    try:
+                        from skylos.architecture import get_architecture_findings
+
+                        dep_graph = dict(circular_rule._analyzer.dependencies)
+                        mod_files = dict(circular_rule._analyzer.modules)
+
+                        mod_trees = {}
+                        for file in files:
+                            if not str(file).endswith(".py"):
+                                continue
+                            mod = modmap.get(file, "")
+                            try:
+                                src = Path(file).read_text(
+                                    encoding="utf-8", errors="ignore"
+                                )
+                                mod_trees[mod] = ast.parse(src)
+                            except (OSError, SyntaxError):
+                                pass
+
+                        arch_findings, arch_summary = get_architecture_findings(
+                            dependency_graph=dep_graph,
+                            module_files=mod_files,
+                            module_trees=mod_trees,
+                        )
+                        if arch_findings:
+                            all_quality.extend(arch_findings)
+                        if arch_summary:
+                            result["architecture_metrics"] = arch_summary
+                    except Exception:
+                        if os.getenv("SKYLOS_DEBUG"):
+                            traceback.print_exc()
+
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    traceback.print_exc()
+
+        try:
+            from skylos.grader import count_lines_of_code, compute_grade
+
+            total_loc = count_lines_of_code(files)
+            result["analysis_summary"]["total_loc"] = total_loc
+            result["grade"] = compute_grade(result, total_loc)
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                traceback.print_exc()
+
+        return result
+
+    def analyze(
+        self,
+        path,
+        thr=60,
+        exclude_folders=None,
+        enable_secrets=False,
+        enable_danger=False,
+        enable_quality=False,
+        extra_visitors=None,
+        progress_callback=None,
+        custom_rules_data=None,
+        changed_files=None,
+        grep_verify=True,
+    ) -> str:
+        if not isinstance(path, (str, list, tuple)):
+            raise TypeError(
+                f"path must be str, list, or tuple, got {type(path).__name__}"
+            )
+        if not (0 <= thr <= 100):
+            raise ValueError(f"thr must be 0-100, got {thr}")
+
+        clear_go_cache()
+
+        files, root = self._discover_files(path, exclude_folders)
 
         if not files:
             logger.warning(f"No Python files found in {path}")
@@ -949,6 +1368,7 @@ class Skylos:
                 )
 
         root = project_root
+        self._project_root = project_root
 
         trace_path = project_root / ".skylos_trace"
         if trace_path.exists():
@@ -1064,6 +1484,8 @@ class Skylos:
                 for definition in defs:
                     if definition.type == "import":
                         key = f"{definition.filename}:{definition.name}"
+                    elif str(definition.filename).endswith((".ts", ".tsx")):
+                        key = f"{definition.filename}:{definition.name}"
                     else:
                         key = definition.name
                     self.defs[key] = definition
@@ -1083,6 +1505,9 @@ class Skylos:
                     all_quality.extend(q_finds)
 
                 if enable_danger and d_finds:
+                    _ign = cfg.get("ignore", [])
+                    if _ign:
+                        d_finds = [f for f in d_finds if f.get("rule_id") not in _ign]
                     all_dangers.extend(d_finds)
 
                 if pro_finds:
@@ -1235,6 +1660,31 @@ class Skylos:
                     }
                 )
 
+        # security regression detection
+        if changed_files and enable_quality and "SKY-L021" not in cfg.get("ignore", []):
+            from skylos.rules.quality.regression import detect_security_regressions
+
+            try:
+                import subprocess
+
+                for cf in changed_files:
+                    diff_result = subprocess.run(
+                        ["git", "diff", "HEAD", "--", cf],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        cwd=str(root),
+                    )
+                    if diff_result.returncode == 0 and diff_result.stdout.strip():
+                        reg_findings = detect_security_regressions(
+                            diff_result.stdout,
+                            cf,
+                        )
+                        all_quality.extend(reg_findings)
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error("Security regression scan failed", exc_info=True)
+
         self.pattern_trackers = pattern_trackers
 
         for tracker in pattern_trackers.values():
@@ -1341,6 +1791,10 @@ class Skylos:
                         dep_root, py_files
                     )
                     if dep_findings:
+                        _ignore = cfg.get("ignore", [])
+                        dep_findings = [
+                            f for f in dep_findings if f.get("rule_id") not in _ignore
+                        ]
                         all_dangers.extend(dep_findings)
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
@@ -1470,182 +1924,34 @@ class Skylos:
             progress_callback(0, 1, Path("PHASE: transitive dead code"))
         self._propagate_transitive_dead()
 
-        shown = 0
+        if grep_verify:
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: grep verify"))
+            self._grep_verify()
 
-        def def_sort_key(d):
-            return (d.type, d.name)
+        dead_ts_files = self._find_dead_ts_files(files, exclude_folders)
+        empty_files.extend(dead_ts_files)
 
-        for d in sorted(self.defs.values(), key=def_sort_key):
-            if shown >= 50:
-                break
-            shown += 1
+        unused_ts_exports = self._find_unused_ts_exports()
 
-        unused = []
-        for definition in self.defs.values():
-            if (
-                definition.references == 0
-                and not definition.is_exported
-                and definition.confidence > 0
-                and definition.confidence >= thr
-            ):
-                unused.append(definition.to_dict())
-
-        context_map = {}
-        for name, d in self.defs.items():
-            if d.type in ("class", "function", "method") and not name.startswith("_"):
-                context_map[name] = {
-                    "name": d.name,
-                    "file": str(d.filename),
-                    "line": d.line,
-                    "type": d.type,
-                }
-
-        whitelisted = []
-        for d in self.defs.values():
-            reason = getattr(d, "skip_reason", None)
-            if reason:
-                entry = {
-                    "name": d.simple_name,
-                    "file": str(d.filename),
-                    "line": d.line,
-                    "reason": d.skip_reason,
-                    "category": "dead_code",
-                }
-                whitelisted.append(entry)
-                if reason == "inline ignore comment":
-                    all_suppressed.append(entry)
-
-        result = {
-            "definitions": context_map,
-            "unused_functions": [],
-            "unused_imports": [],
-            "unused_classes": [],
-            "unused_variables": [],
-            "unused_parameters": [],
-            "unused_files": [],
-            "whitelisted": whitelisted,
-            "suppressed": all_suppressed,
-            "analysis_summary": {
-                "total_files": len(files),
-                "excluded_folders": exclude_folders or [],
-                "languages": self._count_languages(files),
-            },
-        }
-
-        if enable_secrets and all_secrets:
-            result["secrets"] = all_secrets
-            result["analysis_summary"]["secrets_count"] = len(all_secrets)
-
-        if enable_danger and all_dangers:
-            result["danger"] = all_dangers
-            result["analysis_summary"]["danger_count"] = len(all_dangers)
-
-        if all_sca:
-            result["dependency_vulnerabilities"] = all_sca
-            result["analysis_summary"]["sca_count"] = len(all_sca)
-
-        if enable_quality and all_quality:
-            custom_hits = []
-            core_quality = []
-
-            for f in all_quality:
-                rid = str(f.get("rule_id", ""))
-                if rid.startswith("CUSTOM-"):
-                    custom_hits.append(f)
-                else:
-                    core_quality.append(f)
-
-            if core_quality:
-                result["quality"] = core_quality
-                result["analysis_summary"]["quality_count"] = len(core_quality)
-
-            if custom_hits:
-                result["custom_rules"] = custom_hits
-                result["analysis_summary"]["custom_rules_count"] = len(custom_hits)
-
-        if empty_files:
-            result["unused_files"] = empty_files
-            result["analysis_summary"]["unused_files_count"] = len(empty_files)
-
-        if enable_danger and result.get("danger"):
-            from skylos.rules.compliance import enrich_findings_with_compliance
-
-            result["danger"] = enrich_findings_with_compliance(result["danger"])
-
-        for u in unused:
-            if u["type"] in ("function", "method"):
-                result["unused_functions"].append(u)
-            elif u["type"] == "import":
-                result["unused_imports"].append(u)
-            elif u["type"] in ("class", "type"):
-                result["unused_classes"].append(u)
-            elif u["type"] in ("variable", "constant"):
-                result["unused_variables"].append(u)
-            elif u["type"] == "parameter":
-                result["unused_parameters"].append(u)
-
-        project_cfg = load_config(path[0] if isinstance(path, (list, tuple)) else path)
-        if project_cfg.get("check_circular", True):
-            circular_rule = CircularDependencyRule()
-
-            for file in files:
-                if not str(file).endswith(".py"):
-                    continue
-                mod = modmap.get(file, "")
-                raw_imp = all_raw_imports.get(file, [])
-                circular_rule.add_file_imports(str(file), mod, raw_imp)
-
-            try:
-                circular_findings = circular_rule.analyze()
-                if circular_findings:
-                    result["circular_dependencies"] = circular_findings
-
-                if enable_quality and "SKY-Q802" not in project_cfg.get("ignore", []):
-                    try:
-                        from skylos.architecture import get_architecture_findings
-
-                        dep_graph = dict(circular_rule._analyzer.dependencies)
-                        mod_files = dict(circular_rule._analyzer.modules)
-
-                        mod_trees = {}
-                        for file in files:
-                            if not str(file).endswith(".py"):
-                                continue
-                            mod = modmap.get(file, "")
-                            try:
-                                src = Path(file).read_text(
-                                    encoding="utf-8", errors="ignore"
-                                )
-                                mod_trees[mod] = ast.parse(src)
-                            except (OSError, SyntaxError):
-                                pass
-
-                        arch_findings, arch_summary = get_architecture_findings(
-                            dependency_graph=dep_graph,
-                            module_files=mod_files,
-                            module_trees=mod_trees,
-                        )
-                        if arch_findings:
-                            all_quality.extend(arch_findings)
-                        if arch_summary:
-                            result["architecture_metrics"] = arch_summary
-                    except Exception:
-                        if os.getenv("SKYLOS_DEBUG"):
-                            traceback.print_exc()
-
-            except Exception:
-                if os.getenv("SKYLOS_DEBUG"):
-                    traceback.print_exc()
-
-        try:
-            from skylos.grader import count_lines_of_code, compute_grade
-
-            total_loc = count_lines_of_code(files)
-            result["analysis_summary"]["total_loc"] = total_loc
-            result["grade"] = compute_grade(result, total_loc)
-        except Exception:
-            if os.getenv("SKYLOS_DEBUG"):
-                traceback.print_exc()
+        result = self._build_result(
+            files,
+            thr,
+            exclude_folders,
+            enable_secrets,
+            enable_danger,
+            enable_quality,
+            all_secrets,
+            all_dangers,
+            all_quality,
+            all_sca,
+            all_suppressed,
+            empty_files,
+            modmap,
+            all_raw_imports,
+            path,
+            unused_ts_exports=unused_ts_exports,
+        )
 
         return json.dumps(result, indent=2)
 
@@ -1668,7 +1974,9 @@ def _is_truly_empty_or_docstring_only(tree):
     )
 
 
-def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
+def proc_file(
+    file_or_args, mod=None, extra_visitors=None, full_scan=True
+) -> dict | None:
     if mod is None and isinstance(file_or_args, tuple):
         file, mod = file_or_args
     else:
@@ -1774,6 +2082,8 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
             q_rules = []
             if "SKY-Q301" not in cfg["ignore"]:
                 q_rules.append(ComplexityRule(threshold=cfg["complexity"]))
+            if "SKY-Q306" not in cfg["ignore"]:
+                q_rules.append(CognitiveComplexityRule())
             if "SKY-Q302" not in cfg["ignore"]:
                 q_rules.append(NestingRule(threshold=cfg["nesting"]))
             if "SKY-Q401" not in cfg["ignore"]:
@@ -1823,8 +2133,13 @@ def proc_file(file_or_args, mod=None, extra_visitors=None, full_scan=True):
                 q_rules.append(PhantomDecoratorRule())
             if "SKY-L026" not in cfg["ignore"]:
                 q_rules.append(UnfinishedGenerationRule())
-            # SKY-D260 (prompt injection) is now handled by injection_scanner,
-            # not as a LinterVisitor rule — see injection scanner integration below.
+            if "SKY-L027" not in cfg["ignore"]:
+                q_rules.append(DuplicateStringLiteralRule())
+            if "SKY-L028" not in cfg["ignore"]:
+                q_rules.append(TooManyReturnsRule())
+            if "SKY-L029" not in cfg["ignore"]:
+                q_rules.append(BooleanTrapRule())
+            # SKY-D260 (prompt injection) is now handled by injection_scanner..
             if "SKY-Q501" not in cfg["ignore"]:
                 q_rules.append(GodClassRule())
             if "SKY-Q701" not in cfg["ignore"]:
@@ -2010,7 +2325,8 @@ def analyze(
     progress_callback=None,
     custom_rules_data=None,
     changed_files=None,
-):
+    grep_verify=True,
+) -> str:
     return Skylos().analyze(
         path,
         conf,
@@ -2022,6 +2338,7 @@ def analyze(
         progress_callback,
         custom_rules_data,
         changed_files,
+        grep_verify=grep_verify,
     )
 
 

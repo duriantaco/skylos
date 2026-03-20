@@ -1679,11 +1679,11 @@ class StaleMockRule(SkylosRule):
             return mod_path
 
         if len(module_parts) >= 2:
-            flat_path = project_root / "/".join(module_parts) + ".py"
+            flat_path = project_root / ("/".join(module_parts) + ".py")
             if Path(flat_path).is_file():
                 return Path(flat_path)
 
-        direct = project_root / "/".join(module_parts) + ".py"
+        direct = project_root / ("/".join(module_parts) + ".py")
         if Path(direct).is_file():
             return Path(direct)
 
@@ -2281,3 +2281,216 @@ class BroadFilePermissionsRule(SkylosRule):
             "line": node.lineno,
             "col": node.col_offset,
         }
+
+
+class DuplicateStringLiteralRule(SkylosRule):
+    rule_id = "SKY-L027"
+    name = "Duplicate String Literal"
+
+    def __init__(self, threshold=3):
+        self.threshold = threshold
+
+    def _is_docstring(self, node, parent_map):
+        parent = parent_map.get(id(node))
+        if parent is None:
+            return False
+        if isinstance(parent, ast.Expr):
+            grandparent = parent_map.get(id(parent))
+            if grandparent is not None and isinstance(
+                grandparent,
+                (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+            ):
+                body = grandparent.body
+                if body and body[0] is parent:
+                    return True
+        return False
+
+    def visit_node(self, node, context):
+        if not isinstance(node, ast.Module):
+            return None
+
+        filename = context.get("filename", "")
+        basename = Path(filename).name
+
+        if basename.startswith("test_") or basename.endswith("_test.py"):
+            return None
+
+        parent_map = {}
+        for parent in ast.walk(node):
+            for child in ast.iter_child_nodes(parent):
+                parent_map[id(child)] = parent
+
+        string_occurrences = {}
+        for child in ast.walk(node):
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                if len(child.value) < 5:
+                    continue
+                if self._is_docstring(child, parent_map):
+                    continue
+                key = child.value
+                if key not in string_occurrences:
+                    string_occurrences[key] = []
+                string_occurrences[key].append(child)
+
+        findings = []
+        for value, nodes in string_occurrences.items():
+            count = len(nodes)
+            if count < self.threshold:
+                continue
+            severity = "MEDIUM" if count >= 6 else "LOW"
+            display = value if len(value) <= 40 else value[:37] + "..."
+            findings.append(
+                {
+                    "rule_id": self.rule_id,
+                    "kind": "quality",
+                    "severity": severity,
+                    "type": "string",
+                    "name": display,
+                    "simple_name": display,
+                    "value": count,
+                    "threshold": self.threshold,
+                    "message": f"String literal '{display}' repeated {count} times. Extract to a constant.",
+                    "file": filename,
+                    "basename": basename,
+                    "line": nodes[0].lineno,
+                    "col": nodes[0].col_offset,
+                }
+            )
+
+        return findings if findings else None
+
+
+class TooManyReturnsRule(SkylosRule):
+    rule_id = "SKY-L028"
+    name = "Too Many Returns"
+
+    def __init__(self, threshold=5):
+        self.threshold = threshold
+
+    def _count_returns(self, func_node):
+        count = 0
+        stack = list(func_node.body)
+        while stack:
+            child = stack.pop()
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(child, ast.Return):
+                count += 1
+            for attr in ("body", "orelse", "finalbody", "handlers"):
+                block = getattr(child, attr, None)
+                if block and isinstance(block, list):
+                    stack.extend(block)
+        return count
+
+    def visit_node(self, node, context):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+
+        count = self._count_returns(node)
+        if count < self.threshold:
+            return None
+
+        severity = "MEDIUM" if count >= 9 else "LOW"
+        filename = context.get("filename", "")
+
+        return [
+            {
+                "rule_id": self.rule_id,
+                "kind": "structure",
+                "severity": severity,
+                "type": "function",
+                "name": node.name,
+                "simple_name": node.name,
+                "value": count,
+                "threshold": self.threshold,
+                "message": f"Function has {count} return statements (limit: {self.threshold}). Consider simplifying control flow.",
+                "file": filename,
+                "basename": Path(filename).name,
+                "line": node.lineno,
+                "col": node.col_offset,
+            }
+        ]
+
+
+_BOOLEAN_TRAP_ALLOWED_NAMES = {
+    "inplace",
+    "reverse",
+    "recursive",
+    "verbose",
+    "debug",
+    "force",
+    "dry_run",
+    "strict",
+}
+
+
+class BooleanTrapRule(SkylosRule):
+    rule_id = "SKY-L029"
+    name = "Boolean Trap"
+
+    def visit_node(self, node, context):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+
+        func_name = node.name
+        if func_name.startswith("__") and func_name.endswith("__"):
+            return None
+
+        args = node.args
+        positional_args = args.args
+
+        num_defaults = len(args.defaults)
+        num_positional = len(positional_args)
+
+        findings = []
+        filename = context.get("filename", "")
+
+        for i, arg in enumerate(positional_args):
+            arg_name = arg.arg
+            if arg_name in ("self", "cls"):
+                continue
+            if arg_name in _BOOLEAN_TRAP_ALLOWED_NAMES:
+                continue
+
+            is_bool_trap = False
+
+            if arg.annotation is not None:
+                if isinstance(arg.annotation, ast.Name) and arg.annotation.id == "bool":
+                    is_bool_trap = True
+                elif (
+                    isinstance(arg.annotation, ast.Constant)
+                    and arg.annotation.value == "bool"
+                ):
+                    is_bool_trap = True
+
+            if not is_bool_trap and num_defaults > 0:
+                default_index = i - (num_positional - num_defaults)
+                if 0 <= default_index < num_defaults:
+                    default = args.defaults[default_index]
+                    if isinstance(default, ast.Constant) and isinstance(
+                        default.value, bool
+                    ):
+                        is_bool_trap = True
+
+            if is_bool_trap:
+                findings.append(
+                    {
+                        "rule_id": self.rule_id,
+                        "kind": "quality",
+                        "severity": "LOW",
+                        "type": "function",
+                        "name": f"{func_name}.{arg_name}",
+                        "simple_name": arg_name,
+                        "value": arg_name,
+                        "threshold": 0,
+                        "message": f"Boolean positional parameter '{arg_name}' is a readability trap. Use keyword-only arguments instead.",
+                        "file": filename,
+                        "basename": Path(filename).name,
+                        "line": arg.lineno if hasattr(arg, "lineno") else node.lineno,
+                        "col": arg.col_offset
+                        if hasattr(arg, "col_offset")
+                        else node.col_offset,
+                    }
+                )
+
+        return findings if findings else None

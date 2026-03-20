@@ -36,21 +36,35 @@ class SarifExporter:
         self.version = version
 
     def generate(self):
+        from skylos.rules.quality.standards import get_cwe_taxa
+
+        cwe_taxa = get_cwe_taxa()
+        run = {
+            "tool": {
+                "driver": {
+                    "name": self.tool_name,
+                    "version": self.version,
+                    "rules": self._get_unique_rules(),
+                }
+            },
+            "results": self._get_results(),
+        }
+
+        if cwe_taxa:
+            run["taxonomies"] = [
+                {
+                    "name": "CWE",
+                    "version": "4.14",
+                    "organization": "MITRE",
+                    "shortDescription": {"text": "Common Weakness Enumeration"},
+                    "taxa": cwe_taxa,
+                }
+            ]
+
         sarif_log = {
             "version": "2.1.0",
             "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
-            "runs": [
-                {
-                    "tool": {
-                        "driver": {
-                            "name": self.tool_name,
-                            "version": self.version,
-                            "rules": self._get_unique_rules(),
-                        }
-                    },
-                    "results": self._get_results(),
-                }
-            ],
+            "runs": [run],
         }
         return sarif_log
 
@@ -85,13 +99,29 @@ class SarifExporter:
             if cat == "SECURITY":
                 tags.append("security")
 
-            rules[rule_id] = {
+            rule_entry = {
                 "id": rule_id,
                 "shortDescription": {"text": title or rule_id},
                 "defaultConfiguration": {"level": level},
                 "properties": {"tags": tags},
                 "helpUri": f"https://docs.skylos.dev/rules/{rule_id}",
             }
+
+            cwe_list = finding.get("cwe", [])
+            if cwe_list:
+                rule_entry["relationships"] = [
+                    {
+                        "target": {
+                            "id": cwe["id"],
+                            "toolComponent": {"name": "CWE"},
+                        },
+                        "kinds": ["superset"],
+                    }
+                    for cwe in cwe_list
+                ]
+                tags.extend(cwe["id"] for cwe in cwe_list)
+
+            rules[rule_id] = rule_entry
 
         return list(rules.values())
 

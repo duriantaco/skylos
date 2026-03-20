@@ -4,6 +4,7 @@ import sys
 import re
 import logging
 import os
+import secrets
 from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
 from skylos.analyzer import analyze as run_analyze
 from skylos.codemods import (
@@ -1726,7 +1727,7 @@ def _load_addopts():
     return []
 
 
-def main():
+def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "key":
         from skylos.commands.key_cmd import run_key_command
 
@@ -2327,6 +2328,164 @@ def main():
 
         sys.exit(0)
 
+    # ── skylos provenance ──────────────────────────────────────────────
+    if len(sys.argv) > 1 and sys.argv[1] == "provenance":
+        import argparse as prov_argparse
+        from skylos.provenance import analyze_provenance
+        from skylos.api import get_git_root
+
+        prov_parser = prov_argparse.ArgumentParser(
+            prog="skylos provenance",
+            description="Detect AI-authored code provenance in PR changes",
+        )
+        prov_parser.add_argument("path", nargs="?", default=".", help="Path to scan")
+        prov_parser.add_argument(
+            "--json", action="store_true", dest="output_json", help="Output as JSON"
+        )
+        prov_parser.add_argument(
+            "--diff-base",
+            default=None,
+            help="Base ref to diff against (default: auto-detect from CI or origin/main)",
+        )
+        prov_parser.add_argument(
+            "-o", "--output", dest="output_file", help="Write output to file"
+        )
+        prov_parser.add_argument(
+            "--with-risk",
+            action="store_true",
+            help="Cross-reference with discover+defend for local risk analysis",
+        )
+
+        prov_args = prov_parser.parse_args(sys.argv[2:])
+        console = Console()
+
+        target = Path(prov_args.path).resolve()
+        git_root = get_git_root() or str(target)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+            disable=prov_args.output_json,
+        ) as progress:
+            progress.add_task("Analyzing provenance...", total=None)
+            report = analyze_provenance(git_root, base_ref=prov_args.diff_base)
+
+        risk_data = None
+        if prov_args.with_risk:
+            from skylos.provenance import compute_risk_intersections
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+                transient=True,
+                disable=prov_args.output_json,
+            ) as progress:
+                progress.add_task("Computing risk intersections...", total=None)
+                risk_data = compute_risk_intersections(git_root, report)
+
+        if prov_args.output_json:
+            out_dict = report.to_dict()
+            if risk_data:
+                out_dict["risk_intersection"] = risk_data.to_dict()
+            output = json.dumps(out_dict, indent=2)
+            if prov_args.output_file:
+                Path(prov_args.output_file).write_text(output)
+                console.print(f"[green]Written to {prov_args.output_file}[/green]")
+            else:
+                print(output)
+        else:
+            summary = report.summary
+            console.print()
+            console.print(
+                Panel(
+                    f"[bold]AI Provenance Report[/bold]\n"
+                    f"Confidence: [{'green' if report.confidence == 'low' else 'yellow' if report.confidence == 'medium' else 'red'}]{report.confidence}[/]",
+                    border_style="cyan",
+                )
+            )
+
+            table = Table(title="File Breakdown", show_lines=False)
+            table.add_column("Category", style="bold")
+            table.add_column("Count", justify="right")
+            table.add_row("Total files changed", str(summary.get("total_files", 0)))
+            table.add_row("[red]AI-authored[/red]", str(summary.get("agent_count", 0)))
+            table.add_row(
+                "[green]Human-only[/green]", str(summary.get("human_count", 0))
+            )
+            console.print(table)
+
+            agents = summary.get("agents_seen", [])
+            if agents:
+                console.print(f"\n[bold]Agents detected:[/bold] {', '.join(agents)}")
+
+            if report.agent_files:
+                console.print(f"\n[bold]AI-authored files:[/bold]")
+                for af in report.agent_files:
+                    fp = report.files.get(af)
+                    agent_label = f" ({fp.agent_name})" if fp and fp.agent_name else ""
+                    ranges = ""
+                    if fp and fp.agent_lines:
+                        range_strs = [f"L{s}-{e}" for s, e in fp.agent_lines[:5]]
+                        if len(fp.agent_lines) > 5:
+                            range_strs.append(f"...+{len(fp.agent_lines) - 5} more")
+                        ranges = f" [{', '.join(range_strs)}]"
+                    console.print(f"  [red]•[/red] {af}{agent_label}{ranges}")
+
+            if risk_data:
+                console.print()
+                risk_table = Table(title="Risk Intersection", show_lines=False)
+                risk_table.add_column("File", style="bold")
+                risk_table.add_column("Agent")
+                risk_table.add_column("Risk Level", justify="center")
+                risk_table.add_column("Reasons")
+
+                for entry in risk_data.high_risk:
+                    risk_table.add_row(
+                        entry["file_path"],
+                        entry.get("agent_name") or "unknown",
+                        "[red bold]HIGH[/red bold]",
+                        ", ".join(entry["reasons"]),
+                    )
+                for entry in risk_data.medium_risk:
+                    risk_table.add_row(
+                        entry["file_path"],
+                        entry.get("agent_name") or "unknown",
+                        "[yellow]MEDIUM[/yellow]",
+                        ", ".join(entry["reasons"]),
+                    )
+
+                if risk_data.high_risk or risk_data.medium_risk:
+                    console.print(risk_table)
+                else:
+                    console.print(
+                        Panel(
+                            "[green]No risk intersections found[/green]",
+                            title="Risk Intersection",
+                            border_style="green",
+                        )
+                    )
+
+                console.print(
+                    f"  Summary: [red]{risk_data.summary['high']} high[/red], "
+                    f"[yellow]{risk_data.summary['medium']} medium[/yellow] "
+                    f"(of {risk_data.summary['total_ai_files']} AI files)"
+                )
+
+            if prov_args.output_file:
+                out_dict = report.to_dict()
+                if risk_data:
+                    out_dict["risk_intersection"] = risk_data.to_dict()
+                output = json.dumps(out_dict, indent=2)
+                Path(prov_args.output_file).write_text(output)
+                console.print(f"\n[green]Written to {prov_args.output_file}[/green]")
+
+            console.print()
+
+        sys.exit(0)
+
     if len(sys.argv) > 1 and sys.argv[1] == "cicd":
         import argparse as cicd_argparse
 
@@ -2386,6 +2545,11 @@ def main():
             "--summary",
             action="store_true",
             help="Write markdown to $GITHUB_STEP_SUMMARY",
+        )
+        p_ci_gate.add_argument(
+            "--diff-base",
+            default=None,
+            help="Base ref for provenance detection (default: auto-detect)",
         )
 
         p_ci_ann = cicd_sub.add_parser(
@@ -2461,11 +2625,27 @@ def main():
         elif cicd_args.cicd_cmd == "gate":
             results = _cicd_load_results(cicd_args)
             config = load_config(results.get("project_root", "."))
+
+            # Compute provenance if agent gate config exists
+            gate_cfg = config.get("gate", {})
+            prov_report = None
+            if gate_cfg.get("agent"):
+                try:
+                    from skylos.provenance import analyze_provenance
+                    from skylos.api import get_git_root
+
+                    git_root = get_git_root() or results.get("project_root", ".")
+                    diff_base = getattr(cicd_args, "diff_base", None)
+                    prov_report = analyze_provenance(git_root, base_ref=diff_base)
+                except Exception:
+                    pass
+
             exit_code = run_gate_interaction(
                 result=results,
                 config=config,
                 strict=cicd_args.strict,
                 summary=cicd_args.summary,
+                provenance=prov_report,
             )
             sys.exit(exit_code)
 
@@ -2507,33 +2687,29 @@ def main():
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] == "agent":
-        if not LLM_AVAILABLE:
-            Console().print("[bold red]Agent module not available[/bold red]")
-            sys.exit(1)
-
         import argparse as agent_argparse
         # from skylos.llm.merger import merge_findings
 
         agent_parser = agent_argparse.ArgumentParser(prog="skylos agent")
         agent_sub = agent_parser.add_subparsers(dest="agent_cmd", required=True)
 
-        p_analyze = agent_sub.add_parser(
-            "analyze", help="Hybrid analysis (static + LLM)"
+        p_scan = agent_sub.add_parser("scan", help="Hybrid analysis (static + LLM)")
+        p_scan.add_argument(
+            "path", nargs="?", default=".", help="File or directory to analyze"
         )
-        p_analyze.add_argument("path", help="File or directory to analyze")
-        p_analyze.add_argument("--model", default="gpt-4.1")
-        p_analyze.add_argument(
+        p_scan.add_argument("--model", default="gpt-4.1")
+        p_scan.add_argument(
             "--format", choices=["table", "tree", "json", "sarif"], default="table"
         )
-        p_analyze.add_argument("--output", "-o", help="Output file")
-        p_analyze.add_argument(
+        p_scan.add_argument("--output", "-o", help="Output file")
+        p_scan.add_argument(
             "--min-confidence", choices=["high", "medium", "low"], default="low"
         )
-        p_analyze.add_argument(
+        p_scan.add_argument(
             "--llm-only", action="store_true", help="Skip static, run LLM only"
         )
-        p_analyze.add_argument("--quiet", "-q", action="store_true")
-        p_analyze.add_argument(
+        p_scan.add_argument("--quiet", "-q", action="store_true")
+        p_scan.add_argument(
             "--provider",
             choices=[
                 "openai",
@@ -2549,162 +2725,52 @@ def main():
             default=None,
             help="Force LLM provider",
         )
-        p_analyze.add_argument(
+        p_scan.add_argument(
             "--base-url",
             default=None,
             help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
         )
-        p_analyze.add_argument(
+        p_scan.add_argument(
             "--upload",
             action="store_true",
             help="Upload results to skylos.dev dashboard",
         )
-        p_analyze.add_argument(
+        p_scan.add_argument(
             "--force",
             action="store_true",
             help="Force upload even if quality gate fails",
         )
-        p_analyze.add_argument(
+        p_scan.add_argument(
             "--strict",
             action="store_true",
             help="Exit with error code if findings are reported",
         )
-        p_analyze.add_argument(
+        p_scan.add_argument(
             "--verification-mode",
             choices=["judge_all", "production"],
             default="judge_all",
             help="Dead-code verifier mode: judge_all sends nearly every refs==0 candidate to the LLM",
         )
-
-        p_audit = agent_sub.add_parser(
-            "audit",
-            help="Full hybrid analysis (static + LLM) — dead code, security, quality",
-        )
-        p_audit.add_argument("path", help="File or directory to analyze")
-        p_audit.add_argument("--model", default="gpt-4.1")
-        p_audit.add_argument(
-            "--format", choices=["table", "tree", "json", "sarif"], default="table"
-        )
-        p_audit.add_argument("--output", "-o", help="Output file")
-        p_audit.add_argument(
-            "--min-confidence", choices=["high", "medium", "low"], default="low"
-        )
-        p_audit.add_argument(
-            "--llm-only", action="store_true", help="Skip static, run LLM only"
-        )
-        p_audit.add_argument("--quiet", "-q", action="store_true")
-        p_audit.add_argument(
-            "--provider",
-            choices=[
-                "openai",
-                "anthropic",
-                "google",
-                "mistral",
-                "groq",
-                "xai",
-                "together",
-                "deepseek",
-                "ollama",
-            ],
-            default=None,
-            help="Force LLM provider",
-        )
-        p_audit.add_argument(
-            "--base-url",
-            default=None,
-            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
-        )
-        p_audit.add_argument(
-            "--upload",
+        p_scan.add_argument(
+            "--no-fixes",
             action="store_true",
-            help="Upload results to skylos.dev dashboard",
+            help="Skip fix suggestions (faster)",
         )
-        p_audit.add_argument(
-            "--force",
+        p_scan.add_argument(
+            "--changed",
             action="store_true",
-            help="Force upload even if quality gate fails",
+            help="Analyze only git-changed files",
         )
-        p_audit.add_argument(
-            "--strict",
+        p_scan.add_argument(
+            "--security",
             action="store_true",
-            help="Exit with error code if findings are reported",
+            help="Security-only LLM audit mode",
         )
-        p_audit.add_argument(
-            "--with-fixes",
+        p_scan.add_argument(
+            "--interactive",
+            "-i",
             action="store_true",
-            default=False,
-            help="Generate fix suggestions (off by default for speed)",
-        )
-        p_audit.add_argument(
-            "--verification-mode",
-            choices=["judge_all", "production"],
-            default="judge_all",
-            help="Dead-code verifier mode: judge_all sends nearly every refs==0 candidate to the LLM",
-        )
-
-        p_sec_audit = agent_sub.add_parser(
-            "security-audit", help="Security audit with LLM for Python files"
-        )
-        p_sec_audit.add_argument("path", help="File or directory")
-        p_sec_audit.add_argument("--model", default="gpt-4.1")
-        p_sec_audit.add_argument(
-            "--format", choices=["table", "tree", "json", "sarif"], default="tree"
-        )
-        p_sec_audit.add_argument("--output", "-o")
-        p_sec_audit.add_argument("--quiet", "-q", action="store_true")
-        p_sec_audit.add_argument("--interactive", "-i", action="store_true")
-        p_sec_audit.add_argument(
-            "--provider",
-            choices=[
-                "openai",
-                "anthropic",
-                "google",
-                "mistral",
-                "groq",
-                "xai",
-                "together",
-                "deepseek",
-                "ollama",
-            ],
-            default=None,
-            help="Force LLM provider",
-        )
-        p_sec_audit.add_argument(
-            "--base-url",
-            default=None,
-            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
-        )
-
-        p_review = agent_sub.add_parser(
-            "review", help="Review git-changed Python files"
-        )
-        p_review.add_argument("path", nargs="?", default=".")
-        p_review.add_argument("--model", default="gpt-4.1")
-        p_review.add_argument(
-            "--format", choices=["table", "tree", "json", "sarif"], default="table"
-        )
-        p_review.add_argument("--output", "-o")
-        p_review.add_argument("--quiet", "-q", action="store_true")
-        p_review.add_argument(
-            "--provider",
-            choices=[
-                "openai",
-                "anthropic",
-                "google",
-                "mistral",
-                "groq",
-                "xai",
-                "together",
-                "deepseek",
-                "ollama",
-            ],
-            default=None,
-            help="Force LLM provider",
-        )
-        p_review.add_argument(
-            "--base-url",
-            default=None,
-            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
+            help="Interactive file selection (with --security)",
         )
 
         p_remediate = agent_sub.add_parser(
@@ -2742,6 +2808,13 @@ def main():
             choices=["critical", "high", "medium", "low"],
             default=None,
             help="Only fix findings at or above this severity",
+        )
+        p_remediate.add_argument(
+            "--standards",
+            nargs="?",
+            const="__builtin__",
+            default=None,
+            help="Enable LLM-guided cleanup mode (optional: path to custom standards .md file)",
         )
         p_remediate.add_argument("--quiet", "-q", action="store_true")
         p_remediate.add_argument(
@@ -2831,9 +2904,418 @@ def main():
             default=None,
             help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
         )
+        p_verify.add_argument(
+            "--grep-workers",
+            type=int,
+            default=4,
+            help="Number of parallel grep workers (default: 4)",
+        )
+        p_verify.add_argument(
+            "--parallel-grep",
+            action="store_true",
+            help="Enable parallel grep execution for faster verification",
+        )
+        p_verify.add_argument(
+            "--fix",
+            action="store_true",
+            help="Generate removal patches for confirmed dead code",
+        )
+        p_verify.add_argument(
+            "--fix-mode",
+            choices=["delete", "comment"],
+            default="delete",
+            help="Fix mode: delete removes code, comment comments it out (default: delete)",
+        )
+        p_verify.add_argument(
+            "--apply",
+            action="store_true",
+            help="Apply generated patches (use with --fix)",
+        )
+        p_verify.add_argument(
+            "--pr",
+            action="store_true",
+            help="Create a branch, apply patches, and commit (use with --fix)",
+        )
+
+        p_watch = agent_sub.add_parser(
+            "watch",
+            help="Continuously maintain active-agent state for a repository",
+        )
+        p_watch.add_argument("path", nargs="?", default=".")
+        p_watch.add_argument("--interval", type=float, default=5.0)
+        p_watch.add_argument(
+            "--cycles",
+            type=int,
+            default=0,
+            help="Number of refresh cycles to run (0 means keep watching)",
+        )
+        p_watch.add_argument("--once", action="store_true")
+        p_watch.add_argument("--conf", type=int, default=80)
+        p_watch.add_argument("--no-baseline", action="store_true")
+        p_watch.add_argument("--state-file", default=None)
+        p_watch.add_argument(
+            "--format",
+            choices=["table", "json"],
+            default="table",
+        )
+        p_watch.add_argument("--limit", type=int, default=10)
+        p_watch.add_argument(
+            "--learn", action="store_true", help="Enable triage pattern learning"
+        )
+
+        p_precommit = agent_sub.add_parser(
+            "pre-commit",
+            help="Analyze staged files only (git hook mode)",
+        )
+        p_precommit.add_argument("path", nargs="?", default=".")
+        p_precommit.add_argument("--conf", type=int, default=80)
+        p_precommit.add_argument("--state-file", default=None)
+        p_precommit.add_argument(
+            "--format",
+            choices=["table", "json"],
+            default="table",
+        )
+
+        p_triage = agent_sub.add_parser(
+            "triage",
+            help="Manage finding triage (suggest, dismiss, snooze, restore)",
+        )
+        triage_sub = p_triage.add_subparsers(dest="triage_cmd", required=True)
+
+        t_suggest = triage_sub.add_parser(
+            "suggest",
+            help="Show auto-triage candidates based on learned patterns",
+        )
+        t_suggest.add_argument("path", nargs="?", default=".")
+        t_suggest.add_argument("--state-file", default=None)
+        t_suggest.add_argument(
+            "--format",
+            choices=["table", "json"],
+            default="table",
+        )
+
+        t_dismiss = triage_sub.add_parser(
+            "dismiss",
+            help="Dismiss a ranked action",
+        )
+        t_dismiss.add_argument("path", nargs="?", default=".")
+        t_dismiss.add_argument("action_id")
+        t_dismiss.add_argument("--state-file", default=None)
+        t_dismiss.add_argument(
+            "--format",
+            choices=["table", "json"],
+            default="table",
+        )
+        t_dismiss.add_argument("--limit", type=int, default=10)
+
+        t_snooze = triage_sub.add_parser(
+            "snooze",
+            help="Temporarily snooze a ranked action",
+        )
+        t_snooze.add_argument("path", nargs="?", default=".")
+        t_snooze.add_argument("action_id")
+        t_snooze.add_argument("--hours", type=float, default=24.0)
+        t_snooze.add_argument("--state-file", default=None)
+        t_snooze.add_argument(
+            "--format",
+            choices=["table", "json"],
+            default="table",
+        )
+        t_snooze.add_argument("--limit", type=int, default=10)
+
+        t_restore = triage_sub.add_parser(
+            "restore",
+            help="Restore a dismissed or snoozed action",
+        )
+        t_restore.add_argument("path", nargs="?", default=".")
+        t_restore.add_argument("action_id")
+        t_restore.add_argument("--state-file", default=None)
+        t_restore.add_argument(
+            "--format",
+            choices=["table", "json"],
+            default="table",
+        )
+        t_restore.add_argument("--limit", type=int, default=10)
+
+        p_status = agent_sub.add_parser(
+            "status",
+            help="Show the latest active-agent summary",
+        )
+        p_status.add_argument("path", nargs="?", default=".")
+        p_status.add_argument("--state-file", default=None)
+        p_status.add_argument("--refresh", action="store_true")
+        p_status.add_argument("--conf", type=int, default=80)
+        p_status.add_argument("--no-baseline", action="store_true")
+        p_status.add_argument(
+            "--format",
+            choices=["table", "json", "feed"],
+            default="table",
+        )
+        p_status.add_argument("--limit", type=int, default=10)
+
+        p_serve = agent_sub.add_parser(
+            "serve",
+            help="Run a local cross-platform HTTP API for the active-agent state",
+        )
+        p_serve.add_argument("path", nargs="?", default=".")
+        p_serve.add_argument("--host", default="127.0.0.1")
+        p_serve.add_argument("--port", type=int, default=5089)
+        p_serve.add_argument("--token", default=None)
+        p_serve.add_argument("--state-file", default=None)
+        p_serve.add_argument("--conf", type=int, default=80)
+        p_serve.add_argument("--no-baseline", action="store_true")
+        p_serve.add_argument("--limit", type=int, default=10)
+        p_serve.add_argument("--refresh-on-start", action="store_true")
 
         agent_args = agent_parser.parse_args(sys.argv[2:])
         console = Console()
+        cmd = agent_args.agent_cmd
+
+        if cmd in {"watch", "pre-commit", "triage", "status", "serve"}:
+            from skylos.agent_center import (
+                clear_action_triage,
+                command_center_payload,
+                load_agent_state,
+                refresh_agent_state,
+                render_status_table,
+                update_action_triage,
+                watch_project,
+            )
+
+            def _print_agent_table(state, limit):
+                rendered = render_status_table(state, limit=limit)
+                console.print(f"[bold]{rendered['headline']}[/bold]")
+                if rendered["subtitle"]:
+                    console.print(f"[dim]{rendered['subtitle']}[/dim]")
+
+                actions = rendered["actions"]
+                if not actions:
+                    console.print("[green]No ranked actions.[/green]")
+                    return
+
+                table = Table(title="Active Agent Queue", expand=True)
+                table.add_column("#", style="dim", width=3)
+                table.add_column("Severity", width=9)
+                table.add_column("Category", width=10)
+                table.add_column("Action")
+                table.add_column("Location", style="dim", width=28)
+                table.add_column("Reason", overflow="fold")
+
+                for idx, action in enumerate(actions[:limit], 1):
+                    table.add_row(
+                        str(idx),
+                        str(action.get("severity", "")),
+                        str(action.get("category", "")),
+                        str(action.get("title", "")),
+                        f"{action.get('file', '?')}:{action.get('line', '?')}",
+                        str(action.get("reason", "")),
+                    )
+                console.print(table)
+
+            def _resolve_state(refresh=False):
+                state = (
+                    None
+                    if refresh
+                    else load_agent_state(
+                        agent_args.path,
+                        state_file=getattr(agent_args, "state_file", None),
+                    )
+                )
+                if state is None:
+                    state, _ = refresh_agent_state(
+                        agent_args.path,
+                        conf=getattr(agent_args, "conf", 80),
+                        use_baseline=not getattr(agent_args, "no_baseline", False),
+                        state_file=getattr(agent_args, "state_file", None),
+                        force=True,
+                    )
+                return state
+
+            if cmd == "watch":
+                state = watch_project(
+                    agent_args.path,
+                    interval=agent_args.interval,
+                    cycles=None if agent_args.cycles == 0 else agent_args.cycles,
+                    once=agent_args.once,
+                    conf=agent_args.conf,
+                    use_baseline=not agent_args.no_baseline,
+                    state_file=agent_args.state_file,
+                )
+                if agent_args.format == "json":
+                    print(json.dumps(state, indent=2, default=str))
+                else:
+                    _print_agent_table(state, agent_args.limit)
+                sys.exit(0)
+
+            if cmd == "pre-commit":
+                import subprocess as _sp
+
+                staged_result = _sp.run(
+                    ["git", "diff", "--cached", "--name-only"],
+                    capture_output=True,
+                    text=True,
+                    cwd=agent_args.path,
+                )
+                staged_files = [
+                    f.strip()
+                    for f in staged_result.stdout.strip().splitlines()
+                    if f.strip()
+                ]
+                if not staged_files:
+                    console.print("[good]No staged files to analyze[/good]")
+                    sys.exit(0)
+
+                state, _ = refresh_agent_state(
+                    agent_args.path,
+                    conf=agent_args.conf,
+                    state_file=agent_args.state_file,
+                    force=True,
+                )
+                staged_set = set(staged_files)
+                staged_findings = [
+                    f
+                    for f in state.get("findings", [])
+                    if f.get("file", "") in staged_set
+                ]
+                if staged_findings:
+                    if agent_args.format == "json":
+                        print(json.dumps(staged_findings, indent=2, default=str))
+                    else:
+                        console.print(
+                            f"[warn]{len(staged_findings)} finding(s) in staged files:[/warn]"
+                        )
+                        for f in staged_findings[:20]:
+                            sev = f.get("severity", "INFO")
+                            console.print(
+                                f"  [{sev.lower()}]{sev}[/{sev.lower()}] {f['file']}:{f['line']} {f['message']}"
+                            )
+                    sys.exit(1)
+                console.print("[good]No issues in staged files[/good]")
+                sys.exit(0)
+
+            if cmd == "triage":
+                tcmd = agent_args.triage_cmd
+
+                if tcmd == "suggest":
+                    from skylos.triage_learner import TriageLearner
+
+                    project_root = find_project_root(agent_args.path)
+                    learner = TriageLearner()
+                    learner.load(str(project_root))
+
+                    state = load_agent_state(
+                        project_root, state_file=agent_args.state_file
+                    )
+                    if not state:
+                        console.print(
+                            "[dim]No agent state found. Run 'skylos agent watch --once' first.[/dim]"
+                        )
+                        sys.exit(1)
+
+                    findings = state.get("findings", [])
+                    candidates = learner.get_auto_triage_candidates(findings)
+
+                    if not candidates:
+                        console.print(
+                            "[dim]No auto-triage candidates (need more observations)[/dim]"
+                        )
+                        sys.exit(0)
+
+                    if agent_args.format == "json":
+                        out = [
+                            {"finding": f, "action": a, "confidence": c}
+                            for f, a, c in candidates
+                        ]
+                        print(json.dumps(out, indent=2, default=str))
+                    else:
+                        console.print(
+                            f"[brand]Auto-triage candidates ({len(candidates)}):[/brand]"
+                        )
+                        for finding, action, confidence in candidates:
+                            console.print(
+                                f"  {action.upper()} ({confidence:.0%}) "
+                                f"{finding.get('file', '?')}:{finding.get('line', '?')} "
+                                f"{finding.get('message', '?')}"
+                            )
+                    sys.exit(0)
+
+                if tcmd == "dismiss":
+                    state = update_action_triage(
+                        agent_args.path,
+                        agent_args.action_id,
+                        status="dismissed",
+                        state_file=agent_args.state_file,
+                    )
+                elif tcmd == "snooze":
+                    state = update_action_triage(
+                        agent_args.path,
+                        agent_args.action_id,
+                        status="snoozed",
+                        state_file=agent_args.state_file,
+                        snooze_hours=agent_args.hours,
+                    )
+                elif tcmd == "restore":
+                    state = clear_action_triage(
+                        agent_args.path,
+                        agent_args.action_id,
+                        state_file=agent_args.state_file,
+                    )
+
+                if agent_args.format == "json":
+                    print(json.dumps(state, indent=2, default=str))
+                else:
+                    _print_agent_table(state, agent_args.limit)
+                sys.exit(0)
+
+            if cmd == "status":
+                state = _resolve_state(refresh=agent_args.refresh)
+                if agent_args.format == "feed":
+                    print(
+                        json.dumps(
+                            command_center_payload(state, limit=agent_args.limit),
+                            indent=2,
+                            default=str,
+                        )
+                    )
+                elif agent_args.format == "json":
+                    print(json.dumps(state, indent=2, default=str))
+                else:
+                    _print_agent_table(state, agent_args.limit)
+                sys.exit(0)
+
+            if cmd == "serve":
+                from skylos.agent_service import create_agent_service
+
+                token = agent_args.token or secrets.token_urlsafe(24)
+                server = create_agent_service(
+                    agent_args.path,
+                    host=agent_args.host,
+                    port=agent_args.port,
+                    token=token,
+                    state_file=agent_args.state_file,
+                    conf=agent_args.conf,
+                    use_baseline=not agent_args.no_baseline,
+                    default_limit=agent_args.limit,
+                    refresh_on_start=agent_args.refresh_on_start,
+                )
+                address = server.server_address
+                console.print(
+                    f"[bold]Skylos Agent API[/bold] listening on http://{address[0]}:{address[1]}"
+                )
+                console.print(f"[dim]Repo:[/dim] {agent_args.path}")
+                console.print("[dim]Auth header:[/dim] X-Skylos-Agent-Token")
+                console.print(f"[dim]Session token:[/dim] {token}")
+                try:
+                    server.serve_forever()
+                except KeyboardInterrupt:
+                    console.print("\n[dim]Stopping Skylos Agent API[/dim]")
+                finally:
+                    server.server_close()
+                sys.exit(0)
+
+        if not LLM_AVAILABLE:
+            Console().print("[bold red]Agent module not available[/bold red]")
+            sys.exit(1)
 
         model = agent_args.model
 
@@ -2872,11 +3354,89 @@ def main():
                 console.print("[bad]No API key provided.[/bad]")
                 sys.exit(1)
 
-        cmd = agent_args.agent_cmd
         agent_exclude_folders = list(parse_exclude_folders(use_defaults=True))
 
-        if cmd in ("analyze", "audit"):
-            if cmd == "analyze" and not hasattr(agent_args, "with_fixes"):
+        if cmd == "scan":
+            # --security mode: LLM-only security audit
+            if getattr(agent_args, "security", False):
+                path = pathlib.Path(agent_args.path)
+                if not path.exists():
+                    console.print(f"[bad]Path not found: {path}[/bad]")
+                    sys.exit(1)
+
+                if path.is_file():
+                    files = [path]
+                else:
+                    files = [
+                        f
+                        for f in path.rglob("*.py")
+                        if not any(ex in f.parts for ex in agent_exclude_folders)
+                    ]
+
+                if not files:
+                    console.print("[warn]No Python files found[/warn]")
+                    sys.exit(0)
+
+                if (
+                    INTERACTIVE_AVAILABLE
+                    and getattr(agent_args, "interactive", False)
+                    and len(files) > 1
+                ):
+                    choices = [
+                        (f"{f.name} ({f.stat().st_size / 1024:.1f}KB)", f)
+                        for f in files
+                    ]
+                    questions = [
+                        inquirer.Checkbox(
+                            "files", message="Select files", choices=choices
+                        )
+                    ]
+                    answers = inquirer.prompt(questions)
+                    if not answers or not answers["files"]:
+                        sys.exit(0)
+                    files = answers["files"]
+
+                tokens, cost = llm_estimate_cost(files, model)
+                console.print(
+                    f"\n[brand]Security audit:[/brand] {len(files)} files, ~{tokens:,} tokens, ~${cost:.4f}"
+                )
+
+                if (
+                    INTERACTIVE_AVAILABLE
+                    and _is_tty()
+                    and not inquirer.confirm("Proceed?", default=True)
+                ):
+                    sys.exit(0)
+
+                config = AnalyzerConfig(
+                    model=model,
+                    api_key=api_key,
+                    quiet=getattr(agent_args, "quiet", False),
+                )
+                analyzer = SkylosLLM(config)
+                llm_result = analyzer.analyze_files(
+                    files, issue_types=["security_audit"]
+                )
+                analyzer.print_results(
+                    llm_result, format=agent_args.format, output_file=agent_args.output
+                )
+                sys.exit(1 if llm_result.has_blockers else 0)
+
+            # --changed mode: only git-changed files
+            changed_files = None
+            if getattr(agent_args, "changed", False):
+                path = pathlib.Path(agent_args.path)
+                console.print("[brand]Finding git-changed files...[/brand]")
+                changed_files = get_git_changed_files(path)
+
+                if not changed_files:
+                    console.print("[dim]No changed files[/dim]")
+                    sys.exit(0)
+
+                console.print(f"Found {len(changed_files)} changed files")
+
+            # Fix suggestions on by default (--no-fixes disables)
+            if not getattr(agent_args, "no_fixes", False):
                 agent_args.with_fixes = True
 
             path = pathlib.Path(agent_args.path)
@@ -2886,12 +3446,16 @@ def main():
 
             project_root = find_project_root(path)
 
+            import time as _time
+
+            _scan_start = _time.time()
             merged_findings = run_pipeline(
                 path=str(path),
                 model=model,
                 api_key=api_key,
                 agent_args=agent_args,
                 console=console,
+                changed_files=changed_files,
                 exclude_folders=agent_exclude_folders,
             )
 
@@ -2925,8 +3489,13 @@ def main():
                 else:
                     print(output)
             else:
+                title = (
+                    "Hybrid Review Results (Changed Files)"
+                    if changed_files
+                    else "Hybrid Analysis Results"
+                )
                 if merged_findings:
-                    table = Table(title="Hybrid Analysis Results", expand=True)
+                    table = Table(title=title, expand=True)
                     table.add_column("#", style="dim", width=3)
                     table.add_column("Conf", width=6)
                     table.add_column("Source", width=10)
@@ -2943,7 +3512,7 @@ def main():
 
                         source = f.get("_source", "?")
                         cat = f.get("_category", "?")
-                        msg = f.get("message", "?")[:120]
+                        msg = (f.get("message", "?") or "?")[:120]
                         file_rel = f.get("file", "?")
                         loc = f"{file_rel}:{f.get('line', '?')}"
 
@@ -2962,140 +3531,26 @@ def main():
                     analysis_mode="hybrid",
                 )
 
+            try:
+                from skylos.api import upload_agent_run
+
+                upload_agent_run(
+                    "scan",
+                    {
+                        "total": len(merged_findings),
+                        "static_only": static_only,
+                        "llm_only": llm_only,
+                        "both": both,
+                    },
+                    model=model,
+                    provider=provider,
+                    duration_seconds=round(_time.time() - _scan_start, 1),
+                )
+            except Exception:
+                pass
+
             if merged_findings and getattr(agent_args, "strict", False):
                 sys.exit(1)
-            sys.exit(0)
-
-        elif cmd == "security-audit":
-            path = pathlib.Path(agent_args.path)
-            if not path.exists():
-                console.print(f"[bad]Path not found: {path}[/bad]")
-                sys.exit(1)
-
-            if path.is_file():
-                files = [path]
-            else:
-                files = [
-                    f
-                    for f in path.rglob("*.py")
-                    if not any(ex in f.parts for ex in agent_exclude_folders)
-                ]
-
-            if not files:
-                console.print("[warn]No Python files found[/warn]")
-                sys.exit(0)
-
-            if (
-                INTERACTIVE_AVAILABLE
-                and getattr(agent_args, "interactive", False)
-                and len(files) > 1
-            ):
-                choices = [
-                    (f"{f.name} ({f.stat().st_size / 1024:.1f}KB)", f) for f in files
-                ]
-                questions = [
-                    inquirer.Checkbox("files", message="Select files", choices=choices)
-                ]
-                answers = inquirer.prompt(questions)
-                if not answers or not answers["files"]:
-                    sys.exit(0)
-                files = answers["files"]
-
-            tokens, cost = llm_estimate_cost(files, model)
-            console.print(
-                f"\n[brand]Audit:[/brand] {len(files)} files, ~{tokens:,} tokens, ~${cost:.4f}"
-            )
-
-            if (
-                INTERACTIVE_AVAILABLE
-                and _is_tty()
-                and not inquirer.confirm("Proceed?", default=True)
-            ):
-                sys.exit(0)
-
-            config = AnalyzerConfig(
-                model=model,
-                api_key=api_key,
-                quiet=getattr(agent_args, "quiet", False),
-            )
-            analyzer = SkylosLLM(config)
-            llm_result = analyzer.analyze_files(files, issue_types=["security_audit"])
-            analyzer.print_results(
-                llm_result, format=agent_args.format, output_file=agent_args.output
-            )
-            sys.exit(1 if llm_result.has_blockers else 0)
-
-        elif cmd == "review":
-            path = pathlib.Path(agent_args.path)
-            console.print("[brand]Finding git-changed files...[/brand]")
-            files = get_git_changed_files(path)
-
-            if not files:
-                console.print("[dim]No changed Python files[/dim]")
-                sys.exit(0)
-
-            console.print(f"Found {len(files)} changed files")
-            if INTERACTIVE_AVAILABLE and _is_tty():
-                if not inquirer.confirm(
-                    "Run hybrid review (static + LLM)?", default=True
-                ):
-                    sys.exit(0)
-
-            project_root = find_project_root(path)
-
-            merged_findings = run_pipeline(
-                path=str(path),
-                model=model,
-                api_key=api_key,
-                agent_args=agent_args,
-                console=console,
-                changed_files=files,
-                exclude_folders=agent_exclude_folders,
-            )
-
-            merged_findings = _normalize_agent_findings(merged_findings, project_root)
-
-            if agent_args.format == "json":
-                output = json.dumps(merged_findings, indent=2, default=str)
-                if agent_args.output:
-                    pathlib.Path(agent_args.output).write_text(output)
-                else:
-                    print(output)
-                if merged_findings:
-                    sys.exit(1)
-                else:
-                    sys.exit(0)
-
-            if merged_findings:
-                table = Table(
-                    title="Hybrid Review Results (Changed Files)", expand=True
-                )
-                table.add_column("#", style="dim", width=3)
-                table.add_column("Conf", width=6)
-                table.add_column("Source", width=10)
-                table.add_column("Category", width=10)
-                table.add_column("Message", overflow="fold")
-                table.add_column("Location", style="dim", width=30)
-
-                for i, f in enumerate(merged_findings[:100], 1):
-                    conf = f.get("_confidence", "?")
-                    if conf == "high":
-                        conf_style = "[green]HIGH[/green]"
-                    else:
-                        conf_style = "[yellow]MED[/yellow]"
-
-                    source = f.get("_source", "?")
-                    cat = f.get("_category", "?")
-                    msg = (f.get("message", "?") or "?")[:120]
-                    file_rel = f.get("file", "?")
-                    loc = f"{file_rel}:{f.get('line', '?')}"
-
-                    table.add_row(str(i), conf_style, source, cat, msg, loc)
-
-                console.print(table)
-                sys.exit(1)
-
-            console.print("[good]No issues found in changed files![/good]")
             sys.exit(0)
 
         if cmd == "verify":
@@ -3148,6 +3603,9 @@ def main():
                 enable_survivor_challenge=not agent_args.no_survivor_challenge,
                 quiet=getattr(agent_args, "quiet", False),
                 verification_mode=getattr(agent_args, "verification_mode", "judge_all"),
+                grep_workers=getattr(agent_args, "grep_workers", 4),
+                parallel_grep=getattr(agent_args, "parallel_grep", False)
+                or getattr(agent_args, "fix", False),
             )
 
             stats = result["stats"]
@@ -3242,39 +3700,253 @@ def main():
                 f"= {net} verified findings"
             )
 
+            # Fix generation (Phase 3)
+            if getattr(agent_args, "fix", False):
+                from skylos.fixgen import (
+                    generate_removal_plan,
+                    generate_unified_diff,
+                    apply_patches,
+                    validate_patches,
+                    generate_fix_summary,
+                )
+
+                dead_findings = [
+                    f for f in verified if f.get("_llm_verdict") == "TRUE_POSITIVE"
+                ] + (new_dead or [])
+
+                if dead_findings:
+                    fix_mode = getattr(agent_args, "fix_mode", "delete")
+                    project_root_str = str(path if path.is_dir() else path.parent)
+                    patches = generate_removal_plan(
+                        dead_findings,
+                        defs_map,
+                        project_root_str,
+                        mode=fix_mode,
+                    )
+
+                    if patches:
+                        errors = validate_patches(patches, project_root_str)
+                        if errors:
+                            console.print("\n[warn]Patch validation warnings:[/warn]")
+                            for err in errors:
+                                console.print(f"  [yellow]! {err}[/yellow]")
+
+                        summary = generate_fix_summary(patches)
+                        console.print(f"\n[brand]Fix Plan:[/brand]")
+                        console.print(f"  Patches: {summary['total_patches']}")
+                        console.print(f"  Files affected: {summary['files_affected']}")
+                        console.print(
+                            f"  Lines to remove: {summary['total_lines_removed']}"
+                        )
+                        console.print(f"  Avg safety: {summary['avg_safety_score']}")
+
+                        diff = generate_unified_diff(patches, project_root_str)
+                        if diff:
+                            console.print("\n[brand]Unified Diff:[/brand]")
+                            print(diff)
+
+                        if getattr(agent_args, "pr", False) and not errors:
+                            # --fix --pr: create branch, apply, commit
+                            import time as _time
+
+                            branch_name = f"skylos/fix-deadcode-{int(_time.time())}"
+                            try:
+                                subprocess.run(
+                                    ["git", "checkout", "-b", branch_name],
+                                    cwd=project_root_str,
+                                    check=True,
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                apply_patches(patches, project_root_str, dry_run=False)
+                                subprocess.run(
+                                    ["git", "add", "-A"],
+                                    cwd=project_root_str,
+                                    check=True,
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                commit_msg = (
+                                    f"fix: remove {summary['total_patches']} dead code items "
+                                    f"({summary['total_lines_removed']} lines)"
+                                )
+                                subprocess.run(
+                                    ["git", "commit", "-m", commit_msg],
+                                    cwd=project_root_str,
+                                    check=True,
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                console.print(
+                                    f"\n[good]Branch created: {branch_name}[/good]"
+                                )
+                                console.print(f"[good]Committed: {commit_msg}[/good]")
+                                if shutil.which("gh"):
+                                    console.print(
+                                        f"\n[brand]Create PR with:[/brand]\n"
+                                        f'  gh pr create --title "{commit_msg}" '
+                                        f'--body "Automated dead code removal by Skylos"'
+                                    )
+                                else:
+                                    console.print(
+                                        f"\n[dim]Push and create PR:[/dim]\n"
+                                        f"  git push -u origin {branch_name}\n"
+                                        f"  # then open PR on GitHub"
+                                    )
+                            except subprocess.CalledProcessError as e:
+                                console.print(
+                                    f"\n[warn]Git operation failed: {e.stderr or e}[/warn]"
+                                )
+                        elif getattr(agent_args, "apply", False) and not errors:
+                            apply_patches(patches, project_root_str, dry_run=False)
+                            console.print(
+                                "\n[good]Patches applied successfully![/good]"
+                            )
+                        elif (
+                            getattr(agent_args, "apply", False)
+                            or getattr(agent_args, "pr", False)
+                        ) and errors:
+                            console.print(
+                                "\n[warn]Skipping apply due to validation errors[/warn]"
+                            )
+                    else:
+                        console.print("\n[dim]No patches generated[/dim]")
+                else:
+                    console.print("\n[dim]No confirmed dead code to fix[/dim]")
+
+            try:
+                from skylos.api import upload_agent_run
+
+                upload_agent_run(
+                    "verify",
+                    {
+                        "total_findings": stats["total_findings"],
+                        "verified_true_positive": stats["verified_true_positive"],
+                        "verified_false_positive": stats["verified_false_positive"],
+                        "entry_points_discovered": stats["entry_points_discovered"],
+                        "llm_calls": stats["llm_calls"],
+                        "elapsed_seconds": stats["elapsed_seconds"],
+                    },
+                    model=model,
+                    provider=provider,
+                    duration_seconds=stats.get("elapsed_seconds"),
+                )
+            except Exception:
+                pass
+
             sys.exit(0)
 
         if cmd == "remediate":
-            from skylos.llm.orchestrator import RemediationAgent
+            standards_raw = getattr(agent_args, "standards", None)
 
-            agent = RemediationAgent(
-                model=model,
-                api_key=api_key,
-                test_cmd=getattr(agent_args, "test_cmd", None),
-                severity_filter=getattr(agent_args, "severity", None),
-                provider=provider,
-                base_url=base_url,
-            )
+            if standards_raw:
+                # "__builtin__" sentinel means use built-in defaults (--standards with no arg)
+                standards_path = (
+                    None if standards_raw == "__builtin__" else standards_raw
+                )
+                # LLM-guided cleanup mode
+                from skylos.llm.cleanup_orchestrator import CleanupOrchestrator
 
-            summary = agent.run(
-                agent_args.path,
-                dry_run=getattr(agent_args, "dry_run", False),
-                max_fixes=getattr(agent_args, "max_fixes", 10),
-                auto_pr=getattr(agent_args, "auto_pr", False),
-                branch_prefix=getattr(agent_args, "branch_prefix", "skylos/fix"),
-                quiet=getattr(agent_args, "quiet", False),
-            )
+                orchestrator = CleanupOrchestrator(
+                    model=model,
+                    api_key=api_key,
+                    provider=provider,
+                    base_url=base_url,
+                    test_cmd=getattr(agent_args, "test_cmd", None),
+                    standards_path=standards_path,
+                )
 
-            if getattr(agent_args, "quiet", False):
-                import json as _json_mod
+                summary = orchestrator.run(
+                    agent_args.path,
+                    max_fixes=getattr(agent_args, "max_fixes", 20),
+                    dry_run=getattr(agent_args, "dry_run", False),
+                    quiet=getattr(agent_args, "quiet", False),
+                )
 
-                print(_json_mod.dumps(summary, indent=2))
+                if getattr(agent_args, "quiet", False):
+                    import json as _json_mod
 
-            sys.exit(
-                0
-                if summary.get("fixed", 0) > 0 or summary.get("total_findings", 0) == 0
-                else 1
-            )
+                    print(_json_mod.dumps(summary, indent=2))
+
+                try:
+                    from skylos.api import upload_agent_run
+
+                    upload_agent_run(
+                        "cleanup",
+                        {
+                            "total_items": summary.get("total_items", 0),
+                            "applied": summary.get("applied", 0),
+                            "reverted": summary.get("reverted", 0),
+                            "skipped": summary.get("skipped", 0),
+                            "total_analyzed_files": summary.get(
+                                "total_analyzed_files", 0
+                            ),
+                        },
+                        model=model,
+                        provider=provider,
+                        duration_seconds=summary.get("elapsed_seconds"),
+                    )
+                except Exception:
+                    pass
+
+                sys.exit(
+                    0
+                    if summary.get("applied", 0) > 0
+                    or summary.get("total_items", 0) == 0
+                    else 1
+                )
+            else:
+                # Standard remediation mode
+                from skylos.llm.orchestrator import RemediationAgent
+
+                agent = RemediationAgent(
+                    model=model,
+                    api_key=api_key,
+                    test_cmd=getattr(agent_args, "test_cmd", None),
+                    severity_filter=getattr(agent_args, "severity", None),
+                    provider=provider,
+                    base_url=base_url,
+                )
+
+                summary = agent.run(
+                    agent_args.path,
+                    dry_run=getattr(agent_args, "dry_run", False),
+                    max_fixes=getattr(agent_args, "max_fixes", 10),
+                    auto_pr=getattr(agent_args, "auto_pr", False),
+                    branch_prefix=getattr(agent_args, "branch_prefix", "skylos/fix"),
+                    quiet=getattr(agent_args, "quiet", False),
+                )
+
+                if getattr(agent_args, "quiet", False):
+                    import json as _json_mod
+
+                    print(_json_mod.dumps(summary, indent=2))
+
+                try:
+                    from skylos.api import upload_agent_run
+
+                    upload_agent_run(
+                        "remediate",
+                        {
+                            "total_findings": summary.get("total_findings", 0),
+                            "fixed": summary.get("fixed", 0),
+                            "failed": summary.get("failed", 0),
+                            "skipped": summary.get("skipped", 0),
+                            "pr_url": summary.get("pr_url"),
+                        },
+                        model=model,
+                        provider=provider,
+                        duration_seconds=summary.get("elapsed_seconds"),
+                    )
+                except Exception:
+                    pass
+
+                sys.exit(
+                    0
+                    if summary.get("fixed", 0) > 0
+                    or summary.get("total_findings", 0) == 0
+                    else 1
+                )
 
     if len(sys.argv) > 1 and sys.argv[1] == "run":
         try:
@@ -3488,6 +4160,11 @@ Run 'skylos <command> --help' for more information on each command.
         dest="all_checks",
         help="Enable all checks: --danger --secrets --quality --sca",
     )
+    parser.add_argument(
+        "--no-grep-verify",
+        action="store_true",
+        help="Disable grep-based verification pass (reduces false positives by default).",
+    )
 
     parser.add_argument(
         "--sarif",
@@ -3625,6 +4302,20 @@ Run 'skylos <command> --help' for more information on each command.
     )
 
     if not args.json:
+        banner = (
+            "[bold cyan]"
+            " ███████ ██   ██ ██    ██ ██       ██████  ███████\n"
+            " ██      ██  ██   ██  ██  ██      ██    ██ ██     \n"
+            " ███████ █████     ████   ██      ██    ██ ███████\n"
+            "      ██ ██  ██     ██    ██      ██    ██      ██\n"
+            " ███████ ██   ██    ██    ███████  ██████  ███████\n"
+            "[/bold cyan]\n"
+            "  [bold white]v" + skylos.__version__ + "[/bold white]"
+            "  [dim]│[/dim]  [blue]github.com/duriantaco/skylos[/blue]"
+        )
+        console.print(Panel(banner, border_style="cyan", padding=(1, 2)))
+        console.print()
+
         if final_exclude_folders:
             console.print(
                 f"[warn] Excluding:[/warn] {', '.join(sorted(final_exclude_folders))}"
@@ -3822,6 +4513,7 @@ sys.exit(ret)
                 progress_callback=update_progress,
                 custom_rules_data=custom_rules_data,
                 changed_files=changed_files,
+                grep_verify=not getattr(args, "no_grep_verify", False),
             )
 
         result = json.loads(result_json)

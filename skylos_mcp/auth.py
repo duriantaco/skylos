@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from skylos.constants import NETWORK_TIMEOUT_SHORT
+
 logger = logging.getLogger("skylos-mcp-auth")
 
 CLOUD_BASE_URL = os.getenv("SKYLOS_CLOUD_URL", "https://skylos.dev")
@@ -16,6 +18,7 @@ TOOL_CREDIT_MAP: dict[str, str] = {
     "quality_check": "mcp_quality_check",
     "secrets_scan": "mcp_secrets_scan",
     "remediate": "mcp_remediate",
+    "provenance_scan": "mcp_provenance_scan",
 }
 
 UNAUTHENTICATED_TOOLS = {"analyze"}
@@ -85,7 +88,7 @@ def _validate_with_cloud(api_key: str) -> dict[str, Any] | None:
         resp = requests.get(
             f"{CLOUD_BASE_URL}/api/sync/whoami",
             headers={"Authorization": f"Bearer {api_key}"},
-            timeout=5,
+            timeout=NETWORK_TIMEOUT_SHORT,
         )
         if resp.status_code == 200:
             return resp.json()
@@ -185,7 +188,7 @@ def deduct_credits(tool_name: str) -> tuple[bool, str]:
             f"{CLOUD_BASE_URL}/api/credits/deduct",
             json={"feature_key": feature_key},
             headers={"Authorization": f"Bearer {session.api_key}"},
-            timeout=5,
+            timeout=NETWORK_TIMEOUT_SHORT,
         )
 
         if resp.status_code == 402:

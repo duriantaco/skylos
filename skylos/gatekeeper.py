@@ -105,7 +105,97 @@ def start_deployment_wizard():
         run_push()
 
 
-def check_gate(results, config, strict=False):
+def _get_finding_file(finding):
+    return finding.get("file", finding.get("file_path", ""))
+
+
+def _check_agent_gate(findings_lists, agent_file_set, agent_cfg, reasons):
+    """Evaluate agent-specific thresholds against findings in AI-authored files.
+
+    Returns False if any agent threshold is exceeded.
+    """
+    agent_passed = True
+
+    agent_danger = []
+    agent_quality = []
+    agent_secrets = []
+    agent_dead_code = 0
+
+    for category, items in findings_lists.items():
+        for f in items:
+            fpath = _get_finding_file(f)
+            if fpath not in agent_file_set:
+                continue
+            if category == "danger":
+                agent_danger.append(f)
+            elif category == "quality":
+                agent_quality.append(f)
+            elif category == "secrets":
+                agent_secrets.append(f)
+            elif category == "dead_code":
+                agent_dead_code += 1
+
+    agent_critical = [
+        d for d in agent_danger if str(d.get("severity", "")).lower() == "critical"
+    ]
+    agent_high = [
+        d for d in agent_danger if str(d.get("severity", "")).lower() == "high"
+    ]
+
+    a_max_critical = agent_cfg.get("max_critical")
+    if isinstance(a_max_critical, int) and len(agent_critical) > a_max_critical:
+        agent_passed = False
+        reasons.append(
+            f"Agent gate: {len(agent_critical)} critical issue(s) in AI-authored files (max: {a_max_critical})"
+        )
+
+    a_max_high = agent_cfg.get("max_high")
+    if isinstance(a_max_high, int) and len(agent_high) > a_max_high:
+        agent_passed = False
+        reasons.append(
+            f"Agent gate: {len(agent_high)} high severity issue(s) in AI-authored files (max: {a_max_high})"
+        )
+
+    a_max_security = agent_cfg.get("max_security")
+    if isinstance(a_max_security, int) and len(agent_danger) > a_max_security:
+        agent_passed = False
+        reasons.append(
+            f"Agent gate: {len(agent_danger)} security issue(s) in AI-authored files (max: {a_max_security})"
+        )
+
+    a_max_quality = agent_cfg.get("max_quality")
+    if isinstance(a_max_quality, int) and len(agent_quality) > a_max_quality:
+        agent_passed = False
+        reasons.append(
+            f"Agent gate: {len(agent_quality)} quality issue(s) in AI-authored files (max: {a_max_quality})"
+        )
+
+    a_max_secrets = agent_cfg.get("max_secrets")
+    if isinstance(a_max_secrets, int) and len(agent_secrets) > a_max_secrets:
+        agent_passed = False
+        reasons.append(
+            f"Agent gate: {len(agent_secrets)} secret(s) in AI-authored files (max: {a_max_secrets})"
+        )
+
+    a_max_dead_code = agent_cfg.get("max_dead_code")
+    if isinstance(a_max_dead_code, int) and agent_dead_code > a_max_dead_code:
+        agent_passed = False
+        reasons.append(
+            f"Agent gate: {agent_dead_code} dead code issue(s) in AI-authored files (max: {a_max_dead_code})"
+        )
+
+    min_defend = agent_cfg.get("min_defend_score")
+    require_defend = agent_cfg.get("require_defend", False)
+    if require_defend or isinstance(min_defend, (int, float)):
+        reasons.append(
+            "Agent gate: require_defend/min_defend_score set but no defense data available (run skylos defend)"
+        )
+        agent_passed = False
+
+    return agent_passed
+
+
+def check_gate(results, config, strict=False, provenance=None):
     results = results or {}
     config = config or {}
 
@@ -180,6 +270,34 @@ def check_gate(results, config, strict=False):
     if isinstance(max_dead_code, int) and total_findings > max_dead_code:
         passed = False
         reasons.append(f"{total_findings} dead code issue(s) (max: {max_dead_code})")
+
+    # Agent-aware gating: apply stricter thresholds to AI-authored files
+    agent_cfg = gate_config.get("agent")
+    if provenance and agent_cfg and provenance.agent_files:
+        agent_file_set = set(provenance.agent_files)
+
+        dead_code_items = []
+        for k in (
+            "unused_functions",
+            "unused_imports",
+            "unused_variables",
+            "unused_classes",
+            "unused_parameters",
+        ):
+            dead_code_items.extend(results.get(k, []) or [])
+
+        findings_lists = {
+            "danger": danger,
+            "quality": quality,
+            "secrets": secrets,
+            "dead_code": dead_code_items,
+        }
+
+        agent_passed = _check_agent_gate(
+            findings_lists, agent_file_set, agent_cfg, reasons
+        )
+        if not agent_passed:
+            passed = False
 
     return passed, reasons
 
@@ -256,6 +374,7 @@ def run_gate_interaction(
     force=False,
     command_to_run=None,
     summary=False,
+    provenance=None,
 ):
     console = Console()
 
@@ -268,7 +387,9 @@ def run_gate_interaction(
     strict = bool(strict or gate_cfg.get("strict", False))
 
     try:
-        passed, reasons = check_gate(results, config, strict=strict)
+        passed, reasons = check_gate(
+            results, config, strict=strict, provenance=provenance
+        )
     except TypeError:
         passed, reasons = check_gate(results, config)
 

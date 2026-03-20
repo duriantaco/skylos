@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +18,19 @@ from .dead_code_verifier import (
     apply_verdict,
     _parse_confidence,
     _parse_int,
+)
+
+from skylos.grep_verify import (
+    _run_grep,
+    multi_strategy_search as _multi_strategy_search,
+    parallel_multi_strategy_search as _parallel_multi_strategy_search,
+    filter_grep_results as _filter_grep_results,
+    is_definition_line as _is_definition_line,
+    is_substring_match as _is_substring_match,
+    repo_relative_path as _repo_relative_path,
+    module_candidates as _module_candidates,
+    parameter_owner_name as _parameter_owner_name,
+    detect_language as _detect_language,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,6 +92,7 @@ class VerifyStats:
     entry_points_discovered: int = 0
     edges_resolved: int = 0
     edges_spurious: int = 0
+    haiku_prefiltered: int = 0
     llm_calls: int = 0
     elapsed_seconds: float = 0.0
 
@@ -119,6 +134,11 @@ known list above. Focus on:
 - Click/Typer command groups registered via entry_points
 - ASGI/WSGI application references
 - GitHub Actions workflow steps that invoke Python
+- package.json "main", "bin", "scripts" entries (TypeScript/JS)
+- Next.js/Vite/Webpack entry points and page routes
+- Go main() functions referenced in go.mod or Dockerfile
+- Java main classes in pom.xml/build.gradle, Spring Boot @SpringBootApplication
+- Rust binary targets in Cargo.toml [[bin]] sections
 
 JSON response:\
 """
@@ -126,6 +146,7 @@ JSON response:\
 
 def _gather_config_files(project_root: Path) -> dict[str, str]:
     candidates = [
+        # Python
         "pyproject.toml",
         "setup.py",
         "setup.cfg",
@@ -133,6 +154,38 @@ def _gather_config_files(project_root: Path) -> dict[str, str]:
         "tox.ini",
         "mkdocs.yml",
         "mkdocs.yaml",
+        "conftest.py",
+        "manage.py",
+        "app.py",
+        "wsgi.py",
+        "asgi.py",
+        # TypeScript/JS
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.*.json",
+        "next.config.js",
+        "next.config.mjs",
+        "next.config.ts",
+        "vite.config.ts",
+        "vite.config.js",
+        "webpack.config.js",
+        "jest.config.js",
+        "jest.config.ts",
+        ".eslintrc.json",
+        ".eslintrc.js",
+        # Go
+        "go.mod",
+        "go.sum",
+        # Java
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+        # Rust
+        "Cargo.toml",
+        "Cargo.lock",
+        # Universal
         "Dockerfile",
         "docker-compose.yml",
         "docker-compose.yaml",
@@ -140,11 +193,6 @@ def _gather_config_files(project_root: Path) -> dict[str, str]:
         ".github/workflows/*.yaml",
         "Makefile",
         "Procfile",
-        "conftest.py",
-        "manage.py",
-        "app.py",
-        "wsgi.py",
-        "asgi.py",
     ]
 
     configs = {}
@@ -170,33 +218,6 @@ def _gather_config_files(project_root: Path) -> dict[str, str]:
                     pass
 
     return configs
-
-
-def _repo_relative_path(file_path: str, project_root: str | Path) -> str:
-    try:
-        rel = Path(file_path).resolve().relative_to(Path(project_root).resolve())
-        return rel.as_posix()
-    except Exception:
-        return Path(file_path).as_posix()
-
-
-def _module_candidates(file_path: str, project_root: str | Path) -> list[str]:
-    rel = _repo_relative_path(file_path, project_root)
-    if not rel.endswith(".py"):
-        return []
-    stem = rel[:-3]
-    parts = [p for p in stem.split("/") if p]
-    if not parts:
-        return []
-    if parts[-1] == "__init__":
-        parts = parts[:-1]
-    if not parts:
-        return []
-
-    candidates = [".".join(parts)]
-    if parts[0] == "src" and len(parts) > 1:
-        candidates.append(".".join(parts[1:]))
-    return list(dict.fromkeys(candidates))
 
 
 def _load_pytest_patterns_from_text(raw_value: Any) -> list[str]:
@@ -410,15 +431,6 @@ def _definition_executes_for_side_effect(finding: dict, source: str) -> bool:
     )
 
 
-def _parameter_owner_name(finding: dict) -> str:
-    if str(finding.get("type", "")).lower() != "parameter":
-        return ""
-    full_name = str(finding.get("full_name", finding.get("name", "")))
-    if "." not in full_name:
-        return ""
-    return full_name.rsplit(".", 1)[0]
-
-
 def _function_node_for_finding(source: str, finding: dict) -> Any | None:
     import ast
 
@@ -516,6 +528,17 @@ def _parameter_contract_evidence(
     return evidence
 
 
+def _entry_point_cache_path(project_root: Path) -> Path:
+    return project_root / ".skylos" / "cache" / "entry_points.json"
+
+
+def _config_files_hash(configs: dict[str, str]) -> str:
+    import hashlib
+
+    content = json.dumps(configs, sort_keys=True)
+    return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+
 def discover_entry_points(
     agent: DeadCodeVerifierAgent,
     project_root: Path,
@@ -524,6 +547,22 @@ def discover_entry_points(
     configs = _gather_config_files(project_root)
     if not configs:
         return []
+
+    cache_path = _entry_point_cache_path(project_root)
+    current_hash = _config_files_hash(configs)
+    if cache_path.exists():
+        try:
+            cached = json.loads(cache_path.read_text())
+            if cached.get("hash") == current_hash:
+                return [
+                    EntryPoint(
+                        name=ep["name"], source=ep["source"], reason=ep["reason"]
+                    )
+                    for ep in cached.get("entry_points", [])
+                    if ep.get("name") and ep["name"] not in known_entry_points
+                ]
+        except Exception:
+            pass
 
     config_text = []
     for name, content in configs.items():
@@ -549,16 +588,37 @@ def discover_entry_points(
 
         data = json.loads(clean)
         results = []
+        all_discovered = []
         for ep in data.get("entry_points", []):
             name = ep.get("name", "")
-            if name and name not in known_entry_points:
-                results.append(
-                    EntryPoint(
-                        name=name,
-                        source=ep.get("source", "config"),
-                        reason=ep.get("reason", ""),
-                    )
+            if name:
+                all_discovered.append(
+                    {
+                        "name": name,
+                        "source": ep.get("source", "config"),
+                        "reason": ep.get("reason", ""),
+                    }
                 )
+                if name not in known_entry_points:
+                    results.append(
+                        EntryPoint(
+                            name=name,
+                            source=ep.get("source", "config"),
+                            reason=ep.get("reason", ""),
+                        )
+                    )
+
+        # Save cache
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(
+                json.dumps(
+                    {"hash": current_hash, "entry_points": all_discovered}, indent=2
+                )
+            )
+        except Exception:
+            pass
+
         return results
 
     except (json.JSONDecodeError, Exception) as e:
@@ -599,6 +659,14 @@ Choice(), or member lookup at runtime even without explicit references
 - A public symbol (no underscore prefix) in an importable package that is documented in the \
 project's docs/ directory (rst, md, or autodoc) is ALIVE — it exists for downstream consumers \
 even if unused internally. Look for the public_api_docs search results.
+- A symbol marked as exported (is_exported=true) is part of the package's public API. \
+It exists for downstream consumers. Unless you find strong evidence it's truly orphaned \
+(e.g., the entire module is dead), treat it as ALIVE.
+- TypeScript/JS: imported via `import {{ X }}` or `require()`, used as JSX `<Component />`, \
+exported via barrel `export {{ X }}`, used with decorator `@X`, or `implements Interface`
+- Go: called as `package.Func()`, referenced in interface method signatures, struct field access
+- Java: imported, annotated with @Override/@Bean/@Autowired, implements/extends
+- Rust: imported via `use crate::`, referenced in `impl Trait for`, `#[derive(X)]`
 
 What counts as DEAD (TRUE_POSITIVE):
 - ZERO references anywhere in the project (only the definition itself found)
@@ -607,15 +675,17 @@ What counts as DEAD (TRUE_POSITIVE):
 green is used
 - TypeVar definitions like T = TypeVar("T") are NOT usages of T
 - A class docstring mentioning a name is NOT a usage of that name
-- Listed in __all__ but NOT actually imported or used anywhere else — __all__ lists are often \
-stale. Being exportable does NOT mean something is actually used. Check for real imports.
+- Listed in __all__ but NOT imported or used anywhere — __all__ can be stale, but when \
+combined with is_exported=true, treat __all__ membership as meaningful public API intent.
+- TypeScript: only re-exported from index.ts but never actually consumed downstream
+- Go: only referenced in _test.go files with Test* prefix (test-only symbol)
 
 Decision rules:
 - COMMIT to a verdict. Use UNCERTAIN only if evidence genuinely conflicts.
 - If you see a real code usage (call, import, dispatch), it is FALSE_POSITIVE — full stop.
 - If ZERO real code usages exist, it is TRUE_POSITIVE — full stop.
 - Read the file context around each match to distinguish real code from comments/docs.
-- __all__ alone is NOT enough to call something alive. Look for actual import/usage evidence.
+- __all__ alone is NOT enough to call something alive — but __all__ combined with is_exported=true IS strong evidence for ALIVE.
 - A generic docs mention is not enough, but an explicit compatibility-retention note is strong evidence for ALIVE.
 - If public_api_docs results show the symbol documented in docs/ AND the symbol is public \
 (no underscore) in an importable package, it is FALSE_POSITIVE — library public API.
@@ -670,116 +740,7 @@ def _find_git_root(path: Path) -> Path | None:
     return None
 
 
-def _run_grep(
-    pattern: str,
-    project_root: str,
-    use_regex: bool = False,
-    include_globs: list[str] | None = None,
-    fixed_string: bool = False,
-    max_results: int = 20,
-) -> list[str]:
-    import subprocess
-
-    if include_globs is None:
-        include_globs = [
-            "*.py",
-            "*.rst",
-            "*.md",
-            "*.yaml",
-            "*.yml",
-            "*.toml",
-            "*.cfg",
-            "*.ini",
-            "*.txt",
-        ]
-
-    grep_flags = ["-rn"]
-    if fixed_string:
-        grep_flags.append("-F")
-    elif use_regex:
-        grep_flags.append("-E")
-
-    includes = []
-    for g in include_globs:
-        includes.extend(["--include", g])
-
-    try:
-        cmd = ["grep", *grep_flags, *includes, pattern, project_root]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        lines = result.stdout.strip().splitlines()
-        return [l for l in lines if "__pycache__" not in l and ".egg-info" not in l][
-            :max_results
-        ]
-    except Exception:
-        return []
-
-
-def _is_definition_line(grep_line: str, finding: dict) -> bool:
-    file_path = finding.get("file", "")
-    line_num = finding.get("line", 0)
-
-    if file_path and file_path in grep_line:
-        try:
-            parts = grep_line.split(":")
-            if len(parts) >= 2 and parts[1].strip().isdigit():
-                match_line = int(parts[1].strip())
-                if abs(match_line - line_num) <= 2:
-                    return True
-        except (ValueError, IndexError):
-            pass
-
-    if ":" in grep_line:
-        content = grep_line.split(":", 2)[-1]
-    else:
-        content = grep_line
-
-    simple_name = finding.get("simple_name", "")
-    definition_patterns = [
-        f"def {simple_name}",
-        f"class {simple_name}",
-        f"{simple_name} =",
-        f'TypeVar("{simple_name}"',
-        f"TypeVar('{simple_name}'",
-    ]
-    for pattern in definition_patterns:
-        if pattern in content:
-            return True
-
-    return False
-
-
-def _filter_grep_results(
-    lines: list[str],
-    finding: dict,
-) -> tuple[list[str], list[str]]:
-    definitions = []
-    usages = []
-    for line in lines:
-        if _is_definition_line(line, finding):
-            definitions.append(line)
-        else:
-            usages.append(line)
-    return definitions, usages
-
-
-def _is_substring_match(grep_line: str, simple_name: str) -> bool:
-    import re
-
-    if ":" in grep_line:
-        content = grep_line.split(":", 2)[-1]
-    else:
-        content = grep_line
-
-    for match in re.finditer(re.escape(simple_name), content):
-        start, end = match.start(), match.end()
-        before_ok = start == 0 or not content[start - 1].isalnum()
-        after_ok = end == len(content) or not content[end].isalnum()
-        if before_ok and after_ok:
-            return False
-    return True
-
-
-def _read_context_around_match(grep_line: str, context_lines: int = 12) -> str | None:
+def _read_context_around_match(grep_line: str, context_lines: int = 8) -> str | None:
     try:
         parts = grep_line.split(":")
         if len(parts) < 2:
@@ -815,6 +776,7 @@ def _enrich_search_results(
 ) -> dict[str, str]:
     enriched = {}
     total_contexts = 0
+    seen_file_lines: set[str] = set()  # cross-strategy dedup
 
     enrich_strategies = [
         "references",
@@ -847,6 +809,14 @@ def _enrich_search_results(
         for line in lines[:2]:
             if total_contexts >= max_contexts:
                 break
+            parts = line.split(":", 2)
+            if len(parts) >= 2 and parts[1].strip().isdigit():
+                key = f"{parts[0]}:{parts[1]}"
+            else:
+                key = line
+            if key in seen_file_lines:
+                continue
+            seen_file_lines.add(key)
             ctx = _read_context_around_match(line)
             if ctx:
                 contexts.append(ctx)
@@ -859,339 +829,6 @@ def _enrich_search_results(
             break
 
     return enriched
-
-
-def _multi_strategy_search(
-    finding: dict,
-    project_root: str,
-) -> dict[str, list[str]]:
-    simple_name = finding.get("simple_name", finding.get("name", ""))
-    full_name = finding.get("full_name", "")
-    kind = finding.get("type", "")
-    file_path = finding.get("file", "")
-
-    if file_path:
-        rel_file = _repo_relative_path(file_path, project_root)
-    else:
-        rel_file = ""
-
-    if file_path:
-        module_names = _module_candidates(file_path, project_root)
-    else:
-        module_names = []
-
-    if kind == "parameter":
-        owner_full_name = _parameter_owner_name(finding)
-    else:
-        owner_full_name = ""
-
-    if owner_full_name:
-        owner_simple_name = owner_full_name.rsplit(".", 1)[-1]
-    else:
-        owner_simple_name = ""
-
-    results: dict[str, list[str]] = {}
-
-    if not simple_name or len(simple_name) <= 1:
-        return results
-
-    boundary_pattern = rf"\b{simple_name}\b"
-    refs = _run_grep(boundary_pattern, project_root, use_regex=True)
-    if refs:
-        refs = [r for r in refs if not _is_substring_match(r, simple_name)]
-        _defs, usages = _filter_grep_results(refs, finding)
-        if usages:
-            results["references"] = usages
-        elif _defs:
-            results["references_definition_only"] = [
-                "(only the definition itself found, no usages)"
-            ]
-
-    if full_name and full_name != simple_name:
-        qualified_refs = _run_grep(full_name, project_root, fixed_string=True)
-        if qualified_refs:
-            _defs, usages = _filter_grep_results(qualified_refs, finding)
-            if usages:
-                results["qualified_references"] = usages
-
-    if kind in ("method", "function"):
-        call_pattern = rf"\.{simple_name}\("
-        call_refs = _run_grep(
-            call_pattern, project_root, use_regex=True, include_globs=["*.py"]
-        )
-        if call_refs:
-            _defs, usages = _filter_grep_results(call_refs, finding)
-            if usages:
-                results["method_calls"] = usages
-
-    import_pattern = rf"import.*\b{simple_name}\b"
-    import_refs = _run_grep(
-        import_pattern, project_root, use_regex=True, include_globs=["*.py"]
-    )
-    if import_refs:
-        _defs, usages = _filter_grep_results(import_refs, finding)
-        if usages:
-            for usage_line in usages[:3]:
-                ctx = _read_context_around_match(usage_line, context_lines=6)
-                if ctx and ("try:" in ctx or "except" in ctx.lower()):
-                    results["conditional_import"] = [
-                        f"(import is inside try/except — conditional import, symbol IS used)",
-                        usage_line,
-                    ]
-                    break
-            results["imports"] = usages
-
-    import re as _re
-
-    dispatch_patterns = [
-        rf'(?:getattr|setattr|hasattr|delattr)\s*\([^,]+,\s*["\x27]{_re.escape(simple_name)}["\x27]',
-        rf'\[["\x27]{_re.escape(simple_name)}["\x27]\]',
-        rf'\.\w+\(\s*["\x27]{_re.escape(simple_name)}["\x27]',
-        rf'["\x27]{_re.escape(simple_name)}["\x27]\s*:\s*\w+\(',
-    ]
-    for dp in dispatch_patterns:
-        dp_refs = _run_grep(dp, project_root, use_regex=True, include_globs=["*.py"])
-        if dp_refs:
-            dp_refs = [
-                r
-                for r in dp_refs
-                if not any(pat in r for pat in ["TypeVar(", "TypeAlias", "Literal["])
-            ]
-            _defs, usages = _filter_grep_results(dp_refs, finding)
-            if usages:
-                results["string_dispatch"] = usages
-                break
-
-    all_refs = _run_grep(
-        rf"__all__.*\b{simple_name}\b",
-        project_root,
-        use_regex=True,
-        include_globs=["*.py"],
-    )
-    if all_refs:
-        results["exported_in_all"] = all_refs
-
-    if kind in ("import", "variable", "class"):
-        cast_pattern = rf'cast\(\s*["\x27]{simple_name}["\x27]'
-        cast_refs = _run_grep(
-            cast_pattern, project_root, use_regex=True, include_globs=["*.py"]
-        )
-        if cast_refs:
-            _defs, usages = _filter_grep_results(cast_refs, finding)
-            if usages:
-                results["cast_usage"] = usages
-
-        bound_pattern = rf'bound\s*=\s*["\x27]{simple_name}["\x27]'
-        bound_refs = _run_grep(
-            bound_pattern, project_root, use_regex=True, include_globs=["*.py"]
-        )
-        if bound_refs:
-            _defs, usages = _filter_grep_results(bound_refs, finding)
-            if usages:
-                results["typevar_bound"] = usages
-
-    elif kind == "method":
-        method_parts = full_name.split(".")
-        if len(method_parts) >= 2:
-            parent_class = method_parts[-2]
-            if len(parent_class) > 2:
-                cast_pattern = rf"cast\([^,]+,\s*[^)]*\b{parent_class}\b"
-                cast_refs = _run_grep(
-                    cast_pattern, project_root, use_regex=True, include_globs=["*.py"]
-                )
-                if cast_refs:
-                    _defs, usages = _filter_grep_results(cast_refs, finding)
-                    if usages:
-                        results["cast_protocol"] = usages
-
-    if kind == "method":
-        parts = full_name.split(".")
-        if len(parts) >= 2:
-            class_name = parts[-2]
-            if len(class_name) > 2:
-                class_refs = _run_grep(
-                    rf"\b{class_name}\b",
-                    project_root,
-                    use_regex=True,
-                    include_globs=["*.py"],
-                    max_results=15,
-                )
-                if class_refs:
-                    import re as _re2
-
-                    usage_lines = []
-                    for cr in class_refs:
-                        if ":" in cr:
-                            line_text = cr.split(":", 2)[-1]
-                        else:
-                            line_text = cr
-                        if _re2.search(
-                            rf"^\s*class\s+{_re2.escape(class_name)}", line_text
-                        ):
-                            continue
-                        usage_lines.append(cr)
-                    if usage_lines:
-                        results["class_usage"] = usage_lines[:10]
-
-    test_refs = _run_grep(
-        rf"\b{simple_name}\b",
-        project_root,
-        use_regex=True,
-        include_globs=["test_*.py", "*_test.py", "conftest.py"],
-    )
-    if test_refs:
-        test_refs = [r for r in test_refs if not _is_substring_match(r, simple_name)]
-        _defs, test_usages = _filter_grep_results(test_refs, finding)
-        if test_usages:
-            results["test_references"] = test_usages
-
-    if rel_file and rel_file.endswith(".py"):
-        file_refs = _run_grep(rel_file, project_root, fixed_string=True, max_results=15)
-        if file_refs:
-            _defs, usages = _filter_grep_results(file_refs, finding)
-            if usages:
-                results["file_path_references"] = usages
-
-        config_refs = _run_grep(
-            rel_file,
-            project_root,
-            fixed_string=True,
-            include_globs=["*.toml", "*.cfg", "*.ini", "*.yaml", "*.yml"],
-            max_results=10,
-        )
-        if config_refs:
-            _defs, usages = _filter_grep_results(config_refs, finding)
-            if usages:
-                results["config_references"] = usages
-
-    for module_name in module_names:
-        module_refs = _run_grep(
-            module_name, project_root, fixed_string=True, max_results=15
-        )
-        if module_refs:
-            _defs, usages = _filter_grep_results(module_refs, finding)
-            if usages:
-                results["module_references"] = usages
-                break
-
-    if kind == "parameter" and owner_simple_name:
-        import re as _re3
-
-        callback_pattern = (
-            rf"callback\s*=\s*(?:[\w\.]+\.)*{_re3.escape(owner_simple_name)}\b"
-        )
-        callback_refs = _run_grep(
-            callback_pattern,
-            project_root,
-            use_regex=True,
-            include_globs=["*.py"],
-            max_results=10,
-        )
-        if callback_refs:
-            results["callback_registrations"] = callback_refs
-
-        signature_pattern = rf"def\s+{_re3.escape(owner_simple_name)}\s*\([^)]*\b{_re3.escape(simple_name)}\b"
-        signature_refs = _run_grep(
-            signature_pattern,
-            project_root,
-            use_regex=True,
-            include_globs=["*.py"],
-            max_results=12,
-        )
-        if signature_refs:
-            override_refs = []
-            line_num = _parse_int(finding.get("line", 0))
-            for ref in signature_refs:
-                parts = ref.split(":", 2)
-                if len(parts) < 2 or not parts[1].isdigit():
-                    continue
-                match_file = parts[0]
-                match_line = int(parts[1])
-                if match_file == file_path and abs(match_line - line_num) <= 3:
-                    continue
-                override_refs.append(ref)
-            if override_refs:
-                results["signature_overrides"] = override_refs
-
-    doc_refs = _run_grep(
-        rf"\b{simple_name}\b",
-        project_root,
-        use_regex=True,
-        include_globs=["*.rst", "*.md"],
-    )
-    if doc_refs:
-        doc_refs = [r for r in doc_refs if not _is_substring_match(r, simple_name)]
-        if doc_refs:
-            compatibility_refs = [
-                r
-                for r in doc_refs
-                if any(
-                    keyword in r.lower()
-                    for keyword in (
-                        "reintroduced",
-                        "restored",
-                        "backward compatibility",
-                        "backwards compatibility",
-                        "compatibility",
-                        "synonym",
-                        "alias",
-                        "shim",
-                        "shortcut",
-                    )
-                )
-            ]
-            if compatibility_refs:
-                results["compatibility_references"] = compatibility_refs
-            sphinx_refs = [
-                r
-                for r in doc_refs
-                if any(
-                    pat in r
-                    for pat in [
-                        ":func:",
-                        ":meth:",
-                        ":class:",
-                        ":attr:",
-                        "autofunction",
-                        "autoclass",
-                        "automethod",
-                        "automodule",
-                        ".. function::",
-                        ".. method::",
-                    ]
-                )
-            ]
-            if sphinx_refs:
-                results["sphinx_directive"] = sphinx_refs
-            else:
-                results["doc_references"] = doc_refs
-
-            if not simple_name.startswith("_"):
-                changelog_patterns = [
-                    "changelog",
-                    "changes",
-                    "history",
-                    "news",
-                    "release",
-                ]
-                api_refs = []
-                for ref in doc_refs:
-                    ref_path = ref.split(":", 1)[0].replace("\\", "/").lower()
-                    in_docs_dir = (
-                        ref_path.startswith("docs/")
-                        or ref_path.startswith("doc/")
-                        or "/docs/" in ref_path
-                        or "/doc/" in ref_path
-                    )
-                    if not in_docs_dir:
-                        continue
-                    if any(pattern in ref_path for pattern in changelog_patterns):
-                        continue
-                    api_refs.append(ref)
-                if api_refs:
-                    results["public_api_docs"] = api_refs[:10]
-
-    return results
 
 
 _pip_install_cache: dict[str, str | None] = {}
@@ -1221,6 +858,123 @@ def _pip_install_to_temp(pip_name: str) -> str | None:
     return None
 
 
+def _find_parent_class_info_ts(
+    finding: dict,
+    source_cache: dict[str, str],
+    project_root: str = "",
+) -> str | None:
+
+    import re
+
+    simple_name = finding.get("simple_name", finding.get("name", ""))
+    full_name = finding.get("full_name", "")
+    file_path = finding.get("file", "")
+
+    parts = full_name.split(".")
+    if len(parts) < 2:
+        return None
+
+    class_name = parts[-2]
+    source = source_cache.get(file_path, "")
+    if not source:
+        return None
+
+    ts_class_pat = re.compile(
+        rf"class\s+{re.escape(class_name)}\s+extends\s+(\S+?)(?:\s+implements\s+(\S+?))?\s*\{{",
+    )
+    match = ts_class_pat.search(source)
+    if not match:
+        ts_impl_pat = re.compile(
+            rf"class\s+{re.escape(class_name)}\s+implements\s+(\S+?)\s*\{{",
+        )
+        match = ts_impl_pat.search(source)
+        if not match:
+            return None
+        bases = [match.group(1).strip().rstrip("{")]
+    else:
+        bases = [match.group(1).strip().rstrip("{")]
+        if match.group(2):
+            bases.append(match.group(2).strip().rstrip("{"))
+
+    info = f"Class `{class_name}` extends/implements: {', '.join(bases)}."
+
+    if not project_root:
+        return info
+
+    found_in_parent = False
+    ts_globs = ["*.ts", "*.tsx", "*.js", "*.jsx"]
+
+    for base in bases:
+        base_name = base.split("<")[0].strip()
+        if not base_name:
+            continue
+
+        parent_class_refs = _run_grep(
+            rf"class\s+{re.escape(base_name)}",
+            project_root,
+            use_regex=True,
+            include_globs=ts_globs,
+            max_results=3,
+        )
+        if parent_class_refs:
+            for ref in parent_class_refs:
+                parent_file = ref.split(":")[0]
+                method_in_parent = _run_grep(
+                    rf"(?:public|protected|private)?\s*(?:async\s+)?{re.escape(simple_name)}\s*[\(<]",
+                    parent_file,
+                    use_regex=True,
+                    max_results=2,
+                )
+                if method_in_parent:
+                    info += (
+                        f"\n  CONFIRMED: Parent `{base_name}` defines `{simple_name}`:"
+                    )
+                    for mr in method_in_parent[:2]:
+                        info += f"\n    {mr}"
+                    found_in_parent = True
+                    break
+        if found_in_parent:
+            break
+
+        if not found_in_parent:
+            nm_dir = Path(project_root) / "node_modules"
+            if nm_dir.is_dir():
+                dts_refs = _run_grep(
+                    rf"(?:export\s+)?(?:declare\s+)?(?:abstract\s+)?class\s+{re.escape(base_name)}",
+                    str(nm_dir),
+                    use_regex=True,
+                    include_globs=["*.d.ts"],
+                    max_results=3,
+                )
+                if dts_refs:
+                    for ref in dts_refs:
+                        dts_file = ref.split(":")[0]
+                        method_in_dts = _run_grep(
+                            rf"{re.escape(simple_name)}\s*[\(<]",
+                            dts_file,
+                            use_regex=True,
+                            max_results=2,
+                        )
+                        if method_in_dts:
+                            info += f"\n  CONFIRMED (node_modules .d.ts): Parent `{base_name}` defines `{simple_name}`:"
+                            for mr in method_in_dts[:2]:
+                                info += f"\n    {mr}"
+                            found_in_parent = True
+                            break
+        if found_in_parent:
+            break
+
+    if found_in_parent:
+        info += f"\n  Method `{simple_name}` is a confirmed override — overrides are NOT dead code."
+    else:
+        info += f"\n  Method `{simple_name}` has parent classes but could not confirm it overrides a parent method."
+        info += (
+            f"\n  Check if the parent framework/library defines this method externally."
+        )
+
+    return info
+
+
 def _find_parent_class_info(
     finding: dict,
     source_cache: dict[str, str],
@@ -1235,6 +989,10 @@ def _find_parent_class_info(
     simple_name = finding.get("simple_name", finding.get("name", ""))
     full_name = finding.get("full_name", "")
     file_path = finding.get("file", "")
+
+    lang = _detect_language(file_path)
+    if lang == "typescript":
+        return _find_parent_class_info_ts(finding, source_cache, project_root)
 
     parts = full_name.split(".")
     if len(parts) < 2:
@@ -1538,12 +1296,45 @@ def _find_string_dispatch(
     return results[:max_results]
 
 
+def _finding_complexity_tier(finding: dict, search_results: dict | None) -> int:
+    """Return 1 (trivial), 2 (moderate), or 3 (complex) based on finding signals."""
+    if finding.get("heuristic_refs"):
+        return 3
+    if finding.get("decorators"):
+        return 3
+    if finding.get("framework_signals"):
+        return 3
+    if finding.get("dynamic_signals"):
+        return 3
+    if finding.get("is_exported"):
+        return 3
+    if finding.get("type") == "method":
+        return 3
+    hit_count = 0
+    if search_results:
+        hit_count = sum(len(v) for v in search_results.values() if isinstance(v, list))
+    if hit_count > 3:
+        return 3
+    if finding.get("called_by"):
+        return 2
+    if hit_count >= 1:
+        return 2
+    return 1
+
+
+_TIER_HALF_WINDOWS = {1: 10, 2: 20, 3: 30}
+_TIER_MAX_CALLERS = {1: 0, 2: 3, 3: 5}
+_TIER_MAX_ENRICHMENT = {1: 2, 2: 5, 3: 8}
+
+
 def _build_graph_context(
     finding: dict,
     defs_map: dict[str, Any],
     source_cache: dict[str, str],
     project_root: str = "",
     repo_facts: RepoFacts | None = None,
+    *,
+    grep_cache: Any = None,
 ) -> str:
     name = finding.get("name", "unknown")
     full_name = finding.get("full_name", name)
@@ -1563,10 +1354,13 @@ def _build_graph_context(
     why_confidence_reduced = finding.get("why_confidence_reduced", [])
     decorators_lower = _normalize_names(decorators)
     if project_root:
-        search_results = _get_cached_search_results(finding, project_root)
+        search_results = _get_cached_search_results(
+            finding, project_root, cache=grep_cache
+        )
     else:
         search_results = {}
     source = source_cache.get(file_path, "")
+    tier = _finding_complexity_tier(finding, search_results)
     guarded_import = _conditional_import_reason(finding, source)
     repo_facts = repo_facts or RepoFacts()
     if project_root and file_path:
@@ -1596,7 +1390,7 @@ def _build_graph_context(
 
     parts.append(f"## Flagged Symbol: `{full_name}`")
     parts.append(f"- Type: {kind}")
-    parts.append(f"- File: `{file_path}:{line}`")
+    parts.append(f"- File: `{rel_file or file_path}:{line}`")
     parts.append(f"- Direct references: {refs}")
     parts.append(f"- Static confidence: {confidence}")
     if decorators:
@@ -1619,12 +1413,20 @@ def _build_graph_context(
 
     parts.append("## Structured Evidence")
     parts.append(f"- Test context: {'yes' if _is_test_context(file_path) else 'no'}")
-    parts.append(f"- Decorator aliases: {decorators_lower or ['none']}")
-    parts.append(f"- Framework signals: {framework_signals or ['none']}")
-    parts.append(f"- Dynamic signals: {dynamic_signals or ['none']}")
-    parts.append(f"- Heuristic ref buckets: {list(heuristic_refs.keys()) or ['none']}")
-    parts.append(f"- Repo-relative file: {rel_file or 'unknown'}")
-    parts.append(f"- Module candidates: {module_names or ['none']}")
+    if finding.get("is_exported"):
+        parts.append(
+            "- **Export status**: This symbol is exported as part of the package's public API"
+        )
+    if decorators_lower:
+        parts.append(f"- Decorator aliases: {decorators_lower}")
+    if framework_signals:
+        parts.append(f"- Framework signals: {framework_signals}")
+    if dynamic_signals:
+        parts.append(f"- Dynamic signals: {dynamic_signals}")
+    if heuristic_refs:
+        parts.append(f"- Heuristic ref buckets: {list(heuristic_refs.keys())}")
+    if module_names:
+        parts.append(f"- Module candidates: {module_names}")
     if owner_full_name:
         parts.append(f"- Parameter owner: {owner_full_name}")
     if discovered_entry_point:
@@ -1675,8 +1477,9 @@ def _build_graph_context(
 
     if source:
         source_lines = source.splitlines()
-        start = max(0, line - 31)
-        end = min(len(source_lines), line + 30)
+        half_window = _TIER_HALF_WINDOWS[tier]
+        start = max(0, line - half_window - 1)
+        end = min(len(source_lines), line + half_window)
         parts.append("## Flagged Function Source")
         for i in range(start, end):
             if i == line - 1:
@@ -1686,9 +1489,12 @@ def _build_graph_context(
             parts.append(f"{i + 1:4d}{marker}{source_lines[i]}")
         parts.append("")
 
+    # Caller truncation — limit callers with source (tier-based)
+    max_callers_with_source = _TIER_MAX_CALLERS[tier]
+    caller_source_window = 10
     parts.append("## Call Graph: Callers (called_by)")
     if called_by:
-        for caller_name in called_by[:10]:
+        for idx, caller_name in enumerate(called_by[:10]):
             parts.append(f"\n### Caller: `{caller_name}`")
             caller_def = defs_map.get(caller_name)
             if caller_def:
@@ -1703,13 +1509,14 @@ def _build_graph_context(
                     f"- Type: {caller_type}, File: `{caller_file}:{caller_line}`"
                 )
 
-                caller_source = source_cache.get(caller_file, "")
-                if caller_source:
-                    clines = caller_source.splitlines()
-                    cs = max(0, caller_line - 6)
-                    ce = min(len(clines), caller_line + 15)
-                    for ci in range(cs, ce):
-                        parts.append(f"  {ci + 1:4d} | {clines[ci]}")
+                if idx < max_callers_with_source:
+                    caller_source = source_cache.get(caller_file, "")
+                    if caller_source:
+                        clines = caller_source.splitlines()
+                        cs = max(0, caller_line - 3)
+                        ce = min(len(clines), caller_line + caller_source_window)
+                        for ci in range(cs, ce):
+                            parts.append(f"  {ci + 1:4d} | {clines[ci]}")
             else:
                 parts.append(f"  (not found in defs_map)")
     else:
@@ -1754,60 +1561,52 @@ def _build_graph_context(
 
     if project_root and simple_name and len(simple_name) > 1:
         if search_results:
-            parts.append("## Search Results Across Entire Project")
-            parts.append(
-                "(Searched source, tests, docs, configs. Definition-only matches filtered out.)"
-            )
-            parts.append(
-                "Read each match carefully. Decide if it represents ACTUAL usage of this symbol,"
-            )
-            parts.append(
-                "or just a coincidental mention (kwarg value, comment, docstring, similar name)."
-            )
+            parts.append("## Search Results Across Project")
             parts.append("")
 
             strategy_labels = {
-                "references": "General references (definition itself filtered out)",
-                "references_definition_only": "Only the definition found — no other references anywhere",
-                "method_calls": f"Method call pattern: .{simple_name}()",
-                "imports": "Import statements",
-                "conditional_import": "CONDITIONAL IMPORT — inside try/except (symbol IS used in the guarded code path)",
-                "string_dispatch": "Dynamic dispatch pattern (getattr, .do(), dict lookup, etc.)",
-                "exported_in_all": "__all__ exports (NOTE: __all__ alone does NOT prove alive — check for actual imports)",
-                "cast_usage": "cast() type reference",
-                "typevar_bound": "TypeVar bound reference",
-                "cast_protocol": "Class is cast to a protocol/interface type (methods are part of that protocol contract)",
-                "class_usage": "How the parent class is used (instantiation, assignment, passing)",
-                "test_references": "Test file references",
-                "qualified_references": "Fully-qualified symbol references",
-                "file_path_references": "Repo-relative file path references",
-                "module_references": "Module path references",
-                "config_references": "Config-file references",
-                "callback_registrations": "Runtime callback registrations",
-                "signature_overrides": "Matching override signatures",
-                "compatibility_references": "Compatibility-retention notes",
-                "sphinx_directive": "Sphinx documentation directive (:func:, autofunction, etc.)",
-                "doc_references": "Documentation mentions",
-                "public_api_docs": "Public API documentation (symbol is documented for users in docs/)",
+                "references": "References (definition filtered out)",
+                "references_definition_only": "Definition only — no other references",
+                "method_calls": f".{simple_name}() calls",
+                "imports": "Imports",
+                "conditional_import": "CONDITIONAL IMPORT (try/except guarded)",
+                "string_dispatch": "Dynamic dispatch (getattr, dict lookup, etc.)",
+                "exported_in_all": "__all__ exports",
+                "cast_usage": "cast() type ref",
+                "typevar_bound": "TypeVar bound ref",
+                "cast_protocol": "Protocol cast (methods are contract)",
+                "class_usage": "Parent class usage",
+                "test_references": "Test refs",
+                "qualified_references": "Qualified refs",
+                "file_path_references": "File path refs",
+                "module_references": "Module path refs",
+                "config_references": "Config refs",
+                "callback_registrations": "Callback registrations",
+                "signature_overrides": "Override signatures",
+                "compatibility_references": "Compatibility notes",
+                "sphinx_directive": "Sphinx directive",
+                "doc_references": "Doc mentions",
+                "public_api_docs": "Public API docs",
             }
 
+            results_per_strategy = 10
             for strategy, lines in search_results.items():
                 label = strategy_labels.get(strategy, strategy)
                 parts.append(f"### {label}:")
-                for line in lines[:10]:
+                for line in lines[:results_per_strategy]:
                     parts.append(f"  {line}")
                 parts.append("")
 
-            enriched = _enrich_search_results(search_results, max_contexts=8)
+            max_enrichment = _TIER_MAX_ENRICHMENT[tier]
+            enriched = _enrich_search_results(
+                search_results, max_contexts=max_enrichment
+            )
             if enriched:
-                parts.append("## File Context Around Matches")
-                parts.append(
-                    "(Full source around each match — read to understand if it's a real usage)"
-                )
+                parts.append("## Source Context Around Matches")
                 parts.append("")
                 for strategy, context_text in enriched.items():
                     label = strategy_labels.get(strategy, strategy)
-                    parts.append(f"### Context for {label}:")
+                    parts.append(f"### {label}:")
                     parts.append(context_text)
                     parts.append("")
 
@@ -2031,6 +1830,9 @@ Choice(), or member lookup at runtime even without explicit references
 - A public symbol (no underscore prefix) in an importable package that is documented in the \
 project's docs/ directory (rst, md, or autodoc) is ALIVE — it exists for downstream consumers \
 even if unused internally. Look for the public_api_docs search results.
+- A symbol marked as exported (is_exported=true) is part of the package's public API. \
+It exists for downstream consumers. Unless you find strong evidence it's truly orphaned \
+(e.g., the entire module is dead), treat it as ALIVE.
 
 What counts as DEAD (TRUE_POSITIVE):
 - ZERO references anywhere in the project (only the definition itself found)
@@ -2039,15 +1841,15 @@ What counts as DEAD (TRUE_POSITIVE):
 green is used
 - TypeVar definitions like T = TypeVar("T") are NOT usages of T
 - A class docstring mentioning a name is NOT a usage of that name
-- Listed in __all__ but NOT actually imported or used anywhere else — __all__ lists are often \
-stale. Being exportable does NOT mean something is actually used. Check for real imports.
+- Listed in __all__ but NOT imported or used anywhere — __all__ can be stale, but when \
+combined with is_exported=true, treat __all__ membership as meaningful public API intent.
 
 Decision rules:
 - COMMIT to a verdict. Use UNCERTAIN only if evidence genuinely conflicts.
 - If you see a real code usage (call, import, dispatch), it is FALSE_POSITIVE — full stop.
 - If ZERO real code usages exist, it is TRUE_POSITIVE — full stop.
 - Read the file context around each match to distinguish real code from comments/docs.
-- __all__ alone is NOT enough to call something alive. Look for actual import/usage evidence.
+- __all__ alone is NOT enough to call something alive — but __all__ combined with is_exported=true IS strong evidence for ALIVE.
 - A generic docs mention is not enough, but an explicit compatibility-retention note is strong evidence for ALIVE.
 - If public_api_docs results show the symbol documented in docs/ AND the symbol is public \
 (no underscore) in an importable package, it is FALSE_POSITIVE — library public API.
@@ -2246,6 +2048,10 @@ def _conditional_import_reason(finding: dict, source: str) -> str | None:
 def _get_cached_search_results(
     finding: dict,
     project_root: str,
+    *,
+    parallel: bool = False,
+    max_workers: int = 4,
+    cache: Any = None,
 ) -> dict[str, list[str]]:
     cached = finding.get("_search_results")
     if isinstance(cached, dict):
@@ -2255,7 +2061,15 @@ def _get_cached_search_results(
     simple_name = finding.get("simple_name", finding.get("name", ""))
     if not simple_name or len(simple_name) <= 1:
         return {}
-    results = _multi_strategy_search(finding, project_root)
+    if parallel:
+        results = _parallel_multi_strategy_search(
+            finding,
+            project_root,
+            max_workers=max_workers,
+            cache=cache,
+        )
+    else:
+        results = _multi_strategy_search(finding, project_root)
     finding["_search_results"] = results
     return results
 
@@ -2293,6 +2107,8 @@ def _deterministic_suppress(
     source_cache: dict[str, str],
     project_root: str = "",
     repo_facts: RepoFacts | None = None,
+    *,
+    grep_cache: Any = None,
 ) -> SuppressionDecision | None:
     import re
 
@@ -2366,7 +2182,9 @@ def _deterministic_suppress(
         )
 
     if project_root:
-        search_results = _get_cached_search_results(finding, project_root)
+        search_results = _get_cached_search_results(
+            finding, project_root, cache=grep_cache
+        )
     else:
         search_results = {}
 
@@ -3082,6 +2900,106 @@ def _build_source_cache(
     return cache
 
 
+HAIKU_PREFILTER_SYSTEM = """\
+You are a quick pre-filter for dead code analysis. For each symbol below, determine if it is \
+a public API method meant to be called by external users of this package.
+
+Answer YES if the symbol is clearly part of the public API (public method on a public class, \
+exported in __init__.py or __all__, documented for external use).
+Answer NO if the symbol appears to be internal implementation detail, private, or orphaned.
+
+IMPORTANT: Respond with ONLY a JSON array. No explanations, no preamble.
+[{"id": 1, "public_api": "YES", "reason": "brief reason"}, ...]
+"""
+
+HAIKU_PREFILTER_MAX_BATCH = 20
+
+
+def _create_haiku_agent(api_key: str) -> DeadCodeVerifierAgent:
+    from skylos.llm.agents import AgentConfig
+
+    haiku_config = AgentConfig(
+        model="claude-haiku-4-5-20251001",
+        api_key=api_key,
+    )
+    haiku_config.provider = "anthropic"
+    return DeadCodeVerifierAgent(haiku_config)
+
+
+def _build_haiku_context(finding: dict, source_cache: dict[str, str]) -> str:
+    name = finding.get("name", "unknown")
+    full_name = finding.get("full_name", name)
+    file_path = finding.get("file", "")
+    kind = finding.get("type", "function")
+    decorators = finding.get("decorators", [])
+
+    parts = [f"- Symbol: `{full_name}` ({kind})"]
+    parts.append(f"- File: `{file_path}`")
+    if decorators:
+        parts.append(f"- Decorators: {', '.join(decorators)}")
+    if finding.get("is_exported"):
+        parts.append("- Exported: yes (in __all__ or __init__.py)")
+
+    source = source_cache.get(file_path, "")
+    if source:
+        line = finding.get("line", 0)
+        lines = source.splitlines()
+        if 0 < line <= len(lines):
+            start = max(0, line - 1)
+            end = min(len(lines), line + 4)
+            snippet = "\n".join(lines[start:end])
+            parts.append(f"- Definition:\n```\n{snippet}\n```")
+
+    return "\n".join(parts)
+
+
+def _haiku_prefilter_exports(
+    haiku_agent: DeadCodeVerifierAgent,
+    findings: list[dict],
+    source_cache: dict[str, str],
+) -> tuple[list[dict], list[dict]]:
+    if not findings:
+        return [], []
+
+    kept = []
+    dismissed = []
+
+    for batch_start in range(0, len(findings), HAIKU_PREFILTER_MAX_BATCH):
+        batch = findings[batch_start : batch_start + HAIKU_PREFILTER_MAX_BATCH]
+
+        contexts = []
+        for i, f in enumerate(batch):
+            ctx = _build_haiku_context(f, source_cache)
+            contexts.append(
+                f"### Symbol {i + 1}: `{f.get('full_name', f.get('name'))}`\n{ctx}"
+            )
+
+        combined = "\n\n---\n\n".join(contexts)
+        user_prompt = f"{combined}\n\nClassify all {len(batch)} symbols above. JSON array response:"
+
+        try:
+            verdicts = _parse_batch_response(
+                haiku_agent, HAIKU_PREFILTER_SYSTEM, user_prompt, len(batch)
+            )
+            for f, v_data in zip(batch, verdicts):
+                public_api = str(v_data.get("public_api", "NO")).strip().upper()
+                reason = v_data.get("reason", "")
+                if public_api == "YES":
+                    dismissed.append(f)
+                    f["_llm_verdict"] = "FALSE_POSITIVE"
+                    f["_llm_rationale"] = f"[haiku-prefilter] Public API: {reason}"
+                    f["_verified_by_llm"] = True
+                    f["_adjusted_confidence"] = 20
+                    f["_haiku_prefiltered"] = True
+                else:
+                    kept.append(f)
+        except Exception as e:
+            logger.warning(f"Haiku pre-filter failed: {e}")
+            kept.extend(batch)
+
+    return kept, dismissed
+
+
 def run_verification(
     findings: list[dict],
     defs_map: dict[str, Any],
@@ -3101,8 +3019,12 @@ def run_verification(
     max_suppression_audit: int = 20,
     quiet: bool = False,
     verification_mode: str = VERIFICATION_MODE_PRODUCTION,
+    grep_workers: int = 4,
+    parallel_grep: bool = False,
 ) -> dict[str, Any]:
     from skylos.llm.agents import AgentConfig
+
+    from skylos.grep_cache import GrepCache
 
     start_time = time.time()
     project_root = Path(project_root)
@@ -3119,6 +3041,9 @@ def run_verification(
     else:
         grep_root = str(project_root)
     config_root = Path(grep_root)
+
+    grep_cache = GrepCache()
+    grep_cache.load(grep_root)
 
     config = AgentConfig(model=model, api_key=api_key)
     if provider:
@@ -3191,6 +3116,7 @@ def run_verification(
                     source_cache,
                     project_root=grep_root,
                     repo_facts=repo_facts,
+                    grep_cache=grep_cache,
                 )
                 if decision is not None:
                     if judge_all_mode:
@@ -3224,6 +3150,41 @@ def run_verification(
                 f["_llm_rationale"] = "Below threshold"
 
     to_verify = to_verify[:max_verify]
+
+    if to_verify:
+        haiku_key = config.api_key or os.environ.get("ANTHROPIC_API_KEY")
+
+        exported_candidates = [
+            f
+            for f in to_verify
+            if f.get("is_exported") and _parse_confidence(f.get("confidence", 0)) >= 80
+        ]
+        if exported_candidates and haiku_key:
+            log(
+                f"Pass 1.5: Haiku pre-filter for {len(exported_candidates)} exported symbols..."
+            )
+            try:
+                haiku_agent = _create_haiku_agent(haiku_key)
+                kept, dismissed = _haiku_prefilter_exports(
+                    haiku_agent,
+                    exported_candidates,
+                    source_cache,
+                )
+                stats.haiku_prefiltered = len(dismissed)
+                stats.verified_false_positive += len(dismissed)
+                stats.llm_calls += max(
+                    1,
+                    (len(exported_candidates) + HAIKU_PREFILTER_MAX_BATCH - 1)
+                    // HAIKU_PREFILTER_MAX_BATCH,
+                )
+                dismissed_set = {id(f) for f in dismissed}
+                to_verify = [f for f in to_verify if id(f) not in dismissed_set]
+                if dismissed:
+                    log(
+                        f"  Haiku dismissed {len(dismissed)} exported symbols as public API"
+                    )
+            except Exception as e:
+                logger.warning(f"Haiku pre-filter setup failed: {e}")
 
     if batch_mode and len(to_verify) > 1:
         log(
@@ -3279,6 +3240,7 @@ def run_verification(
                 source_cache,
                 project_root=grep_root,
                 repo_facts=repo_facts,
+                grep_cache=grep_cache,
             )
             has_rich_context = (
                 "class_usage" in ctx.lower()
@@ -3463,9 +3425,14 @@ def run_verification(
     if propagated:
         log(f"  Transitive alive propagation: {propagated} findings reclassified as FP")
 
+    haiku_note = (
+        f", {stats.haiku_prefiltered} haiku-prefiltered"
+        if stats.haiku_prefiltered
+        else ""
+    )
     log(
         f"  Results: {stats.verified_true_positive} confirmed dead, "
-        f"{stats.verified_false_positive} LLM false positives, "
+        f"{stats.verified_false_positive} LLM false positives{haiku_note}, "
         f"{stats.deterministic_suppressed} deterministically suppressed, "
         f"{stats.suppression_reclassified_dead} suppressions reopened as dead, "
         f"{stats.uncertain} uncertain"
@@ -3587,6 +3554,7 @@ def run_verification(
             "survivors_challenged": stats.survivors_challenged,
             "survivors_reclassified_dead": stats.survivors_reclassified_dead,
             "entry_points_discovered": stats.entry_points_discovered,
+            "haiku_prefiltered": stats.haiku_prefiltered,
             "llm_calls": stats.llm_calls,
             "elapsed_seconds": stats.elapsed_seconds,
             "verification_mode": verification_mode,
@@ -3616,6 +3584,8 @@ def run_verification(
         output["feedback"] = summary
     except Exception as e:
         logger.debug(f"Feedback recording failed: {e}")
+
+    grep_cache.save(grep_root)
 
     return output
 
