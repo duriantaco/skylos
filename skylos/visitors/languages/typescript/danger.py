@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 from tree_sitter import Language, Query, QueryCursor
 import tree_sitter_typescript as tsts
 
@@ -636,7 +637,169 @@ def scan_danger(
     # --- Error info disclosure in HTTP responses (SKY-D271) ---
     _check_error_disclosure(root_node, source_bytes, file_path, findings)
 
+    _check_nextjs_missing_auth(source_bytes, file_path, findings)
+    _check_nextjs_client_secrets(source_bytes, file_path, findings)
+    _check_nextjs_server_action_sqli(source_bytes, file_path, findings)
+
     return findings
+
+
+_AUTH_EVIDENCE = frozenset(
+    {
+        "auth",
+        "session",
+        "getServerSession",
+        "getToken",
+        "cookies",
+        "headers",
+        "getSession",
+        "withAuth",
+        "requireAuth",
+        "verifyToken",
+        "authenticate",
+        "isAuthenticated",
+        "currentUser",
+        "getUser",
+        "clerkClient",
+        "authMiddleware",
+        "NextAuth",
+    }
+)
+
+_MUTATING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
+
+_NEXTJS_ROUTE_PATTERNS = ("/app/", "/pages/api/")
+
+
+def _check_nextjs_missing_auth(
+    source_bytes: bytes, file_path: str, findings: list[dict]
+) -> None:
+    """SKY-D280: Detect Next.js API routes with mutating handlers missing auth checks."""
+    normalized_path = str(file_path).replace(os.sep, "/")
+    is_route = False
+    if "/app/" in normalized_path and normalized_path.endswith(
+        ("route.ts", "route.tsx")
+    ):
+        is_route = True
+    elif "/pages/api/" in normalized_path and normalized_path.endswith(
+        (".ts", ".tsx")
+    ):
+        is_route = True
+
+    if not is_route:
+        return
+
+    source_text = source_bytes.decode("utf-8", errors="replace")
+
+    has_mutating = False
+    for method in _MUTATING_METHODS:
+        if (
+            f"export async function {method}" in source_text
+            or f"export function {method}" in source_text
+            or f"export const {method}" in source_text
+        ):
+            has_mutating = True
+            break
+
+    if not has_mutating:
+        return
+
+    has_auth = False
+    for evidence in _AUTH_EVIDENCE:
+        if evidence in source_text:
+            has_auth = True
+            break
+
+    if not has_auth:
+        findings.append(
+            {
+                "rule_id": "SKY-D280",
+                "severity": "HIGH",
+                "message": "Next.js API route with mutating handler (POST/PUT/DELETE/PATCH) has no authentication check. Add auth verification.",
+                "file": str(file_path),
+                "line": 1,
+                "col": 0,
+            }
+        )
+
+
+def _check_nextjs_client_secrets(
+    source_bytes: bytes, file_path: str, findings: list[dict]
+) -> None:
+    """SKY-S102: Detect server-only env vars accessed in 'use client' components."""
+    source_text = source_bytes.decode("utf-8", errors="replace")
+
+    lines = source_text.split("\n")
+    is_client = False
+    for line in lines[:5]:
+        stripped = line.strip()
+        if stripped in ('"use client"', "'use client'", '"use client";', "'use client';"):
+            is_client = True
+            break
+        if stripped and not stripped.startswith(("//", "/*", "*", "import")):
+            break
+
+    if not is_client:
+        return
+
+    import re
+
+    for match in re.finditer(r"process\.env\.([A-Z_][A-Z0-9_]*)", source_text):
+        env_name = match.group(1)
+        if not env_name.startswith("NEXT_PUBLIC_"):
+            line_num = source_text[: match.start()].count("\n") + 1
+            findings.append(
+                {
+                    "rule_id": "SKY-S102",
+                    "severity": "HIGH",
+                    "message": f"Server-only env var `process.env.{env_name}` accessed in client component. Use NEXT_PUBLIC_ prefix for client-safe vars or move to a server component.",
+                    "file": str(file_path),
+                    "line": line_num,
+                    "col": 0,
+                }
+            )
+
+
+def _check_nextjs_server_action_sqli(
+    source_bytes: bytes, file_path: str, findings: list[dict]
+) -> None:
+    """SKY-D281: Detect potential SQL injection in server actions via template literals."""
+    source_text = source_bytes.decode("utf-8", errors="replace")
+
+    lines = source_text.split("\n")
+    is_server = False
+    for line in lines[:5]:
+        stripped = line.strip()
+        if stripped in ('"use server"', "'use server'", '"use server";', "'use server';"):
+            is_server = True
+            break
+        if stripped and not stripped.startswith(("//", "/*", "*", "import")):
+            break
+
+    if not is_server:
+        return
+
+    import re
+
+    db_methods = re.finditer(
+        r"\.(query|execute|raw|sql)\s*\(\s*`([^`]*\$\{[^`]*)`",
+        source_text,
+        re.DOTALL,
+    )
+    for match in db_methods:
+        template_content = match.group(2).upper()
+        if any(kw in template_content for kw in _SQL_KEYWORDS):
+            line_num = source_text[: match.start()].count("\n") + 1
+            findings.append(
+                {
+                    "rule_id": "SKY-D281",
+                    "severity": "CRITICAL",
+                    "message": f"SQL injection risk in server action — template literal with interpolation passed to .{match.group(1)}(). Use parameterized queries.",
+                    "file": str(file_path),
+                    "line": line_num,
+                    "col": 0,
+                }
+            )
 
 
 def _check_timing_comparison(

@@ -15,6 +15,8 @@ class YAMLRule(SkylosRule):
         self.message = config.get("yaml_config", {}).get(
             "message", "Custom rule violation"
         )
+        # Taint tracking state: maps variable names to taint status within function scope
+        self._taint_state: dict[str, bool] = {}
 
     @property
     def rule_id(self):
@@ -38,6 +40,9 @@ class YAMLRule(SkylosRule):
         elif pattern_type == "call":
             if isinstance(node, ast.Call):
                 return self._check_call_pattern(node, context)
+
+        elif pattern_type == "taint_flow":
+            return self._check_taint_flow(node, context)
 
         return None
 
@@ -117,6 +122,150 @@ class YAMLRule(SkylosRule):
 
         return None
 
+    def _check_taint_flow(self, node, context):
+        """Check for tainted data flowing from sources to sinks without sanitization."""
+        sources = self.pattern.get("sources", [])
+        sinks = self.pattern.get("sinks", [])
+        sanitizers = self.pattern.get("sanitizers", [])
+
+        # Reset taint state at function scope boundaries
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            self._taint_state = {}
+
+        # Track assignments: var = source(...)  or  var = request.form[...]
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    var_name = target.id
+                    if self._expr_matches_sources(node.value, sources):
+                        self._taint_state[var_name] = True
+                    elif self._expr_is_sanitizer_call(node.value, sanitizers):
+                        # Sanitizer call removes taint
+                        self._taint_state[var_name] = False
+                    elif self._expr_contains_tainted(node.value, sources):
+                        # Taint propagates through expressions containing tainted vars
+                        self._taint_state[var_name] = True
+
+        # Check sink calls for tainted arguments
+        if isinstance(node, ast.Call):
+            call_name = self._get_call_name(node)
+            if call_name and any(s in call_name for s in sinks):
+                # Check if any argument is tainted
+                for arg in node.args:
+                    if self._arg_is_tainted(arg, sources):
+                        return [self._make_finding(node, context)]
+                # Check keyword arguments too
+                for kw in node.keywords:
+                    if kw.value and self._arg_is_tainted(kw.value, sources):
+                        return [self._make_finding(node, context)]
+
+        return None
+
+    def _expr_matches_sources(self, node, sources):
+        """Check if an expression references any source pattern."""
+        expr_str = self._node_to_str(node)
+        if expr_str and any(s in expr_str for s in sources):
+            return True
+        # Check subscript access like request.form["key"]
+        if isinstance(node, ast.Subscript):
+            return self._expr_matches_sources(node.value, sources)
+        # Check call like request.get_json()
+        if isinstance(node, ast.Call):
+            return self._expr_matches_sources(node.func, sources)
+        return False
+
+    def _expr_is_sanitizer_call(self, node, sanitizers):
+        """Check if an expression is a sanitizer call wrapping a tainted variable."""
+        if not isinstance(node, ast.Call):
+            return False
+        call_name = self._get_call_name(node)
+        if call_name and any(s in call_name for s in sanitizers):
+            # Check that it wraps a tainted variable
+            for arg in node.args:
+                if isinstance(arg, ast.Name) and self._taint_state.get(arg.id):
+                    return True
+        return False
+
+    def _expr_contains_tainted(self, node, sources):
+        """Check if an expression contains any tainted variable reference."""
+        if isinstance(node, ast.Name) and self._taint_state.get(node.id):
+            return True
+        if isinstance(node, ast.BinOp):
+            return self._expr_contains_tainted(
+                node.left, sources
+            ) or self._expr_contains_tainted(node.right, sources)
+        if isinstance(node, ast.JoinedStr):
+            for val in node.values:
+                if isinstance(val, ast.FormattedValue):
+                    if self._expr_contains_tainted(val.value, sources):
+                        return True
+            return False
+        if isinstance(node, ast.Call):
+            # .format(tainted_var) or func(tainted_var)
+            for arg in node.args:
+                if self._expr_contains_tainted(arg, sources):
+                    return True
+            for kw in node.keywords:
+                if kw.value and self._expr_contains_tainted(kw.value, sources):
+                    return True
+        return False
+
+    def _arg_is_tainted(self, node, sources):
+        """Check if a call argument contains tainted data."""
+        # Direct variable reference
+        if isinstance(node, ast.Name) and self._taint_state.get(node.id):
+            return True
+        # f-string or format string containing tainted variable
+        if isinstance(node, ast.JoinedStr):
+            for val in node.values:
+                if isinstance(val, ast.FormattedValue):
+                    if isinstance(val.value, ast.Name) and self._taint_state.get(
+                        val.value.id
+                    ):
+                        return True
+        # String concatenation/formatting with tainted variable
+        if isinstance(node, ast.BinOp):
+            if self._arg_is_tainted(node.left, sources) or self._arg_is_tainted(
+                node.right, sources
+            ):
+                return True
+        # .format() call with tainted arg
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "format":
+                for arg in node.args:
+                    if self._arg_is_tainted(arg, sources):
+                        return True
+            # Direct source call as argument to sink
+            call_name = self._get_call_name(node)
+            if call_name and any(s in call_name for s in sources):
+                return True
+        # % formatting: "..." % (var,)
+        if isinstance(node, ast.Tuple):
+            for elt in node.elts:
+                if self._arg_is_tainted(elt, sources):
+                    return True
+        # Subscript access like request.form["key"] as direct argument
+        if isinstance(node, ast.Subscript):
+            sub_str = self._node_to_str(node.value)
+            if sub_str and any(s in sub_str for s in sources):
+                return True
+        # Direct source attribute access as argument
+        expr_str = self._node_to_str(node)
+        if expr_str and any(s in expr_str for s in sources):
+            return True
+        return False
+
+    def _node_to_str(self, node):
+        """Convert a simple AST node to a dotted string representation."""
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            parent = self._node_to_str(node.value)
+            if parent:
+                return f"{parent}.{node.attr}"
+            return node.attr
+        return None
+
     def _get_decorator_name(self, deco):
         if isinstance(deco, ast.Name):
             return deco.id
@@ -193,3 +342,37 @@ def load_custom_rules(rules_data):
         except Exception as e:
             print(f"Warning: Failed to load rule {config.get('rule_id')}: {e}")
     return rules
+
+
+def load_community_rules() -> list[dict]:
+    """Load all installed community rules from ~/.skylos/rules/"""
+    rules_dir = Path.home() / ".skylos" / "rules"
+    if not rules_dir.exists():
+        return []
+    all_rules = []
+    for f in sorted(rules_dir.glob("*.yml")):
+        try:
+            import yaml
+
+            data = yaml.safe_load(f.read_text())
+            if data and "rules" in data:
+                for rule_def in data["rules"]:
+                    all_rules.append(
+                        {
+                            "rule_id": rule_def["id"],
+                            "name": rule_def["name"],
+                            "rule_type": "yaml",
+                            "enabled": True,
+                            "severity": rule_def.get("severity", "MEDIUM"),
+                            "category": rule_def.get("category", "community"),
+                            "yaml_config": {
+                                "pattern": rule_def.get("pattern", {}),
+                                "message": rule_def.get(
+                                    "message", "Community rule violation"
+                                ),
+                            },
+                        }
+                    )
+        except Exception:
+            continue
+    return all_rules

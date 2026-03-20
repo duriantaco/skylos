@@ -44,12 +44,19 @@ def build_ts_import_graph(ts_raw_imports: dict, defs: dict):
                     if name == "*":
                         wildcard_edges[str(importer_file)].add(resolved)
                     else:
-                        consumed_exports[resolved].add(name)
+                        actual_name = (
+                            name.split(" as ")[0].strip()
+                            if " as " in name
+                            else name
+                        )
+                        consumed_exports[resolved].add(actual_name)
                     target_key = f"{resolved}:{name}"
                     if target_key in defs:
                         defs[target_key].references += 1
 
     _resolve_wildcard_consumed(consumed_exports, wildcard_edges, defs)
+    _resolve_reexport_aliases(consumed_exports, ts_raw_imports, defs)
+    _resolve_namespace_reexports(consumed_exports, wildcard_edges, defs, ts_raw_imports)
 
     return consumed_exports, wildcard_edges, importers_of
 
@@ -87,6 +94,84 @@ def _resolve_wildcard_consumed(consumed_exports, wildcard_edges, defs):
                             target_key = f"{source_file}:{name}"
                             if target_key in defs:
                                 defs[target_key].references += 1
+
+
+def _resolve_reexport_aliases(consumed_exports, ts_raw_imports, defs):
+    reexport_aliases: dict[str, dict[str, str]] = {}
+
+    for importer_file, raw_imports in ts_raw_imports.items():
+        for imp in raw_imports:
+            resolved = resolve_ts_module(imp["source"], str(importer_file))
+            if not resolved:
+                continue
+            for name in imp["names"]:
+                if " as " in name:
+                    original, alias = name.split(" as ", 1)
+                    original = original.strip()
+                    alias = alias.strip()
+                    reexport_aliases.setdefault(str(importer_file), {})[alias] = (
+                        original,
+                        resolved,
+                    )
+
+    if not reexport_aliases:
+        return
+
+    changed = True
+    iterations = 0
+    while changed and iterations < 20:
+        changed = False
+        iterations += 1
+        for reexporter, alias_map in reexport_aliases.items():
+            consumed_from_reexporter = consumed_exports.get(reexporter, set())
+            for alias, (original, source_file) in alias_map.items():
+                if alias in consumed_from_reexporter:
+                    before = len(consumed_exports[source_file])
+                    consumed_exports[source_file].add(original)
+                    if len(consumed_exports[source_file]) > before:
+                        changed = True
+                        target_key = f"{source_file}:{original}"
+                        if target_key in defs:
+                            defs[target_key].references += 1
+
+
+def _resolve_namespace_reexports(consumed_exports, wildcard_edges, defs, ts_raw_imports):
+    local_defs_by_file = defaultdict(set)
+    for defn in defs.values():
+        if defn.type != "import":
+            local_defs_by_file[str(defn.filename)].add(defn.simple_name)
+
+    for reexporter, sources in wildcard_edges.items():
+        consumed_from_reexporter = consumed_exports.get(reexporter, set())
+        if not consumed_from_reexporter:
+            continue
+
+        for source_file in sources:
+            for importer_file, raw_imports in ts_raw_imports.items():
+                if str(importer_file) != reexporter:
+                    continue
+                for imp in raw_imports:
+                    resolved = resolve_ts_module(imp["source"], str(importer_file))
+                    if resolved != source_file:
+                        continue
+                    if "*" in imp["names"]:
+                        ns_names = set()
+                        for dk, dv in defs.items():
+                            if (
+                                str(dv.filename) == reexporter
+                                and dv.type == "import"
+                            ):
+                                ns_names.add(dv.simple_name)
+                        for ns_name in ns_names:
+                            if ns_name in consumed_from_reexporter:
+                                source_defs = local_defs_by_file.get(
+                                    source_file, set()
+                                )
+                                for name in source_defs:
+                                    consumed_exports[source_file].add(name)
+                                    target_key = f"{source_file}:{name}"
+                                    if target_key in defs:
+                                        defs[target_key].references += 1
 
 
 def demote_unconsumed_ts_exports(defs, consumed_exports):
@@ -227,6 +312,45 @@ def find_dead_ts_files(files, exclude_folders, importers_of, wildcard_edges):
     return dead_files
 
 
+_NEXTJS_CONVENTION_EXPORTS = frozenset(
+    {
+        "default",
+        "generateMetadata",
+        "generateStaticParams",
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "PATCH",
+        "HEAD",
+        "OPTIONS",
+        "middleware",
+        "loading",
+        "error",
+        "layout",
+        "page",
+        "generateViewport",
+        "revalidate",
+        "dynamic",
+        "dynamicParams",
+        "fetchCache",
+        "runtime",
+        "preferredRegion",
+    }
+)
+
+_NEXTJS_CONVENTION_DIRS = ("app/", "pages/", "api/")
+
+
+def _is_nextjs_convention_file(fname: str) -> bool:
+    """Check if a file is under Next.js convention directories."""
+    normalized = fname.replace(os.sep, "/")
+    for d in _NEXTJS_CONVENTION_DIRS:
+        if f"/{d}" in normalized or normalized.startswith(d):
+            return True
+    return False
+
+
 def find_unused_ts_exports(demoted_exports, wildcard_edges):
     if not demoted_exports:
         return []
@@ -268,6 +392,11 @@ def find_unused_ts_exports(demoted_exports, wildcard_edges):
         if defn.type == "method":
             continue
         if os.path.realpath(fname) in api_surface:
+            continue
+        if (
+            defn.simple_name in _NEXTJS_CONVENTION_EXPORTS
+            and _is_nextjs_convention_file(fname)
+        ):
             continue
         findings.append(
             {
