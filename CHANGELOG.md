@@ -1,989 +1,502 @@
 ## Changelog
 
-## [4.1.0] - 2026-03-18
+## [4.1.0] - 2026-03-20
 
 ### Added
-- SKY-Q306: Cognitive Complexity (SonarQube S3776) — penalizes nested logic, complements cyclomatic Q301
-- SKY-L021: Security Control Regression Detection — catches auth/CSRF/TLS/crypto/rate-limit removal in diffs
-- Go quality rules (Q301, Q302, C303, C304) via tree-sitter-go — Go files no longer return empty quality findings
-- `skylos[fast]` — optional Rust accelerator (`pip install skylos[fast]`)
-- `skylos provenance` — detect AI-authored code in PRs
-- Agent-aware quality gate — `[tool.skylos.gate.agent]` stricter thresholds for AI-authored files
-- `skylos agent watch`, `agent pre-commit`, `agent verify --fix --pr`
-- Grep-based verification pass, parallel grep workers
-- GrepCache, multi-language patch validation, CWE tagging + SARIF taxonomy
+- Security regression detection — SKY-L021 expanded to 13 categories: input validation, security headers, encryption, logging/audit, sanitization, permission checks. Findings include `control_type` field
+- Web scanner — public scan page at `skylos.dev/scan`, paste a GitHub URL, get a vibe code risk score. No signup, rate-limited (10/IP/hr)
+- MCP guardrails — `validate_code_change` (diff validation for regressions, dangerous patterns, secrets) and `get_security_context` (project security posture for agents)
+- Community rules — `skylos rules install|list|remove|validate` for YAML rule packs from `duriantaco/skylos-rules` or any URL. Taint-flow pattern support in YAML rules
+- AI provenance — `--provenance` flag annotates findings with AI authorship (cursor, copilot, claude, etc.). Per-agent and per-severity breakdowns
+- TypeScript dead code detection — cross-file analysis with SKY-E003 (unused files with transitive propagation), SKY-E004 (unnecessary exports), wildcard re-export chain resolution, `.js`→`.ts` path resolution
+- TypeScript export graph — aliased imports, default re-exports, namespace re-exports all tracked correctly
+- Next.js security — SKY-D280 (missing auth in API routes), SKY-S102 (server secrets in `"use client"` files), SKY-D281 (SQL injection in `"use server"` actions)
+- SKY-S102: Client-side secret exposure in `static/`, `public/`, `.next/`, `dist/`, `build/` paths
+- D230 enhanced: catches `redirect(request.args.get("next", "/"))` with `urlparse`/`startswith` guard suppression
+- SKY-Q306: Cognitive complexity (SonarQube S3776)
 - SKY-L027 (duplicate strings), SKY-L028 (too many returns), SKY-L029 (boolean trap)
+- Go quality rules (Q301, Q302, C303, C304) via tree-sitter-go
+- `skylos[fast]` — optional Rust accelerator
+- `skylos provenance` — detect AI-authored code in PRs
+- Agent-aware quality gate (`[tool.skylos.gate.agent]`)
+- `skylos agent watch`, `agent pre-commit`, `agent verify --fix --pr`
+- Grep-based verification pass with parallel workers, GrepCache, CWE tagging + SARIF taxonomy
 
 ### Changed
-- Agent CLI consolidated from 16 to 8 commands (`scan`, `verify`, `remediate`, `watch`, `pre-commit`, `triage`, `status`, `serve`)
-- `skylos agent remediate --standards` for LLM-guided code cleanup
-- `--parallel-grep` auto-enabled with `--fix`
+- Agent CLI consolidated from 16 to 8 commands
+- TS definitions use `filename:name` as dict key (prevents collisions)
 
 ### Fixed
 - `Definition.to_dict()` now includes `is_exported` flag
+- TS def key collisions and cross-file import resolution
 
 ## [4.0.0] - 2026-03-15
 
 ### Added
-- **`-a` / `--all` flag** — enables `--danger`, `--secrets`, `--quality`, and `--sca` in one shot. `skylos . -a` replaces `skylos . --danger --secrets --quality --sca`
-- **`addopts` config** — set default CLI flags in `pyproject.toml` under `[tool.skylos]`, just like pytest. Supports list (`["--quality", "--danger"]`) or string (`"--quality --danger"`) format. CLI flags override `addopts`
-- **LLM Verification Agent** — `skylos agent verify <path>` runs 3-pass dead code verification: entry point discovery, graph-aware finding verification, and survivor challenge
-- **Batch LLM Calls** — groups up to 8 findings per LLM call
-- **Confidence Feedback Loop** — auto-tunes heuristic weights based on LLM verdicts across runs (`~/.skylos/feedback.json`)
-- **MCP: `verify_dead_code` tool** — exposes LLM verification to AI agents
-- **`--verification-mode` flag** — added to `skylos agent analyze`, `skylos agent audit`, and `skylos agent verify` with `judge_all` and `production` modes
-- **AI Defense: Cloud Dashboard** — `skylos defend . --upload` sends defense results to the Skylos Cloud dashboard
-- **AI Defense: Dashboard Page** — dedicated AI Defense tab on project pages with defense score ring, OWASP LLM Top 10 grid, trend chart, findings breakdown, and ops checks
-- **CI/CD: `skylos cicd init --defend`** — generates workflow with AI Defense check step (`skylos defend . --fail-on critical --min-score 70`)
-- **Pre-commit: `skylos-defend` hook** — blocks commits with critical AI defense failures
-- **Public API Detection** — `skylos agent verify` now detects documented public API symbols in library packages.
-- **Deterministic suppression for documented public API** — top-level functions, classes, and variables with docs references are fully suppressed without LLM calls; methods require additional Sphinx/autodoc evidence
+- `-a` / `--all` flag — enables `--danger`, `--secrets`, `--quality`, and `--sca` in one shot
+- `addopts` config — set default CLI flags in `pyproject.toml` under `[tool.skylos]`
+- LLM verification agent — `skylos agent verify <path>` with 3-pass dead code verification
+- Batch LLM calls — up to 8 findings per call
+- Confidence feedback loop — auto-tunes heuristic weights across runs (`~/.skylos/feedback.json`)
+- MCP `verify_dead_code` tool
+- `--verification-mode` flag — `judge_all` and `production` modes
+- AI defense cloud dashboard — `skylos defend . --upload` sends results to Skylos Cloud
+- `skylos cicd init --defend` and `skylos-defend` pre-commit hook
+- Public API detection — documented API symbols suppressed without LLM calls
 
 ### Changed
-- **Dead-code verifier contract** — `skylos agent analyze`, `skylos agent audit`, and `skylos agent verify` now default to `judge_all` mode, where static dead-code candidates remain the source of truth and the LLM reviews nearly every `references == 0`
-- **Deterministic suppressors as evidence** — in `judge_all` mode, entry-point discovery and deterministic suppressors are attached to findings as verifier evidence
-- **Benchmark fairness** — the real world dead-code benchmark now runs the verifier in `judge_all` mode so model quality is measured separately
+- Dead-code verifier defaults to `judge_all` mode
+- Deterministic suppressors attached as verifier evidence
 
 ### Fixed
-- **CI/CD:** Quality Gate step now runs with `if: always()` so it reports even when defend step fails. Fixed trailing blank line in generated defend workflow step
-- **CLI:** `--upload` on empty project now prints "skipping upload" instead of silently doing nothing
+- Quality Gate step runs with `if: always()`
+- `--upload` on empty project prints "skipping upload"
 
 ## [3.5.10] - 2026-03-10
 
 ### Changed
-- **Breaking:** Removed `skylos . --fix`, `skylos agent fix`, and `skylos agent analyze --fix`. Use `skylos agent remediate` instead
-- Removed legacy `Fixer` class in favor of `FixerAgent`
+- Breaking: Removed `skylos . --fix`, `skylos agent fix`, `skylos agent analyze --fix` — use `skylos agent remediate`
 
 ### Fixed
-- `LiteLLMAdapter.complete()` now forwards `response_format` to litellm, fixing `TypeError` in `skylos agent remediate`
-- `create_llm_adapter()` now passes `base_url` from `AgentConfig`, fixing `--base-url` being silently ignored
-- Attribute context matching bug: `if "."` -> `if "." in defn.name` (dead branch producing incorrect results)
-- `_mark_refs()` fallback: replaced O(n) full scan with pre-built lookup for method resolution
-- Narrowed broad `except Exception` blocks to specific types (`OSError`, `SyntaxError`, `TypeError`, `ValueError`) across analyzer and API modules
-- Added debug logging to silent `except: pass` blocks in API and analyzer
-- Git subprocess calls now have timeouts to prevent indefinite hangs
-- File reads cached in LLM report generation
+- `LiteLLMAdapter.complete()` forwards `response_format` to litellm
+- `create_llm_adapter()` passes `base_url` from `AgentConfig`
+- Attribute context matching bug, `_mark_refs()` O(n) fallback replaced with lookup
+- Narrowed broad `except Exception` blocks to specific types
+- Git subprocess calls now have timeouts
 
 ## [3.5.9] - 2026-03-10
 
-Patch over 3.5.8.
-
 ### Fixed
-- `skylos cicd init` no longer crashes with `TypeError: generate_workflow() got an unexpected keyword argument 'use_baseline'`
+- `skylos cicd init` no longer crashes with `TypeError` on `generate_workflow()`
 
 ## [3.5.8] - 2026-03-10
 
 ### Fixed
-- SKY-D260: multiline HTML comments no longer produce duplicate findings — all spanned lines are excluded from prose scanning
-- SKY-D260: `scan_directory` now reuses project-wide `DEFAULT_EXCLUDE_FOLDERS` (adds `vendor`, `.next`, `.nuxt`, `.idea`, etc.)
-- SKY-D260: removed overly broad patterns (`system|assistant:` header, `when the AI reads this`), tightened prompt-key regex
-- SKY-D260: fenced code blocks and YAML front matter excluded from markdown prose scanning
-- SKY-D260: homoglyph detection only flags mixed-script words, not pure Cyrillic/Greek text
-- SKY-D260: removed `return`/`print` from exfil verbs, tightened `act as` to require sentence boundary
-- SKY-D260: fixed single-line string regex matching across newlines in `.py` files
-- SKY-Q301: now counts comprehension `for`/`if` and match case guards
-- SKY-Q301: threshold changed from `>=10` to `>10` (aligns with McCabe convention and TS engine)
+- SKY-D260: multiline HTML comment duplicates, overly broad patterns, fenced code block exclusion, homoglyph false positives, single-line string regex
+- SKY-Q301: counts comprehension `for`/`if` and match case guards; threshold `>=10` → `>10`
 
 ## [3.5.7] - 2026-03-09
 
 ### Added
-- `skylos cicd init --upload` flag for cloud dashboard upload workflows
-- SKY-L016: Undefined Config — detects references to undefined env-var feature flags
-- SKY-L023: Phantom Decorator — detects undefined security decorators
-- SKY-L024: Stale Mock — detects `mock.patch` targeting renamed/removed functions
-- SKY-L026: Unfinished Generation — detects stub-only functions in production code
-- SKY-D260: AI Supply Chain Security — multi-file prompt injection scanner with canonicalization engine
-- Vibe confidence metadata (`vibe_category`, `ai_likelihood`) on all vibe rules
+- `skylos cicd init --upload` for cloud dashboard workflows
+- SKY-L016 (undefined config), SKY-L023 (phantom decorator), SKY-L024 (stale mock), SKY-L026 (unfinished generation)
+- SKY-D260: AI supply chain security — multi-file prompt injection scanner
+- Vibe confidence metadata (`vibe_category`, `ai_likelihood`)
 - `--llm` flag for LLM-optimized reports
 
 ### Fixed
-- SKY-C401 clone detection: reduced false positives (higher thresholds, skip tests/boilerplate)
-- Server tests updated for token auth and path allowlist
-
+- SKY-C401 clone detection false positives reduced
 
 ## [3.5.6] - 2026-03-07
 
 ### Added
-- `--diff [BASE_REF]` flag for line-level precision filtering — only reports findings in lines changed since BASE_REF (e.g. `--diff origin/main`). Use `--diff` without a value to auto-detect (`GITHUB_BASE_REF` or `origin/main`). Unlike `--diff-base` which filters at the file level, `--diff` uses unified diff hunk headers for exact line-range matching
-- Git blame attribution: findings show the author who introduced the code
-- Auto-upload: linked projects automatically upload scan results (use `--no-upload` to skip)
-- SKY-L010: Security TODO/FIXME markers
-- SKY-L011: Disabled security controls (e.g. `verify=False`)
-- SKY-L012: Phantom calls — calls to undefined/unimported functions
-- SKY-L013: Insecure randomness (CWE-330)
-- SKY-L014: Hardcoded credentials (CWE-798)
-- SKY-L017: Error information disclosure (CWE-209)
-- SKY-L020: Overly broad file permissions (CWE-732)
-- Dynamic signal tracking (`inspect.getmembers`, `dir()`) for smarter false-positive suppression
-- Default exclude folders expanded for Go (`vendor`), TypeScript (`.next`, `.nuxt`, `.turbo`), VCS (`.hg`, `.svn`), and IDE (`.idea`, `.vscode`)
-- Go engine now shares exclude folder list with main constants
+- `--diff [BASE_REF]` — line-level precision filtering using unified diff hunk headers
+- Git blame attribution on findings
+- Auto-upload for linked projects (`--no-upload` to skip)
+- SKY-L010 (security TODOs), SKY-L011 (disabled security controls), SKY-L012 (phantom calls), SKY-L013 (insecure randomness), SKY-L014 (hardcoded credentials), SKY-L017 (error info disclosure), SKY-L020 (overly broad permissions)
+- Dynamic signal tracking (`inspect.getmembers`, `dir()`)
+- Expanded default exclude folders for Go, TypeScript, VCS, IDE
 
 ### Fixed
-- `--exclude-folder` with trailing slashes (e.g. `app/alembic/`) now works correctly. Also with paths relative to CWD that include the target directory prefix (e.g. `--exclude-folder app/alembic` when analyzing `app/`) now correctly excludes files
-- `test_analyzer.py`: updated `proc_file` unpacking to include new `source_lines` return value
-- `test_server.py`: updated expected bind host from `0.0.0.0` to `127.0.0.1`
+- `--exclude-folder` with trailing slashes and CWD-relative paths
 
 ### Changed
-- Table output is now the default. TUI is now opt-in via `--tui`
-- MCP credit checks fail-open on network errors and unexpected status codes
+- Table output is now the default (TUI opt-in via `--tui`)
+- MCP credit checks fail-open on network errors
 
 ## [3.5.5] - 2026-03-04
 
 ### Added
-- Claude Code Security integration — ingest Anthropic's AI vulnerability scanner findings into Skylos dashboard
-- `skylos ingest claude-security` CLI subcommand (--input, --token, --no-upload, --json)
-- `skylos cicd init --claude-security` generates a 3-job GitHub Actions workflow (Skylos + Claude Security in parallel, upload sequential)
-- Blue "Claude Security" badges on scans list, scan detail, and issues list pages
-- Example workflow: `.github/workflows/examples/skylos-plus-claude-security.yml`
-- Integration docs: `docs/integrations/claude-code-security.mdx`
+- Claude Code Security integration — `skylos ingest claude-security` CLI subcommand
+- `skylos cicd init --claude-security` generates 3-job GitHub Actions workflow
+- Blue "Claude Security" badges on dashboard
 
 ### Changed
-- `normalizeIncomingReport()` in report route now detects Claude Security format (after SARIF check)
-- `generate_workflow()` accepts `use_claude_security` parameter
-- Credit deduction in report route is now format-aware (2 credits for Claude Security, 1 for native)
+- Credit deduction is format-aware (2 credits for Claude Security, 1 for native)
 
 ## [3.5.4] - 2026-03-03
 
 ### Added
-- LLM now generates code-level fix suggestions. It shows the problematic code snippet and the corrected version with 2 lines of context before/after
-- PR inline comments render vulnerable code and fixed code in fenced code blocks
-- PR summary "Top Issues" section uses collapsible `<details>` blocks for code fixes
-- Fallback to rule-based text suggestions (`_RULE_SUGGESTIONS`) when LLM is not used
+- LLM-generated code-level fix suggestions with before/after snippets
+- PR inline comments with fenced code blocks, collapsible `<details>` in summary
+- Rule-based text suggestion fallback when LLM not used
 
 ### Fixed
-- Phase 3 matching: findings without `rule_id` (dead code) now match by line number alone
-- `_merge_llm_findings` passes through `vulnerable_code` and `fixed_code` fields
+- Phase 3 matching for findings without `rule_id`
+- `_merge_llm_findings` passes through `vulnerable_code` and `fixed_code`
 
 ## [3.5.3] - 2026-03-03
 
 ### Added
-- CVE reachability analysis for Python SCA findings via ca9 engine — proves whether vulnerable dependency code is actually reachable, eliminating false positives
-- "Reachability" column in SCA table output (red=Reachable, green=Unreachable, yellow=Inconclusive)
-- Auto-discovery of `coverage.json` for dynamic reachability analysis
-- `ca9` added as a core dependency
-- `skylos whoami` command — shows org, project, and plan info
+- CVE reachability analysis via ca9 engine — proves whether vulnerable deps are actually reachable
+- `skylos whoami` command
 
 ### Fixed
-- `--json -o <file>` now writes JSON to the output file instead of only printing to stdout
-- CI/CD workflow generator: `agent review` step uses `--format json` instead of invalid `--json` flag
-- CI/CD workflow generator: auto-adds `ANTHROPIC_API_KEY` env when model name contains "claude"
-- LLM agent review pipeline now includes `explanation` and `suggestion` fields in output
-- CI/CD PR review: inline comments now match findings to diff correctly (absolute vs relative path mismatch)
+- `--json -o <file>` writes to file instead of only stdout
+- CI/CD workflow: `agent review` uses `--format json`, auto-adds `ANTHROPIC_API_KEY`
+- PR review inline comments: absolute vs relative path mismatch fixed
 
 ## [3.5.2] - 2026-03-01
 
 ### Added
-- Go dead code detection now live
-- Go module caching to avoid redundant binary invocations per file
-
-### Changed
-- Go engine output now returns symbols alongside findings
-- Go engine contract validates symbol data structure
-- README: added Skylos vs Knip (TS) benchmark on consola
+- Go dead code detection
 
 ### Fixed
-- Added `__init__.py` inside `engines/__init__.py`
+- `engines/__init__.py` missing
 
 ## [3.5.1] - 2026-02-28
 
 ### Added
-- TypeScript analysis 6.7x faster — batched ~77 per-file tree-sitter queries into 3-4 module-level compiled queries
-- SKY-D245 (HIGH): Dynamic `require()` with variable argument
-- SKY-D246 (HIGH): `jwt.decode()` without verification
-- SKY-D247 (MEDIUM): CORS wildcard origin `cors({ origin: '*' })`
-- SKY-D248 (MEDIUM): Hardcoded internal URL (`localhost`/`127.0.0.1`)
-- SKY-D250 (MEDIUM): Insecure randomness — `Math.random()` usage
-- SKY-D251 (HIGH): Sensitive data in logs — passwords/tokens passed to `console.log()`
-- SKY-D252 (MEDIUM): Insecure cookie — missing `httpOnly`/`secure` flags
-- SKY-D253 (MEDIUM): Timing-unsafe comparison of secrets via `===`/`==`
-- SKY-D270 (MEDIUM): Sensitive data in `localStorage`/`sessionStorage` — tokens, passwords, API keys
-- SKY-D271 (MEDIUM): Error info disclosure — `error.stack`/`.sql` sent in HTTP response
-- SKY-D510 (HIGH): Prototype pollution via `__proto__` access
-- SKY-Q305 (MEDIUM): Duplicate condition in if-else-if chain
-- SKY-Q402 (MEDIUM): `await` inside for/while loop
-- SKY-UC002 (MEDIUM): Unreachable code after return/throw/break/continue
-- Shannon entropy-based secret detection for high-entropy strings (enhances SKY-S101)
-- Parser object caching for TypeScript and TSX grammars
-- Smarter attribute resolution — fallback matching for instance methods and polymorphic calls
-- `__init__.py` re-export and import chain tracking
-- Exported class methods automatically marked as public API
-- `nonlocal` variable handling and tuple unpacking underscore convention
-- Sphinx `conf.py` and docs theme files excluded
-- Expanded Django and DRF framework dictionaries (admin attrs, form/serializer field methods, more base classes, template tag decorators)
-- `threading.Thread.run()` overrides suppressed
-- Test classes and mock objects in test files suppressed
-- Score badge auto-copied to clipboard
-- Added new Go Language
+- TypeScript analysis 6.7x faster via batched tree-sitter queries
+- 11 new TypeScript security rules: SKY-D245 through SKY-D253, SKY-D270, SKY-D271, SKY-D510
+- SKY-Q305 (duplicate condition), SKY-Q402 (await in loop), SKY-UC002 (unreachable code)
+- Shannon entropy-based secret detection
+- Smarter attribute resolution, `__init__.py` re-export tracking
+- Expanded Django/DRF framework dictionaries
+- Go language support
 
 ### Fixed
-- TUI category list is now focusable again
+- TUI category list focusable again
 
 ## [3.4.3] - 2026-02-25
 
 ### Added
-- Multi-path CLI support — `skylos app/ tests/` analyzes all paths with deduplication
-- Module-scoped f-string pattern matching (`export_*` no longer leaks across modules)
-- `@abstractmethod` declarations suppressed as dead code
-- Framework dictionaries for Starlette, Flask-RESTful, Tornado, Marshmallow, SQLAlchemy, Celery, Click
+- Multi-path CLI support (`skylos app/ tests/`)
+- `@abstractmethod` suppression, framework dictionaries for Starlette, Flask-RESTful, Tornado, Marshmallow, SQLAlchemy, Celery, Click
 
 ### Fixed
-- Pattern tracker double-counting refs from redundant per-module loop
-- `private_name` penalty 80→60 for correct threshold behavior at `--confidence 20`
-- TUI sidebar no longer focusable by arrow keys
+- Pattern tracker double-counting, `private_name` penalty 80→60
 
 ## [3.4.2] - 2026-02-22
 
 ### Added
-- Next.js/React framework TypeScript dead code detection. Convention-based exports, route handlers, config exports, react patterns, and exported custom hooks are no longer flagged as dead code
-- Added dynamic dispatch pattern detection. `getattr(module, f"prefix_{var}")` registers f-string patterns and marks matching functions as used
-- Added `globals()[f"prefix_{var}"]` f-string subscript detection 
-- Added `__init_subclass__` registry pattern are now marked as implicitly used
-- `base_classes` field on `Definition` for tracking class inheritance chains
-- Added Indirect enum inheritance
-- Added 12 new tests for dynamic pattern detection and enum member handling
+- Next.js/React TypeScript dead code detection (convention exports, route handlers, hooks)
+- Dynamic dispatch: `getattr(module, f"prefix_{var}")` and `globals()` f-string detection
+- `__init_subclass__` registry pattern detection, indirect enum inheritance
 
 ### Fixed
-- Fixed `pattern_tracker.pattern_refs.append()`. Was not compiling regex patterns, so f-string pattern matching was silently breaking
-- Fixed inline f-strings in `getattr`/`globals()`. Calls were ignored because only pre-assigned variable names were checked
-- Fixed functions containing dynamic dispatch (`getattr`/`globals()` with f-string) now auto-marked as used
-- Fixed functions returning a `__init_subclass__` base type now recognized as registry consumers and marked as used
-- Fixed uppercase class variable. Check was short-circuiting before enum detection could run, and the early return discarded the confidence reduction without assigning it
-- Enum methods now also skipped
-- Uppercase class variable early-return now properly assigns `def_obj.confidence` before returning
+- Pattern tracker regex compilation, inline f-string handling, enum method/class variable detection
 
 ## [3.4.1] - 2026-02-21
 
 ### Added
-- BFS from entry points through the import graph to eliminate false positives for code in orphaned modules
-- `__getattr__` package handling and dynamic module safety for lazy-loading and `eval`/`exec` patterns
-- Relative import resolution in raw import collection
-- `skylos credits` command and credit check before `--upload`
-- MCP server auth, rate limiting, and per-tool credit deduction
+- BFS from entry points through import graph for false positive elimination
+- `__getattr__` package handling, relative import resolution
+- `skylos credits` command, MCP server auth + rate limiting + credit deduction
 
 ### Fixed
-- `--trace --json` and `--pytest-fixtures --json` producing invalid JSON (`capture_output` logic was inverted, letting subprocess stdout leak into JSON output)
-
-### Changed
-- MCP tools now gated with auth check + credit deduction before execution
-- Unreachable module definitions capped at confidence 5
+- `--trace --json` and `--pytest-fixtures --json` producing invalid JSON
 
 ## [3.4.0] - 2026-02-18
 
 ### Added
 - TypeScript: interface, enum, and type alias dead code detection
-- TUI detected languages display and severity bar chart in Overview panel
-- `languages` field in `analysis_summary` output
-- CI/CD visibility added in README, "30-second setup", badge, `skylos badge` command
-- Type hints added to control_flow.py, penalties.py, cicd/workflow.py, cicd/review.py, and all TypeScript scanner files
-- CBO coupling (SKY-Q701) with 7 dependency types, afferent/efferent breakdown, and framework-aware filtering. LCOM cohesion (SKY-Q702) with Union-Find LCOM1/4/5, Python-aware method categorization, and dataclass exemption
-- Architecture metrics: distance from Main Sequence (SKY-Q802), Zone of Pain/Uselessness classification (SKY-Q803), Dependency Inversion violations (SKY-Q804), per-module and package-level instability/abstractness scoring with system-wide fitness scores in JSON output
-- CBO coupling (SKY-Q701) with 7 dependency types, afferent/efferent breakdown, and framework-aware filtering; LCOM cohesion (SKY-Q702) with Union-Find LCOM1/4/5, Python-aware method categorization, and dataclass exemption
-- Architecture metrics: distance from Main Sequence (SKY-Q802), Zone of Pain/Uselessness classification (SKY-Q803), Dependency Inversion violations (SKY-Q804), per-module and package-level instability/abstractness scoring with system-wide fitness scores in JSON output
-- 50 new tests for coupling, cohesion, architecture metrics, zone classification, and DIP detection
+- TUI language display and severity bar chart
+- CI/CD visibility: `skylos badge` command, "30-second setup" in README
+- CBO coupling (SKY-Q701) and LCOM cohesion (SKY-Q702)
+- Architecture metrics: SKY-Q802 (distance from Main Sequence), SKY-Q803 (Zone of Pain/Uselessness), SKY-Q804 (Dependency Inversion violations)
 
 ### Fixed
-- class names in the typescript portion now captured correctly (`type_identifier` instead of `identifier`)
-- `regex.exec()` in typescript no longer triggers SKY-D506 and decorated classes no longer flagged as dead (FPs)
-- TypeScript: lifecycle methods (`constructor`, `render`, `componentDidMount`, etc.) excluded from dead code
-- `export default function`, `export { name }`, and `extends Base` all tracked properly
-- TypeScript: callbacks, array storage, object shorthand, return values, spread, and type annotations now tracked as references
-- Version-conditional imports no longer flagged as dead code
+- TypeScript class name capture, `regex.exec()` false positives, lifecycle method exclusion
+- `export default function`, `export { name }`, `extends Base` tracking
+- Callbacks, array storage, object shorthand, return values, spread, type annotations as references
 
 ### Changed
-- Quick Start table expanded with CI/CD commands
 - TypeScript scanner uses `Query()` constructor instead of deprecated `TS_LANG.query()`
-- `--table` flag outputs Rich tables 
 
 ## [3.3.0] - 2026-02-13
 
 ### Added
-
-**DevOps Remediation Agent**
-- New `skylos agent remediate` command — end-to-end security & quality remediation agent that scans, prioritizes, fixes, tests, and creates PRs autonomously
-  - `--dry-run` shows remediation plan without touching files
-  - `--max-fixes N` caps the number of fixes per run
-  - `--auto-pr` creates a git branch, commits fixes, pushes, and opens a PR via `gh`
-  - `--test-cmd CMD` overrides test suite auto-detection (supports pytest, unittest, tox, Makefile)
-  - `--severity LEVEL` filters findings to fix (critical, high, medium, low)
-  - `--branch-prefix PREFIX` customizes the git branch name (default `skylos/fix`)
-- `skylos/llm/planner.py` — `RemediationPlanner` that prioritizes findings by severity, groups by file, sorts auto-fixable rules first, and caps at `max_fixes`
-- `skylos/llm/executor.py` — `RemediationExecutor` that applies fixes to disk with backup/revert, auto-detects test suites, runs tests, verifies fixes via re-scan, and handles git branch/commit/push/PR creation
-- `skylos/llm/orchestrator.py` — `RemediationAgent` that orchestrates the full 5-step lifecycle
-- Added `build_pr_description()` to `skylos/llm/prompts.py` for generating structured PR bodies with fix/failure/skip tables
-- Added `remediate` MCP tool to `skylos_mcp/server.py` — AI assistants can invoke the full remediation loop via MCP
-
-**Tests**
-- 24 tests for the remediation agent (planner, executor, orchestrator, PR description)
-- 32 tests for MCP server security rules
-- Added tests for CORS, JWT, open redirect, mass assignment, deserialization, sanitizers, TypeScript expanded rules, new quality rules, and non-Python secrets
-
-**CI/CD Integration**
-- New `skylos cicd` command group for CI/CD integration
-  - `skylos cicd init` generates GitHub Actions workflow (`.github/workflows/skylos.yml`) with configurable triggers, analysis types, and optional LLM review
-  - `skylos cicd gate` runs quality gate checks from a JSON results file
-  - `skylos cicd annotate` emits GitHub Actions annotations from a JSON results file
-  - `skylos cicd review` posts inline PR review comments and a summary via `gh` CLI, filtered to changed lines only
-- `--summary` flag on `skylos . --gate` to write a markdown results table to `$GITHUB_STEP_SUMMARY`
-- Added MCP server (`skylos_mcp/`) exposing `analyze`, `security_scan`, `quality_check`, and `secrets_scan` as tools via FastMCP
-
-**New Security Rules**
-- SKY-D230 (HIGH): Open redirect detection — taint-flow from user input to `redirect()`, `HttpResponseRedirect()`, `HttpResponsePermanentRedirect()`
-- SKY-D231 (HIGH): CORS misconfiguration — detects `CORS_ALLOW_ALL_ORIGINS = True`, `Access-Control-Allow-Origin: *`, `CORS()` without explicit origins
-- SKY-D232 (CRITICAL): JWT security issues — `algorithms=['none']`, `verify=False`, disabled signature verification
-- SKY-D233 (CRITICAL): Untrusted deserialization — `marshal.loads`, `shelve.open`, `jsonpickle.decode`, `dill.loads`, `dill.load`
-- SKY-D234 (HIGH): Mass assignment — `Meta.fields = '__all__'` in Django ModelForms and DRF serializers
-- Sanitizer framework for taint analysis: XSS (`html.escape`, `bleach.clean`), CMD (`shlex.quote`), URL (`urllib.parse.quote`), PATH (`os.path.basename`) sanitizers clear taint contextually
-- OWASP Top 10 and PCI DSS 4.0 compliance mappings for all new rules
-
-**New TypeScript Security Rules**
-- SKY-D503 (HIGH): `document.write()` — XSS risk
-- SKY-D504 (CRITICAL): `new Function()` — equivalent to eval
-- SKY-D505 (HIGH): `setTimeout`/`setInterval` with string argument — eval equivalent
-- SKY-D506 (HIGH): `child_process.exec()` — command injection, suggests `execFile()`
-- SKY-D507 (HIGH): `outerHTML` assignment — XSS risk
-- SKY-D240 (HIGH): Tool poisoning — detects hidden instructions in MCP tool descriptions
-- SKY-D241 (HIGH): Unauthenticated transport — MCP servers using `sse` or `streamable-http` without authentication middleware
-- SKY-D242 (HIGH): Permissive resource URI — `file://` or wildcard `{path}` patterns in MCP resource URIs
-- SKY-D243 (HIGH): Network-exposed MCP — `host="0.0.0.0"` without binding to localhost
-- SKY-D244 (CRITICAL): Secrets in tool defaults — hardcoded API keys, tokens, or passwords in MCP tool parameter defaults
-- OWASP Top 10 and PCI DSS 4.0 compliance mappings for all MCP rules
-
-**New Quality Rules**
-- SKY-L005 (LOW): Unused exception variable — `except ValueError as e` where `e` is never used
-- SKY-L006 (MEDIUM): Inconsistent return — functions with mixed explicit returns and bare returns
-- SKY-Q501 (MEDIUM): God class detection — classes exceeding configurable method count (20) or attribute count (15)
-
-**New TypeScript Quality Rules**
-- SKY-Q601: Cyclomatic complexity (threshold: 10)
-- SKY-Q602: Nesting depth (threshold: 4)
-- SKY-Q603: Function length (threshold: 50 lines)
-- SKY-Q604: Parameter count (threshold: 5)
-
-**Language Support**
-- Go language support via pluggable engine architecture (`skylos/engines/`)
-- TypeScript import tracking (named, default, and namespace imports) with unused import detection
-- Secrets scanning expanded to `.env`, `.yaml`, `.yml`, `.json`, `.toml`, `.ini`, `.cfg`, `.conf`, `.ts`, `.tsx`, `.js`, `.jsx`, `.go`
+- Remediation agent — `skylos agent remediate` with `--dry-run`, `--max-fixes`, `--auto-pr`, `--test-cmd`, `--severity`
+- CI/CD integration — `skylos cicd init|gate|annotate|review`
+- MCP server — `analyze`, `security_scan`, `quality_check`, `secrets_scan`, `remediate` tools
+- SKY-D230 (open redirect), SKY-D231 (CORS), SKY-D232 (JWT), SKY-D233 (deserialization), SKY-D234 (mass assignment)
+- Sanitizer framework for taint analysis (XSS, CMD, URL, PATH)
+- TypeScript security: SKY-D503 through SKY-D507, SKY-D240 through SKY-D244
+- SKY-L005 (unused exception var), SKY-L006 (inconsistent return), SKY-Q501 (god class)
+- TypeScript quality: SKY-Q601 through SKY-Q604
+- Go language support via pluggable engine architecture
+- Secrets scanning expanded to `.env`, `.yaml`, `.json`, `.toml`, `.ini`, `.cfg`, `.ts`, `.tsx`, `.js`, `.go`
 
 ### Fixed
-- Fixed `import json` inside `main()` shadowing the module-level `json` import, causing `UnboundLocalError` in all CLI paths that call `json.loads()` after the agent remediate block
-- LLM marked all `_`-prefixed dead code as alive by speculating about dynamic dispatch without evidence in the code context
-- Removed deprecated `ast.NameConstant` compatibility in `calls.py` — now uses `ast.Constant` only
+- `import json` inside `main()` shadowing module-level import
+- LLM false-aliving all `_`-prefixed dead code
 
 ### Changed
-- `_emit_github_annotations()` now sorts annotations by severity and caps output at 50 (GitHub's limit), with optional `severity_filter` and `max_annotations` params
-- `run_gate_interaction()` accepts a new `summary` keyword arg to write markdown to `$GITHUB_STEP_SUMMARY`
-- SYSTEM_PROMPT requires citing a specific line for FP verdicts and explicitly states underscore prefix != dynamic usage
-- Taint-flow scanners (cmd, fs, net, xss) now accept context-specific sanitizer sets
-- `danger.py` refactored to share parsed AST tree across all scanners instead of re-parsing per scanner
+- Taint-flow scanners accept context-specific sanitizer sets
+- `danger.py` shares parsed AST tree across scanners
 
 ## [3.2.5] - 2026-02-09
 
 ### Fixed
-- Wired `exclude_folders` parameter through `run_pipeline` and `run_static_on_files`
-- `run_analyze` call inside run_pipeline now uses the passed `exclude_folders` instead of always calling `parse_exclude_folders()`
+- `exclude_folders` wired through `run_pipeline` and `run_static_on_files`
 
 ## [3.2.4] - 2026-02-08
 
 ### Changed
-- Refactored agent analyze and review commands from parallel execution to a pipeline architecture where static analysis is source of truth and LLM verifies
-- Extracted orchestration logic from `cli.py` into `pipeline.py`
-- Static analysis now indexes the full project even when reviewing changed files, fixing FP dead code in the review command
-- LLM no longer independently discovers dead code. Only confirms static findings
-- LLM-only findings are now always marked as needs_review and never block CI
-- Removed dependency on line-proximity merger for combining static and LLM results
-- Added `node_modules` to default exclude folders
+- Agent analyze/review refactored from parallel execution to pipeline architecture (static analysis as source of truth, LLM verifies)
+- LLM no longer independently discovers dead code
 
 ### Added
-- New `DeadCodeVerifierAgent` that reviews static findings with call graph evidence and defs_map context
-- New `pipeline.py` containing `run_pipeline` and `run_static_on_files`
-- Added unit tests for `pipeline.py` covering static analysis categorisation, LLM dead-code verification, LLM-native analysis, deduplication, sorting, and fallback behaviour
-- Added unit tests for `dead_code_verifier.py` covering verdict application, confidence parsing, context building, single and batch verification, annotation, and agent initialisation
+- `DeadCodeVerifierAgent` with call graph evidence and defs_map context
+- `pipeline.py` with `run_pipeline` and `run_static_on_files`
 
 ### Fixed
-- Fixed `run_gate_interaction` because it uses `*` to enforce keyword only args
-- Fixed circular dependency checker feeding `.ts`/`.go` files to `ast.parse()`
-- Fixed undefined task variable in run_pipeline progress spinner
+- Circular dependency checker feeding `.ts`/`.go` files to `ast.parse()`
 
 ## [3.2.3] - 2026-02-07
 
-## Fixed
-- Fixed hallucination detection by making PyPI "missing" status behave correctly
-- Improved dependency parsing for pyproject.toml and setup.py, including extras like pkg[extra], and updated parsers to return (deps, name)
-- Ensured the project's own package name is included in declared dependencies
-- Fixed tests to reflect above changes
+### Fixed
+- Hallucination detection PyPI "missing" status
+- Dependency parsing for pyproject.toml and setup.py (extras, project name inclusion)
 
 ## [3.2.1] - 2026-02-05
 
-## Fixed 
-- Fix import usage counting by mapping imports to the correct original def using the full qualified import target. We matched ref keys so aliases don’t mark the wrong mod as used.
+### Fixed
+- Import usage counting: aliases no longer mark the wrong module as used
 
 ## [3.2.0] - 2026-02-05
 
-## Added 
-- Added `graph.py` to handle taint analysis, data flow, and context slicing for the LLM.
-- Added `FalsePositiveFilterAgent` in `agents.py` to verify static findings using the LLM
-- Added typing for `visitor.py`, `base.py`, `merger.py`, `schemas.py`, `framework_aware.py`, and `test_aware.py` 
-- Added CI auto-detection for GitHub Actions, Jenkins, CircleCI, and GitLab CI in `api.py`
-- Added automatic PR/MR number extraction from CI environments
-- Added environment variable overrides: `SKYLOS_COMMIT`, `SKYLOS_BRANCH`, `SKYLOS_ACTOR`, `SKYLOS_PR_NUMBER`
-- Added comprehensive tests for CI detection, PR extraction, and branch normalization in `test_api.py`
-- Added Type2 bucket to detect clones with different variable names. Clone type now displays in Quality Issues table (type1, type2, type3)
-- Added CLI display table for circular dependency findings
-- Functions decorated with `@*.command`, `@*.default`, `@*.callback`, `@*.group`, `@*.subcommand` no longer flagged as unused
-- Added generic decorator patterns to detect CLI entrypoints regardless of framework
-- Added tests for monorepo layout, framework aware and circular dep
-- Added a post scan upload CTA footer that prints the exact commands to upload results to Skylos Cloud and view the dashboard
-- Added a security-only "upload now?" prompt that triggers only when secrets are detected 
-- Added a "Don’t remind me again" preference (no_upload_prompt) stored in pyproject.toml under [tool.skylos]
-- Added `async_blocking.py` SKY-Q401 as well as new tests
+### Added
+- `graph.py` for taint analysis, data flow, and context slicing
+- `FalsePositiveFilterAgent` for LLM-based static finding verification
+- CI auto-detection (GitHub Actions, Jenkins, CircleCI, GitLab CI) with PR number extraction
+- Type2 clone detection, circular dependency display
+- CLI entrypoint decorator patterns, post-scan upload CTA, upload prompt with "don't remind me" preference
+- SKY-Q401 (async blocking)
 
-## Changes
-- Changed static `visitor.py` with call graph construction, lambda tracking and dynamic string reference detection
-- Changed `analyzer.py` to use the new `CodeGraph` for deep security audits instead of dumb chunking.
-- Changed `get_git_info()` to return CI metadata alongside commit, branch, and actor
-- Changed `upload_report()` to include CI metadata in payload for better Jenkins/CircleCI/GitLab support
-- Changed module name computation for `src-layout` projects in `analyzer.py`
-- Hardened `MutableDefaultRule` (SKY-L001). Now catches `list()`, `dict()`, `set()` constructor calls. List comprehensions, Dict comprehensions etc
-- Improved CLI API token prompt with clearer instructions
+### Changed
+- `visitor.py` with call graph construction and dynamic string reference detection
+- `analyzer.py` uses `CodeGraph` for deep security audits
+- Hardened SKY-L001 (catches `list()`, `dict()`, `set()` constructors, comprehensions)
 
-## Fixed
-- Fixed parent dir search for pyproject.toml/requirements.txt
-- Fixed dist-info name parsing by reading METADATA file instead of folder name
-- Fixed Python 3.13 AST compatibility in `circular_deps.py`
-
-Note: Formalized a dual pipeline architecture that keeps the static analyzer separate from the LLM
+### Fixed
+- Parent dir search for pyproject.toml/requirements.txt, dist-info name parsing, Python 3.13 AST compat
 
 ## [3.1.3] - 2026-01-27
 
-## Added 
-- Added a centralized LLM runtime resolver that auto-detects provider from `--model`
-- Added `_symbol_stack` and `_current_symbol()` to `TaintVisitor` for tracking function/class context
-- Added `"symbol": self._current_symbol()` to all findings in sql_flow.py, sql_raw_flow.py, cmd_flow.py, ssrf_flow.py, path_flow.py, xss_flow.py
-- Added test for dependency hallucination
-- Added `skylos key` command and route skylos key (no args) to open the interactive menu.
+### Added
+- Centralized LLM runtime resolver with auto-detection from `--model`
+- Symbol context tracking in taint visitors
+- `skylos key` command
 
-## Removed
-- Removed keyring/API-key resolution from `LiteLLMAdapter`. Adapters now only consume the resolved api_key/base_url passed in.
-- Deprecated `skylos login` to stop it from running analysis.
-
-## Changes
-- Updated skylos agent commands to use the centralized resolver so normal runs automatically prompt+store credentials when needed.
-- Two levels detection logic for dependency hallucination:
-  - SKY-D222 (CRITICAL): Now raised when high confidence that package is hallucinated
-  - SKY-D223 (MEDIUM): Raised for packages that exist but not declared in requirements
+### Changed
+- Two-level dependency hallucination: SKY-D222 (CRITICAL, confirmed hallucinated) and SKY-D223 (MEDIUM, exists but undeclared)
 
 ## [3.1.2] - 2026-01-25
 
 ### Added
-- Parse pyproject.toml for console entrypoints via `[project.scripts]` (and optionally `[tool.poetry.scripts]`) and treat them as implicit usage
-- Added `--pytest-fixtures` flag which should be run in the test directory. This will allow Skylos to detect pytest fixtures that are defined but never used
-- Added dependency hallucination to catch packages that do not exist
-- Allow customrules and compliance from main webapp (beta)
-
-### Fixed
-- Fixed tests that were breaking because of cache
-- Fixed `conftest.py` that had duplicate function
-- Fixed `--strict` flag for gating in CLI
+- Console entrypoint parsing from `pyproject.toml` `[project.scripts]`
+- `--pytest-fixtures` flag for unused fixture detection
+- Dependency hallucination detection
+- Custom rules and compliance from web app (beta)
 
 ### Changed
-- Changed CLI to display paths relative to CWD, not project root. Example: 
-
-```
-## Users run app.py from 
-/Users/duriantaco/skylos
-
-## Displayed
-app.py:16
-
-## Users run from
-/Users/duriantaco/
-
-## Displayed
-skylos/app.py:16
-```
-
-- Upgraded yaml files in `.github` folder to use `uv` instead of `pip`
-- Changed agents to use `litellm_adapter.py` instead of our independent wrapper 
-- Changed upload to be optional instead of automatic everytime a check is being run
+- CLI displays paths relative to CWD
+- Switched to `uv` in CI workflows, `litellm` adapter, upload made optional
 
 ### Removed
-- Removed `cache.py` due to unstable outputs. If changes are made to the structure of objects returned by `proc_file()` then users with old cached results will get errors or wrong data. Dropped it, not worth the trouble
-- Removed anthropic and openai adapter. Switched to `litellm`
+- `cache.py` (unstable outputs), anthropic/openai adapters (replaced by litellm)
 
 ## [3.1.1] - 2026-01-20
 
 ### Added
-- Added new `--provider` flag to force `openai` or `anthropic` provider
-- New `--base-url` flag for OpenAI compatible endpoints (eg. Ollama etc)
-- env variable support: `SKYLOS_LLM_PROVIDER`, `SKYLOS_LLM_BASE_URL`, `OPENAI_BASE_URL`
-- Auto API key bypass for local endpoints (localhost, 127.0.0.1, 0.0.0.0)
-- Added agent for LLM assisted detection 
-- Added new cache and parallel processing functionalities
-- More unit tests for LLM agents, cache and parallel processing
+- `--provider`, `--base-url` flags and env variable support for LLM providers
+- Auto API key bypass for local endpoints
+- LLM-assisted detection agent
 
 ### Fixed
-- `--gate` flag now uploads scan results before exiting, enabling GitHub App check updates for Pro users
-- Pre-commit hook now correctly returns exit code 1 when issues are found (use `skylos . --gate`)
-- False positives for methods called via Protocol interface
-- Fixed gatekeeper check_gate(..., strict=False) support so strict mode can be driven from config
-- Fixed gatekeeper mismatch with tests
-- Progress callback bug. Wrong variable name (progress vs progress_callback) fixed
+- `--gate` uploads before exiting, pre-commit hook exit codes, Protocol interface false positives
 
 ### Changed
-- `OpenAIAdapter` now uses Chat Completions API (`chat.completions.create`) instead of Responses API
-- Provider resolution now follows priority chain: CLI flag -> env variable -> model name inference
-- Changed CLI to use left truncate instead of right truncate to display paths
+- `OpenAIAdapter` uses Chat Completions API, provider resolution priority chain
 
-### Removed
-- Removed `cache.py` due to unstable outputs. If changes are made to the structure of objects returned by `proc_file()` then users with old cached results will get errors or wrong data. Dropped it, not worth the trouble
- 
 ## [3.0.3] - 2026-01-10
 
 ### Added
+- Protocol and ABC detection with duck typing (≥70% method overlap)
+- Mixin, base class, and framework lifecycle method confidence penalties
+- Data class field detection (dataclass, NamedTuple, Enum, attrs, Pydantic)
+- Optional dependency import handling (`try`/`except ImportError`)
 
-- Added protocol and ABC detection. Things include protocol class and member skipping. Classes inhering from `abc.ABC` or `ABC` classes are tracked. `@abstractmethod` decorators are also collected per ABC class. Methods implementing parent ABC's abstract methods as well as classes explicitly inheriting from Protocol classes will get a confidence of 0
-- Added `visit_ClassDef` tracking inside `visitor.py` for ABC/Protocol inheritance chains
-- Added auto duck typing recognition. Classes implementing >=70% of a Protocol's methods (with min 3 of matching) are detected
-- Added global tracking where all protocol method signatures are collected across codebase
-- Added `Mixin` class methods penalty. Methods in `*Mixin` classes get a -60% confidence penalty
-- Added base class skipping. Methods in `Base*`, `*Base`, `*ABC`, `*Interface`, `*Adapter` classes
-- Added framework lifecycle methods for `on_*`, `watch_*`, `compose` methods. They will face a -30%, -30% and -40% penalty respectively
-- Added data class field detection where `@dataclass` class attributes, `typing.NamedTuple` fields, `enum.Enum` class, `@attr.s`, Pydantic `BaseModel` fields all will get a confidence of 0
-- Added optional dependency imports. Imports inside `try` blocks with `except ImportError` + `HAS_*`/`HAVE_*` flags will be marked as used
-
-### Changes
-- Extended `config.py` to include `# noqa` comments where any line with `# noqa` will be ignored. Supports the following formats. `# noqa`, `# noqa: F401`, `# noqa: F401, F402`, `#noqa`, `# NOQA`
-
-### Fixed
-- Fixed `visit_Try` to correctly construct import references for optional dependencies
+### Changed
+- `# noqa` comment support for line-level suppression
 
 ## [3.0.1] - 2026-01-08
 
-New year new me, and a new release! Happy new year everyone! 
-
 ### Added
-- Added `--trace` flag for runtime call tracing using `sys.settrace()` to capture dynamic dispatch patterns (visitor patterns, getattr, plugins)
-- Added `skylos/tracer.py` with `CallTracer` class to record function calls during test execution
-- Added pytest plugin hooks (`pytest_configure`, `pytest_unconfigure`, `pytest_addoption`) for `--skylos-trace` integration
-- Added `.skylos_trace` file generation containing JSON trace data with function calls, line numbers, and call counts
-- Added trace data x-referencing in analyzer to eliminate false positives for dynamic codes
-- Added progress callback support to `analyze()` for real-time file processing feedback
-- Added progress indicator in CLI showing `[current/total] filename` during analysis
-- Added dead code reporting for truly empty Python files (empty or docstring-only), tagged as SKY-U002 under unused_files
-- Added `unused_files_count` to analysis_summary when empty-file findings are present
-- Added unit test coverage for empty-file reporting
-- Added AST body masking feature via `skylos/ast_mask.py` to support masking by name, decorator, and base-class globs
-- Added `skylos/known_patterns.py` with framework pattern detection
-- Added class context-aware framework entrypoint detection (e.g., `save()` only skipped if inside `Model` subclass)
-- Added config-based dead code suppression
-  - Config file support in `pyproject.toml`:
-    - `[tool.skylos.whitelist].names` - Glob patterns (e.g., `"handle_*"`)
-    - `[tool.skylos.whitelist.documented]` - Patterns with reasons for team visibility
-    - `[tool.skylos.whitelist.temporary]` - Patterns with expiration dates to prevent whitelist rot
-    - `[tool.skylos.overrides."path/*"]` - Per-file/folder whitelist rules
-- Added new CLI commands. 1. `skylos whitelist <pattern>` 2. `skylos whitelist <pattern> --reason "why"` 3. `skylos whitelist --show`
-- Added new helper functions in `config.py`: `is_whitelisted()`, `get_all_ignore_lines()`, `get_expired_whitelists()`
-
-- Added "Conf" column showing confidence percentage for each flagged item. 100% = definitely dead, 60-80% = probably dead but check, <60% = not flagged
-- **Expanded SOFT_PATTERNS** in `known_patterns.py`:
-  - `visit_*`, `leave_*` (25) - AST visitor pattern dispatch
-  - `pytest_*` (30) - pytest hook functions
-  - `*Plugin` (20) - plugin discovery via `__subclasses__()`
-
-- Added the following for reducing false positives:
-  - ABC class tracking. Detects classes inheriting from `ABC`
-  - Abstract method tracking. Records methods with `@abstractmethod` decorator
-  - ABC implementer detection. Tracks classes inheriting from ABC classes
-  - Protocol implementer detection. Tracks classes that are explicitly inheriting from Protocol classes
-  - Protocol method name tracking
-  - Duck-typed Protocol detection (≥70% method overlap with ≥3 methods)
-
+- `--trace` flag for runtime call tracing via `sys.settrace()`
+- Progress indicator during analysis
+- SKY-U002: dead file detection for empty Python files
+- AST body masking, framework-aware entrypoint detection
+- Config-based dead code suppression (`pyproject.toml` whitelists with patterns, reasons, expiration dates)
+- `skylos whitelist` command
+- Confidence column in output
+- Expanded soft patterns (visitor, pytest hooks, plugins)
 
 ### Changed
-- Replaced `--coverage` flag with `--trace` for runtime analysis
-- Updated `implicit_refs.py` to store traced function lines as lists
-- Updated `should_mark_as_used()` to iterate over traced line lists with ~5 lines tolerance matching
-- Added automatic suppression for pytest hook functions (`pytest_configure`, `pytest_unconfigure`, `pytest_addoption`, etc.)
-- Added automatic suppression for abstract base class (abc) methods
-- `Skylos.analyze()` accepts `progress_callback` parameter for progress reporting
-- Updated the analyzer result schema to include `unused_files: []` in the top-level output 
-- Updated `_apply_penalties()` in analyzer to use new known patterns system. 1. Hard entrypoints where `confidence = 0`. 2. Framework entrypoints `confidence = 0` only with class context + framework evidence 3. Soft patterns that reduce confidence proportionally
-- Updated `visit_FunctionDef` in `framework_aware.py` to immediately add decorated lines to `framework_decorated_lines` (fixes Pydantic model detection in routes)
-- Framework decorator patterns now set `is_route = True` during visiting (not just in `finalize()`)
-- Reduced `dynamic_module` penalty from 40 to 10
-- Updated `skylos init` to properly reset ALL `[tool.skylos*]` sections (fixed regex)
-- Mixin method confidence penalty increased from -50 to -60
-- Protocol class definitions now get confidence = 0
-- Abstract method implementations now get confidence = 0 when parent ABC is tracked
-- Duck-typed Protocol implementations now get confidence = 0
-- Shifted `apply_penalties` function from `analyzer.py` into a separate script 
+- Replaced `--coverage` with `--trace`
+- Penalty system: hard entrypoints (confidence=0), framework entrypoints (with context), soft patterns (proportional)
 
 ### Fixed
-- Fixed import path in cli.py: `from skylos.skylos_trace` → `from skylos.tracer`
-- Fixed false positives for dynamically dispatched methods (visitor patterns, plugin hooks)
-- Fixed analyzer output JSON serialization edge case in tests by ensuring mocked definitions provide concrete line / filename fields (prevents TypeError: Object of type Mock is not JSON serializable)
-- Fixed `proc_file()` tests to match the updated return signature
-- Fixed Flask route detection bug where `app = Flask(__name__)` routes were incorrectly marked as unused
-  - Root cause: `if is_passed or not is_created` evaluated to `False` when `is_created=True` and `is_passed=False`
-  - Fix: Removed conditional, all routes are now unconditionally added to `framework_decorated_lines`
-- Fixed `@login_required` and other framework decorators not adding functions to `framework_decorated_lines`
-- Fixed Pydantic models used as route type hints not being marked as used
-- Fixed `ComplexityRule` not counting complexity (visitor was returning early on FunctionDef)
-- Fixed Python 3.13 compatibility issue in `ComplexityRule` with nested class `super()` scope
-- Fixed test mock path: `skylos.framework_aware.Path` → `skylos.visitors.framework_aware.Path`
-- Fixed `skylos init` not removing duplicate config sections when run multiple times
-- Fixed `skylos whitelist` command writing to wrong section
-
-### Removed
-- Removed `--coverage` flag (replaced by `--trace`)
+- Flask route detection, `@login_required` handling, Pydantic route type hints
+- `ComplexityRule` visitor, Python 3.13 compat, `skylos init` duplicate config sections
 
 ## [2.7.1] - 2025-12-23
 
 ### Fixed
-- Fixed packaging bug where `skylos.visitors.languages` were missing from some installs, causing `ModuleNotFoundError: No module named 'skylos.visitors.languages'`
-- Fixed bug where running `skylos --version` could crash by importing optional language scanners too early
-- Fixed pre-commit integration issue where inline `python -c gate` scripts could fail with SyntaxError due to multi-statement if usage
-- Fixed pre-commit integration reliability by moving the "fail-on-findings" logic into `scripts/skylos_gate.py` entry
+- Missing `skylos.visitors.languages` in package, `--version` crash, pre-commit gate script
 
 ## [2.7.0] - 2025-12-19
-### Fixed
-- Fixed bug where `Class(1).method()` patterns were incorrectly flagged
-- Fixed bug where `self.attr.method()` patterns were flagged as dead code when `self.attr` was assigned a class instance (e.g., `self.helper = Helper()`)
-- Fixed bug where `module.MyC lass().method()` was incorrectly resolving to wrong module
-- **Super() Calls:** Fixed bug where `super().method()` calls weren't registering the overridden method as used
-- Fixed Flask/FastAPI routes being incorrectly flagged
 
 ### Added
-- Added `instance_attr_types` tracking in `Visitor` to infer types of instance attributes assigned in `__init__`
-- Added `_get_decorator_name()` helper method for robust decorator name extraction
-- Expanded `AUTO_CALLED` dunder methods
-- Added `TryBlockPatternsRule (SKY-L004)`. `try` blocks nested inside other try blocks to prevent flow
-- Added `UnreachableCodeRule (SKY-U001)`. Identifies codes that can never be executed because they follow a terminal statement
-- Added `--coverage` CLI flag. Run tests with coverage before analysis
-- Added `ImplicitRefTracker` for better dynamic pattern detection. This includes 1. f-string patterns 2. getattr 3. Framework decorators 
-- Expanded entry point decorators inside `framework_aware.py` 
-- Added test coverage for unreachable, cli coverage and implicit refs
-- Added `control_flow.py` to better catch `is False`
+- Instance attribute type tracking, expanded dunder methods
+- SKY-L004 (nested try blocks), SKY-U001 (unreachable code)
+- `--coverage` flag, `ImplicitRefTracker` for dynamic patterns
 
-### Changed
-- Modified tests for `test_constants.py` and `test_visitor.py` to test changes above
-- Changes for `@property`, `@x.setter`, `@x.deleter`, and `@cached_property` decorated methods
-- Modified `analyzer.py` to register new rules. SKY-L004 and SKY-U001
-- `_is_interpolated_string` flagged all f-strings, causing false positives on safe patterns. Added `_has_safe_base_url`
-- Replaced nuclear mark all functions as used in `analyzer.py`
+### Fixed
+- `Class(1).method()`, `self.attr.method()`, `super().method()` patterns
+- Flask/FastAPI route false positives
 
 ## [2.6.0] - 2025-12-05
 
 ### Added
-
-- Added TypeScript support (dead code, security, and quality checks) using tree-sitter
-- Modular structure for languages for better separation of concerns
-- Added support for language-specific config overrides in `pyproject.toml` (e.g., [tool.skylos.languages.typescript])
-- Added `DummyVisitor` adapter to prevent the analyzer from crashing when it expects Python-specific attributes on non-Python files
-- Added `OpenAIAdapter` and `AnthropicAdapter` to support multi-provider AI fixes and auditing (you can call it using `skylos . --quality --danger --security-audit --model claude-haiku-4-5-20251001`)
-- Added secure credential storage using keyring to persist API keys locally
-- Added security detection in security-audit mode to identify dangerous functions
-- Added `Fixer` engine for AI-powered code repair (you can call it using `skylos . --quality --danger --security-audit --fix --model claude-haiku-4-5-20251001`)
-
-### Changed
-
-- Refactored `analyzer.py` to route files based on extension (`.py` vs `.ts`/`.tsx`) instead of assuming everything is Python
-- Moved load_config to the start of `proc_file` so all languages can access the configuration
-- Updated `skylos init` template to include language-specific examples
+- TypeScript support (dead code, security, quality) via tree-sitter
+- Language-specific config overrides in `pyproject.toml`
+- Multi-provider AI adapters (OpenAI, Anthropic) with keyring credential storage
+- AI-powered code repair (`--fix`)
 
 ## [2.5.3] - 2025-11-28
 
 ### Fixed
-- Fixed a bug in `analyzer.py` where exclusion patterns were ignored 
-- Fixed `UnboundLocalError` in `start_server` by correctly passing `exclude_folders` as an argument
-
-### Added
-- Added support in `analyzer.py` for excluding nested directories (e.g., `--exclude-folder src/legacy`) using normalized path matching
+- Exclusion patterns ignored in analyzer, nested directory exclusion support
 
 ## [2.5.2] - 2025-11-24
 
 ### Added
-- **Gatekeeper (`--gate`):** A new "Quality Gate" feature that blocks CI/CD pipelines or local deployments if critical issues are found.
-  - Supports "Bypass" mode
-  - Includes a deployment wizard that handles git staging/commit/push if the checks pass
-- **Config Support:** Skylos now reads settings from `pyproject.toml` under `[tool.skylos]`.
-  - Users can change the complexity thresholds, max arguments, and ignore specific rules without waiting for a release 
-- **Quality Rules:** Added 5 new architectural checks:
-  - `SKY-C303`: Too Many Arguments (detects functions with >5 args).
-  - `SKY-C304`: Function Too Long (detects functions >50 lines).
-  - `SKY-L001`: Mutable Default Arguments (catches `def foo(x=[])`).
-  - `SKY-L002`: Bare Except Block (catches `except:` swallowing errors).
-  - `SKY-L003`: Dangerous Comparison (catches `if x == True:`).
-
-### Changed
-- **Architecture Refactor:** Split the monolithic `analyzer.py` logic into a modular `LinterVisitor` that will run multiple rules in a single pass.
-- CLI arguments now support command pass-through (e.g., `skylos . --gate -- git push`).
+- Quality gate (`--gate`) for CI/CD pipeline blocking
+- Config support via `pyproject.toml` `[tool.skylos]`
+- SKY-C303 (too many args), SKY-C304 (function too long), SKY-L001 (mutable default), SKY-L002 (bare except), SKY-L003 (dangerous comparison)
 
 ### Fixed
-- Fixed `NameError: name 'ast' is not defined` crash in Python 3.13 by implementing manual AST traversal in `LinterVisitor`.
-- Fixed JSON serialization crash where `pathlib.Path` objects were breaking the reporter
-- Fixed false positives in `DangerousComparisonRule` where integer comparisons (`x == 1`) were flagged as Bool comparisons
+- Python 3.13 AST crash, JSON serialization of `pathlib.Path`, `DangerousComparisonRule` false positives
 
 ## [2.5.1] - 2025-11-19
 
-### Changed
-- CLI now displays **relative file paths** (relative to the scanned root), reducing text overflow in CLI output
-
 ### Added
-- Added `--tree` flag so users can display their results in an ASCII tree format 
-
-### Downstream
-- Analyzer returns richer metadata (`analysis_summary`, secrets/danger/quality wiring), preparing for FE UI integrations down the road
+- `--tree` flag for ASCII tree output
+- Relative file paths in CLI
 
 ## [2.5.0] - 2025-11-12
 
 ### Added
+- Code quality scanner: cyclomatic complexity and nesting depth rules
 
-- Code quality scanner with 2 new rules namely complexity and nesting
-  - flags high cyclomatic complexity
-  - flags deep nesting
-- Added uv.lock for frozen dependency snapshot
-
-### Changed
-- CLI ui/ux polish
-
-### Fixed 
-- Fixed dataframely schema class reports class variables marked as unused
-- Fixed multi-part module imports not detected correctly
-
-### Developer Notes
-
-Quality rules live under:
-
-- `skylos/rules/quality/complexity.py`
-- `skylos/rules/quality/nesting.py` (max depth across if/for/while/try/with)
-- `skylos/rules/quality/quality.py` (entry point)
+### Fixed
+- Dataclass schema class false positives, multi-part module import detection
 
 ## [2.4.0] - 2025-10-14
 
 ### Added
-
-- SKY-D211 (CRITICAL) + test –> SQL injection (cursor): tainted/string-built SQL into .execute etc
-- SKY-D217 (CRITICAL) -> SQL injection (raw-api): tainted SQL 
-- SKY-D216 (CRITICAL) + test –> SSRF: tainted URL into HTTP clients 
-- SKY-D215 (HIGH) + test –> Path traversal: tainted file path into open(...), os.* etc
-- SKY-D212 (CRITICAL) + test –> Cmd injection: tainted command to os.system(...) or subprocess.*(...).
-- Added new UI materials into the VSC extension
+- SKY-D211 (SQL injection), SKY-D217 (SQL raw API), SKY-D216 (SSRF), SKY-D215 (path traversal), SKY-D212 (command injection)
 
 ## [2.3.0] - 2025-09-22
 
 ### Added
-- You can now download the plugin via marketplace VSC
-- Added dangerous patterns scanner (from SKY-D201 -> D210). Results appear in JSON under dangerous
-- Danger flag for cli to trigger the dangerous pattern scanning `--danger`
-- Added test for danger script
-- `--table` flag to output results in table format
+- VSCode extension on marketplace
+- Dangerous patterns scanner (SKY-D201 through D210), `--danger` flag, `--table` output
 
 ### Fixed
-- Removed non JSON prints which was causing some CICD pipeline failures
-- Fixed the REGEX for secrets which was causing a lot of false positives
-- Analyzer now emits separate secrets and dangerous buckets
+- Non-JSON prints breaking CI/CD, secrets regex false positives
 
 ## [2.2.3] - 2025-09-18
 
-### Fix
-Interactive remove and comment out works for dotted imports (e.g. import pkg.subpkg.mod) and class/async methods (Class.method). There was a name mismatch in `codemods.py` script
+### Fixed
+- Interactive remove/comment for dotted imports and class/async methods
 
 ## [2.2.2] - 2025-09-17
 
 ### Added
-- Secrets scanning PoC (SKY-S101): provider patterns + generic high entropy
-- `--secrets` CLI flag. Results shown in JSON output. To trigger secrets scanning run with `--secrets` flag
-- Unit tests covering secrets
-- GitHub Actions CI. Skylos Deadcode Scan workflow (.github/workflows/skylos.yml)
-
-### Changed
-- Lazy imports to avoid cycles
-
-### Fixed
-- Circular import causing scan_ctx import errors.
-- Minor preview/test stability issues
+- Secrets scanning (SKY-S101): provider patterns + high entropy detection, `--secrets` flag
+- GitHub Actions CI workflow
 
 ## [2.1.2] - 2025-08-27
 
 ### Added
-- `Dataclass` field detection in `visitor.py`. When a class has `@dataclass`, its annotated class attributes are tagged as dataclass fields
-- `first_read_lineno` tracking. Record the first line where each variable is read.
-- `visit_Global` to bind global names to module-level FQNs
-
-### Changed
-- Report `ALL_CAPS` constants. Previously we had a blanket mute which caused quite a bit of problems 
-- `_apply_penalties` mute dataclass fields
-- In `Definition` class, add `lineno` alias to `.line` for back-compat.
+- Dataclass field detection, `first_read_lineno` tracking, `visit_Global` binding
 
 ### Fixed
-- Crash: missing `_dataclass_stack` init in `Visitor.__init__`
-- False positives fixes. dataclass fields, `global` singletons (e.g., PROCESS_POOL)
-- no “All variables…” when an “Unused Variables” section exists inside `cli.py`
+- Missing `_dataclass_stack` init, dataclass/global singleton false positives
 
 ## [2.1.1] - 2025-08-23
 
 ### Added
-- Added pre-commit hooks
+- Pre-commit hooks
 
 ## [2.1.0] - 2025-08-21
 
 ### Added
-- CST based safe edits for removals.. `remove_unused_import_cst` and `remove_unused_function_cst` using `libcst` + `PositionProvider`. Handles multiline imports, aliases, decorators, async defs etc ..
-- Unit tests done for `codemode.py`  
-- Added dependency: `libcst>=1.4` to project requirements.
+- CST-based safe edits for import/function removal via `libcst`
 
 ### Changed
-- `visitor.py` improvements by tracking locals and types per function scope 
-- `logging.Formatter.format` credited as implicitly called by the logging subsystem.
-- Cleaner constants handling. Module-level ALL_CAPS variables treated as constants, reducing noise.
+- Visitor improvements: locals and types per function scope, constants handling
 
 ### Fixed
-- LibCST removal sentinel: returned `cst.RemoveFromParent()` to avoid transformer errors
-- Removed the redundant `parse_exclude_folders` in `analyzer.py` 
-- `self.attr` / `cls.attr` now credited to `CurrentClass.attr`. Fixed some false positives
-
-### Known limitations
-- Factory functions or some complex builders may still require a pragma (e.g., `# skylos: ignore`)
-- Star imports are intentionally left untouched
+- `self.attr`/`cls.attr` false positives
 
 ## [2.0.1] - 2025-08-11
 
-### Fixed 
-- Patched framework aware pass now finalized and applied early. Route-decorated endpoints were clamped to very low confidence.. helpers/models require they're actually reference
-- Improved matching
-- `_mark_refs()` rewritten for more clarity. Lesser magic 
-- Updated the manual test cases for frameworks
+### Fixed
+- Framework-aware pass: route endpoints no longer clamped to low confidence
+- `_mark_refs()` rewritten for clarity
 
 ## [2.0.0] - 2025-07-14
 
 ### Added
-- Front end integration! 
+- Front end integration (Skylos Cloud dashboard)
 
 ## [1.2.2] - 2025-07-03
 
 ### Fixed
-- Patched bug because down in the loop accidentally overwrote `self.ignored_lines` so it never fires lmao
+- `self.ignored_lines` overwrite in loop
 
 ## [1.2.1] - 2025-07-03
 
 ### Added
--  Skylos now recognises comment directives that mark code as intentionally unreachable:  
-  `# pragma: no skylos`, `# pragma: no cover`, and standard `# noqa`. Lines carrying these tags are skipped in all unused-code reports
-- `proc_file()` returns a 7 tuple: the final item is the `set[int]` of ignored line
-  numbers. Library users can consume it immediately. Legacy callers still work
-- **Deprecation warning**  
-  A `DeprecationWarning` is emitted when the legacy 6 tuple signature is used.
-- **Back-compat shim**  
-  `Skylos.analyze()` auto detects whether `proc_file()` yielded 6 or 7 items and
-  remaps transparently
-
-### Fixed
-- Updated test suite to handle the new 7 value signature and ignore pragmas
-
-### Changed
-- `analyzer.py`- Switched `proc_file` call site to signature agnostic pattern and inserted the `DeprecationWarning`
-
-### Technical Details
-- `proc_file()` always returns seven values. The except path appends an empty
-  `set()` for parity
-- Environment variable **`SKYLOS_STRICT_APIS=1`** (optional) will raise an error
-  if the legacy 6 tuple is encountered
-- Unit-tests: added `TestIgnorePragmas`
+- Comment directives: `# pragma: no skylos`, `# pragma: no cover`, `# noqa`
+- `proc_file()` returns 7-tuple with ignored lines set
 
 ## [1.2.0] - 2025-06-12
 
 ### Added
-- Detection for web frameworks (Flask, Django, FastAPI) 
-- Framework-specific patterns: `@app.route`, `@router.get`, `@task`, etc.
-- More granular dead code detection using confidence. Eg, 0, 20, 40, 60, 100% confidence
-- Regex patterns for `/test/` and `/tests/` directory detection
-- Added new confidence flag in the CLI
+- Framework detection (Flask, Django, FastAPI) with confidence scoring
+- `--confidence` flag
 
 ### Fixed
-- Fixed issue where Flask/Django routes were incorrectly flagged as unused
-- Fixed regression where some test files weren't properly excluded
-- Files in `/test/` directories now better detected and excluded
-- Test files ending with `_test.py` should be filtered out
-- Improved CLI argument parsing for confidence values
-
-### Technical Details
-- `framework_aware.py`: `FrameworkAwareVisitor` now should have better decorator detection
-- `analyzer.py`: `_apply_penalties()` method for framework confidence scoring
-- `cli.py`: Added confidence threshold validation
-- `constants.py`: Framework detection patterns and test file regex
+- Flask/Django routes incorrectly flagged, test file exclusion improvements
 
 ## [1.1.12] - 2025-06-10
 
 ### Added
-- Auto identifies test files in `/tests/`, `/test/`, `test_*.py` patterns
-- Detects test files by test library imports (unittest.mock, pytest, responses, etc.)
-- Decorator detection
-- Constants Module: New `skylos/constants.py` for centralized configuration management
-- Test lifecycle methods: setUp, tearDown, setUpClass, tearDownClass, setup_method, teardown_method
-- Test import patterns: `unittest`, `pytest`, `mock`, `responses`, `freezegun`, `hypothesis`, `faker`
-- Test decorators: `@patch`, `@pytest.fixture`, `@pytest.mark`, `@responses.activate`
+- Test file auto-detection (patterns, imports, decorators)
 
 ### Fixed
-- Fixed false positives where private items starting with `_` were wrongly reported as unused
-- Fixed false positives where from `__future__import annotations`
-- Missing detection of test_* method patterns that were not being excluded from unused reports
-
-### Changed
-- Refactored constants into separate module
-- Pattern matching for test classes eg. TestExample, ExampleTest, ExampleTestCase 
+- Private item (`_`-prefix) and `__future__` import false positives
 
 ## [1.1.11] - 2025-06-08
 
 ### Added
-- Folder Management: Control over folder exclusions/inclusions
-`--exclude-folder`: Add custom folder exclusions to defaults
-`--include-folder`: Include specific folders
-`--no-default-excludes`: Disable default exclusions
-`--list-default-excludes`: Display all default excluded folders
+- `--exclude-folder`, `--include-folder`, `--no-default-excludes`, `--list-default-excludes`
 
 ### Fixed
-- Improved accuracy for test method identification
-- Fixed false positives where classes containing "Test" were incorrectly identified as test classes
-- Resolved issue where `NotATestClass` was incorrectly identified as test class
-- Changed from "Test" in class_name to precise pattern matching
-- Fixed module import issues in CLI components
-
-### Changed
-- Standardized default folder exclusions across all components
-
-### Technical Details
-`analyzer.py`: Updated _`apply_heuristics()` with better test class detection logic
-`cli.py`: Folder management update
-`analyzer.py`: Added `parse_exclude_folders()` function for more flexible folder handling
+- Test class identification false positives
 
 ## [1.0.11] - 2025-05-27
 
 ### Added
-- **Unused Parameter Detection**: Detects unused functions and method parameters
-  - New `unused_parameters` and `unused_variables` category in analysis results
-  - Detects parameters used in attribute access (e.g., `self.attribute`)
-  - CLI now displays unused parameters
-
-### Fixed
-- **Parameter Usage Tracking**: Fixed false positives where `self` and other parameters were incorrectly flagged as unused
-  - Now detects `self` usage in attribute access
-  - Tracks parameters passed as arguments to other functions
-
-### Changed
-- Improved `visitor` to track parameter usage within function scopes
-- Enhanced heuristics for magic method params
-- Updated result format to include parameter and variables analysis
-
-### Technical Details
-- `visitor.py`: Added parameter tracking in `visit_Attribute` for proper `self` detection
-- `skylos.py`: Added `unused_parameters` to result dictionary
-- `cli.py`: Added display section for unused parameters with color coding
+- Unused parameter and variable detection
 
 ## [1.0.10] - 2025-05-24
 
-### Fixed
-Major Changes: Changed from Rust to Python. Surprisingly it's faster!
-Accuracy Improvements: Constructed 2 full tests with ground truths
-Technical Improvements: Benchmark infrastructure, confidence system, AST enhancements. Please read `BENCHMARK.md` for more
-Beautified CLI to make reading much easier
+### Changed
+- Rewritten from Rust to Python (faster), benchmark infrastructure, confidence system
