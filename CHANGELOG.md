@@ -11,7 +11,7 @@
 
 ### Fixed
 - Crash on systems without clipboard mechanism (Docker, headless Linux) — `pyperclip.PyperclipException` is now caught
-- False positive on framework methods in nested classes (e.g. `do_OPTIONS` inside a function-scoped `BaseHTTPRequestHandler` subclass)
+- False positive on framework methods in nested classes
 - Removed unused `DJANGO_SIGNAL_METHODS` import in penalties module
 
 ## [4.1.0] - 2026-03-20
