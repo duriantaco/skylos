@@ -3,6 +3,11 @@ import sys
 import os
 import unittest
 from pathlib import Path
+
+import pytest
+pytest.importorskip("flask", reason="Flask not installed — skip server tests")
+pytest.importorskip("flask_cors", reason="flask-cors not installed — skip server tests")
+
 from unittest.mock import patch, MagicMock
 
 _original_constants = sys.modules.get("skylos.constants")
@@ -11,14 +16,6 @@ mock_constants.DEFAULT_EXCLUDE_FOLDERS = [".git", "__pycache__"]
 sys.modules["skylos.constants"] = mock_constants
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-try:
-    import flask  # noqa: F401
-except ImportError:
-    import unittest
-
-    raise unittest.SkipTest("Flask not installed — skipping server tests")
-
 
 from skylos.server import app, start_server
 

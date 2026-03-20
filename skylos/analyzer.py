@@ -393,6 +393,10 @@ class Skylos:
                 if resolved:
                     for name in imp["names"]:
                         self.ts_consumed_exports[resolved].add(name)
+                        # Connect import to the actual definition in the target file
+                        target_key = f"{resolved}:{name}"
+                        if target_key in self.defs:
+                            self.defs[target_key].references += 1
 
     def _demote_unconsumed_ts_exports(self):
         if not hasattr(self, "ts_consumed_exports"):
@@ -1384,6 +1388,8 @@ class Skylos:
 
                 for definition in defs:
                     if definition.type == "import":
+                        key = f"{definition.filename}:{definition.name}"
+                    elif str(definition.filename).endswith((".ts", ".tsx")):
                         key = f"{definition.filename}:{definition.name}"
                     else:
                         key = definition.name
