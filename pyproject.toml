@@ -124,3 +124,6 @@ fail_on_critical = true
 max_security = 0
 max_quality = 10
 strict = false
+
+[tool.uv.workspace]
+exclude = ["rust", "desktop"]
