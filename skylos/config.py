@@ -13,6 +13,7 @@ DEFAULTS = {
     "whitelist_temporary": {},
     "lower_confidence": [],
     "overrides": {},
+    "non_library_dirs": {},
     "check_circular": True,
     "max_circular_deps": -1,
     "masking": {
@@ -24,7 +25,7 @@ DEFAULTS = {
 }
 
 
-def load_config(start_path):
+def load_config(start_path) -> dict:
     current = Path(start_path).resolve()
     if current.is_file():
         current = current.parent
@@ -82,6 +83,7 @@ def load_config(start_path):
             )
 
         final_cfg["overrides"] = user_cfg.get("overrides", {})
+        final_cfg["non_library_dirs"] = user_cfg.get("non_library_dirs", {})
 
         return final_cfg
 
@@ -89,7 +91,7 @@ def load_config(start_path):
         return DEFAULTS.copy()
 
 
-def is_path_excluded(filepath, cfg):
+def is_path_excluded(filepath, cfg) -> bool:
     exclude = cfg.get("exclude", [])
     filepath_str = str(filepath).replace("\\", "/")
 
@@ -111,7 +113,7 @@ def is_path_excluded(filepath, cfg):
     return False
 
 
-def is_whitelisted(name, filepath, cfg):
+def is_whitelisted(name, filepath, cfg) -> tuple[bool, str | None, int]:
     import datetime
 
     for pattern, config in cfg.get("whitelist_temporary", {}).items():
@@ -155,7 +157,7 @@ def is_whitelisted(name, filepath, cfg):
     return False, None, 0
 
 
-def get_expired_whitelists(cfg):
+def get_expired_whitelists(cfg) -> list[tuple[str, str, str]]:
     import datetime
 
     expired = []
@@ -176,7 +178,7 @@ def get_expired_whitelists(cfg):
     return expired
 
 
-def get_all_ignore_lines(source):
+def get_all_ignore_lines(source) -> set[int]:
     ignore_lines = set()
     in_ignore_block = False
 
@@ -221,7 +223,7 @@ def get_all_ignore_lines(source):
     return ignore_lines
 
 
-def suggest_pattern(name):
+def suggest_pattern(name) -> str | None:
     if name.startswith("handle_"):
         return "handle_*"
     if name.startswith("on_"):

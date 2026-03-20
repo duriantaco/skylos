@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SkylosFileDecorationProvider = void 0;
 const vscode = require("vscode");
+const config_1 = require("./config");
 class SkylosFileDecorationProvider {
     constructor(store) {
         this.store = store;
@@ -11,7 +12,7 @@ class SkylosFileDecorationProvider {
         this.disposables.push(this._onDidChangeFileDecorations, store.onDidChange(() => this._onDidChangeFileDecorations.fire(undefined)), store.onDidChangeAI(() => this._onDidChangeFileDecorations.fire(undefined)));
     }
     provideFileDecoration(uri) {
-        const findings = this.store.getFindingsForFile(uri.fsPath);
+        const findings = this.store.getFindingsForFile(uri.fsPath, { max: (0, config_1.getMaxDecorationsPerFile)() });
         if (findings.length === 0)
             return undefined;
         let hasCritical = false;

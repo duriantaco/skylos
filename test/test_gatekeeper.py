@@ -122,3 +122,203 @@ def test_run_gate_interaction_failed_can_bypass(monkeypatch):
     )
     assert rc == 0
     assert called["wizard"] == 1
+
+
+class FakeProvenance:
+    def __init__(self, agent_files):
+        self.agent_files = agent_files
+
+
+def test_check_gate_no_provenance_backward_compat():
+    results = {"danger": [], "quality": [], "secrets": []}
+    config = {"gate": {"max_critical": 0, "max_high": 5}}
+    passed, reasons = gk.check_gate(results, config)
+    assert passed is True
+    assert reasons == []
+
+
+def test_check_gate_provenance_none_ignores_agent():
+    results = {
+        "danger": [{"severity": "high", "file": "ai_file.py"}],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {"gate": {"max_high": 5, "agent": {"max_high": 0}}}
+    passed, reasons = gk.check_gate(results, config, provenance=None)
+    assert passed is True
+
+
+def test_check_gate_agent_stricter_threshold():
+    results = {
+        "danger": [{"severity": "high", "file": "ai_file.py"}],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {
+        "gate": {
+            "max_high": 5,
+            "agent": {"max_high": 0},
+        }
+    }
+    prov = FakeProvenance(agent_files=["ai_file.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is False
+    assert any("Agent gate" in r and "high" in r for r in reasons)
+
+
+def test_check_gate_agent_critical():
+    results = {
+        "danger": [{"severity": "critical", "file": "bot.py"}],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {
+        "gate": {
+            "fail_on_critical": False,
+            "max_critical": 5,
+            "agent": {"max_critical": 0},
+        }
+    }
+    prov = FakeProvenance(agent_files=["bot.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is False
+    assert any("Agent gate" in r and "critical" in r for r in reasons)
+
+
+def test_check_gate_agent_human_file_not_affected():
+    results = {
+        "danger": [{"severity": "high", "file": "human_file.py"}],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {
+        "gate": {
+            "max_high": 5,
+            "agent": {"max_high": 0},
+        }
+    }
+    prov = FakeProvenance(agent_files=["ai_file.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is True
+
+
+def test_check_gate_agent_security_threshold():
+    results = {
+        "danger": [
+            {"severity": "medium", "file": "ai.py"},
+            {"severity": "low", "file": "ai.py"},
+        ],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {"gate": {"agent": {"max_security": 0}}}
+    prov = FakeProvenance(agent_files=["ai.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is False
+    assert any("security" in r for r in reasons)
+
+
+def test_check_gate_agent_quality():
+    results = {
+        "danger": [],
+        "quality": [{"file": "ai.py", "rule": "complexity"}],
+        "secrets": [],
+    }
+    config = {"gate": {"agent": {"max_quality": 0}}}
+    prov = FakeProvenance(agent_files=["ai.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is False
+    assert any("quality" in r for r in reasons)
+
+
+def test_check_gate_agent_secrets():
+    results = {
+        "danger": [],
+        "quality": [],
+        "secrets": [{"file": "ai.py", "rule": "api_key"}],
+    }
+    config = {"gate": {"agent": {"max_secrets": 0}}}
+    prov = FakeProvenance(agent_files=["ai.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is False
+    assert any("secret" in r for r in reasons)
+
+
+def test_check_gate_agent_dead_code():
+    results = {
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+        "unused_functions": [{"file": "ai.py", "name": "old_fn"}],
+    }
+    config = {"gate": {"agent": {"max_dead_code": 0}}}
+    prov = FakeProvenance(agent_files=["ai.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is False
+    assert any("dead code" in r for r in reasons)
+
+
+def test_check_gate_agent_require_defend():
+    results = {"danger": [], "quality": [], "secrets": []}
+    config = {"gate": {"agent": {"require_defend": True}}}
+    prov = FakeProvenance(agent_files=["ai.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is False
+    assert any("require_defend" in r or "defend" in r.lower() for r in reasons)
+
+
+def test_check_gate_agent_no_agent_config_skips():
+    results = {
+        "danger": [{"severity": "critical", "file": "ai.py"}],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {"gate": {"fail_on_critical": False, "max_critical": 10}}
+    prov = FakeProvenance(agent_files=["ai.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is True
+
+
+def test_check_gate_agent_no_agent_files_skips():
+    results = {
+        "danger": [{"severity": "high", "file": "human.py"}],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {"gate": {"max_high": 5, "agent": {"max_high": 0}}}
+    prov = FakeProvenance(agent_files=[])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is True
+
+
+def test_check_gate_agent_file_path_key():
+    results = {
+        "danger": [{"severity": "high", "file_path": "ai.py"}],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {"gate": {"max_high": 5, "agent": {"max_high": 0}}}
+    prov = FakeProvenance(agent_files=["ai.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is False
+
+
+def test_check_gate_both_gates_can_fail():
+    results = {
+        "danger": [
+            {"severity": "critical", "file": "ai.py"},
+            {"severity": "critical", "file": "human.py"},
+        ],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {
+        "gate": {
+            "max_critical": 0,
+            "agent": {"max_critical": 0},
+        }
+    }
+    prov = FakeProvenance(agent_files=["ai.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is False
+    assert len(reasons) >= 2

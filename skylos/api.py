@@ -8,6 +8,15 @@ import sys
 from pathlib import Path
 import json
 
+from skylos.constants import (
+    NETWORK_TIMEOUT_SHORT,
+    NETWORK_TIMEOUT_DEFAULT,
+    NETWORK_TIMEOUT_LONG,
+    SNIPPET_CONTEXT_LINES,
+    SUBPROCESS_TIMEOUT,
+    UPLOAD_TIMEOUT,
+)
+
 logger = logging.getLogger(__name__)
 
 LINK_FILE = ".skylos/link.json"
@@ -116,7 +125,7 @@ def _read_json(path: Path):
     try:
         if path and path.exists():
             return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError, ValueError):
         pass
     return None
 
@@ -129,7 +138,7 @@ def _get_repo_root_for_link():
         p = out.decode().strip()
         if p:
             return Path(p)
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         pass
     return Path.cwd()
 
@@ -145,8 +154,10 @@ else:
 
 if BASE_URL.endswith("/api"):
     VERIFY_URL = f"{BASE_URL}/verify"
+    AGENT_RUNS_URL = f"{BASE_URL}/agent-runs"
 else:
     VERIFY_URL = f"{BASE_URL}/api/verify"
+    AGENT_RUNS_URL = f"{BASE_URL}/api/agent-runs"
 
 
 def _try_github_oidc_token():
@@ -159,18 +170,18 @@ def _try_github_oidc_token():
         resp = requests.get(
             f"{oidc_url}{sep}audience=skylos",
             headers={"Authorization": f"Bearer {oidc_token}"},
-            timeout=10,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         if resp.status_code == 200:
             jwt_token = resp.json().get("value")
             if jwt_token:
                 return f"oidc:{jwt_token}"
-    except Exception:
+    except (OSError, ValueError):
         logger.debug("Failed to fetch GitHub OIDC token", exc_info=True)
     return None
 
 
-def get_project_token():
+def get_project_token() -> str | None:
     token = os.getenv("SKYLOS_TOKEN")
     if token:
         return token
@@ -200,7 +211,7 @@ def get_project_token():
     return get_key("skylos_token")
 
 
-def get_project_info(token):
+def get_project_info(token) -> dict | None:
     if not token:
         return None
     if token.startswith("oidc:"):
@@ -209,16 +220,16 @@ def get_project_info(token):
         resp = requests.get(
             WHOAMI_URL,
             headers={"Authorization": f"Bearer {token}"},
-            timeout=10,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         if resp.status_code == 200:
             return resp.json()
-    except Exception:
+    except (OSError, ValueError):
         logger.debug("Failed to get project info", exc_info=True)
     return None
 
 
-def get_credit_balance(token=None):
+def get_credit_balance(token=None) -> dict | None:
     if token is None:
         token = get_project_token()
     if not token or token.startswith("oidc:"):
@@ -227,11 +238,11 @@ def get_credit_balance(token=None):
         resp = requests.get(
             f"{BASE_URL}/api/credits/balance",
             headers={"Authorization": f"Bearer {token}"},
-            timeout=10,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         if resp.status_code == 200:
             return resp.json()
-    except Exception:
+    except (OSError, ValueError):
         logger.debug("Failed to get credit balance", exc_info=True)
     return None
 
@@ -254,7 +265,7 @@ def print_credit_status(token=None, quiet=False):
     return data
 
 
-def get_git_root():
+def get_git_root() -> str | None:
     try:
         return (
             subprocess.check_output(
@@ -263,7 +274,7 @@ def get_git_root():
             .decode()
             .strip()
         )
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         return None
 
 
@@ -277,11 +288,11 @@ def _load_repo_link(git_root):
         import json
 
         return json.loads(open(p, "r", encoding="utf-8").read() or "{}")
-    except Exception:
+    except (OSError, json.JSONDecodeError, ValueError):
         return {}
 
 
-def get_git_info():
+def get_git_info() -> tuple[str, str, str, dict]:
     override_sha = os.getenv("SKYLOS_COMMIT")
     override_branch = os.getenv("SKYLOS_BRANCH")
     override_actor = os.getenv("SKYLOS_ACTOR")
@@ -336,7 +347,7 @@ def get_git_info():
             )
             commit = commit or git_commit
             branch = branch or git_branch
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             commit = commit or "unknown"
             branch = branch or "unknown"
 
@@ -357,7 +368,7 @@ def get_git_info():
     return commit, branch, actor, ci
 
 
-def extract_snippet(file_abs, line_number, context=3):
+def extract_snippet(file_abs, line_number, context=SNIPPET_CONTEXT_LINES) -> str | None:
     if not file_abs:
         return None
     try:
@@ -366,7 +377,7 @@ def extract_snippet(file_abs, line_number, context=3):
         start = max(0, line_number - 1 - context)
         end = min(len(lines), line_number + context)
         return "\n".join([line.rstrip("\n") for line in lines[start:end]])
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         return None
 
 
@@ -379,7 +390,7 @@ def _build_auth_headers(token):
     return {"Authorization": f"Bearer {token}"}
 
 
-def detect_ai_code(git_root=None):
+def detect_ai_code(git_root=None) -> dict:
     if not git_root:
         git_root = get_git_root()
     if not git_root:
@@ -429,7 +440,7 @@ def detect_ai_code(git_root=None):
             ],
             cwd=git_root,
             stderr=subprocess.DEVNULL,
-            timeout=10,
+            timeout=SUBPROCESS_TIMEOUT,
         ).decode("utf-8", errors="ignore")
 
         for line in log_output.strip().splitlines():
@@ -502,17 +513,17 @@ def detect_ai_code(git_root=None):
                         ],
                         cwd=git_root,
                         stderr=subprocess.DEVNULL,
-                        timeout=5,
+                        timeout=NETWORK_TIMEOUT_SHORT,
                     ).decode("utf-8", errors="ignore")
                     for f in diff_output.strip().splitlines():
                         if f.strip():
                             ai_files.add(f.strip())
-                except Exception:
+                except (subprocess.SubprocessError, OSError):
                     logger.debug(
                         "Failed to get git diff-tree for AI detection", exc_info=True
                     )
 
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         logger.debug("Failed to detect AI code from git log", exc_info=True)
 
     detected = len(indicators) > 0
@@ -557,9 +568,12 @@ def _get_blame_map(findings: list, git_root: str | None) -> dict:
 
         try:
             out = subprocess.check_output(
-                cmd, cwd=git_root, stderr=subprocess.DEVNULL, timeout=15
+                cmd,
+                cwd=git_root,
+                stderr=subprocess.DEVNULL,
+                timeout=NETWORK_TIMEOUT_DEFAULT,
             ).decode("utf-8", errors="ignore")
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             continue
 
         current_line = None
@@ -578,9 +592,111 @@ def _get_blame_map(findings: list, git_root: str | None) -> dict:
     return blame_map
 
 
+def _normalize_findings(
+    items,
+    category,
+    git_root,
+    default_rule_id=None,
+    default_severity=None,
+    extract_metadata=False,
+    generate_finding_id=False,
+) -> list[dict]:
+    """Unified finding normalization used by upload and verify paths."""
+    if not isinstance(category, str):
+        raise ValueError(f"category must be a string, got {type(category).__name__}")
+    processed = []
+    for item in items or []:
+        finding = dict(item)
+
+        rid = (
+            finding.get("rule_id")
+            or finding.get("rule")
+            or finding.get("code")
+            or finding.get("id")
+            or default_rule_id
+            or "UNKNOWN"
+        )
+        finding["rule_id"] = str(rid)
+
+        raw_path = finding.get("file_path") or finding.get("file") or ""
+        file_abs = os.path.abspath(raw_path) if raw_path else ""
+
+        line_raw = finding.get("line_number") or finding.get("line") or 1
+        try:
+            line = int(line_raw)
+        except (TypeError, ValueError):
+            line = 1
+        if line < 1:
+            line = 1
+        finding["line_number"] = line
+
+        if git_root and file_abs:
+            try:
+                finding["file_path"] = os.path.relpath(file_abs, git_root).replace(
+                    "\\", "/"
+                )
+            except (ValueError, OSError):
+                finding["file_path"] = (
+                    raw_path.replace("\\", "/") if raw_path else "unknown"
+                )
+        else:
+            finding["file_path"] = (
+                raw_path.replace("\\", "/") if raw_path else "unknown"
+            )
+
+        finding["category"] = category
+
+        if default_severity:
+            finding["severity"] = finding.get("severity") or default_severity
+
+        if not finding.get("message"):
+            name = (
+                finding.get("name")
+                or finding.get("symbol")
+                or finding.get("function")
+                or ""
+            )
+            if category == "DEAD_CODE" and name:
+                finding["message"] = f"Dead code: {name}"
+            else:
+                finding["message"] = (
+                    finding.get("detail") or finding.get("msg") or "Issue"
+                )
+
+        if file_abs and line:
+            finding["snippet"] = (
+                finding.get("snippet") or extract_snippet(file_abs, line) or None
+            )
+
+        if extract_metadata:
+            metadata = {}
+            for meta_key in (
+                "_source",
+                "_confidence",
+                "_llm_verdict",
+                "_llm_rationale",
+                "_llm_challenged",
+                "_needs_review",
+                "_llm_uncertain",
+            ):
+                val = finding.pop(meta_key, None)
+                if val is not None:
+                    metadata[meta_key.lstrip("_")] = val
+            if metadata:
+                finding["metadata"] = metadata
+
+        if generate_finding_id:
+            finding_id = f"{finding['rule_id']}::{finding['file_path']}::{finding['line_number']}"
+            finding["finding_id"] = finding_id
+
+        processed.append(finding)
+
+    return processed
+
+
 def upload_report(
     result_json, is_forced=False, quiet=False, strict=False, analysis_mode="static"
-):
+) -> dict:
     token = get_project_token()
     if not token:
         return {
@@ -598,87 +714,13 @@ def upload_report(
     git_root = get_git_root()
 
     def prepare_for_sarif(items, category, default_rule_id=None):
-        processed = []
-
-        for item in items or []:
-            finding = dict(item)
-
-            rid = (
-                finding.get("rule_id")
-                or finding.get("rule")
-                or finding.get("code")
-                or finding.get("id")
-                or default_rule_id
-                or "UNKNOWN"
-            )
-            finding["rule_id"] = str(rid)
-
-            raw_path = finding.get("file_path") or finding.get("file") or ""
-            file_abs = os.path.abspath(raw_path) if raw_path else ""
-
-            line_raw = finding.get("line_number") or finding.get("line") or 1
-            try:
-                line = int(line_raw)
-            except (TypeError, ValueError):
-                line = 1
-            if line < 1:
-                line = 1
-            finding["line_number"] = line
-
-            if git_root and file_abs:
-                try:
-                    finding["file_path"] = os.path.relpath(file_abs, git_root).replace(
-                        "\\", "/"
-                    )
-                except (ValueError, OSError):
-                    finding["file_path"] = (
-                        raw_path.replace("\\", "/") if raw_path else "unknown"
-                    )
-            else:
-                finding["file_path"] = (
-                    raw_path.replace("\\", "/") if raw_path else "unknown"
-                )
-
-            finding["category"] = category
-
-            if not finding.get("message"):
-                name = (
-                    finding.get("name")
-                    or finding.get("symbol")
-                    or finding.get("function")
-                    or ""
-                )
-                if category == "DEAD_CODE" and name:
-                    finding["message"] = f"Dead code: {name}"
-                else:
-                    finding["message"] = (
-                        finding.get("detail") or finding.get("msg") or "Issue"
-                    )
-
-            if file_abs and line:
-                finding["snippet"] = (
-                    finding.get("snippet") or extract_snippet(file_abs, line) or None
-                )
-
-            metadata = {}
-            for meta_key in (
-                "_source",
-                "_confidence",
-                "_llm_verdict",
-                "_llm_rationale",
-                "_llm_challenged",
-                "_needs_review",
-                "_llm_uncertain",
-            ):
-                val = finding.pop(meta_key, None)
-                if val is not None:
-                    metadata[meta_key.lstrip("_")] = val
-            if metadata:
-                finding["metadata"] = metadata
-
-            processed.append(finding)
-
-        return processed
+        return _normalize_findings(
+            items,
+            category,
+            git_root,
+            default_rule_id=default_rule_id,
+            extract_metadata=True,
+        )
 
     all_findings = []
 
@@ -738,6 +780,17 @@ def upload_report(
     plan = (info.get("plan") or "free").lower()
     ai_code = detect_ai_code(git_root)
 
+    # PR-scoped provenance detection
+    provenance_data = None
+    try:
+        from skylos.provenance import analyze_provenance
+
+        prov_report = analyze_provenance(git_root)
+        if prov_report.agent_files:
+            provenance_data = prov_report.to_dict()
+    except (ImportError, subprocess.SubprocessError, OSError):
+        logger.debug("Provenance detection failed", exc_info=True)
+
     payload.update(
         {
             "commit_hash": commit,
@@ -747,6 +800,7 @@ def upload_report(
             "ci": ci,
             "analysis_mode": analysis_mode,
             "ai_code": ai_code if ai_code.get("detected") else None,
+            "provenance": provenance_data,
         }
     )
 
@@ -770,7 +824,7 @@ def upload_report(
                 REPORT_URL,
                 json=payload,
                 headers=_build_auth_headers(token),
-                timeout=30,
+                timeout=NETWORK_TIMEOUT_LONG,
             )
             if response.status_code in (200, 201):
                 data = response.json()
@@ -851,7 +905,7 @@ def upload_report(
                 data = {}
                 try:
                     data = response.json()
-                except Exception:
+                except (ValueError, KeyError):
                     pass
                 return {
                     "success": False,
@@ -869,7 +923,7 @@ def upload_report(
     return {"success": False, "error": last_err or "Unknown error"}
 
 
-def upload_defense_report(defense_json_str, quiet=False):
+def upload_defense_report(defense_json_str, quiet=False) -> dict:
     """Upload defense scan results to the cloud dashboard."""
     token = get_project_token()
     if not token:
@@ -919,7 +973,7 @@ def upload_defense_report(defense_json_str, quiet=False):
                 REPORT_URL,
                 json=payload,
                 headers=_build_auth_headers(token),
-                timeout=30,
+                timeout=NETWORK_TIMEOUT_LONG,
             )
             if response.status_code in (200, 201):
                 data = response.json()
@@ -972,7 +1026,46 @@ def upload_defense_report(defense_json_str, quiet=False):
     return {"success": False, "error": last_err or "Unknown error"}
 
 
-def verify_report(result_json, quiet=False):
+def upload_agent_run(
+    command,
+    summary,
+    *,
+    model=None,
+    provider=None,
+    duration_seconds=None,
+    status="completed",
+):
+    """Upload agent run telemetry to the cloud dashboard. Fire-and-forget."""
+    try:
+        token = get_project_token()
+        if not token:
+            return
+
+        commit, branch, actor, _ci = get_git_info()
+
+        payload = {
+            "command": command,
+            "summary": summary or {},
+            "model": model,
+            "provider": provider,
+            "duration_seconds": duration_seconds,
+            "commit_hash": commit,
+            "branch": branch,
+            "actor": actor,
+            "status": status,
+        }
+
+        requests.post(
+            AGENT_RUNS_URL,
+            json=payload,
+            headers=_build_auth_headers(token),
+            timeout=NETWORK_TIMEOUT_SHORT,
+        )
+    except Exception:
+        pass
+
+
+def verify_report(result_json, quiet=False) -> dict:
     token = get_project_token()
     if not token:
         return {
@@ -993,72 +1086,14 @@ def verify_report(result_json, quiet=False):
     git_root = get_git_root()
 
     def _norm_findings(items, category, default_rule_id=None):
-        processed = []
-        for item in items or []:
-            finding = dict(item)
-
-            rid = (
-                finding.get("rule_id")
-                or finding.get("rule")
-                or finding.get("code")
-                or finding.get("id")
-                or default_rule_id
-                or "UNKNOWN"
-            )
-            finding["rule_id"] = str(rid)
-
-            raw_path = finding.get("file_path") or finding.get("file") or ""
-            file_abs = os.path.abspath(raw_path) if raw_path else ""
-            line_raw = finding.get("line_number") or finding.get("line") or 1
-            try:
-                line = int(line_raw)
-            except (TypeError, ValueError):
-                line = 1
-            if line < 1:
-                line = 1
-            finding["line_number"] = line
-
-            if git_root and file_abs:
-                try:
-                    finding["file_path"] = os.path.relpath(file_abs, git_root).replace(
-                        "\\", "/"
-                    )
-                except (ValueError, OSError):
-                    finding["file_path"] = (
-                        raw_path.replace("\\", "/") if raw_path else "unknown"
-                    )
-            else:
-                finding["file_path"] = (
-                    raw_path.replace("\\", "/") if raw_path else "unknown"
-                )
-
-            finding["category"] = category
-            finding["severity"] = finding.get("severity") or "LOW"
-
-            if not finding.get("message"):
-                name = (
-                    finding.get("name")
-                    or finding.get("symbol")
-                    or finding.get("function")
-                    or ""
-                )
-                if category == "DEAD_CODE" and name:
-                    finding["message"] = f"Dead code: {name}"
-                else:
-                    finding["message"] = (
-                        finding.get("detail") or finding.get("msg") or "Issue"
-                    )
-
-            if file_abs and line:
-                finding["snippet"] = (
-                    finding.get("snippet") or extract_snippet(file_abs, line) or None
-                )
-
-            finding_id = f"{finding['rule_id']}::{finding['file_path']}::{finding['line_number']}"
-            finding["finding_id"] = finding_id
-
-            processed.append(finding)
-        return processed
+        return _normalize_findings(
+            items,
+            category,
+            git_root,
+            default_rule_id=default_rule_id,
+            default_severity="LOW",
+            generate_finding_id=True,
+        )
 
     findings = []
     findings.extend(
@@ -1083,7 +1118,7 @@ def verify_report(result_json, quiet=False):
             VERIFY_URL,
             json=payload,
             headers={"Authorization": f"Bearer {token}"},
-            timeout=60,
+            timeout=UPLOAD_TIMEOUT,
         )
     except Exception as e:
         return {"success": False, "error": f"Verification connection failed: {e}"}

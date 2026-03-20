@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "4.0.0"
+version = "4.1.0"
 requires-python = ">=3.10"
 description = "Dead code and security PR gate for Python, TypeScript, and Go."
 authors = [{name = "oha", email = "aaronoh2015@gmail.com"}]
@@ -67,6 +67,7 @@ dependencies = [
     "requests",
     "tree-sitter>=0.25.2",
     "tree-sitter-typescript>=0.23.2",
+    "tree-sitter-go>=0.23.0",
     "pyyaml",
     "litellm>=1.81.3",
     "networkx",
@@ -123,3 +124,6 @@ fail_on_critical = true
 max_security = 0
 max_quality = 10
 strict = false
+
+[tool.uv.workspace]
+exclude = ["rust", "desktop"]

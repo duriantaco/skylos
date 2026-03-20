@@ -1,0 +1,22 @@
+[package]
+name = "skylos-fast"
+version = "0.1.0"
+edition = "2021"
+description = "Rust accelerator for Skylos dead code analysis"
+license = "Apache-2.0"
+
+[lib]
+name = "skylos_fast"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+rayon = "1.10"
+rustpython-parser = "0.4"
+ignore = "0.4"               # ripgrep's file walker
+petgraph = "0.6"             # graph algorithms (cycles, coupling)
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
