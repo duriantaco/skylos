@@ -377,6 +377,20 @@ class Skylos:
             return None
         base = os.path.dirname(importer)
         target = os.path.normpath(os.path.join(base, source))
+
+        # Handle .js/.jsx → .ts/.tsx remapping (node16/bundler moduleResolution)
+        if target.endswith(".js"):
+            ts_target = target[:-3] + ".ts"
+            if os.path.isfile(ts_target):
+                return ts_target
+            tsx_target = target[:-3] + ".tsx"
+            if os.path.isfile(tsx_target):
+                return tsx_target
+        elif target.endswith(".jsx"):
+            tsx_target = target[:-4] + ".tsx"
+            if os.path.isfile(tsx_target):
+                return tsx_target
+
         for suffix in (".ts", ".tsx", "/index.ts", "/index.tsx"):
             candidate = target + suffix
             if os.path.isfile(candidate):
@@ -647,8 +661,6 @@ class Skylos:
             if len(cands) == 1:
                 return cands[0]
 
-            # e.g. sessions.py imports Mapping from compat.py, compat.py
-            # imports Mapping from collections.abc
             import_cands = [
                 k for k in import_by_simple.get(simple, []) if k != import_def_key
             ]
