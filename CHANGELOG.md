@@ -1,5 +1,10 @@
 ## Changelog
 
+## [4.1.1] - 2026-03-20
+
+### Fixed
+- Crash on systems without clipboard mechanism (Docker, headless Linux) — `pyperclip.PyperclipException` is now fixed
+
 ## [4.1.0] - 2026-03-20
 
 ### Added
