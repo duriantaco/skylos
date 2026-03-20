@@ -401,6 +401,7 @@ class Skylos:
     def _demote_unconsumed_ts_exports(self):
         if not hasattr(self, "ts_consumed_exports"):
             return
+        self._ts_demoted_exports = []
         for name, defn in self.defs.items():
             if not defn.is_exported:
                 continue
@@ -412,6 +413,93 @@ class Skylos:
             consumed = self.ts_consumed_exports.get(str(defn.filename), set())
             if defn.simple_name not in consumed and "*" not in consumed:
                 defn.is_exported = False
+                self._ts_demoted_exports.append(defn)
+
+    def _find_dead_ts_files(self, files, exclude_folders):
+        """Find TS files that are never imported by any other file."""
+        if not hasattr(self, "ts_consumed_exports"):
+            return []
+
+        _TEST_SUFFIXES = (".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx")
+
+        ts_files = set()
+        for f in files:
+            sf = str(f)
+            if sf.endswith((".ts", ".tsx")) and not any(
+                ex in sf for ex in (exclude_folders or [])
+            ):
+                # Skip test files — they're run by test runners, not imported
+                if sf.endswith(_TEST_SUFFIXES) or "/__tests__/" in sf:
+                    continue
+                # Skip .d.ts declaration files — ambient types, not import targets
+                if sf.endswith(".d.ts"):
+                    continue
+                ts_files.add(os.path.realpath(sf))
+
+        # Files that are imported by at least one other file
+        imported_files = set()
+        for resolved_file in self.ts_consumed_exports:
+            imported_files.add(os.path.realpath(resolved_file))
+
+        # Identify entry points: index.ts at package roots, files in package.json
+        entry_points = set()
+        for tf in ts_files:
+            basename = os.path.basename(tf)
+            # index.ts/tsx files are conventional entry points
+            if basename in ("index.ts", "index.tsx"):
+                entry_points.add(tf)
+
+        dead_files = []
+        for tf in sorted(ts_files - imported_files - entry_points):
+            # Check the file actually has definitions (skip empty detection to
+            # _is_truly_empty style — but for TS we just check if file has defs)
+            has_defs = False
+            for defn in self.defs.values():
+                if os.path.realpath(str(defn.filename)) == tf and defn.type != "import":
+                    has_defs = True
+                    break
+
+            # Only flag files that have definitions but nothing imports them
+            # (empty files are a separate concern)
+            if has_defs or os.path.getsize(tf) == 0:
+                dead_files.append(
+                    {
+                        "rule_id": "SKY-E003",
+                        "message": "Unused TypeScript file (not imported by any other file)",
+                        "file": tf,
+                        "line": 1,
+                        "severity": "LOW",
+                        "category": "DEAD_CODE",
+                    }
+                )
+
+        return dead_files
+
+    def _find_unused_ts_exports(self):
+        """Find TS symbols with unnecessary export keyword (used internally but not imported elsewhere)."""
+        if not hasattr(self, "_ts_demoted_exports"):
+            return []
+        findings = []
+        for defn in self._ts_demoted_exports:
+            if defn.references <= 0:
+                continue
+            # Skip exports from index files — these are typically package public API
+            basename = os.path.basename(str(defn.filename))
+            if basename in ("index.ts", "index.tsx"):
+                continue
+            findings.append(
+                {
+                    "rule_id": "SKY-E004",
+                    "name": defn.simple_name,
+                    "message": f"Unnecessary `export` on `{defn.simple_name}` (used internally but not imported by any other file)",
+                    "file": str(defn.filename),
+                    "line": defn.line,
+                    "type": defn.type,
+                    "severity": "LOW",
+                    "category": "DEAD_CODE",
+                }
+            )
+        return findings
 
     def _propagate_transitive_dead(self):
         dead_set = set()
@@ -1008,6 +1096,7 @@ class Skylos:
         modmap,
         all_raw_imports,
         path,
+        unused_ts_exports=None,
     ):
         """Assemble the final result dict from analysis outputs."""
         unused = []
@@ -1119,6 +1208,12 @@ class Skylos:
                 result["unused_variables"].append(u)
             elif u["type"] == "parameter":
                 result["unused_parameters"].append(u)
+
+        if unused_ts_exports:
+            if "unused_exports" not in result:
+                result["unused_exports"] = []
+            result["unused_exports"].extend(unused_ts_exports)
+            result["analysis_summary"]["unused_exports_count"] = len(unused_ts_exports)
 
         project_cfg = load_config(path[0] if isinstance(path, (list, tuple)) else path)
         if project_cfg.get("check_circular", True):
@@ -1834,6 +1929,11 @@ class Skylos:
                 progress_callback(0, 1, Path("PHASE: grep verify"))
             self._grep_verify()
 
+        dead_ts_files = self._find_dead_ts_files(files, exclude_folders)
+        empty_files.extend(dead_ts_files)
+
+        unused_ts_exports = self._find_unused_ts_exports()
+
         result = self._build_result(
             files,
             thr,
@@ -1850,6 +1950,7 @@ class Skylos:
             modmap,
             all_raw_imports,
             path,
+            unused_ts_exports=unused_ts_exports,
         )
 
         return json.dumps(result, indent=2)
