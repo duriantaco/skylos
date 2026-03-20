@@ -34,6 +34,10 @@ def mock_definition():
         mock.line = line
         mock.filename = Path("test.py")
         mock.skip_reason = None
+        mock.node = None
+        mock.calls = []
+        mock.called_by = []
+        mock.complexity = 1
         mock.why_confidence_reduced = []
         mock.conditional_import = False
         mock.to_dict.return_value = {
@@ -318,6 +322,10 @@ class TestAnalyze:
         mock_def.simple_name = "unused_function"
         mock_def.in_init = False
         mock_def.skip_reason = None
+        mock_def.node = None
+        mock_def.calls = []
+        mock_def.called_by = []
+        mock_def.complexity = 1
         mock_def.filename = Path("test.py")
 
         mock_test_visitor = Mock(spec=TestAwareVisitor)

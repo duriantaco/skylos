@@ -7,6 +7,8 @@ import subprocess
 
 from rich.console import Console
 
+from skylos.rules.quality.regression import detect_security_regressions
+
 console = Console()
 
 
@@ -49,11 +51,17 @@ def run_pr_review(
     if llm_findings:
         all_findings = _merge_llm_findings(all_findings, llm_findings)
 
+    regression_findings = _detect_regressions_from_diff(diff_base)
+
     if not summary_only:
         changed_ranges = get_changed_line_ranges(diff_base)
         findings = filter_findings_to_diff(all_findings, changed_ranges)
+        # Regression findings ARE the diff — no need to filter them
+        findings.extend(regression_findings)
     else:
-        findings = all_findings
+        findings = all_findings + regression_findings
+
+    all_findings.extend(regression_findings)
 
     if findings and not summary_only:
         _post_pr_review(findings[:max_comments], pr_number, repo)
@@ -111,6 +119,65 @@ def _parse_unified_diff(diff_output: str) -> list[dict]:
                 )
 
     return entries
+
+
+def _get_per_file_diffs(base_ref: str = "origin/main") -> dict[str, str]:
+    """Return a dict mapping file paths to their individual diff text."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--unified=3", f"{base_ref}...HEAD"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return {}
+    except FileNotFoundError:
+        return {}
+
+    file_diffs: dict[str, str] = {}
+    current_file = None
+    current_lines: list[str] = []
+
+    for line in result.stdout.splitlines():
+        if line.startswith("diff --git"):
+            if current_file and current_lines:
+                file_diffs[current_file] = "\n".join(current_lines)
+            current_file = None
+            current_lines = [line]
+        elif line.startswith("+++ b/"):
+            current_file = line[6:]
+            current_lines.append(line)
+        else:
+            current_lines.append(line)
+
+    if current_file and current_lines:
+        file_diffs[current_file] = "\n".join(current_lines)
+
+    return file_diffs
+
+
+def _detect_regressions_from_diff(base_ref: str = "origin/main") -> list[dict]:
+    """Run security regression detection on the PR diff."""
+    file_diffs = _get_per_file_diffs(base_ref)
+    regression_findings: list[dict] = []
+
+    for file_path, diff_text in file_diffs.items():
+        findings = detect_security_regressions(diff_text, file_path)
+        for f in findings:
+            regression_findings.append(
+                {
+                    "file": f.get("file", ""),
+                    "line": f.get("line", 1),
+                    "message": f.get("message", ""),
+                    "rule_id": f.get("rule_id", ""),
+                    "severity": f.get("severity", "HIGH"),
+                    "category": "security_regression",
+                    "control_type": f.get("control_type", ""),
+                    "kind": "security_regression",
+                }
+            )
+
+    return regression_findings
 
 
 def filter_findings_to_diff(
@@ -212,6 +279,20 @@ def _merge_llm_findings(
     return static_findings
 
 
+_REGRESSION_SUGGESTIONS: dict[str, str] = {
+    "auth": "Re-add the authentication decorator or dependency. Removing auth exposes the endpoint to unauthenticated access.",
+    "csrf": "Re-enable CSRF protection. Without it, the endpoint is vulnerable to cross-site request forgery attacks.",
+    "tls": "Re-enable TLS certificate verification (verify=True). Disabling it allows man-in-the-middle attacks.",
+    "crypto": "Use a strong hash algorithm (SHA-256 or better). Weak hashes like MD5/SHA-1 are vulnerable to collision attacks.",
+    "rate_limit": "Re-add rate limiting. Without it, the endpoint is vulnerable to brute-force and denial-of-service attacks.",
+    "validation": "Re-add input validation or sanitization. Without it, the endpoint may be vulnerable to injection attacks.",
+    "headers": "Re-add the security header or middleware. Security headers protect against XSS, clickjacking, and other attacks.",
+    "encryption": "Re-add encryption. Removing it may expose sensitive data in plaintext.",
+    "logging": "Re-add audit logging. Without it, security-relevant actions go untracked.",
+    "sanitization": "Re-add output sanitization. Without it, user-supplied content may cause XSS or injection vulnerabilities.",
+    "permission": "Re-add the permission check. Removing it may allow unauthorized access to restricted resources.",
+}
+
 _RULE_SUGGESTIONS: dict[str, str] = {
     "SKY-D201": "Replace `eval()` with `json.loads()`, `ast.literal_eval()`, or a safe parser. Never evaluate untrusted input.",
     "SKY-D203": "Replace `os.system()` with `subprocess.run()` with `shell=False`. Pass arguments as a list.",
@@ -225,42 +306,55 @@ _RULE_SUGGESTIONS: dict[str, str] = {
 
 
 def _format_review_comment(finding: dict) -> str:
+    kind = finding.get("kind", "")
     severity = finding.get("severity", "MEDIUM")
-    badge = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵"}.get(
-        severity, "⚪"
-    )
     rule_id = finding.get("rule_id", "")
     message = finding.get("message", "")
     rule_str = f" `{rule_id}`" if rule_id else ""
 
-    parts = [f"{badge} **{severity}**{rule_str}", "", message]
-
-    explanation = finding.get("explanation")
-    if explanation:
-        parts.extend(["", f"**Why:** {explanation}"])
-
-    vulnerable_code = finding.get("vulnerable_code")
-    fixed_code = finding.get("fixed_code")
-
-    if vulnerable_code and fixed_code:
-        parts.extend(
-            [
-                "",
-                "**Vulnerable code:**",
-                "```python",
-                vulnerable_code,
-                "```",
-                "",
-                "**Fixed code:**",
-                "```python",
-                fixed_code,
-                "```",
-            ]
-        )
-    else:
-        suggestion = finding.get("suggestion") or _RULE_SUGGESTIONS.get(rule_id)
+    if kind == "security_regression":
+        control_type = finding.get("control_type", "")
+        control_label = control_type.replace("_", " ").title() if control_type else "Unknown"
+        parts = [
+            f"⚠️ **SECURITY REGRESSION**{rule_str} — {control_label}",
+            "",
+            message,
+        ]
+        suggestion = _REGRESSION_SUGGESTIONS.get(control_type)
         if suggestion:
             parts.extend(["", f"**Fix:** {suggestion}"])
+    else:
+        badge = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵"}.get(
+            severity, "⚪"
+        )
+        parts = [f"{badge} **{severity}**{rule_str}", "", message]
+
+        explanation = finding.get("explanation")
+        if explanation:
+            parts.extend(["", f"**Why:** {explanation}"])
+
+        vulnerable_code = finding.get("vulnerable_code")
+        fixed_code = finding.get("fixed_code")
+
+        if vulnerable_code and fixed_code:
+            parts.extend(
+                [
+                    "",
+                    "**Vulnerable code:**",
+                    "```python",
+                    vulnerable_code,
+                    "```",
+                    "",
+                    "**Fixed code:**",
+                    "```python",
+                    fixed_code,
+                    "```",
+                ]
+            )
+        else:
+            suggestion = finding.get("suggestion") or _RULE_SUGGESTIONS.get(rule_id)
+            if suggestion:
+                parts.extend(["", f"**Fix:** {suggestion}"])
 
     footer = "\n\n---\n_🤖 Analyzed by [Skylos](https://github.com/duriantaco/skylos) • [Add to your repo](https://github.com/duriantaco/skylos#cicd)_"
     parts.append(footer)
@@ -373,10 +467,29 @@ def _post_summary_comment(
                 "|----------|-------|",
             ]
         )
-        for cat in ("danger", "quality", "secrets", "custom_rules"):
+        for cat in ("danger", "quality", "secrets", "custom_rules", "security_regression"):
             count = by_category.get(cat, 0)
             if count > 0:
                 lines.append(f"| {cat} | {count} |")
+
+    regression_findings = [
+        f for f in diff_findings if f.get("kind") == "security_regression"
+    ]
+    if regression_findings:
+        lines.extend(
+            [
+                "",
+                "### ⚠️ Security Regressions Detected",
+                "",
+                "| Control | File | Message |",
+                "|---------|------|---------|",
+            ]
+        )
+        for f in regression_findings:
+            control = f.get("control_type", "unknown")
+            file = os.path.basename(f.get("file", ""))
+            msg = f.get("message", "")
+            lines.append(f"| {control} | {file} | {msg} |")
 
     critical_findings = [
         f for f in diff_findings if f.get("severity") in ("CRITICAL", "HIGH")
