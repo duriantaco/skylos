@@ -43,6 +43,20 @@ class _CmdFlowChecker(TaintVisitor):
                     }
                 )
 
+        if qn.endswith(".exec_command") and node.args:
+            if self.is_tainted(node.args[0]):
+                self.findings.append(
+                    {
+                        "rule_id": "SKY-D212",
+                        "severity": "CRITICAL",
+                        "message": "Possible command injection (ssh exec_command): tainted input.",
+                        "file": str(self.file_path),
+                        "line": node.lineno,
+                        "col": node.col_offset,
+                        "symbol": self._current_symbol(),
+                    }
+                )
+
         if qn.startswith(self.SUBPROC_PREFIX):
             shell_true = False
             for kw in node.keywords:

@@ -7,6 +7,11 @@ import tokenize
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from enum import Enum
+
+try:
+    from skylos_fast import compute_similarity as _fast_similarity
+except ImportError:
+    _fast_similarity = None
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -153,11 +158,11 @@ def _count_nodes(node: ast.AST) -> int:
 
 
 def _similarity(a: str, b: str) -> float:
+    if _fast_similarity is not None:
+        return _fast_similarity(a, b)
     return SequenceMatcher(a=a, b=b).ratio()
 
 
-# Test file basenames and dunder methods produce expected structural
-# duplication — skip them to avoid flooding the user with false positives.
 _SKIP_PREFIXES = ("test_", "conftest")
 _BOILERPLATE_METHODS = {
     "__init__",

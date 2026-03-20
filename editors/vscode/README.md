@@ -7,6 +7,7 @@
 ## Features
 
 * **Streaming Inline Analysis**: Ghost text appears character-by-character as the AI streams findings — see issues the instant they're detected
+* **Active Command Center**: A ranked repo-level queue highlights what matters now, fed by Skylos agent state instead of dumping every finding
 * **AI Security Copilot Chat**: Sidebar chat panel to ask questions about findings, get explanations, and apply fixes from code blocks
 * **Auto-Remediation**: One-click "Fix All" with severity picker, progress tracking, and dry-run preview mode
 * **AI-Powered Analysis**: Real-time bug detection as you type using GPT-4, Claude, or any local model — no save required
@@ -24,7 +25,7 @@ All analysis runs locally on your machine. AI features require an API key.
 ## How it works
 
 **Static Analysis (Skylos CLI)**
-On save, the extension runs:
+On save, the extension scans the current file by default. Full workspace scans are explicit:
 ```
 skylos <workspace-folder> --json -c <confidence> [--secrets] [--danger] [--quality]
 ```
@@ -58,7 +59,7 @@ Open your project in VS Code and save a file — diagnostics appear.
 
 ### Basic
 
-- **Save any file** → Skylos CLI scans the workspace
+- **Save any file** → Skylos CLI refreshes findings for that file
 - **Type and pause** → AI analyzes changed functions
 - **Click "Fix with AI"** on any error line to auto-fix
 - **Command Palette** → `Skylos: Scan Workspace` for a full project scan
@@ -167,6 +168,32 @@ The Findings sidebar has a filter button (funnel icon) in the title bar:
    - **By File Name** — substring match (e.g. `auth.py`, `src/utils`)
 3. Filters stack — filter by severity, then by category to narrow further
 4. An **X** button appears in the title bar when a filter is active — click to clear
+
+### Command Center
+
+The **Command Center** view in the Skylos sidebar shows a ranked repo-level action queue:
+
+1. Click **Refresh Command Center** in the Command Center title bar, or run `Skylos: Refresh Command Center`
+2. Skylos reads `.skylos/agent_state.json` and shows the top ranked actions first
+3. Click an action to open the file at the flagged line
+4. Right-click an action to:
+   - open a richer detail panel
+   - apply a safe cleanup fix when available
+   - snooze or dismiss the action
+5. Use **Restore Triaged Actions** from the Command Center title bar to bring snoozed or dismissed items back
+
+For continuous repo-level updates, run this in a terminal from your project root:
+
+```bash
+skylos agent watch .
+```
+
+When the agent state file changes, the Command Center view refreshes automatically. You can also enable:
+
+- `skylos.commandCenterRefreshOnOpen`
+- `skylos.commandCenterRefreshOnSave`
+- `skylos.commandCenterLimit`
+- `skylos.commandCenterStateFile`
 
 ### Delta Mode
 

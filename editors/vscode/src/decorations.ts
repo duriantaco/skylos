@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import type { SkylosFinding } from "./types";
+import { getMaxDecorationsPerFile } from "./config";
 
 const deadCodeType = (): vscode.DecorationRenderOptions => ({
   isWholeLine: true,
@@ -185,7 +186,7 @@ export class DecorationsManager {
 
   private applyToEditor(editor: vscode.TextEditor): void {
     const filePath = editor.document.uri.fsPath;
-    const findings = this.store.getFindingsForFile(filePath);
+    const findings = this.store.getFindingsForFile(filePath, { max: getMaxDecorationsPerFile() });
 
     const byCat = new Map<DecoCategory, vscode.DecorationOptions[]>();
     for (const key of this.decoTypes.keys()) {

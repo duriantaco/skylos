@@ -42,7 +42,14 @@
       { "command": "skylos.toggleDelta", "title": "Skylos: Toggle Delta Mode", "icon": "$(git-compare)" },
       { "command": "skylos.showFindingDetail", "title": "Skylos: Show Finding Detail", "icon": "$(info)" },
       { "command": "skylos.filterFindings", "title": "Skylos: Filter Findings", "icon": "$(filter)" },
-      { "command": "skylos.clearFilter", "title": "Skylos: Clear Filter", "icon": "$(close)" }
+      { "command": "skylos.clearFilter", "title": "Skylos: Clear Filter", "icon": "$(close)" },
+      { "command": "skylos.refreshCommandCenter", "title": "Skylos: Refresh Command Center", "icon": "$(pulse)" },
+      { "command": "skylos.commandCenterOpenDetail", "title": "Skylos: Open Command Center Detail", "icon": "$(info)" },
+      { "command": "skylos.commandCenterApplySafeFix", "title": "Skylos: Apply Command Center Safe Fix", "icon": "$(wrench)" },
+      { "command": "skylos.commandCenterDismiss", "title": "Skylos: Dismiss Command Center Action", "icon": "$(close)" },
+      { "command": "skylos.commandCenterSnooze", "title": "Skylos: Snooze Command Center Action", "icon": "$(clock)" },
+      { "command": "skylos.commandCenterRestoreTriaged", "title": "Skylos: Restore Triaged Command Center Action", "icon": "$(history)" },
+      { "command": "skylos.fixDeadCode", "title": "Skylos: Preview Dead Code Removal", "icon": "$(trash)" }
     ],
     "viewsContainers": {
       "activitybar": [
@@ -61,6 +68,11 @@
           "icon": "$(shield)"
         },
         {
+          "id": "skylosCommandCenter",
+          "name": "Command Center",
+          "icon": "$(pulse)"
+        },
+        {
           "type": "webview",
           "id": "skylosChatPanel",
           "name": "Security Copilot"
@@ -76,11 +88,20 @@
         { "command": "skylos.toggleDelta", "when": "view == skylosFindings", "group": "navigation" },
         { "command": "skylos.filterFindings", "when": "view == skylosFindings", "group": "navigation" },
         { "command": "skylos.clearFilter", "when": "view == skylosFindings && skylos.filterActive", "group": "navigation" },
+        { "command": "skylos.refreshCommandCenter", "when": "view == skylosCommandCenter", "group": "navigation" },
+        { "command": "skylos.commandCenterRestoreTriaged", "when": "view == skylosCommandCenter", "group": "navigation" },
         { "command": "skylos.clearChat", "when": "view == skylosChatPanel", "group": "navigation" }
       ],
       "view/item/context": [
         { "command": "skylos.showFindingDetail", "when": "viewItem == skylosFinding", "group": "inline" },
-        { "command": "skylos.chatAboutFinding", "when": "viewItem == skylosFinding", "group": "inline" }
+        { "command": "skylos.chatAboutFinding", "when": "viewItem == skylosFinding", "group": "inline" },
+        { "command": "skylos.commandCenterOpenDetail", "when": "view == skylosCommandCenter && viewItem == skylosCommandCenterAction", "group": "inline" },
+        { "command": "skylos.commandCenterOpenDetail", "when": "view == skylosCommandCenter && viewItem == skylosCommandCenterActionSafeFix", "group": "inline" },
+        { "command": "skylos.commandCenterApplySafeFix", "when": "view == skylosCommandCenter && viewItem == skylosCommandCenterActionSafeFix", "group": "inline" },
+        { "command": "skylos.commandCenterSnooze", "when": "view == skylosCommandCenter && viewItem == skylosCommandCenterAction", "group": "navigation" },
+        { "command": "skylos.commandCenterSnooze", "when": "view == skylosCommandCenter && viewItem == skylosCommandCenterActionSafeFix", "group": "navigation" },
+        { "command": "skylos.commandCenterDismiss", "when": "view == skylosCommandCenter && viewItem == skylosCommandCenterAction", "group": "navigation" },
+        { "command": "skylos.commandCenterDismiss", "when": "view == skylosCommandCenter && viewItem == skylosCommandCenterActionSafeFix", "group": "navigation" }
       ],
       "editor/context": [
         { "command": "skylos.scan", "group": "skylos" },
@@ -117,6 +138,10 @@
       {
         "view": "skylosFindings",
         "contents": "No security findings yet.\n[Run Scan](command:skylos.scan)\n[Open Settings](command:workbench.action.openSettings?%5B%22skylos%22%5D)"
+      },
+      {
+        "view": "skylosCommandCenter",
+        "contents": "No active command center state yet.\n[Refresh Command Center](command:skylos.refreshCommandCenter)\nRun `skylos agent watch .` in a terminal for continuous updates.\n[Restore Triaged Actions](command:skylos.commandCenterRestoreTriaged)"
       }
     ],
     "configuration": {
@@ -158,17 +183,79 @@
         "skylos.runOnSave": {
           "type": "boolean",
           "default": true,
-          "description": "Auto run skylos when you save a file"
+          "description": "Auto scan the saved file and update its findings without rescanning the whole workspace"
         },
         "skylos.scanOnOpen": {
           "type": "boolean",
           "default": true,
-          "description": "Auto scan workspace when it opens"
+          "description": "Auto scan the first supported file you open in the session"
         },
         "skylos.showPopup": {
           "type": "boolean",
           "default": true,
-          "description": "Show a toast after scans"
+          "description": "Show a toast for critical/high workspace findings"
+        },
+        "skylos.maxProblems": {
+          "type": "number",
+          "default": 200,
+          "minimum": 25,
+          "maximum": 2000,
+          "description": "Maximum findings to publish into the Problems view across the workspace"
+        },
+        "skylos.maxProblemsPerFile": {
+          "type": "number",
+          "default": 50,
+          "minimum": 5,
+          "maximum": 500,
+          "description": "Maximum findings per file to publish into the Problems view"
+        },
+        "skylos.maxTreeFindings": {
+          "type": "number",
+          "default": 200,
+          "minimum": 25,
+          "maximum": 2000,
+          "description": "Maximum findings to show in the Findings sidebar before truncating"
+        },
+        "skylos.maxTreeFindingsPerFile": {
+          "type": "number",
+          "default": 25,
+          "minimum": 5,
+          "maximum": 250,
+          "description": "Maximum findings per file to show in the Findings sidebar"
+        },
+        "skylos.maxDecorationsPerFile": {
+          "type": "number",
+          "default": 25,
+          "minimum": 5,
+          "maximum": 250,
+          "description": "Maximum findings per file to decorate inline with hover/code lenses"
+        },
+        "skylos.showDeadCodeInProblems": {
+          "type": "boolean",
+          "default": false,
+          "description": "Publish dead code findings into the Problems view"
+        },
+        "skylos.commandCenterLimit": {
+          "type": "number",
+          "default": 10,
+          "minimum": 3,
+          "maximum": 50,
+          "description": "Maximum ranked actions to show in the Command Center view"
+        },
+        "skylos.commandCenterRefreshOnOpen": {
+          "type": "boolean",
+          "default": false,
+          "description": "Refresh the repo-level Command Center when the extension loads"
+        },
+        "skylos.commandCenterRefreshOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Refresh the repo-level Command Center after saving a supported file"
+        },
+        "skylos.commandCenterStateFile": {
+          "type": "string",
+          "default": "",
+          "description": "Optional custom path to the Skylos agent state file. Leave empty to use .skylos/agent_state.json in the workspace root."
         },
         "skylos.idleMs": {
           "type": "number",

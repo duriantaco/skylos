@@ -2,13 +2,14 @@ import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import { getRuleMeta } from "./rules";
 import { getDocumentFilters } from "./types";
+import { getMaxDecorationsPerFile } from "./config";
 
 
 export class SkylosHoverProvider implements vscode.HoverProvider {
   constructor(private store: FindingsStore) {}
 
   provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | undefined {
-    const findings = this.store.getFindingsForFile(document.uri.fsPath);
+    const findings = this.store.getFindingsForFile(document.uri.fsPath, { max: getMaxDecorationsPerFile() });
     const lineFindings = findings.filter((f) => Math.max(0, f.line - 1) === position.line);
 
     if (lineFindings.length === 0) 

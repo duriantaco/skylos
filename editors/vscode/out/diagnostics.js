@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DiagnosticsManager = void 0;
 const vscode = require("vscode");
+const config_1 = require("./config");
 class DiagnosticsManager {
     constructor(store) {
         this.store = store;
@@ -12,28 +13,35 @@ class DiagnosticsManager {
     }
     refreshCLI() {
         this.cliCollection.clear();
-        const files = this.store.getFilesWithFindings();
-        for (const file of files) {
-            const findings = this.store.getCLIFindingsForFile(file);
-            if (findings.length === 0)
-                continue;
-            const uri = vscode.Uri.file(file);
-            this.cliCollection.set(uri, findings.map(toDiagnostic));
-        }
+        const findings = this.store.getVisibleFindings((0, config_1.getMaxProblems)(), {
+            source: "cli",
+            includeDeadCode: (0, config_1.isShowDeadCodeInProblems)(),
+            maxPerFile: (0, config_1.getMaxProblemsPerFile)(),
+        });
+        this.publish(this.cliCollection, findings);
     }
     refreshAI() {
         this.aiCollection.clear();
-        const files = this.store.getFilesWithFindings();
-        for (const file of files) {
-            const findings = this.store.getAIFindingsForFile(file);
-            if (findings.length === 0)
-                continue;
-            const uri = vscode.Uri.file(file);
-            this.aiCollection.set(uri, findings.map(toDiagnostic));
-        }
+        const findings = this.store.getVisibleFindings((0, config_1.getMaxProblems)(), {
+            source: "ai",
+            maxPerFile: (0, config_1.getMaxProblemsPerFile)(),
+        });
+        this.publish(this.aiCollection, findings);
     }
     dispose() {
         this.disposables.forEach((d) => d.dispose());
+    }
+    publish(collection, findings) {
+        const byFile = new Map();
+        for (const finding of findings) {
+            const list = byFile.get(finding.file) ?? [];
+            list.push(finding);
+            byFile.set(finding.file, list);
+        }
+        for (const [file, items] of byFile) {
+            const uri = vscode.Uri.file(file);
+            collection.set(uri, items.map(toDiagnostic));
+        }
     }
 }
 exports.DiagnosticsManager = DiagnosticsManager;

@@ -12,7 +12,7 @@ def test_agent_review_passes_exclude_folders():
         ),
         patch("skylos.cli.get_git_changed_files", return_value=["fake.py"]),
         patch("skylos.cli.inquirer.confirm", return_value=True),
-        patch("sys.argv", ["skylos", "agent", "review", "."]),
+        patch("sys.argv", ["skylos", "agent", "scan", ".", "--changed"]),
     ):
         mock_pipeline.return_value = []
 
@@ -49,7 +49,7 @@ def test_agent_analyze_exits_zero_by_default(tmp_path):
             "skylos.cli.resolve_llm_runtime",
             return_value=("openai", "fake-key", None, False),
         ),
-        patch("sys.argv", ["skylos", "agent", "analyze", str(tmp_path)]),
+        patch("sys.argv", ["skylos", "agent", "scan", str(tmp_path)]),
     ):
         from skylos.cli import main
 
@@ -79,7 +79,7 @@ def test_agent_analyze_strict_exits_one_when_findings_exist(tmp_path):
             "skylos.cli.resolve_llm_runtime",
             return_value=("openai", "fake-key", None, False),
         ),
-        patch("sys.argv", ["skylos", "agent", "analyze", str(tmp_path), "--strict"]),
+        patch("sys.argv", ["skylos", "agent", "scan", str(tmp_path), "--strict"]),
     ):
         from skylos.cli import main
 
@@ -107,7 +107,7 @@ def test_security_audit_skips_confirmation_without_tty(tmp_path):
         patch("skylos.cli.SkylosLLM", return_value=fake_llm),
         patch(
             "sys.argv",
-            ["skylos", "agent", "security-audit", str(tmp_path), "--interactive"],
+            ["skylos", "agent", "scan", str(tmp_path), "--security", "--interactive"],
         ),
     ):
         from skylos.cli import main

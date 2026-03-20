@@ -9,6 +9,16 @@ exports.isScanOnOpen = isScanOnOpen;
 exports.getIdleMs = getIdleMs;
 exports.getPopupCooldownMs = getPopupCooldownMs;
 exports.isShowPopup = isShowPopup;
+exports.getMaxProblems = getMaxProblems;
+exports.getMaxProblemsPerFile = getMaxProblemsPerFile;
+exports.getMaxTreeFindings = getMaxTreeFindings;
+exports.getMaxTreeFindingsPerFile = getMaxTreeFindingsPerFile;
+exports.getMaxDecorationsPerFile = getMaxDecorationsPerFile;
+exports.isShowDeadCodeInProblems = isShowDeadCodeInProblems;
+exports.getCommandCenterLimit = getCommandCenterLimit;
+exports.isCommandCenterRefreshOnOpen = isCommandCenterRefreshOnOpen;
+exports.isCommandCenterRefreshOnSave = isCommandCenterRefreshOnSave;
+exports.getCommandCenterStateFile = getCommandCenterStateFile;
 exports.getAIProvider = getAIProvider;
 exports.getOpenAIBaseUrl = getOpenAIBaseUrl;
 exports.isLocalProvider = isLocalProvider;
@@ -56,6 +66,36 @@ function getPopupCooldownMs() {
 }
 function isShowPopup() {
     return cfg().get("showPopup", true);
+}
+function getMaxProblems() {
+    return cfg().get("maxProblems", 200);
+}
+function getMaxProblemsPerFile() {
+    return cfg().get("maxProblemsPerFile", 50);
+}
+function getMaxTreeFindings() {
+    return cfg().get("maxTreeFindings", 200);
+}
+function getMaxTreeFindingsPerFile() {
+    return cfg().get("maxTreeFindingsPerFile", 25);
+}
+function getMaxDecorationsPerFile() {
+    return cfg().get("maxDecorationsPerFile", 25);
+}
+function isShowDeadCodeInProblems() {
+    return cfg().get("showDeadCodeInProblems", false);
+}
+function getCommandCenterLimit() {
+    return cfg().get("commandCenterLimit", 10);
+}
+function isCommandCenterRefreshOnOpen() {
+    return cfg().get("commandCenterRefreshOnOpen", false);
+}
+function isCommandCenterRefreshOnSave() {
+    return cfg().get("commandCenterRefreshOnSave", false);
+}
+function getCommandCenterStateFile() {
+    return cfg().get("commandCenterStateFile", "").trim();
 }
 function getAIProvider() {
     return cfg().get("aiProvider", "openai");

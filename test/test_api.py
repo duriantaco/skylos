@@ -1,5 +1,6 @@
 import os
 import importlib
+import subprocess
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
 
@@ -702,7 +703,7 @@ class TestGetGitInfo(unittest.TestCase):
 
     @patch("subprocess.check_output")
     def test_git_failure_returns_unknown(self, mock_git):
-        mock_git.side_effect = Exception("git not found")
+        mock_git.side_effect = subprocess.SubprocessError("git not found")
 
         commit, branch, actor, ci = get_git_info()
 

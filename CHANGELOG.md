@@ -1,5 +1,27 @@
 ## Changelog
 
+## [4.1.0] - 2026-03-18
+
+### Added
+- SKY-Q306: Cognitive Complexity (SonarQube S3776) — penalizes nested logic, complements cyclomatic Q301
+- SKY-L021: Security Control Regression Detection — catches auth/CSRF/TLS/crypto/rate-limit removal in diffs
+- Go quality rules (Q301, Q302, C303, C304) via tree-sitter-go — Go files no longer return empty quality findings
+- `skylos[fast]` — optional Rust accelerator (`pip install skylos[fast]`)
+- `skylos provenance` — detect AI-authored code in PRs
+- Agent-aware quality gate — `[tool.skylos.gate.agent]` stricter thresholds for AI-authored files
+- `skylos agent watch`, `agent pre-commit`, `agent verify --fix --pr`
+- Grep-based verification pass, parallel grep workers
+- GrepCache, multi-language patch validation, CWE tagging + SARIF taxonomy
+- SKY-L027 (duplicate strings), SKY-L028 (too many returns), SKY-L029 (boolean trap)
+
+### Changed
+- Agent CLI consolidated from 16 to 8 commands (`scan`, `verify`, `remediate`, `watch`, `pre-commit`, `triage`, `status`, `serve`)
+- `skylos agent remediate --standards` for LLM-guided code cleanup
+- `--parallel-grep` auto-enabled with `--fix`
+
+### Fixed
+- `Definition.to_dict()` now includes `is_exported` flag
+
 ## [4.0.0] - 2026-03-15
 
 ### Added
