@@ -38,12 +38,18 @@ jobs:
           key: rust-parity-${{ hashFiles('rust/Cargo.lock') }}
 
       - name: Install skylos
-        run: pip install -e ".[test]"
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install -e ".[test]"
 
       - name: Install maturin and build skylos-fast
         run: |
+          . .venv/bin/activate
           pip install maturin
           cd rust && maturin develop --release
 
       - name: Run parity tests
-        run: pytest test/test_fast_parity.py -v --tb=short
+        run: |
+          . .venv/bin/activate
+          pytest test/test_fast_parity.py -v --tb=short
