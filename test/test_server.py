@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 import pytest
+
 pytest.importorskip("flask", reason="Flask not installed — skip server tests")
 pytest.importorskip("flask_cors", reason="flask-cors not installed — skip server tests")
 
