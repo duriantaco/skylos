@@ -116,6 +116,292 @@ def _list_runs() -> list[dict]:
     return runs
 
 
+def _validate_code_change_impl(
+    diff: str,
+    path: str = ".",
+    policy: str | None = None,
+) -> dict:
+    """Core logic for validate_code_change, extracted for testability."""
+    from skylos.rules.quality.regression import detect_security_regressions
+    from skylos.rules.secrets import (
+        PROVIDER_PATTERNS,
+        GENERIC_VALUE,
+        SAFE_TEST_HINTS,
+        _entropy,
+        DEFAULT_MIN_ENTROPY,
+    )
+
+    all_findings: list[dict] = []
+
+    file_chunks: list[tuple[str, str]] = []
+    current_file = None
+    current_lines: list[str] = []
+
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            if current_file and current_lines:
+                file_chunks.append((current_file, "\n".join(current_lines)))
+            current_file = line[6:]
+            current_lines = [line]
+        elif line.startswith("--- a/") or line.startswith("--- /dev/null"):
+            current_lines.append(line)
+        elif current_file is not None:
+            current_lines.append(line)
+
+    if current_file and current_lines:
+        file_chunks.append((current_file, "\n".join(current_lines)))
+
+    for file_path_chunk, chunk_text in file_chunks:
+        regressions = detect_security_regressions(chunk_text, file_path_chunk)
+        all_findings.extend(regressions)
+
+    dangerous_calls = {
+        "eval(": ("SKY-D201", "HIGH", "Use of eval()"),
+        "exec(": ("SKY-D202", "HIGH", "Use of exec()"),
+        "os.system(": ("SKY-D203", "CRITICAL", "Use of os.system()"),
+        "pickle.load(": ("SKY-D204", "CRITICAL", "Untrusted deserialization via pickle.load"),
+        "pickle.loads(": ("SKY-D205", "CRITICAL", "Untrusted deserialization via pickle.loads"),
+        "yaml.load(": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
+        "marshal.loads(": ("SKY-D233", "CRITICAL", "Untrusted deserialization via marshal.loads"),
+        "__import__(": ("SKY-D240", "HIGH", "Dynamic import via __import__()"),
+        "compile(": ("SKY-D241", "MEDIUM", "Dynamic code compilation"),
+    }
+
+    sql_injection_re = re.compile(
+        r"""(?:execute|cursor\.execute|raw|text)\(\s*(?:f['"']|['"].*%[sd]|['"].*\+|.*\.format\()""",
+    )
+
+    for file_path_chunk, chunk_text in file_chunks:
+        line_no = 0
+        for raw_line in chunk_text.splitlines():
+            if raw_line.startswith("@@"):
+                m = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)", raw_line)
+                if m:
+                    line_no = int(m.group(1)) - 1
+                continue
+            if raw_line.startswith("+") and not raw_line.startswith("+++"):
+                line_no += 1
+                added = raw_line[1:]
+                stripped = added.strip()
+
+                for pattern, (rule_id, severity, msg) in dangerous_calls.items():
+                    if pattern in stripped:
+                        all_findings.append({
+                            "rule_id": rule_id,
+                            "kind": "dangerous_pattern",
+                            "severity": severity,
+                            "message": f"Dangerous pattern in added code: {msg}",
+                            "file": file_path_chunk,
+                            "line": line_no,
+                            "col": 0,
+                        })
+
+                if sql_injection_re.search(stripped):
+                    all_findings.append({
+                        "rule_id": "SKY-D220",
+                        "kind": "dangerous_pattern",
+                        "severity": "CRITICAL",
+                        "message": "Potential SQL injection in added code: string interpolation in query",
+                        "file": file_path_chunk,
+                        "line": line_no,
+                        "col": 0,
+                    })
+
+                for provider, regex in PROVIDER_PATTERNS:
+                    if regex.search(stripped):
+                        all_findings.append({
+                            "rule_id": "SKY-S101",
+                            "kind": "secret",
+                            "severity": "CRITICAL",
+                            "message": f"Secret detected in added code: {provider} token/key",
+                            "file": file_path_chunk,
+                            "line": line_no,
+                            "col": 0,
+                        })
+
+                for m_generic in GENERIC_VALUE.finditer(stripped):
+                    val = m_generic.group("val") or m_generic.group("bare")
+                    if val and _entropy(val) >= DEFAULT_MIN_ENTROPY:
+                        if not any(hint in val.lower() for hint in SAFE_TEST_HINTS):
+                            all_findings.append({
+                                "rule_id": "SKY-S101",
+                                "kind": "secret",
+                                "severity": "HIGH",
+                                "message": "Possible secret/credential in added code",
+                                "file": file_path_chunk,
+                                "line": line_no,
+                                "col": 0,
+                            })
+            elif not raw_line.startswith("-"):
+                line_no += 1
+
+    if policy:
+        policy_path = Path(policy) if not Path(policy).is_absolute() else Path(policy)
+        if not policy_path.exists():
+            target_dir = Path(path).resolve()
+            policy_path = target_dir / policy
+
+    status = "fail" if all_findings else "pass"
+    counts: dict[str, int] = {}
+    for f in all_findings:
+        kind = f.get("kind", "unknown")
+        counts[kind] = counts.get(kind, 0) + 1
+
+    parts = []
+    for kind, count in sorted(counts.items()):
+        label = kind.replace("_", " ")
+        parts.append(f"{count} {label}{'s' if count != 1 else ''}")
+    summary_text = ", ".join(parts) + " found" if parts else "No issues found"
+
+    return {
+        "status": status,
+        "findings": all_findings,
+        "summary": summary_text,
+    }
+
+
+def _get_security_context_impl(path: str) -> dict:
+    """Core logic for get_security_context, extracted for testability."""
+    target = Path(path).resolve()
+    if not target.exists():
+        return {"error": f"Path does not exist: {path}"}
+
+    context: dict[str, Any] = {
+        "project_path": str(target),
+        "frameworks": [],
+        "auth_patterns": [],
+        "security_headers": [],
+        "rate_limiting": [],
+        "input_validation": [],
+        "policy": None,
+    }
+
+    framework_indicators = {
+        "Django": [
+            "manage.py", "settings.py", "django.conf", "urls.py",
+        ],
+        "Flask": [
+            "app.py", "wsgi.py",
+        ],
+        "FastAPI": [
+            "main.py", "app.py",
+        ],
+        "Express": [
+            "app.js", "server.js", "index.js",
+        ],
+        "Next.js": [
+            "next.config.js", "next.config.mjs", "next.config.ts",
+        ],
+    }
+
+    framework_imports = {
+        "Django": re.compile(r"(?:from django|import django)"),
+        "Flask": re.compile(r"(?:from flask |import flask)"),
+        "FastAPI": re.compile(r"(?:from fastapi |import fastapi|FastAPI\(\))"),
+        "Express": re.compile(r"""(?:require\(['"]express['"]\)|from ['"]express['"])"""),
+        "Next.js": re.compile(r"""(?:from ['"]next/|@next/)"""),
+    }
+
+    scan_files: list[Path] = []
+    scan_extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".mjs"}
+    scan_names = set()
+    for indicators in framework_indicators.values():
+        scan_names.update(indicators)
+
+    for item in target.rglob("*"):
+        parts_item = item.parts
+        if any(skip in parts_item for skip in ("node_modules", ".git", "__pycache__", "venv", ".venv", "env")):
+            continue
+        if item.is_file():
+            if item.name in scan_names or item.suffix in scan_extensions:
+                scan_files.append(item)
+        if len(scan_files) > 500:
+            break
+
+    detected_frameworks: set[str] = set()
+    auth_patterns: set[str] = set()
+    security_headers: set[str] = set()
+    rate_limiting: set[str] = set()
+    validation: set[str] = set()
+
+    auth_decorator_re = re.compile(
+        r"@(?:login_required|require_auth|requires_auth|authenticated|"
+        r"permission_required|jwt_required|token_required|permissions_required)"
+    )
+    auth_depends_re = re.compile(
+        r"Depends\((?:get_current_user|get_current_active_user|require_admin|verify_token)\)"
+    )
+    auth_middleware_re = re.compile(
+        r"(?:AuthenticationMiddleware|SessionMiddleware|JWTAuthentication|"
+        r"OAuth2PasswordBearer|HTTPBearer)"
+    )
+
+    header_names = {
+        "X-Content-Type-Options", "X-Frame-Options",
+        "Content-Security-Policy", "Strict-Transport-Security",
+        "X-XSS-Protection", "Referrer-Policy", "Permissions-Policy",
+    }
+    header_middleware_re = re.compile(r"(?:SecurityMiddleware|helmet\(|secure_headers)")
+
+    rate_limit_re = re.compile(
+        r"(?:@(?:rate_limit|ratelimit|throttle|limiter\.limit)|"
+        r"slowapi|RateLimitMiddleware|Throttle)"
+    )
+
+    validation_re = re.compile(
+        r"(?:@(?:validate|validator|field_validator|validates)|"
+        r"BaseModel|Pydantic|Schema\(|marshmallow|cerberus|"
+        r"wtforms|FlaskForm|Serializer)"
+    )
+
+    for fpath in scan_files:
+        try:
+            content = fpath.read_text(errors="ignore")
+        except OSError:
+            continue
+
+        for fw, regex in framework_imports.items():
+            if regex.search(content):
+                detected_frameworks.add(fw)
+
+        for m in auth_decorator_re.finditer(content):
+            auth_patterns.add(m.group(0))
+        for m in auth_depends_re.finditer(content):
+            auth_patterns.add(m.group(0))
+        for m in auth_middleware_re.finditer(content):
+            auth_patterns.add(m.group(0))
+
+        for header in header_names:
+            if header in content:
+                security_headers.add(header)
+        if header_middleware_re.search(content):
+            security_headers.add("security_middleware_detected")
+
+        for m in rate_limit_re.finditer(content):
+            rate_limiting.add(m.group(0))
+
+        for m in validation_re.finditer(content):
+            validation.add(m.group(0))
+
+    context["frameworks"] = sorted(detected_frameworks)
+    context["auth_patterns"] = sorted(auth_patterns)
+    context["security_headers"] = sorted(security_headers)
+    context["rate_limiting"] = sorted(rate_limiting)
+    context["input_validation"] = sorted(validation)
+
+    for policy_name in (".skylos.yml", ".skylos.yaml", "skylos.yml", "skylos.yaml"):
+        policy_path = target / policy_name
+        if policy_path.exists():
+            try:
+                import yaml
+                context["policy"] = yaml.safe_load(policy_path.read_text())
+            except Exception:
+                context["policy"] = f"Found {policy_name} but could not parse"
+            break
+
+    return context
+
+
 def _run_analysis(
     path: str,
     confidence: int = 60,
@@ -522,139 +808,9 @@ def _register_tools(mcp):
             return gate_err
 
         try:
-            from skylos.rules.quality.regression import detect_security_regressions
-            from skylos.rules.secrets import PROVIDER_PATTERNS, GENERIC_VALUE, SAFE_TEST_HINTS, _entropy, DEFAULT_MIN_ENTROPY
-
-            all_findings: list[dict] = []
-
-            file_chunks: list[tuple[str, str]] = []
-            current_file = None
-            current_lines: list[str] = []
-
-            for line in diff.splitlines():
-                if line.startswith("+++ b/"):
-                    if current_file and current_lines:
-                        file_chunks.append((current_file, "\n".join(current_lines)))
-                    current_file = line[6:]
-                    current_lines = [line]
-                elif line.startswith("--- a/") or line.startswith("--- /dev/null"):
-                    current_lines.append(line)
-                elif current_file is not None:
-                    current_lines.append(line)
-
-            if current_file and current_lines:
-                file_chunks.append((current_file, "\n".join(current_lines)))
-
-            for file_path_chunk, chunk_text in file_chunks:
-                regressions = detect_security_regressions(chunk_text, file_path_chunk)
-                all_findings.extend(regressions)
-
-            dangerous_calls = {
-                "eval(": ("SKY-D201", "HIGH", "Use of eval()"),
-                "exec(": ("SKY-D202", "HIGH", "Use of exec()"),
-                "os.system(": ("SKY-D203", "CRITICAL", "Use of os.system()"),
-                "pickle.load(": ("SKY-D204", "CRITICAL", "Untrusted deserialization via pickle.load"),
-                "pickle.loads(": ("SKY-D205", "CRITICAL", "Untrusted deserialization via pickle.loads"),
-                "yaml.load(": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
-                "marshal.loads(": ("SKY-D233", "CRITICAL", "Untrusted deserialization via marshal.loads"),
-                "__import__(": ("SKY-D240", "HIGH", "Dynamic import via __import__()"),
-                "compile(": ("SKY-D241", "MEDIUM", "Dynamic code compilation"),
-            }
-
-            sql_injection_re = re.compile(
-                r"""(?:execute|cursor\.execute|raw|text)\(\s*(?:f['"']|['"].*%[sd]|['"].*\+|.*\.format\()""",
-            )
-
-            for file_path_chunk, chunk_text in file_chunks:
-                line_no = 0
-                for raw_line in chunk_text.splitlines():
-                    if raw_line.startswith("@@"):
-                        m = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)", raw_line)
-                        if m:
-                            line_no = int(m.group(1)) - 1
-                        continue
-                    if raw_line.startswith("+") and not raw_line.startswith("+++"):
-                        line_no += 1
-                        added = raw_line[1:]
-                        stripped = added.strip()
-
-                        for pattern, (rule_id, severity, msg) in dangerous_calls.items():
-                            if pattern in stripped:
-                                all_findings.append({
-                                    "rule_id": rule_id,
-                                    "kind": "dangerous_pattern",
-                                    "severity": severity,
-                                    "message": f"Dangerous pattern in added code: {msg}",
-                                    "file": file_path_chunk,
-                                    "line": line_no,
-                                    "col": 0,
-                                })
-
-                        if sql_injection_re.search(stripped):
-                            all_findings.append({
-                                "rule_id": "SKY-D220",
-                                "kind": "dangerous_pattern",
-                                "severity": "CRITICAL",
-                                "message": "Potential SQL injection in added code: string interpolation in query",
-                                "file": file_path_chunk,
-                                "line": line_no,
-                                "col": 0,
-                            })
-
-                        for provider, regex in PROVIDER_PATTERNS:
-                            if regex.search(stripped):
-                                all_findings.append({
-                                    "rule_id": "SKY-S101",
-                                    "kind": "secret",
-                                    "severity": "CRITICAL",
-                                    "message": f"Secret detected in added code: {provider} token/key",
-                                    "file": file_path_chunk,
-                                    "line": line_no,
-                                    "col": 0,
-                                })
-
-                        for m in GENERIC_VALUE.finditer(stripped):
-                            val = m.group("val") or m.group("bare")
-                            if val and _entropy(val) >= DEFAULT_MIN_ENTROPY:
-                                if not any(hint in val.lower() for hint in SAFE_TEST_HINTS):
-                                    all_findings.append({
-                                        "rule_id": "SKY-S101",
-                                        "kind": "secret",
-                                        "severity": "HIGH",
-                                        "message": "Possible secret/credential in added code",
-                                        "file": file_path_chunk,
-                                        "line": line_no,
-                                        "col": 0,
-                                    })
-                    elif not raw_line.startswith("-"):
-                        line_no += 1
-
-            if policy:
-                policy_path = Path(policy) if not Path(policy).is_absolute() else Path(policy)
-                if not policy_path.exists():
-                    target_dir = Path(path).resolve()
-                    policy_path = target_dir / policy
-  
-            status = "fail" if all_findings else "pass"
-            counts: dict[str, int] = {}
-            for f in all_findings:
-                kind = f.get("kind", "unknown")
-                counts[kind] = counts.get(kind, 0) + 1
-
-            parts = []
-            for kind, count in sorted(counts.items()):
-                label = kind.replace("_", " ")
-                parts.append(f"{count} {label}{'s' if count != 1 else ''}")
-            summary_text = ", ".join(parts) + " found" if parts else "No issues found"
-
-            result = {
-                "status": status,
-                "findings": all_findings,
-                "summary": summary_text,
-            }
+            result = _validate_code_change_impl(diff, path, policy)
             _store_result(result, "validate_code_change", path)
             return json.dumps(result, indent=2)
-
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -667,146 +823,83 @@ def _register_tools(mcp):
             return gate_err
 
         try:
-            target = Path(path).resolve()
-            if not target.exists():
-                return json.dumps({"error": f"Path does not exist: {path}"})
+            result = _get_security_context_impl(path)
+            if "error" in result:
+                return json.dumps(result)
+            _store_result(result, "get_security_context", path)
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
-            context: dict[str, Any] = {
-                "project_path": str(target),
-                "frameworks": [],
-                "auth_patterns": [],
-                "security_headers": [],
-                "rate_limiting": [],
-                "input_validation": [],
-                "policy": None,
-            }
+    @mcp.tool()
+    def city_topology(
+        path: str,
+        confidence: int = 60,
+        exclude_folders: list[str] | None = None,
+        filter_district: str | None = None,
+        filter_dead_only: bool = False,
+        min_complexity: int = 0,
+    ) -> str:
+        """Generate Code City topology from codebase analysis.
 
-            framework_indicators = {
-                "Django": [
-                    "manage.py", "settings.py", "django.conf", "urls.py",
-                ],
-                "Flask": [
-                    "app.py", "wsgi.py",
-                ],
-                "FastAPI": [
-                    "main.py", "app.py",
-                ],
-                "Express": [
-                    "app.js", "server.js", "index.js",
-                ],
-                "Next.js": [
-                    "next.config.js", "next.config.mjs", "next.config.ts",
-                ],
-            }
+        Returns a 3D city representation where directories are districts,
+        files are blocks, and functions/classes are buildings.
+        Building height = LOC, color = complexity, dead = abandoned.
 
-            framework_imports = {
-                "Django": re.compile(r"(?:from django|import django)"),
-                "Flask": re.compile(r"(?:from flask |import flask)"),
-                "FastAPI": re.compile(r"(?:from fastapi |import fastapi|FastAPI\(\))"),
-                "Express": re.compile(r"""(?:require\(['"]express['"]\)|from ['"]express['"])"""),
-                "Next.js": re.compile(r"""(?:from ['"]next/|@next/)"""),
-            }
+        Filter params let agents query slices of the city.
+        """
+        gate_err = _gate("city_topology")
+        if gate_err:
+            return gate_err
 
-            scan_files: list[Path] = []
-            scan_extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".mjs"}
-            scan_names = set()
-            for indicators in framework_indicators.values():
-                scan_names.update(indicators)
+        try:
+            from skylos.city import generate_topology
 
-            for item in target.rglob("*"):
-                parts = item.parts
-                if any(skip in parts for skip in ("node_modules", ".git", "__pycache__", "venv", ".venv", "env")):
-                    continue
-                if item.is_file():
-                    if item.name in scan_names or item.suffix in scan_extensions:
-                        scan_files.append(item)
-                if len(scan_files) > 500:
-                    break
-
-            detected_frameworks: set[str] = set()
-            auth_patterns: set[str] = set()
-            security_headers: set[str] = set()
-            rate_limiting: set[str] = set()
-            validation: set[str] = set()
-
-            auth_decorator_re = re.compile(
-                r"@(?:login_required|require_auth|requires_auth|authenticated|"
-                r"permission_required|jwt_required|token_required|permissions_required)"
+            result = _run_analysis(
+                path,
+                confidence=confidence,
+                exclude_folders=exclude_folders,
+                enable_quality=True,
             )
-            auth_depends_re = re.compile(
-                r"Depends\((?:get_current_user|get_current_active_user|require_admin|verify_token)\)"
-            )
-            auth_middleware_re = re.compile(
-                r"(?:AuthenticationMiddleware|SessionMiddleware|JWTAuthentication|"
-                r"OAuth2PasswordBearer|HTTPBearer)"
-            )
+            topology = generate_topology(result)
 
-            header_names = {
-                "X-Content-Type-Options", "X-Frame-Options",
-                "Content-Security-Policy", "Strict-Transport-Security",
-                "X-XSS-Protection", "Referrer-Policy", "Permissions-Policy",
-            }
-            header_middleware_re = re.compile(r"(?:SecurityMiddleware|helmet\(|secure_headers)")
+            # Apply filters
+            if filter_district:
+                topology["districts"] = [
+                    d for d in topology["districts"]
+                    if filter_district in d["name"]
+                ]
 
-            rate_limit_re = re.compile(
-                r"(?:@(?:rate_limit|ratelimit|throttle|limiter\.limit)|"
-                r"slowapi|RateLimitMiddleware|Throttle)"
-            )
+            if filter_dead_only:
+                for district in topology["districts"]:
+                    for block in district["blocks"]:
+                        block["buildings"] = [
+                            b for b in block["buildings"] if b["dead"]
+                        ]
+                    district["blocks"] = [
+                        b for b in district["blocks"] if b["buildings"]
+                    ]
+                topology["districts"] = [
+                    d for d in topology["districts"] if d["blocks"]
+                ]
 
-            validation_re = re.compile(
-                r"(?:@(?:validate|validator|field_validator|validates)|"
-                r"BaseModel|Pydantic|Schema\(|marshmallow|cerberus|"
-                r"wtforms|FlaskForm|Serializer)"
-            )
+            if min_complexity > 0:
+                for district in topology["districts"]:
+                    for block in district["blocks"]:
+                        block["buildings"] = [
+                            b for b in block["buildings"]
+                            if b["complexity"] >= min_complexity
+                        ]
+                    district["blocks"] = [
+                        b for b in district["blocks"] if b["buildings"]
+                    ]
+                topology["districts"] = [
+                    d for d in topology["districts"] if d["blocks"]
+                ]
 
-            for fpath in scan_files:
-                try:
-                    content = fpath.read_text(errors="ignore")
-                except OSError:
-                    continue
-
-                for fw, regex in framework_imports.items():
-                    if regex.search(content):
-                        detected_frameworks.add(fw)
-
-                for m in auth_decorator_re.finditer(content):
-                    auth_patterns.add(m.group(0))
-                for m in auth_depends_re.finditer(content):
-                    auth_patterns.add(m.group(0))
-                for m in auth_middleware_re.finditer(content):
-                    auth_patterns.add(m.group(0))
-
-                for header in header_names:
-                    if header in content:
-                        security_headers.add(header)
-                if header_middleware_re.search(content):
-                    security_headers.add("security_middleware_detected")
-
-                for m in rate_limit_re.finditer(content):
-                    rate_limiting.add(m.group(0))
-
-                for m in validation_re.finditer(content):
-                    validation.add(m.group(0))
-
-            context["frameworks"] = sorted(detected_frameworks)
-            context["auth_patterns"] = sorted(auth_patterns)
-            context["security_headers"] = sorted(security_headers)
-            context["rate_limiting"] = sorted(rate_limiting)
-            context["input_validation"] = sorted(validation)
-
-            for policy_name in (".skylos.yml", ".skylos.yaml", "skylos.yml", "skylos.yaml"):
-                policy_path = target / policy_name
-                if policy_path.exists():
-                    try:
-                        import yaml
-                        context["policy"] = yaml.safe_load(policy_path.read_text())
-                    except Exception:
-                        context["policy"] = f"Found {policy_name} but could not parse"
-                    break
-
-            _store_result(context, "get_security_context", path)
-            return json.dumps(context, indent=2)
-
+            run_id = _store_result(topology, "city_topology", path)
+            topology["_run_id"] = run_id
+            return json.dumps(topology, indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)})
 
