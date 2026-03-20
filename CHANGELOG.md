@@ -3,7 +3,6 @@
 ## [4.1.2] - 2026-03-20
 
 ### Added
-- Code City context map — analyzer now emits per-definition `loc`, `complexity`, `calls`, `called_by`, and `dead` fields for visualization
 - MCP `validate_code_change` — diff-level validation with security regression detection, dangerous pattern scanning, secret leak detection, and SQL injection checks
 - CI/CD review integration with security regression detection from diffs
 - Upload payload now includes `definitions` for Code City dashboard
