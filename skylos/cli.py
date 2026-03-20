@@ -907,6 +907,8 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             console.print(
                 "[muted]Install pyperclip for auto-copy: pip install pyperclip[/muted]"
             )
+        except Exception:
+            pass
 
         console.print()
 
@@ -2127,6 +2129,8 @@ def main() -> None:
             console.print(
                 "[muted]💡 Install pyperclip for auto-copy: pip install pyperclip[/muted]"
             )
+        except Exception:
+            pass
 
         sys.exit(0)
 
@@ -2191,6 +2195,86 @@ def main() -> None:
         from skylos.sync import main as sync_main
 
         sync_main(sys.argv[2:])
+        sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "city":
+        import argparse as city_argparse
+
+        city_parser = city_argparse.ArgumentParser(
+            prog="skylos city",
+            description="Generate Code City topology from codebase analysis",
+        )
+        city_parser.add_argument("path", nargs="?", default=".", help="Path to scan")
+        city_parser.add_argument(
+            "--json", action="store_true", dest="output_json", help="Output raw topology JSON"
+        )
+        city_parser.add_argument(
+            "--quality", action="store_true", help="Include complexity data in output"
+        )
+        city_parser.add_argument(
+            "-o", "--output", dest="output_file", help="Write output to file"
+        )
+        city_parser.add_argument(
+            "--exclude",
+            nargs="+",
+            default=None,
+            help="Additional folders to exclude",
+        )
+        city_parser.add_argument(
+            "--confidence",
+            type=int,
+            default=60,
+            help="Confidence threshold (default: 60)",
+        )
+        city_args = city_parser.parse_args(sys.argv[2:])
+        console = Console()
+
+        target = Path(city_args.path).resolve()
+        if not target.exists():
+            console.print(f"[red]Error: path does not exist: {target}[/red]")
+            sys.exit(1)
+
+        from skylos.city import generate_topology, format_rich_summary
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task("Analyzing codebase...", total=None)
+
+            exclude_folders = list(parse_exclude_folders())
+            if city_args.exclude:
+                exclude_folders.extend(city_args.exclude)
+
+            result_json = run_analyze(
+                str(target),
+                conf=city_args.confidence,
+                exclude_folders=exclude_folders,
+                enable_quality=city_args.quality,
+            )
+            result = json.loads(result_json)
+
+        topology = generate_topology(result)
+
+        if city_args.output_json:
+            output = json.dumps(topology, indent=2)
+        else:
+            output = format_rich_summary(topology)
+
+        if city_args.output_file:
+            try:
+                Path(city_args.output_file).write_text(output, encoding="utf-8")
+            except OSError as e:
+                console.print(f"[red]Error writing output file: {e}[/red]")
+                sys.exit(1)
+            console.print(f"[green]Output written to {city_args.output_file}[/green]")
+        elif city_args.output_json:
+            print(output)
+        else:
+            console.print(output)
+
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] == "discover":
@@ -4511,16 +4595,20 @@ Run 'skylos <command> --help' for more information on each command.
     parser.add_argument(
         "--provenance",
         action="store_true",
-        help="Annotate findings with AI authorship from git provenance data. "
-        "Adds an 'AI' column to table output and ai_authored/ai_agent fields to JSON.",
+        help="(Deprecated — provenance is now automatic in git repos.) "
+        "Kept for backwards compatibility; has no effect.",
+    )
+    parser.add_argument(
+        "--no-provenance",
+        action="store_true",
+        help="Disable automatic AI provenance detection.",
     )
     parser.add_argument(
         "--provenance-base",
         type=str,
         default=None,
         metavar="REF",
-        help="Base ref for provenance detection (default: auto-detect). "
-        "Only used with --provenance.",
+        help="Base ref for provenance detection (default: auto-detect).",
     )
 
     parser.add_argument("command", nargs="*", help="Command to run if gate passes")
@@ -4952,9 +5040,10 @@ sys.exit(ret)
             except Exception as e:
                 console.print(f"[warn]Verification failed: {e}[/warn]")
 
-        # ── Provenance annotation ─────────────────────────────────────
+        # ── Provenance annotation (automatic in git repos) ────────────
         prov_report = None
-        if getattr(args, "provenance", False):
+        _skip_provenance = getattr(args, "no_provenance", False)
+        if not _skip_provenance:
             try:
                 from skylos.provenance import (
                     analyze_provenance,
@@ -4963,7 +5052,9 @@ sys.exit(ret)
                 )
                 from skylos.api import get_git_root
 
-                git_root = get_git_root() or str(project_root)
+                git_root = get_git_root()
+                if not git_root:
+                    raise RuntimeError("not a git repository")
                 prov_base = getattr(args, "provenance_base", None)
 
                 with Progress(
@@ -5015,11 +5106,6 @@ sys.exit(ret)
                             console.print(
                                 f"  [muted]Agents: {', '.join(agent_parts)}[/muted]"
                             )
-                    else:
-                        console.print(
-                            f"[brand]Provenance:[/brand] [good]0 of "
-                            f"{ai_stats['total_findings']} findings are AI-authored[/good]"
-                        )
             except Exception as e:
                 if args.verbose:
                     console.print(f"[warn]Provenance annotation failed: {e}[/warn]")
