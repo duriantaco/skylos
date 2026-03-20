@@ -72,6 +72,10 @@ _REFS_PATTERN = """
 (decorator (call_expression function: (identifier) @ref))
 (export_specifier name: (identifier) @ref)
 (extends_clause (identifier) @ref)
+(ternary_expression consequence: (identifier) @ref)
+(ternary_expression alternative: (identifier) @ref)
+(as_expression (identifier) @ref)
+(satisfies_expression (identifier) @ref)
 (type_identifier) @type_ref
 """
 
