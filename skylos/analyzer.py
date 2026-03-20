@@ -451,27 +451,16 @@ class Skylos:
 
         dead_files = []
         for tf in sorted(ts_files - imported_files - entry_points):
-            # Check the file actually has definitions (skip empty detection to
-            # _is_truly_empty style — but for TS we just check if file has defs)
-            has_defs = False
-            for defn in self.defs.values():
-                if os.path.realpath(str(defn.filename)) == tf and defn.type != "import":
-                    has_defs = True
-                    break
-
-            # Only flag files that have definitions but nothing imports them
-            # (empty files are a separate concern)
-            if has_defs or os.path.getsize(tf) == 0:
-                dead_files.append(
-                    {
-                        "rule_id": "SKY-E003",
-                        "message": "Unused TypeScript file (not imported by any other file)",
-                        "file": tf,
-                        "line": 1,
-                        "severity": "LOW",
-                        "category": "DEAD_CODE",
-                    }
-                )
+            dead_files.append(
+                {
+                    "rule_id": "SKY-E003",
+                    "message": "Unused TypeScript file (not imported by any other file)",
+                    "file": tf,
+                    "line": 1,
+                    "severity": "LOW",
+                    "category": "DEAD_CODE",
+                }
+            )
 
         return dead_files
 
