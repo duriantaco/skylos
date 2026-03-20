@@ -315,7 +315,7 @@ class TestMainFunction:
 
     def test_main_json_output(self, mock_skylos_result):
         """testing main function with JSON output"""
-        test_args = ["cli.py", "test_path", "--json"]
+        test_args = ["cli.py", "test_path", "--json", "--no-provenance"]
 
         with (
             patch("sys.argv", test_args),
