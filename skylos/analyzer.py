@@ -22,6 +22,12 @@ from skylos.constants import AUTO_CALLED, MARKREFS_TICK_DEFAULT
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.languages.typescript import scan_typescript_file
+from skylos.visitors.languages.typescript.analysis import (
+    build_ts_import_graph,
+    demote_unconsumed_ts_exports,
+    find_dead_ts_files,
+    find_unused_ts_exports,
+)
 from skylos.visitors.languages.go import scan_go_file, clear_go_cache
 
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
@@ -372,128 +378,37 @@ class Skylos:
                             def_obj.is_exported = True
                             def_obj.references = max(def_obj.references, 1)
 
-    def _resolve_ts_module(self, source: str, importer: str) -> str | None:
-        if not source.startswith("."):
-            return None
-        base = os.path.dirname(importer)
-        target = os.path.normpath(os.path.join(base, source))
-
-        if target.endswith(".js"):
-            ts_target = target[:-3] + ".ts"
-            if os.path.isfile(ts_target):
-                return ts_target
-            tsx_target = target[:-3] + ".tsx"
-            if os.path.isfile(tsx_target):
-                return tsx_target
-        elif target.endswith(".jsx"):
-            tsx_target = target[:-4] + ".tsx"
-            if os.path.isfile(tsx_target):
-                return tsx_target
-
-        for suffix in (".ts", ".tsx", "/index.ts", "/index.tsx"):
-            candidate = target + suffix
-            if os.path.isfile(candidate):
-                return candidate
-        if os.path.isfile(target):
-            return target
-        return None
-
     def _build_ts_import_graph(self, ts_raw_imports: dict):
-        self.ts_consumed_exports = defaultdict(set)
-        for importer_file, raw_imports in ts_raw_imports.items():
-            for imp in raw_imports:
-                resolved = self._resolve_ts_module(imp["source"], str(importer_file))
-                if resolved:
-                    for name in imp["names"]:
-                        self.ts_consumed_exports[resolved].add(name)
-                        target_key = f"{resolved}:{name}"
-                        if target_key in self.defs:
-                            self.defs[target_key].references += 1
+        (
+            self.ts_consumed_exports,
+            self._ts_wildcard_edges,
+            self._ts_importers_of,
+        ) = build_ts_import_graph(ts_raw_imports, self.defs)
 
     def _demote_unconsumed_ts_exports(self):
         if not hasattr(self, "ts_consumed_exports"):
             return
-        self._ts_demoted_exports = []
-        for name, defn in self.defs.items():
-            if not defn.is_exported:
-                continue
-            if not str(defn.filename).endswith((".ts", ".tsx")):
-                continue
-            if defn.type == "import":
-                continue
-
-            consumed = self.ts_consumed_exports.get(str(defn.filename), set())
-            if defn.simple_name not in consumed and "*" not in consumed:
-                defn.is_exported = False
-                self._ts_demoted_exports.append(defn)
+        self._ts_demoted_exports = demote_unconsumed_ts_exports(
+            self.defs, self.ts_consumed_exports
+        )
 
     def _find_dead_ts_files(self, files, exclude_folders):
-        """Find TS files that are never imported by any other file."""
         if not hasattr(self, "ts_consumed_exports"):
             return []
-
-        _TEST_SUFFIXES = (".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx")
-
-        ts_files = set()
-        for f in files:
-            sf = str(f)
-            if sf.endswith((".ts", ".tsx")) and not any(
-                ex in sf for ex in (exclude_folders or [])
-            ):
-                if sf.endswith(_TEST_SUFFIXES) or "/__tests__/" in sf:
-                    continue
-                if sf.endswith(".d.ts"):
-                    continue
-                ts_files.add(os.path.realpath(sf))
-
-        imported_files = set()
-        for resolved_file in self.ts_consumed_exports:
-            imported_files.add(os.path.realpath(resolved_file))
-
-        entry_points = set()
-        for tf in ts_files:
-            basename = os.path.basename(tf)
-            if basename in ("index.ts", "index.tsx"):
-                entry_points.add(tf)
-
-        dead_files = []
-        for tf in sorted(ts_files - imported_files - entry_points):
-            dead_files.append(
-                {
-                    "rule_id": "SKY-E003",
-                    "message": "Unused TypeScript file (not imported by any other file)",
-                    "file": tf,
-                    "line": 1,
-                    "severity": "LOW",
-                    "category": "DEAD_CODE",
-                }
-            )
-
-        return dead_files
+        return find_dead_ts_files(
+            files,
+            exclude_folders,
+            getattr(self, "_ts_importers_of", {}),
+            getattr(self, "_ts_wildcard_edges", {}),
+        )
 
     def _find_unused_ts_exports(self):
         if not hasattr(self, "_ts_demoted_exports"):
             return []
-        findings = []
-        for defn in self._ts_demoted_exports:
-            if defn.references <= 0:
-                continue
-            basename = os.path.basename(str(defn.filename))
-            if basename in ("index.ts", "index.tsx"):
-                continue
-            findings.append(
-                {
-                    "rule_id": "SKY-E004",
-                    "name": defn.simple_name,
-                    "message": f"Unnecessary `export` on `{defn.simple_name}` (used internally but not imported by any other file)",
-                    "file": str(defn.filename),
-                    "line": defn.line,
-                    "type": defn.type,
-                    "severity": "LOW",
-                    "category": "DEAD_CODE",
-                }
-            )
-        return findings
+        return find_unused_ts_exports(
+            self._ts_demoted_exports,
+            getattr(self, "_ts_wildcard_edges", {}),
+        )
 
     def _propagate_transitive_dead(self):
         dead_set = set()
