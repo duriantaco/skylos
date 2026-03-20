@@ -442,21 +442,24 @@ class Skylos:
             if sf.endswith((".ts", ".tsx")) and not any(
                 ex in sf for ex in (exclude_folders or [])
             ):
+                # Skip test files — they're run by test runners, not imported
                 if sf.endswith(_TEST_SUFFIXES) or "/__tests__/" in sf:
                     continue
-                if "/test/" in sf or "/tests/" in sf:
-                    continue
+                # Skip .d.ts declaration files — ambient types, not import targets
                 if sf.endswith(".d.ts"):
                     continue
                 ts_files.add(os.path.realpath(sf))
 
+        # Files that are imported by at least one other file
         imported_files = set()
         for resolved_file in self.ts_consumed_exports:
             imported_files.add(os.path.realpath(resolved_file))
 
+        # Identify entry points: index.ts at package roots, files in package.json
         entry_points = set()
         for tf in ts_files:
             basename = os.path.basename(tf)
+            # index.ts/tsx files are conventional entry points
             if basename in ("index.ts", "index.tsx"):
                 entry_points.add(tf)
 
@@ -476,18 +479,16 @@ class Skylos:
         return dead_files
 
     def _find_unused_ts_exports(self):
+        """Find TS symbols with unnecessary export keyword (used internally but not imported elsewhere)."""
         if not hasattr(self, "_ts_demoted_exports"):
             return []
         findings = []
         for defn in self._ts_demoted_exports:
             if defn.references <= 0:
                 continue
+            # Skip exports from index files — these are typically package public API
             basename = os.path.basename(str(defn.filename))
             if basename in ("index.ts", "index.tsx"):
-                continue
-            if defn.type == "method":
-                continue
-            if defn.type in ("type", "class") and defn.simple_name[0:1].isupper():
                 continue
             findings.append(
                 {

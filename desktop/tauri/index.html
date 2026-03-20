@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Skylos Companion</title>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Skylos Companion</p>
+          <h1 id="headline">Waiting for repo agent</h1>
+          <p id="subtitle" class="subtitle">Point the companion at a repo-level agent service and it will stay on top of the active queue.</p>
+        </div>
+        <div class="hero-status">
+          <span class="chip" id="connection-chip">Disconnected</span>
+          <span class="chip muted" id="runtime-chip">Browser preview</span>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel control-panel">
+          <div class="panel-head">
+            <h2>Service</h2>
+            <button class="ghost-button" id="save-settings">Save</button>
+          </div>
+
+          <label class="field">
+            <span>Repo Path</span>
+            <input id="repo-path" type="text" placeholder="/Users/oha/skylos" />
+          </label>
+
+          <div class="field-grid">
+            <label class="field">
+              <span>Executable</span>
+              <input id="service-binary" type="text" placeholder="skylos" />
+            </label>
+            <label class="field">
+              <span>Action Limit</span>
+              <input id="action-limit" type="number" min="3" max="50" step="1" />
+            </label>
+          </div>
+
+          <div class="field-grid">
+            <label class="field">
+              <span>Host</span>
+              <input id="service-host" type="text" placeholder="127.0.0.1" />
+            </label>
+            <label class="field">
+              <span>Port</span>
+              <input id="service-port" type="number" min="1" max="65535" step="1" />
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Token</span>
+            <input id="service-token" type="text" placeholder="session token" />
+          </label>
+
+          <div class="toggle-row">
+            <label class="toggle">
+              <input id="refresh-on-start" type="checkbox" />
+              <span>Refresh on service start</span>
+            </label>
+          </div>
+
+          <div class="button-row">
+            <button id="start-service">Start Agent</button>
+            <button class="secondary" id="stop-service">Stop Agent</button>
+            <button class="secondary" id="refresh-state">Refresh</button>
+          </div>
+
+          <p class="panel-note" id="service-note">
+            In browser preview, connect to an already running `skylos agent serve` instance. In Tauri, this panel can launch the local agent for you.
+          </p>
+        </section>
+
+        <section class="panel summary-panel">
+          <div class="panel-head">
+            <h2>Snapshot</h2>
+            <span class="muted-label" id="updated-at">No state yet</span>
+          </div>
+          <div class="stats-grid">
+            <article class="stat-card">
+              <span class="stat-label">Active Queue</span>
+              <strong id="active-count">0</strong>
+            </article>
+            <article class="stat-card">
+              <span class="stat-label">New vs Baseline</span>
+              <strong id="new-count">0</strong>
+            </article>
+            <article class="stat-card">
+              <span class="stat-label">Changed Files</span>
+              <strong id="changed-count">0</strong>
+            </article>
+            <article class="stat-card">
+              <span class="stat-label">Triaged</span>
+              <strong id="triaged-count">0</strong>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel queue-panel">
+          <div class="panel-head">
+            <h2>Active Queue</h2>
+            <span class="muted-label">Ranked actions that need attention now</span>
+          </div>
+          <div id="active-queue" class="action-list empty-state">
+            Start the agent service or connect to a running one.
+          </div>
+        </section>
+
+        <section class="panel triage-panel">
+          <div class="panel-head">
+            <h2>Triaged</h2>
+            <span class="muted-label">Dismissed or snoozed items</span>
+          </div>
+          <div id="triaged-list" class="action-list empty-state">
+            Nothing triaged yet.
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
