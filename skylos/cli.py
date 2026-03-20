@@ -1087,12 +1087,20 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             return
 
         console.rule("[bold red]Secrets")
+
+        has_provenance = any(
+            s.get("ai_authored") is not None for s in (items or [])
+        )
+
         table = Table(expand=True)
         table.add_column("#", style="muted", width=3)
         table.add_column("Provider", style="yellow", width=14)
         table.add_column("Message")
         table.add_column("Preview", style="muted", width=18)
         table.add_column("Location", style="muted", overflow="fold")
+
+        if has_provenance:
+            table.add_column("AI", width=12)
 
         show, overflow = _display_cap(items)
         for i, s in enumerate(show, 1):
@@ -1101,7 +1109,16 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             prev = s.get("preview") or "****"
             short = _shorten_path(s.get("file"), root_path)
             loc = f"{short}:{s.get('line', '?')}"
-            table.add_row(str(i), prov, msg, prev, loc)
+            row = [str(i), prov, msg, prev, loc]
+
+            if has_provenance:
+                if s.get("ai_authored"):
+                    agent = s.get("ai_agent") or "ai"
+                    row.append(f"[red]{agent}[/red]")
+                else:
+                    row.append("[muted]-[/muted]")
+
+            table.add_row(*row)
 
         console.print(table)
         if overflow:
@@ -1203,6 +1220,10 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             for d in (items or [])
         )
 
+        has_provenance = any(
+            d.get("ai_authored") is not None for d in (items or [])
+        )
+
         table = Table(expand=True)
         table.add_column("#", style="muted", width=3)
         table.add_column("Issue", style="yellow", width=20)
@@ -1210,6 +1231,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
         table.add_column("Message", overflow="fold")
         table.add_column("Location", style="muted", width=20, overflow="fold")
         table.add_column("Symbol", style="muted", width=10, overflow="fold")
+
+        if has_provenance:
+            table.add_column("AI", width=12)
 
         if has_verification:
             table.add_column("Verified", width=9)
@@ -1229,6 +1253,15 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             loc = f"{short}:{d.get('line', '?')}"
 
             symbol = d.get("symbol") or "<module>"
+
+            row = [str(i), issue_cell, sev, msg, loc, symbol]
+
+            if has_provenance:
+                if d.get("ai_authored"):
+                    agent = d.get("ai_agent") or "ai"
+                    row.append(f"[red]{agent}[/red]")
+                else:
+                    row.append("[muted]-[/muted]")
 
             if has_verification:
                 ver = (d.get("verification") or {}).get("verdict")
@@ -1273,9 +1306,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
                         if ver:
                             proof = "No evidence attached"
 
-                table.add_row(str(i), issue_cell, sev, msg, loc, symbol, ver_str, proof)
-            else:
-                table.add_row(str(i), issue_cell, sev, msg, loc, symbol)
+                row.extend([ver_str, proof])
+
+            table.add_row(*row)
 
         console.print(table)
         if overflow:
@@ -1725,6 +1758,234 @@ def _load_addopts():
             break
         current = current.parent
     return []
+
+
+def _handle_rules_command():
+    import argparse as rules_argparse
+
+    console = Console()
+    rules_dir = Path.home() / ".skylos" / "rules"
+
+    rules_parser = rules_argparse.ArgumentParser(
+        prog="skylos rules", description="Manage community rules for Skylos"
+    )
+    rules_sub = rules_parser.add_subparsers(dest="rules_cmd")
+
+    p_install = rules_sub.add_parser("install", help="Install a rule pack or YAML URL")
+    p_install.add_argument("pack_or_url", help="Pack name or URL to a .yml/.yaml file")
+
+    rules_sub.add_parser("list", help="List installed community rules")
+
+    p_remove = rules_sub.add_parser("remove", help="Remove an installed rule pack")
+    p_remove.add_argument("name", help="Name of the rule pack to remove")
+
+    p_validate = rules_sub.add_parser("validate", help="Validate a YAML rule file")
+    p_validate.add_argument("path", help="Path to the YAML rule file")
+
+    rules_argv = sys.argv[2:]
+    if not rules_argv:
+        rules_parser.print_help()
+        sys.exit(0)
+
+    rules_args = rules_parser.parse_args(rules_argv)
+
+    if rules_args.rules_cmd == "install":
+        _rules_install(console, rules_dir, rules_args.pack_or_url)
+
+    elif rules_args.rules_cmd == "list":
+        _rules_list(console, rules_dir)
+
+    elif rules_args.rules_cmd == "remove":
+        _rules_remove(console, rules_dir, rules_args.name)
+
+    elif rules_args.rules_cmd == "validate":
+        _rules_validate(console, rules_args.path)
+
+    else:
+        rules_parser.print_help()
+
+    sys.exit(0)
+
+
+def _rules_install(console, rules_dir, pack_or_url):
+    import urllib.request
+    import urllib.error
+
+    try:
+        import yaml
+    except ImportError:
+        console.print("[red]PyYAML is required. Install with: pip install pyyaml[/red]")
+        sys.exit(1)
+
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    if pack_or_url.startswith("http://") or pack_or_url.startswith("https://"):
+        url = pack_or_url
+        name = Path(url).stem
+    else:
+        name = pack_or_url
+        url = f"https://raw.githubusercontent.com/duriantaco/skylos-rules/main/packs/{name}.yml"
+
+    dest = rules_dir / f"{name}.yml"
+
+    console.print(f"[bold]Installing rule pack:[/bold] {name}")
+    console.print(f"[dim]Source: {url}[/dim]")
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "skylos-cli"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            content = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        console.print(f"[red]Download failed: HTTP {e.code}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Download failed: {e}[/red]")
+        sys.exit(1)
+
+    try:
+        data = yaml.safe_load(content)
+        if not data or "rules" not in data:
+            console.print("[red]Invalid rule file: missing 'rules' key[/red]")
+            sys.exit(1)
+        rule_count = len(data["rules"])
+    except yaml.YAMLError as e:
+        console.print(f"[red]Invalid YAML: {e}[/red]")
+        sys.exit(1)
+
+    dest.write_text(content)
+    console.print(f"[green]Installed {rule_count} rule(s) to {dest}[/green]")
+
+
+def _rules_list(console, rules_dir):
+    try:
+        import yaml
+    except ImportError:
+        console.print("[red]PyYAML is required. Install with: pip install pyyaml[/red]")
+        sys.exit(1)
+
+    if not rules_dir.exists():
+        console.print("[dim]No community rules installed.[/dim]")
+        console.print("Run [bold]skylos rules install <pack>[/bold] to get started.")
+        return
+
+    yml_files = sorted(rules_dir.glob("*.yml"))
+    if not yml_files:
+        console.print("[dim]No community rules installed.[/dim]")
+        console.print("Run [bold]skylos rules install <pack>[/bold] to get started.")
+        return
+
+    table = Table(title="Installed Community Rules")
+    table.add_column("Pack", style="bold")
+    table.add_column("Rules", justify="right")
+    table.add_column("Source")
+
+    for f in yml_files:
+        try:
+            data = yaml.safe_load(f.read_text())
+            rule_count = len(data.get("rules", [])) if data else 0
+            table.add_row(f.stem, str(rule_count), str(f))
+        except Exception:
+            table.add_row(f.stem, "?", str(f))
+
+    console.print(table)
+
+
+def _rules_remove(console, rules_dir, name):
+    dest = rules_dir / f"{name}.yml"
+    if not dest.exists():
+        console.print(f"[red]Rule pack '{name}' not found.[/red]")
+        sys.exit(1)
+
+    dest.unlink()
+    console.print(f"[green]Removed rule pack '{name}'[/green]")
+
+
+def _rules_validate(console, path_str):
+    try:
+        import yaml
+    except ImportError:
+        console.print("[red]PyYAML is required. Install with: pip install pyyaml[/red]")
+        sys.exit(1)
+
+    rule_path = Path(path_str)
+    if not rule_path.exists():
+        console.print(f"[red]File not found: {path_str}[/red]")
+        sys.exit(1)
+
+    try:
+        data = yaml.safe_load(rule_path.read_text())
+    except yaml.YAMLError as e:
+        console.print(f"[red]YAML parse error: {e}[/red]")
+        sys.exit(1)
+
+    if not data or not isinstance(data, dict):
+        console.print("[red]Invalid rule file: not a YAML mapping[/red]")
+        sys.exit(1)
+
+    if "rules" not in data:
+        console.print("[red]Invalid rule file: missing 'rules' key[/red]")
+        sys.exit(1)
+
+    errors = []
+    warnings = []
+    valid_severities = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+    valid_pattern_types = {"function", "class", "call", "taint_flow"}
+
+    for i, rule in enumerate(data["rules"]):
+        prefix = f"Rule #{i + 1}"
+        if not isinstance(rule, dict):
+            errors.append(f"{prefix}: not a mapping")
+            continue
+
+        if "id" not in rule:
+            errors.append(f"{prefix}: missing required field 'id'")
+        if "name" not in rule:
+            errors.append(f"{prefix}: missing required field 'name'")
+        if "severity" not in rule:
+            errors.append(f"{prefix}: missing required field 'severity'")
+        elif rule["severity"] not in valid_severities:
+            warnings.append(
+                f"{prefix} ({rule.get('id', '?')}): severity '{rule['severity']}' "
+                f"not in {valid_severities}"
+            )
+
+        pattern = rule.get("pattern")
+        if not pattern:
+            errors.append(f"{prefix} ({rule.get('id', '?')}): missing 'pattern'")
+        elif not isinstance(pattern, dict):
+            errors.append(f"{prefix} ({rule.get('id', '?')}): 'pattern' must be a mapping")
+        elif "type" not in pattern:
+            errors.append(
+                f"{prefix} ({rule.get('id', '?')}): missing 'pattern.type'"
+            )
+        elif pattern["type"] not in valid_pattern_types:
+            warnings.append(
+                f"{prefix} ({rule.get('id', '?')}): unknown pattern type '{pattern['type']}'"
+            )
+
+        if pattern and isinstance(pattern, dict) and pattern.get("type") == "taint_flow":
+            if not pattern.get("sources"):
+                errors.append(
+                    f"{prefix} ({rule.get('id', '?')}): taint_flow requires 'sources'"
+                )
+            if not pattern.get("sinks"):
+                errors.append(
+                    f"{prefix} ({rule.get('id', '?')}): taint_flow requires 'sinks'"
+                )
+
+    if errors:
+        console.print(f"[red]Validation failed with {len(errors)} error(s):[/red]")
+        for err in errors:
+            console.print(f"  [red]- {err}[/red]")
+    if warnings:
+        console.print(f"[yellow]{len(warnings)} warning(s):[/yellow]")
+        for w in warnings:
+            console.print(f"  [yellow]- {w}[/yellow]")
+    if not errors:
+        rule_count = len(data["rules"])
+        console.print(f"[green]Valid: {rule_count} rule(s) in {rule_path.name}[/green]")
+    else:
+        sys.exit(1)
 
 
 def main() -> None:
@@ -2485,6 +2746,9 @@ def main() -> None:
             console.print()
 
         sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "rules":
+        _handle_rules_command()
 
     if len(sys.argv) > 1 and sys.argv[1] == "cicd":
         import argparse as cicd_argparse
@@ -4002,6 +4266,9 @@ Additional commands:
   skylos cicd review     Post inline PR review comments
   skylos agent analyze   AI-powered hybrid analysis with LLM
   skylos agent review    AI code review for git-changed files
+  skylos rules install   Install community rule packs
+  skylos rules list      List installed community rules
+  skylos rules validate  Validate a YAML rule file
   skylos badge           Get badge markdown for your README
 
 Run 'skylos <command> --help' for more information on each command.
@@ -4239,6 +4506,21 @@ Run 'skylos <command> --help' for more information on each command.
         metavar="N",
         help="Max findings to display per category. Remaining shown as summary. "
         "Example: --limit 20",
+    )
+
+    parser.add_argument(
+        "--provenance",
+        action="store_true",
+        help="Annotate findings with AI authorship from git provenance data. "
+        "Adds an 'AI' column to table output and ai_authored/ai_agent fields to JSON.",
+    )
+    parser.add_argument(
+        "--provenance-base",
+        type=str,
+        default=None,
+        metavar="REF",
+        help="Base ref for provenance detection (default: auto-detect). "
+        "Only used with --provenance.",
     )
 
     parser.add_argument("command", nargs="*", help="Command to run if gate passes")
@@ -4669,6 +4951,78 @@ sys.exit(ret)
                     console.print(f"[warn]{msg}[/warn]")
             except Exception as e:
                 console.print(f"[warn]Verification failed: {e}[/warn]")
+
+        # ── Provenance annotation ─────────────────────────────────────
+        prov_report = None
+        if getattr(args, "provenance", False):
+            try:
+                from skylos.provenance import (
+                    analyze_provenance,
+                    annotate_findings_with_provenance,
+                    compute_ai_security_stats,
+                )
+                from skylos.api import get_git_root
+
+                git_root = get_git_root() or str(project_root)
+                prov_base = getattr(args, "provenance_base", None)
+
+                with Progress(
+                    SpinnerColumn(style="brand"),
+                    TextColumn("[brand]Skylos[/brand] {task.description}"),
+                    transient=True,
+                    console=console,
+                ) as progress:
+                    progress.add_task("detecting AI provenance...", total=None)
+                    prov_report = analyze_provenance(git_root, base_ref=prov_base)
+
+                # Collect all findings into a flat list for annotation
+                _finding_categories = [
+                    "danger", "quality", "secrets", "custom_rules",
+                    "unused_functions", "unused_imports", "unused_classes",
+                    "unused_variables", "unused_parameters",
+                    "dependency_vulnerabilities",
+                ]
+                all_annotatable = []
+                for cat in _finding_categories:
+                    items = result.get(cat)
+                    if items:
+                        # Tag each finding with its category for stats
+                        for item in items:
+                            item.setdefault("category", cat)
+                        all_annotatable.extend(items)
+
+                annotate_findings_with_provenance(all_annotatable, prov_report)
+
+                # Compute aggregate stats
+                ai_stats = compute_ai_security_stats(all_annotatable)
+                result["ai_security_stats"] = ai_stats
+                result["provenance_summary"] = prov_report.summary
+
+                # Update result_json for JSON output
+                result_json = json.dumps(result)
+
+                if not args.json:
+                    ai_count = ai_stats["ai_authored_findings"]
+                    ai_pct = ai_stats["ai_authored_pct"]
+                    if ai_count > 0:
+                        console.print(
+                            f"[brand]Provenance:[/brand] [red]{ai_count}[/red] of "
+                            f"{ai_stats['total_findings']} findings ({ai_pct}%) are AI-authored"
+                        )
+                        agents = ai_stats.get("by_agent", {})
+                        if agents:
+                            agent_parts = [f"{name}: {cnt}" for name, cnt in sorted(agents.items())]
+                            console.print(
+                                f"  [muted]Agents: {', '.join(agent_parts)}[/muted]"
+                            )
+                    else:
+                        console.print(
+                            f"[brand]Provenance:[/brand] [good]0 of "
+                            f"{ai_stats['total_findings']} findings are AI-authored[/good]"
+                        )
+            except Exception as e:
+                if args.verbose:
+                    console.print(f"[warn]Provenance annotation failed: {e}[/warn]")
 
         if args.sarif:
             all_findings = []

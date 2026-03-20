@@ -126,4 +126,4 @@ max_quality = 10
 strict = false
 
 [tool.uv.workspace]
-exclude = ["rust", "desktop"]
+exclude = ["rust"]
