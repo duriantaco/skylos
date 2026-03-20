@@ -582,20 +582,22 @@ def has_base_class(def_obj, required_bases, framework):
     if def_obj.type != "method":
         return False
 
-    parts = def_obj.name.rsplit(".", 2)
+    parts = def_obj.name.split(".")
     if len(parts) < 2:
         return False
 
-    class_name = parts[-2]
     class_defs = getattr(framework, "class_defs", {})
 
-    if class_name not in class_defs:
-        return False
-
-    cls_node = class_defs[class_name]
-    for base in getattr(cls_node, "bases", []):
-        base_name = getattr(base, "id", None) or getattr(base, "attr", None)
-        if base_name in required_bases:
-            return True
+    # Walk all parts between module and method name to find the owning class.
+    # For nested classes (e.g. module.ClassName.factory.do_GET) the class may
+    # not be the immediate parent in the dotted name.
+    for part in parts[:-1]:
+        if part not in class_defs:
+            continue
+        cls_node = class_defs[part]
+        for base in getattr(cls_node, "bases", []):
+            base_name = getattr(base, "id", None) or getattr(base, "attr", None)
+            if base_name in required_bases:
+                return True
 
     return False
