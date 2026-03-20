@@ -89,7 +89,7 @@ Discord = "https://discord.gg/Ftn9t9tErf"
 fast = ["skylos-fast>=0.1.0"]
 web = ["flask>=2.1.1", "flask-cors>=3.0.3"]
 test = ["pytest>=9.0.2"]
-all = ["skylos-fast>=0.1.0", "flask>=2.1.1", "flask-cors>=3.0.3", "pytest>=9.0.2"]
+all = ["flask>=2.1.1", "flask-cors>=3.0.3", "pytest>=9.0.2"]
 
 [project.scripts]
 skylos = "skylos.cli:main"
