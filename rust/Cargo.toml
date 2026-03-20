@@ -10,7 +10,7 @@ name = "skylos_fast"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module"] }
+pyo3 = { version = "0.24", features = ["extension-module"] }
 rayon = "1.10"
 rustpython-parser = "0.4"
 ignore = "0.4"               # ripgrep's file walker
