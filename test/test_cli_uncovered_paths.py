@@ -277,7 +277,7 @@ def test_main_writes_sarif_and_prints_json(tmp_path, monkeypatch):
         "secrets": [],
     }
     sarif_path = tmp_path / "out.sarif.json"
-    test_args = ["skylos", ".", "--sarif", str(sarif_path), "--json"]
+    test_args = ["skylos", ".", "--sarif", str(sarif_path), "--json", "--no-provenance"]
     monkeypatch.setattr(sys, "argv", test_args)
 
     with (

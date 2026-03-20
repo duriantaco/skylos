@@ -1,4 +1,12 @@
+from unittest.mock import patch
+
 from skylos.rules.quality.regression import detect_security_regressions
+from skylos.cicd.review import (
+    _detect_regressions_from_diff,
+    _format_review_comment,
+    _post_summary_comment,
+    _REGRESSION_SUGGESTIONS,
+)
 
 
 def _make_diff(
@@ -463,3 +471,239 @@ class TestFindingFormat:
         assert f["file"] == "views.py"
         assert f["line"] >= 1
         assert "kind" in f
+
+
+class TestRegressionPRReviewFormatting:
+    """Test that regression findings are formatted correctly for PR comments."""
+
+    def test_regression_comment_has_warning_badge(self):
+        finding = {
+            "kind": "security_regression",
+            "rule_id": "SKY-L021",
+            "severity": "HIGH",
+            "message": "Security control regression: Auth decorator @login_required was removed",
+            "control_type": "auth",
+            "file": "views.py",
+            "line": 10,
+        }
+        comment = _format_review_comment(finding)
+        assert "SECURITY REGRESSION" in comment
+        assert "SKY-L021" in comment
+        assert "Auth" in comment
+
+    def test_regression_comment_includes_suggestion(self):
+        finding = {
+            "kind": "security_regression",
+            "rule_id": "SKY-L021",
+            "severity": "HIGH",
+            "message": "Security control regression: Auth decorator @login_required was removed",
+            "control_type": "auth",
+            "file": "views.py",
+            "line": 10,
+        }
+        comment = _format_review_comment(finding)
+        assert "Re-add the authentication decorator" in comment
+
+    def test_regression_comment_csrf_suggestion(self):
+        finding = {
+            "kind": "security_regression",
+            "rule_id": "SKY-L021",
+            "severity": "HIGH",
+            "message": "Security control regression: CSRF protection 'CsrfViewMiddleware' was removed",
+            "control_type": "csrf",
+            "file": "settings.py",
+            "line": 5,
+        }
+        comment = _format_review_comment(finding)
+        assert "SECURITY REGRESSION" in comment
+        assert "Csrf" in comment
+        assert "cross-site request forgery" in comment
+
+    def test_regression_comment_tls_suggestion(self):
+        finding = {
+            "kind": "security_regression",
+            "control_type": "tls",
+            "rule_id": "SKY-L021",
+            "severity": "HIGH",
+            "message": "TLS verification disabled",
+            "file": "client.py",
+            "line": 3,
+        }
+        comment = _format_review_comment(finding)
+        assert "verify=True" in comment
+
+    def test_non_regression_finding_uses_normal_format(self):
+        finding = {
+            "rule_id": "SKY-D201",
+            "severity": "CRITICAL",
+            "message": "eval() usage detected",
+            "file": "app.py",
+            "line": 5,
+        }
+        comment = _format_review_comment(finding)
+        assert "SECURITY REGRESSION" not in comment
+        assert "CRITICAL" in comment
+
+    def test_all_control_types_have_suggestions(self):
+        control_types = [
+            "auth", "csrf", "tls", "crypto", "rate_limit",
+            "validation", "headers", "encryption", "logging",
+            "sanitization", "permission",
+        ]
+        for ct in control_types:
+            assert ct in _REGRESSION_SUGGESTIONS, f"Missing suggestion for {ct}"
+
+
+class TestRegressionDetectFromDiff:
+    """Test the _detect_regressions_from_diff integration."""
+
+    def test_returns_findings_with_correct_fields(self):
+        fake_diffs = {
+            "views.py": "\n".join([
+                "diff --git a/views.py b/views.py",
+                "--- a/views.py",
+                "+++ b/views.py",
+                "@@ -1,5 +1,4 @@",
+                "-@login_required",
+                " def view(request):",
+                "     pass",
+            ]),
+        }
+        with patch(
+            "skylos.cicd.review._get_per_file_diffs", return_value=fake_diffs
+        ):
+            findings = _detect_regressions_from_diff("origin/main")
+
+        assert len(findings) >= 1
+        f = findings[0]
+        assert f["category"] == "security_regression"
+        assert f["kind"] == "security_regression"
+        assert f["control_type"] == "auth"
+        assert f["rule_id"] == "SKY-L021"
+        assert f["file"] == "views.py"
+
+    def test_returns_empty_for_clean_diff(self):
+        fake_diffs = {
+            "app.py": "\n".join([
+                "diff --git a/app.py b/app.py",
+                "--- a/app.py",
+                "+++ b/app.py",
+                "@@ -1,3 +1,3 @@",
+                "-x = 1",
+                "+x = 2",
+                " y = 3",
+            ]),
+        }
+        with patch(
+            "skylos.cicd.review._get_per_file_diffs", return_value=fake_diffs
+        ):
+            findings = _detect_regressions_from_diff("origin/main")
+
+        assert len(findings) == 0
+
+    def test_multiple_files_with_regressions(self):
+        fake_diffs = {
+            "views.py": "\n".join([
+                "--- a/views.py",
+                "+++ b/views.py",
+                "@@ -1,5 +1,4 @@",
+                "-@login_required",
+                " def view(request):",
+            ]),
+            "settings.py": "\n".join([
+                "--- a/settings.py",
+                "+++ b/settings.py",
+                "@@ -1,5 +1,4 @@",
+                "-    'django.middleware.csrf.CsrfViewMiddleware',",
+                "     'django.middleware.common.CommonMiddleware',",
+            ]),
+        }
+        with patch(
+            "skylos.cicd.review._get_per_file_diffs", return_value=fake_diffs
+        ):
+            findings = _detect_regressions_from_diff("origin/main")
+
+        assert len(findings) >= 2
+        files = {f["file"] for f in findings}
+        assert "views.py" in files
+        assert "settings.py" in files
+
+
+class TestRegressionInSummary:
+    """Test that regression findings appear in the summary comment."""
+
+    def test_summary_includes_regression_table(self):
+        all_findings = [
+            {
+                "kind": "security_regression",
+                "category": "security_regression",
+                "control_type": "auth",
+                "severity": "HIGH",
+                "message": "Security control regression: Auth decorator @login_required was removed",
+                "file": "views.py",
+                "line": 10,
+                "rule_id": "SKY-L021",
+            },
+        ]
+        diff_findings = list(all_findings)
+
+        # Capture the body passed to subprocess
+        captured = {}
+
+        def mock_run(cmd, **kwargs):
+            if "pr" in cmd and "comment" in cmd:
+                body_idx = cmd.index("--body") + 1
+                captured["body"] = cmd[body_idx]
+
+            class FakeResult:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            return FakeResult()
+
+        with patch("skylos.cicd.review.subprocess.run", side_effect=mock_run):
+            _post_summary_comment(
+                all_findings, diff_findings, 42, "owner/repo"
+            )
+
+        body = captured.get("body", "")
+        assert "Security Regressions Detected" in body
+        assert "auth" in body
+        assert "views.py" in body
+        assert "login_required" in body
+
+    def test_summary_no_regression_section_when_none(self):
+        all_findings = [
+            {
+                "category": "danger",
+                "severity": "HIGH",
+                "message": "eval() usage",
+                "file": "app.py",
+                "line": 5,
+                "rule_id": "SKY-D201",
+            },
+        ]
+        diff_findings = list(all_findings)
+
+        captured = {}
+
+        def mock_run(cmd, **kwargs):
+            if "pr" in cmd and "comment" in cmd:
+                body_idx = cmd.index("--body") + 1
+                captured["body"] = cmd[body_idx]
+
+            class FakeResult:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            return FakeResult()
+
+        with patch("skylos.cicd.review.subprocess.run", side_effect=mock_run):
+            _post_summary_comment(
+                all_findings, diff_findings, 42, "owner/repo"
+            )
+
+        body = captured.get("body", "")
+        assert "Security Regressions Detected" not in body
