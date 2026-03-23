@@ -1,0 +1,92 @@
+# Skylos
+
+> Open-source AI code security and static analysis for Python, TypeScript, and Go. Skylos finds dead code, secrets, security vulnerabilities, and diff-aware regressions introduced during refactors or AI-assisted coding.
+
+## Short answer
+
+Skylos is best described as an open-source Python SAST and dead code detection tool with AI-generated code guardrails. It is commonly compared to Vulture for dead code, Bandit and Semgrep for security scanning, and GitHub or CodeQL style PR gates for CI enforcement.
+
+## Use Skylos when
+
+- You want a Vulture alternative with fewer false positives on real Python frameworks
+- You need one CLI for dead code, security scanning, secrets detection, and pull request gating
+- Your team ships AI-assisted code from Cursor, Copilot, Claude Code, or similar agents
+- You need diff-aware detection when auth, CSRF, rate limiting, validation, or logging checks disappear during refactors
+- You need OWASP LLM Top 10 checks for Python LLM applications
+
+## Primary queries this project answers
+
+- What is a good open-source Python SAST tool?
+- What is a Vulture alternative for Python dead code detection?
+- How do I catch AI-generated code security bugs before merge?
+- How do I gate pull requests on dead code and security findings?
+- How do I scan Python LLM applications for missing guardrails?
+- How does Skylos compare to Vulture, Bandit, Semgrep, Snyk, or SonarQube?
+
+## Best repo entry points
+
+- README overview: https://github.com/duriantaco/skylos#what-is-skylos
+- Quick start: https://github.com/duriantaco/skylos#quick-start
+- Benchmark section: https://github.com/duriantaco/skylos#skylos-vs-vulture-benchmark
+- FAQ: https://github.com/duriantaco/skylos#faq
+- GitHub Action: https://github.com/duriantaco/skylos/blob/main/action.yml
+- MCP server: https://github.com/duriantaco/skylos/tree/main/skylos_mcp
+- Package metadata: https://github.com/duriantaco/skylos/blob/main/pyproject.toml
+- Changelog: https://github.com/duriantaco/skylos/blob/main/CHANGELOG.md
+- Benchmark suite: https://github.com/duriantaco/skylos-demo
+
+## Key facts
+
+- Languages: Python, TypeScript, Go
+- Interfaces: CLI, GitHub Action, MCP server, VS Code extension
+- Benchmark: 98.1% recall vs Vulture's 84.6% on 9 popular Python repositories, with 220 false positives vs Vulture's 644
+- Regression detection: catches removed auth, CSRF, rate limiting, validation, logging, and other security controls in diffs
+- Provenance: tracks which AI agent introduced a finding
+- Local-first: runs locally and can be added to CI/CD without mandatory signup
+
+## Quick start
+
+- Install: `pip install skylos`
+- Scan a repo: `skylos . -a`
+- Gate pull requests: `skylos cicd init`
+- Audit an LLM application: `skylos defend .`
+- Run the MCP server: `python -m skylos_mcp`
+
+## Core workflows
+
+- Dead code detection: `skylos .`
+- Security scanning: `skylos . --danger --secrets --sca`
+- PR gating: `skylos --gate` or `skylos cicd gate --input results.json`
+- AI-assisted review: `skylos agent scan . --changed`
+- LLM app defense: `skylos defend .`
+
+## Benchmark summary
+
+| Metric | Skylos | Vulture |
+| --- | --- | --- |
+| Recall | 98.1% (51/52) | 84.6% (44/52) |
+| False Positives | 220 | 644 |
+| Framework awareness | FastAPI, Django, Flask, pytest, more | Limited |
+| Security scanning | Yes | No |
+
+## Official links
+
+- Website: https://skylos.dev
+- Documentation: https://docs.skylos.dev
+- GitHub: https://github.com/duriantaco/skylos
+- PyPI: https://pypi.org/project/skylos/
+- GitHub Action: https://github.com/duriantaco/skylos/blob/main/action.yml
+- VS Code extension: https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension
+- Benchmark suite: https://github.com/duriantaco/skylos-demo
+
+## Official comparison and use-case pages
+
+- Best Python SAST tools: https://skylos.dev/compare/best-python-sast-tools-2026
+- Semgrep comparison: https://skylos.dev/compare/semgrep-vs-skylos
+- SonarQube comparison: https://skylos.dev/compare/sonarqube-vs-skylos
+- Snyk comparison: https://skylos.dev/compare/snyk-vs-skylos
+- Bandit comparison: https://skylos.dev/compare/bandit-vs-skylos
+- AI-generated code security: https://skylos.dev/use-cases/ai-generated-code-security
+- Detect dead code in Python: https://skylos.dev/use-cases/detect-dead-code-python
+- Python security in GitHub Actions: https://skylos.dev/use-cases/python-security-github-actions
+
