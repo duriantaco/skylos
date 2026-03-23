@@ -2349,7 +2349,7 @@ class DuplicateStringLiteralRule(SkylosRule):
                     "simple_name": display,
                     "value": count,
                     "threshold": self.threshold,
-                    "message": f"String literal '{display}' repeated {count} times. Extract to a constant.",
+                    "message": f"String literal '{display}' repeated {count} times (threshold: {self.threshold}).",
                     "file": filename,
                     "basename": basename,
                     "line": nodes[0].lineno,
