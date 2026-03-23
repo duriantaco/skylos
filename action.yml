@@ -1,5 +1,5 @@
-name: "Skylos - Dead Code & Security PR Gate"
-description: "Scan Python, TypeScript, and Go for dead code, secrets, and risky flows, then gate pull requests with annotations."
+name: "Skylos - Python SAST, Dead Code Detection & PR Gate"
+description: "GitHub Action for Python, TypeScript, and Go SAST, dead code detection, secrets scanning, and pull request gating with annotations."
 author: "Skylos (founder@skylos.dev)"
 
 branding:
