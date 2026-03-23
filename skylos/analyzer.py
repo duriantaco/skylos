@@ -29,6 +29,7 @@ from skylos.visitors.languages.typescript.analysis import (
     find_unused_ts_exports,
 )
 from skylos.visitors.languages.go import scan_go_file, clear_go_cache
+from skylos.visitors.languages.java import scan_java_file
 
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 
@@ -191,8 +192,8 @@ class Skylos:
             return [p], p.parent
 
         root = p
-        exts = {".py", ".go", ".ts", ".tsx"}
-        ext_list = ["py", "go", "ts", "tsx"]
+        exts = {".py", ".go", ".ts", ".tsx", ".java"}
+        ext_list = ["py", "go", "ts", "tsx", "java"]
 
         # use rust file discovery when avail
         if _fast_discover is not None and os.path.isdir(str(p)):
@@ -378,12 +379,12 @@ class Skylos:
                             def_obj.is_exported = True
                             def_obj.references = max(def_obj.references, 1)
 
-    def _build_ts_import_graph(self, ts_raw_imports: dict):
+    def _build_ts_import_graph(self, ts_raw_imports: dict, monorepo_resolver=None):
         (
             self.ts_consumed_exports,
             self._ts_wildcard_edges,
             self._ts_importers_of,
-        ) = build_ts_import_graph(ts_raw_imports, self.defs)
+        ) = build_ts_import_graph(ts_raw_imports, self.defs, monorepo_resolver)
 
     def _demote_unconsumed_ts_exports(self):
         if not hasattr(self, "ts_consumed_exports"):
@@ -1849,7 +1850,9 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
-        self._build_ts_import_graph(ts_raw_imports)
+        from skylos.visitors.languages.typescript.resolve import MonorepoResolver
+        monorepo_resolver = MonorepoResolver(str(self._project_root))
+        self._build_ts_import_graph(ts_raw_imports, monorepo_resolver)
 
         self._global_type_map = {}
         self._global_type_map.update(all_inferred_types)
@@ -1951,6 +1954,12 @@ def proc_file(
 
     if str(file).endswith(".go"):
         out = scan_go_file(file, cfg)
+        if isinstance(out, tuple) and len(out) < 13:
+            return (*out, *([None] * (13 - len(out))))
+        return out[:13]
+
+    if str(file).endswith(".java"):
+        out = scan_java_file(file, cfg)
         if isinstance(out, tuple) and len(out) < 13:
             return (*out, *([None] * (13 - len(out))))
         return out[:13]
@@ -2093,7 +2102,7 @@ def proc_file(
             if "SKY-L026" not in cfg["ignore"]:
                 q_rules.append(UnfinishedGenerationRule())
             if "SKY-L027" not in cfg["ignore"]:
-                q_rules.append(DuplicateStringLiteralRule())
+                q_rules.append(DuplicateStringLiteralRule(threshold=cfg.get("duplicate_strings", 3)))
             if "SKY-L028" not in cfg["ignore"]:
                 q_rules.append(TooManyReturnsRule())
             if "SKY-L029" not in cfg["ignore"]:

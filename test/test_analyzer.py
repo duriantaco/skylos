@@ -187,7 +187,7 @@ class TestSkylos:
 
         files, root = skylos._get_python_files("/project")
 
-        assert mock_dir.glob.call_count == 4
+        assert mock_dir.glob.call_count == 5
         assert root == mock_dir
 
     def test_mark_exports_in_init(self, skylos):

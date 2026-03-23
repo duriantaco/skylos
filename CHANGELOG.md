@@ -1,5 +1,30 @@
 ## Changelog
 
+## [4.1.3] - 2026-03-22
+
+### Added
+- Configurable duplicate string threshold — `duplicate_strings` in `[tool.skylos]` (default: 3)
+- CLI table now prints a brief explanation of what each column means
+- CLI discoverability overhaul — `skylos` with no args shows grouped command overview of all 30+ commands
+- `skylos commands` — flat alphabetical listing of every command
+- `skylos tour` — guided 6-step walkthrough for new users
+- README Command Reference section with grouped tables
+- `nudges` config key in `[tool.skylos]` to suppress post-scan suggestions
+- Java language support. Dead code, security and quality
+- Spring/JUnit framework awareness — `@Override`, `@Bean`, `@Test`, `@GetMapping`, `@Scheduled`, lifecycle methods are suppressed
+
+### Fixed
+- Django/DRF false positives: `Meta` inner classes, `urlpatterns`, `serializer_class`, `permission_classes`, `filterset_class`, migration attrs, and `AppConfig` subclasses are fixed (fixes [#115](https://github.com/duriantaco/skylos/issues/115))
+- Added `django_filters` to framework detection
+
+### Changed
+- Quality table column renamed from "Function" to "Name"
+- Duplicate string findings now show `repeated 5× (max 3)` instead of cryptic `5 (target ≤ 3)`
+- Complexity findings now show `Complexity: 14 (max 10)` instead of bare `14 (target ≤ 10)`
+- `skylos init` template now includes `duplicate_strings` option
+- Post-scan hints replaced with context-aware nudges (1 per scan, based on results)
+- Argparse epilog simplified — points to `skylos commands` and `skylos tour`
+
 ## [4.1.2] - 2026-03-20
 
 ### Added
