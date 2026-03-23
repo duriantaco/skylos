@@ -6,6 +6,7 @@ DEFAULTS = {
     "nesting": 3,
     "max_args": 5,
     "max_lines": 50,
+    "duplicate_strings": 3,
     "ignore": [],
     "exclude": [],
     "whitelist": [],
@@ -14,6 +15,7 @@ DEFAULTS = {
     "lower_confidence": [],
     "overrides": {},
     "non_library_dirs": {},
+    "nudges": True,
     "check_circular": True,
     "max_circular_deps": -1,
     "masking": {

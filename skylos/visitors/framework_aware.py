@@ -120,6 +120,7 @@ FRAMEWORK_IMPORTS = {
     "flask",
     "fastapi",
     "django",
+    "django_filters",
     "rest_framework",
     "pydantic",
     "celery",
