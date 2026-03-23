@@ -439,6 +439,58 @@ def _print_upload_cta(console: Console, project_root: Path):
         )
 
 
+def _print_feature_hints(console: Console, args):
+    """Print contextual hints about features the user hasn't used yet."""
+    if _is_ci():
+        return
+
+    hints = []
+
+    ran_all = getattr(args, "all_checks", False)
+    ran_danger = getattr(args, "danger", False)
+    ran_secrets = getattr(args, "secrets", False)
+    ran_quality = getattr(args, "quality", False)
+
+    if not ran_all and not (ran_danger and ran_secrets and ran_quality):
+        extras = []
+        if not ran_danger:
+            extras.append("security")
+        if not ran_secrets:
+            extras.append("secrets")
+        if not ran_quality:
+            extras.append("quality")
+        hints.append(
+            f"[dim]Add {' + '.join(extras)} scanning:[/dim] [bold]skylos . -a[/bold]"
+        )
+
+    hint_file = Path.home() / ".skylos" / ".hint_index"
+    try:
+        idx = int(hint_file.read_text().strip()) if hint_file.exists() else 0
+    except (ValueError, OSError):
+        idx = 0
+
+    rotating_hints = [
+        "[dim]Scan for AI/LLM guardrails:[/dim] [bold]skylos defend .[/bold]",
+        "[dim]Map LLM integrations:[/dim] [bold]skylos discover .[/bold]",
+        "[dim]LLM-verified dead code (100% accuracy):[/dim] [bold]skylos agent verify .[/bold]",
+        "[dim]Visualize codebase topology:[/dim] [bold]skylos city .[/bold]",
+        "[dim]Auto-fix dead code interactively:[/dim] [bold]skylos . -i[/bold]",
+    ]
+
+    hints.append(rotating_hints[idx % len(rotating_hints)])
+
+    try:
+        hint_file.parent.mkdir(parents=True, exist_ok=True)
+        hint_file.write_text(str(idx + 1))
+    except OSError:
+        pass
+
+    if hints:
+        console.print()
+        for hint in hints:
+            console.print(f"  {hint}")
+
+
 def interactive_selection(
     console: Console, unused_functions, unused_imports, root_path=None
 ):
@@ -569,7 +621,6 @@ def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
     if not all_findings:
         return "# Skylos Report\n\nNo findings.\n"
 
-    # Sort: CRITICAL > HIGH > MEDIUM > LOW
     severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
     all_findings.sort(key=lambda x: severity_order.get(x[0].get("severity", "LOW"), 4))
 
@@ -912,6 +963,9 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print()
 
+    _SUPPRESS_HINT = "[muted]Suppress: # skylos: ignore (line), ignore = [\"SKY-XXX\"] (rule), or # skylos: ignore-start/end (block)[/muted]\n"
+    _DOCS_LINK = _SUPPRESS_HINT + "[muted]Full guide: https://docs.skylos.dev/guides/understanding-output[/muted]\n"
+
     def _display_cap(items):
         cap = limit or len(items)
         return items[:cap], max(0, len(items) - cap)
@@ -952,7 +1006,11 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             console.print(
                 f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
             )
-        console.print()
+        console.print(
+            "[muted]Name — the unused function, import, class, or variable.[/muted]\n"
+            "[muted]Conf — how confident Skylos is that this code is truly unused (higher = safer to remove).[/muted]\n"
+            + _DOCS_LINK
+        )
 
     def _render_unused_simple(title, items, name_key="name"):
         if not items:
@@ -987,7 +1045,7 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
         table = Table(expand=True)
         table.add_column("#", style="muted", width=3)
         table.add_column("Type", style="yellow", width=12)
-        table.add_column("Function", style="bold")
+        table.add_column("Name", style="bold")
         table.add_column("Detail")
         table.add_column("Location", style="muted", width=36)
 
@@ -1000,15 +1058,27 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             value = quality.get("value") or quality.get("complexity")
             thr = quality.get("threshold")
             length = quality.get("length")
+            qtype = quality.get("type", "")
 
-            if raw_kind == "nesting":
+            if qtype == "string":
+                detail = f"repeated {value}×"
+                if thr is not None:
+                    detail += f" (max {thr})"
+                func = f'"{func}"'
+            elif qtype == "dependency":
+                detail = str(value)
+            elif raw_kind == "nesting":
                 detail = f"Deep nesting: depth {value}"
             elif raw_kind == "structure":
                 detail = f"Line count: {value}"
+            elif raw_kind == "complexity":
+                detail = f"Complexity: {value}"
+                if thr is not None:
+                    detail += f" (max {thr})"
             else:
                 detail = f"{value}"
-            if thr is not None:
-                detail += f" (target ≤ {thr})"
+                if thr is not None:
+                    detail += f" (max {thr})"
             if length is not None:
                 detail += f", {length} lines"
             table.add_row(str(i), kind, func, detail, loc)
@@ -1019,7 +1089,13 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
                 f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
             )
         console.print(
-            "[muted]Tip: split helpers, add early returns, flatten branches.[/muted]\n"
+            "[muted]Reading the table:[/muted]\n"
+            "[muted]  • Complexity — number of branches/loops in a function (lower = easier to test)[/muted]\n"
+            "[muted]  • Nesting — how deeply indented the code is (depth count)[/muted]\n"
+            "[muted]  • Structure — line count of a function or argument count[/muted]\n"
+            "[muted]  • Duplicate strings — how many times a literal appears[/muted]\n"
+            "[muted]  • \"max N\" / \"(max N)\" — the configured threshold; tune in [tool.skylos] (complexity, nesting, max_args, max_lines, duplicate_strings)[/muted]\n"
+            + _DOCS_LINK
         )
 
     def _render_circular_deps(items):
@@ -1050,7 +1126,10 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
                 f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
             )
         console.print(
-            "[muted]Tip: Break the cycle by refactoring the suggested module.[/muted]\n"
+            "[muted]Cycle — the chain of modules that import each other in a loop.[/muted]\n"
+            "[muted]Length — how many modules are in the cycle.[/muted]\n"
+            "[muted]Suggested Break — the module to refactor to break the dependency loop.[/muted]\n"
+            + _DOCS_LINK
         )
 
     def _render_custom_rules(items):
@@ -1127,7 +1206,11 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             console.print(
                 f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
             )
-        console.print()
+        console.print(
+            "[muted]Provider — the service the secret belongs to (e.g. AWS, Stripe, GitHub) or \"generic\" for high-entropy strings.[/muted]\n"
+            "[muted]Preview — a masked snippet of the detected secret.[/muted]\n"
+            + _DOCS_LINK
+        )
 
     def render_tree(console: Console, result, root_path=None):
         by_file = defaultdict(list)
@@ -1317,7 +1400,12 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             console.print(
                 f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
             )
-        console.print()
+        console.print(
+            "[muted]Issue — the type of vulnerability (e.g. SQL injection, command injection, eval).[/muted]\n"
+            "[muted]Severity — risk level: Critical > High > Medium > Low.[/muted]\n"
+            "[muted]Symbol — the function or scope where the issue was found.[/muted]\n"
+            + _DOCS_LINK
+        )
 
     def _render_sca(items):
         if not items:
@@ -1359,7 +1447,12 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             console.print(
                 f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
             )
-        console.print()
+        console.print(
+            "[muted]Package — the dependency and its installed version.[/muted]\n"
+            "[muted]Reachability — whether your code actually calls the vulnerable code path.[/muted]\n"
+            "[muted]Fix — the version that patches the vulnerability (upgrade to this).[/muted]\n"
+            + _DOCS_LINK
+        )
 
     if tree:
         render_tree(console, result, root_path=root_path)
@@ -1400,6 +1493,7 @@ complexity = 10
 nesting = 3
 max_args = 5
 max_lines = 50
+duplicate_strings = 3
 model = "gpt-4.1"
 exclude = []
 ignore = []
@@ -1581,6 +1675,92 @@ def estimate_cost(files):
     est_tokens = total_chars / 4
     est_cost_usd = (est_tokens / 1_000_000) * 2.50
     return est_tokens, est_cost_usd
+
+
+def _run_doctor():
+    import platform
+    console = Console()
+
+    console.print()
+    console.print(Panel.fit("[bold]Skylos Doctor[/bold]", border_style="cyan"))
+    console.print()
+
+    py_ver = platform.python_version()
+    py_ok = tuple(int(x) for x in py_ver.split(".")[:2]) >= (3, 10)
+    console.print(f"  {'[green]OK[/green]' if py_ok else '[red]FAIL[/red]'}  Python {py_ver}" +
+                  ("" if py_ok else " [red](requires 3.10+)[/red]"))
+
+    console.print(f"  [green]OK[/green]  Skylos {skylos.__version__}")
+
+    try:
+        import skylos_rust  # noqa: F401
+        console.print("  [green]OK[/green]  skylos\\[fast] installed (Rust acceleration)")
+    except ImportError:
+        console.print("  [yellow]--[/yellow]  skylos\\[fast] not installed [dim](optional: pip install skylos\\[fast])[/dim]")
+
+    if LLM_AVAILABLE:
+        console.print("  [green]OK[/green]  LLM support available")
+    else:
+        console.print("  [yellow]--[/yellow]  LLM support not available [dim](optional: pip install litellm)[/dim]")
+
+    if INTERACTIVE_AVAILABLE:
+        console.print("  [green]OK[/green]  Interactive mode available")
+    else:
+        console.print("  [yellow]--[/yellow]  Interactive mode not available [dim](optional: pip install inquirer)[/dim]")
+
+    from skylos.api import get_project_token
+    token = get_project_token()
+    if token:
+        console.print("  [green]OK[/green]  Cloud connected (SKYLOS_TOKEN set)")
+        try:
+            from skylos.api import get_credit_balance
+            bal_data = get_credit_balance(token)
+            if bal_data:
+                plan = bal_data.get("plan", "free")
+                balance = bal_data.get("balance", 0)
+                if plan == "enterprise":
+                    console.print(f"  [green]OK[/green]  Plan: {plan} (unlimited credits)")
+                else:
+                    color = "green" if balance > 0 else "red"
+                    console.print(f"  [{color}]OK[/{color}]  Plan: {plan} | Credits: {balance:,}")
+        except Exception:
+            pass
+    else:
+        console.print("  [yellow]--[/yellow]  Cloud not connected [dim](optional: skylos login)[/dim]")
+
+    cwd = Path.cwd()
+    pyproject = cwd / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            config = load_config(cwd)
+            has_skylos_config = bool(config.get("whitelist") or config.get("exclude") or
+                                     config.get("gate") or config.get("masking"))
+            if has_skylos_config:
+                console.print("  [green]OK[/green]  pyproject.toml [tool.skylos] config found")
+            else:
+                console.print("  [yellow]--[/yellow]  pyproject.toml exists but no [tool.skylos] section")
+        except Exception:
+            console.print("  [yellow]--[/yellow]  pyproject.toml exists but could not parse config")
+    else:
+        console.print("  [yellow]--[/yellow]  No pyproject.toml in current directory")
+
+    workflow = cwd / ".github" / "workflows" / "skylos.yml"
+    if workflow.exists():
+        console.print("  [green]OK[/green]  GitHub Actions workflow found")
+    else:
+        console.print("  [yellow]--[/yellow]  No CI/CD workflow [dim](run: skylos cicd init)[/dim]")
+
+    rules_dir = Path.home() / ".skylos" / "rules"
+    if rules_dir.exists():
+        rule_files = list(rules_dir.glob("*.yml"))
+        if rule_files:
+            console.print(f"  [green]OK[/green]  {len(rule_files)} community rule pack(s) installed")
+        else:
+            console.print("  [yellow]--[/yellow]  No community rules [dim](optional: skylos rules install <pack>)[/dim]")
+    else:
+        console.print("  [yellow]--[/yellow]  No community rules [dim](optional: skylos rules install <pack>)[/dim]")
+
+    console.print()
 
 
 def _run_clean_command():
@@ -1991,6 +2171,24 @@ def _rules_validate(console, path_str):
 
 
 def main() -> None:
+    if len(sys.argv) == 1:
+        from skylos.help import print_command_overview
+
+        print_command_overview(Console())
+        sys.exit(0)
+
+    if sys.argv[1] == "commands":
+        from skylos.help import print_flat_commands
+
+        print_flat_commands(Console())
+        sys.exit(0)
+
+    if sys.argv[1] == "tour":
+        from skylos.tour import run_tour
+
+        run_tour(Console())
+        sys.exit(0)
+
     if len(sys.argv) > 1 and sys.argv[1] == "key":
         from skylos.commands.key_cmd import run_key_command
 
@@ -2154,6 +2352,10 @@ def main() -> None:
 
     if len(sys.argv) > 1 and sys.argv[1] == "clean":
         _run_clean_command()
+        sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "doctor":
+        _run_doctor()
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] == "whoami":
@@ -2673,7 +2875,6 @@ def main() -> None:
 
         sys.exit(0)
 
-    # ── skylos provenance ──────────────────────────────────────────────
     if len(sys.argv) > 1 and sys.argv[1] == "provenance":
         import argparse as prov_argparse
         from skylos.provenance import analyze_provenance
@@ -2974,7 +3175,6 @@ def main() -> None:
             results = _cicd_load_results(cicd_args)
             config = load_config(results.get("project_root", "."))
 
-            # Compute provenance if agent gate config exists
             gate_cfg = config.get("gate", {})
             prov_report = None
             if gate_cfg.get("agent"):
@@ -3705,7 +3905,6 @@ def main() -> None:
         agent_exclude_folders = list(parse_exclude_folders(use_defaults=True))
 
         if cmd == "scan":
-            # --security mode: LLM-only security audit
             if getattr(agent_args, "security", False):
                 path = pathlib.Path(agent_args.path)
                 if not path.exists():
@@ -3770,7 +3969,6 @@ def main() -> None:
                 )
                 sys.exit(1 if llm_result.has_blockers else 0)
 
-            # --changed mode: only git-changed files
             changed_files = None
             if getattr(agent_args, "changed", False):
                 path = pathlib.Path(agent_args.path)
@@ -3783,7 +3981,6 @@ def main() -> None:
 
                 console.print(f"Found {len(changed_files)} changed files")
 
-            # Fix suggestions on by default (--no-fixes disables)
             if not getattr(agent_args, "no_fixes", False):
                 agent_args.with_fixes = True
 
@@ -4048,7 +4245,6 @@ def main() -> None:
                 f"= {net} verified findings"
             )
 
-            # Fix generation (Phase 3)
             if getattr(agent_args, "fix", False):
                 from skylos.fixgen import (
                     generate_removal_plan,
@@ -4094,7 +4290,6 @@ def main() -> None:
                             print(diff)
 
                         if getattr(agent_args, "pr", False) and not errors:
-                            # --fix --pr: create branch, apply, commit
                             import time as _time
 
                             branch_name = f"skylos/fix-deadcode-{int(_time.time())}"
@@ -4188,11 +4383,10 @@ def main() -> None:
             standards_raw = getattr(agent_args, "standards", None)
 
             if standards_raw:
-                # "__builtin__" sentinel means use built-in defaults (--standards with no arg)
                 standards_path = (
                     None if standards_raw == "__builtin__" else standards_raw
                 )
-                # LLM-guided cleanup mode
+
                 from skylos.llm.cleanup_orchestrator import CleanupOrchestrator
 
                 orchestrator = CleanupOrchestrator(
@@ -4244,7 +4438,6 @@ def main() -> None:
                     else 1
                 )
             else:
-                # Standard remediation mode
                 from skylos.llm.orchestrator import RemediationAgent
 
                 agent = RemediationAgent(
@@ -4343,19 +4536,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Find dead code, secrets, and risky flows in Python, TypeScript, and Go",
         epilog="""
-Additional commands:
-  skylos cicd init       Generate GitHub Actions workflow (30-second setup)
-  skylos cicd gate       Quality gate for CI/CD pipelines
-  skylos cicd annotate   Emit GitHub Annotations on PRs
-  skylos cicd review     Post inline PR review comments
-  skylos agent analyze   AI-powered hybrid analysis with LLM
-  skylos agent review    AI code review for git-changed files
-  skylos rules install   Install community rule packs
-  skylos rules list      List installed community rules
-  skylos rules validate  Validate a YAML rule file
-  skylos badge           Get badge markdown for your README
-
-Run 'skylos <command> --help' for more information on each command.
+Run 'skylos commands' for a full list of all available commands.
+Run 'skylos tour' for a guided walkthrough of capabilities.
         """,
     )
     parser.add_argument("path", nargs="+", help="Path(s) to the project")
@@ -5040,7 +5222,6 @@ sys.exit(ret)
             except Exception as e:
                 console.print(f"[warn]Verification failed: {e}[/warn]")
 
-        # ── Provenance annotation (automatic in git repos) ────────────
         prov_report = None
         _skip_provenance = getattr(args, "no_provenance", False)
         if not _skip_provenance:
@@ -5066,7 +5247,6 @@ sys.exit(ret)
                     progress.add_task("detecting AI provenance...", total=None)
                     prov_report = analyze_provenance(git_root, base_ref=prov_base)
 
-                # Collect all findings into a flat list for annotation
                 _finding_categories = [
                     "danger", "quality", "secrets", "custom_rules",
                     "unused_functions", "unused_imports", "unused_classes",
@@ -5077,19 +5257,16 @@ sys.exit(ret)
                 for cat in _finding_categories:
                     items = result.get(cat)
                     if items:
-                        # Tag each finding with its category for stats
                         for item in items:
                             item.setdefault("category", cat)
                         all_annotatable.extend(items)
 
                 annotate_findings_with_provenance(all_annotatable, prov_report)
 
-                # Compute aggregate stats
                 ai_stats = compute_ai_security_stats(all_annotatable)
                 result["ai_security_stats"] = ai_stats
                 result["provenance_summary"] = prov_report.summary
 
-                # Update result_json for JSON output
                 result_json = json.dumps(result)
 
                 if not args.json:
@@ -5381,6 +5558,11 @@ sys.exit(ret)
                     )
                 )
 
+            from skylos.nudge import pick_nudge
+
+            nudge = pick_nudge(result, args, project_root)
+            if nudge:
+                console.print(f"\n  {nudge}")
             _print_upload_cta(console, project_root)
         else:
             console.print()
@@ -5388,6 +5570,11 @@ sys.exit(ret)
                 "[good]✨ Clean codebase! No issues found.[/good]\n"
                 "[dim]💡 Show others you maintain quality code: [/dim][bold cyan]skylos badge[/bold cyan]"
             )
+            from skylos.nudge import pick_nudge
+
+            nudge = pick_nudge(result, args, project_root)
+            if nudge:
+                console.print(f"\n  {nudge}")
 
     if not args.upload and not getattr(args, "no_upload", False) and not args.json:
         is_linked = _detect_link_file(project_root) is not None

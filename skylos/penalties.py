@@ -104,6 +104,39 @@ _META_ATTRS = {
     "get_latest_by",
     "managed",
     "default_manager_name",
+    "model",
+    "fields",
+    "exclude",
+    "read_only_fields",
+    "extra_kwargs",
+    "depth",
+    "filter_overrides",
+}
+
+_DRF_VIEW_ATTRS = {
+    "serializer_class",
+    "permission_classes",
+    "authentication_classes",
+    "throttle_classes",
+    "pagination_class",
+    "filter_backends",
+    "filterset_class",
+    "filterset_fields",
+    "queryset",
+    "lookup_field",
+    "lookup_url_kwarg",
+}
+
+_MIGRATION_ATTRS = {
+    "initial",
+    "dependencies",
+    "operations",
+}
+
+_DJANGO_MODULE_VARS = {
+    "urlpatterns",
+    "app_name",
+    "default_app_config",
 }
 
 _DRF_BACKEND_METHODS = {
@@ -258,6 +291,30 @@ def _check_pytest_unittest(def_obj, framework):
     return None
 
 
+def _check_django_drf_structural(def_obj, framework):
+    detected = getattr(framework, "detected_frameworks", set())
+    simple_name = def_obj.simple_name
+    _DJANGO_DRF_FRAMEWORKS = {"django", "rest_framework", "django_filters", "marshmallow"}
+
+    if def_obj.type == "class" and simple_name == "Meta":
+        if "." in def_obj.name and detected & _DJANGO_DRF_FRAMEWORKS:
+            return _suppress(def_obj)
+
+    if def_obj.type == "variable" and simple_name in _META_ATTRS:
+        if "." in def_obj.name and "Meta" in def_obj.name:
+            return _suppress(def_obj)
+
+    if def_obj.type == "variable" and simple_name in _DJANGO_MODULE_VARS:
+        return _suppress(def_obj)
+
+    if def_obj.type == "variable" and simple_name in _MIGRATION_ATTRS:
+        fname = str(def_obj.filename)
+        if "/migrations/" in fname or "\\migrations\\" in fname:
+            return _suppress(def_obj)
+
+    return None
+
+
 def _check_django_methods(def_obj, framework):
     detected = getattr(framework, "detected_frameworks", set())
     if "django" not in detected:
@@ -295,9 +352,14 @@ def _check_django_methods(def_obj, framework):
                     if base_name in DJANGO_ADMIN_BASES:
                         return _suppress(def_obj)
 
-    if def_obj.type == "variable" and simple_name in _META_ATTRS:
-        if "." in def_obj.name and "Meta" in def_obj.name:
-            return _suppress(def_obj)
+    if def_obj.type == "class":
+        class_defs = getattr(framework, "class_defs", {})
+        cls_node = class_defs.get(simple_name)
+        if cls_node is not None:
+            for base in getattr(cls_node, "bases", []):
+                base_name = getattr(base, "id", None) or getattr(base, "attr", None)
+                if base_name in DJANGO_APPCONFIG_BASES:
+                    return _suppress(def_obj)
 
     if simple_name in UNITTEST_METHODS and has_base_class(
         def_obj,
@@ -345,6 +407,10 @@ def _check_drf_methods(def_obj, framework):
         def_obj, _DRF_BACKEND_BASES, framework
     ):
         return _suppress(def_obj)
+
+    if def_obj.type == "variable" and simple_name in _DRF_VIEW_ATTRS:
+        if "." in def_obj.name:
+            return _suppress(def_obj)
 
     return None
 
@@ -850,6 +916,9 @@ def apply_penalties(
         return
 
     if _check_pytest_unittest(def_obj, framework) is True:
+        return
+
+    if _check_django_drf_structural(def_obj, framework) is True:
         return
 
     if _check_django_methods(def_obj, framework) is True:

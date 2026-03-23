@@ -1,7 +1,7 @@
 <div align="center">
     <img src="assets/DOG_1.png" alt="Skylos - Dead code, security, and AI defense for Python, TypeScript, and Go" width="300">
-    <h1>Skylos: Dead Code and Security PR Gate for Modern Codebases</h1>
-    <h3>Find dead code, secrets, and exploitable flows in Python, TypeScript, and Go. Add a pull request gate in minutes.</h3>
+    <h1>Skylos: Open-Source Python SAST, Dead Code Detection, and AI Code Security</h1>
+    <h3>Find unused code, hardcoded secrets, exploitable flows, and AI-generated security regressions in Python, TypeScript, and Go. Run locally or gate pull requests in CI/CD.</h3>
 </div>
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
@@ -17,15 +17,31 @@
 ![Skylos](https://img.shields.io/badge/Skylos-PR%20Guard-2f80ed?style=flat&logo=github&logoColor=white)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
 
-📖 **[Website](https://skylos.dev)** · **[Documentation](https://docs.skylos.dev)** · **[Blog](https://skylos.dev/blog)** · **[VS Code Extension](https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension)**
+📖 **[Website](https://skylos.dev)** · **[Documentation](https://docs.skylos.dev)** · **[Blog](https://skylos.dev/blog)** · **[GitHub Action](https://github.com/duriantaco/skylos/blob/main/action.yml)** · **[VS Code Extension](https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension)** · **[MCP Server](https://github.com/duriantaco/skylos/tree/main/skylos_mcp)**
 
 ---
 
 # What is Skylos?
 
-Skylos is a local-first scanner for Python, TypeScript, and Go that helps teams catch dead code, secrets, and exploitable flows before they land in `main`.
+Skylos is an open-source static analysis tool and PR gate for Python, TypeScript, and Go. It helps teams detect dead code, hardcoded secrets, exploitable flows, and AI-generated security regressions before they land in `main`.
+
+If you use Vulture for dead code, Bandit for security checks, or Semgrep/CodeQL for CI enforcement, Skylos combines those workflows with framework-aware dead code detection and diff-aware regression detection for AI-assisted refactors.
 
 The core use case is straightforward: run it locally, add it to CI, and gate pull requests on real findings with GitHub annotations and review comments. Advanced features like AI defense, remediation agents, VS Code, MCP, and cloud upload are available, but you do not need any of them to get value from Skylos.
+
+### Best for
+
+- Python teams that want dead code detection with fewer false positives than Vulture
+- Repositories using Cursor, Copilot, Claude Code, or other AI coding assistants
+- CI/CD pull request gates with GitHub annotations and review comments
+- Python LLM applications that need OWASP LLM Top 10 checks
+
+### Available as
+
+- CLI for local scans and CI/CD workflows
+- GitHub Action for pull request gating and annotations
+- VS Code extension for in-editor findings and AI-assisted fixes
+- MCP server for AI agents and coding assistants
 
 ### Start here
 
@@ -38,10 +54,12 @@ The core use case is straightforward: run it locally, add it to CI, and gate pul
 ### Why teams adopt it
 
 1. **Better dead code signal on real frameworks:** Skylos understands FastAPI, Django, Flask, pytest, Next.js, React, and more, so dynamic code produces less noise.
-2. **One workflow instead of three tools:** Dead code, security scanning, and PR gating live in the same CLI and CI flow.
-3. **Local-first by default:** You can keep scans on your machine and add optional AI or cloud features later if you need them.
+2. **Diff-aware AI regression detection:** Skylos can catch removed auth decorators, CSRF, rate limiting, validation, logging, and other controls that disappear during AI-assisted refactors.
+3. **One workflow instead of three tools:** Dead code, security scanning, and PR gating live in the same CLI and CI flow.
+4. **Local-first by default:** You can keep scans on your machine and add optional AI or cloud features later if you need them.
+5. **Self-explaining output:** Every table prints a legend explaining what each column and number means — no manual required.
 
-### Why Skylos over Vulture?
+### Why Skylos over Vulture for Python dead code detection?
 
 | | Skylos | Vulture |
 |:---|:---|:---|
@@ -271,9 +289,10 @@ Supports OpenAI, Anthropic, Google Gemini, Cohere, Mistral, Ollama, Together AI,
 |----------|--------|-----------|----------|---------|
 | Python | AST | ✅ | ✅ | ✅ |
 | TypeScript/TSX | Tree-sitter | ✅ | ✅ | ✅ |
+| Java | Tree-sitter | ✅ | ✅ | ✅ |
 | Go | Standalone binary | ✅ | - | - |
 
-No Node.js required — TypeScript parser is built-in via Tree-sitter. Languages are auto-detected by file extension. Mixed-language repos (e.g. Python + TypeScript) work out of the box.
+Languages are auto-detected by file extension. Mixed-language repos work out of the box. No Node.js or JDK required — all parsers are built-in via Tree-sitter.
 
 #### TypeScript Rules
 
@@ -767,7 +786,63 @@ For the default `skylos cicd init` workflow, you do not need any Skylos-specific
 
 `GH_TOKEN` is automatically provided by GitHub Actions — no setup needed for PR comments.
 
-## Commands
+## Command Reference
+
+### Core Analysis
+
+| Command | Description |
+|---------|-------------|
+| `skylos <path>` | Dead code, security, and quality analysis |
+| `skylos discover <path>` | Map LLM/AI integrations in your codebase |
+| `skylos defend <path>` | Check LLM integrations for missing defenses |
+| `skylos city <path>` | Visualize codebase as a Code City topology |
+
+### AI Agent
+
+| Command | Description |
+|---------|-------------|
+| `skylos agent scan <path>` | Hybrid static + LLM analysis |
+| `skylos agent verify <path>` | LLM-verify dead code (100% accuracy) |
+| `skylos agent remediate <path>` | Auto-fix issues and create PR |
+| `skylos agent watch <path>` | Continuous repo monitoring |
+| `skylos agent pre-commit <path>` | Analyze staged files (git hook) |
+| `skylos agent triage` | Manage finding triage (dismiss/snooze) |
+
+### CI/CD
+
+| Command | Description |
+|---------|-------------|
+| `skylos cicd init` | Generate GitHub Actions workflow |
+| `skylos cicd gate` | Quality gate (CI exit code) |
+| `skylos cicd annotate` | Emit GitHub Actions annotations |
+| `skylos cicd review` | Post inline PR review comments |
+
+### Account
+
+| Command | Description |
+|---------|-------------|
+| `skylos login` | Connect to Skylos Cloud |
+| `skylos whoami` | Show connected account info |
+| `skylos key` | Manage API keys |
+| `skylos credits` | Check credit balance |
+
+### Utility
+
+| Command | Description |
+|---------|-------------|
+| `skylos init` | Initialize config in pyproject.toml |
+| `skylos baseline <path>` | Save current findings as baseline |
+| `skylos whitelist <pattern>` | Manage whitelisted symbols |
+| `skylos badge` | Get badge markdown for README |
+| `skylos rules` | Install/manage community rule packs |
+| `skylos doctor` | Check installation health |
+| `skylos clean` | Remove cache and state files |
+| `skylos tour` | Guided tour of capabilities |
+| `skylos commands` | List all commands (flat) |
+
+Run `skylos <command> --help` for detailed usage of any command.
+
+## Commands (Detailed)
 
 ### `skylos cicd init`
 
@@ -1037,7 +1112,8 @@ complexity = 10
 nesting = 3
 max_args = 5
 max_lines = 50
-ignore = [] 
+duplicate_strings = 3
+ignore = []
 model = "gpt-4.1"
 
 # Language overrides (optional)
@@ -1164,6 +1240,20 @@ Control how you consume the watchdog's findings.
 
 By default, Skylos finds dead code. Enable additional scans with flags.
 
+### Dead Code (default)
+
+```bash
+skylos .
+```
+
+**Reading the output:**
+
+| Column | Meaning |
+|--------|---------|
+| **Name** | The unused function, import, class, or variable |
+| **Location** | `file:line` where it's defined |
+| **Conf** | Confidence score (0–100%) — how certain Skylos is that this code is truly unused. Higher = safer to remove |
+
 ### Security (`--danger`)
 
 Tracks tainted data from user input to dangerous sinks.
@@ -1171,6 +1261,16 @@ Tracks tainted data from user input to dangerous sinks.
 ```bash
 skylos . --danger
 ```
+
+**Reading the output:**
+
+| Column | Meaning |
+|--------|---------|
+| **Issue** | The vulnerability type (e.g. SQL injection, eval) with its rule ID |
+| **Severity** | Risk level: Critical > High > Medium > Low |
+| **Message** | What was found and why it's dangerous |
+| **Location** | `file:line` where the issue occurs |
+| **Symbol** | The function or scope containing the vulnerable code |
 
 | Rule | ID | What It Catches |
 |------|-----|-----------------|
@@ -1218,7 +1318,34 @@ Detects hardcoded credentials.
 skylos . --secrets
 ```
 
+**Reading the output:**
+
+| Column | Meaning |
+|--------|---------|
+| **Provider** | The service the secret belongs to (e.g. AWS, Stripe, GitHub) or "generic" for high-entropy strings |
+| **Message** | Description of the detected credential |
+| **Preview** | A masked snippet of the secret (e.g. `sk_live_****`) |
+| **Location** | `file:line` where the secret was found |
+
 Providers: GitHub, GitLab, AWS, Stripe, Slack, Google, SendGrid, Twilio, private keys.
+
+### Dependency Vulnerabilities (`--sca`)
+
+Scans your installed dependencies against the OSV.dev vulnerability database.
+
+```bash
+skylos . --sca
+```
+
+**Reading the output:**
+
+| Column | Meaning |
+|--------|---------|
+| **Package** | The dependency and its installed version (e.g. `requests@2.28.0`) |
+| **Vuln ID** | The CVE or advisory identifier |
+| **Severity** | Risk level: Critical > High > Medium > Low |
+| **Reachability** | Whether your code actually calls the vulnerable code path: Reachable (confirmed risk), Unreachable (safe), or Inconclusive |
+| **Fix** | The patched version to upgrade to |
 
 ### Quality (`--quality`)
 
@@ -1226,6 +1353,15 @@ Flags functions that are hard to maintain.
 ```bash
 skylos . --quality
 ```
+
+**Reading the output:**
+
+| Column | Meaning |
+|--------|---------|
+| **Type** | The category: Complexity, Nesting, Structure, Quality (duplicate literals, coupling, cohesion) |
+| **Name** | The function, class, or string literal that triggered the finding |
+| **Detail** | The measured value and the threshold — e.g. `Complexity: 14 (max 10)` means 14 branches were found but the limit is 10; `repeated 5× (max 3)` means a string literal appears 5 times but should appear at most 3 |
+| **Location** | `file:line` where the finding starts |
 
 | Rule | ID | What It Catches |
 |------|-----|-----------------|
@@ -1250,7 +1386,7 @@ skylos . --quality
 | Anti-pattern try block | SKY-L004 | Nested try, or try wrapping too much logic |
 | Unused exception var | SKY-L005 | `except Error as e:` where `e` is never referenced |
 | Inconsistent return | SKY-L006 | Function returns both values and `None` |
-| Duplicate string literal | SKY-L027 | Same string repeated 3+ times — extract to a constant |
+| Duplicate string literal | SKY-L027 | Same string repeated 3+ times (see [suppressing duplicate strings](#suppressing-duplicate-string-findings)) |
 | Too many returns | SKY-L028 | Function has 5+ return statements |
 | Boolean trap | SKY-L029 | Boolean positional parameter harms call-site readability |
 | **Performance** | | |
@@ -1277,6 +1413,30 @@ complexity = 15        # Default: 10
 nesting = 4            # Default: 3
 max_args = 7           # Default: 5
 max_lines = 80
+```
+
+### Suppressing Duplicate String Findings
+
+Skylos flags string literals that appear 3+ times (rule `SKY-L027`). If a repeated string is intentional (e.g. a status value checked in multiple places), you have three options:
+
+**Option 1: Raise the threshold** — only flag strings repeated more than N times:
+```toml
+# pyproject.toml
+[tool.skylos]
+duplicate_strings = 10   # Default: 3. Set to 999 to effectively disable.
+```
+
+**Option 2: Disable the rule entirely:**
+```toml
+# pyproject.toml
+[tool.skylos]
+ignore = ["SKY-L027"]
+```
+
+**Option 3: Suppress inline** — on the specific line:
+```python
+if somevar == "lokal":  # skylos: ignore
+    do_something()
 ```
 
 ### Default CLI Options (`addopts`)
@@ -1701,6 +1861,9 @@ A: `conftest.py` is the standard place for shared fixtures. If a fixture is defi
 **Q: My tests are failing. Can I still use `--trace`?**
 A: Yes. Coverage tracks execution, not pass/fail. Even failing tests provide coverage data.
 
+**Q: What do the numbers in the quality table mean?**
+A: Each quality finding has a **measured value** and a **threshold** (the configured maximum). For example, `Complexity: 14 (max 10)` means the function has 14 branches but the limit is 10. For duplicate string literals, `repeated 5× (max 3)` means the same string appears 5 times — extract it to a named constant. You can tune thresholds in `pyproject.toml` under `[tool.skylos]`.
+
 **Q: What's the difference between `skylos . --audit` and `skylos agent scan`?**
 A: `skylos agent scan` runs the full hybrid pipeline — static analysis, judge-all LLM dead-code verification, and LLM security/quality analysis with fix suggestions. Use `--no-fixes` to skip fix generation. The `--audit` flag on the base command is the legacy static-only mode.
 
@@ -1719,7 +1882,7 @@ A: Yes! Use `--base-url` to point to Ollama, LM Studio, or any OpenAI-compatible
 - **Test data**: Limited scenarios, your mileage may vary
 - **False positives**: Always manually review before deleting code
 - **Secrets PoC**: May emit both a provider hit and a generic high-entropy hit for the same token. Supported file types: `.py`, `.pyi`, `.pyw`, `.env`, `.yaml`, `.yml`, `.json`, `.toml`, `.ini`, `.cfg`, `.conf`, `.ts`, `.tsx`, `.js`, `.jsx`, `.go`
-- **Quality limitations**: The current `--quality` flag does not allow you to configure the cyclomatic complexity. 
+- **Quality limitations**: Quality thresholds (`complexity`, `nesting`, `max_args`, `max_lines`, `duplicate_strings`) are configurable in `pyproject.toml` under `[tool.skylos]`.
 - **Coverage requires execution**: The `--trace` flag only helps if you have tests or can run your application. Pure static analysis is still available without it.
 - **LLM limitations**: AI analysis requires API access (cloud) or local setup (Ollama). Results depend on model quality.
 
