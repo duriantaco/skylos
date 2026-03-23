@@ -26,3 +26,5 @@ node_modules
 .coverage
 .skylos_trace
 .skylos
+.mcpregistry_github_token
+.mcpregistry_registry_token

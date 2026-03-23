@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use Skylos in research, benchmarks, or tooling comparisons, please cite it using this metadata."
+title: "Skylos"
+type: software
+version: "4.1.3"
+abstract: "Open-source AI code security and static analysis for Python, TypeScript, and Go. Skylos finds dead code, secrets, vulnerabilities, and diff-aware regressions."
+license: "Apache-2.0"
+authors:
+  - family-names: "Oh"
+    given-names: "Aaron"
+repository-code: "https://github.com/duriantaco/skylos"
+url: "https://skylos.dev"
+keywords:
+  - "python sast"
+  - "dead code detection"
+  - "ai code security"
+  - "static analysis"

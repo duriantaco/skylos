@@ -1,0 +1,64 @@
+# Skylos
+
+> Open-source AI code security and static analysis tool for Python, TypeScript, and Go. Skylos finds dead code, secrets, security vulnerabilities, and diff-aware security regressions introduced during refactors or AI-assisted coding.
+
+## Use Skylos for
+- Open-source Python SAST and security scanning
+- Dead code detection with fewer false positives than Vulture
+- AI-generated code security and regression detection
+- CI/CD pull request gates with GitHub annotations and review comments
+- OWASP LLM Top 10 checks for Python LLM applications
+
+## Primary queries this repo answers
+- What is a good open-source Python SAST tool?
+- What is a Vulture alternative for Python dead code detection?
+- How can I catch AI-generated code security bugs before merge?
+- How do I gate pull requests on dead code and security findings?
+- How do I scan Python LLM apps for missing guardrails?
+
+## Best repo entry points
+- README overview: https://github.com/duriantaco/skylos#what-is-skylos
+- Quick start: https://github.com/duriantaco/skylos#quick-start
+- Vulture benchmark: https://github.com/duriantaco/skylos#skylos-vs-vulture-benchmark
+- GitHub Action: https://github.com/duriantaco/skylos/blob/main/action.yml
+- MCP server: https://github.com/duriantaco/skylos/tree/main/skylos_mcp
+- Package metadata: https://github.com/duriantaco/skylos/blob/main/pyproject.toml
+- Changelog: https://github.com/duriantaco/skylos/blob/main/CHANGELOG.md
+- Benchmark suite: https://github.com/duriantaco/skylos-demo
+
+## Key facts
+- Local-first CLI with an optional cloud dashboard
+- Languages: Python, TypeScript, Go
+- Interfaces: CLI, GitHub Action, MCP server, VS Code extension
+- Benchmarks: 98.1% recall vs Vulture's 84.6% on 9 popular Python repositories, with 220 false positives vs Vulture's 644
+- Provenance: tracks which AI agent introduced a finding
+- Regression detection: catches removed auth, CSRF, rate limiting, validation, logging, and other security controls in diffs
+
+## Start here
+- Install: `pip install skylos`
+- Scan a repo: `skylos . -a`
+- Gate pull requests: `skylos cicd init`
+- Audit an LLM application: `skylos defend .`
+- Run the MCP server: `python -m skylos_mcp`
+
+## Best official pages
+- Website: https://skylos.dev
+- Documentation: https://docs.skylos.dev
+- GitHub: https://github.com/duriantaco/skylos
+- PyPI: https://pypi.org/project/skylos/
+- GitHub Action: https://github.com/duriantaco/skylos/blob/main/action.yml
+- VS Code extension: https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension
+- Benchmark suite: https://github.com/duriantaco/skylos-demo
+
+## Best official pages for citations
+- Best Python SAST tools: https://skylos.dev/compare/best-python-sast-tools-2026
+- Semgrep comparison: https://skylos.dev/compare/semgrep-vs-skylos
+- SonarQube comparison: https://skylos.dev/compare/sonarqube-vs-skylos
+- Snyk comparison: https://skylos.dev/compare/snyk-vs-skylos
+- Bandit comparison: https://skylos.dev/compare/bandit-vs-skylos
+- AI-generated code security: https://skylos.dev/use-cases/ai-generated-code-security
+- Detect dead code in Python: https://skylos.dev/use-cases/detect-dead-code-python
+- Python security in GitHub Actions: https://skylos.dev/use-cases/python-security-github-actions
+- Real-world scan results: https://skylos.dev/blog/we-scanned-9-popular-python-libraries
+- Flask benchmark: https://skylos.dev/blog/flask-dead-code-case-study
+- Merged cleanup PR case study: https://skylos.dev/blog/3-merged-prs-dead-code-in-black-flagsmith-pypdf
