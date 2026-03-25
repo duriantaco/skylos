@@ -345,8 +345,14 @@ TypeScript dead code detection tracks: callbacks, type annotations, generics, de
 ## from pypi
 pip install skylos
 
+## with LLM-powered features (agent verify, agent remediate, etc.)
+pip install skylos[llm]
+
 ## with Rust-accelerated analysis (up to 63x faster)
 pip install skylos[fast]
+
+## both
+pip install skylos[llm,fast]
 
 ## or from source
 git clone https://github.com/duriantaco/skylos.git
@@ -356,6 +362,8 @@ pip install .
 ```
 
 > **`skylos[fast]`** installs an optional Rust backend that accelerates clone detection (63x), file discovery (5x), coupling analysis, and cycle detection. Same results, just faster. Pure Python works fine without it — the Rust module is auto-detected at runtime.
+>
+> **`skylos[llm]`** installs `litellm` for LLM-powered features (`skylos agent verify`, `skylos agent remediate`, `--llm`). Core static analysis works without it.
 
 ### 🎯 What's Next?
 

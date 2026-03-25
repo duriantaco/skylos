@@ -76,7 +76,6 @@ dependencies = [
     "tree-sitter-go>=0.23.0",
     "tree-sitter-java>=0.23.0",
     "pyyaml",
-    "litellm>=1.81.3",
     "networkx",
     "pyperclip",
     "ca9>=0.1.0",
@@ -94,8 +93,9 @@ Discord = "https://discord.gg/Ftn9t9tErf"
 
 [project.optional-dependencies]
 web = ["flask>=2.1.1", "flask-cors>=3.0.3"]
+llm = ["litellm>=1.81.3,<1.82.8"]
 test = ["pytest>=9.0.2"]
-all = ["flask>=2.1.1", "flask-cors>=3.0.3", "pytest>=9.0.2"]
+all = ["flask>=2.1.1", "flask-cors>=3.0.3", "pytest>=9.0.2", "litellm>=1.81.3,<1.82.8"]
 
 [project.scripts]
 skylos = "skylos.cli:main"

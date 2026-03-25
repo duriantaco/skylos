@@ -15,8 +15,8 @@ class LiteLLMAdapter(BaseAdapter):
             self.litellm.drop_params = True
         except ImportError:
             raise ImportError(
-                "LiteLLM is required but missing. Your Skylos installation is incomplete. "
-                "Reinstall Skylos."
+                "LiteLLM is required for this feature. "
+                "Install it with: pip install skylos[llm]"
             )
 
         self.api_base = api_base or os.getenv("SKYLOS_LLM_BASE_URL")

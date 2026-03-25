@@ -1,5 +1,16 @@
 ## Changelog
 
+## [4.1.4] - 2026-03-25
+
+### Fixed
+- `skylos --llm` now shows populated `Problem:` descriptions for dead code findings instead of blank lines (fixes [#118](https://github.com/duriantaco/skylos/issues/118))
+- Dead code findings in `--llm` output now include rule IDs (SKY-DC001–SKY-DC006) and proper severity levels
+- `uvx skylos` crash on Windows due to litellm's `.pth` file exceeding MAX_PATH (260 chars) in uvx cache paths (fixes [#120](https://github.com/duriantaco/skylos/issues/120))
+
+### Changed
+- `litellm` moved from required to optional dependency — install with `pip install skylos[llm]` for LLM features. Core static analysis no longer pulls in litellm.
+- `litellm` version capped at `<1.82.8` to avoid known supply chain compromise
+
 ## [4.1.3] - 2026-03-22
 
 ### Added
