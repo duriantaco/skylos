@@ -607,16 +607,29 @@ def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
         for f in result.get(category, []):
             all_findings.append((f, label))
 
-    for category, label in [
-        ("unused_functions", "Dead Code"),
-        ("unused_imports", "Dead Code"),
-        ("unused_classes", "Dead Code"),
-        ("unused_variables", "Dead Code"),
-        ("unused_parameters", "Dead Code"),
-        ("unused_files", "Dead Code"),
-    ]:
+    _dead_code_meta = {
+        "unused_functions": ("SKY-DC001", "MEDIUM", "Unused function"),
+        "unused_imports": ("SKY-DC002", "LOW", "Unused import"),
+        "unused_classes": ("SKY-DC003", "MEDIUM", "Unused class"),
+        "unused_variables": ("SKY-DC004", "LOW", "Unused variable"),
+        "unused_parameters": ("SKY-DC005", "LOW", "Unused parameter"),
+        "unused_files": ("SKY-DC006", "LOW", "Empty file"),
+    }
+    for category in _dead_code_meta:
+        rule_id, sev, human_label = _dead_code_meta[category]
         for f in result.get(category, []):
-            all_findings.append((f, label))
+            if not f.get("message"):
+                name = f.get("name") or f.get("simple_name") or ""
+                why = f.get("why_unused")
+                if why:
+                    f["message"] = f"{human_label} '{name}' is never used ({', '.join(why)})"
+                else:
+                    f["message"] = f"{human_label} '{name}' is never used"
+            if not f.get("rule_id"):
+                f["rule_id"] = rule_id
+            if not f.get("severity"):
+                f["severity"] = sev
+            all_findings.append((f, "Dead Code"))
 
     if not all_findings:
         return "# Skylos Report\n\nNo findings.\n"
