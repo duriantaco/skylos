@@ -5,6 +5,14 @@ import skylos.llm.agents as agents
 from skylos.adapters.litellm_adapter import LiteLLMAdapter
 
 
+def _has_litellm():
+    try:
+        import litellm  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 class FakeAdapter:
     def __init__(self, complete_text=None, stream_chunks=None):
         self.complete_text = complete_text or ""
@@ -62,6 +70,9 @@ def test_create_agent_invalid_type_raises():
         agents.create_agent("not_real")
 
 
+@pytest.mark.skipif(
+    not _has_litellm(), reason="litellm not installed"
+)
 def test_create_llm_adapter_returns_litellm_adapter(monkeypatch):
     cfg = agents.AgentConfig(model="gpt-4o-mini", api_key="X")
     adapter = agents.create_llm_adapter(cfg)
@@ -69,6 +80,9 @@ def test_create_llm_adapter_returns_litellm_adapter(monkeypatch):
     assert isinstance(adapter, LiteLLMAdapter)
 
 
+@pytest.mark.skipif(
+    not _has_litellm(), reason="litellm not installed"
+)
 def test_create_llm_adapter_litellm_sets_api_base_from_env(monkeypatch):
     monkeypatch.setenv("SKYLOS_LLM_BASE_URL", "http://localhost:11434/v1")
 
