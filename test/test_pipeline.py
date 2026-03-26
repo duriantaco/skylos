@@ -88,7 +88,8 @@ def _agent_args(**overrides):
         static_only=False,
         skip_verification=False,
         min_confidence="low",
-        verification_mode="judge_all",
+        verification_mode="production",
+        with_fixes=False,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -320,6 +321,20 @@ class TestRunStaticOnFiles:
         result = run_static_on_files(["/proj/a.py"], project_root=pathlib.Path("/proj"))
         assert result["analysis_summary"]["total_files"] == 42
 
+    @patch(P_CUSTOM, return_value=None)
+    @patch(P_EXCLUDE, return_value=set())
+    @patch(P_ANALYZE)
+    def test_passes_changed_files_to_incremental_analyzer(self, mock_analyze, _e, _c):
+        mock_analyze.return_value = json.dumps(_fresh_static())
+
+        run_static_on_files(
+            ["/proj/a.py", "/proj/b.py"],
+            project_root=pathlib.Path("/proj"),
+        )
+
+        kwargs = mock_analyze.call_args.kwargs
+        assert sorted(kwargs["changed_files"]) == ["/proj/a.py", "/proj/b.py"]
+
 
 class TestPipelinePhase1:
     @patch(P_LLM)
@@ -502,7 +517,7 @@ class TestPipelinePhase2a:
         kwargs = mock_agent.verify_candidates.call_args[1]
         assert "defs_map" in kwargs
         assert "project_root" in kwargs
-        assert kwargs["verification_mode"] == "judge_all"
+        assert kwargs["verification_mode"] == "production"
 
     def test_skip_verification_passes_through(self, tmp_path):
         proj = tmp_path / "proj"
@@ -791,6 +806,36 @@ class TestPipelinePhase2b:
         llm = [f for f in findings if f["_source"] == "llm"]
         assert llm[0]["_confidence"] == "medium"
 
+    def test_changed_scan_only_sends_python_files_to_llm_audit(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        py_file = proj / "a.py"
+        ts_file = proj / "b.tsx"
+        py_file.write_text("x = 1")
+        ts_file.write_text("export const x = 1;")
+
+        llm_result = MagicMock()
+        llm_result.findings = []
+
+        with (
+            patch(P_STATIC_FN, return_value=_empty_result()),
+            patch(P_PROGRESS),
+            patch(P_LLM) as mock_llm,
+        ):
+            mock_llm.return_value.analyze_files.return_value = llm_result
+
+            run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(),
+                console=_console(),
+                changed_files=[str(py_file), str(ts_file)],
+            )
+
+        analyze_files_args = mock_llm.return_value.analyze_files.call_args[0][0]
+        assert [str(f) for f in analyze_files_args] == [str(py_file)]
+
 
 class TestPipelineOutput:
     def test_high_confidence_sorted_before_medium(self, tmp_path):
@@ -906,6 +951,84 @@ class TestPipelineOutput:
         for f in findings:
             assert "_source" in f
             assert "_category" in f
+
+
+class TestPipelinePhase3:
+    @patch("skylos.pipeline._enrich_with_llm_suggestions")
+    @patch(P_LLM)
+    @patch(P_STATIC_FN, return_value=_fresh_static())
+    @patch(P_PROGRESS)
+    def test_fix_suggestions_are_opt_in(
+        self, _prog, _static, mock_llm, mock_enrich, tmp_path
+    ):
+        mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a.py").write_text("x = 1")
+
+        run_pipeline(
+            path=str(proj),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(skip_verification=True),
+            console=_console(),
+            changed_files=[str(proj / "a.py")],
+        )
+
+        mock_enrich.assert_not_called()
+
+    @patch("skylos.pipeline._enrich_with_llm_suggestions")
+    @patch(P_LLM)
+    @patch(P_STATIC_FN, return_value=_fresh_static())
+    @patch(P_PROGRESS)
+    def test_fix_suggestions_run_when_enabled(
+        self, _prog, _static, mock_llm, mock_enrich, tmp_path
+    ):
+        mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a.py").write_text("x = 1")
+
+        run_pipeline(
+            path=str(proj),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(skip_verification=True, with_fixes=True),
+            console=_console(),
+            changed_files=[str(proj / "a.py")],
+        )
+
+        mock_enrich.assert_called_once()
+
+    @patch(P_LLM)
+    @patch(P_STATIC_FN, return_value=_fresh_static())
+    @patch(P_PROGRESS)
+    def test_collects_pipeline_stats(self, _prog, _static, mock_llm, tmp_path):
+        mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a.py").write_text("x = 1")
+
+        stats = {}
+        run_pipeline(
+            path=str(proj),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(static_only=True, skip_verification=True),
+            console=_console(),
+            changed_files=[str(proj / "a.py")],
+            stats_out=stats,
+        )
+
+        assert "phase_1_seconds" in stats
+        assert "phase_2a_seconds" in stats
+        assert "phase_2b_seconds" in stats
+        assert "phase_3_seconds" in stats
+        assert "elapsed_seconds" in stats
+        assert stats["verification_mode"] == "production"
 
 
 class TestPipelineIntegration:
