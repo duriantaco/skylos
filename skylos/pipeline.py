@@ -7,6 +7,35 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+_PHASE_2B_MAX_FILES = 12
+_PHASE_2B_ENTRYPOINT_BASENAMES = {
+    "app.py",
+    "api.py",
+    "cli.py",
+    "main.py",
+    "manage.py",
+    "server.py",
+    "settings.py",
+}
+_PHASE_2B_SENSITIVE_TOKENS = (
+    "admin",
+    "auth",
+    "billing",
+    "crypto",
+    "database",
+    "db",
+    "login",
+    "oauth",
+    "password",
+    "payment",
+    "query",
+    "secret",
+    "session",
+    "sql",
+    "token",
+    "upload",
+)
+
 
 _SUGGEST_PROMPT = """You are a code reviewer. Given the source code and a list of findings (security, quality, dead code), provide the problematic code snippet and the fixed code snippet for each finding.
 
@@ -152,6 +181,55 @@ def _infer_root(path) -> Path:
     return Path.cwd().resolve()
 
 
+def _is_high_signal_python_file(file_path: Path) -> bool:
+    normalized = str(file_path).lower().replace("\\", "/")
+    basename = file_path.name.lower()
+    if basename in _PHASE_2B_ENTRYPOINT_BASENAMES:
+        return True
+    return any(token in normalized for token in _PHASE_2B_SENSITIVE_TOKENS)
+
+
+def _select_phase_2b_files(
+    python_files,
+    static_findings,
+    *,
+    changed_files=None,
+    max_files=_PHASE_2B_MAX_FILES,
+):
+    py_files = [Path(f) for f in python_files if Path(f).suffix.lower() == ".py"]
+    if not py_files:
+        return []
+
+    if changed_files:
+        changed_norm = {_norm(f) for f in changed_files}
+        return [f for f in py_files if _norm(f) in changed_norm]
+
+    by_norm = {_norm(f): f for f in py_files}
+    scores = {key: 0 for key in by_norm}
+
+    for category, weight in (("security", 100), ("secrets", 100), ("quality", 60)):
+        for finding in static_findings.get(category, []) or []:
+            file_path = _norm(finding.get("file", ""))
+            if file_path in by_norm:
+                scores[file_path] += weight
+
+    for key, file_path in by_norm.items():
+        if file_path.name.lower() in _PHASE_2B_ENTRYPOINT_BASENAMES:
+            scores[key] += 50
+        elif _is_high_signal_python_file(file_path):
+            scores[key] += 40
+
+    ranked = sorted(
+        py_files,
+        key=lambda file_path: (-scores.get(_norm(file_path), 0), str(file_path)),
+    )
+    return [
+        file_path
+        for file_path in ranked
+        if scores.get(_norm(file_path), 0) > 0
+    ][:max_files]
+
+
 def run_static_on_files(
     files,
     *,
@@ -270,7 +348,7 @@ def run_pipeline(
 
     if not getattr(agent_args, "llm_only", False):
         console.print(
-            "[brand]Phase 1:[/brand] Running static analysis (global index)..."
+            "[brand]Phase 1:[/brand] Running project scan..."
         )
 
         try:
@@ -382,6 +460,9 @@ def run_pipeline(
             pass
 
     dead_code_findings = static_findings.get("dead_code", [])
+    phase_2b_files = _select_phase_2b_files(
+        files, static_findings, changed_files=changed_files
+    )
 
     low_conf = [f for f in dead_code_findings if f.get("confidence", 100) < 20]
     if low_conf:
@@ -500,6 +581,17 @@ def run_pipeline(
         phase_2b_start = time.time()
         results = []
         console.print("[brand]Phase 2b:[/brand] LLM security & quality analysis...")
+        if not phase_2b_files:
+            console.print(
+                "[dim]Skipping LLM audit: no high-signal Python files selected[/dim]"
+            )
+            phase_stats["phase_2b_seconds"] = round(time.time() - phase_2b_start, 1)
+            return results
+
+        if len(phase_2b_files) < len(files):
+            console.print(
+                f"[dim]Scoped LLM audit to {len(phase_2b_files)}/{len(files)} Python files[/dim]"
+            )
 
         _is_rate_limited = any(
             (model or "").strip().lower().startswith(p)
@@ -525,45 +617,44 @@ def run_pipeline(
         analyzer = SkylosLLM(config)
 
         try:
-            if files:
-                llm_result = analyzer.analyze_files(files, defs_map=defs_map)
+            llm_result = analyzer.analyze_files(phase_2b_files, defs_map=defs_map)
 
-                for finding in llm_result.findings:
-                    issue_type = (
-                        finding.issue_type.value
-                        if hasattr(finding.issue_type, "value")
-                        else str(finding.issue_type)
-                    )
-
-                    llm_finding = {
-                        "file": finding.location.file,
-                        "line": finding.location.line,
-                        "message": finding.message,
-                        "rule_id": finding.rule_id,
-                        "severity": (
-                            finding.severity.value
-                            if hasattr(finding.severity, "value")
-                            else str(finding.severity)
-                        ),
-                        "confidence": (
-                            finding.confidence.value
-                            if hasattr(finding.confidence, "value")
-                            else str(finding.confidence)
-                        ),
-                        "explanation": finding.explanation,
-                        "suggestion": finding.suggestion,
-                        "_source": "llm",
-                        "_category": issue_type,
-                        "_confidence": "medium",
-                        "_needs_review": True,
-                        "_ci_blocking": False,
-                    }
-                    results.append(llm_finding)
-
-                console.print(
-                    f"[good]✓ LLM:[/good] {len(results)} additional findings "
-                    f"(all marked needs_review)"
+            for finding in llm_result.findings:
+                issue_type = (
+                    finding.issue_type.value
+                    if hasattr(finding.issue_type, "value")
+                    else str(finding.issue_type)
                 )
+
+                llm_finding = {
+                    "file": finding.location.file,
+                    "line": finding.location.line,
+                    "message": finding.message,
+                    "rule_id": finding.rule_id,
+                    "severity": (
+                        finding.severity.value
+                        if hasattr(finding.severity, "value")
+                        else str(finding.severity)
+                    ),
+                    "confidence": (
+                        finding.confidence.value
+                        if hasattr(finding.confidence, "value")
+                        else str(finding.confidence)
+                    ),
+                    "explanation": finding.explanation,
+                    "suggestion": finding.suggestion,
+                    "_source": "llm",
+                    "_category": issue_type,
+                    "_confidence": "medium",
+                    "_needs_review": True,
+                    "_ci_blocking": False,
+                }
+                results.append(llm_finding)
+
+            console.print(
+                f"[good]✓ LLM:[/good] {len(results)} additional findings "
+                f"(all marked needs_review)"
+            )
 
         except Exception as e:
             console.print(f"[warn]LLM analysis failed: {e}[/warn]")
@@ -644,7 +735,10 @@ def run_pipeline(
             {
                 "elapsed_seconds": round(time.time() - pipeline_start, 1),
                 "dead_code_candidates": len(dead_code_findings),
-                "llm_audit_files": len(files),
+                "llm_audit_files": len(phase_2b_files),
+                "llm_audit_selected_files": len(phase_2b_files),
+                "llm_audit_total_python_files": len(files),
+                "llm_audit_skipped_files": max(0, len(files) - len(phase_2b_files)),
                 "changed_files_count": len(changed_files or []),
                 "with_fixes": bool(getattr(agent_args, "with_fixes", False)),
                 "verification_mode": getattr(

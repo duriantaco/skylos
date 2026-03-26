@@ -836,6 +836,91 @@ class TestPipelinePhase2b:
         analyze_files_args = mock_llm.return_value.analyze_files.call_args[0][0]
         assert [str(f) for f in analyze_files_args] == [str(py_file)]
 
+    @patch(P_ANALYZE)
+    @patch(P_EXCLUDE, return_value=set())
+    @patch(P_PROGRESS)
+    @patch(P_LLM)
+    def test_full_scan_scopes_llm_audit_to_high_signal_files(
+        self, mock_llm, _prog, _exclude, mock_analyze, tmp_path
+    ):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        vuln_file = proj / "vuln.py"
+        quality_file = proj / "quality.py"
+        auth_file = proj / "auth_service.py"
+        misc_file = proj / "misc.py"
+        for file_path in (vuln_file, quality_file, auth_file, misc_file):
+            file_path.write_text("x = 1")
+
+        static_result = _empty_result()
+        static_result["danger"] = [
+            {
+                "file": str(vuln_file),
+                "line": 3,
+                "message": "SQL injection",
+                "confidence": 95,
+            }
+        ]
+        static_result["quality"] = [
+            {
+                "file": str(quality_file),
+                "line": 8,
+                "message": "Function too long",
+                "confidence": 70,
+            }
+        ]
+        mock_analyze.return_value = json.dumps(static_result)
+
+        llm_result = MagicMock()
+        llm_result.findings = []
+        mock_llm.return_value.analyze_files.return_value = llm_result
+
+        run_pipeline(
+            path=str(proj),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(skip_verification=True),
+            console=_console(),
+        )
+
+        analyze_files_args = mock_llm.return_value.analyze_files.call_args[0][0]
+        analyzed = {str(f) for f in analyze_files_args}
+        assert analyzed == {str(vuln_file), str(quality_file), str(auth_file)}
+        assert str(misc_file) not in analyzed
+
+    @patch(P_ANALYZE)
+    @patch(P_EXCLUDE, return_value=set())
+    @patch(P_PROGRESS)
+    @patch(P_LLM)
+    def test_phase_2b_stats_track_selected_and_skipped_files(
+        self, mock_llm, _prog, _exclude, mock_analyze, tmp_path
+    ):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        selected_file = proj / "app.py"
+        skipped_file = proj / "misc.py"
+        selected_file.write_text("x = 1")
+        skipped_file.write_text("x = 1")
+
+        mock_analyze.return_value = json.dumps(_empty_result())
+        llm_result = MagicMock()
+        llm_result.findings = []
+        mock_llm.return_value.analyze_files.return_value = llm_result
+
+        stats = {}
+        run_pipeline(
+            path=str(proj),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(skip_verification=True),
+            console=_console(),
+            stats_out=stats,
+        )
+
+        assert stats["llm_audit_total_python_files"] == 2
+        assert stats["llm_audit_selected_files"] == 1
+        assert stats["llm_audit_skipped_files"] == 1
+
 
 class TestPipelineOutput:
     def test_high_confidence_sorted_before_medium(self, tmp_path):
