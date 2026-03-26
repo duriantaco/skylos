@@ -8,12 +8,17 @@ from skylos.visitors.languages.typescript import scan_typescript_file
 _BENCHMARKS_DIR = Path(__file__).parent.parent / "manual" / "mixed_repo"
 
 
-def _scan_ts(tmp_path, code):
-    p = tmp_path / "test.ts"
+def _scan_ts_file(tmp_path, filename, code):
+    p = tmp_path / filename
+    p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(code, encoding="utf-8")
     results = scan_typescript_file(str(p))
     defs, refs, _, _, _, _, quality, danger, *_ = results
     return defs, refs, quality, danger
+
+
+def _scan_ts(tmp_path, code):
+    return _scan_ts_file(tmp_path, "test.ts", code)
 
 
 def _def_names(defs):
@@ -204,6 +209,37 @@ class TestTSImports:
 
 
 class TestTSDeadCodeFalsePositives:
+    def test_jsx_callback_reference(self, tmp_path):
+        code = (
+            "export function UserMenu() {\n"
+            "    const handleLogout = async () => {\n"
+            "        await Promise.resolve();\n"
+            "    };\n"
+            "    return <button onClick={handleLogout}>Logout</button>;\n"
+            "}\n"
+        )
+        defs, refs, _, _ = _scan_ts_file(tmp_path, "UserMenu.tsx", code)
+        ref_names = _ref_names(refs)
+        assert "handleLogout" in ref_names
+        assert "button" not in ref_names
+        assert "handleLogout" not in _unused(defs, refs)
+
+    def test_jsx_component_reference_self_closing(self, tmp_path):
+        code = (
+            "function UserMenu() { return <button />; }\n"
+            "export function Page() { return <UserMenu />; }\n"
+        )
+        defs, refs, _, _ = _scan_ts_file(tmp_path, "Page.tsx", code)
+        assert "UserMenu" not in _unused(defs, refs)
+
+    def test_jsx_component_reference_paired_tag(self, tmp_path):
+        code = (
+            "function UserMenu() { return <button />; }\n"
+            "export function Page() { return <UserMenu></UserMenu>; }\n"
+        )
+        defs, refs, _, _ = _scan_ts_file(tmp_path, "Page.tsx", code)
+        assert "UserMenu" not in _unused(defs, refs)
+
     def test_callback_passed_as_argument(self, tmp_path):
         code = (
             "function transformer(x: number): number { return x * 2; }\n"
@@ -367,6 +403,56 @@ class TestTSClassDefs:
 
 
 class TestMixedRepoIntegration:
+    def test_mixed_repo_tsx_jsx_refs_prevent_false_positives(self, tmp_path):
+        """TSX callbacks and component usage should count as live refs."""
+        from skylos.analyzer import analyze
+
+        frontend = tmp_path / "frontend"
+        (frontend / "src" / "components" / "Common").mkdir(parents=True)
+
+        (frontend / "src" / "components" / "Common" / "UserMenu.tsx").write_text(
+            "export function UserMenu() {\n"
+            "    const handleLogout = async () => {\n"
+            "        await Promise.resolve();\n"
+            "    };\n"
+            "    function deadHelper() {\n"
+            "        return 1;\n"
+            "    }\n"
+            "    return <button onClick={handleLogout}>Logout</button>;\n"
+            "}\n"
+        )
+        (frontend / "src" / "App.tsx").write_text(
+            'import { UserMenu } from "./components/Common/UserMenu";\n'
+            "\n"
+            "export function App() {\n"
+            "    return <UserMenu />;\n"
+            "}\n"
+        )
+        (frontend / "src" / "main.tsx").write_text(
+            'import { App } from "./App";\n'
+            "\n"
+            "function mount() {\n"
+            "    return <App />;\n"
+            "}\n"
+            "\n"
+            "mount();\n"
+        )
+
+        result_json = analyze(str(frontend), conf=10)
+        result = json.loads(result_json)
+
+        unused_functions = {item["name"] for item in result.get("unused_functions", [])}
+        unused_imports = {item["name"] for item in result.get("unused_imports", [])}
+        unused_files = {Path(item["file"]).name for item in result.get("unused_files", [])}
+
+        assert "deadHelper" in unused_functions
+        assert "handleLogout" not in unused_functions
+        assert "UserMenu" not in unused_functions
+        assert "App" not in unused_functions
+        assert "UserMenu" not in unused_imports
+        assert "App" not in unused_imports
+        assert unused_files == set()
+
     def test_mixed_repo_finds_dead_code_in_both(self, tmp_path):
         """Both Python and TS dead code should appear in results."""
         from skylos.analyzer import analyze

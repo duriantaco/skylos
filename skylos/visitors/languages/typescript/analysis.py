@@ -235,6 +235,15 @@ _CONFIG_FILES = frozenset(
     }
 )
 
+_TS_ENTRY_FILES = frozenset(
+    {
+        "index.ts",
+        "index.tsx",
+        "main.ts",
+        "main.tsx",
+    }
+)
+
 
 def _is_ts_entry_or_infra(sf: str) -> bool:
     if sf.endswith(_TEST_SUFFIXES) or "/__tests__/" in sf:
@@ -280,7 +289,7 @@ def find_dead_ts_files(files, exclude_folders, importers_of, wildcard_edges):
 
     entry_points = set()
     for tf in ts_files:
-        if os.path.basename(tf) in ("index.ts", "index.tsx"):
+        if os.path.basename(tf) in _TS_ENTRY_FILES:
             entry_points.add(tf)
 
     dead_set = set()

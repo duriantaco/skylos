@@ -12,6 +12,7 @@ from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
     demote_unconsumed_ts_exports,
     find_unused_ts_exports,
+    find_dead_ts_files,
     _is_nextjs_convention_file,
     _NEXTJS_CONVENTION_EXPORTS,
 )
@@ -242,3 +243,25 @@ class TestWildcardPassthrough:
 
         consumed, _, _ = build_ts_import_graph(ts_raw_imports, defs)
         assert "helper" in consumed[str(mod_file)]
+
+
+class TestTypeScriptDeadFiles:
+    def test_main_tsx_is_treated_as_entrypoint(self, tmp_path):
+        main_file = tmp_path / "src" / "main.tsx"
+        app_file = tmp_path / "src" / "App.tsx"
+        component_file = tmp_path / "src" / "components" / "UserMenu.tsx"
+
+        component_file.parent.mkdir(parents=True)
+        main_file.parent.mkdir(parents=True, exist_ok=True)
+
+        for path in (main_file, app_file, component_file):
+            path.write_text("", encoding="utf-8")
+
+        files = [main_file, app_file, component_file]
+        importers_of = {
+            str(app_file): {str(main_file)},
+            str(component_file): {str(app_file)},
+        }
+
+        dead_files = find_dead_ts_files(files, [], importers_of, {})
+        assert dead_files == []
