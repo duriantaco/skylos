@@ -200,16 +200,18 @@ def test_run_whitelist_creates_names_section_if_missing(tmp_path, monkeypatch):
     assert '"dark_logic"' in content
 
 
-def test_get_git_changed_files_returns_only_existing_py(tmp_path):
+def test_get_git_changed_files_returns_existing_supported_files_only(tmp_path):
     root = tmp_path
     (root / "a.py").write_text("x=1", encoding="utf-8")
+    (root / "b.tsx").write_text("export const x = 1", encoding="utf-8")
+    (root / "c.go").write_text("package main", encoding="utf-8")
     (root / "b.txt").write_text("no", encoding="utf-8")
 
     def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
         if cmd[:3] == ["git", "rev-parse", "--is-inside-work-tree"]:
             return b"true"
         if cmd[:3] == ["git", "diff", "--name-only"]:
-            return b"a.py\nb.txt\nmissing.py\n"
+            return b"a.py\nb.tsx\nc.go\nb.txt\nmissing.py\nmissing.ts\n"
         raise AssertionError("unexpected cmd")
 
     with patch("skylos.cli.subprocess.check_output", side_effect=fake_check_output):
@@ -220,7 +222,7 @@ def test_get_git_changed_files_returns_only_existing_py(tmp_path):
         names.append(p.name)
     names.sort()
 
-    assert names == ["a.py"]
+    assert names == ["a.py", "b.tsx", "c.go"]
 
 
 def test_get_git_changed_files_on_error_returns_empty(tmp_path):

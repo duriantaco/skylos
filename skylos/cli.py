@@ -1636,13 +1636,16 @@ def run_whitelist(pattern=None, reason=None, show=False):
 
 
 def get_git_changed_files(root_path):
-    def _collect_py(output):
+    supported_exts = {".py", ".go", ".ts", ".tsx", ".java"}
+
+    def _collect_supported(output):
         files = []
         for line in output.splitlines():
-            if line.endswith(".py"):
-                full_path = pathlib.Path(root_path) / line
-                if full_path.exists():
-                    files.append(full_path)
+            full_path = pathlib.Path(root_path) / line
+            if full_path.suffix.lower() not in supported_exts:
+                continue
+            if full_path.exists():
+                files.append(full_path)
         return files
 
     try:
@@ -1657,7 +1660,7 @@ def get_git_changed_files(root_path):
             cwd=root_path,
             timeout=30,
         ).decode("utf-8")
-        files = _collect_py(output)
+        files = _collect_supported(output)
         if files:
             return files
 
@@ -1670,7 +1673,7 @@ def get_git_changed_files(root_path):
             output = subprocess.check_output(
                 cmd, cwd=root_path, stderr=subprocess.DEVNULL, timeout=30
             ).decode("utf-8")
-            return _collect_py(output)
+            return _collect_supported(output)
         except Exception:
             return []
     except Exception:
@@ -3309,13 +3312,18 @@ def main() -> None:
         p_scan.add_argument(
             "--verification-mode",
             choices=["judge_all", "production"],
-            default="judge_all",
+            default="production",
             help="Dead-code verifier mode: judge_all sends nearly every refs==0 candidate to the LLM",
+        )
+        p_scan.add_argument(
+            "--with-fixes",
+            action="store_true",
+            help="Generate fix suggestions for findings (slower)",
         )
         p_scan.add_argument(
             "--no-fixes",
             action="store_true",
-            help="Skip fix suggestions (faster)",
+            help="Disable fix suggestions (compatibility alias; fixes are off by default)",
         )
         p_scan.add_argument(
             "--changed",
@@ -3994,8 +4002,9 @@ def main() -> None:
 
                 console.print(f"Found {len(changed_files)} changed files")
 
-            if not getattr(agent_args, "no_fixes", False):
-                agent_args.with_fixes = True
+            agent_args.with_fixes = bool(getattr(agent_args, "with_fixes", False))
+            if getattr(agent_args, "no_fixes", False):
+                agent_args.with_fixes = False
 
             path = pathlib.Path(agent_args.path)
             if not path.exists():
@@ -4007,6 +4016,7 @@ def main() -> None:
             import time as _time
 
             _scan_start = _time.time()
+            pipeline_stats = {}
             merged_findings = run_pipeline(
                 path=str(path),
                 model=model,
@@ -4015,6 +4025,7 @@ def main() -> None:
                 console=console,
                 changed_files=changed_files,
                 exclude_folders=agent_exclude_folders,
+                stats_out=pipeline_stats,
             )
 
             merged_findings = _normalize_agent_findings(merged_findings, project_root)
@@ -4039,6 +4050,15 @@ def main() -> None:
             console.print(
                 f"  [yellow]MEDIUM (LLM only, needs review):[/yellow] {llm_only}"
             )
+            if pipeline_stats:
+                console.print("[dim]Timings:[/dim]")
+                console.print(
+                    f"  static={pipeline_stats.get('phase_1_seconds', 0):.1f}s "
+                    f"verify={pipeline_stats.get('phase_2a_seconds', 0):.1f}s "
+                    f"audit={pipeline_stats.get('phase_2b_seconds', 0):.1f}s "
+                    f"fixes={pipeline_stats.get('phase_3_seconds', 0):.1f}s "
+                    f"total={pipeline_stats.get('elapsed_seconds', 0):.1f}s"
+                )
 
             if agent_args.format == "json":
                 output = json.dumps(merged_findings, indent=2, default=str)
