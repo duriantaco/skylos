@@ -79,6 +79,12 @@ _REFS_PATTERN = """
 (type_identifier) @type_ref
 """
 
+_REFS_JSX_PATTERN = """
+(jsx_expression (identifier) @ref)
+(jsx_opening_element name: (identifier) @ref (#match? @ref "^[A-Z]"))
+(jsx_self_closing_element name: (identifier) @ref (#match? @ref "^[A-Z]"))
+"""
+
 _IMPORTS_PATTERN = """
 (import_clause (named_imports (import_specifier name: (identifier) @import_name)))
 (import_clause (identifier) @import_name)
@@ -177,6 +183,10 @@ class TypeScriptCore:
         for k, v in ts_only.items():
             self._defs_captures.setdefault(k, []).extend(v)
         self._refs_captures = self._run_batch("refs", _REFS_PATTERN)
+        if str(self.file_path).endswith(".tsx"):
+            jsx_refs = self._run_batch("refs_jsx", _REFS_JSX_PATTERN)
+            for k, v in jsx_refs.items():
+                self._refs_captures.setdefault(k, []).extend(v)
         self._imports_captures = self._run_batch("imports", _IMPORTS_PATTERN)
 
         self._scan_defs()
