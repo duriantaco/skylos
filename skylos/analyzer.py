@@ -37,7 +37,11 @@ from skylos.rules.danger.calls import DangerousCallsRule
 
 
 from skylos.config import get_all_ignore_lines, load_config
-from skylos.file_discovery import discover_source_files, should_exclude_path
+from skylos.file_discovery import (
+    discover_source_files,
+    find_git_root,
+    should_exclude_path,
+)
 
 from skylos.linter import LinterVisitor
 
@@ -458,6 +462,7 @@ class Skylos:
 
     def _grep_verify(self):
         """Post-pass: use grep strategies to rescue false-positive dead code."""
+        from skylos.grep_cache import GrepCache
         from skylos.grep_verify import grep_verify_findings
 
         candidates = []
@@ -477,7 +482,13 @@ class Skylos:
         if not project_root:
             return
 
-        verdicts = grep_verify_findings(candidates, project_root)
+        grep_root = find_git_root(project_root) or Path(project_root)
+        grep_cache = GrepCache()
+        grep_cache.load(grep_root)
+        try:
+            verdicts = grep_verify_findings(candidates, project_root, cache=grep_cache)
+        finally:
+            grep_cache.save(grep_root)
 
         rescued = 0
         for full_name, verdict in verdicts.items():
