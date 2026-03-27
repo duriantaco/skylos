@@ -5,6 +5,9 @@ import logging
 import pathlib
 from pathlib import Path
 
+from skylos.config import load_config
+from skylos.file_discovery import discover_source_files
+
 logger = logging.getLogger(__name__)
 
 _PHASE_2B_MAX_FILES = 12
@@ -270,7 +273,12 @@ def run_static_on_files(
             enable_secrets=enable_secrets,
             enable_danger=enable_danger,
             enable_quality=enable_quality,
-            exclude_folders=list(exclude_folders or parse_exclude_folders()),
+            exclude_folders=list(
+                exclude_folders
+                or parse_exclude_folders(
+                    config_exclude_folders=load_config(project_root).get("exclude")
+                )
+            ),
             changed_files=sorted(target_files),
         )
         full_result = json.loads(result_json)
@@ -381,7 +389,10 @@ def run_pipeline(
                         enable_danger=True,
                         enable_quality=True,
                         exclude_folders=list(
-                            exclude_folders or parse_exclude_folders()
+                            exclude_folders
+                            or parse_exclude_folders(
+                                config_exclude_folders=load_config(path).get("exclude")
+                            )
                         ),
                         progress_callback=lambda cur, tot, f: progress.update(
                             task, description=f"[{cur}/{tot}] {f.name}"
@@ -444,7 +455,7 @@ def run_pipeline(
             if exclude_folders
             else {"__pycache__", ".git", "venv", ".venv"}
         )
-        files = [f for f in path.rglob("*.py") if not any(ex in f.parts for ex in _exc)]
+        files = discover_source_files(path, [".py"], exclude_folders=_exc)
         source_cache_files = files
 
     if changed_files:

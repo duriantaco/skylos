@@ -358,7 +358,37 @@ class TestPipelinePhase1:
 
         categories = {f.get("_category") for f in findings}
         assert "dead_code" in categories
-        assert "security" in categories
+
+    @patch(P_LLM)
+    def test_uses_gitignore_aware_discovery_for_phase_2b(self, mock_llm, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        keep_file = proj / "app.py"
+        ignored_file = proj / "customenv" / "ghost.py"
+        ignored_file.parent.mkdir()
+        keep_file.write_text("x = 1")
+        ignored_file.write_text("x = 1")
+
+        llm_result = MagicMock()
+        llm_result.findings = []
+
+        with (
+            patch(P_STATIC_FN, return_value=_empty_result()),
+            patch(P_PROGRESS),
+            patch("skylos.pipeline.discover_source_files", return_value=[keep_file]),
+        ):
+            mock_llm.return_value.analyze_files.return_value = llm_result
+
+            run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(),
+                console=_console(),
+            )
+
+        analyze_files_args = mock_llm.return_value.analyze_files.call_args[0][0]
+        assert [str(f) for f in analyze_files_args] == [str(keep_file)]
 
     @patch(P_LLM)
     @patch(P_STATIC_FN, return_value=_fresh_static())

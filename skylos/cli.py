@@ -19,6 +19,7 @@ from skylos.gatekeeper import run_gate_interaction
 from skylos.api import upload_report
 from skylos.sarif_exporter import SarifExporter
 from skylos.pipeline import run_pipeline
+from skylos.file_discovery import discover_source_files
 
 from pathlib import Path
 import pathlib
@@ -2462,7 +2463,11 @@ def main() -> None:
         ) as progress:
             progress.add_task("Analyzing codebase...", total=None)
 
-            exclude_folders = list(parse_exclude_folders())
+            exclude_folders = list(
+                parse_exclude_folders(
+                    config_exclude_folders=load_config(target).get("exclude")
+                )
+            )
             if city_args.exclude:
                 exclude_folders.extend(city_args.exclude)
 
@@ -3923,7 +3928,14 @@ def main() -> None:
                 console.print("[bad]No API key provided.[/bad]")
                 sys.exit(1)
 
-        agent_exclude_folders = list(parse_exclude_folders(use_defaults=True))
+        agent_exclude_folders = list(
+            parse_exclude_folders(
+                use_defaults=True,
+                config_exclude_folders=load_config(
+                    getattr(agent_args, "path", Path.cwd())
+                ).get("exclude"),
+            )
+        )
 
         if cmd == "scan":
             if getattr(agent_args, "security", False):
@@ -3935,11 +3947,11 @@ def main() -> None:
                 if path.is_file():
                     files = [path]
                 else:
-                    files = [
-                        f
-                        for f in path.rglob("*.py")
-                        if not any(ex in f.parts for ex in agent_exclude_folders)
-                    ]
+                    files = discover_source_files(
+                        path,
+                        [".py"],
+                        exclude_folders=agent_exclude_folders,
+                    )
 
                 if not files:
                     console.print("[warn]No Python files found[/warn]")
@@ -4552,6 +4564,7 @@ def main() -> None:
 
         exclude_folders = parse_exclude_folders(
             user_exclude_folders=run_exclude_folders or None,
+            config_exclude_folders=load_config(Path.cwd()).get("exclude"),
             use_defaults=not no_defaults,
             include_folders=run_include_folders or None,
         )
@@ -4880,8 +4893,10 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
             logger.debug(f"Excluding folders: {args.exclude_folders}")
 
     use_defaults = not args.no_default_excludes
+    project_cfg = load_config(project_root)
     final_exclude_folders = parse_exclude_folders(
         user_exclude_folders=args.exclude_folders,
+        config_exclude_folders=project_cfg.get("exclude"),
         use_defaults=use_defaults,
         include_folders=args.include_folders,
     )
