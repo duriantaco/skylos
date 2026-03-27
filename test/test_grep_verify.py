@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from skylos.grep_verify import (
     GrepStrategy,
     detect_language,
@@ -378,7 +380,7 @@ class TestAnalyzerGrepVerifyOrdering:
             analyzer.defs[name] = definition
 
         with patch("skylos.grep_verify.grep_verify_findings", return_value={}) as mock_grep:
-            analyzer._grep_verify(time_budget=1.0)
+            analyzer._grep_verify()
 
         ordered_names = [
             finding["full_name"] for finding in mock_grep.call_args.args[0]
