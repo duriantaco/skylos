@@ -117,3 +117,37 @@ def test_security_audit_skips_confirmation_without_tty(tmp_path):
 
     assert exc.value.code == 0
     mock_confirm.assert_not_called()
+
+
+def test_security_audit_uses_gitignore_aware_discovery(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text("print('hi')\n")
+
+    fake_llm = MagicMock()
+    fake_llm.analyze_files.return_value = MagicMock(has_blockers=False)
+
+    with (
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch("skylos.cli.INTERACTIVE_AVAILABLE", True),
+        patch("skylos.cli._is_tty", return_value=False),
+        patch("skylos.cli.llm_estimate_cost", return_value=(1, 0.01)),
+        patch("skylos.cli.SkylosLLM", return_value=fake_llm),
+        patch("skylos.cli.discover_source_files", return_value=[sample]) as mock_discover,
+        patch(
+            "sys.argv",
+            ["skylos", "agent", "scan", str(tmp_path), "--security", "--interactive"],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+    mock_discover.assert_called_once()
+    fake_llm.analyze_files.assert_called_once_with(
+        [sample], issue_types=["security_audit"]
+    )

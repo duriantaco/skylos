@@ -1,3 +1,8 @@
+import shutil
+import subprocess
+
+import pytest
+
 from skylos.agent_center import (
     clear_action_triage,
     build_headline,
@@ -6,6 +11,7 @@ from skylos.agent_center import (
     load_agent_state,
     rebuild_agent_state_from_existing,
     save_agent_state,
+    snapshot_file_signatures,
     update_action_triage,
 )
 
@@ -24,6 +30,27 @@ def test_detect_changed_files_includes_new_changed_and_removed_files():
     changed = detect_changed_files(previous, current)
 
     assert changed == ["src/b.py", "src/c.py"]
+
+
+def test_snapshot_file_signatures_skips_gitignored_files(tmp_path):
+    if shutil.which("git") is None:
+        pytest.skip("git is required for this test")
+
+    project = tmp_path / "repo"
+    project.mkdir()
+    ignored_dir = project / "customenv"
+    kept_dir = project / "src"
+    ignored_dir.mkdir(parents=True)
+    kept_dir.mkdir(parents=True)
+    (project / ".gitignore").write_text("customenv/\n", encoding="utf-8")
+    (ignored_dir / "ghost.py").write_text("x = 1\n", encoding="utf-8")
+    (kept_dir / "keep.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+
+    signatures = snapshot_file_signatures(project)
+
+    assert "src/keep.py" in signatures
+    assert "customenv/ghost.py" not in signatures
 
 
 def test_build_ranked_actions_prioritizes_new_critical_changed_security():

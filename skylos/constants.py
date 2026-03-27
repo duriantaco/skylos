@@ -171,12 +171,18 @@ def get_non_library_dir_kind(p, project_root=None, extra_dirs=None) -> str | Non
 
 
 def parse_exclude_folders(
-    user_exclude_folders=None, use_defaults=True, include_folders=None
+    user_exclude_folders=None,
+    use_defaults=True,
+    include_folders=None,
+    config_exclude_folders=None,
 ) -> set[str]:
     exclude_folders = set()
 
     if use_defaults:
         exclude_folders.update(DEFAULT_EXCLUDE_FOLDERS)
+
+    if config_exclude_folders:
+        exclude_folders.update(config_exclude_folders)
 
     if user_exclude_folders:
         exclude_folders.update(user_exclude_folders)
