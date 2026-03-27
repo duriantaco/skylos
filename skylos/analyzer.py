@@ -37,6 +37,7 @@ from skylos.rules.danger.calls import DangerousCallsRule
 
 
 from skylos.config import get_all_ignore_lines, load_config
+from skylos.file_discovery import discover_source_files, should_exclude_path
 
 from skylos.linter import LinterVisitor
 
@@ -125,47 +126,7 @@ class Skylos:
         return ".".join(p)
 
     def _should_exclude_file(self, file_path, root_path, exclude_folders):
-        if not exclude_folders:
-            return False
-
-        try:
-            rel_path = file_path.relative_to(root_path)
-        except ValueError:
-            return False
-
-        path_parts = rel_path.parts
-        rel_path_str = str(rel_path).replace("\\", "/")
-
-        for exclude_folder in exclude_folders:
-            exclude_normalized = exclude_folder.replace("\\", "/").rstrip("/")
-
-            if "*" in exclude_normalized:
-                for part in path_parts:
-                    if part.endswith(exclude_normalized.replace("*", "")):
-                        return True
-            elif "/" in exclude_normalized:
-                if rel_path_str == exclude_normalized:
-                    return True
-                if rel_path_str.startswith(exclude_normalized + "/"):
-                    return True
-                check = "/" + rel_path_str + "/"
-                if "/" + exclude_normalized + "/" in check:
-                    return True
-
-                root_name = root_path.resolve().name
-                exclude_parts = exclude_normalized.split("/")
-                if exclude_parts[0] == root_name:
-                    stripped = "/".join(exclude_parts[1:])
-                    if stripped:
-                        if rel_path_str == stripped:
-                            return True
-                        if rel_path_str.startswith(stripped + "/"):
-                            return True
-            else:
-                if exclude_normalized in path_parts:
-                    return True
-
-        return False
+        return should_exclude_path(file_path, root_path, exclude_folders)
 
     _LANG_MAP = {
         ".py": "Python",
@@ -223,21 +184,11 @@ class Skylos:
                 rust_files = _fast_discover(str(p), ext_list, simple_excludes)
                 all_files = [Path(f) for f in rust_files]
             except Exception:
-                all_files = self._walk_python_files_py(p, exts, exclude_folders, root)
+                all_files = discover_source_files(
+                    p, exts, exclude_folders=exclude_folders
+                )
         else:
-            all_files = self._walk_python_files_py(p, exts, exclude_folders, root)
-
-        if exclude_folders:
-            filtered_files = []
-            excluded_count = 0
-            for file_path in all_files:
-                if self._should_exclude_file(file_path, root, exclude_folders):
-                    excluded_count += 1
-                    continue
-                filtered_files.append(file_path)
-            if excluded_count > 0:
-                logger.info(f"Excluded {excluded_count} files from analysis")
-            return filtered_files, root
+            all_files = discover_source_files(p, exts, exclude_folders=exclude_folders)
 
         return all_files, root
 

@@ -1,6 +1,8 @@
 import pytest
 import json
 import tempfile
+import shutil
+import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
 from collections import defaultdict
@@ -176,19 +178,45 @@ class TestSkylos:
         assert files == [mock_file]
         assert root == Path("/project")
 
+    @patch("skylos.analyzer.discover_source_files")
     @patch("skylos.analyzer.Path")
-    def test_get_python_files_directory(self, mock_path, skylos):
+    def test_get_python_files_directory(self, mock_path, mock_discover, skylos):
         mock_dir = Mock()
         mock_dir.is_file.return_value = False
         mock_files = [Path("/project/file1.py"), Path("/project/file2.py")]
 
-        mock_dir.glob.return_value = mock_files
         mock_path.return_value.resolve.return_value = mock_dir
+        mock_discover.return_value = mock_files
 
         files, root = skylos._get_python_files("/project")
 
-        assert mock_dir.glob.call_count == 5
+        mock_discover.assert_called_once_with(
+            mock_dir, {".py", ".go", ".ts", ".tsx", ".java"}, exclude_folders=None
+        )
+        assert files == mock_files
         assert root == mock_dir
+
+    def test_get_python_files_fallback_honors_gitignore(self, skylos, tmp_path, monkeypatch):
+        if shutil.which("git") is None:
+            pytest.skip("git is required for this test")
+
+        project = tmp_path / "proj"
+        ignored_dir = project / "customenv"
+        kept_dir = project / "src"
+        ignored_dir.mkdir(parents=True)
+        kept_dir.mkdir(parents=True)
+        (project / ".gitignore").write_text("customenv/\n", encoding="utf-8")
+        (ignored_dir / "ghost.py").write_text("def ghost():\n    pass\n", encoding="utf-8")
+        keep_file = kept_dir / "keep.py"
+        keep_file.write_text("def keep():\n    return 1\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+
+        monkeypatch.setattr("skylos.analyzer._fast_discover", None)
+
+        files, root = skylos._get_python_files(project)
+
+        assert root == project.resolve()
+        assert files == [keep_file.resolve()]
 
     def test_mark_exports_in_init(self, skylos):
         mock_def1 = Mock()

@@ -266,6 +266,102 @@ def test_main_list_default_excludes_returns_without_analysis(monkeypatch):
     assert fake_logger.console.print.called
 
 
+def test_main_merges_config_excludes_into_scan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[tool.skylos]
+exclude = ["customenv", ".claude/worktrees"]
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["skylos", ".", "--json"])
+
+    result = {
+        "analysis_summary": {"total_files": 0},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+    }
+
+    with (
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
+        patch("builtins.print"),
+    ):
+        cli.main()
+
+    excludes = set(mock_analyze.call_args.kwargs["exclude_folders"])
+    assert "customenv" in excludes
+    assert ".claude/worktrees" in excludes
+
+
+def test_main_include_folder_overrides_config_excludes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[tool.skylos]
+exclude = ["customenv"]
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["skylos", ".", "--json", "--include-folder", "customenv"]
+    )
+
+    result = {
+        "analysis_summary": {"total_files": 0},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+    }
+
+    with (
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
+        patch("builtins.print"),
+    ):
+        cli.main()
+
+    excludes = set(mock_analyze.call_args.kwargs["exclude_folders"])
+    assert "customenv" not in excludes
+
+
+def test_main_no_default_excludes_keeps_config_excludes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[tool.skylos]
+exclude = ["customenv"]
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["skylos", ".", "--json", "--no-default-excludes"])
+
+    result = {
+        "analysis_summary": {"total_files": 0},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+    }
+
+    with (
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
+        patch("builtins.print"),
+    ):
+        cli.main()
+
+    excludes = set(mock_analyze.call_args.kwargs["exclude_folders"])
+    assert excludes == {"customenv"}
+
+
 def test_main_writes_sarif_and_prints_json(tmp_path, monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1},

@@ -10,6 +10,8 @@ from typing import Any
 from skylos.analyzer import analyze as run_analyze
 from skylos.baseline import load_baseline
 from skylos.constants import parse_exclude_folders
+from skylos.config import load_config
+from skylos.file_discovery import discover_source_files
 
 STATE_DIR = ".skylos"
 STATE_FILE = "agent_state.json"
@@ -72,26 +74,26 @@ def snapshot_file_signatures(
     exclude_folders: list[str] | set[str] | None = None,
 ) -> dict[str, dict[str, int]]:
     root = Path(project_root).resolve()
-    excluded = set(exclude_folders or parse_exclude_folders(use_defaults=True))
+    excluded = set(
+        exclude_folders
+        or parse_exclude_folders(
+            use_defaults=True,
+            config_exclude_folders=load_config(root).get("exclude"),
+        )
+    )
     excluded.add(STATE_DIR)
 
     signatures: dict[str, dict[str, int]] = {}
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [name for name in dirnames if name not in excluded]
-        base = Path(dirpath)
-        for filename in filenames:
-            path = base / filename
-            if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-                continue
-            try:
-                stat = path.stat()
-            except OSError:
-                continue
-            rel = str(path.relative_to(root)).replace("\\", "/")
-            signatures[rel] = {
-                "mtime_ns": int(stat.st_mtime_ns),
-                "size": int(stat.st_size),
-            }
+    for path in discover_source_files(root, SUPPORTED_EXTENSIONS, excluded):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        rel = str(path.relative_to(root)).replace("\\", "/")
+        signatures[rel] = {
+            "mtime_ns": int(stat.st_mtime_ns),
+            "size": int(stat.st_size),
+        }
     return signatures
 
 
@@ -334,7 +336,11 @@ def refresh_agent_state(
         enable_danger=enable_danger,
         enable_quality=enable_quality,
         exclude_folders=list(
-            exclude_folders or parse_exclude_folders(use_defaults=True)
+            exclude_folders
+            or parse_exclude_folders(
+                use_defaults=True,
+                config_exclude_folders=load_config(project_root).get("exclude"),
+            )
         ),
     )
     result = json.loads(raw) if isinstance(raw, str) else raw
