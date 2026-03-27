@@ -94,6 +94,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Skylos")
 
+_GREP_VERIFY_TYPE_PRIORITY = {
+    "method": 0,
+    "function": 1,
+    "class": 2,
+    "import": 3,
+    "parameter": 4,
+    "variable": 5,
+    "lambda": 6,
+}
+
 _heuristic_weights = {"same_file_attr": 1.0, "same_pkg_attr": 0.3, "global_attr": 0.1}
 try:
     from skylos.llm.feedback import get_tuned_weights
@@ -101,6 +111,17 @@ try:
     _heuristic_weights = get_tuned_weights()
 except (ImportError, OSError, ValueError):
     pass
+
+
+def _grep_verify_rescue_priority(candidate: dict) -> tuple:
+    """Budget grep verification toward candidates most worth rescuing first."""
+    return (
+        int(candidate.get("confidence", 0)),
+        _GREP_VERIFY_TYPE_PRIORITY.get(candidate.get("type", ""), 99),
+        str(candidate.get("file", "")),
+        int(candidate.get("line", 0)),
+        str(candidate.get("full_name", candidate.get("name", ""))),
+    )
 
 
 class Skylos:
@@ -449,6 +470,8 @@ class Skylos:
 
         if not candidates:
             return
+
+        candidates.sort(key=_grep_verify_rescue_priority)
 
         project_root = str(getattr(self, "_project_root", ""))
         if not project_root:

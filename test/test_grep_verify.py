@@ -352,6 +352,46 @@ class TestAnalyzerIntegration:
         assert len(unused_names_on) <= len(unused_names_off)
 
 
+class TestAnalyzerGrepVerifyOrdering:
+    def test_candidates_are_sorted_by_rescue_priority(self, tmp_path):
+        from skylos.analyzer import Skylos
+        from skylos.visitor import Definition
+
+        source = tmp_path / "mod.py"
+        source.write_text("pass\n")
+
+        analyzer = Skylos()
+        analyzer._project_root = tmp_path
+
+        specs = [
+            ("mod.value", "variable", 50, 90),
+            ("mod.Orphan", "class", 30, 60),
+            ("mod.helper", "function", 20, 60),
+            ("mod.Widget.run", "method", 40, 60),
+            ("mod.helper.arg", "parameter", 10, 40),
+        ]
+
+        analyzer.defs = {}
+        for name, kind, line, confidence in specs:
+            definition = Definition(name, kind, source, line)
+            definition.confidence = confidence
+            analyzer.defs[name] = definition
+
+        with patch("skylos.grep_verify.grep_verify_findings", return_value={}) as mock_grep:
+            analyzer._grep_verify(time_budget=1.0)
+
+        ordered_names = [
+            finding["full_name"] for finding in mock_grep.call_args.args[0]
+        ]
+        assert ordered_names == [
+            "mod.helper.arg",
+            "mod.Widget.run",
+            "mod.helper",
+            "mod.Orphan",
+            "mod.value",
+        ]
+
+
 class TestDetectLanguage:
     def test_python(self):
         assert detect_language("foo.py") == "python"
