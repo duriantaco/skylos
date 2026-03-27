@@ -312,6 +312,11 @@ class FrameworkAwareVisitor:
             self._mark_view_from_url_pattern(route_target)
             self.is_framework_file = True
 
+        callback_target = self._get_imperative_callback_target(node)
+        if callback_target is not None:
+            self._mark_view_from_url_pattern(callback_target)
+            self.is_framework_file = True
+
         if isinstance(node.func, ast.Attribute) and node.func.attr == "register":
             if len(node.args) >= 2:
                 vs = node.args[1]
@@ -541,6 +546,28 @@ class FrameworkAwareVisitor:
                 return call.args[0]
             if len(call.args) >= 2:
                 return call.args[1]
+
+        return None
+
+    def _get_imperative_callback_target(self, call: ast.Call) -> ast.expr | None:
+        if not isinstance(call.func, ast.Attribute):
+            return None
+
+        attr = call.func.attr
+        frameworks = self.detected_frameworks
+
+        if "sanic" not in frameworks:
+            return None
+
+        if attr == "register_listener" and call.args:
+            return call.args[0]
+
+        if attr == "register_middleware":
+            target = self._get_keyword_arg(call, "middleware")
+            if target is not None:
+                return target
+            if call.args:
+                return call.args[0]
 
         return None
 

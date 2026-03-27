@@ -265,6 +265,40 @@ app.add_websocket_route("/ws", endpoint=ws_endpoint)
         assert v.is_framework_file is True
         assert 5 in v.framework_decorated_lines
 
+    def test_sanic_register_listener_marks_callback(self):
+        code = """
+from sanic import Sanic
+app = Sanic("demo")
+
+async def setup_db(app, loop):
+    return None
+
+app.register_listener(setup_db, "before_server_start")
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 5 in v.framework_decorated_lines
+
+    def test_sanic_register_middleware_marks_callback(self):
+        code = """
+from sanic import Sanic
+app = Sanic("demo")
+
+async def auth_middleware(request):
+    return None
+
+app.register_middleware(auth_middleware, "request")
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 5 in v.framework_decorated_lines
+
     @patch("skylos.visitors.framework_aware.Path")
     def test_file_content_framework_detection(self, mock_path):
         mock_file = Mock()
