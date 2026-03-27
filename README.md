@@ -1465,6 +1465,9 @@ addopts = "--quality --danger --confidence=80"
 
 CLI flags override `addopts`, so you can always narrow or widen a run without editing config.
 
+Skylos also honors `[tool.skylos].exclude` during CLI scans, which is the cleanest place
+to keep team-specific paths like custom venv names or `.claude/worktrees/`.
+
 ### Legacy AI Flags
 
 ```bash
@@ -1593,12 +1596,18 @@ skylos --list-default-excludes
 # Add more exclusions
 skylos . --exclude-folder vendor --exclude-folder generated
 
+# Skylos also respects project `.gitignore` entries during file discovery
+# so ignored folders like custom venvs and worktrees are skipped automatically
+
 # Force include an excluded folder
 skylos . --include-folder venv
 
 # Scan everything (no exclusions)
 skylos . --no-default-excludes
 ```
+
+Use `[tool.skylos].exclude` in `pyproject.toml` for team-wide custom exclusions that should apply
+even outside `.gitignore`.
 
 ### Rule Suppression
 
@@ -1621,6 +1630,7 @@ ignore = [
 | Skip a folder | `--exclude-folder NAME` |
 | Skip a rule globally | `ignore = ["SKY-XXX"]` in pyproject.toml |
 | Include excluded folder | `--include-folder NAME` |
+| Skip team-specific folders | `exclude = ["customenv", ".claude/worktrees"]` in pyproject.toml |
 | Run all checks | `-a` or `addopts` in pyproject.toml |
 | Scan everything | `--no-default-excludes` |
 

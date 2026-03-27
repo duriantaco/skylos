@@ -9,7 +9,9 @@ from .validator import ResultValidator, deduplicate_findings, merge_findings
 from .ui import SkylosUI, estimate_cost
 
 from .schemas import Confidence, AnalysisResult
+from skylos.config import load_config
 from skylos.llm.graph import CodeGraph
+from skylos.file_discovery import discover_source_files
 
 
 class AnalyzerConfig:
@@ -467,7 +469,8 @@ class SkylosLLM:
         if not project_path.exists():
             return AnalysisResult(summary="Project path not found")
 
-        exclude = set(exclude_folders or [])
+        exclude = set(load_config(project_path).get("exclude", []))
+        exclude.update(exclude_folders or [])
         exclude.update(
             {
                 "__pycache__",
@@ -481,18 +484,15 @@ class SkylosLLM:
                 "dist",
                 ".tox",
                 ".eggs",
+                "*.egg-info",
             }
         )
 
-        files = []
-        for f in project_path.rglob("*.py"):
-            skip = False
-            for part in f.parts:
-                if part in exclude or part.endswith(".egg-info"):
-                    skip = True
-                    break
-            if not skip:
-                files.append(f)
+        files = discover_source_files(
+            project_path,
+            [".py"],
+            exclude_folders=exclude,
+        )
 
         if not files:
             return AnalysisResult(summary="No Python files found")
