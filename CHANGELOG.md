@@ -7,7 +7,7 @@
 - Dead code findings in `--llm` output now include rule IDs (SKY-DC001–SKY-DC006) and proper severity levels
 - `uvx skylos` crash on Windows due to litellm's `.pth` file exceeding MAX_PATH (260 chars) in uvx cache paths (fixes [#120](https://github.com/duriantaco/skylos/issues/120))
 - Skylos now honors project `.gitignore` entries during file discovery, so ignored worktrees, custom virtualenvs, and other excluded paths are no longer scanned
-- Flask, FastAPI, and Starlette imperative route registration (`add_url_rule`, `add_api_route`, `add_route`) is now treated as a live framework entrypoint instead of dead code
+- Flask, FastAPI, Starlette, and Sanic imperative route or lifecycle registration (`add_url_rule`, `add_api_route`, `add_route`, `register_listener`, `register_middleware`) is now treated as a live framework entrypoint instead of dead code
 - Grep cache saves now fail open on non-writable roots instead of aborting analysis
 
 ### Changed
