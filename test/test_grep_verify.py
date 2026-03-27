@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from skylos.grep_cache import GrepCache
 from skylos.grep_verify import (
     GrepStrategy,
     detect_language,
@@ -268,6 +269,33 @@ class TestGrepVerifyFindings:
         assert "lib.compute" in verdicts
         assert verdicts["lib.compute"].alive
 
+    def test_serial_mode_reuses_cache(self, tmp_path):
+        (tmp_path / "lib.py").write_text("def helper():\n    return 42\n")
+
+        findings = [
+            {
+                "name": "helper",
+                "full_name": "lib.helper",
+                "simple_name": "helper",
+                "type": "function",
+                "file": str(tmp_path / "lib.py"),
+                "line": 1,
+                "confidence": 80,
+            }
+        ]
+        cache = GrepCache()
+
+        with patch(
+            "skylos.grep_verify.multi_strategy_search",
+            return_value={"references": ["main.py:1:helper()"]},
+        ) as mock_search:
+            first = grep_verify_findings(findings, str(tmp_path), cache=cache)
+            second = grep_verify_findings(findings, str(tmp_path), cache=cache)
+
+        assert mock_search.call_count == 1
+        assert "lib.helper" in first
+        assert "lib.helper" in second
+
 
 class TestMethodCallWhitespace:
     def test_method_call_with_space_before_paren(self, tmp_path):
@@ -392,6 +420,37 @@ class TestAnalyzerGrepVerifyOrdering:
             "mod.Orphan",
             "mod.value",
         ]
+
+
+class TestAnalyzerGrepVerifyCache:
+    def test_grep_verify_loads_and_saves_cache(self, tmp_path):
+        from skylos.analyzer import Skylos
+        from skylos.visitor import Definition
+
+        project_root = tmp_path / "repo"
+        project_root.mkdir()
+        source = project_root / "mod.py"
+        source.write_text("def helper():\n    return 1\n")
+
+        analyzer = Skylos()
+        analyzer._project_root = project_root
+
+        definition = Definition("mod.helper", "function", source, 1)
+        definition.confidence = 80
+        analyzer.defs = {"mod.helper": definition}
+
+        with (
+            patch("skylos.analyzer.find_git_root", return_value=project_root) as mock_root,
+            patch("skylos.grep_cache.GrepCache") as mock_cache_cls,
+            patch("skylos.grep_verify.grep_verify_findings", return_value={}) as mock_grep,
+        ):
+            cache = mock_cache_cls.return_value
+            analyzer._grep_verify()
+
+        mock_root.assert_called_once_with(str(project_root))
+        cache.load.assert_called_once_with(project_root)
+        cache.save.assert_called_once_with(project_root)
+        assert mock_grep.call_args.kwargs["cache"] is cache
 
 
 class TestDetectLanguage:

@@ -533,6 +533,7 @@ When Skylos sees Flask, Django, FastAPI, Next.js, or React imports, it adjusts s
 | Pattern | Handling |
 |---------|----------|
 | `@app.route`, `@router.get` | Entry point → marked as used |
+| `app.add_url_rule(...)`, `app.add_api_route(...)`, `app.add_route(...)` | Imperative route registration → marked as used |
 | `@pytest.fixture` | Treated as a pytest entrypoint, but can be reported as unused if never referenced |
 | `@celery.task` | Entry point → marked as used |
 | `getattr(mod, "func")` | Tracks dynamic reference |
@@ -1530,7 +1531,7 @@ func()  # here
 | Situation | Command |
 |-----------|---------|
 | Have pytest/unittest tests | `skylos . --trace` |
-| No tests | `skylos .` (static only) |
+| No tests | `skylos .` (static only; repeated runs reuse `.skylos/cache/grep_results.json` for grep verification) |
 | CI with cached trace | `skylos .` (reuses `.skylos_trace`) |
 
 ### What Tracing Catches

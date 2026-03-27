@@ -248,6 +248,23 @@ app.add_route("/", endpoint=homepage, methods=["GET"])
         assert v.is_framework_file is True
         assert 5 in v.framework_decorated_lines
 
+    def test_starlette_add_websocket_route_marks_endpoint(self):
+        code = """
+from starlette.applications import Starlette
+app = Starlette()
+
+async def ws_endpoint(websocket):
+    return None
+
+app.add_websocket_route("/ws", endpoint=ws_endpoint)
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 5 in v.framework_decorated_lines
+
     @patch("skylos.visitors.framework_aware.Path")
     def test_file_content_framework_detection(self, mock_path):
         mock_file = Mock()
