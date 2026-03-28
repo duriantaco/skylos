@@ -90,6 +90,40 @@ def detect_language(file_path: str) -> str:
     return "python"
 
 
+def _cached_group_results(
+    cache: Any,
+    group_name: str,
+    finding: dict,
+    search_fn: Callable[[], dict[str, list[str]]],
+) -> dict[str, list[str]]:
+    if cache is None or not group_name:
+        return search_fn()
+
+    from skylos.grep_cache import file_content_hash as _fch
+    import json as _json
+
+    simple_name = finding.get("simple_name", finding.get("name", ""))
+    finding_file = finding.get("file", "")
+    content_hash = _fch(finding_file) if finding_file else ""
+    cache_key = (
+        f"group:{group_name}:{simple_name}:{finding.get('full_name', '')}:"
+        f"{finding.get('type', '')}:{content_hash}"
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        try:
+            return _json.loads(cached[0]) if cached else {}
+        except Exception:
+            pass
+
+    results = search_fn()
+    try:
+        cache.put(cache_key, [_json.dumps(results)])
+    except Exception:
+        pass
+    return results
+
+
 def source_globs_for_language(lang: str) -> list[str]:
     return _LANG_GLOBS.get(lang, _LANG_GLOBS["python"])
 
@@ -771,28 +805,12 @@ def parallel_multi_strategy_search(
     ) -> None:
         if early_exit_event.is_set():
             return
-        if cache is not None and group_name:
-            from skylos.grep_cache import file_content_hash as _fch
-
-            finding_file = finding.get("file", "")
-            ch = _fch(finding_file) if finding_file else ""
-            cache_key = f"group:{group_name}:{simple_name}:{finding.get('full_name', '')}:{finding.get('type', '')}:{ch}"
-            cached = cache.get(cache_key)
-            if cached is not None:
-                import json as _json
-
-                try:
-                    partial_results = _json.loads(cached[0]) if cached else {}
-                except Exception:
-                    partial_results = run_fn(*args)
-            else:
-                partial_results = run_fn(*args)
-                try:
-                    cache.put(cache_key, [_json.dumps(partial_results)])
-                except Exception:
-                    pass
-        else:
-            partial_results = run_fn(*args)
+        partial_results = _cached_group_results(
+            cache,
+            group_name,
+            finding,
+            lambda: run_fn(*args),
+        )
         with results_lock:
             results.update(partial_results)
         if _check_early_exit():
@@ -1342,7 +1360,17 @@ def grep_verify_findings(
     else:
 
         def search_fn(f: dict) -> dict[str, list[str]]:
-            return multi_strategy_search(f, project_root)
+            if cache is None:
+                return multi_strategy_search(f, project_root)
+
+            lang = detect_language(f.get("file", ""))
+            group_name = "python_core" if lang == "python" else f"serial_{lang}"
+            return _cached_group_results(
+                cache,
+                group_name,
+                f,
+                lambda: multi_strategy_search(f, project_root),
+            )
 
     for finding in findings:
         if time.monotonic() - start_time > time_budget:
