@@ -535,6 +535,7 @@ When Skylos sees Flask, Django, FastAPI, Next.js, or React imports, it adjusts s
 | `@app.route`, `@router.get` | Entry point → marked as used |
 | `app.add_url_rule(...)`, `app.add_api_route(...)`, `app.add_route(...)`, `app.register_listener(...)`, `app.register_middleware(...)` | Imperative route or lifecycle registration → marked as used |
 | `@pytest.fixture` | Treated as a pytest entrypoint, but can be reported as unused if never referenced |
+| `@pytest.hookimpl`, `@hookimpl` | Plugin hook implementation → marked as used |
 | `@celery.task` | Entry point → marked as used |
 | `getattr(mod, "func")` | Tracks dynamic reference |
 | `getattr(mod, f"handle_{x}")` | Tracks pattern `handle_*` |
