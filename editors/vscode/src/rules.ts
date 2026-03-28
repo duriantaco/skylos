@@ -65,6 +65,8 @@ const RULES: Record<string, RuleMeta> = {
 
   "SKY-S101": { name: "Hardcoded secret", severity: "CRITICAL", category: "secrets", description: "Hardcoded API key, password, token, or credential in source code.", pciDss: "3.5.1", cwe: "CWE-798", fix: "Use environment variables or a secrets manager." },
 
+  "SKY-DEBT": { name: "Technical debt hotspot", severity: "MEDIUM", category: "debt", description: "File-level structural debt hotspot derived from static maintainability, architecture, and dead-code signals.", fix: "Plan an incremental refactor and validate behavior with focused tests." },
+
   "SKY-L001": { name: "Mutable default argument", severity: "HIGH", category: "quality", description: "Mutable object used as default argument; shared across calls.", cwe: "CWE-665", fix: "Use None as default and create the mutable inside the function.", language: "python" },
   "SKY-L002": { name: "Bare except", severity: "MEDIUM", category: "quality", description: "Bare except block catches all exceptions including SystemExit and KeyboardInterrupt.", fix: "Catch specific exceptions (e.g., except ValueError).", language: "python" },
   "SKY-L003": { name: "Dangerous comparison", severity: "LOW", category: "quality", description: "Using == with True/False/None instead of 'is'.", fix: "Use 'is None', 'is True', 'is False'.", language: "python" },

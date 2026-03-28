@@ -27,6 +27,7 @@ import {
   getDiffBase,
   getAIProvider,
   getOpenAIBaseUrl,
+  getSkylosBin,
   getMaxTreeFindings,
   getMaxTreeFindingsPerFile,
   isCommandCenterRefreshOnSave,
@@ -508,6 +509,7 @@ export function activate(context: vscode.ExtensionContext) {
           [
             { label: "Security", value: "security" },
             { label: "Secrets", value: "secrets" },
+            { label: "Technical Debt", value: "debt" },
             { label: "Dead Code", value: "dead_code" },
             { label: "Quality", value: "quality" },
             { label: "AI Analysis", value: "ai" },

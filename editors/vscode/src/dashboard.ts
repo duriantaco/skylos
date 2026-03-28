@@ -142,6 +142,7 @@ export class SkylosDashboard {
       dead_code: "&#128465;",
       secrets: "&#128273;",
       quality: "&#128736;",
+      debt: "&#128295;",
       ai: "&#129302;",
     };
 

@@ -484,7 +484,7 @@ function resolveActionPath(file: string): string | undefined {
 }
 
 function normalizeCategory(value: string | undefined): SkylosFinding["category"] {
-  if (value === "security" || value === "secrets" || value === "dead_code" || value === "quality" || value === "ai") {
+  if (value === "security" || value === "secrets" || value === "dead_code" || value === "quality" || value === "debt" || value === "ai") {
     return value;
   }
   return "quality";
