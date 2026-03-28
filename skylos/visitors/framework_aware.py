@@ -64,6 +64,8 @@ FRAMEWORK_DECORATORS = [
     "@*.validates_schema",
     "@*.listens_for",
     "@listens_for",
+    "@*.hookimpl",
+    "@hookimpl",
 ]
 
 FRAMEWORK_FUNCTIONS = [

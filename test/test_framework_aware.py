@@ -299,6 +299,38 @@ app.register_middleware(auth_middleware, "request")
         assert v.is_framework_file is True
         assert 5 in v.framework_decorated_lines
 
+    def test_pytest_hookimpl_marks_plugin_hook(self):
+        code = """
+import pytest
+
+class Plugin:
+    @pytest.hookimpl(optionalhook=True)
+    def pytest_testnodedown(self, node, error):
+        return None
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 6 in v.framework_decorated_lines
+
+    def test_direct_hookimpl_marks_plugin_hook(self):
+        code = """
+from pluggy import hookimpl
+
+class Plugin:
+    @hookimpl
+    def pytest_addoption(self, parser):
+        return None
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 6 in v.framework_decorated_lines
+
     @patch("skylos.visitors.framework_aware.Path")
     def test_file_content_framework_detection(self, mock_path):
         mock_file = Mock()
