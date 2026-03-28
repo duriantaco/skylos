@@ -177,6 +177,128 @@ async def get_item(item_id: int):
         assert 3 in v.framework_decorated_lines
         assert 7 in v.framework_decorated_lines
 
+    def test_flask_add_url_rule_marks_view_func(self):
+        code = """
+from flask import Flask
+app = Flask(__name__)
+
+def list_users():
+    return []
+
+app.add_url_rule("/users", view_func=list_users)
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 5 in v.framework_decorated_lines
+
+    def test_flask_add_url_rule_marks_method_view(self):
+        code = """
+from flask import Flask
+from flask.views import MethodView
+app = Flask(__name__)
+
+class UserView(MethodView):
+    def get(self):
+        return []
+
+app.add_url_rule("/users", view_func=UserView.as_view("users"))
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 6 in v.framework_decorated_lines
+        assert 7 in v.framework_decorated_lines
+
+    def test_fastapi_add_api_route_marks_endpoint(self):
+        code = """
+from fastapi import FastAPI
+app = FastAPI()
+
+async def read_items():
+    return []
+
+app.add_api_route("/items", read_items, methods=["GET"])
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 5 in v.framework_decorated_lines
+
+    def test_starlette_add_route_marks_endpoint(self):
+        code = """
+from starlette.applications import Starlette
+app = Starlette()
+
+async def homepage(request):
+    return None
+
+app.add_route("/", endpoint=homepage, methods=["GET"])
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 5 in v.framework_decorated_lines
+
+    def test_starlette_add_websocket_route_marks_endpoint(self):
+        code = """
+from starlette.applications import Starlette
+app = Starlette()
+
+async def ws_endpoint(websocket):
+    return None
+
+app.add_websocket_route("/ws", endpoint=ws_endpoint)
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 5 in v.framework_decorated_lines
+
+    def test_sanic_register_listener_marks_callback(self):
+        code = """
+from sanic import Sanic
+app = Sanic("demo")
+
+async def setup_db(app, loop):
+    return None
+
+app.register_listener(setup_db, "before_server_start")
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 5 in v.framework_decorated_lines
+
+    def test_sanic_register_middleware_marks_callback(self):
+        code = """
+from sanic import Sanic
+app = Sanic("demo")
+
+async def auth_middleware(request):
+    return None
+
+app.register_middleware(auth_middleware, "request")
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 5 in v.framework_decorated_lines
+
     @patch("skylos.visitors.framework_aware.Path")
     def test_file_content_framework_detection(self, mock_path):
         mock_file = Mock()

@@ -307,6 +307,16 @@ class FrameworkAwareVisitor:
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
+        route_target = self._get_imperative_route_target(node)
+        if route_target is not None:
+            self._mark_view_from_url_pattern(route_target)
+            self.is_framework_file = True
+
+        callback_target = self._get_imperative_callback_target(node)
+        if callback_target is not None:
+            self._mark_view_from_url_pattern(callback_target)
+            self.is_framework_file = True
+
         if isinstance(node.func, ast.Attribute) and node.func.attr == "register":
             if len(node.args) >= 2:
                 vs = node.args[1]
@@ -483,7 +493,83 @@ class FrameworkAwareVisitor:
         else:
             fname = self._simple_name(view_expr)
             if fname:
-                self._mark_functions.add(fname)
+                if fname in self.class_defs:
+                    self._mark_classes.add(fname)
+                    self._mark_cbv_http_methods.add(fname)
+                else:
+                    self._mark_functions.add(fname)
+
+    def _get_keyword_arg(self, call: ast.Call, *names: str) -> ast.expr | None:
+        for kw in call.keywords:
+            if kw.arg in names:
+                return kw.value
+        return None
+
+    def _get_imperative_route_target(self, call: ast.Call) -> ast.expr | None:
+        if not isinstance(call.func, ast.Attribute):
+            return None
+
+        attr = call.func.attr
+        frameworks = self.detected_frameworks
+
+        if attr == "add_url_rule":
+            if "flask" not in frameworks:
+                return None
+            target = self._get_keyword_arg(call, "view_func")
+            if target is None and len(call.args) >= 3:
+                target = call.args[2]
+            return target
+
+        if attr == "add_api_route":
+            if "fastapi" not in frameworks:
+                return None
+            target = self._get_keyword_arg(call, "endpoint")
+            if target is None and len(call.args) >= 2:
+                target = call.args[1]
+            return target
+
+        if attr == "add_websocket_route":
+            if "starlette" not in frameworks:
+                return None
+            target = self._get_keyword_arg(call, "endpoint")
+            if target is None and len(call.args) >= 2:
+                target = call.args[1]
+            return target
+
+        if attr == "add_route":
+            if not frameworks.intersection({"starlette", "sanic", "aiohttp", "falcon"}):
+                return None
+            target = self._get_keyword_arg(call, "endpoint", "handler", "view_func")
+            if target is not None:
+                return target
+            if "sanic" in frameworks and call.args:
+                return call.args[0]
+            if len(call.args) >= 2:
+                return call.args[1]
+
+        return None
+
+    def _get_imperative_callback_target(self, call: ast.Call) -> ast.expr | None:
+        if not isinstance(call.func, ast.Attribute):
+            return None
+
+        attr = call.func.attr
+        frameworks = self.detected_frameworks
+
+        if "sanic" not in frameworks:
+            return None
+
+        if attr == "register_listener" and call.args:
+            return call.args[0]
+
+        if attr == "register_middleware":
+            target = self._get_keyword_arg(call, "middleware")
+            if target is not None:
+                return target
+            if call.args:
+                return call.args[0]
+
+        return None
 
     def _scan_for_depends(self, node) -> None:
         if not isinstance(node, ast.Call):

@@ -116,8 +116,8 @@ class GrepCache:
             self._dirty = False
 
         path = Path(project_root) / CACHE_DIR / CACHE_FILE
-        path.parent.mkdir(parents=True, exist_ok=True)
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(data), encoding="utf-8")
             logger.debug("Saved %d grep cache entries", len(data["entries"]))
         except Exception as e:
