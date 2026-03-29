@@ -168,6 +168,7 @@ export interface AgentCommandCenterItem {
   message?: string;
   safe_fix?: string;
   hotspot_score?: number;
+  priority_score?: number;
   signal_count?: number;
   primary_dimension?: string;
   baseline_status?: string;
@@ -198,6 +199,7 @@ export interface AgentCenterFinding {
   line: number;
   confidence?: number;
   hotspot_score?: number;
+  priority_score?: number;
   signal_count?: number;
   primary_dimension?: string;
   baseline_status?: string;

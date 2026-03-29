@@ -51,6 +51,54 @@ def compute_signal_points(signal: DebtSignal) -> float:
     return round(base * dimension_weight * magnitude, 2)
 
 
+def _strongest_severity(hotspot: DebtHotspot) -> str:
+    if not hotspot.signals:
+        return "LOW"
+    return max(
+        (str(signal.severity).upper() for signal in hotspot.signals),
+        key=lambda severity: SEVERITY_WEIGHTS.get(severity, 1),
+    )
+
+
+def compute_priority_score(hotspot: DebtHotspot) -> float:
+    priority = float(hotspot.score)
+    if hotspot.changed:
+        priority += 5.0
+
+    if hotspot.baseline_status == "worsened":
+        priority += 8.0
+    elif hotspot.baseline_status == "new":
+        priority += 6.0
+    elif hotspot.baseline_status == "improved":
+        priority -= 2.0
+
+    severity_bonus = {
+        "CRITICAL": 4.0,
+        "HIGH": 3.0,
+        "MEDIUM": 2.0,
+        "WARN": 1.0,
+        "LOW": 0.5,
+        "INFO": 0.0,
+    }
+    priority += severity_bonus.get(_strongest_severity(hotspot), 0.0)
+    return round(max(priority, 0.0), 2)
+
+
+def refresh_hotspot_priority(hotspots: list[DebtHotspot]) -> list[DebtHotspot]:
+    for hotspot in hotspots:
+        hotspot.priority_score = compute_priority_score(hotspot)
+
+    hotspots.sort(
+        key=lambda hotspot: (
+            -hotspot.priority_score,
+            -hotspot.score,
+            -hotspot.signal_count,
+            hotspot.file,
+        )
+    )
+    return hotspots
+
+
 def build_hotspots(
     signals: list[DebtSignal],
     *,
@@ -73,8 +121,6 @@ def build_hotspots(
         base_score = sum(signal.points for signal in file_signals)
         breadth_bonus = max(0, len(dim_points) - 1) * 2
         is_changed = file_path in changed
-        if is_changed:
-            base_score *= 1.15
 
         primary_dimension = max(
             dim_points.items(),
@@ -87,6 +133,7 @@ def build_hotspots(
                 fingerprint=f"hotspot:{file_path}",
                 file=file_path,
                 score=score,
+                priority_score=score,
                 signal_count=len(file_signals),
                 dimension_count=len(dim_points),
                 primary_dimension=primary_dimension,
@@ -98,15 +145,7 @@ def build_hotspots(
             )
         )
 
-    hotspots.sort(
-        key=lambda hotspot: (
-            not hotspot.changed,
-            -hotspot.score,
-            -hotspot.signal_count,
-            hotspot.file,
-        )
-    )
-    return hotspots
+    return refresh_hotspot_priority(hotspots)
 
 
 def compute_debt_score(
@@ -123,6 +162,7 @@ def compute_debt_score(
             risk_rating="LOW",
             hotspot_count=0,
             signal_count=0,
+            scope="project",
         )
 
     total_points = round(sum(hotspot.score for hotspot in hotspots), 2)
@@ -148,4 +188,5 @@ def compute_debt_score(
         risk_rating=risk_rating,
         hotspot_count=len(hotspots),
         signal_count=signal_count,
+        scope="project",
     )

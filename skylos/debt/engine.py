@@ -215,26 +215,36 @@ def run_debt_analysis(
     )
     result = json.loads(raw) if isinstance(raw, str) else raw
 
-    signals = collect_debt_signals(
+    all_signals = collect_debt_signals(
         result,
         project_root=project_root,
-        changed_files=changed_files,
     )
     changed = _normalize_changed_files(changed_files, project_root)
-    hotspots = build_hotspots(signals, changed_files=changed)
+    all_hotspots = build_hotspots(all_signals, changed_files=changed)
+    hotspots = (
+        [hotspot for hotspot in all_hotspots if hotspot.file in changed]
+        if changed
+        else list(all_hotspots)
+    )
 
     analysis_summary = result.get("analysis_summary") or {}
     total_loc = int(analysis_summary.get("total_loc") or 0)
-    score = compute_debt_score(hotspots, total_loc=total_loc)
+    score = compute_debt_score(all_hotspots, total_loc=total_loc)
 
     dimension_counts: dict[str, int] = {}
-    for signal in signals:
+    for signal in all_signals:
         dimension_counts[signal.dimension] = dimension_counts.get(signal.dimension, 0) + 1
 
     summary = {
         "dimensions": dimension_counts,
         "changed_files": sorted(changed),
         "architecture_metrics": result.get("architecture_metrics") or {},
+        "scope": {
+            "score": "project",
+            "hotspots": "changed" if changed else "project",
+        },
+        "project_hotspot_count": len(all_hotspots),
+        "visible_hotspot_count": len(hotspots),
     }
 
     return DebtSnapshot(
@@ -245,5 +255,6 @@ def run_debt_analysis(
         total_loc=total_loc,
         score=score,
         hotspots=hotspots,
+        all_hotspots=all_hotspots,
         summary=summary,
     )
