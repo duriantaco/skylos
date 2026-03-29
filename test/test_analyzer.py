@@ -890,6 +890,35 @@ used()
         assert "unused_ignore" not in unreachable
         assert "used" not in unreachable
 
+    def test_analyze_suppresses_pytest_plugin_hook_methods(self, tmp_path):
+        src = tmp_path / "plugin.py"
+        src.write_text(
+            """
+import pytest
+
+class UnusedFixturesPlugin:
+    def pytest_collection_finish(self, session):
+        return None
+
+    def pytest_fixture_setup(self, fixturedef, request):
+        return None
+
+    def pytest_sessionfinish(self, session, exitstatus):
+        return None
+"""
+        )
+
+        result_json = analyze(str(tmp_path), conf=0)
+        result = json.loads(result_json)
+
+        unreachable = {
+            item["name"].split(".")[-1] for item in result["unused_functions"]
+        }
+
+        assert "pytest_collection_finish" not in unreachable
+        assert "pytest_fixture_setup" not in unreachable
+        assert "pytest_sessionfinish" not in unreachable
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
