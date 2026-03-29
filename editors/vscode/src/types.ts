@@ -11,7 +11,7 @@ export const SUPPORTED_LANGUAGES = [
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO" | "WARN";
-export type Category = "dead_code" | "security" | "secrets" | "quality" | "ai";
+export type Category = "dead_code" | "security" | "secrets" | "quality" | "debt" | "ai";
 
 export interface SkylosFinding {
   id: string;
@@ -164,9 +164,14 @@ export interface AgentCommandCenterItem {
   reason?: string;
   action_type?: string;
   command_hint?: string;
-   rule_id?: string;
-   message?: string;
-   safe_fix?: string;
+  rule_id?: string;
+  message?: string;
+  safe_fix?: string;
+  hotspot_score?: number;
+  priority_score?: number;
+  signal_count?: number;
+  primary_dimension?: string;
+  baseline_status?: string;
 }
 
 export interface AgentCommandCenterSummary {
@@ -177,6 +182,7 @@ export interface AgentCommandCenterSummary {
   critical?: number;
   high?: number;
   medium?: number;
+  debt?: number;
   changed_file_count?: number;
    dismissed?: number;
    snoozed?: number;
@@ -192,6 +198,11 @@ export interface AgentCenterFinding {
   absolute_file?: string;
   line: number;
   confidence?: number;
+  hotspot_score?: number;
+  priority_score?: number;
+  signal_count?: number;
+  primary_dimension?: string;
+  baseline_status?: string;
   triage_status?: string;
   snoozed_until?: string;
 }

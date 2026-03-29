@@ -396,6 +396,7 @@ function activate(context) {
             const cat = await vscode.window.showQuickPick([
                 { label: "Security", value: "security" },
                 { label: "Secrets", value: "secrets" },
+                { label: "Technical Debt", value: "debt" },
                 { label: "Dead Code", value: "dead_code" },
                 { label: "Quality", value: "quality" },
                 { label: "AI Analysis", value: "ai" },
@@ -426,6 +427,48 @@ function activate(context) {
         store.filter = {};
         vscode.commands.executeCommand("setContext", "skylos.filterActive", false);
         vscode.window.setStatusBarMessage("Skylos: Filter cleared", 3000);
+    }), vscode.commands.registerCommand("skylos.fixDeadCode", async () => {
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!root) {
+            vscode.window.showWarningMessage("Skylos: Open a folder first.");
+            return;
+        }
+        const skylosBin = (0, config_1.getSkylosBin)();
+        const { spawn: spawnProc } = await Promise.resolve().then(() => require("child_process"));
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Skylos: Generating dead code removal plan..." }, () => new Promise((resolve, reject) => {
+            const args = ["agent", "verify", root, "--fix", "--format", "json", "--quiet"];
+            const proc = spawnProc(skylosBin, args, { cwd: root });
+            let stdout = "";
+            let stderr = "";
+            proc.stdout?.on("data", (d) => { stdout += d.toString(); });
+            proc.stderr?.on("data", (d) => { stderr += d.toString(); });
+            proc.on("close", async (code) => {
+                if (code !== 0) {
+                    vscode.window.showErrorMessage(`Skylos fix failed: ${stderr || `exit ${code}`}`);
+                    reject(new Error(stderr));
+                    return;
+                }
+                try {
+                    // Extract the diff from JSON output
+                    const result = JSON.parse(stdout);
+                    const diff = result?.diff || result?.unified_diff || "";
+                    if (!diff) {
+                        vscode.window.showInformationMessage("Skylos: No dead code patches to preview.");
+                        resolve();
+                        return;
+                    }
+                    // Show diff in VS Code diff editor via untitled documents
+                    const originalDoc = await vscode.workspace.openTextDocument({ content: "", language: "diff" });
+                    const patchDoc = await vscode.workspace.openTextDocument({ content: diff, language: "diff" });
+                    await vscode.commands.executeCommand("vscode.diff", originalDoc.uri, patchDoc.uri, "Skylos: Dead Code Removal Preview");
+                    resolve();
+                }
+                catch (e) {
+                    vscode.window.showErrorMessage(`Skylos: Failed to parse fix output: ${e}`);
+                    reject(e);
+                }
+            });
+        }));
     }));
     if ((0, config_1.isRunOnSave)()) {
         context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((doc) => {

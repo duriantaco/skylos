@@ -36,6 +36,7 @@ const CATEGORY_LABELS = {
     security: "Security",
     secrets: "Secrets",
     quality: "Quality",
+    debt: "Technical Debt",
     ai: "AI Analysis",
 };
 const CATEGORY_ICONS = {
@@ -43,6 +44,7 @@ const CATEGORY_ICONS = {
     security: "shield",
     secrets: "key",
     quality: "beaker",
+    debt: "wrench",
     ai: "sparkle",
 };
 class SkylosTreeProvider {
@@ -117,7 +119,7 @@ class SkylosTreeProvider {
                 byCategory.set(f.category, list);
             }
             const nodes = [];
-            const order = ["security", "secrets", "dead_code", "quality", "ai"];
+            const order = ["security", "secrets", "debt", "dead_code", "quality", "ai"];
             for (const cat of order) {
                 const findings = byCategory.get(cat);
                 if (findings && findings.length > 0) {
