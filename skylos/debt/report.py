@@ -6,19 +6,39 @@ from skylos.debt.result import DebtSnapshot
 
 
 def format_debt_table(snapshot: DebtSnapshot, *, top: int | None = None) -> str:
-    hotspots = snapshot.hotspots[:top] if top else snapshot.hotspots
     summary = snapshot.summary or {}
     baseline = summary.get("baseline") or {}
+    scope = summary.get("scope") or {}
+    hotspot_scope = scope.get("hotspots", "project")
+    project_hotspot_count = int(summary.get("project_hotspot_count") or len(snapshot.hotspots))
+    ordered = sorted(
+        snapshot.hotspots,
+        key=lambda hotspot: (
+            -float(getattr(hotspot, "priority_score", hotspot.score)),
+            -hotspot.score,
+            hotspot.file,
+        ),
+    )
+    hotspots = ordered[:top] if top else ordered
 
     lines = []
     lines.append("")
     lines.append("Skylos Technical Debt Report")
-    lines.append(
-        f"Scanned: {snapshot.files_scanned} files | "
-        f"Total LOC: {snapshot.total_loc} | "
-        f"Hotspots: {len(snapshot.hotspots)} | "
-        f"Score: {snapshot.score.score_pct}% ({snapshot.score.risk_rating})"
-    )
+    if hotspot_scope == "changed":
+        lines.append(
+            f"Scanned: {snapshot.files_scanned} files | "
+            f"Total LOC: {snapshot.total_loc} | "
+            f"Hotspots: {len(snapshot.hotspots)} shown ({project_hotspot_count} project total) | "
+            f"Score: {snapshot.score.score_pct}% ({snapshot.score.risk_rating}, project scope)"
+        )
+        lines.append("View: changed files only")
+    else:
+        lines.append(
+            f"Scanned: {snapshot.files_scanned} files | "
+            f"Total LOC: {snapshot.total_loc} | "
+            f"Hotspots: {len(snapshot.hotspots)} | "
+            f"Score: {snapshot.score.score_pct}% ({snapshot.score.risk_rating})"
+        )
     if baseline:
         lines.append(
             "Baseline: "
@@ -31,7 +51,10 @@ def format_debt_table(snapshot: DebtSnapshot, *, top: int | None = None) -> str:
 
     if not hotspots:
         lines.append("")
-        lines.append("No debt hotspots found.")
+        if hotspot_scope == "changed":
+            lines.append("No debt hotspots found in changed files.")
+        else:
+            lines.append("No debt hotspots found.")
         return "\n".join(lines)
 
     lines.append("")
@@ -46,6 +69,7 @@ def format_debt_table(snapshot: DebtSnapshot, *, top: int | None = None) -> str:
 
         lines.append(
             f"{index:>2}. {hotspot.file} | score={hotspot.score:.2f} | "
+            f"priority={hotspot.priority_score:.2f} | "
             f"signals={hotspot.signal_count} | dimensions={dimensions} | {status}"
         )
         for signal in hotspot.signals[:3]:

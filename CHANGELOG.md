@@ -1,5 +1,19 @@
 ## Changelog
 
+## [4.2.0] - Unreleased
+
+### Added
+- Added `skylos debt <path>` for technical debt hotspot analysis
+- Added separate structural debt scoring and hotspot `priority_score`
+
+### Changed
+- Refactored the CLI entrypoint by extracting `baseline`, `badge`, `doctor`, `credits`, `init`, `whitelist`, `clean`, `whoami`, `login`, `sync`, `city`, `discover`, `defend`, `debt`, `ingest`, `provenance`, and `cicd` into dedicated command modules. 
+- CLI refactor guardrails to catch dispatch, output, and exit-code regressions during future `cli.py` cleanup
+- `skylos debt --top` now will override `report.top`
+- Changed-file debt scans now resolve git diffs from the repository root and include `.js` / `.jsx`
+- Debt baseline and history writes require project-root scans
+- Debt baseline comparisons no longer count unseen hotspots as resolved
+
 ## [4.1.4] - 2026-03-25
 
 ### Fixed

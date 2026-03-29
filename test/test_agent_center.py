@@ -1,6 +1,7 @@
 import shutil
 import subprocess
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -11,6 +12,7 @@ from skylos.agent_center import (
     detect_changed_files,
     load_agent_state,
     normalize_findings,
+    refresh_agent_state,
     rebuild_agent_state_from_existing,
     save_agent_state,
     snapshot_file_signatures,
@@ -130,6 +132,103 @@ def test_build_ranked_actions_prioritizes_debt_hotspots_over_plain_quality():
     assert actions[0]["score"] > actions[1]["score"]
 
 
+def test_build_ranked_actions_preserves_debt_priority_order():
+    findings = [
+        {
+            "fingerprint": "hotspot:src/a.py",
+            "rule_id": "SKY-DEBT",
+            "category": "debt",
+            "severity": "MEDIUM",
+            "message": "Debt hotspot A",
+            "file": "src/a.py",
+            "absolute_file": "/tmp/src/a.py",
+            "line": 10,
+            "hotspot_score": 35.0,
+            "priority_score": 41.0,
+        },
+        {
+            "fingerprint": "hotspot:src/b.py",
+            "rule_id": "SKY-DEBT",
+            "category": "debt",
+            "severity": "MEDIUM",
+            "message": "Debt hotspot B",
+            "file": "src/b.py",
+            "absolute_file": "/tmp/src/b.py",
+            "line": 10,
+            "hotspot_score": 35.0,
+            "priority_score": 80.0,
+        },
+    ]
+
+    actions = build_ranked_actions(findings, changed_files=[])
+
+    assert actions[0]["file"] == "src/b.py"
+    assert actions[0]["priority_score"] > actions[1]["priority_score"]
+
+
+def test_build_ranked_actions_keeps_critical_security_ahead_of_debt_hotspot():
+    findings = [
+        {
+            "fingerprint": "hotspot:src/debt.py",
+            "rule_id": "SKY-DEBT",
+            "category": "debt",
+            "severity": "HIGH",
+            "message": "Debt hotspot",
+            "file": "src/debt.py",
+            "absolute_file": "/tmp/src/debt.py",
+            "line": 20,
+            "priority_score": 44.0,
+            "hotspot_score": 38.0,
+        },
+        {
+            "fingerprint": "security:1",
+            "rule_id": "SKY-D999",
+            "category": "security",
+            "severity": "CRITICAL",
+            "message": "Critical injection path",
+            "file": "src/auth.py",
+            "absolute_file": "/tmp/src/auth.py",
+            "line": 10,
+        },
+    ]
+
+    actions = build_ranked_actions(findings, changed_files=[])
+
+    assert actions[0]["category"] == "security"
+
+
+def test_build_ranked_actions_debt_ignores_new_since_last_scan_bonus():
+    findings = [
+        {
+            "fingerprint": "hotspot:src/debt.py",
+            "rule_id": "SKY-DEBT",
+            "category": "debt",
+            "severity": "HIGH",
+            "message": "Debt hotspot",
+            "file": "src/debt.py",
+            "absolute_file": "/tmp/src/debt.py",
+            "line": 20,
+            "priority_score": 44.0,
+            "hotspot_score": 38.0,
+            "is_new_since_last_scan": True,
+        },
+        {
+            "fingerprint": "security:1",
+            "rule_id": "SKY-D999",
+            "category": "security",
+            "severity": "CRITICAL",
+            "message": "Critical injection path",
+            "file": "src/auth.py",
+            "absolute_file": "/tmp/src/auth.py",
+            "line": 10,
+        },
+    ]
+
+    actions = build_ranked_actions(findings, changed_files=[])
+
+    assert actions[0]["category"] == "security"
+
+
 def test_build_headline_prefers_urgent_changed_code():
     headline = build_headline(
         critical=1,
@@ -212,6 +311,53 @@ def test_normalize_findings_applies_debt_baseline(tmp_path):
     debt = [finding for finding in findings if finding["category"] == "debt"]
     assert len(debt) == 1
     assert debt[0]["baseline_status"] == "worsened"
+
+
+def test_refresh_agent_state_with_only_debt_baseline_does_not_mark_quality_new(tmp_path):
+    project_root = tmp_path / "repo"
+    src = project_root / "src"
+    state_dir = project_root / ".skylos"
+    src.mkdir(parents=True)
+    state_dir.mkdir(parents=True)
+    target = src / "auth.py"
+    target.write_text("def login():\n    return True\n", encoding="utf-8")
+    (state_dir / "debt_baseline.json").write_text(
+        json.dumps(
+            {
+                "hotspots": [
+                    {
+                        "fingerprint": "hotspot:src/auth.py",
+                        "score": 2.0,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = {
+        "quality": [
+            {
+                "rule_id": "SKY-Q301",
+                "severity": "WARN",
+                "message": "High cyclomatic complexity",
+                "file": str(target),
+                "line": 1,
+                "value": 14,
+                "threshold": 10,
+            }
+        ]
+    }
+
+    with patch("skylos.agent_center.run_analyze", return_value=json.dumps(result)):
+        state, updated = refresh_agent_state(project_root, force=True)
+
+    assert updated is True
+    quality = [finding for finding in state["findings"] if finding["category"] == "quality"]
+    debt = [finding for finding in state["findings"] if finding["category"] == "debt"]
+    assert quality[0]["is_new_vs_baseline"] is False
+    assert debt[0]["is_new_vs_baseline"] is False
+    assert state["summary"]["new_findings"] == 0
 
 
 def test_agent_state_round_trip(tmp_path):

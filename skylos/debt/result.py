@@ -66,6 +66,7 @@ class DebtHotspot:
     signal_count: int
     dimension_count: int
     primary_dimension: str
+    priority_score: float = 0.0
     changed: bool = False
     baseline_status: str = "untracked"
     score_delta: float = 0.0
@@ -77,6 +78,7 @@ class DebtHotspot:
             "fingerprint": self.fingerprint,
             "file": self.file,
             "score": self.score,
+            "priority_score": self.priority_score,
             "signal_count": self.signal_count,
             "dimension_count": self.dimension_count,
             "primary_dimension": self.primary_dimension,
@@ -96,6 +98,7 @@ class DebtScore:
     risk_rating: str
     hotspot_count: int
     signal_count: int
+    scope: str = "project"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -105,6 +108,7 @@ class DebtScore:
             "risk_rating": self.risk_rating,
             "hotspot_count": self.hotspot_count,
             "signal_count": self.signal_count,
+            "scope": self.scope,
         }
 
 
@@ -117,6 +121,7 @@ class DebtSnapshot:
     total_loc: int
     score: DebtScore
     hotspots: list[DebtHotspot] = field(default_factory=list)
+    all_hotspots: list[DebtHotspot] = field(default_factory=list, repr=False)
     summary: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

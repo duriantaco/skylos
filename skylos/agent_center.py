@@ -16,7 +16,10 @@ from skylos.debt.baseline import (
     load_baseline as load_debt_baseline,
 )
 from skylos.debt.engine import collect_debt_signals
-from skylos.debt.scoring import build_hotspots as build_debt_hotspots
+from skylos.debt.scoring import (
+    build_hotspots as build_debt_hotspots,
+    refresh_hotspot_priority as refresh_debt_hotspot_priority,
+)
 from skylos.file_discovery import discover_source_files
 
 STATE_DIR = ".skylos"
@@ -215,6 +218,7 @@ def compose_agent_state(
                     "message": action["message"],
                     "safe_fix": action["safe_fix"],
                     "hotspot_score": action.get("hotspot_score"),
+                    "priority_score": action.get("priority_score"),
                     "signal_count": action.get("signal_count"),
                     "primary_dimension": action.get("primary_dimension"),
                     "baseline_status": action.get("baseline_status"),
@@ -380,12 +384,11 @@ def refresh_agent_state(
     for finding in normalized:
         fingerprint = finding["fingerprint"]
         if finding.get("category") == "debt":
-            if debt_baseline:
-                finding["is_new_vs_baseline"] = fingerprint not in debt_known
-            else:
-                finding["is_new_vs_baseline"] = finding.get("is_new_vs_baseline", True)
+            finding["is_new_vs_baseline"] = (
+                fingerprint not in debt_known if debt_baseline else False
+            )
         else:
-            finding["is_new_vs_baseline"] = fingerprint not in known if baseline else True
+            finding["is_new_vs_baseline"] = fingerprint not in known if baseline else False
         finding["is_new_since_last_scan"] = fingerprint not in previous_fingerprints
         finding["is_in_changed_file"] = finding["file"] in changed_files
 
@@ -564,21 +567,21 @@ def build_ranked_actions(
     for finding in findings:
         if finding.get("is_dismissed") or finding.get("is_snoozed"):
             continue
-        score = severity_score(finding["severity"]) * 100
-        if finding.get("is_new_vs_baseline"):
+        score = float(severity_score(finding["severity"]) * 100)
+        if finding.get("is_new_vs_baseline") and finding["category"] != "debt":
             score += 220
-        if finding.get("is_new_since_last_scan"):
+        if finding.get("is_new_since_last_scan") and finding["category"] != "debt":
             score += 140
-        if finding["file"] in changed:
+        if finding["file"] in changed and finding["category"] != "debt":
             score += 160
         if finding["category"] in {"security", "secrets"}:
             score += 60
         if finding["category"] == "debt":
-            score += min(int(float(finding.get("hotspot_score") or 0.0) * 10), 320)
-            if finding.get("baseline_status") == "worsened":
-                score += 120
-            elif finding.get("baseline_status") == "new":
-                score += 90
+            score += float(
+                finding.get("priority_score")
+                or finding.get("hotspot_score")
+                or 0.0
+            ) * 3.0
         if finding["category"] == "dead_code":
             score -= 75
         if finding.get("confidence") is not None:
@@ -602,6 +605,7 @@ def build_ranked_actions(
                 "message": finding["message"],
                 "safe_fix": infer_safe_fix(finding),
                 "hotspot_score": finding.get("hotspot_score"),
+                "priority_score": finding.get("priority_score"),
                 "signal_count": finding.get("signal_count"),
                 "primary_dimension": finding.get("primary_dimension"),
                 "baseline_status": finding.get("baseline_status"),
@@ -610,7 +614,8 @@ def build_ranked_actions(
 
     actions.sort(
         key=lambda item: (
-            -int(item["score"]),
+            -float(item["score"]),
+            -float(item.get("priority_score") or 0.0),
             item["file"],
             int(item["line"]),
             item["title"],
@@ -744,6 +749,7 @@ def _append_debt_hotspots(
         baseline = load_debt_baseline(project_root)
         if baseline:
             annotate_debt_hotspots(hotspots, baseline)
+    refresh_debt_hotspot_priority(hotspots)
 
     for hotspot in hotspots:
         first_signal = hotspot.signals[0] if hotspot.signals else None
@@ -761,6 +767,7 @@ def _append_debt_hotspots(
                 "line": line,
                 "confidence": None,
                 "hotspot_score": hotspot.score,
+                "priority_score": hotspot.priority_score,
                 "signal_count": hotspot.signal_count,
                 "dimension_count": hotspot.dimension_count,
                 "primary_dimension": hotspot.primary_dimension,
