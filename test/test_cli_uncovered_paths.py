@@ -46,7 +46,7 @@ def test_run_init_creates_pyproject_when_missing(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     mock_console = Mock()
 
-    with patch("skylos.commands.init_cmd.Console", return_value=mock_console):
+    with patch("skylos.cli.Console", return_value=mock_console):
         cli.run_init()
 
     p = tmp_path / "pyproject.toml"
@@ -72,7 +72,7 @@ x = 1
     )
 
     mock_console = Mock()
-    with patch("skylos.commands.init_cmd.Console", return_value=mock_console):
+    with patch("skylos.cli.Console", return_value=mock_console):
         cli.run_init()
 
     content = py.read_text(encoding="utf-8")
@@ -84,7 +84,7 @@ def test_run_whitelist_requires_pyproject(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     mock_console = Mock()
 
-    with patch("skylos.commands.whitelist_cmd.Console", return_value=mock_console):
+    with patch("skylos.cli.Console", return_value=mock_console):
         cli.run_whitelist(pattern="x")
 
     assert not (tmp_path / "pyproject.toml").exists()
@@ -112,9 +112,9 @@ names = ["a", "b"]
 
     mock_console = Mock()
     with (
-        patch("skylos.commands.whitelist_cmd.Console", return_value=mock_console),
+        patch("skylos.cli.Console", return_value=mock_console),
         patch(
-            "skylos.commands.whitelist_cmd.load_config",
+            "skylos.cli.load_config",
             return_value={
                 "whitelist": ["a", "b"],
                 "whitelist_documented": {"handle_*": "called via getattr"},
@@ -134,7 +134,7 @@ def test_run_whitelist_no_pattern_prints_usage(tmp_path, monkeypatch):
     (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
 
     mock_console = Mock()
-    with patch("skylos.commands.whitelist_cmd.Console", return_value=mock_console):
+    with patch("skylos.cli.Console", return_value=mock_console):
         cli.run_whitelist(pattern=None)
 
     parts = []
@@ -153,7 +153,7 @@ def test_run_whitelist_adds_documented_reason(tmp_path, monkeypatch):
     py.write_text("[tool.skylos]\n", encoding="utf-8")
 
     mock_console = Mock()
-    with patch("skylos.commands.whitelist_cmd.Console", return_value=mock_console):
+    with patch("skylos.cli.Console", return_value=mock_console):
         cli.run_whitelist(pattern="handle_*", reason="Called via getattr")
 
     content = py.read_text(encoding="utf-8")
@@ -178,7 +178,7 @@ names = [
     )
 
     mock_console = Mock()
-    with patch("skylos.commands.whitelist_cmd.Console", return_value=mock_console):
+    with patch("skylos.cli.Console", return_value=mock_console):
         cli.run_whitelist(pattern="new_name")
 
     content = py.read_text(encoding="utf-8")
@@ -191,7 +191,7 @@ def test_run_whitelist_creates_names_section_if_missing(tmp_path, monkeypatch):
     py.write_text("[tool.skylos]\n", encoding="utf-8")
 
     mock_console = Mock()
-    with patch("skylos.commands.whitelist_cmd.Console", return_value=mock_console):
+    with patch("skylos.cli.Console", return_value=mock_console):
         cli.run_whitelist(pattern="dark_logic")
 
     content = py.read_text(encoding="utf-8")

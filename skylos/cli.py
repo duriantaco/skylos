@@ -1637,12 +1637,12 @@ def run_whitelist(pattern=None, reason=None, show=False):
 
 
 def get_git_changed_files(root_path):
-    supported_exts = {".py", ".go", ".ts", ".tsx", ".java"}
+    supported_exts = {".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".java"}
 
-    def _collect_supported(output):
+    def _collect_supported(output, repo_root):
         files = []
         for line in output.splitlines():
-            full_path = pathlib.Path(root_path) / line
+            full_path = pathlib.Path(repo_root) / line
             if full_path.suffix.lower() not in supported_exts:
                 continue
             if full_path.exists():
@@ -1650,18 +1650,22 @@ def get_git_changed_files(root_path):
         return files
 
     try:
-        subprocess.check_output(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=root_path,
-            stderr=subprocess.DEVNULL,
-            timeout=10,
+        repo_root = pathlib.Path(
+            subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=root_path,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+            )
+            .decode("utf-8")
+            .strip()
         )
         output = subprocess.check_output(
             ["git", "diff", "--name-only", "HEAD"],
-            cwd=root_path,
+            cwd=repo_root,
             timeout=30,
         ).decode("utf-8")
-        files = _collect_supported(output)
+        files = _collect_supported(output, repo_root)
         if files:
             return files
 
@@ -1672,9 +1676,9 @@ def get_git_changed_files(root_path):
             cmd = ["git", "diff", "--name-only", "origin/main...HEAD"]
         try:
             output = subprocess.check_output(
-                cmd, cwd=root_path, stderr=subprocess.DEVNULL, timeout=30
+                cmd, cwd=repo_root, stderr=subprocess.DEVNULL, timeout=30
             ).decode("utf-8")
-            return _collect_supported(output)
+            return _collect_supported(output, repo_root)
         except Exception:
             return []
     except Exception:
@@ -2835,7 +2839,7 @@ def main() -> None:
         debt_parser.add_argument(
             "--top",
             type=int,
-            default=20,
+            default=None,
             help="Maximum number of hotspots to show in table output",
         )
         debt_parser.add_argument(
@@ -2951,7 +2955,7 @@ def main() -> None:
 
         policy = None
         try:
-            policy = load_debt_policy(debt_args.policy_file)
+            policy = load_debt_policy(debt_args.policy_file, start_path=target)
         except (FileNotFoundError, ValueError, ImportError) as e:
             console.print(f"[bold red]Policy error: {e}[/bold red]")
             sys.exit(1)
@@ -2968,6 +2972,8 @@ def main() -> None:
             exclude_folders=sorted(exclude),
             changed_files=changed_files,
         )
+        project_target = Path(snapshot.project).resolve()
+        is_project_scope = target == project_target
 
         if debt_args.with_agent:
             model = debt_args.model
@@ -3029,10 +3035,18 @@ def main() -> None:
                 compare_debt_baseline(snapshot, baseline)
 
         if debt_args.save_baseline:
+            if not is_project_scope:
+                console.print(
+                    "[red]--save-baseline only supports project-root scans[/red]"
+                )
+                sys.exit(1)
             baseline_path = save_debt_baseline(snapshot.project, snapshot)
             console.print(f"[green]Debt baseline written to {baseline_path}[/green]")
 
         if debt_args.history:
+            if not is_project_scope:
+                console.print("[red]--history only supports project-root scans[/red]")
+                sys.exit(1)
             history_path = append_debt_history(snapshot.project, snapshot)
             console.print(f"[dim]Debt history appended to {history_path}[/dim]")
 
@@ -3040,7 +3054,7 @@ def main() -> None:
             output = format_debt_json(snapshot)
         else:
             top = debt_args.top
-            if policy and policy.report_top is not None:
+            if top is None and policy and policy.report_top is not None:
                 top = policy.report_top
             output = format_debt_table(snapshot, top=top)
 
