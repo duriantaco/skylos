@@ -12,6 +12,12 @@ except ImportError:
     YAML_AVAILABLE = False
 
 VALID_FAIL_ON_STATUS = {"new", "worsened", "new_or_worsened"}
+POLICY_FILENAMES = (
+    "skylos-debt.yaml",
+    "skylos-debt.yml",
+    ".skylos-debt.yaml",
+    ".skylos-debt.yml",
+)
 
 
 @dataclass
@@ -30,22 +36,30 @@ class DebtPolicy:
         }
 
 
-def load_policy(path: str | Path | None = None) -> Optional[DebtPolicy]:
+def find_policy_path(start_path: str | Path | None = None) -> Path | None:
+    current = Path(start_path or ".").resolve()
+    if current.is_file():
+        current = current.parent
+
+    while True:
+        for filename in POLICY_FILENAMES:
+            candidate = current / filename
+            if candidate.exists():
+                return candidate
+        if current.parent == current:
+            return None
+        current = current.parent
+
+
+def load_policy(
+    path: str | Path | None = None,
+    *,
+    start_path: str | Path | None = None,
+) -> Optional[DebtPolicy]:
     if path is not None:
         policy_path = Path(path)
     else:
-        candidates = [
-            Path("skylos-debt.yaml"),
-            Path("skylos-debt.yml"),
-            Path(".skylos-debt.yaml"),
-            Path(".skylos-debt.yml"),
-        ]
-        policy_path = None
-        for candidate in candidates:
-            if candidate.exists():
-                policy_path = candidate
-                break
-
+        policy_path = find_policy_path(start_path)
         if policy_path is None:
             return None
 

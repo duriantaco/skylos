@@ -98,6 +98,7 @@ git add .github/workflows/skylos.yml && git push
 
 - [What is Skylos?](#what-is-skylos)
 - [Quick Start](#quick-start)
+- [Technical Debt Hotspots](#technical-debt-hotspots)
 - [Key Capabilities](#key-capabilities)
 - [Installation](#installation)
 - [Skylos vs Vulture](#skylos-vs-vulture-benchmark)
@@ -155,6 +156,30 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 | **AI Defense: Defend** | `skylos defend .` | Check LLM integrations for missing guardrails |
 | **AI Defense: CI Gate** | `skylos defend . --fail-on critical --min-score 70` | Block PRs with critical AI defense gaps |
 | **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
+
+## Technical Debt Hotspots
+
+Use `skylos debt <path>` to rank structural debt hotspots without collapsing everything into a single urgency number.
+
+- `score` is the project-level structural debt score.
+- `priority` is the hotspot triage score used for ordering fix candidates.
+- `--changed` limits the visible hotspot list to changed files, but keeps the structural debt score anchored to the whole project.
+
+```bash
+# Full project debt scan
+skylos debt .
+
+# Review only changed hotspots without distorting the project score
+skylos debt . --changed
+
+# Compare the current project against a saved debt baseline
+skylos debt . --baseline
+
+# Save a repo-level debt baseline
+skylos debt . --save-baseline
+```
+
+Debt policy files such as `skylos-debt.yaml` are discovered from the scan target upward, and explicit CLI flags like `--top` override policy defaults.
 
 ### Demo
 [![Skylos demo](https://img.youtube.com/vi/BjMdSP2zZl8/0.jpg)](https://www.youtube.com/watch?v=BjMdSP2zZl8)
@@ -803,6 +828,7 @@ For the default `skylos cicd init` workflow, you do not need any Skylos-specific
 | Command | Description |
 |---------|-------------|
 | `skylos <path>` | Dead code, security, and quality analysis |
+| `skylos debt <path>` | Technical debt hotspot analysis with baseline-aware prioritization |
 | `skylos discover <path>` | Map LLM/AI integrations in your codebase |
 | `skylos defend <path>` | Check LLM integrations for missing defenses |
 | `skylos city <path>` | Visualize codebase as a Code City topology |
@@ -1449,6 +1475,32 @@ if somevar == "lokal":  # skylos: ignore
     do_something()
 ```
 
+### Technical Debt (`skylos debt`)
+
+Ranks structural debt hotspots using the existing static findings from quality, architecture, and dead code analysis.
+
+```bash
+skylos debt .
+skylos debt . --changed
+skylos debt . --baseline
+skylos debt . --save-baseline
+skylos debt . --history
+skylos debt . --json
+```
+
+**How the debt output works:**
+
+| Field | Meaning |
+|------|---------|
+| **score** | Structural debt score for the hotspot itself |
+| **priority** | Triage priority for what to fix next. Changed files and baseline drift raise this without changing structural debt score |
+| **project score** | Repo-level structural debt score. This stays project-scoped even when `--changed` is used |
+| **baseline status** | Whether a hotspot is `new`, `worsened`, `improved`, or `unchanged` versus the saved debt baseline |
+
+`--changed` is a filter/view mode, not a different scoring model. It limits the visible hotspot list to git-changed files, but the repo debt score still reflects the full project.
+
+Debt baselines and debt history are project-level artifacts. `--save-baseline` and `--history` only work when you scan the project root.
+
 ### Default CLI Options (`addopts`)
 
 Set default flags in `pyproject.toml` so you don't have to type them every time — just like pytest's `addopts`:
@@ -1812,6 +1864,7 @@ Options:
 ```
 Commands:
   skylos PATH                  Analyze a project (static analysis)
+  skylos debt PATH             Analyze technical debt hotspots
   skylos discover PATH         Map LLM integrations in a codebase
   skylos defend PATH           Check LLM integrations for missing defenses
   skylos agent scan PATH       Hybrid static + LLM analysis

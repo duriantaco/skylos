@@ -6,9 +6,9 @@ import pytest
 
 import skylos.cli as cli
 from skylos.debt.advisor import augment_hotspots_with_advisories
-from skylos.debt.baseline import compare_to_baseline
+from skylos.debt.baseline import compare_to_baseline, save_baseline
 from skylos.debt.engine import collect_debt_signals, run_debt_analysis
-from skylos.debt.policy import _parse_policy
+from skylos.debt.policy import _parse_policy, load_policy
 from skylos.debt.result import (
     DebtAdvisory,
     DebtHotspot,
@@ -16,6 +16,7 @@ from skylos.debt.result import (
     DebtSignal,
     DebtSnapshot,
 )
+from skylos.debt.scoring import build_hotspots
 
 
 SAMPLE_RESULT = {
@@ -130,6 +131,45 @@ def test_run_debt_analysis_builds_snapshot():
     assert snapshot.summary["dimensions"]["complexity"] == 1
 
 
+def test_run_debt_analysis_changed_mode_keeps_project_score_and_filters_hotspots():
+    with patch("skylos.debt.engine.run_analyze", return_value=json.dumps(SAMPLE_RESULT)):
+        full_snapshot = run_debt_analysis("/repo")
+        changed_snapshot = run_debt_analysis(
+            "/repo",
+            changed_files=["/repo/app/services.py"],
+        )
+
+    assert full_snapshot.score.score_pct == changed_snapshot.score.score_pct
+    assert full_snapshot.score.total_points == changed_snapshot.score.total_points
+    assert changed_snapshot.score.hotspot_count == 3
+    assert len(changed_snapshot.hotspots) == 1
+    assert changed_snapshot.hotspots[0].file == "app/services.py"
+    assert changed_snapshot.summary["scope"]["score"] == "project"
+    assert changed_snapshot.summary["scope"]["hotspots"] == "changed"
+
+
+def test_build_hotspots_changed_files_raise_priority_not_structural_score():
+    signals = collect_debt_signals(
+        SAMPLE_RESULT,
+        project_root=cli.Path("/repo"),
+    )
+
+    unchanged_hotspots = build_hotspots(signals)
+    changed_hotspots = build_hotspots(
+        signals,
+        changed_files={"app/services.py"},
+    )
+
+    by_file = {hotspot.file: hotspot for hotspot in unchanged_hotspots}
+    changed_by_file = {hotspot.file: hotspot for hotspot in changed_hotspots}
+
+    assert changed_by_file["app/services.py"].score == by_file["app/services.py"].score
+    assert (
+        changed_by_file["app/services.py"].priority_score
+        > by_file["app/services.py"].priority_score
+    )
+
+
 def test_compare_to_baseline_marks_worsened_unchanged_and_resolved():
     snapshot = _snapshot("/repo")
     baseline = {
@@ -144,6 +184,38 @@ def test_compare_to_baseline_marks_worsened_unchanged_and_resolved():
     assert snapshot.hotspots[0].baseline_status == "worsened"
     assert counts["worsened"] == 1
     assert counts["resolved"] == 1
+
+
+def test_compare_to_baseline_changed_scope_does_not_count_unseen_resolved():
+    snapshot = _snapshot("/repo")
+    snapshot.summary["scope"] = {"score": "project", "hotspots": "changed"}
+    baseline = {
+        "hotspots": [
+            {"fingerprint": "hotspot:app/services.py", "score": 10.0},
+            {"fingerprint": "hotspot:app/old.py", "score": 8.0},
+        ]
+    }
+
+    counts = compare_to_baseline(snapshot, baseline)
+
+    assert snapshot.hotspots[0].baseline_status == "worsened"
+    assert counts["worsened"] == 1
+    assert counts["resolved"] == 0
+
+
+def test_save_baseline_normalizes_changed_scope_to_project(tmp_path):
+    snapshot = _snapshot(str(tmp_path))
+    snapshot.all_hotspots = list(snapshot.hotspots)
+    snapshot.summary["scope"] = {"score": "project", "hotspots": "changed"}
+    snapshot.summary["project_hotspot_count"] = 1
+    snapshot.summary["visible_hotspot_count"] = 1
+    snapshot.summary["baseline"] = {"resolved": 0}
+
+    path = save_baseline(tmp_path, snapshot)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["summary"]["scope"]["hotspots"] == "project"
+    assert "baseline" not in payload["summary"]
 
 
 def test_parse_policy_accepts_gate_and_report():
@@ -162,6 +234,21 @@ def test_parse_policy_accepts_gate_and_report():
 def test_parse_policy_rejects_invalid_status():
     with pytest.raises(ValueError):
         _parse_policy({"gate": {"fail_on_status": "boom"}})
+
+
+def test_load_policy_discovers_from_start_path(tmp_path):
+    project = tmp_path / "repo"
+    src = project / "src"
+    src.mkdir(parents=True)
+    (project / "skylos-debt.yaml").write_text(
+        "report:\n  top: 3\n",
+        encoding="utf-8",
+    )
+
+    policy = load_policy(start_path=src)
+
+    assert policy is not None
+    assert policy.report_top == 3
 
 
 def test_augment_hotspots_with_advisories_sets_advisory(tmp_path):
@@ -298,3 +385,95 @@ def test_cli_debt_fail_on_status_uses_baseline_comparison(tmp_path, monkeypatch)
         cli.main()
 
     assert exc.value.code == 1
+
+
+def test_cli_debt_uses_project_policy_for_report_top(tmp_path, monkeypatch):
+    snapshot = _snapshot(str(tmp_path))
+    (tmp_path / "skylos-debt.yaml").write_text(
+        "report:\n  top: 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["skylos", "debt", str(tmp_path)])
+
+    with (
+        patch("skylos.debt.run_debt_analysis", return_value=snapshot),
+        patch("skylos.debt.format_debt_table", return_value="ok") as mock_table,
+        patch("skylos.cli.Console", return_value=Mock()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    assert mock_table.call_args.kwargs["top"] == 1
+
+
+def test_cli_debt_top_flag_overrides_policy_report_top(tmp_path, monkeypatch):
+    snapshot = _snapshot(str(tmp_path))
+    (tmp_path / "skylos-debt.yaml").write_text(
+        "report:\n  top: 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["skylos", "debt", str(tmp_path), "--top", "2"])
+
+    with (
+        patch("skylos.debt.run_debt_analysis", return_value=snapshot),
+        patch("skylos.debt.format_debt_table", return_value="ok") as mock_table,
+        patch("skylos.cli.Console", return_value=Mock()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    assert mock_table.call_args.kwargs["top"] == 2
+
+
+def test_cli_debt_save_baseline_requires_project_root_scan(tmp_path, monkeypatch):
+    project = tmp_path / "repo"
+    target = project / "src"
+    target.mkdir(parents=True)
+    snapshot = _snapshot(str(project))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "debt", str(target), "--save-baseline"],
+    )
+    mock_console = Mock()
+
+    with (
+        patch("skylos.debt.run_debt_analysis", return_value=snapshot),
+        patch("skylos.debt.save_baseline") as mock_save,
+        patch("skylos.cli.Console", return_value=mock_console),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 1
+    mock_save.assert_not_called()
+    message = mock_console.print.call_args.args[0]
+    assert "--save-baseline only supports project-root scans" in message
+
+
+def test_cli_debt_history_requires_project_root_scan(tmp_path, monkeypatch):
+    project = tmp_path / "repo"
+    target = project / "src"
+    target.mkdir(parents=True)
+    snapshot = _snapshot(str(project))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "debt", str(target), "--history"],
+    )
+    mock_console = Mock()
+
+    with (
+        patch("skylos.debt.run_debt_analysis", return_value=snapshot),
+        patch("skylos.debt.append_history") as mock_history,
+        patch("skylos.cli.Console", return_value=mock_console),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 1
+    mock_history.assert_not_called()
+    message = mock_console.print.call_args.args[0]
+    assert "--history only supports project-root scans" in message
