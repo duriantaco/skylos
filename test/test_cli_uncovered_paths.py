@@ -205,13 +205,15 @@ def test_get_git_changed_files_returns_existing_supported_files_only(tmp_path):
     (root / "a.py").write_text("x=1", encoding="utf-8")
     (root / "b.tsx").write_text("export const x = 1", encoding="utf-8")
     (root / "c.go").write_text("package main", encoding="utf-8")
+    (root / "d.js").write_text("console.log('x')", encoding="utf-8")
+    (root / "e.jsx").write_text("export const X = () => null", encoding="utf-8")
     (root / "b.txt").write_text("no", encoding="utf-8")
 
     def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
-        if cmd[:3] == ["git", "rev-parse", "--is-inside-work-tree"]:
-            return b"true"
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return str(root).encode("utf-8")
         if cmd[:3] == ["git", "diff", "--name-only"]:
-            return b"a.py\nb.tsx\nc.go\nb.txt\nmissing.py\nmissing.ts\n"
+            return b"a.py\nb.tsx\nc.go\nd.js\ne.jsx\nb.txt\nmissing.py\nmissing.ts\n"
         raise AssertionError("unexpected cmd")
 
     with patch("skylos.cli.subprocess.check_output", side_effect=fake_check_output):
@@ -222,7 +224,26 @@ def test_get_git_changed_files_returns_existing_supported_files_only(tmp_path):
         names.append(p.name)
     names.sort()
 
-    assert names == ["a.py", "b.tsx", "c.go"]
+    assert names == ["a.py", "b.tsx", "c.go", "d.js", "e.jsx"]
+
+
+def test_get_git_changed_files_uses_repo_root_for_subdir_targets(tmp_path):
+    root = tmp_path
+    src = root / "src"
+    src.mkdir()
+    (src / "a.py").write_text("x=1", encoding="utf-8")
+
+    def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return str(root).encode("utf-8")
+        if cmd[:3] == ["git", "diff", "--name-only"]:
+            return b"src/a.py\n"
+        raise AssertionError("unexpected cmd")
+
+    with patch("skylos.cli.subprocess.check_output", side_effect=fake_check_output):
+        files = cli.get_git_changed_files(src)
+
+    assert files == [src / "a.py"]
 
 
 def test_get_git_changed_files_on_error_returns_empty(tmp_path):

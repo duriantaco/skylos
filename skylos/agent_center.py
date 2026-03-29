@@ -11,6 +11,15 @@ from skylos.analyzer import analyze as run_analyze
 from skylos.baseline import load_baseline
 from skylos.constants import parse_exclude_folders
 from skylos.config import load_config
+from skylos.debt.baseline import (
+    annotate_hotspots as annotate_debt_hotspots,
+    load_baseline as load_debt_baseline,
+)
+from skylos.debt.engine import collect_debt_signals
+from skylos.debt.scoring import (
+    build_hotspots as build_debt_hotspots,
+    refresh_hotspot_priority as refresh_debt_hotspot_priority,
+)
 from skylos.file_discovery import discover_source_files
 
 STATE_DIR = ".skylos"
@@ -180,7 +189,7 @@ def compose_agent_state(
     return {
         "project_root": str(Path(project_root).resolve()),
         "generated_at": utc_now(),
-        "state_version": 2,
+        "state_version": 3,
         "file_signatures": signatures,
         "changed_files": changed_files,
         "baseline_present": baseline_present,
@@ -208,6 +217,11 @@ def compose_agent_state(
                     "rule_id": action["rule_id"],
                     "message": action["message"],
                     "safe_fix": action["safe_fix"],
+                    "hotspot_score": action.get("hotspot_score"),
+                    "priority_score": action.get("priority_score"),
+                    "signal_count": action.get("signal_count"),
+                    "primary_dimension": action.get("primary_dimension"),
+                    "baseline_status": action.get("baseline_status"),
                 }
                 for action in actions[:10]
             ],
@@ -346,10 +360,20 @@ def refresh_agent_state(
     result = json.loads(raw) if isinstance(raw, str) else raw
 
     normalized = normalize_findings(
-        result, project_root, include_dead_code=include_dead_code
+        result,
+        project_root,
+        include_dead_code=include_dead_code,
+        changed_files=changed_files,
+        use_debt_baseline=use_baseline,
     )
     baseline = load_baseline(project_root) if use_baseline else None
+    debt_baseline = load_debt_baseline(project_root) if use_baseline else None
     known = set((baseline or {}).get("fingerprints", []))
+    debt_known = {
+        str(item.get("fingerprint"))
+        for item in (debt_baseline or {}).get("hotspots", [])
+        if item.get("fingerprint")
+    }
 
     previous_fingerprints = {
         finding.get("fingerprint", "")
@@ -359,7 +383,12 @@ def refresh_agent_state(
 
     for finding in normalized:
         fingerprint = finding["fingerprint"]
-        finding["is_new_vs_baseline"] = fingerprint not in known if baseline else True
+        if finding.get("category") == "debt":
+            finding["is_new_vs_baseline"] = (
+                fingerprint not in debt_known if debt_baseline else False
+            )
+        else:
+            finding["is_new_vs_baseline"] = fingerprint not in known if baseline else False
         finding["is_new_since_last_scan"] = fingerprint not in previous_fingerprints
         finding["is_in_changed_file"] = finding["file"] in changed_files
 
@@ -368,7 +397,7 @@ def refresh_agent_state(
         signatures=signatures,
         findings=normalized,
         changed_files=changed_files,
-        baseline_present=bool(baseline),
+        baseline_present=bool(baseline or debt_baseline),
         triage=triage,
     )
     save_agent_state(project_root, state, state_file=state_file)
@@ -478,6 +507,8 @@ def normalize_findings(
     project_root: str | Path,
     *,
     include_dead_code: bool = True,
+    changed_files: list[str] | None = None,
+    use_debt_baseline: bool = True,
 ) -> list[dict[str, Any]]:
     root = Path(project_root).resolve()
     findings: list[dict[str, Any]] = []
@@ -507,6 +538,14 @@ def normalize_findings(
     _append_findings(findings, result.get("danger") or [], root, "security", "HIGH")
     _append_findings(findings, result.get("secrets") or [], root, "secrets", "HIGH")
     _append_findings(findings, result.get("quality") or [], root, "quality", "MEDIUM")
+    _append_debt_hotspots(
+        findings,
+        result,
+        root,
+        changed_files=changed_files or [],
+        include_dead_code=include_dead_code,
+        use_baseline=use_debt_baseline,
+    )
 
     findings.sort(
         key=lambda item: (
@@ -528,15 +567,21 @@ def build_ranked_actions(
     for finding in findings:
         if finding.get("is_dismissed") or finding.get("is_snoozed"):
             continue
-        score = severity_score(finding["severity"]) * 100
-        if finding.get("is_new_vs_baseline"):
+        score = float(severity_score(finding["severity"]) * 100)
+        if finding.get("is_new_vs_baseline") and finding["category"] != "debt":
             score += 220
-        if finding.get("is_new_since_last_scan"):
+        if finding.get("is_new_since_last_scan") and finding["category"] != "debt":
             score += 140
-        if finding["file"] in changed:
+        if finding["file"] in changed and finding["category"] != "debt":
             score += 160
         if finding["category"] in {"security", "secrets"}:
             score += 60
+        if finding["category"] == "debt":
+            score += float(
+                finding.get("priority_score")
+                or finding.get("hotspot_score")
+                or 0.0
+            ) * 3.0
         if finding["category"] == "dead_code":
             score -= 75
         if finding.get("confidence") is not None:
@@ -559,12 +604,18 @@ def build_ranked_actions(
                 "rule_id": finding["rule_id"],
                 "message": finding["message"],
                 "safe_fix": infer_safe_fix(finding),
+                "hotspot_score": finding.get("hotspot_score"),
+                "priority_score": finding.get("priority_score"),
+                "signal_count": finding.get("signal_count"),
+                "primary_dimension": finding.get("primary_dimension"),
+                "baseline_status": finding.get("baseline_status"),
             }
         )
 
     actions.sort(
         key=lambda item: (
-            -int(item["score"]),
+            -float(item["score"]),
+            -float(item.get("priority_score") or 0.0),
             item["file"],
             int(item["line"]),
             item["title"],
@@ -590,6 +641,7 @@ def build_summary(
     )
     new_total = sum(1 for item in findings if item.get("is_new_vs_baseline"))
     changed_total = sum(1 for item in findings if item.get("is_in_changed_file"))
+    debt_total = sum(1 for item in findings if item.get("category") == "debt")
     changed_file_count = len(
         {item["file"] for item in findings if item.get("is_in_changed_file")}
     )
@@ -612,6 +664,8 @@ def build_summary(
         )
     if baseline_present:
         subtitle_parts.append(f"{new_total} new vs baseline")
+    if debt_total:
+        subtitle_parts.append(f"{debt_total} debt hotspot(s)")
     if actions:
         subtitle_parts.append(f"{len(actions)} ranked action(s)")
     if snoozed:
@@ -628,6 +682,7 @@ def build_summary(
         "critical": critical,
         "high": high,
         "medium": medium,
+        "debt": debt_total,
         "changed_file_count": changed_file_count,
         "changed_files": changed_files,
         "dismissed": dismissed,
@@ -672,6 +727,108 @@ def command_center_payload(state: dict[str, Any], *, limit: int = 10) -> dict[st
     payload = dict(state.get("command_center") or {})
     payload["items"] = list((payload.get("items") or [])[:limit])
     return payload
+
+
+def _append_debt_hotspots(
+    out: list[dict[str, Any]],
+    result: dict[str, Any],
+    project_root: Path,
+    *,
+    changed_files: list[str],
+    include_dead_code: bool,
+    use_baseline: bool,
+) -> None:
+    signals = collect_debt_signals(result, project_root=project_root)
+    if not include_dead_code:
+        signals = [signal for signal in signals if signal.source_category != "dead_code"]
+    if not signals:
+        return
+
+    hotspots = build_debt_hotspots(signals, changed_files=set(changed_files))
+    if use_baseline:
+        baseline = load_debt_baseline(project_root)
+        if baseline:
+            annotate_debt_hotspots(hotspots, baseline)
+    refresh_debt_hotspot_priority(hotspots)
+
+    for hotspot in hotspots:
+        first_signal = hotspot.signals[0] if hotspot.signals else None
+        line = int(first_signal.line) if first_signal else 1
+        absolute = str(resolve_file_path(hotspot.file, project_root))
+        out.append(
+            {
+                "fingerprint": hotspot.fingerprint,
+                "rule_id": "SKY-DEBT",
+                "category": "debt",
+                "severity": debt_hotspot_severity(hotspot),
+                "message": debt_hotspot_message(hotspot),
+                "file": hotspot.file,
+                "absolute_file": absolute,
+                "line": line,
+                "confidence": None,
+                "hotspot_score": hotspot.score,
+                "priority_score": hotspot.priority_score,
+                "signal_count": hotspot.signal_count,
+                "dimension_count": hotspot.dimension_count,
+                "primary_dimension": hotspot.primary_dimension,
+                "baseline_status": hotspot.baseline_status,
+                "score_delta": hotspot.score_delta,
+            }
+        )
+
+
+def debt_hotspot_severity(hotspot: dict[str, Any] | Any) -> str:
+    signals = (
+        list(hotspot.get("signals") or [])
+        if isinstance(hotspot, dict)
+        else list(getattr(hotspot, "signals", []) or [])
+    )
+    if not signals:
+        return "MEDIUM"
+
+    strongest = max(
+        (
+            normalize_severity(
+                getattr(signal, "severity", None)
+                if not isinstance(signal, dict)
+                else signal.get("severity"),
+                "LOW",
+            )
+            for signal in signals
+        ),
+        key=severity_score,
+    )
+    return strongest
+
+
+def debt_hotspot_message(hotspot: dict[str, Any] | Any) -> str:
+    if isinstance(hotspot, dict):
+        primary_dimension = str(hotspot.get("primary_dimension") or "maintainability")
+        signal_count = int(hotspot.get("signal_count") or 0)
+        score = float(hotspot.get("score") or 0.0)
+        signals = list(hotspot.get("signals") or [])
+    else:
+        primary_dimension = str(
+            getattr(hotspot, "primary_dimension", None) or "maintainability"
+        )
+        signal_count = int(getattr(hotspot, "signal_count", None) or 0)
+        score = float(getattr(hotspot, "score", None) or 0.0)
+        signals = list(getattr(hotspot, "signals", []) or [])
+    lead = ""
+    if signals:
+        first_signal = signals[0]
+        lead = str(
+            getattr(first_signal, "message", None)
+            if not isinstance(first_signal, dict)
+            else first_signal.get("message")
+            or ""
+        ).strip()
+
+    detail = (
+        f"Technical debt hotspot: {primary_dimension} "
+        f"({signal_count} signal(s), score {score:.2f})"
+    )
+    return f"{detail}. {lead}" if lead else detail
 
 
 def _append_findings(
@@ -803,6 +960,9 @@ def severity_score(severity: str) -> int:
 def build_action_title(finding: dict[str, Any]) -> str:
     if finding["category"] == "dead_code":
         return f"Clean up {finding['message']}"
+    if finding["category"] == "debt":
+        dimension = str(finding.get("primary_dimension") or "debt")
+        return f"Refactor {dimension} hotspot"
     return f"Review {finding['severity']} {finding['rule_id']}"
 
 
@@ -813,8 +973,16 @@ def build_action_subtitle(finding: dict[str, Any]) -> str:
 
 def build_action_reason(finding: dict[str, Any]) -> str:
     reasons = []
-    if finding.get("is_new_vs_baseline"):
+    if finding.get("is_new_vs_baseline") and finding.get("category") != "debt":
         reasons.append("new vs baseline")
+    if finding.get("category") == "debt":
+        baseline_status = str(finding.get("baseline_status") or "").strip().lower()
+        if baseline_status == "new":
+            reasons.append("new vs debt baseline")
+        elif baseline_status == "worsened":
+            reasons.append("worsened vs debt baseline")
+        elif baseline_status == "improved":
+            reasons.append("improved vs debt baseline")
     if finding.get("is_new_since_last_scan"):
         reasons.append("new since last scan")
     if finding.get("is_in_changed_file"):
@@ -827,6 +995,8 @@ def build_action_reason(finding: dict[str, Any]) -> str:
 def infer_action_type(finding: dict[str, Any]) -> str:
     if finding["category"] == "dead_code":
         return "cleanup"
+    if finding["category"] == "debt":
+        return "plan_refactor"
     if finding["severity"] in {"CRITICAL", "HIGH"}:
         return "inspect_now"
     return "review"

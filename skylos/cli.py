@@ -1637,12 +1637,12 @@ def run_whitelist(pattern=None, reason=None, show=False):
 
 
 def get_git_changed_files(root_path):
-    supported_exts = {".py", ".go", ".ts", ".tsx", ".java"}
+    supported_exts = {".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".java"}
 
-    def _collect_supported(output):
+    def _collect_supported(output, repo_root):
         files = []
         for line in output.splitlines():
-            full_path = pathlib.Path(root_path) / line
+            full_path = pathlib.Path(repo_root) / line
             if full_path.suffix.lower() not in supported_exts:
                 continue
             if full_path.exists():
@@ -1650,18 +1650,22 @@ def get_git_changed_files(root_path):
         return files
 
     try:
-        subprocess.check_output(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=root_path,
-            stderr=subprocess.DEVNULL,
-            timeout=10,
+        repo_root = pathlib.Path(
+            subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=root_path,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+            )
+            .decode("utf-8")
+            .strip()
         )
         output = subprocess.check_output(
             ["git", "diff", "--name-only", "HEAD"],
-            cwd=root_path,
+            cwd=repo_root,
             timeout=30,
         ).decode("utf-8")
-        files = _collect_supported(output)
+        files = _collect_supported(output, repo_root)
         if files:
             return files
 
@@ -1672,9 +1676,9 @@ def get_git_changed_files(root_path):
             cmd = ["git", "diff", "--name-only", "origin/main...HEAD"]
         try:
             output = subprocess.check_output(
-                cmd, cwd=root_path, stderr=subprocess.DEVNULL, timeout=30
+                cmd, cwd=repo_root, stderr=subprocess.DEVNULL, timeout=30
             ).decode("utf-8")
-            return _collect_supported(output)
+            return _collect_supported(output, repo_root)
         except Exception:
             return []
     except Exception:
@@ -2815,6 +2819,274 @@ def main() -> None:
 
         if min_score is not None and score.score_pct < min_score:
             exit_code = 1
+
+        sys.exit(exit_code)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "debt":
+        import argparse as debt_argparse
+
+        debt_parser = debt_argparse.ArgumentParser(
+            prog="skylos debt",
+            description="Analyze technical debt hotspots in a codebase",
+        )
+        debt_parser.add_argument("path", nargs="?", default=".", help="Path to scan")
+        debt_parser.add_argument(
+            "--json", action="store_true", dest="output_json", help="Output as JSON"
+        )
+        debt_parser.add_argument(
+            "-o", "--output", dest="output_file", help="Write output to file"
+        )
+        debt_parser.add_argument(
+            "--top",
+            type=int,
+            default=None,
+            help="Maximum number of hotspots to show in table output",
+        )
+        debt_parser.add_argument(
+            "--changed",
+            action="store_true",
+            help="Limit hotspots to git-changed files",
+        )
+        debt_parser.add_argument(
+            "--with-agent",
+            action="store_true",
+            help="Use an LLM to summarize the top static debt hotspots",
+        )
+        debt_parser.add_argument(
+            "--agent-top",
+            type=int,
+            default=5,
+            help="Maximum number of hotspots to summarize with the LLM",
+        )
+        debt_parser.add_argument(
+            "--model",
+            default="gpt-4.1",
+            help="LLM model to use with --with-agent",
+        )
+        debt_parser.add_argument(
+            "--provider",
+            default=None,
+            help="Optional provider override for --with-agent",
+        )
+        debt_parser.add_argument(
+            "--base-url",
+            default=None,
+            help="Optional OpenAI-compatible base URL for --with-agent",
+        )
+        debt_parser.add_argument(
+            "--baseline",
+            action="store_true",
+            help="Compare current debt against the saved debt baseline if present",
+        )
+        debt_parser.add_argument(
+            "--save-baseline",
+            action="store_true",
+            help="Write the current debt snapshot as the baseline",
+        )
+        debt_parser.add_argument(
+            "--history",
+            action="store_true",
+            help="Append the current debt summary to the history log",
+        )
+        debt_parser.add_argument(
+            "--policy",
+            dest="policy_file",
+            help="Path to skylos-debt.yaml policy file",
+        )
+        debt_parser.add_argument(
+            "--min-score",
+            type=int,
+            help="Exit 1 if debt score percentage is below this value (0-100)",
+        )
+        debt_parser.add_argument(
+            "--fail-on-status",
+            choices=["new", "worsened", "new_or_worsened"],
+            help="Exit 1 if hotspots matching the requested baseline status exist",
+        )
+        debt_parser.add_argument(
+            "--exclude",
+            nargs="+",
+            default=None,
+            help="Additional folders to exclude",
+        )
+        debt_args = debt_parser.parse_args(sys.argv[2:])
+        console = Console()
+
+        from skylos.debt import (
+            append_history as append_debt_history,
+            augment_hotspots_with_advisories,
+            compare_to_baseline as compare_debt_baseline,
+            format_debt_json,
+            format_debt_table,
+            load_baseline as load_debt_baseline,
+            load_policy as load_debt_policy,
+            run_debt_analysis,
+            save_baseline as save_debt_baseline,
+        )
+
+        target = Path(debt_args.path).resolve()
+        if not target.exists():
+            console.print(f"[red]Error: path does not exist: {target}[/red]")
+            sys.exit(1)
+
+        if debt_args.min_score is not None and not 0 <= debt_args.min_score <= 100:
+            console.print(
+                f"[red]Error: --min-score must be 0-100, got {debt_args.min_score}[/red]"
+            )
+            sys.exit(1)
+
+        if debt_args.top is not None and debt_args.top <= 0:
+            console.print(f"[red]Error: --top must be > 0, got {debt_args.top}[/red]")
+            sys.exit(1)
+        if debt_args.agent_top is not None and debt_args.agent_top <= 0:
+            console.print(
+                f"[red]Error: --agent-top must be > 0, got {debt_args.agent_top}[/red]"
+            )
+            sys.exit(1)
+
+        exclude = set(
+            parse_exclude_folders(
+                use_defaults=True,
+                config_exclude_folders=load_config(target).get("exclude"),
+            )
+        )
+        if debt_args.exclude:
+            exclude.update(debt_args.exclude)
+
+        policy = None
+        try:
+            policy = load_debt_policy(debt_args.policy_file, start_path=target)
+        except (FileNotFoundError, ValueError, ImportError) as e:
+            console.print(f"[bold red]Policy error: {e}[/bold red]")
+            sys.exit(1)
+
+        changed_files = None
+        if debt_args.changed:
+            changed_files = get_git_changed_files(target if target.is_dir() else target.parent)
+            if not changed_files:
+                console.print("[dim]No changed files found.[/dim]")
+                sys.exit(0)
+
+        snapshot = run_debt_analysis(
+            target,
+            exclude_folders=sorted(exclude),
+            changed_files=changed_files,
+        )
+        project_target = Path(snapshot.project).resolve()
+        is_project_scope = target == project_target
+
+        if debt_args.with_agent:
+            model = debt_args.model
+            provider_override = getattr(debt_args, "provider", None)
+            if provider_override and model == "gpt-4.1":
+                provider_default_models = {
+                    "anthropic": "claude-sonnet-4-20250514",
+                    "google": "gemini/gemini-2.0-flash",
+                    "mistral": "mistral/mistral-large-latest",
+                    "groq": "groq/llama3-70b-8192",
+                    "deepseek": "deepseek/deepseek-chat",
+                    "xai": "xai/grok-2",
+                    "together": "together/meta-llama/Meta-Llama-3-70B-Instruct-Turbo",
+                    "ollama": "ollama/llama3",
+                }
+                if provider_override in provider_default_models:
+                    model = provider_default_models[provider_override]
+
+            provider, api_key, base_url, is_local = resolve_llm_runtime(
+                model=model,
+                provider_override=provider_override,
+                base_url_override=debt_args.base_url,
+                console=console,
+                allow_prompt=True,
+            )
+
+            if api_key is None:
+                sys.exit(1)
+            if api_key == "" and not is_local:
+                console.print("[bad]No API key provided.[/bad]")
+                sys.exit(1)
+
+            try:
+                advised_count = augment_hotspots_with_advisories(
+                    snapshot.hotspots,
+                    project_root=snapshot.project,
+                    model=model,
+                    api_key=api_key,
+                    base_url=base_url,
+                    top=debt_args.agent_top,
+                    architecture_metrics=snapshot.summary.get("architecture_metrics")
+                    or {},
+                )
+                snapshot.summary["agent"] = {
+                    "enabled": True,
+                    "provider": provider,
+                    "model": model,
+                    "advised_hotspots": advised_count,
+                    "requested_top": debt_args.agent_top,
+                }
+            except Exception as e:
+                console.print(f"[warn]Debt agent advisory failed: {e}[/warn]")
+
+        if debt_args.baseline:
+            baseline = load_debt_baseline(snapshot.project)
+            if baseline is None:
+                console.print("[dim]No debt baseline found.[/dim]")
+            else:
+                compare_debt_baseline(snapshot, baseline)
+
+        if debt_args.save_baseline:
+            if not is_project_scope:
+                console.print(
+                    "[red]--save-baseline only supports project-root scans[/red]"
+                )
+                sys.exit(1)
+            baseline_path = save_debt_baseline(snapshot.project, snapshot)
+            console.print(f"[green]Debt baseline written to {baseline_path}[/green]")
+
+        if debt_args.history:
+            if not is_project_scope:
+                console.print("[red]--history only supports project-root scans[/red]")
+                sys.exit(1)
+            history_path = append_debt_history(snapshot.project, snapshot)
+            console.print(f"[dim]Debt history appended to {history_path}[/dim]")
+
+        if debt_args.output_json:
+            output = format_debt_json(snapshot)
+        else:
+            top = debt_args.top
+            if top is None and policy and policy.report_top is not None:
+                top = policy.report_top
+            output = format_debt_table(snapshot, top=top)
+
+        if debt_args.output_file:
+            try:
+                Path(debt_args.output_file).write_text(output, encoding="utf-8")
+            except OSError as e:
+                console.print(f"[red]Error writing output file: {e}[/red]")
+                sys.exit(1)
+            console.print(f"[green]Output written to {debt_args.output_file}[/green]")
+        elif debt_args.output_json:
+            print(output)
+        else:
+            console.print(output)
+
+        exit_code = 0
+        min_score = debt_args.min_score
+        if policy and policy.gate_min_score is not None and min_score is None:
+            min_score = policy.gate_min_score
+        if min_score is not None and snapshot.score.score_pct < min_score:
+            exit_code = 1
+
+        fail_on_status = debt_args.fail_on_status
+        if policy and policy.gate_fail_on_status and not fail_on_status:
+            fail_on_status = policy.gate_fail_on_status
+        if fail_on_status:
+            statuses = {hotspot.baseline_status for hotspot in snapshot.hotspots}
+            if fail_on_status == "new_or_worsened":
+                if {"new", "worsened"} & statuses:
+                    exit_code = 1
+            elif fail_on_status in statuses:
+                exit_code = 1
 
         sys.exit(exit_code)
 

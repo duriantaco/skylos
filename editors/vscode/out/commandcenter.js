@@ -13,9 +13,11 @@ class SummaryNode {
     }
 }
 class InfoNode {
-    constructor(label, description) {
+    constructor(label, description, icon, command) {
         this.label = label;
         this.description = description;
+        this.icon = icon;
+        this.command = command;
     }
 }
 class ActionNode {
@@ -149,8 +151,11 @@ class SkylosCommandCenterProvider {
         }
         if (element instanceof InfoNode) {
             const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
-            item.iconPath = new vscode.ThemeIcon("info");
+            item.iconPath = new vscode.ThemeIcon(element.icon ?? "info");
             item.description = element.description;
+            if (element.command) {
+                item.command = { title: element.label, command: element.command };
+            }
             return item;
         }
         if (element instanceof EmptyNode) {
@@ -224,6 +229,7 @@ class SkylosCommandCenterProvider {
             nodes.push(new EmptyNode("No ranked actions", "The repo agent did not surface anything urgent"));
             return nodes;
         }
+        nodes.push(new InfoNode("Preview dead code removal", "Run LLM-verified fix generation", "trash", "skylos.fixDeadCode"));
         nodes.push(...actions.map((action) => new ActionNode(action)));
         return nodes;
     }
@@ -408,7 +414,7 @@ function resolveActionPath(file) {
     return path.isAbsolute(file) ? file : path.join(root, file);
 }
 function normalizeCategory(value) {
-    if (value === "security" || value === "secrets" || value === "dead_code" || value === "quality" || value === "ai") {
+    if (value === "security" || value === "secrets" || value === "dead_code" || value === "quality" || value === "debt" || value === "ai") {
         return value;
     }
     return "quality";

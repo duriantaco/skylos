@@ -39,6 +39,7 @@ const CATEGORY_LABELS: Record<Category, string> = {
   security: "Security",
   secrets: "Secrets",
   quality: "Quality",
+  debt: "Technical Debt",
   ai: "AI Analysis",
 };
 
@@ -47,6 +48,7 @@ const CATEGORY_ICONS: Record<Category, string> = {
   security: "shield",
   secrets: "key",
   quality: "beaker",
+  debt: "wrench",
   ai: "sparkle",
 };
 
@@ -138,7 +140,7 @@ export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       }
 
       const nodes: CategoryNode[] = [];
-      const order: Category[] = ["security", "secrets", "dead_code", "quality", "ai"];
+      const order: Category[] = ["security", "secrets", "debt", "dead_code", "quality", "ai"];
       for (const cat of order) {
         const findings = byCategory.get(cat);
         if (findings && findings.length > 0) {
