@@ -15,6 +15,9 @@
 - Debt baseline comparisons no longer count unseen hotspots as resolved
 - Sync-installed pre-push hooks now run only the fast Rust/Python parity guard instead of a full `skylos .` scan, and checked-in Skylos hooks are limited to the `pre-commit` stage
 
+### Fixed
+- `skylos agent watch --learn` now forwards the learning flag into the watch loop
+
 ## [4.1.4] - 2026-03-25
 
 ### Fixed

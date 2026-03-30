@@ -469,7 +469,7 @@ def test_doctor_command_reports_core_statuses(tmp_path):
     assert exit_code == 0
     printed = " ".join(str(call.args[0]) for call in console.print.call_args_list if call.args)
     assert "Python 3.12.1" in printed
-    assert "Skylos 4.1.4" in printed
+    assert "Skylos 4.2.0" in printed
     assert "Cloud connected" in printed
     assert "pyproject.toml [tool.skylos] config found" in printed
     assert "GitHub Actions workflow found" in printed
