@@ -2185,6 +2185,7 @@ def main() -> None:
                     conf=agent_args.conf,
                     use_baseline=not agent_args.no_baseline,
                     state_file=agent_args.state_file,
+                    enable_learning=agent_args.learn,
                 )
                 if agent_args.format == "json":
                     print(json.dumps(state, indent=2, default=str))

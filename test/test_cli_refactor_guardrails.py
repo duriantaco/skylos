@@ -724,3 +724,22 @@ def test_cli_guardrail_debt_top_flag_overrides_policy(tmp_path, monkeypatch):
 
     assert exc.value.code == 0
     assert mock_table.call_args.kwargs["top"] == 2
+
+
+def test_cli_guardrail_agent_watch_forwards_learn_flag(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "agent", "watch", "repo", "--once", "--learn", "--format", "json"],
+    )
+
+    with (
+        patch("skylos.agent_center.watch_project", return_value={"summary": {}}) as mock_watch,
+        patch("builtins.print") as mock_print,
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    assert mock_watch.call_args.kwargs["enable_learning"] is True
+    mock_print.assert_called_once()
