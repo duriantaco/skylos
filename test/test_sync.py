@@ -313,3 +313,55 @@ def test_main_dispatch_connect(monkeypatch):
     monkeypatch.setattr(syncmod, "cmd_connect", fake_connect)
     syncmod.main(["connect", "T"])
     assert called["ok"] is True
+
+
+def test_create_precommit_config_limits_gate_to_pre_commit(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    created = syncmod.create_precommit_config()
+
+    assert created is True
+    content = (tmp_path / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    assert "stages: [pre-commit]" in content
+
+
+def test_cmd_setup_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".git").mkdir()
+
+    monkeypatch.setattr(syncmod, "api_get", lambda endpoint, token: {
+        "/api/sync/whoami": {
+            "project": {"id": "proj_123", "name": "Proj"},
+            "organization": {"name": "Org"},
+            "plan": "pro",
+        }
+    }[endpoint])
+    monkeypatch.setattr(syncmod, "_write_link", lambda *args, **kwargs: None)
+    monkeypatch.setattr(syncmod, "save_token", lambda *args, **kwargs: str(tmp_path / "creds.json"))
+
+    answers = iter(["y", "n", "n"])
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
+
+    syncmod.cmd_setup("TOK")
+
+    hook = (tmp_path / ".git" / "hooks" / "pre-push").read_text(encoding="utf-8")
+    assert "skylos ." not in hook
+    assert "Rust/Python parity check" in hook
+    assert "test/test_fast_parity.py" in hook
+
+
+def test_cmd_upgrade_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".git").mkdir()
+
+    monkeypatch.setattr(syncmod, "get_token", lambda: "TOK")
+    monkeypatch.setattr(syncmod, "api_get", lambda endpoint, token: {
+        "/api/sync/whoami": {"plan": "pro"}
+    }[endpoint])
+
+    syncmod.cmd_upgrade()
+
+    hook = (tmp_path / ".git" / "hooks" / "pre-push").read_text(encoding="utf-8")
+    assert "skylos ." not in hook
+    assert "Rust/Python parity check" in hook
+    assert "test/test_fast_parity.py" in hook

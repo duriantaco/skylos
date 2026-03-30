@@ -13,6 +13,7 @@
 - Changed-file debt scans now resolve git diffs from the repository root and include `.js` / `.jsx`
 - Debt baseline and history writes require project-root scans
 - Debt baseline comparisons no longer count unseen hotspots as resolved
+- Sync-installed pre-push hooks now run only the fast Rust/Python parity guard instead of a full `skylos .` scan, and checked-in Skylos hooks are limited to the `pre-commit` stage
 
 ## [4.1.4] - 2026-03-25
 
