@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "4.1.4"
+version = "4.2.0"
 requires-python = ">=3.10"
 description = "Open-source AI code security and static analysis for Python, TypeScript, and Go. Finds dead code, secrets, vulnerabilities, and diff-aware regressions."
 authors = [{name = "Aaron Oh", email = "aaronoh2015@gmail.com"}]
