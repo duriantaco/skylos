@@ -123,6 +123,8 @@ FRAMEWORK_IMPORTS = {
     "fastapi",
     "django",
     "django_filters",
+    "pluggy",
+    "pytest",
     "rest_framework",
     "pydantic",
     "celery",
