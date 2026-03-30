@@ -8,6 +8,7 @@ repos:
         pass_filenames: false
         require_serial: true
         args: [".", "--json", "--confidence", "70", "--danger", "--no-grep-verify"]
+        stages: [pre-commit]
 
       - id: skylos-fail-on-findings
         name: skylos gate
@@ -15,6 +16,7 @@ repos:
         pass_filenames: false
         require_serial: true
         entry: python scripts/skylos_gate.py
+        stages: [pre-commit]
 
       - id: skylos-parity
         name: rust/python parity

@@ -386,11 +386,31 @@ repos:
         pass_filenames: false
         require_serial: true
         args: [".", "--gate", "--danger"]
+        stages: [pre-commit]
 """
 
     precommit_path.write_text(config_content)
     print("  ✓ Created .pre-commit-config.yaml")
     return True
+
+
+def _build_pre_push_hook() -> str:
+    return """#!/bin/bash
+# Fast local parity guard only. Full Skylos scans should run manually or in CI.
+if python3 -c "import skylos_fast" 2>/dev/null; then
+    echo "Running Rust/Python parity check..."
+    python3 -m pytest test/test_fast_parity.py -k "synthetic or exact_match or same_cycles_found or python_files_match" -q --no-header --tb=line 2>&1
+    PARITY_EXIT=$?
+    if [ $PARITY_EXIT -ne 0 ]; then
+        echo ""
+        echo "BLOCKED: Rust/Python parity drift detected."
+        echo "Run 'pytest test/test_fast_parity.py -v' for details."
+        exit 1
+    fi
+fi
+
+exit 0
+"""
 
 
 def cmd_setup(token_arg=None):
@@ -534,11 +554,7 @@ def cmd_setup(token_arg=None):
         hooks_dir = git_dir / "hooks"
         hooks_dir.mkdir(exist_ok=True)
         hook_path = hooks_dir / "pre-push"
-        hook_content = r"""#!/bin/bash
-echo "Running Skylos quality gate..."
-skylos .
-exit $?
-"""
+        hook_content = _build_pre_push_hook()
         hook_path.write_text(hook_content)
         hook_path.chmod(0o755)
         print("  ✓ Installed git hooks (.git/hooks/pre-push)")
@@ -663,11 +679,7 @@ def cmd_upgrade():
         hooks_dir = git_dir / "hooks"
         hooks_dir.mkdir(exist_ok=True)
         hook_path = hooks_dir / "pre-push"
-        hook_content = """#!/bin/bash
-echo "Running Skylos quality gate..."
-skylos . --gate
-exit $?
-"""
+        hook_content = _build_pre_push_hook()
         hook_path.write_text(hook_content)
         hook_path.chmod(0o755)
         print(" ✓ Installed git hooks")
