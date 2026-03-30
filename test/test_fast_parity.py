@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import ast
 import os
+import json
+import subprocess
+import sys
+import textwrap
 import pytest
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -25,6 +29,45 @@ for f in sorted(SKYLOS_PKG.rglob("*.py")):
     if "__pycache__" in str(f) or "venv" in str(f):
         continue
     _REAL_FILES.append(f)
+
+
+def _run_dead_code_parity_scans_in_subprocess(target: Path) -> tuple[dict, dict]:
+    code = textwrap.dedent(
+        """
+        import json
+        import sys
+        import skylos.analyzer as mod
+        from skylos.analyzer import Skylos
+
+        target = sys.argv[1]
+        exclude = ["venv", "__pycache__", ".git", "node_modules"]
+
+        result_fast = json.loads(Skylos().analyze(target, exclude_folders=exclude))
+
+        mod._fast_discover = None
+
+        import skylos.rules.quality.clones as clones_mod
+        clones_mod._fast_similarity = None
+
+        import skylos.rules.quality.coupling as coupling_mod
+        coupling_mod._fast_analyze_coupling = None
+
+        import skylos.circular_deps as circ_mod
+        circ_mod._fast_find_cycles = None
+
+        result_py = json.loads(Skylos().analyze(target, exclude_folders=exclude))
+        print(json.dumps({"fast": result_fast, "python": result_py}))
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code, str(target)],
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(proc.stdout)
+    return payload["fast"], payload["python"]
 
 
 def _py_similarity(a: str, b: str) -> float:
@@ -454,43 +497,7 @@ class Result:
 
 class TestEndToEndParity:
     def test_dead_code_findings_match(self):
-        import json
-        import skylos.analyzer as mod
-        from skylos.analyzer import Skylos
-
-        exclude = ["venv", "__pycache__", ".git", "node_modules"]
-
-        s1 = Skylos()
-        result_rust = json.loads(s1.analyze(str(SKYLOS_PKG), exclude_folders=exclude))
-
-        originals = {
-            "_fast_discover": mod._fast_discover,
-        }
-        mod._fast_discover = None
-
-        import skylos.rules.quality.clones as clones_mod
-
-        orig_fast_sim = clones_mod._fast_similarity
-        clones_mod._fast_similarity = None
-
-        import skylos.rules.quality.coupling as coupling_mod
-
-        orig_fast_coupling = coupling_mod._fast_analyze_coupling
-        coupling_mod._fast_analyze_coupling = None
-
-        import skylos.circular_deps as circ_mod
-
-        orig_fast_cycles = circ_mod._fast_find_cycles
-        circ_mod._fast_find_cycles = None
-
-        try:
-            s2 = Skylos()
-            result_py = json.loads(s2.analyze(str(SKYLOS_PKG), exclude_folders=exclude))
-        finally:
-            mod._fast_discover = originals["_fast_discover"]
-            clones_mod._fast_similarity = orig_fast_sim
-            coupling_mod._fast_analyze_coupling = orig_fast_coupling
-            circ_mod._fast_find_cycles = orig_fast_cycles
+        result_rust, result_py = _run_dead_code_parity_scans_in_subprocess(SKYLOS_PKG)
 
         def _finding_set(result, key):
             return {f"{f['file']}:{f['name']}:{f['line']}" for f in result.get(key, [])}
