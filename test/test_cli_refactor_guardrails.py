@@ -352,6 +352,25 @@ def test_cli_guardrail_cicd_dispatch_preserves_argv(monkeypatch):
     mock_cicd.assert_called_once_with(["gate", "--input", "results.json", "--strict"])
 
 
+def test_cli_guardrail_rules_dispatch_preserves_argv(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "rules", "validate", "community.yml"],
+    )
+
+    with (
+        patch("skylos.commands.rules_cmd.run_rules_command", return_value=0) as mock_rules,
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    mock_rules.assert_called_once_with(
+        ["validate", "community.yml"], console_factory=cli.Console
+    )
+
+
 def test_cli_guardrail_baseline_subcommand_writes_baseline(tmp_path, monkeypatch):
     target = tmp_path / "repo"
     target.mkdir()
