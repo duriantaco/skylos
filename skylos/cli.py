@@ -1510,65 +1510,15 @@ def run_whitelist(pattern=None, reason=None, show=False):
 
 
 def get_git_changed_files(root_path):
-    supported_exts = {".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".java"}
+    from skylos.cli_shared import get_git_changed_files as get_git_changed_files_impl
 
-    def _collect_supported(output, repo_root):
-        files = []
-        for line in output.splitlines():
-            full_path = pathlib.Path(repo_root) / line
-            if full_path.suffix.lower() not in supported_exts:
-                continue
-            if full_path.exists():
-                files.append(full_path)
-        return files
-
-    try:
-        repo_root = pathlib.Path(
-            subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
-                cwd=root_path,
-                stderr=subprocess.DEVNULL,
-                timeout=10,
-            )
-            .decode("utf-8")
-            .strip()
-        )
-        output = subprocess.check_output(
-            ["git", "diff", "--name-only", "HEAD"],
-            cwd=repo_root,
-            timeout=30,
-        ).decode("utf-8")
-        files = _collect_supported(output, repo_root)
-        if files:
-            return files
-
-        base_ref = os.environ.get("GITHUB_BASE_REF")
-        if base_ref:
-            cmd = ["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"]
-        else:
-            cmd = ["git", "diff", "--name-only", "origin/main...HEAD"]
-        try:
-            output = subprocess.check_output(
-                cmd, cwd=repo_root, stderr=subprocess.DEVNULL, timeout=30
-            ).decode("utf-8")
-            return _collect_supported(output, repo_root)
-        except Exception:
-            return []
-    except Exception:
-        return []
+    return get_git_changed_files_impl(root_path)
 
 
 def estimate_cost(files):
-    total_chars = 0
-    for f in files:
-        try:
-            content = f.read_text(encoding="utf-8", errors="ignore")
-            total_chars += len(content)
-        except Exception:
-            pass
-    est_tokens = total_chars / 4
-    est_cost_usd = (est_tokens / 1_000_000) * 2.50
-    return est_tokens, est_cost_usd
+    from skylos.cli_shared import estimate_cost as estimate_cost_impl
+
+    return estimate_cost_impl(files)
 
 
 def _run_clean_command():
@@ -1636,263 +1586,39 @@ def run_cicd_command(argv):
 
 
 def _load_addopts():
-    import shlex
+    from skylos.cli_shared import load_addopts
 
-    try:
-        import tomllib
-    except ImportError:
-        try:
-            import tomli as tomllib
-        except ImportError:
-            return []
-
-    current = Path.cwd()
-    while True:
-        toml_path = current / "pyproject.toml"
-        if toml_path.exists():
-            try:
-                with open(toml_path, "rb") as f:
-                    data = tomllib.load(f)
-                addopts = data.get("tool", {}).get("skylos", {}).get("addopts", [])
-                if isinstance(addopts, str):
-                    return shlex.split(addopts)
-                if isinstance(addopts, list):
-                    return list(addopts)
-            except Exception:
-                pass
-            break
-        if current.parent == current:
-            break
-        current = current.parent
-    return []
+    return load_addopts()
 
 
 def _handle_rules_command():
-    import argparse as rules_argparse
+    from skylos.commands.rules_cmd import run_rules_command
 
-    console = Console()
-    rules_dir = Path.home() / ".skylos" / "rules"
-
-    rules_parser = rules_argparse.ArgumentParser(
-        prog="skylos rules", description="Manage community rules for Skylos"
-    )
-    rules_sub = rules_parser.add_subparsers(dest="rules_cmd")
-
-    p_install = rules_sub.add_parser("install", help="Install a rule pack or YAML URL")
-    p_install.add_argument("pack_or_url", help="Pack name or URL to a .yml/.yaml file")
-
-    rules_sub.add_parser("list", help="List installed community rules")
-
-    p_remove = rules_sub.add_parser("remove", help="Remove an installed rule pack")
-    p_remove.add_argument("name", help="Name of the rule pack to remove")
-
-    p_validate = rules_sub.add_parser("validate", help="Validate a YAML rule file")
-    p_validate.add_argument("path", help="Path to the YAML rule file")
-
-    rules_argv = sys.argv[2:]
-    if not rules_argv:
-        rules_parser.print_help()
-        sys.exit(0)
-
-    rules_args = rules_parser.parse_args(rules_argv)
-
-    if rules_args.rules_cmd == "install":
-        _rules_install(console, rules_dir, rules_args.pack_or_url)
-
-    elif rules_args.rules_cmd == "list":
-        _rules_list(console, rules_dir)
-
-    elif rules_args.rules_cmd == "remove":
-        _rules_remove(console, rules_dir, rules_args.name)
-
-    elif rules_args.rules_cmd == "validate":
-        _rules_validate(console, rules_args.path)
-
-    else:
-        rules_parser.print_help()
-
-    sys.exit(0)
+    sys.exit(run_rules_command(sys.argv[2:], console_factory=Console))
 
 
 def _rules_install(console, rules_dir, pack_or_url):
-    import urllib.request
-    import urllib.error
+    from skylos.commands.rules_cmd import install_rules
 
-    try:
-        import yaml
-    except ImportError:
-        console.print("[red]PyYAML is required. Install with: pip install pyyaml[/red]")
-        sys.exit(1)
-
-    rules_dir.mkdir(parents=True, exist_ok=True)
-
-    if pack_or_url.startswith("http://") or pack_or_url.startswith("https://"):
-        url = pack_or_url
-        name = Path(url).stem
-    else:
-        name = pack_or_url
-        url = f"https://raw.githubusercontent.com/duriantaco/skylos-rules/main/packs/{name}.yml"
-
-    dest = rules_dir / f"{name}.yml"
-
-    console.print(f"[bold]Installing rule pack:[/bold] {name}")
-    console.print(f"[dim]Source: {url}[/dim]")
-
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "skylos-cli"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            content = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        console.print(f"[red]Download failed: HTTP {e.code}[/red]")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"[red]Download failed: {e}[/red]")
-        sys.exit(1)
-
-    try:
-        data = yaml.safe_load(content)
-        if not data or "rules" not in data:
-            console.print("[red]Invalid rule file: missing 'rules' key[/red]")
-            sys.exit(1)
-        rule_count = len(data["rules"])
-    except yaml.YAMLError as e:
-        console.print(f"[red]Invalid YAML: {e}[/red]")
-        sys.exit(1)
-
-    dest.write_text(content)
-    console.print(f"[green]Installed {rule_count} rule(s) to {dest}[/green]")
+    return install_rules(console, rules_dir, pack_or_url)
 
 
 def _rules_list(console, rules_dir):
-    try:
-        import yaml
-    except ImportError:
-        console.print("[red]PyYAML is required. Install with: pip install pyyaml[/red]")
-        sys.exit(1)
+    from skylos.commands.rules_cmd import list_rules
 
-    if not rules_dir.exists():
-        console.print("[dim]No community rules installed.[/dim]")
-        console.print("Run [bold]skylos rules install <pack>[/bold] to get started.")
-        return
-
-    yml_files = sorted(rules_dir.glob("*.yml"))
-    if not yml_files:
-        console.print("[dim]No community rules installed.[/dim]")
-        console.print("Run [bold]skylos rules install <pack>[/bold] to get started.")
-        return
-
-    table = Table(title="Installed Community Rules")
-    table.add_column("Pack", style="bold")
-    table.add_column("Rules", justify="right")
-    table.add_column("Source")
-
-    for f in yml_files:
-        try:
-            data = yaml.safe_load(f.read_text())
-            rule_count = len(data.get("rules", [])) if data else 0
-            table.add_row(f.stem, str(rule_count), str(f))
-        except Exception:
-            table.add_row(f.stem, "?", str(f))
-
-    console.print(table)
+    return list_rules(console, rules_dir)
 
 
 def _rules_remove(console, rules_dir, name):
-    dest = rules_dir / f"{name}.yml"
-    if not dest.exists():
-        console.print(f"[red]Rule pack '{name}' not found.[/red]")
-        sys.exit(1)
+    from skylos.commands.rules_cmd import remove_rules
 
-    dest.unlink()
-    console.print(f"[green]Removed rule pack '{name}'[/green]")
+    return remove_rules(console, rules_dir, name)
 
 
 def _rules_validate(console, path_str):
-    try:
-        import yaml
-    except ImportError:
-        console.print("[red]PyYAML is required. Install with: pip install pyyaml[/red]")
-        sys.exit(1)
+    from skylos.commands.rules_cmd import validate_rules
 
-    rule_path = Path(path_str)
-    if not rule_path.exists():
-        console.print(f"[red]File not found: {path_str}[/red]")
-        sys.exit(1)
-
-    try:
-        data = yaml.safe_load(rule_path.read_text())
-    except yaml.YAMLError as e:
-        console.print(f"[red]YAML parse error: {e}[/red]")
-        sys.exit(1)
-
-    if not data or not isinstance(data, dict):
-        console.print("[red]Invalid rule file: not a YAML mapping[/red]")
-        sys.exit(1)
-
-    if "rules" not in data:
-        console.print("[red]Invalid rule file: missing 'rules' key[/red]")
-        sys.exit(1)
-
-    errors = []
-    warnings = []
-    valid_severities = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
-    valid_pattern_types = {"function", "class", "call", "taint_flow"}
-
-    for i, rule in enumerate(data["rules"]):
-        prefix = f"Rule #{i + 1}"
-        if not isinstance(rule, dict):
-            errors.append(f"{prefix}: not a mapping")
-            continue
-
-        if "id" not in rule:
-            errors.append(f"{prefix}: missing required field 'id'")
-        if "name" not in rule:
-            errors.append(f"{prefix}: missing required field 'name'")
-        if "severity" not in rule:
-            errors.append(f"{prefix}: missing required field 'severity'")
-        elif rule["severity"] not in valid_severities:
-            warnings.append(
-                f"{prefix} ({rule.get('id', '?')}): severity '{rule['severity']}' "
-                f"not in {valid_severities}"
-            )
-
-        pattern = rule.get("pattern")
-        if not pattern:
-            errors.append(f"{prefix} ({rule.get('id', '?')}): missing 'pattern'")
-        elif not isinstance(pattern, dict):
-            errors.append(f"{prefix} ({rule.get('id', '?')}): 'pattern' must be a mapping")
-        elif "type" not in pattern:
-            errors.append(
-                f"{prefix} ({rule.get('id', '?')}): missing 'pattern.type'"
-            )
-        elif pattern["type"] not in valid_pattern_types:
-            warnings.append(
-                f"{prefix} ({rule.get('id', '?')}): unknown pattern type '{pattern['type']}'"
-            )
-
-        if pattern and isinstance(pattern, dict) and pattern.get("type") == "taint_flow":
-            if not pattern.get("sources"):
-                errors.append(
-                    f"{prefix} ({rule.get('id', '?')}): taint_flow requires 'sources'"
-                )
-            if not pattern.get("sinks"):
-                errors.append(
-                    f"{prefix} ({rule.get('id', '?')}): taint_flow requires 'sinks'"
-                )
-
-    if errors:
-        console.print(f"[red]Validation failed with {len(errors)} error(s):[/red]")
-        for err in errors:
-            console.print(f"  [red]- {err}[/red]")
-    if warnings:
-        console.print(f"[yellow]{len(warnings)} warning(s):[/yellow]")
-        for w in warnings:
-            console.print(f"  [yellow]- {w}[/yellow]")
-    if not errors:
-        rule_count = len(data["rules"])
-        console.print(f"[green]Valid: {rule_count} rule(s) in {rule_path.name}[/green]")
-    else:
-        sys.exit(1)
+    return validate_rules(console, path_str)
 
 
 def main() -> None:
