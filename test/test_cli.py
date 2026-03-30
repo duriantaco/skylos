@@ -562,7 +562,7 @@ def test_render_results_tree_mode_groups_by_file_and_sorts_by_line():
 
 def test_main_init_subcommand_calls_run_init_and_exits(monkeypatch):
     monkeypatch.setattr(cli.sys, "argv", ["skylos", "init"])
-    with patch("skylos.cli.run_init") as r:
+    with patch("skylos.commands.init_cmd.run_init_command", return_value=0) as r:
         with pytest.raises(SystemExit) as e:
             cli.main()
     assert e.value.code == 0
@@ -573,15 +573,14 @@ def test_main_whitelist_subcommand_calls_run_whitelist_and_exits(monkeypatch):
     monkeypatch.setattr(
         cli.sys, "argv", ["skylos", "whitelist", "handle_*", "--reason", "x"]
     )
-    with patch("skylos.cli.run_whitelist") as w:
+    with patch(
+        "skylos.commands.whitelist_cmd.run_whitelist_command", return_value=0
+    ) as w:
         with pytest.raises(SystemExit) as e:
             cli.main()
     assert e.value.code == 0
     w.assert_called_once()
-    kwargs = w.call_args.kwargs
-    assert kwargs["pattern"] == "handle_*"
-    assert kwargs["reason"] == "x"
-    assert kwargs["show"] is False
+    assert w.call_args.args == (["handle_*", "--reason", "x"],)
 
 
 def test_main_sync_subcommand_calls_sync_main_and_exits(monkeypatch):

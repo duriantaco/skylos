@@ -331,6 +331,36 @@ class Plugin:
         assert v.is_framework_file is True
         assert 6 in v.framework_decorated_lines
 
+    def test_pytest_import_marks_pytest_framework(self):
+        code = """
+import pytest
+
+class Plugin:
+    def pytest_sessionfinish(self, session, exitstatus):
+        return None
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert "pytest" in v.detected_frameworks
+
+    def test_pluggy_import_marks_pluggy_framework(self):
+        code = """
+import pluggy
+
+class Plugin:
+    def pytest_addoption(self, parser):
+        return None
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert "pluggy" in v.detected_frameworks
+
     @patch("skylos.visitors.framework_aware.Path")
     def test_file_content_framework_detection(self, mock_path):
         mock_file = Mock()
