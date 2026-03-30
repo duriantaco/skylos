@@ -157,6 +157,10 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 | **AI Defense: CI Gate** | `skylos defend . --fail-on critical --min-score 70` | Block PRs with critical AI defense gaps |
 | **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/duriantaco-skylos).
+
 ## Technical Debt Hotspots
 
 Use `skylos debt <path>` to rank structural debt hotspots without collapsing everything into a single urgency number.
