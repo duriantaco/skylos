@@ -840,7 +840,7 @@ For the default `skylos cicd init` workflow, you do not need any Skylos-specific
 | `skylos agent scan <path>` | Hybrid static + LLM analysis |
 | `skylos agent verify <path>` | LLM-verify dead code (100% accuracy) |
 | `skylos agent remediate <path>` | Auto-fix issues and create PR |
-| `skylos agent watch <path>` | Continuous repo monitoring |
+| `skylos agent watch <path>` | Continuous repo monitoring with optional triage pattern learning |
 | `skylos agent pre-commit <path>` | Analyze staged files (git hook) |
 | `skylos agent triage` | Manage finding triage (dismiss/snooze) |
 
@@ -1833,6 +1833,13 @@ Agent remediate options:
   --test-cmd CMD               Custom test command (default: auto-detect)
   --severity LEVEL             Min severity filter: critical, high, medium, low
   --standards [FILE]           Enable LLM cleanup mode (uses built-in standards, or pass custom .md)
+
+Agent watch options:
+  --once                       Run one refresh cycle and exit
+  --interval SECONDS           Poll interval for continuous watch mode
+  --cycles N                   Stop after N refresh cycles (0 = keep watching)
+  --learn                      Enable triage pattern learning during watch mode
+  --format FORMAT              Output: table, json
 ```
 
 ### AI Defense Command Flags
