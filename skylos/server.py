@@ -435,7 +435,7 @@ def serve_frontend():
     <script>
         let analysisData = null;
         let confidenceThreshold = 60;
-        const SKYLOS_WEB_TOKEN = "__SKYLOS_WEB_TOKEN__";
+        const SKYLOS_WEB_TOKEN = __SKYLOS_WEB_TOKEN_JSON__;
 
         const slider = document.getElementById('confidenceSlider');
         const confidenceValue = document.getElementById('confidenceValue');
@@ -454,11 +454,14 @@ def serve_frontend():
         analyzeBtn.addEventListener('click', analyzeProject);
 
         function showError(message) {
-            errorMessage.innerHTML = `<div class="error">${message}</div>`;
+            const wrapper = document.createElement('div');
+            wrapper.className = 'error';
+            wrapper.textContent = message;
+            errorMessage.replaceChildren(wrapper);
         }
 
         function clearError() {
-            errorMessage.innerHTML = '';
+            errorMessage.replaceChildren();
         }
 
         async function analyzeProject() {
@@ -472,7 +475,10 @@ def serve_frontend():
             analyzeBtn.textContent = 'Analyzing...';
             analyzeBtn.disabled = true;
 
-            document.getElementById('deadCodeList').innerHTML = '<div class="loading">Analyzing project...</div>';
+            const loading = document.createElement('div');
+            loading.className = 'loading';
+            loading.textContent = 'Analyzing project...';
+            document.getElementById('deadCodeList').replaceChildren(loading);
 
             try {
                 const response = await fetch('/api/analyze', {
@@ -498,7 +504,12 @@ def serve_frontend():
 
             } catch (error) {
                 showError(`Error: ${error.message}`);
-                document.getElementById('deadCodeList').innerHTML = '<div class="no-results"><p>Analysis failed. Check the error message above.</p></div>';
+                const wrapper = document.createElement('div');
+                wrapper.className = 'no-results';
+                const text = document.createElement('p');
+                text.textContent = 'Analysis failed. Check the error message above.';
+                wrapper.appendChild(text);
+                document.getElementById('deadCodeList').replaceChildren(wrapper);
             }
 
             analyzeBtn.textContent = 'Analyze Project';
@@ -551,33 +562,58 @@ def serve_frontend():
             });
 
             if (allItems.length === 0) {
-                listElement.innerHTML = `
-                    <div class="no-results">
-                        <p>No dead code found at confidence level ${confidenceThreshold}%</p>
-                    </div>
-                `;
+                const wrapper = document.createElement('div');
+                wrapper.className = 'no-results';
+                const text = document.createElement('p');
+                text.textContent = `No dead code found at confidence level ${confidenceThreshold}%`;
+                wrapper.appendChild(text);
+                listElement.replaceChildren(wrapper);
                 return;
             }
 
             allItems.sort((a, b) => b.confidence - a.confidence);
+            listElement.replaceChildren();
+            allItems.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'dead-code-item';
 
-            listElement.innerHTML = allItems.map(item => `
-                <div class="dead-code-item">
-                    <div class="item-details">
-                        <div class="item-name">${item.name}</div>
-                        <div class="item-location">${item.file}:${item.line}</div>
-                    </div>
-                    <div class="item-meta">
-                        <span class="item-type">${item.category}</span>
-                        <span class="item-confidence">${item.confidence}%</span>
-                    </div>
-                </div>
-            `).join('');
+                const details = document.createElement('div');
+                details.className = 'item-details';
+
+                const name = document.createElement('div');
+                name.className = 'item-name';
+                name.textContent = item.name;
+                details.appendChild(name);
+
+                const location = document.createElement('div');
+                location.className = 'item-location';
+                location.textContent = `${item.file}:${item.line}`;
+                details.appendChild(location);
+
+                const meta = document.createElement('div');
+                meta.className = 'item-meta';
+
+                const type = document.createElement('span');
+                type.className = 'item-type';
+                type.textContent = item.category;
+                meta.appendChild(type);
+
+                const confidence = document.createElement('span');
+                confidence.className = 'item-confidence';
+                confidence.textContent = `${item.confidence}%`;
+                meta.appendChild(confidence);
+
+                row.appendChild(details);
+                row.appendChild(meta);
+                listElement.appendChild(row);
+            });
         }
     </script>
 </body>
 </html>"""
-    return html.replace("__SKYLOS_WEB_TOKEN__", app.config.get("WEB_API_TOKEN", ""))
+    token_json = json.dumps(app.config.get("WEB_API_TOKEN", ""))
+    token_json = token_json.replace("</", "<\\/")
+    return html.replace("__SKYLOS_WEB_TOKEN_JSON__", token_json)
 
 
 @app.route("/api/analyze", methods=["POST"])
