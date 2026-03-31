@@ -92,6 +92,23 @@ def test_create_llm_adapter_litellm_sets_api_base_from_env(monkeypatch):
     assert adapter.api_base == "http://localhost:11434/v1"
 
 
+def test_create_llm_adapter_forwards_max_tokens(monkeypatch):
+    captured = {}
+
+    class FakeLiteLLMAdapter:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "skylos.adapters.litellm_adapter.LiteLLMAdapter", FakeLiteLLMAdapter
+    )
+
+    cfg = agents.AgentConfig(model="gpt-4o-mini", api_key="X", max_tokens=777)
+    agents.create_llm_adapter(cfg)
+
+    assert captured["max_tokens"] == 777
+
+
 def test_security_agent_include_examples_true_for_small_context(monkeypatch):
     ctx = "x" * 100
     fake_builder = DummyContextBuilder(context_text=ctx)
