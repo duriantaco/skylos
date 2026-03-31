@@ -5,21 +5,15 @@ import re
 import logging
 import os
 import secrets
+from types import SimpleNamespace
 from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
-from skylos.analyzer import analyze as run_analyze
 from skylos.codemods import (
     remove_unused_import_cst,
     remove_unused_function_cst,
     comment_out_unused_import_cst,
     comment_out_unused_function_cst,
 )
-from skylos.llm.runtime import resolve_llm_runtime
 from skylos.config import load_config
-from skylos.gatekeeper import run_gate_interaction
-from skylos.api import upload_report
-from skylos.sarif_exporter import SarifExporter
-from skylos.pipeline import run_pipeline
-from skylos.file_discovery import discover_source_files
 
 from pathlib import Path
 import pathlib
@@ -44,14 +38,109 @@ try:
 except ImportError:
     INTERACTIVE_AVAILABLE = False
 
+SarifExporter = None
+SkylosLLM = None
+AnalyzerConfig = None
+LLM_AVAILABLE = False
 
-try:
-    from skylos.llm.analyzer import SkylosLLM, AnalyzerConfig
-    from skylos.llm.ui import estimate_cost as llm_estimate_cost
 
+def run_analyze(*args, **kwargs):
+    from skylos.analyzer import analyze as run_analyze_impl
+
+    return run_analyze_impl(*args, **kwargs)
+
+
+def resolve_llm_runtime(*args, **kwargs):
+    from skylos.llm.runtime import resolve_llm_runtime as resolve_llm_runtime_impl
+
+    return resolve_llm_runtime_impl(*args, **kwargs)
+
+
+def run_gate_interaction(*args, **kwargs):
+    from skylos.gatekeeper import run_gate_interaction as run_gate_interaction_impl
+
+    return run_gate_interaction_impl(*args, **kwargs)
+
+
+def upload_report(*args, **kwargs):
+    from skylos.api import upload_report as upload_report_impl
+
+    return upload_report_impl(*args, **kwargs)
+
+
+def run_pipeline(*args, **kwargs):
+    from skylos.pipeline import run_pipeline as run_pipeline_impl
+
+    return run_pipeline_impl(*args, **kwargs)
+
+
+def discover_source_files(*args, **kwargs):
+    from skylos.file_discovery import (
+        discover_source_files as discover_source_files_impl,
+    )
+
+    return discover_source_files_impl(*args, **kwargs)
+
+
+def llm_estimate_cost(files, model):
+    try:
+        from skylos.llm.ui import estimate_cost as llm_estimate_cost_impl
+    except ImportError:
+        approx_tokens = 0
+        for file_path in files:
+            try:
+                approx_tokens += max(Path(file_path).stat().st_size // 4, 1)
+            except OSError:
+                approx_tokens += 1
+        return approx_tokens, 0.0
+
+    return llm_estimate_cost_impl(files, model)
+
+
+def _get_sarif_exporter_class():
+    global SarifExporter
+
+    if SarifExporter is None:
+        from skylos.sarif_exporter import SarifExporter as sarif_exporter_impl
+
+        SarifExporter = sarif_exporter_impl
+
+    return SarifExporter
+
+
+def _ensure_llm_support() -> bool:
+    global SkylosLLM, AnalyzerConfig, LLM_AVAILABLE
+
+    if SkylosLLM is not None:
+        LLM_AVAILABLE = True
+        return True
+
+    try:
+        from skylos.llm.analyzer import (
+            SkylosLLM as skylos_llm_impl,
+            AnalyzerConfig as analyzer_config_impl,
+        )
+    except ImportError:
+        LLM_AVAILABLE = False
+        return False
+
+    SkylosLLM = skylos_llm_impl
+    AnalyzerConfig = analyzer_config_impl
     LLM_AVAILABLE = True
-except ImportError:
-    LLM_AVAILABLE = False
+    return True
+
+
+def _build_analyzer_config(**kwargs):
+    global AnalyzerConfig
+
+    if AnalyzerConfig is None:
+        try:
+            from skylos.llm.analyzer import AnalyzerConfig as analyzer_config_impl
+        except ImportError:
+            return SimpleNamespace(**kwargs)
+        AnalyzerConfig = analyzer_config_impl
+
+    return AnalyzerConfig(**kwargs)
 
 
 class CleanFormatter(logging.Formatter):
@@ -1521,10 +1610,10 @@ def estimate_cost(files):
     return estimate_cost_impl(files)
 
 
-def _run_clean_command():
+def _run_clean_command(argv):
     from skylos.commands.clean_cmd import run_clean_command
 
-    return run_clean_command(sys.argv[2:])
+    return run_clean_command(argv)
 
 
 def run_debt_command(argv):
@@ -1591,10 +1680,10 @@ def _load_addopts():
     return load_addopts()
 
 
-def _handle_rules_command():
+def _handle_rules_command(argv):
     from skylos.commands.rules_cmd import run_rules_command
 
-    sys.exit(run_rules_command(sys.argv[2:], console_factory=Console))
+    return run_rules_command(argv, console_factory=Console)
 
 
 def _rules_install(console, rules_dir, pack_or_url):
@@ -1615,116 +1704,692 @@ def _rules_remove(console, rules_dir, name):
     return remove_rules(console, rules_dir, name)
 
 
+def _run_command_overview(_argv):
+    from skylos.help import print_command_overview
+
+    print_command_overview(Console())
+    return 0
+
+
+def _run_commands_command(_argv):
+    from skylos.help import print_flat_commands
+
+    print_flat_commands(Console())
+    return 0
+
+
+def _run_tour_command(_argv):
+    from skylos.tour import run_tour
+
+    run_tour(Console())
+    return 0
+
+
+def _run_key_command(argv):
+    from skylos.commands.key_cmd import run_key_command
+
+    return run_key_command(argv or ["menu"])
+
+
+def _run_credits_command(_argv):
+    from skylos.commands.credits_cmd import run_credits_command
+
+    return run_credits_command()
+
+
+def _run_init_command(_argv):
+    return run_init()
+
+
+def _run_baseline_command(argv):
+    from skylos.commands.baseline_cmd import run_baseline_command
+
+    return run_baseline_command(argv)
+
+
+def _run_badge_command(_argv):
+    from skylos.commands.badge_cmd import run_badge_command
+
+    return run_badge_command()
+
+
+def _run_whitelist_command(argv):
+    from skylos.commands.whitelist_cmd import run_whitelist_command
+
+    return run_whitelist_command(argv)
+
+
+def _run_doctor_command(_argv):
+    from skylos.commands.doctor_cmd import run_doctor_command
+
+    return run_doctor_command()
+
+
+def _run_whoami_command(_argv):
+    from skylos.commands.whoami_cmd import run_whoami_command
+
+    return run_whoami_command()
+
+
+def _run_login_command(_argv):
+    from skylos.commands.login_cmd import run_login_command
+
+    return run_login_command()
+
+
+def _run_sync_command(argv):
+    from skylos.commands.sync_cmd import run_sync_command
+
+    return run_sync_command(argv)
+
+
+def _run_city_command(argv):
+    from skylos.commands.city_cmd import run_city_command
+
+    return run_city_command(argv)
+
+
+def _run_discover_command(argv):
+    from skylos.commands.discover_cmd import run_discover_command
+
+    return run_discover_command(argv)
+
+
+EARLY_COMMAND_HANDLERS = {
+    "commands": "_run_commands_command",
+    "tour": "_run_tour_command",
+    "key": "_run_key_command",
+    "credits": "_run_credits_command",
+    "baseline": "_run_baseline_command",
+    "init": "_run_init_command",
+    "badge": "_run_badge_command",
+    "whitelist": "_run_whitelist_command",
+    "clean": "_run_clean_command",
+    "doctor": "_run_doctor_command",
+    "whoami": "_run_whoami_command",
+    "login": "_run_login_command",
+    "sync": "_run_sync_command",
+    "city": "_run_city_command",
+    "discover": "_run_discover_command",
+    "defend": "run_defend_command",
+    "debt": "run_debt_command",
+    "ingest": "run_ingest_command",
+    "provenance": "run_provenance_command",
+    "rules": "_handle_rules_command",
+    "cicd": "run_cicd_command",
+}
+
+
+def _dispatch_early_command(argv):
+    if not argv:
+        return _run_command_overview([])
+
+    handler_name = EARLY_COMMAND_HANDLERS.get(argv[0])
+    if handler_name is None:
+        return None
+
+    return globals()[handler_name](argv[1:])
+
+
 def _rules_validate(console, path_str):
     from skylos.commands.rules_cmd import validate_rules
 
     return validate_rules(console, path_str)
 
 
+def _build_main_parser():
+    parser = argparse.ArgumentParser(
+        description="Find dead code, secrets, and risky flows in Python, TypeScript, and Go",
+        epilog="""
+Run 'skylos commands' for a full list of all available commands.
+Run 'skylos tour' for a guided walkthrough of capabilities.
+        """,
+    )
+    parser.add_argument("path", nargs="+", help="Path(s) to the project")
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="Run as a quality gate (block deployment on failure)",
+    )
+    parser.add_argument(
+        "--upload",
+        action="store_true",
+        help="Upload results to skylos.dev dashboard",
+    )
+    parser.add_argument(
+        "--no-upload",
+        action="store_true",
+        help="Skip automatic upload even if connected to Skylos Cloud",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="(PRO) Verify findings with neuro-symbolic prover. Requires paid plan.",
+    )
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Run tests with call tracing to capture dynamic dispatch (e.g., visitor patterns)",
+    )
+    parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Run tests with coverage before analysis",
+    )
+    parser.add_argument(
+        "--pytest-fixtures",
+        action="store_true",
+        help="Run pytest runtime fixture tracker and report unused fixtures",
+    )
+    parser.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Bypass the quality gate (exit 0 even if issues found)",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Strict gate: fail if ANY issue is found",
+    )
+    parser.add_argument(
+        "--tui",
+        action="store_true",
+        help="Launch interactive TUI dashboard",
+    )
+    parser.add_argument(
+        "--tree", action="store_true", help="Show findings in tree format"
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="LLM model. Examples: gpt-4o-mini, claude-sonnet-4-20250514, groq/llama3-70b-8192. Full list: https://docs.litellm.ai/docs/providers",
+    )
+    parser.add_argument(
+        "--api-base",
+        type=str,
+        default=None,
+        help="Custom API URL for self-hosted models",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"skylos {skylos.__version__}",
+        help="Show version and exit",
+    )
+    parser.add_argument("--json", action="store_true", help="Output raw JSON")
+    parser.add_argument(
+        "--llm",
+        action="store_true",
+        help="Output LLM-optimized report (structured findings with code context for AI agents to fix)",
+    )
+    parser.add_argument(
+        "--comment-out",
+        action="store_true",
+        help="Comment out selected dead code instead of deleting item",
+    )
+    parser.add_argument("--output", "-o", type=str, help="Write output to file")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose")
+    parser.add_argument(
+        "--confidence",
+        "-c",
+        type=int,
+        default=60,
+        help="Confidence threshold (0-100). Lower = include more. Default: 60",
+    )
+    parser.add_argument(
+        "--interactive", "-i", action="store_true", help="Select items to remove"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be removed"
+    )
+
+    parser.add_argument(
+        "--exclude-folder",
+        action="append",
+        dest="exclude_folders",
+        help=(
+            "Exclude a folder from analysis (can be used multiple times). By default, common folders like __pycache__, "
+            ".git, venv are excluded. Use --no-default-excludes to disable default exclusions."
+        ),
+    )
+    parser.add_argument(
+        "--include-folder",
+        action="append",
+        dest="include_folders",
+        help=(
+            "Force include a folder that would otherwise be excluded (overrides both default and custom exclusions). "
+            "Example: --include-folder venv"
+        ),
+    )
+    parser.add_argument(
+        "--no-default-excludes",
+        action="store_true",
+        help="Do not exclude default folders (__pycache__, .git, venv, etc.). Only exclude folders with --exclude-folder.",
+    )
+    parser.add_argument(
+        "--list-default-excludes",
+        action="store_true",
+        help="List the default excluded folders and exit.",
+    )
+    parser.add_argument(
+        "--secrets", action="store_true", help="Scan for API keys. Off by default."
+    )
+    parser.add_argument(
+        "--danger",
+        action="store_true",
+        help="Scan for security issues. Off by default.",
+    )
+    parser.add_argument(
+        "--quality",
+        action="store_true",
+        help="Run code quality checks. Off by default.",
+    )
+    parser.add_argument(
+        "--sca",
+        action="store_true",
+        help="Scan dependencies for known vulnerabilities (CVEs) via OSV.dev.",
+    )
+    parser.add_argument(
+        "-a",
+        "--all",
+        action="store_true",
+        dest="all_checks",
+        help="Enable all checks: --danger --secrets --quality --sca",
+    )
+    parser.add_argument(
+        "--no-grep-verify",
+        action="store_true",
+        help="Disable grep-based verification pass (reduces false positives by default).",
+    )
+
+    parser.add_argument(
+        "--sarif",
+        nargs="?",
+        const="skylos.sarif.json",
+        default=None,
+        help="Write SARIF (2.1.0). Optional path. Example: --sarif or --sarif results.sarif.json",
+    )
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="Only report findings not in the baseline. Run 'skylos baseline .' first.",
+    )
+    parser.add_argument(
+        "--diff-base",
+        type=str,
+        default=None,
+        metavar="REF",
+        help="Only report findings in files changed since REF (e.g. origin/main). "
+        "Unchanged files are still parsed for cross-file dead code accuracy, "
+        "but quality/danger/secrets rules are skipped on them.",
+    )
+    parser.add_argument(
+        "--diff",
+        type=str,
+        default=None,
+        nargs="?",
+        const="auto",
+        metavar="BASE_REF",
+        help="Only report findings in lines changed since BASE_REF (e.g. --diff origin/main). "
+        "Use --diff without a value to auto-detect (GITHUB_BASE_REF or origin/main).",
+    )
+    parser.add_argument(
+        "--github",
+        action="store_true",
+        help="Output GitHub Actions annotations (::warning / ::error) for inline PR comments.",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Write markdown summary to $GITHUB_STEP_SUMMARY (use with --gate)",
+    )
+
+    parser.add_argument(
+        "--severity",
+        type=str,
+        default=None,
+        metavar="LEVEL",
+        help="Filter findings by minimum severity: critical, high, medium, low. "
+        "Example: --severity high shows only CRITICAL and HIGH.",
+    )
+    parser.add_argument(
+        "--category",
+        type=str,
+        default=None,
+        metavar="CAT",
+        help="Show only specific category: security, secret, quality, dead_code, dependency. "
+        "Comma-separated for multiple. Example: --category security,secret",
+    )
+    parser.add_argument(
+        "--file-filter",
+        type=str,
+        default=None,
+        metavar="PATTERN",
+        help="Only show findings in files matching this substring. "
+        "Example: --file-filter auth/ or --file-filter models.py",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Max findings to display per category. Remaining shown as summary. "
+        "Example: --limit 20",
+    )
+
+    parser.add_argument(
+        "--provenance",
+        action="store_true",
+        help="(Deprecated — provenance is now automatic in git repos.) "
+        "Kept for backwards compatibility; has no effect.",
+    )
+    parser.add_argument(
+        "--no-provenance",
+        action="store_true",
+        help="Disable automatic AI provenance detection.",
+    )
+    parser.add_argument(
+        "--provenance-base",
+        type=str,
+        default=None,
+        metavar="REF",
+        help="Base ref for provenance detection (default: auto-detect).",
+    )
+
+    parser.add_argument("command", nargs="*", help="Command to run if gate passes")
+    return parser
+
+
+def _parse_main_cli_args(parser, argv):
+    effective_argv = list(argv)
+    addopts = _load_addopts()
+    if addopts:
+        effective_argv = addopts + effective_argv
+
+    if "--" in effective_argv:
+        split = effective_argv.index("--")
+        main_argv = effective_argv[:split]
+        cmd_argv = effective_argv[split + 1 :]
+    else:
+        main_argv = effective_argv
+        cmd_argv = []
+
+    if cmd_argv:
+        args, extra = parser.parse_known_args(main_argv)
+        args.command = cmd_argv + (extra or [])
+        return args
+
+    args = parser.parse_args(main_argv)
+    args.command = []
+    return args
+
+
+def _resolve_main_project_root(paths):
+    project_root = pathlib.Path(paths[0]).resolve()
+    if project_root.is_file():
+        project_root = project_root.parent
+    if len(paths) > 1:
+        all_resolved = [pathlib.Path(path).resolve() for path in paths]
+        project_root = pathlib.Path(os.path.commonpath(all_resolved))
+    return project_root
+
+
+def _print_default_excludes(console):
+    console.print("[brand]Default excluded folders:[/brand]")
+    for folder in sorted(DEFAULT_EXCLUDE_FOLDERS):
+        console.print(f" {folder}")
+    console.print(f"\n[muted]Total: {len(DEFAULT_EXCLUDE_FOLDERS)} folders[/muted]")
+    console.print("\nUse --no-default-excludes to disable these exclusions")
+    console.print("Use --include-folder <folder> to force include specific folders")
+
+
+def _build_main_scan_context(args):
+    if getattr(args, "all_checks", False):
+        args.danger = True
+        args.secrets = True
+        args.quality = True
+        args.sca = True
+
+    project_root = _resolve_main_project_root(args.path)
+    logger = setup_logger(args.output)
+    console = logger.console
+
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+        logger.debug(f"Analyzing path(s): {args.path}")
+        if args.exclude_folders:
+            logger.debug(f"Excluding folders: {args.exclude_folders}")
+
+    use_defaults = not args.no_default_excludes
+    project_cfg = load_config(project_root)
+    final_exclude_folders = parse_exclude_folders(
+        user_exclude_folders=args.exclude_folders,
+        config_exclude_folders=project_cfg.get("exclude"),
+        use_defaults=use_defaults,
+        include_folders=args.include_folders,
+    )
+
+    return SimpleNamespace(
+        project_root=project_root,
+        logger=logger,
+        console=console,
+        final_exclude_folders=final_exclude_folders,
+    )
+
+
+def _print_main_scan_banner(args, console, final_exclude_folders):
+    if args.list_default_excludes:
+        _print_default_excludes(console)
+        return True
+
+    if args.json:
+        return False
+
+    banner = (
+        "[bold cyan]"
+        " ███████ ██   ██ ██    ██ ██       ██████  ███████\n"
+        " ██      ██  ██   ██  ██  ██      ██    ██ ██     \n"
+        " ███████ █████     ████   ██      ██    ██ ███████\n"
+        "      ██ ██  ██     ██    ██      ██    ██      ██\n"
+        " ███████ ██   ██    ██    ███████  ██████  ███████\n"
+        "[/bold cyan]\n"
+        "  [bold white]v" + skylos.__version__ + "[/bold white]"
+        "  [dim]│[/dim]  [blue]github.com/duriantaco/skylos[/blue]"
+    )
+    console.print(Panel(banner, border_style="cyan", padding=(1, 2)))
+    console.print()
+
+    if final_exclude_folders:
+        console.print(
+            f"[warn] Excluding:[/warn] {', '.join(sorted(final_exclude_folders))}"
+        )
+    else:
+        console.print("[good] No folders excluded[/good]")
+
+    return False
+
+
+def _run_pre_analysis_steps(args, project_root, console):
+    pytest_fixtures_ok = None
+
+    if args.coverage:
+        if not args.json:
+            console.print("[brand]Running tests with coverage...[/brand]")
+
+        cmd = ["coverage", "run", "-m", "pytest", "-q"]
+        env = os.environ.copy()
+
+        if args.pytest_fixtures:
+            env["SKYLOS_UNUSED_FIXTURES_OUT"] = str(
+                project_root / ".skylos_unused_fixtures.json"
+            )
+            cmd += ["-p", "skylos.pytest_unused_fixtures"]
+
+        pytest_result = subprocess.run(
+            cmd,
+            cwd=project_root,
+            capture_output=True,
+            env=env,
+        )
+
+        if pytest_result.returncode != 0:
+            if not args.json:
+                console.print("[warn]pytest failed, trying unittest...[/warn]")
+            subprocess.run(
+                ["coverage", "run", "-m", "unittest", "discover"],
+                cwd=project_root,
+                capture_output=True,
+            )
+
+        if not args.json:
+            console.print("[good]Coverage data collected[/good]")
+
+    if args.trace:
+        if not args.json:
+            console.print("[brand]Running tests with call tracing...[/brand]")
+
+        trace_script = textwrap.dedent(f"""\
+import os
+import sys
+sys.path.insert(0, {str(project_root)!r})
+from skylos.tracer import CallTracer
+
+tracer = CallTracer(exclude_patterns=["site-packages", "venv", ".venv", "pytest", "_pytest"])
+tracer.start()
+
+ret = 0
+try:
+    import pytest
+
+    pytest_args = ["-q"]
+    if {bool(args.pytest_fixtures)!r}:
+        os.environ["SKYLOS_UNUSED_FIXTURES_OUT"] = {str(project_root / ".skylos_unused_fixtures.json")!r}
+        pytest_args += ["-p", "skylos.pytest_unused_fixtures"]
+
+    ret = pytest.main(pytest_args)
+
+finally:
+    tracer.stop()
+    tracer.save({str(project_root / ".skylos_trace")!r})
+
+sys.exit(ret)
+
+""")
+
+        trace_result = subprocess.run(
+            [sys.executable, "-c", trace_script],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+        )
+
+        trace_file = project_root / ".skylos_trace"
+
+        if trace_result.returncode != 0 and not args.json:
+            if trace_file.exists() and trace_file.stat().st_size > 0:
+                console.print(
+                    "[warn]Tests had failures, but trace data was collected.[/warn]"
+                )
+            else:
+                console.print(
+                    "[warn]Trace run failed; continuing without trace.[/warn]"
+                )
+                if trace_result.stderr:
+                    console.print(trace_result.stderr)
+        elif not args.json:
+            console.print("[good]Trace data collected[/good]")
+
+    if args.pytest_fixtures and (not args.coverage) and (not args.trace):
+        if not args.json:
+            console.print(
+                "[brand]Running tests to detect unused pytest fixtures...[/brand]"
+            )
+
+        env = os.environ.copy()
+        env["SKYLOS_UNUSED_FIXTURES_OUT"] = str(
+            project_root / ".skylos_unused_fixtures.json"
+        )
+
+        pytest_targets = []
+        if len(args.path) == 1:
+            path = pathlib.Path(args.path[0]).resolve()
+            if path.is_file():
+                pytest_targets = [str(path)]
+
+        fixture_result = subprocess.run(
+            ["pytest", "-q", *pytest_targets, "-p", "skylos.pytest_unused_fixtures"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        pytest_fixtures_ok = fixture_result.returncode == 0
+
+        if not args.json:
+            if pytest_fixtures_ok:
+                console.print("[good]Unused fixture report collected[/good]")
+            else:
+                console.print(
+                    "[warn]pytest had failures; unused fixture report may be partial[/warn]"
+                )
+
+    custom_rules_data = None
+    if not args.json:
+        try:
+            from skylos.sync import get_custom_rules, get_token
+
+            token = get_token()
+            if token:
+                custom_rules_data = get_custom_rules()
+                if custom_rules_data:
+                    console.print(
+                        f"[brand]Loaded {len(custom_rules_data)} custom rules from cloud[/brand]"
+                    )
+        except Exception as e:
+            if args.verbose:
+                console.print(f"[warn]Could not load custom rules: {e}[/warn]")
+
+    changed_files = None
+    if getattr(args, "diff_base", None):
+        try:
+            diff_result = subprocess.run(
+                ["git", "diff", "--name-only", f"{args.diff_base}...HEAD"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+            )
+            if diff_result.returncode == 0:
+                changed_files = set()
+                for line in diff_result.stdout.strip().splitlines():
+                    changed_files.add(str((project_root / line).resolve()))
+                if not args.json:
+                    console.print(
+                        f"[brand]--diff-base:[/brand] {len(changed_files)} changed files "
+                        f"(full scan on changed, defs/refs-only on rest)"
+                    )
+            elif not args.json:
+                console.print(
+                    f"[warn]git diff failed: {diff_result.stderr.strip()}. "
+                    f"Running full analysis.[/warn]"
+                )
+        except FileNotFoundError:
+            if not args.json:
+                console.print("[warn]git not found. Running full analysis.[/warn]")
+
+    return SimpleNamespace(
+        pytest_fixtures_ok=pytest_fixtures_ok,
+        custom_rules_data=custom_rules_data,
+        changed_files=changed_files,
+    )
+
+
 def main() -> None:
-    if len(sys.argv) == 1:
-        from skylos.help import print_command_overview
-
-        print_command_overview(Console())
-        sys.exit(0)
-
-    if sys.argv[1] == "commands":
-        from skylos.help import print_flat_commands
-
-        print_flat_commands(Console())
-        sys.exit(0)
-
-    if sys.argv[1] == "tour":
-        from skylos.tour import run_tour
-
-        run_tour(Console())
-        sys.exit(0)
-
-    if len(sys.argv) > 1 and sys.argv[1] == "key":
-        from skylos.commands.key_cmd import run_key_command
-
-        args = sys.argv[2:]
-
-        if len(args) == 0:
-            sys.exit(run_key_command(["menu"]))
-
-        sys.exit(run_key_command(args))
-
-    if len(sys.argv) > 1 and sys.argv[1] == "credits":
-        from skylos.commands.credits_cmd import run_credits_command
-
-        sys.exit(run_credits_command())
-
-    if len(sys.argv) > 1 and sys.argv[1] == "baseline":
-        from skylos.commands.baseline_cmd import run_baseline_command
-
-        sys.exit(run_baseline_command(sys.argv[2:]))
-
-    if len(sys.argv) > 1 and sys.argv[1] == "init":
-        from skylos.commands.init_cmd import run_init_command
-
-        sys.exit(run_init_command())
-
-    if len(sys.argv) > 1 and sys.argv[1] == "badge":
-        from skylos.commands.badge_cmd import run_badge_command
-
-        sys.exit(run_badge_command())
-
-    if len(sys.argv) > 1 and sys.argv[1] == "whitelist":
-        from skylos.commands.whitelist_cmd import run_whitelist_command
-
-        sys.exit(run_whitelist_command(sys.argv[2:]))
-
-    if len(sys.argv) > 1 and sys.argv[1] == "clean":
-        sys.exit(_run_clean_command())
-
-    if len(sys.argv) > 1 and sys.argv[1] == "doctor":
-        from skylos.commands.doctor_cmd import run_doctor_command
-
-        sys.exit(run_doctor_command())
-
-    if len(sys.argv) > 1 and sys.argv[1] == "whoami":
-        from skylos.commands.whoami_cmd import run_whoami_command
-
-        sys.exit(run_whoami_command())
-
-    if len(sys.argv) > 1 and sys.argv[1] == "login":
-        from skylos.commands.login_cmd import run_login_command
-
-        sys.exit(run_login_command())
-
-    if len(sys.argv) > 1 and sys.argv[1] == "sync":
-        from skylos.commands.sync_cmd import run_sync_command
-
-        sys.exit(run_sync_command(sys.argv[2:]))
-
-    if len(sys.argv) > 1 and sys.argv[1] == "city":
-        from skylos.commands.city_cmd import run_city_command
-
-        sys.exit(run_city_command(sys.argv[2:]))
-
-    if len(sys.argv) > 1 and sys.argv[1] == "discover":
-        from skylos.commands.discover_cmd import run_discover_command
-
-        sys.exit(run_discover_command(sys.argv[2:]))
-
-    if len(sys.argv) > 1 and sys.argv[1] == "defend":
-        sys.exit(run_defend_command(sys.argv[2:]))
-
-    if len(sys.argv) > 1 and sys.argv[1] == "debt":
-        sys.exit(run_debt_command(sys.argv[2:]))
-
-    if len(sys.argv) > 1 and sys.argv[1] == "ingest":
-        sys.exit(run_ingest_command(sys.argv[2:]))
-
-    if len(sys.argv) > 1 and sys.argv[1] == "provenance":
-        sys.exit(run_provenance_command(sys.argv[2:]))
-
-    if len(sys.argv) > 1 and sys.argv[1] == "rules":
-        _handle_rules_command()
-
-    if len(sys.argv) > 1 and sys.argv[1] == "cicd":
-        sys.exit(run_cicd_command(sys.argv[2:]))
+    dispatch_result = _dispatch_early_command(sys.argv[1:])
+    if dispatch_result is not None:
+        sys.exit(dispatch_result)
 
     if len(sys.argv) > 1 and sys.argv[1] == "agent":
         import argparse as agent_argparse
@@ -2359,7 +3024,7 @@ def main() -> None:
                     server.server_close()
                 sys.exit(0)
 
-        if not LLM_AVAILABLE:
+        if not _ensure_llm_support():
             Console().print("[bold red]Agent module not available[/bold red]")
             sys.exit(1)
 
@@ -2460,7 +3125,7 @@ def main() -> None:
                 ):
                     sys.exit(0)
 
-                config = AnalyzerConfig(
+                config = _build_analyzer_config(
                     model=model,
                     api_key=api_key,
                     quiet=getattr(agent_args, "quiet", False),
@@ -3051,517 +3716,21 @@ def main() -> None:
             )
             sys.exit(1)
 
-    parser = argparse.ArgumentParser(
-        description="Find dead code, secrets, and risky flows in Python, TypeScript, and Go",
-        epilog="""
-Run 'skylos commands' for a full list of all available commands.
-Run 'skylos tour' for a guided walkthrough of capabilities.
-        """,
-    )
-    parser.add_argument("path", nargs="+", help="Path(s) to the project")
-    parser.add_argument(
-        "--gate",
-        action="store_true",
-        help="Run as a quality gate (block deployment on failure)",
-    )
-    parser.add_argument(
-        "--upload",
-        action="store_true",
-        help="Upload results to skylos.dev dashboard",
-    )
-    parser.add_argument(
-        "--no-upload",
-        action="store_true",
-        help="Skip automatic upload even if connected to Skylos Cloud",
-    )
-    parser.add_argument(
-        "--verify",
-        action="store_true",
-        help="(PRO) Verify findings with neuro-symbolic prover. Requires paid plan.",
-    )
-    parser.add_argument(
-        "--trace",
-        action="store_true",
-        help="Run tests with call tracing to capture dynamic dispatch (e.g., visitor patterns)",
-    )
-    parser.add_argument(
-        "--coverage",
-        action="store_true",
-        help="Run tests with coverage before analysis",
-    )
-    parser.add_argument(
-        "--pytest-fixtures",
-        action="store_true",
-        help="Run pytest runtime fixture tracker and report unused fixtures",
-    )
-    parser.add_argument(
-        "--force",
-        "-f",
-        action="store_true",
-        help="Bypass the quality gate (exit 0 even if issues found)",
-    )
-    parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="Strict gate: fail if ANY issue is found",
-    )
-    parser.add_argument(
-        "--tui",
-        action="store_true",
-        help="Launch interactive TUI dashboard",
-    )
-    parser.add_argument(
-        "--tree", action="store_true", help="Show findings in tree format"
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=None,
-        help="LLM model. Examples: gpt-4o-mini, claude-sonnet-4-20250514, groq/llama3-70b-8192. Full list: https://docs.litellm.ai/docs/providers",
-    )
-    parser.add_argument(
-        "--api-base",
-        type=str,
-        default=None,
-        help="Custom API URL for self-hosted models",
-    )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"skylos {skylos.__version__}",
-        help="Show version and exit",
-    )
-    parser.add_argument("--json", action="store_true", help="Output raw JSON")
-    parser.add_argument(
-        "--llm",
-        action="store_true",
-        help="Output LLM-optimized report (structured findings with code context for AI agents to fix)",
-    )
-    parser.add_argument(
-        "--comment-out",
-        action="store_true",
-        help="Comment out selected dead code instead of deleting item",
-    )
-    parser.add_argument("--output", "-o", type=str, help="Write output to file")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose")
-    parser.add_argument(
-        "--confidence",
-        "-c",
-        type=int,
-        default=60,
-        help="Confidence threshold (0-100). Lower = include more. Default: 60",
-    )
-    parser.add_argument(
-        "--interactive", "-i", action="store_true", help="Select items to remove"
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Show what would be removed"
-    )
+    parser = _build_main_parser()
+    args = _parse_main_cli_args(parser, sys.argv[1:])
+    context = _build_main_scan_context(args)
+    project_root = context.project_root
+    logger = context.logger
+    console = context.console
+    final_exclude_folders = context.final_exclude_folders
 
-    parser.add_argument(
-        "--exclude-folder",
-        action="append",
-        dest="exclude_folders",
-        help=(
-            "Exclude a folder from analysis (can be used multiple times). By default, common folders like __pycache__, "
-            ".git, venv are excluded. Use --no-default-excludes to disable default exclusions."
-        ),
-    )
-    parser.add_argument(
-        "--include-folder",
-        action="append",
-        dest="include_folders",
-        help=(
-            "Force include a folder that would otherwise be excluded (overrides both default and custom exclusions). "
-            "Example: --include-folder venv"
-        ),
-    )
-    parser.add_argument(
-        "--no-default-excludes",
-        action="store_true",
-        help="Do not exclude default folders (__pycache__, .git, venv, etc.). Only exclude folders with --exclude-folder.",
-    )
-    parser.add_argument(
-        "--list-default-excludes",
-        action="store_true",
-        help="List the default excluded folders and exit.",
-    )
-    parser.add_argument(
-        "--secrets", action="store_true", help="Scan for API keys. Off by default."
-    )
-    parser.add_argument(
-        "--danger",
-        action="store_true",
-        help="Scan for security issues. Off by default.",
-    )
-    parser.add_argument(
-        "--quality",
-        action="store_true",
-        help="Run code quality checks. Off by default.",
-    )
-    parser.add_argument(
-        "--sca",
-        action="store_true",
-        help="Scan dependencies for known vulnerabilities (CVEs) via OSV.dev.",
-    )
-    parser.add_argument(
-        "-a",
-        "--all",
-        action="store_true",
-        dest="all_checks",
-        help="Enable all checks: --danger --secrets --quality --sca",
-    )
-    parser.add_argument(
-        "--no-grep-verify",
-        action="store_true",
-        help="Disable grep-based verification pass (reduces false positives by default).",
-    )
-
-    parser.add_argument(
-        "--sarif",
-        nargs="?",
-        const="skylos.sarif.json",
-        default=None,
-        help="Write SARIF (2.1.0). Optional path. Example: --sarif or --sarif results.sarif.json",
-    )
-    parser.add_argument(
-        "--baseline",
-        action="store_true",
-        help="Only report findings not in the baseline. Run 'skylos baseline .' first.",
-    )
-    parser.add_argument(
-        "--diff-base",
-        type=str,
-        default=None,
-        metavar="REF",
-        help="Only report findings in files changed since REF (e.g. origin/main). "
-        "Unchanged files are still parsed for cross-file dead code accuracy, "
-        "but quality/danger/secrets rules are skipped on them.",
-    )
-    parser.add_argument(
-        "--diff",
-        type=str,
-        default=None,
-        nargs="?",
-        const="auto",
-        metavar="BASE_REF",
-        help="Only report findings in lines changed since BASE_REF (e.g. --diff origin/main). "
-        "Use --diff without a value to auto-detect (GITHUB_BASE_REF or origin/main).",
-    )
-    parser.add_argument(
-        "--github",
-        action="store_true",
-        help="Output GitHub Actions annotations (::warning / ::error) for inline PR comments.",
-    )
-    parser.add_argument(
-        "--summary",
-        action="store_true",
-        help="Write markdown summary to $GITHUB_STEP_SUMMARY (use with --gate)",
-    )
-
-    parser.add_argument(
-        "--severity",
-        type=str,
-        default=None,
-        metavar="LEVEL",
-        help="Filter findings by minimum severity: critical, high, medium, low. "
-        "Example: --severity high shows only CRITICAL and HIGH.",
-    )
-    parser.add_argument(
-        "--category",
-        type=str,
-        default=None,
-        metavar="CAT",
-        help="Show only specific category: security, secret, quality, dead_code, dependency. "
-        "Comma-separated for multiple. Example: --category security,secret",
-    )
-    parser.add_argument(
-        "--file-filter",
-        type=str,
-        default=None,
-        metavar="PATTERN",
-        help="Only show findings in files matching this substring. "
-        "Example: --file-filter auth/ or --file-filter models.py",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Max findings to display per category. Remaining shown as summary. "
-        "Example: --limit 20",
-    )
-
-    parser.add_argument(
-        "--provenance",
-        action="store_true",
-        help="(Deprecated — provenance is now automatic in git repos.) "
-        "Kept for backwards compatibility; has no effect.",
-    )
-    parser.add_argument(
-        "--no-provenance",
-        action="store_true",
-        help="Disable automatic AI provenance detection.",
-    )
-    parser.add_argument(
-        "--provenance-base",
-        type=str,
-        default=None,
-        metavar="REF",
-        help="Base ref for provenance detection (default: auto-detect).",
-    )
-
-    parser.add_argument("command", nargs="*", help="Command to run if gate passes")
-
-    _argv = sys.argv[1:]
-
-    _addopts = _load_addopts()
-    if _addopts:
-        _argv = _addopts + _argv
-
-    if "--" in _argv:
-        _split = _argv.index("--")
-        _main_argv = _argv[:_split]
-        _cmd_argv = _argv[_split + 1 :]
-    else:
-        _main_argv = _argv
-        _cmd_argv = []
-    if _cmd_argv:
-        args, _extra = parser.parse_known_args(_main_argv)
-        args.command = _cmd_argv + (_extra or [])
-    else:
-        args = parser.parse_args(_main_argv)
-        args.command = []
-
-    if getattr(args, "all_checks", False):
-        args.danger = True
-        args.secrets = True
-        args.quality = True
-        args.sca = True
-
-    project_root = pathlib.Path(args.path[0]).resolve()
-    if project_root.is_file():
-        project_root = project_root.parent
-    if len(args.path) > 1:
-        all_resolved = [pathlib.Path(p).resolve() for p in args.path]
-        project_root = pathlib.Path(os.path.commonpath(all_resolved))
-
-    logger = setup_logger(args.output)
-    console = logger.console
-
-    if args.list_default_excludes:
-        console.print("[brand]Default excluded folders:[/brand]")
-        for folder in sorted(DEFAULT_EXCLUDE_FOLDERS):
-            console.print(f" {folder}")
-        console.print(f"\n[muted]Total: {len(DEFAULT_EXCLUDE_FOLDERS)} folders[/muted]")
-        console.print("\nUse --no-default-excludes to disable these exclusions")
-        console.print("Use --include-folder <folder> to force include specific folders")
+    if _print_main_scan_banner(args, console, final_exclude_folders):
         return
 
-    if args.verbose:
-        logger.setLevel(logging.DEBUG)
-        logger.debug(f"Analyzing path(s): {args.path}")
-        if args.exclude_folders:
-            logger.debug(f"Excluding folders: {args.exclude_folders}")
-
-    use_defaults = not args.no_default_excludes
-    project_cfg = load_config(project_root)
-    final_exclude_folders = parse_exclude_folders(
-        user_exclude_folders=args.exclude_folders,
-        config_exclude_folders=project_cfg.get("exclude"),
-        use_defaults=use_defaults,
-        include_folders=args.include_folders,
-    )
-
-    if not args.json:
-        banner = (
-            "[bold cyan]"
-            " ███████ ██   ██ ██    ██ ██       ██████  ███████\n"
-            " ██      ██  ██   ██  ██  ██      ██    ██ ██     \n"
-            " ███████ █████     ████   ██      ██    ██ ███████\n"
-            "      ██ ██  ██     ██    ██      ██    ██      ██\n"
-            " ███████ ██   ██    ██    ███████  ██████  ███████\n"
-            "[/bold cyan]\n"
-            "  [bold white]v" + skylos.__version__ + "[/bold white]"
-            "  [dim]│[/dim]  [blue]github.com/duriantaco/skylos[/blue]"
-        )
-        console.print(Panel(banner, border_style="cyan", padding=(1, 2)))
-        console.print()
-
-        if final_exclude_folders:
-            console.print(
-                f"[warn] Excluding:[/warn] {', '.join(sorted(final_exclude_folders))}"
-            )
-        else:
-            console.print("[good] No folders excluded[/good]")
-
-    if args.coverage:
-        if not args.json:
-            console.print("[brand]Running tests with coverage...[/brand]")
-
-        cmd = ["coverage", "run", "-m", "pytest", "-q"]
-        env = os.environ.copy()
-
-        if args.pytest_fixtures:
-            env["SKYLOS_UNUSED_FIXTURES_OUT"] = str(
-                project_root / ".skylos_unused_fixtures.json"
-            )
-            cmd += ["-p", "skylos.pytest_unused_fixtures"]
-
-        pytest_result = subprocess.run(
-            cmd,
-            cwd=project_root,
-            capture_output=True,
-            env=env,
-        )
-
-        if pytest_result.returncode != 0:
-            if not args.json:
-                console.print("[warn]pytest failed, trying unittest...[/warn]")
-            subprocess.run(
-                ["coverage", "run", "-m", "unittest", "discover"],
-                cwd=project_root,
-                capture_output=True,
-            )
-
-        if not args.json:
-            console.print("[good]Coverage data collected[/good]")
-
-    if args.trace:
-        if not args.json:
-            console.print("[brand]Running tests with call tracing...[/brand]")
-
-        trace_script = textwrap.dedent(f"""\
-import os
-import sys
-sys.path.insert(0, {str(project_root)!r})
-from skylos.tracer import CallTracer
-
-tracer = CallTracer(exclude_patterns=["site-packages", "venv", ".venv", "pytest", "_pytest"])
-tracer.start()
-
-ret = 0
-try:
-    import pytest
-
-    pytest_args = ["-q"]
-    if {bool(args.pytest_fixtures)!r}:
-        os.environ["SKYLOS_UNUSED_FIXTURES_OUT"] = {str(project_root / ".skylos_unused_fixtures.json")!r}
-        pytest_args += ["-p", "skylos.pytest_unused_fixtures"]
-
-    ret = pytest.main(pytest_args)
-
-finally:
-    tracer.stop()
-    tracer.save({str(project_root / ".skylos_trace")!r})
-
-sys.exit(ret)
-
-""")
-
-        r = subprocess.run(
-            [sys.executable, "-c", trace_script],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-        )
-
-        trace_file = project_root / ".skylos_trace"
-
-        if r.returncode != 0 and not args.json:
-            if trace_file.exists() and trace_file.stat().st_size > 0:
-                console.print(
-                    "[warn]Tests had failures, but trace data was collected.[/warn]"
-                )
-            else:
-                console.print(
-                    "[warn]Trace run failed; continuing without trace.[/warn]"
-                )
-                if r.stderr:
-                    console.print(r.stderr)
-        elif not args.json:
-            console.print("[good]Trace data collected[/good]")
-
-    pytest_fixtures_ok = None
-
-    if args.pytest_fixtures and (not args.coverage) and (not args.trace):
-        if not args.json:
-            console.print(
-                "[brand]Running tests to detect unused pytest fixtures...[/brand]"
-            )
-
-        env = os.environ.copy()
-        env["SKYLOS_UNUSED_FIXTURES_OUT"] = str(
-            project_root / ".skylos_unused_fixtures.json"
-        )
-
-        pytest_targets = []
-        if len(args.path) == 1:
-            p = pathlib.Path(args.path[0]).resolve()
-            if p.is_file():
-                pytest_targets = [str(p)]
-
-        r = subprocess.run(
-            ["pytest", "-q", *pytest_targets, "-p", "skylos.pytest_unused_fixtures"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-
-        pytest_fixtures_ok = r.returncode == 0
-
-        if not args.json:
-            if pytest_fixtures_ok:
-                console.print("[good]Unused fixture report collected[/good]")
-            else:
-                console.print(
-                    "[warn]pytest had failures; unused fixture report may be partial[/warn]"
-                )
-
-    custom_rules_data = None
-    if not args.json:
-        try:
-            from skylos.sync import get_custom_rules, get_token
-
-            token = get_token()
-            if token:
-                custom_rules_data = get_custom_rules()
-                if custom_rules_data:
-                    console.print(
-                        f"[brand]Loaded {len(custom_rules_data)} custom rules from cloud[/brand]"
-                    )
-        except Exception as e:
-            if args.verbose:
-                console.print(f"[warn]Could not load custom rules: {e}[/warn]")
-
-    changed_files = None
-    if getattr(args, "diff_base", None):
-        try:
-            diff_result = subprocess.run(
-                ["git", "diff", "--name-only", f"{args.diff_base}...HEAD"],
-                cwd=project_root,
-                capture_output=True,
-                text=True,
-            )
-            if diff_result.returncode == 0:
-                changed_files = set()
-                for line in diff_result.stdout.strip().splitlines():
-                    changed_files.add(str((project_root / line).resolve()))
-                if not args.json:
-                    console.print(
-                        f"[brand]--diff-base:[/brand] {len(changed_files)} changed files "
-                        f"(full scan on changed, defs/refs-only on rest)"
-                    )
-            else:
-                if not args.json:
-                    console.print(
-                        f"[warn]git diff failed: {diff_result.stderr.strip()}. "
-                        f"Running full analysis.[/warn]"
-                    )
-        except FileNotFoundError:
-            if not args.json:
-                console.print("[warn]git not found. Running full analysis.[/warn]")
+    pre_analysis = _run_pre_analysis_steps(args, project_root, console)
+    pytest_fixtures_ok = pre_analysis.pytest_fixtures_ok
+    custom_rules_data = pre_analysis.custom_rules_data
+    changed_files = pre_analysis.changed_files
 
     try:
         with Progress(
@@ -3879,7 +4048,7 @@ sys.exit(ret)
                 "SKYLOS-DEADCODE-UNUSED_PARAMETER",
             )
 
-            exporter = SarifExporter(all_findings, tool_name="Skylos")
+            exporter = _get_sarif_exporter_class()(all_findings, tool_name="Skylos")
             sarif_data = exporter.generate()
             grade_data = result.get("grade")
             if grade_data:
