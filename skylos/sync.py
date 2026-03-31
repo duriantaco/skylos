@@ -2,7 +2,7 @@ import os
 import sys
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import subprocess
 
 try:
@@ -27,6 +27,10 @@ GLOBAL_CREDS_FILE = GLOBAL_CREDS_DIR / "credentials.json"
 LINK_FILE = "link.json"
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _load_creds():
     if not GLOBAL_CREDS_FILE.exists():
         return {}
@@ -38,7 +42,25 @@ def _load_creds():
 
 def _write_creds(data):
     GLOBAL_CREDS_DIR.mkdir(parents=True, exist_ok=True)
-    GLOBAL_CREDS_FILE.write_text(json.dumps(data, indent=2))
+    try:
+        os.chmod(GLOBAL_CREDS_DIR, 0o700)
+    except OSError:
+        pass
+
+    payload = json.dumps(data, indent=2)
+    fd = os.open(
+        GLOBAL_CREDS_FILE,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+    finally:
+        try:
+            os.chmod(GLOBAL_CREDS_FILE, 0o600)
+        except OSError:
+            pass
 
 
 def _find_repo_root():
@@ -93,7 +115,7 @@ def _write_link(
     link_path = skylos_dir / LINK_FILE
     payload = {
         "project_id": str(project_id),
-        "linked_at": datetime.utcnow().isoformat() + "Z",
+        "linked_at": _utc_now_iso(),
     }
     if base_url:
         payload["base_url"] = str(base_url).rstrip("/")
@@ -142,7 +164,7 @@ def get_token():
 
 def save_token(token, project_id=None, project_name=None, org_name=None, plan=None):
     data = _load_creds()
-    now = datetime.utcnow().isoformat() + "Z"
+    now = _utc_now_iso()
 
     data["token"] = token
     data["saved_at"] = now
