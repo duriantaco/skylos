@@ -321,11 +321,27 @@ def parse_llm_finding(data: dict[str, Any], file_path: str) -> Finding | None:
         return None
 
 
+def normalize_json_response_text(response_text: str | None) -> str:
+    text = (response_text or "").strip()
+    if not text:
+        return ""
+
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) >= 3:
+            text = parts[1].strip()
+
+    if text.lower().startswith("json"):
+        text = text[4:].lstrip()
+
+    return text
+
+
 def parse_llm_response(response_text: str | None, file_path: str) -> list[Finding]:
     if not response_text:
         return []
 
-    text = response_text.strip()
+    text = normalize_json_response_text(response_text)
     if text.startswith("Error:"):
         raise RuntimeError(text)
 
