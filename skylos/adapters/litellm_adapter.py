@@ -4,9 +4,17 @@ from skylos.credentials import get_key, PROVIDERS
 
 
 class LiteLLMAdapter(BaseAdapter):
-    def __init__(self, model, api_key=None, api_base=None, enable_cache=True):
+    def __init__(
+        self,
+        model,
+        api_key=None,
+        api_base=None,
+        enable_cache=True,
+        max_tokens=None,
+    ):
         super().__init__(model, api_key)
         self.enable_cache = enable_cache
+        self.max_tokens = max_tokens
 
         try:
             import litellm
@@ -213,6 +221,9 @@ class LiteLLMAdapter(BaseAdapter):
                 "api_key": self.api_key,
             }
 
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+
             if self.api_base:
                 kwargs["api_base"] = self.api_base
 
@@ -263,6 +274,9 @@ class LiteLLMAdapter(BaseAdapter):
                 "stream": True,
                 "api_key": self.api_key,
             }
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
 
             if self.api_base:
                 kwargs["api_base"] = self.api_base

@@ -154,6 +154,16 @@ def test_complete_adds_api_base_when_present(monkeypatch):
     assert fake.last_kwargs["api_base"] == "http://localhost:11434/v1"
 
 
+def test_complete_adds_max_tokens_when_present(monkeypatch):
+    fake = _FakeLiteLLMModule(text="ok")
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+
+    ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K", max_tokens=321)
+    _ = ad.complete("SYS", "USER")
+
+    assert fake.last_kwargs["max_tokens"] == 321
+
+
 def test_complete_local_forces_api_key_not_needed(monkeypatch):
     fake = _FakeLiteLLMModule(text="local ok")
     _install_fake_litellm(monkeypatch, fake_module=fake)
@@ -189,6 +199,17 @@ def test_stream_success_yields_delta_chunks(monkeypatch):
 
     assert "".join(parts) == "hello"
     assert fake.last_kwargs["stream"] is True
+
+
+def test_stream_adds_max_tokens_when_present(monkeypatch):
+    fake = _FakeLiteLLMModule(stream_chunks=["ok"])
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+
+    ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K", max_tokens=456)
+    parts = list(ad.stream("SYS", "USER"))
+
+    assert "".join(parts) == "ok"
+    assert fake.last_kwargs["max_tokens"] == 456
 
 
 def test_stream_error_yields_single_error_message(monkeypatch):
