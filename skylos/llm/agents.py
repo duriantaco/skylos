@@ -8,6 +8,7 @@ from .schemas import (
     Confidence,
     CodeLocation,
     parse_llm_response,
+    normalize_json_response_text,
     FINDING_SCHEMA,
 )
 from .context import ContextBuilder
@@ -129,6 +130,7 @@ def create_llm_adapter(config):
         api_key=config.api_key,
         api_base=getattr(config, "base_url", None),
         enable_cache=config.enable_cache,
+        max_tokens=getattr(config, "max_tokens", None),
     )
 
 
@@ -487,11 +489,7 @@ Respond with JSON array."""
         try:
             response = self.get_adapter().complete(system, user)
 
-            response = response.strip()
-            if response.startswith("```"):
-                response = response.split("```")[1]
-                if response.startswith("json"):
-                    response = response[4:]
+            response = normalize_json_response_text(response)
 
             data = json.loads(response)
 
