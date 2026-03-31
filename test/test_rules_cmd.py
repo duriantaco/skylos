@@ -1,5 +1,8 @@
 from unittest.mock import Mock, patch
 
+import pytest
+
+from skylos import cli
 from skylos.commands import rules_cmd
 
 
@@ -32,3 +35,12 @@ def test_validate_rules_missing_file_returns_one(tmp_path):
 
     assert exit_code == 1
     console.print.assert_called_once()
+
+
+def test_cli_rules_remove_legacy_wrapper_raises_on_missing_pack(tmp_path):
+    console = Mock()
+
+    with pytest.raises(SystemExit) as exc:
+        cli._rules_remove(console, tmp_path, "missing")
+
+    assert exc.value.code == 1
