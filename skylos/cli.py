@@ -1701,7 +1701,10 @@ def _rules_list(console, rules_dir):
 def _rules_remove(console, rules_dir, name):
     from skylos.commands.rules_cmd import remove_rules
 
-    return remove_rules(console, rules_dir, name)
+    exit_code = remove_rules(console, rules_dir, name)
+    if exit_code:
+        raise SystemExit(exit_code)
+    return exit_code
 
 
 def _run_command_overview(_argv):
