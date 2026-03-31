@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from rich.console import Console
@@ -35,16 +34,15 @@ def run_rules_command(argv, *, console_factory=Console) -> int:
     rules_args = rules_parser.parse_args(argv)
 
     if rules_args.rules_cmd == "install":
-        install_rules(console, rules_dir, rules_args.pack_or_url)
-    elif rules_args.rules_cmd == "list":
-        list_rules(console, rules_dir)
-    elif rules_args.rules_cmd == "remove":
-        remove_rules(console, rules_dir, rules_args.name)
-    elif rules_args.rules_cmd == "validate":
-        validate_rules(console, rules_args.path)
-    else:
-        rules_parser.print_help()
+        return install_rules(console, rules_dir, rules_args.pack_or_url)
+    if rules_args.rules_cmd == "list":
+        return list_rules(console, rules_dir)
+    if rules_args.rules_cmd == "remove":
+        return remove_rules(console, rules_dir, rules_args.name)
+    if rules_args.rules_cmd == "validate":
+        return validate_rules(console, rules_args.path)
 
+    rules_parser.print_help()
     return 0
 
 
@@ -56,7 +54,7 @@ def install_rules(console, rules_dir, pack_or_url):
         import yaml
     except ImportError:
         console.print("[red]PyYAML is required. Install with: pip install pyyaml[/red]")
-        sys.exit(1)
+        return 1
 
     rules_dir.mkdir(parents=True, exist_ok=True)
 
@@ -78,23 +76,24 @@ def install_rules(console, rules_dir, pack_or_url):
             content = resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         console.print(f"[red]Download failed: HTTP {e.code}[/red]")
-        sys.exit(1)
+        return 1
     except Exception as e:
         console.print(f"[red]Download failed: {e}[/red]")
-        sys.exit(1)
+        return 1
 
     try:
         data = yaml.safe_load(content)
         if not data or "rules" not in data:
             console.print("[red]Invalid rule file: missing 'rules' key[/red]")
-            sys.exit(1)
+            return 1
         rule_count = len(data["rules"])
     except yaml.YAMLError as e:
         console.print(f"[red]Invalid YAML: {e}[/red]")
-        sys.exit(1)
+        return 1
 
     dest.write_text(content)
     console.print(f"[green]Installed {rule_count} rule(s) to {dest}[/green]")
+    return 0
 
 
 def list_rules(console, rules_dir):
@@ -102,18 +101,18 @@ def list_rules(console, rules_dir):
         import yaml
     except ImportError:
         console.print("[red]PyYAML is required. Install with: pip install pyyaml[/red]")
-        sys.exit(1)
+        return 1
 
     if not rules_dir.exists():
         console.print("[dim]No community rules installed.[/dim]")
         console.print("Run [bold]skylos rules install <pack>[/bold] to get started.")
-        return
+        return 0
 
     yml_files = sorted(rules_dir.glob("*.yml"))
     if not yml_files:
         console.print("[dim]No community rules installed.[/dim]")
         console.print("Run [bold]skylos rules install <pack>[/bold] to get started.")
-        return
+        return 0
 
     table = Table(title="Installed Community Rules")
     table.add_column("Pack", style="bold")
@@ -129,16 +128,18 @@ def list_rules(console, rules_dir):
             table.add_row(f.stem, "?", str(f))
 
     console.print(table)
+    return 0
 
 
 def remove_rules(console, rules_dir, name):
     dest = rules_dir / f"{name}.yml"
     if not dest.exists():
         console.print(f"[red]Rule pack '{name}' not found.[/red]")
-        sys.exit(1)
+        return 1
 
     dest.unlink()
     console.print(f"[green]Removed rule pack '{name}'[/green]")
+    return 0
 
 
 def validate_rules(console, path_str):
@@ -146,26 +147,26 @@ def validate_rules(console, path_str):
         import yaml
     except ImportError:
         console.print("[red]PyYAML is required. Install with: pip install pyyaml[/red]")
-        sys.exit(1)
+        return 1
 
     rule_path = Path(path_str)
     if not rule_path.exists():
         console.print(f"[red]File not found: {path_str}[/red]")
-        sys.exit(1)
+        return 1
 
     try:
         data = yaml.safe_load(rule_path.read_text())
     except yaml.YAMLError as e:
         console.print(f"[red]YAML parse error: {e}[/red]")
-        sys.exit(1)
+        return 1
 
     if not data or not isinstance(data, dict):
         console.print("[red]Invalid rule file: not a YAML mapping[/red]")
-        sys.exit(1)
+        return 1
 
     if "rules" not in data:
         console.print("[red]Invalid rule file: missing 'rules' key[/red]")
-        sys.exit(1)
+        return 1
 
     errors = []
     warnings = []
@@ -225,5 +226,6 @@ def validate_rules(console, path_str):
     if not errors:
         rule_count = len(data["rules"])
         console.print(f"[green]Valid: {rule_count} rule(s) in {rule_path.name}[/green]")
-    else:
-        sys.exit(1)
+        return 0
+
+    return 1
