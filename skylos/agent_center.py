@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from skylos.analyzer import analyze as run_analyze
 from skylos.baseline import load_baseline
 from skylos.constants import parse_exclude_folders
 from skylos.config import load_config
@@ -15,12 +14,10 @@ from skylos.debt.baseline import (
     annotate_hotspots as annotate_debt_hotspots,
     load_baseline as load_debt_baseline,
 )
-from skylos.debt.engine import collect_debt_signals
 from skylos.debt.scoring import (
     build_hotspots as build_debt_hotspots,
     refresh_hotspot_priority as refresh_debt_hotspot_priority,
 )
-from skylos.file_discovery import discover_source_files
 from skylos.agent_payload import (
     build_action_reason as _build_action_reason,
     build_action_subtitle as _build_action_subtitle,
@@ -38,6 +35,26 @@ from skylos.agent_payload import (
 STATE_DIR = ".skylos"
 STATE_FILE = "agent_state.json"
 SUPPORTED_EXTENSIONS = {".py", ".go", ".ts", ".tsx", ".js", ".jsx"}
+
+
+def run_analyze(*args, **kwargs):
+    from skylos.analyzer import analyze as run_analyze_impl
+
+    return run_analyze_impl(*args, **kwargs)
+
+
+def collect_debt_signals(*args, **kwargs):
+    from skylos.debt.engine import collect_debt_signals as collect_debt_signals_impl
+
+    return collect_debt_signals_impl(*args, **kwargs)
+
+
+def discover_source_files(*args, **kwargs):
+    from skylos.file_discovery import (
+        discover_source_files as discover_source_files_impl,
+    )
+
+    return discover_source_files_impl(*args, **kwargs)
 
 
 def resolve_project_root(path: str | Path) -> Path:

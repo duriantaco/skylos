@@ -1,6 +1,16 @@
 ## Changelog
 
-## [4.2.0] - Unreleased
+## [Unreleased]
+
+### Changed
+- Continue CLI cleanup by extracting command boundaries, lazy-loading heavy analysis paths.Expanded regression guardrails around dispatch, output, and exit-code behavior
+
+### Fixed
+- Browser login callback now validates `state` and verifies the returned token metadata via `whoami`
+- Fixed local web UI rendering to avoid unsafe HTML insertion patterns
+- Sync credentials are written with stricter file and dir permissions
+
+## [4.2.0] - 2026-03-30
 
 ### Added
 - Added `skylos debt <path>` for technical debt hotspot analysis

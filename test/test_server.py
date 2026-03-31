@@ -44,6 +44,17 @@ class TestSkylosWebApp(unittest.TestCase):
         self.assertIn(b"<!DOCTYPE html>", response.data)
         self.assertIn(b"Skylos Dead Code Analyzer", response.data)
         self.assertIn(b'id="analyzeBtn"', response.data)
+        self.assertIn(b"wrapper.textContent = message", response.data)
+        self.assertIn(b"name.textContent = item.name", response.data)
+
+    def test_serve_frontend_embeds_token_as_json_literal(self):
+        app.config["WEB_API_TOKEN"] = 'tok-"</script>-x'
+
+        response = self.app.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'const SKYLOS_WEB_TOKEN = "tok-\\"<\\/script>-x";', response.data)
+        self.assertNotIn(b"</script>-x", response.data)
 
     def test_analyze_missing_path(self):
         response = self.app.post(

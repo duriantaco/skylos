@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import pytest
 import skylos.sync as syncmod
@@ -93,6 +94,9 @@ def test_save_token_writes_file(isolated_creds):
     assert data["saved_at"].endswith("Z")
     assert data["tokens"]["proj_abc"]["project_name"] == "Proj"
     assert data["tokens"]["proj_abc"]["org_name"] == "Org"
+    if os.name != "nt":
+        assert (creds_file.stat().st_mode & 0o777) == 0o600
+        assert (creds_file.parent.stat().st_mode & 0o777) == 0o700
 
 
 def test_clear_token(isolated_creds):

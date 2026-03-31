@@ -57,6 +57,20 @@ def _progress_ctx():
     return cm
 
 
+def test_cli_guardrail_overview_dispatch_exits_zero(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["skylos"])
+
+    with (
+        patch("skylos.help.print_command_overview") as mock_overview,
+        patch("skylos.cli.Console", return_value=Mock()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    mock_overview.assert_called_once()
+
+
 def test_cli_guardrail_commands_dispatch_exits_zero(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["skylos", "commands"])
 
@@ -83,6 +97,19 @@ def test_cli_guardrail_tour_dispatch_exits_zero(monkeypatch):
 
     assert exc.value.code == 0
     mock_tour.assert_called_once()
+
+
+def test_cli_guardrail_key_dispatch_defaults_to_menu(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["skylos", "key"])
+
+    with (
+        patch("skylos.commands.key_cmd.run_key_command", return_value=0) as mock_key,
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    mock_key.assert_called_once_with(["menu"])
 
 
 def test_cli_guardrail_badge_dispatch_exits_zero(monkeypatch):

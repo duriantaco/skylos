@@ -1,10 +1,14 @@
 import http.server
+import html
 import os
+import secrets
 import socket
 import subprocess
 import time
 import webbrowser
 from urllib.parse import parse_qs, urlparse
+
+import requests
 
 DEFAULT_BASE_URL = "https://skylos.dev"
 CALLBACK_PATH = "/callback"
@@ -65,41 +69,41 @@ def _get_repo_url():
 
 class _CallbackHandler(http.server.BaseHTTPRequestHandler):
     result = None
+    expected_state = None
 
     def do_GET(self):
-        parsed = urlparse(self.path)
-        if parsed.path != CALLBACK_PATH:
+        outcome, payload = _parse_callback_request(
+            self.path, expected_state=_CallbackHandler.expected_state
+        )
+
+        if outcome == "not_found":
             self.send_response(404)
             self.end_headers()
             return
 
-        params = parse_qs(parsed.query)
-        token = params.get("token", [None])[0]
-        project_id = params.get("project_id", [None])[0]
-        project_name = params.get("project_name", [None])[0]
-        org_name = params.get("org_name", [None])[0]
-        plan = params.get("plan", ["free"])[0]
-        error = params.get("error", [None])[0]
+        if outcome == "invalid_state":
+            self.send_response(400)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(
+                b"<html><body><h2>Invalid login state</h2>"
+                b"<p>You can close this tab and retry from the CLI.</p></body></html>"
+            )
+            return
 
-        if error:
+        if outcome == "error":
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(
-                f"<html><body><h2>Login failed: {error}</h2>"
+                f"<html><body><h2>Login failed: {payload}</h2>"
                 f"<p>You can close this tab.</p></body></html>".encode()
             )
             _CallbackHandler.result = "error"
             return
 
-        if token and project_id:
-            _CallbackHandler.result = LoginResult(
-                token=token,
-                project_id=project_id,
-                project_name=project_name or "Unknown",
-                org_name=org_name or "My Workspace",
-                plan=plan or "free",
-            )
+        if outcome == "success":
+            _CallbackHandler.result = payload
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
@@ -126,15 +130,15 @@ def browser_login(console=None, base_url=None):
     port = _find_free_port()
     repo_name = _get_repo_name() or ""
     repo_url = _get_repo_url() or ""
+    state = secrets.token_urlsafe(24)
 
     _CallbackHandler.result = None
+    _CallbackHandler.expected_state = state
 
     server = http.server.HTTPServer(("127.0.0.1", port), _CallbackHandler)
     server.timeout = 5
 
-    connect_url = (
-        f"{base_url}/cli/connect?port={port}&repo={repo_name}&repo_url={repo_url}"
-    )
+    connect_url = f"{base_url}/cli/connect?port={port}&repo={repo_name}&repo_url={repo_url}&state={state}"
 
     if console:
         console.print("\n[bold]Opening browser to connect to Skylos Cloud...[/bold]")
@@ -178,11 +182,22 @@ def browser_login(console=None, base_url=None):
             print("\nLogin cancelled.")
     finally:
         server.server_close()
+        _CallbackHandler.expected_state = None
 
     result = _CallbackHandler.result
     if result == "error":
         return None
-    return result
+    if result is None:
+        return None
+
+    verified = _verify_login_result(result.token, base_url=base_url)
+    if verified is None:
+        if console:
+            console.print("[warn]Could not verify login with server — using callback credentials.[/warn]")
+        else:
+            print("Warning: Could not verify login with server — using callback credentials.")
+        return result
+    return verified
 
 
 def manual_token_fallback(console=None):
@@ -317,3 +332,73 @@ def run_login(console=None, base_url=None):
         print(f"\n  For MCP/AI agents: export SKYLOS_API_KEY={result.token}")
 
     return result
+
+
+def _parse_callback_request(path: str, *, expected_state: str | None):
+    parsed = urlparse(path)
+    if parsed.path != CALLBACK_PATH:
+        return "not_found", None
+
+    params = parse_qs(parsed.query)
+    provided_state = params.get("state", [None])[0]
+    if expected_state and provided_state and provided_state != expected_state:
+        return "invalid_state", None
+
+    error = params.get("error", [None])[0]
+    if error:
+        return "error", html.escape(error)
+
+    token = params.get("token", [None])[0]
+    if not token:
+        return "missing", None
+
+    return (
+        "success",
+        LoginResult(
+            token=token,
+            project_id=params.get("project_id", [""])[0] or "",
+            project_name=params.get("project_name", ["Unknown"])[0] or "Unknown",
+            org_name=params.get("org_name", ["My Workspace"])[0] or "My Workspace",
+            plan=params.get("plan", ["free"])[0] or "free",
+        ),
+    )
+
+
+def _whoami_url(base_url: str) -> str:
+    normalized = (base_url or DEFAULT_BASE_URL).rstrip("/")
+    if normalized.endswith("/api"):
+        return f"{normalized}/sync/whoami"
+    return f"{normalized}/api/sync/whoami"
+
+
+def _verify_login_result(token: str, *, base_url: str) -> LoginResult | None:
+    try:
+        resp = requests.get(
+            _whoami_url(base_url),
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+    except requests.RequestException:
+        return None
+
+    if resp.status_code != 200:
+        return None
+
+    try:
+        info = resp.json()
+    except ValueError:
+        return None
+
+    project = info.get("project") or {}
+    project_id = project.get("id")
+    if not project_id:
+        return None
+
+    org = info.get("organization") or {}
+    return LoginResult(
+        token=token,
+        project_id=str(project_id),
+        project_name=project.get("name", "Unknown"),
+        org_name=org.get("name", "My Workspace"),
+        plan=info.get("plan", "free"),
+    )
