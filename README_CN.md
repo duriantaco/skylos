@@ -1256,7 +1256,7 @@ Skylos 旨在融入你代码所在的每一个环节 — 从 IDE 到部署流水
 | 环境 | 工具 | 用例 |
 |-------------|------|----------|
 | VS Code | Skylos 扩展 | 实时防护。保存时高亮代码腐化和风险。 |
-| Web UI | `skylos run` | 在 `localhost:5090` 启动本地仪表盘进行可视化审计。 |
+| Web UI | `skylos run` | 启动本地仪表盘进行可视化审计。默认使用 `localhost:5090`，可通过 `--port` 或 `SKYLOS_PORT` 配置。 |
 | CI/CD | GitHub Actions / Pre-commit | 在每个 PR 合并前进行审计的自动化门控。 |
 | 质量门控 | `skylos --gate` | 在安全或复杂度阈值被超越时阻止部署。 |
 
@@ -1887,7 +1887,7 @@ Agent watch 选项：
   skylos key                   管理 API 密钥（添加/删除/列出）
   skylos whitelist PATTERN     添加模式到白名单
   skylos whitelist --show      显示当前白名单
-  skylos run                   在 localhost:5090 启动 Web UI
+  skylos run                   在 localhost:5090 启动 Web UI（默认值；可通过 --port 或 SKYLOS_PORT 覆盖）
 
 白名单选项：
   skylos whitelist PATTERN           添加 glob 模式（如 'handle_*'）
