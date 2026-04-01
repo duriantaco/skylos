@@ -3675,17 +3675,9 @@ def main() -> None:
                 )
 
     if len(sys.argv) > 1 and sys.argv[1] == "run":
-        try:
-            from skylos.server import start_server
-        except ImportError:
-            Console().print("[bold red]Error: Flask is required[/bold red]")
-            Console().print(
-                "[bold yellow]Install with: pip install flask flask-cors[/bold yellow]"
-            )
-            sys.exit(1)
-
         run_exclude_folders = []
         run_include_folders = []
+        run_port = None
         no_defaults = False
 
         i = 2
@@ -3699,17 +3691,40 @@ def main() -> None:
             elif sys.argv[i] == "--no-default-excludes":
                 no_defaults = True
                 i += 1
+            elif sys.argv[i] == "--port" and i + 1 < len(sys.argv):
+                try:
+                    run_port = int(sys.argv[i + 1])
+                except ValueError:
+                    Console().print("[bold red]Error: --port must be an integer[/bold red]")
+                    sys.exit(1)
+                i += 2
+            elif sys.argv[i] == "--port":
+                Console().print("[bold red]Error: --port requires a value[/bold red]")
+                sys.exit(1)
             else:
                 i += 1
 
-        exclude_folders = parse_exclude_folders(
-            user_exclude_folders=run_exclude_folders or None,
-            config_exclude_folders=load_config(Path.cwd()).get("exclude"),
-            use_defaults=not no_defaults,
-            include_folders=run_include_folders or None,
-        )
-
+        original_server_port = os.environ.get("SKYLOS_PORT")
         try:
+            if run_port is not None:
+                os.environ["SKYLOS_PORT"] = str(run_port)
+
+            try:
+                from skylos.server import start_server
+            except ImportError:
+                Console().print("[bold red]Error: Flask is required[/bold red]")
+                Console().print(
+                    "[bold yellow]Install with: pip install flask flask-cors[/bold yellow]"
+                )
+                sys.exit(1)
+
+            exclude_folders = parse_exclude_folders(
+                user_exclude_folders=run_exclude_folders or None,
+                config_exclude_folders=load_config(Path.cwd()).get("exclude"),
+                use_defaults=not no_defaults,
+                include_folders=run_include_folders or None,
+            )
+
             start_server(exclude_folders=list(exclude_folders))
             return
         except ImportError:
@@ -3718,6 +3733,15 @@ def main() -> None:
                 "[bold yellow]Install with: pip install flask flask-cors[/bold yellow]"
             )
             sys.exit(1)
+        except ValueError as exc:
+            Console().print(f"[bold red]Error: {exc}[/bold red]")
+            sys.exit(1)
+        finally:
+            if run_port is not None:
+                if original_server_port is None:
+                    os.environ.pop("SKYLOS_PORT", None)
+                else:
+                    os.environ["SKYLOS_PORT"] = original_server_port
 
     parser = _build_main_parser()
     args = _parse_main_cli_args(parser, sys.argv[1:])

@@ -19,6 +19,8 @@
 
 📖 **[Website](https://skylos.dev)** · **[Documentation](https://docs.skylos.dev)** · **[Blog](https://skylos.dev/blog)** · **[GitHub Action](https://github.com/duriantaco/skylos/blob/main/action.yml)** · **[VS Code Extension](https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension)** · **[MCP Server](https://github.com/duriantaco/skylos/tree/main/skylos_mcp)**
 
+**English** | [中文](README_CN.md)
+
 ---
 
 # What is Skylos?
@@ -1254,7 +1256,7 @@ Skylos is designed to live everywhere your code does—from your IDE to your dep
 | Environment | Tool | Use Case |
 |-------------|------|----------|
 | VS Code | Skylos Extension | Real-time guarding. Highlights code rot and risks on-save. |
-| Web UI | `skylos run` | Launch a local dashboard at `localhost:5090` for visual auditing. |
+| Web UI | `skylos run` | Launch a local dashboard for visual auditing. Defaults to `localhost:5090`; override with `--port` or `SKYLOS_PORT`. |
 | CI/CD | GitHub Actions / Pre-commit | Automated gates that audit every PR before it merges. |
 | Quality Gate | `skylos --gate` | Block deployment if security or complexity thresholds are exceeded. |
 
@@ -1887,7 +1889,7 @@ Commands:
   skylos key                   Manage API keys (add/remove/list)
   skylos whitelist PATTERN     Add pattern to whitelist
   skylos whitelist --show      Display current whitelist
-  skylos run                   Start web UI at localhost:5090
+  skylos run                   Start web UI at localhost:5090 (default; override with --port or SKYLOS_PORT)
 
 Whitelist Options:
   skylos whitelist PATTERN           Add glob pattern (e.g., 'handle_*')
