@@ -3,6 +3,7 @@ from skylos.rules.quality.logic import (
     MutableDefaultRule,
     BareExceptRule,
     DangerousComparisonRule,
+    BroadExceptionRule,
 )
 
 
@@ -167,5 +168,127 @@ if x is None:
     pass
 """
         rule = DangerousComparisonRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 0
+
+class TestBroadExceptionRule:
+
+    def test_exception_pass(self):
+        code = """
+try:
+    pass
+except Exception:
+    pass
+"""
+        rule = BroadExceptionRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-L030"
+        assert "broad" in findings[0]["message"]
+    
+    def test_exception_continue(self):
+        code = """
+for i in range(5):
+    try:
+        pass
+    except Exception:
+        continue
+"""
+        rule = BroadExceptionRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-L030"
+    
+    def test_exception_return(self):
+        code = """
+def foo():
+    try:
+        pass
+    except Exception:
+        return
+"""
+        rule = BroadExceptionRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-L030"
+    
+    def test_exception_return_none(self):
+        code = """
+def foo():
+    try:
+        pass
+    except Exception:
+        return None
+"""
+        rule = BroadExceptionRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+    
+    def test_base_exception_pass(self):
+        code = """
+try:
+    pass
+except BaseException:
+    pass
+"""
+        rule = BroadExceptionRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-L030"
+        assert "broad" in findings[0]["message"]
+    
+    def test_specific_exception(self):
+        code = """
+try:
+    pass
+except ValueError:
+    pass
+"""
+        rule = BroadExceptionRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 0
+    
+    def test_tuple_exception(self):
+        code = """
+try:
+    pass
+except (ValueError, TypeError):
+    pass
+"""
+        rule = BroadExceptionRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 0
+
+    def test_tuple_with_broad_exception(self):
+        code = """
+try:
+    pass
+except (Exception, ValueError):
+    pass
+"""
+        rule = BroadExceptionRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-L030"
+
+    def test_exception_with_logging(self):
+        code = """
+try:
+    pass
+except Exception as e:
+    logging.error(e)
+"""
+        rule = BroadExceptionRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 0
+    
+    def test_exception_with_raise(self):
+        code = """
+try:
+    pass
+except Exception:
+    raise
+"""
+        rule = BroadExceptionRule()
         findings = check_code(rule, code)
         assert len(findings) == 0

@@ -7,6 +7,7 @@
 - Added configurable web UI port support for `skylos run` via `--port` or `SKYLOS_PORT`
 
 ### Changed
+- SKY-L030: Lint rule for `except Exception`/`except BaseException` with trivial handler (CWE-396)
 - Continue CLI cleanup by extracting command boundaries, lazy-loading heavy analysis paths.Expanded regression guardrails around dispatch, output, and exit-code behavior
 
 ### Fixed
