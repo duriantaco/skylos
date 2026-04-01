@@ -4,6 +4,7 @@
 
 ### Added
 - Added a Simplified Chinese README (`README_CN.md`)
+- Added configurable web UI port support for `skylos run` via `--port` or `SKYLOS_PORT`
 
 ### Changed
 - Continue CLI cleanup by extracting command boundaries, lazy-loading heavy analysis paths.Expanded regression guardrails around dispatch, output, and exit-code behavior
