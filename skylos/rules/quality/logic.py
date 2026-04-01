@@ -447,6 +447,21 @@ def _exception_type_name(exc_type):
     return None
 
 
+def _exception_type_names(exc_type):
+    if exc_type is None:
+        return []
+    if isinstance(exc_type, ast.Name):
+        return [exc_type.id]
+    if isinstance(exc_type, ast.Attribute):
+        return [exc_type.attr]
+    if isinstance(exc_type, ast.Tuple):
+        names = []
+        for elt in exc_type.elts:
+            names.extend(_exception_type_names(elt))
+        return names
+    return []
+
+
 class EmptyErrorHandlerRule(SkylosRule):
     rule_id = "SKY-L007"
     name = "Empty Error Handler"
@@ -2504,14 +2519,20 @@ class BroadExceptionRule(SkylosRule):
     def visit_node(self, node, context):
         if not isinstance(node, ast.ExceptHandler) or node.type is None:
             return None
-        
-        exc_name = _exception_type_name(node.type)
-        if exc_name not in self._BROAD_EXCEPTION_TYPES:
+
+        broad_types = [
+            exc_name
+            for exc_name in _exception_type_names(node.type)
+            if exc_name in self._BROAD_EXCEPTION_TYPES
+        ]
+        if not broad_types:
             return None
         if _handler_has_real_work(node.body):
             return None
         if not _handler_body_is_trivial(node.body):
             return None
+
+        exc_name = ", ".join(sorted(set(broad_types)))
 
         return [
             {

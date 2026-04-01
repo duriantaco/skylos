@@ -258,7 +258,19 @@ except (ValueError, TypeError):
         rule = BroadExceptionRule()
         findings = check_code(rule, code)
         assert len(findings) == 0
-    
+
+    def test_tuple_with_broad_exception(self):
+        code = """
+try:
+    pass
+except (Exception, ValueError):
+    pass
+"""
+        rule = BroadExceptionRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-L030"
+
     def test_exception_with_logging(self):
         code = """
 try:
