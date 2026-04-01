@@ -1,5 +1,6 @@
 import os
 import sys
+import types
 from unittest.mock import patch
 
 import pytest
@@ -8,9 +9,8 @@ import pytest
 class TestRunCommand:
     @patch("skylos.cli.load_config", return_value={})
     @patch("skylos.cli.parse_exclude_folders", return_value=("custom_folder",))
-    @patch("skylos.server.start_server")
     def test_run_port_flag_overrides_env(
-        self, mock_start_server, mock_parse_exclude_folders, mock_load_config
+        self, mock_parse_exclude_folders, mock_load_config
     ):
         from skylos.cli import main
 
@@ -20,11 +20,13 @@ class TestRunCommand:
             seen["port"] = os.environ.get("SKYLOS_PORT")
             seen["kwargs"] = kwargs
 
-        mock_start_server.side_effect = capture_start_server
+        fake_server = types.ModuleType("skylos.server")
+        fake_server.start_server = capture_start_server
 
         with patch.dict(os.environ, {"SKYLOS_PORT": "6123"}, clear=False):
-            with patch.object(sys, "argv", ["skylos", "run", "--port", "5111"]):
-                main()
+            with patch.dict(sys.modules, {"skylos.server": fake_server}):
+                with patch.object(sys, "argv", ["skylos", "run", "--port", "5111"]):
+                    main()
 
             assert os.environ["SKYLOS_PORT"] == "6123"
 
