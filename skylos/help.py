@@ -33,7 +33,7 @@ COMMANDS = [
     {"name": "skylos sync", "desc": "Sync config with Skylos Cloud", "group": "Utility"},
     {"name": "skylos ingest", "desc": "Ingest findings from external tools", "group": "Utility"},
     {"name": "skylos provenance", "desc": "Detect AI-authored code in PR changes", "group": "Utility"},
-    {"name": "skylos run", "desc": "Start local web dashboard server", "group": "Utility"},
+    {"name": "skylos run", "desc": "Start local web dashboard server (--port and SKYLOS_PORT supported)", "group": "Utility"},
     {"name": "skylos commands", "desc": "List all commands (flat)", "group": "Utility"},
     {"name": "skylos tour", "desc": "Guided tour of capabilities", "group": "Utility"},
 ]

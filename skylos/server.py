@@ -17,11 +17,29 @@ from threading import Timer
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 
 app = Flask(__name__)
+
+
+def _get_server_port():
+    raw = os.getenv("SKYLOS_PORT", "5090")
+    try:
+        port = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid SKYLOS_PORT: {raw!r}") from exc
+    if not (1 <= port <= 65535):
+        raise ValueError(f"Invalid SKYLOS_PORT: {raw!r}")
+    return port
+
+
+def _get_default_cors_origins():
+    port = _get_server_port()
+    return [f"http://localhost:{port}", f"http://127.0.0.1:{port}"]
+
+
 _cors_origins = os.getenv("SKYLOS_CORS_ORIGINS")
 if _cors_origins:
     origins = [o.strip() for o in _cors_origins.split(",") if o.strip()]
 else:
-    origins = ["http://localhost:5090", "http://127.0.0.1:5090"]
+    origins = _get_default_cors_origins()
 
 CORS(
     app,
@@ -673,20 +691,22 @@ def analyze_project():
 def start_server(exclude_folders=None):
     if exclude_folders is None:
         exclude_folders = DEFAULT_EXCLUDE_FOLDERS
+    port = _get_server_port()
+    local_url = f"http://localhost:{port}"
     app.config["EXCLUDE_FOLDERS"] = exclude_folders
     app.config["ALLOWED_SCAN_ROOTS"] = _get_allowed_scan_roots()
     app.config["WEB_API_TOKEN"] = os.getenv("SKYLOS_WEB_TOKEN") or secrets.token_hex(24)
 
     def open_browser():
-        webbrowser.open("http://localhost:5090")
+        webbrowser.open(local_url)
 
     print(" Starting Skylos Web Interface...")
-    print("Opening browser at: http://localhost:5090")
+    print(f"Opening browser at: {local_url}")
 
     Timer(1.5, open_browser).start()
 
     bind_host = os.getenv("SKYLOS_BIND", "127.0.0.1")
-    app.run(debug=False, host=bind_host, port=5090, use_reloader=False)
+    app.run(debug=False, host=bind_host, port=port, use_reloader=False)
 
 
 if __name__ == "__main__":
