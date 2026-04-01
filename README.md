@@ -19,6 +19,8 @@
 
 📖 **[Website](https://skylos.dev)** · **[Documentation](https://docs.skylos.dev)** · **[Blog](https://skylos.dev/blog)** · **[GitHub Action](https://github.com/duriantaco/skylos/blob/main/action.yml)** · **[VS Code Extension](https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension)** · **[MCP Server](https://github.com/duriantaco/skylos/tree/main/skylos_mcp)**
 
+**English** | [中文](README_CN.md)
+
 ---
 
 # What is Skylos?
