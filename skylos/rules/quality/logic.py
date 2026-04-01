@@ -2508,11 +2508,8 @@ class BroadExceptionRule(SkylosRule):
         exc_name = _exception_type_name(node.type)
         if exc_name not in self._BROAD_EXCEPTION_TYPES:
             return None
-
-
         if _handler_has_real_work(node.body):
             return None
-
         if not _handler_body_is_trivial(node.body):
             return None
 
