@@ -2494,3 +2494,42 @@ class BooleanTrapRule(SkylosRule):
                 )
 
         return findings if findings else None
+
+class BroadExceptionRule(SkylosRule):
+    rule_id = "SKY-L030"
+    name = "Broad Exception with Trivial Handler"
+
+    _BROAD_EXCEPTION_TYPES = {"Exception", "BaseException"}
+
+    def visit_node(self, node, context):
+        if not isinstance(node, ast.ExceptHandler) or node.type is None:
+            return None
+        
+        exc_name = _exception_type_name(node.type)
+        if exc_name not in self._BROAD_EXCEPTION_TYPES:
+            return None
+
+
+        if _handler_has_real_work(node.body):
+            return None
+
+        if not _handler_body_is_trivial(node.body):
+            return None
+
+        return [
+            {
+                "rule_id": self.rule_id,
+                "kind": "logic",
+                "severity": "MEDIUM",
+                "type": "block",
+                "name": "except",
+                "simple_name": "except",
+                "value": "broad",
+                "threshold": 0,
+                "message": f"Catching broad '{exc_name}' with a trivial handler silently hides bugs. Narrow the exception type or add logging/re-raise.",
+                "file": context.get("filename"),
+                "basename": Path(context.get("filename", "")).name,
+                "line": node.lineno,
+                "col": node.col_offset,
+            }
+        ]
