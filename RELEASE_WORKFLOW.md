@@ -31,7 +31,7 @@ These must be enabled for predictable releases:
    - Require pull request before merge.
    - Require status checks to pass.
    - Include PR title validation and core CI checks.
-   - Prefer **squash merge** for a clean conventional history.
+   - Change merge strategy to squash merges for clean release semantics/changelogs.
 
 2. **PR title policy enabled**
    - Workflow: `.github/workflows/pr-title.yml`
