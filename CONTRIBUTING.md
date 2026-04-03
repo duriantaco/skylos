@@ -49,6 +49,7 @@ Use one of these types:
 
 - `feat`
 - `fix`
+- `docs`
 - `refactor`
 - `test`
 - `chore`
@@ -56,6 +57,7 @@ Use one of these types:
 - `style`
 - `ci`
 - `infra`
+- `revert`
 
 Example:
 
