@@ -447,6 +447,21 @@ def _exception_type_name(exc_type):
     return None
 
 
+def _exception_type_names(exc_type):
+    if exc_type is None:
+        return []
+    if isinstance(exc_type, ast.Name):
+        return [exc_type.id]
+    if isinstance(exc_type, ast.Attribute):
+        return [exc_type.attr]
+    if isinstance(exc_type, ast.Tuple):
+        names = []
+        for elt in exc_type.elts:
+            names.extend(_exception_type_names(elt))
+        return names
+    return []
+
+
 class EmptyErrorHandlerRule(SkylosRule):
     rule_id = "SKY-L007"
     name = "Empty Error Handler"
@@ -2494,3 +2509,45 @@ class BooleanTrapRule(SkylosRule):
                 )
 
         return findings if findings else None
+
+class BroadExceptionRule(SkylosRule):
+    rule_id = "SKY-L030"
+    name = "Broad Exception with Trivial Handler"
+
+    _BROAD_EXCEPTION_TYPES = {"Exception", "BaseException"}
+
+    def visit_node(self, node, context):
+        if not isinstance(node, ast.ExceptHandler) or node.type is None:
+            return None
+
+        broad_types = [
+            exc_name
+            for exc_name in _exception_type_names(node.type)
+            if exc_name in self._BROAD_EXCEPTION_TYPES
+        ]
+        if not broad_types:
+            return None
+        if _handler_has_real_work(node.body):
+            return None
+        if not _handler_body_is_trivial(node.body):
+            return None
+
+        exc_name = ", ".join(sorted(set(broad_types)))
+
+        return [
+            {
+                "rule_id": self.rule_id,
+                "kind": "logic",
+                "severity": "MEDIUM",
+                "type": "block",
+                "name": "except",
+                "simple_name": "except",
+                "value": "broad",
+                "threshold": 0,
+                "message": f"Catching broad '{exc_name}' with a trivial handler silently hides bugs. Narrow the exception type or add logging/re-raise.",
+                "file": context.get("filename"),
+                "basename": Path(context.get("filename", "")).name,
+                "line": node.lineno,
+                "col": node.col_offset,
+            }
+        ]
