@@ -868,6 +868,7 @@ Skylos validates semantic PR titles via `.github/workflows/pr-title.yml` with th
 
 - `feat`
 - `fix`
+- `docs`
 - `refactor`
 - `test`
 - `chore`
@@ -875,6 +876,7 @@ Skylos validates semantic PR titles via `.github/workflows/pr-title.yml` with th
 - `style`
 - `ci`
 - `infra`
+- `revert`
 
 For complete release ownership, guardrails, and recovery steps, see [`RELEASE_WORKFLOW.md`](RELEASE_WORKFLOW.md).
 

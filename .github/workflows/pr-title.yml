@@ -19,6 +19,7 @@ jobs:
           types: |
             feat
             fix
+            docs
             refactor
             test
             chore
@@ -26,6 +27,7 @@ jobs:
             style
             ci
             infra
+            revert
           requireScope: true
           subjectPattern: ^[a-z].+$
           subjectPatternError: |

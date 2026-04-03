@@ -39,6 +39,7 @@ These must be enabled for predictable releases:
    - Allowed semantic types:
      - `feat`
      - `fix`
+     - `docs`
      - `refactor`
      - `test`
      - `chore`
@@ -46,6 +47,7 @@ These must be enabled for predictable releases:
      - `style`
      - `ci`
      - `infra`
+     - `revert`
 
 3. **Release Please configured**
    - Workflow: `.github/workflows/release-please.yml`
@@ -70,6 +72,8 @@ Skylos bootstraps Release Please from the existing version history using:
   - `bootstrap-sha: cf3fb427545ad509167438cb76ad41bbba4578fe`
 
 This prevents retroactive release generation for older history and starts automation from the established baseline.
+
+`CHANGELOG.md` is preserved and continued from this baseline. Release Please appends new versions after the current changelog state instead of regenerating the changelog from scratch.
 
 ## End-to-End Release Flow
 
