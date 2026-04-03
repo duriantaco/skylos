@@ -1,19 +1,5 @@
 ## Changelog
 
-## [Unreleased]
-
-### Added
-- Added a Simplified Chinese README (`README_CN.md`)
-- Added configurable web UI port support for `skylos run` via `--port` or `SKYLOS_PORT`
-
-### Changed
-- Continue CLI cleanup by extracting command boundaries, lazy-loading heavy analysis paths.Expanded regression guardrails around dispatch, output, and exit-code behavior
-
-### Fixed
-- Browser login callback now validates `state` and verifies the returned token metadata via `whoami`
-- Fixed local web UI rendering to avoid unsafe HTML insertion patterns
-- Sync credentials are written with stricter file and dir permissions
-
 ## [4.2.0] - 2026-03-30
 
 ### Added
