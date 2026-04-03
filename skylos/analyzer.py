@@ -72,6 +72,7 @@ from skylos.rules.quality.logic import (
     DuplicateStringLiteralRule,
     TooManyReturnsRule,
     BooleanTrapRule,
+    BroadExceptionRule,
 )
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
@@ -2092,6 +2093,8 @@ def proc_file(
                 q_rules.append(TooManyReturnsRule())
             if "SKY-L029" not in cfg["ignore"]:
                 q_rules.append(BooleanTrapRule())
+            if "SKY-L030" not in cfg["ignore"]:
+                q_rules.append(BroadExceptionRule())
             # SKY-D260 (prompt injection) is now handled by injection_scanner..
             if "SKY-Q501" not in cfg["ignore"]:
                 q_rules.append(GodClassRule())

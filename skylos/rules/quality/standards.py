@@ -71,6 +71,12 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
             "name": "Invokable Control Element with Signature Containing an Excessive Number of Parameters",
         }
     ],
+    "SKY-L030": [
+        {
+            "id": "CWE-396",
+            "name": "Declaration of Catch for Generic Exception",
+        }
+    ],
     # Complexity / structure
     "SKY-Q301": [{"id": "CWE-1121", "name": "Excessive McCabe Cyclomatic Complexity"}],
     "SKY-Q302": [{"id": "CWE-1124", "name": "Excessively Deep Nesting"}],
