@@ -1,0 +1,61 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4.4.0 (pin SHA to avoid supply chain attacks))
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: tools/release/release-please-config.json
+          manifest-file: tools/release/.release-please-manifest.json
+
+  build-and-publish:
+    name: Build and publish
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "build>=1.2.2" "packaging>=24.2" "twine>=6.1.0"
+
+      - name: Build sdist + wheel
+        run: |
+          python -m build --sdist --wheel --outdir dist
+
+      - name: Check dist contents
+        run: |
+          ls -lah dist
+          python -m twine check dist/*
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          python -m twine upload --skip-existing dist/*

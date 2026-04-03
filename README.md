@@ -116,6 +116,8 @@ git add .github/workflows/skylos.yml && git push
 - [Auditing and Precision](#auditing-and-precision)
 - [Coverage Integration](#coverage-integration)
 - [Filtering](#filtering)
+- [Release Automation](#release-automation)
+- [Release Workflow Runbook](#release-workflow-runbook)
 - [CLI Options](#cli-options)
 - [FAQ](#faq)
 - [Limitations and Troubleshooting](#limitations-and-troubleshooting)
@@ -822,6 +824,65 @@ For the default `skylos cicd init` workflow, you do not need any Skylos-specific
 | `SKYLOS_TOKEN` | If using `--upload` | Upload token from [skylos.dev/dashboard/settings](https://skylos.dev/dashboard/settings) |
 
 `GH_TOKEN` is automatically provided by GitHub Actions — no setup needed for PR comments.
+
+## Release Automation
+
+Skylos uses a single release workflow for automation:
+
+- `.github/workflows/release-please.yml` updates `CHANGELOG.md`, bumps `pyproject.toml`, opens a release PR, creates the GitHub Release when merged, then builds wheel+sdist and publishes to PyPI in the same workflow.
+- `.github/workflows/publish.yml` is kept as a manual fallback (`workflow_dispatch`) if you ever need to republish from a specific ref/tag.
+
+### First-time bootstrap (already configured in this repo)
+
+Release Please is bootstrapped with:
+
+- `tools/release/.release-please-manifest.json` set to `4.2.0`
+- `tools/release/release-please-config.json` set with `bootstrap-sha` at the commit that prepared `4.2.0`
+
+This prevents backfilling old history and starts automated releases from the current baseline.
+
+### Normal release flow
+
+1. Merge conventional commits into `main` (for example: `feat: ...`, `fix: ...`).
+2. Release Please opens/updates the release PR.
+3. Merge the release PR to `main`.
+4. Release Please creates the GitHub release tag (`vX.Y.Z`).
+5. In the same workflow run, Skylos builds and publishes to PyPI using `PYPI_TOKEN`.
+
+### Manual build/publish checks
+
+If you need to validate packaging before a release:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install "build>=1.2.2" "twine>=6.1.0"
+python -m build --sdist --wheel --outdir dist
+python -m twine check dist/*
+```
+
+If you need to manually run the fallback publish workflow, use **Actions -> Build and publish -> Run workflow** and set `ref` to the target tag (for example `v4.2.1`).
+
+### PR title types used for release semantics
+
+Skylos validates semantic PR titles via `.github/workflows/pr-title.yml` with these allowed types:
+
+- `feat`
+- `fix`
+- `docs`
+- `refactor`
+- `test`
+- `chore`
+- `perf`
+- `style`
+- `ci`
+- `infra`
+- `revert`
+
+For complete release ownership, guardrails, and recovery steps, see [`RELEASE_WORKFLOW.md`](RELEASE_WORKFLOW.md).
+
+## Release Workflow Runbook
+
+Release roles, prerequisites, branch protection guidance, semantic type policy, and incident recovery steps are documented in [`RELEASE_WORKFLOW.md`](RELEASE_WORKFLOW.md).
 
 ## Command Reference
 
