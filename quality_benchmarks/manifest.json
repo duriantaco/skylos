@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "complexity-hotspot",
+      "path": "fixtures/complexity_hotspot",
+      "description": "Branch-heavy request handler should be flagged for cyclomatic complexity.",
+      "taxonomy": ["complexity", "control_flow"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/fastapi/fastapi",
+        "license": "MIT",
+        "notes": "Distilled from common API handler branching patterns."
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-Q301", "branchy_handler"]
+        },
+        "absent": {
+          "quality": ["simple_handler"]
+        }
+      }
+    },
+    {
+      "id": "long-function",
+      "path": "fixtures/long_function",
+      "description": "Report builder should be flagged when the local max_lines threshold is exceeded.",
+      "taxonomy": ["maintainability"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/pallets/click",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from command/report formatting helpers."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-C304", "render_report"]
+        },
+        "absent": {
+          "quality": ["tiny_helper"]
+        }
+      }
+    },
+    {
+      "id": "argument-overload",
+      "path": "fixtures/argument_overload",
+      "description": "Service function should be flagged when it takes too many required arguments.",
+      "taxonomy": ["api_design", "maintainability"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/django/django",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from service-layer helper signatures."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-C303", "build_request"]
+        },
+        "absent": {
+          "quality": ["helper"]
+        }
+      }
+    },
+    {
+      "id": "inconsistent-return",
+      "path": "fixtures/inconsistent_return",
+      "description": "Mixed value and bare returns should be reported as a logic issue.",
+      "taxonomy": ["control_flow"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from request handler helper logic."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-L006", "resolve_user"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "empty-error-handler",
+      "path": "fixtures/empty_error_handler",
+      "description": "Silent exception swallowing should be treated as a quality problem.",
+      "taxonomy": ["exception_handling"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/psf/requests",
+        "license": "Apache-2.0",
+        "notes": "Distilled from network retry / fallback shapes where exception swallowing matters."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-L007"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "clean-module",
+      "path": "fixtures/clean_module",
+      "description": "A small helper module should remain free of the starter benchmark quality findings.",
+      "taxonomy": ["precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Distilled from small utility-module patterns in the Python standard library."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": ["SKY-Q301", "SKY-C303", "SKY-C304", "SKY-L006", "SKY-L007", "SKY-UC001"]
+        }
+      }
+    }
+  ]
+}

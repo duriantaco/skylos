@@ -1,0 +1,27 @@
+name: Quality Benchmark
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  quality-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Create venv + install deps
+        run: |
+          uv venv
+          uv pip install -e .
+
+      - name: Run quality benchmark
+        run: |
+          uv run python scripts/quality_benchmark.py --manifest quality_benchmarks/manifest.json | tee /tmp/quality-benchmark-summary.txt
+          cat /tmp/quality-benchmark-summary.txt >> "$GITHUB_STEP_SUMMARY"

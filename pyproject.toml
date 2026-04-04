@@ -134,3 +134,12 @@ strict = false
 
 [tool.uv.workspace]
 exclude = ["rust"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+norecursedirs = [
+    "agent_review_benchmarks",
+    "corpus",
+    "manual",
+    "quality_benchmarks",
+]

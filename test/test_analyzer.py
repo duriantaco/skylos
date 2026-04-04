@@ -196,7 +196,9 @@ class TestSkylos:
         assert files == mock_files
         assert root == mock_dir
 
-    def test_get_python_files_fallback_honors_gitignore(self, skylos, tmp_path, monkeypatch):
+    def test_get_python_files_fallback_honors_gitignore(
+        self, skylos, tmp_path, monkeypatch
+    ):
         if shutil.which("git") is None:
             pytest.skip("git is required for this test")
 
@@ -206,7 +208,9 @@ class TestSkylos:
         ignored_dir.mkdir(parents=True)
         kept_dir.mkdir(parents=True)
         (project / ".gitignore").write_text("customenv/\n", encoding="utf-8")
-        (ignored_dir / "ghost.py").write_text("def ghost():\n    pass\n", encoding="utf-8")
+        (ignored_dir / "ghost.py").write_text(
+            "def ghost():\n    pass\n", encoding="utf-8"
+        )
         keep_file = kept_dir / "keep.py"
         keep_file.write_text("def keep():\n    return 1\n", encoding="utf-8")
         subprocess.run(["git", "init", "-q"], cwd=project, check=True)
@@ -918,6 +922,105 @@ class UnusedFixturesPlugin:
         assert "pytest_collection_finish" not in unreachable
         assert "pytest_fixture_setup" not in unreachable
         assert "pytest_sessionfinish" not in unreachable
+
+    def test_analyze_suppresses_additional_pytest_plugin_hooks(self, tmp_path):
+        src = tmp_path / "plugin.py"
+        src.write_text(
+            """
+import pytest
+
+def pytest_addhooks(pluginmanager):
+    return None
+
+def pytest_cmdline_main(config):
+    return 0
+
+def pytest_assertrepr_compare(config, op, left, right):
+    return []
+"""
+        )
+
+        result_json = analyze(str(tmp_path), conf=0)
+        result = json.loads(result_json)
+
+        unreachable = {
+            item["name"].split(".")[-1] for item in result["unused_functions"]
+        }
+
+        assert "pytest_addhooks" not in unreachable
+        assert "pytest_cmdline_main" not in unreachable
+        assert "pytest_assertrepr_compare" not in unreachable
+
+    def test_analyze_suppresses_pytest_hook_parameters(self, tmp_path):
+        src = tmp_path / "plugin.py"
+        src.write_text(
+            """
+import pytest
+
+def pytest_assertrepr_compare(config, op, left, right):
+    return []
+"""
+        )
+
+        result_json = analyze(str(tmp_path), conf=0)
+        result = json.loads(result_json)
+
+        unused_parameters = {
+            item["simple_name"] for item in result["unused_parameters"]
+        }
+
+        assert "config" not in unused_parameters
+        assert "op" not in unused_parameters
+        assert "left" not in unused_parameters
+        assert "right" not in unused_parameters
+
+    def test_analyze_suppresses_sqlalchemy_listener_parameters(self, tmp_path):
+        src = tmp_path / "listener.py"
+        src.write_text(
+            """
+from sqlalchemy import event
+
+class Engine:
+    pass
+
+def on_connect(dbapi_connection, connection_record):
+    return None
+
+event.listens_for(Engine, "connect")(on_connect)
+"""
+        )
+
+        result_json = analyze(str(tmp_path), conf=0)
+        result = json.loads(result_json)
+
+        unused_parameters = {
+            item["simple_name"] for item in result["unused_parameters"]
+        }
+
+        assert "dbapi_connection" not in unused_parameters
+        assert "connection_record" not in unused_parameters
+
+    def test_analyze_single_file_skips_project_unused_dependency_rule(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "demo"\ndependencies = ["requests", "rich"]\n',
+            encoding="utf-8",
+        )
+        src = tmp_path / "demo.py"
+        src.write_text(
+            """
+def fake_call():
+    print("demo")
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(src), conf=0, enable_quality=True)
+        result = json.loads(result_json)
+
+        quality = result.get("quality", [])
+        dependency_findings = [f for f in quality if f.get("rule_id") == "SKY-U005"]
+
+        assert dependency_findings == []
 
 
 if __name__ == "__main__":

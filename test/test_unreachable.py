@@ -120,6 +120,21 @@ def check_branches(x):
         findings = self._analyze(code)
         self.assertEqual(len(findings), 0)
 
+    def test_while_false_dead_branch(self):
+        code = """
+def loop_func():
+    while False:
+        print("unreachable")
+    return 1
+"""
+        tree = ast.parse(code)
+        while_node = tree.body[0].body[0]
+        findings = self.rule.visit_node(while_node, self.context)
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["line"], 4)
+        self.assertIn("always False", findings[0]["message"])
+
     def test_nested_if_else_termination(self):
         code = """
 def complex_logic(x, y):
