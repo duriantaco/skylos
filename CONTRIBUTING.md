@@ -27,6 +27,7 @@
     * For Python CLI changes, primarily in `skylos/cli.py`.
 6.  **Add Tests:**
     * For Python integration tests: `pytest tests/` from the project root.
+    * For static-analysis precision changes: `python3 scripts/corpus_ci.py --manifest corpus/manifest.json`
     * Ensure your changes are covered by new or existing tests.
 7.  **Update Documentation:** If your changes affect user-facing features or the API, please update `README.md` or other relevant documentation.
 8.  **Commit Your Changes:** `git commit -am 'your changes'`
@@ -37,6 +38,15 @@
 
 ## Code Style
 - You can look at our code and just follow it accordingly. Try your best to follow best practices. 
+
+## Precision Policy
+
+- Treat the corpus as a required regression guard for dead-code precision.
+- If you fix a confirmed false positive or precision regression, add a minimal fixture under `corpus/fixtures/` that isolates the runtime contract or language pattern.
+- Register the case in `corpus/manifest.json` with narrow expectations and a source link to the upstream framework or library pattern that motivated it.
+- Keep fixtures small and pattern-focused. The corpus should protect specific contracts, not attempt to model an entire framework in one file.
+- Prefer explicit contracts over broad heuristic suppression. If a pattern is plausible but not proven, keep the rule narrow or lower confidence instead of hard-suppressing it.
+- Do not relax or remove an existing corpus expectation unless the original pattern was invalid or the contract changed.
 
 ## Getting Help
 If you have questions or need help, feel free to open an issue with the "question" label.
