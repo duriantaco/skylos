@@ -60,6 +60,7 @@ These must be enabled for predictable releases:
 
 5. **GitHub Actions permissions**
    - `contents: write`
+   - `issues: write`
    - `pull-requests: write`
 
 ## Release Baseline (Bootstrap)
@@ -67,9 +68,9 @@ These must be enabled for predictable releases:
 Skylos bootstraps Release Please from the existing version history using:
 
 - `tools/release/.release-please-manifest.json`:
-  - `"." : "4.2.0"`
+  - `"." : "4.2.1"`
 - `tools/release/release-please-config.json`:
-  - `bootstrap-sha: cf3fb427545ad509167438cb76ad41bbba4578fe`
+  - `bootstrap-sha: a498b27b6902b34e469acfddac1068635aae8122`
 
 This prevents retroactive release generation for older history and starts automation from the established baseline.
 
@@ -97,7 +98,7 @@ This prevents retroactive release generation for older history and starts automa
 ## Operational Notes
 
 - The release and publish logic intentionally lives in one workflow (`release-please.yml`) to avoid cross-workflow timing issues.
-- `.github/workflows/publish.yml` is retained as a **manual fallback** (`workflow_dispatch`) for emergency republish scenarios.
+- `.github/workflows/publish.yml` is retained as a **manual fallback** (`workflow_dispatch`) for emergency republish of an existing release tag.
 - Publish step uses `--skip-existing` to reduce failure risk on re-runs.
 
 ## Manual Validation (Optional)
@@ -117,5 +118,5 @@ If automated publish fails:
 
 1. Fix the cause (token, package metadata, transient registry error).
 2. Re-run failed workflow job if safe.
-3. If needed, run `.github/workflows/publish.yml` manually with `ref=vX.Y.Z`.
+3. If needed, run `.github/workflows/publish.yml` manually with `ref=vX.Y.Z` only. Do not publish from a branch ref.
 4. Confirm version appears on PyPI and matches the GitHub release tag.
