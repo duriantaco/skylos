@@ -26,47 +26,23 @@
 5.  **Make Your Changes:**
     * For Python CLI changes, primarily in `skylos/cli.py`.
 6.  **Add Tests:**
-    * For Python integration tests: `pytest tests/` from the project root.
+    * For Python integration tests: `pytest test/` from the project root.
     * For static-analysis precision changes: `python3 scripts/corpus_ci.py --manifest corpus/manifest.json`
     * Ensure your changes are covered by new or existing tests.
 7.  **Update Documentation:** If your changes affect user-facing features or the API, please update `README.md` or other relevant documentation.
 8.  **Commit Your Changes:** `git commit -am 'your changes'`
-9.  **Push to Your Branch:** `git push origin feature/your changes`
+9.  **Push to Your Branch:** `git push origin feature/your-changes`
 10. **Open a Pull Request:** Go to the original Skylos repo and open a pull request from your forked branch.
     * Provide clear description of your changes.
     * Reference any related issues.
 
-### PR Title Convention (Required)
+## Contribution Authorship And AI Use
 
-Skylos uses semantic PR title validation for release automation.
-
-Required format:
-
-```text
-<type>(<scope>): <message>
-```
-
-Use one of these types:
-
-- `feat`
-- `fix`
-- `docs`
-- `refactor`
-- `test`
-- `chore`
-- `perf`
-- `style`
-- `ci`
-- `infra`
-- `revert`
-
-Example:
-
-```text
-feat(cli): add ai defense context for rag pipelines
-```
-
-Release process details and maintainer runbook: [`RELEASE_WORKFLOW.md`](RELEASE_WORKFLOW.md).
+- Contributors are expected to write and own their submitted code, issue reports, PR descriptions, and review summaries. AI-generated content submitted as one's own work will not be accepted.
+- Contributors must be able to explain, test, and defend any substantive change. If a contributor cannot clearly explain what changed and why, the submission may be rejected regardless of how it was produced.
+- Maintainers evaluate submissions on correctness, clarity, test coverage, and the contributor's demonstrated understanding of the change.
+- Assistive use is permitted for spelling, grammar, minor cleanups, and supplemental research. If AI tools played a meaningful role in producing a contribution, please disclose that in the PR.
+- This policy governs what gets submitted to Skylos, **NOT** every private tool used in the background. We are taking a stricter posture for now because review capacity is limited and the project quality bar is high.
 
 ## Code Style
 - You can look at our code and just follow it accordingly. Try your best to follow best practices. 
