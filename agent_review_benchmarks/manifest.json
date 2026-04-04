@@ -1,0 +1,335 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "complexity-hotspot",
+      "path": "../quality_benchmarks/fixtures/complexity_hotspot/app.py",
+      "description": "Branch-heavy handler should be surfaced under the owning function symbol.",
+      "taxonomy": ["complexity", "control_flow"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/fastapi/fastapi",
+        "license": "MIT",
+        "notes": "Agent-review benchmark distilled from branch-heavy API handlers."
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["branchy_handler"]
+        },
+        "absent": {
+          "quality": ["simple_handler"]
+        }
+      }
+    },
+    {
+      "id": "inconsistent-return",
+      "path": "../quality_benchmarks/fixtures/inconsistent_return/module.py",
+      "description": "Mixed return paths should be attached to the owning function.",
+      "taxonomy": ["control_flow"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Agent-review benchmark for return-path reasoning."
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["resolve_user"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "empty-error-handler",
+      "path": "../quality_benchmarks/fixtures/empty_error_handler/module.py",
+      "description": "Silent exception swallowing should be attached to parse_payload.",
+      "taxonomy": ["exception_handling"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/psf/requests",
+        "license": "Apache-2.0",
+        "notes": "Agent-review benchmark for exception ownership."
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["parse_payload"]
+        },
+        "absent": {
+          "quality": ["except"]
+        }
+      }
+    },
+    {
+      "id": "clean-module",
+      "path": "../quality_benchmarks/fixtures/clean_module/module.py",
+      "description": "Clean module should stay quiet under agent review.",
+      "taxonomy": ["precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Agent-review benchmark for review precision."
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": ["normalize_name", "join_parts"]
+        }
+      }
+    },
+    {
+      "id": "async-blocking-handler",
+      "path": "fixtures/async_blocking_handler/app.py",
+      "description": "Async handlers should surface blocking calls like requests.get and time.sleep under the owning function.",
+      "taxonomy": ["concurrency", "maintainability"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/fastapi/fastapi",
+        "license": "MIT",
+        "notes": "Distilled from common async web-handler mistakes in FastAPI-style services."
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {
+          "performance": ["fetch_profile"]
+        },
+        "absent": {
+          "performance": ["fetch_health"]
+        }
+      }
+    },
+    {
+      "id": "missing-await",
+      "path": "fixtures/missing_await/module.py",
+      "description": "Coroutines passed through without await should attach to the caller that forgot the await.",
+      "taxonomy": ["concurrency", "control_flow"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/aio-libs/aiohttp",
+        "license": "Apache-2.0",
+        "notes": "Distilled from async client/helper call chains where forgotten awaits cause coroutine leaks."
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {
+          "bug": ["load_dashboard"]
+        },
+        "absent": {
+          "bug": ["load_dashboard_ok"]
+        }
+      }
+    },
+    {
+      "id": "mutable-default-state",
+      "path": "fixtures/mutable_default_state/module.py",
+      "description": "Mutable default accumulators should be surfaced under the owning helper.",
+      "taxonomy": ["state_management"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Distilled from canonical Python mutable-default pitfalls."
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {
+          "bug": ["append_tag"]
+        },
+        "absent": {
+          "bug": ["build_headers"]
+        }
+      }
+    },
+    {
+      "id": "resource-leak",
+      "path": "fixtures/resource_leak/module.py",
+      "description": "Early returns on open file handles should be attached to the leaking helper, not the safe variant.",
+      "taxonomy": ["resource_handling", "maintainability"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/pallets/click",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from file-loading helpers where a missing context manager leaks resources."
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["load_first_line"]
+        },
+        "absent": {
+          "quality": ["safe_preview"]
+        }
+      }
+    },
+    {
+      "id": "duplicate-condition",
+      "path": "fixtures/duplicate_condition/module.py",
+      "description": "Duplicated branch conditions should be surfaced on the function that makes a branch unreachable.",
+      "taxonomy": ["control_flow"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/django/django",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from request-routing helper patterns where a later branch can never run."
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {
+          "bug": ["route_request"]
+        },
+        "absent": {
+          "bug": ["route_request_ok"]
+        }
+      }
+    },
+    {
+      "id": "tricky-clean-module",
+      "path": "fixtures/tricky_clean/module.py",
+      "description": "A clean async/control-flow helper file should stay quiet even with early returns and optional None contracts.",
+      "taxonomy": ["precision_guard", "concurrency", "control_flow"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/encode/starlette",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from async helper patterns with legitimate early returns and optional responses."
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": ["fetch_status", "normalize_headers"],
+          "bug": ["fetch_status", "normalize_headers"],
+          "performance": ["fetch_status"]
+        }
+      }
+    },
+    {
+      "id": "cross-file-sql-injection",
+      "path": "fixtures/cross_file_sql_injection",
+      "description": "A repo-style data flow should surface the query builder that interpolates untrusted input into SQL across files.",
+      "taxonomy": ["security", "control_flow"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from common web-handler to repository query-builder flows."
+      },
+      "scan": {
+        "max_files": 4
+      },
+      "budget": {
+        "max_seconds": 14.0
+      },
+      "expect": {
+        "present": {
+          "security": ["search_users"]
+        },
+        "absent": {
+          "security": ["list_recent_users"]
+        }
+      }
+    },
+    {
+      "id": "shell-hook-runner",
+      "path": "fixtures/shell_hook_runner",
+      "description": "A repo-style CLI hook runner should surface shell injection on the dynamic command path but not on the allowlisted path.",
+      "taxonomy": ["security", "maintainability"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/click",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from CLI helper patterns that mix safe builtins with arbitrary shell hooks."
+      },
+      "scan": {
+        "max_files": 3
+      },
+      "budget": {
+        "max_seconds": 14.0
+      },
+      "expect": {
+        "present": {
+          "security": ["run_named_hook"]
+        },
+        "absent": {
+          "security": ["run_builtin"]
+        }
+      }
+    },
+    {
+      "id": "debt-hotspot-service",
+      "path": "fixtures/debt_hotspot_service",
+      "description": "A central service module imported by multiple entry surfaces should be surfaced as a debt hotspot when it is wide, branch-heavy, and swallows failures.",
+      "taxonomy": ["technical_debt", "complexity", "exception_handling", "maintainability"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/django/django",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from central service modules that become hard to change safely over time."
+      },
+      "scan": {
+        "max_files": 4
+      },
+      "budget": {
+        "max_seconds": 14.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["reconcile_account"]
+        },
+        "absent": {
+          "quality": ["summarize_account"]
+        }
+      }
+    },
+    {
+      "id": "repo-clean-service",
+      "path": "fixtures/repo_clean_service",
+      "description": "A small multi-file service with tests and safe helpers should stay quiet under repo-aware review.",
+      "taxonomy": ["precision_guard", "security", "technical_debt"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/encode/starlette",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from clean service-layer repositories with a tested app/service/formatter split."
+      },
+      "scan": {
+        "max_files": 4
+      },
+      "budget": {
+        "max_seconds": 14.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "quality": ["handle_status", "normalize_headers"],
+          "bug": ["handle_status", "normalize_headers"],
+          "security": ["handle_status", "fetch_status"]
+        }
+      }
+    }
+  ]
+}

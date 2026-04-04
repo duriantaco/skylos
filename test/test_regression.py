@@ -546,9 +546,17 @@ class TestRegressionPRReviewFormatting:
 
     def test_all_control_types_have_suggestions(self):
         control_types = [
-            "auth", "csrf", "tls", "crypto", "rate_limit",
-            "validation", "headers", "encryption", "logging",
-            "sanitization", "permission",
+            "auth",
+            "csrf",
+            "tls",
+            "crypto",
+            "rate_limit",
+            "validation",
+            "headers",
+            "encryption",
+            "logging",
+            "sanitization",
+            "permission",
         ]
         for ct in control_types:
             assert ct in _REGRESSION_SUGGESTIONS, f"Missing suggestion for {ct}"
@@ -559,19 +567,19 @@ class TestRegressionDetectFromDiff:
 
     def test_returns_findings_with_correct_fields(self):
         fake_diffs = {
-            "views.py": "\n".join([
-                "diff --git a/views.py b/views.py",
-                "--- a/views.py",
-                "+++ b/views.py",
-                "@@ -1,5 +1,4 @@",
-                "-@login_required",
-                " def view(request):",
-                "     pass",
-            ]),
+            "views.py": "\n".join(
+                [
+                    "diff --git a/views.py b/views.py",
+                    "--- a/views.py",
+                    "+++ b/views.py",
+                    "@@ -1,5 +1,4 @@",
+                    "-@login_required",
+                    " def view(request):",
+                    "     pass",
+                ]
+            ),
         }
-        with patch(
-            "skylos.cicd.review._get_per_file_diffs", return_value=fake_diffs
-        ):
+        with patch("skylos.cicd.review._get_per_file_diffs", return_value=fake_diffs):
             findings = _detect_regressions_from_diff("origin/main")
 
         assert len(findings) >= 1
@@ -584,43 +592,45 @@ class TestRegressionDetectFromDiff:
 
     def test_returns_empty_for_clean_diff(self):
         fake_diffs = {
-            "app.py": "\n".join([
-                "diff --git a/app.py b/app.py",
-                "--- a/app.py",
-                "+++ b/app.py",
-                "@@ -1,3 +1,3 @@",
-                "-x = 1",
-                "+x = 2",
-                " y = 3",
-            ]),
+            "app.py": "\n".join(
+                [
+                    "diff --git a/app.py b/app.py",
+                    "--- a/app.py",
+                    "+++ b/app.py",
+                    "@@ -1,3 +1,3 @@",
+                    "-x = 1",
+                    "+x = 2",
+                    " y = 3",
+                ]
+            ),
         }
-        with patch(
-            "skylos.cicd.review._get_per_file_diffs", return_value=fake_diffs
-        ):
+        with patch("skylos.cicd.review._get_per_file_diffs", return_value=fake_diffs):
             findings = _detect_regressions_from_diff("origin/main")
 
         assert len(findings) == 0
 
     def test_multiple_files_with_regressions(self):
         fake_diffs = {
-            "views.py": "\n".join([
-                "--- a/views.py",
-                "+++ b/views.py",
-                "@@ -1,5 +1,4 @@",
-                "-@login_required",
-                " def view(request):",
-            ]),
-            "settings.py": "\n".join([
-                "--- a/settings.py",
-                "+++ b/settings.py",
-                "@@ -1,5 +1,4 @@",
-                "-    'django.middleware.csrf.CsrfViewMiddleware',",
-                "     'django.middleware.common.CommonMiddleware',",
-            ]),
+            "views.py": "\n".join(
+                [
+                    "--- a/views.py",
+                    "+++ b/views.py",
+                    "@@ -1,5 +1,4 @@",
+                    "-@login_required",
+                    " def view(request):",
+                ]
+            ),
+            "settings.py": "\n".join(
+                [
+                    "--- a/settings.py",
+                    "+++ b/settings.py",
+                    "@@ -1,5 +1,4 @@",
+                    "-    'django.middleware.csrf.CsrfViewMiddleware',",
+                    "     'django.middleware.common.CommonMiddleware',",
+                ]
+            ),
         }
-        with patch(
-            "skylos.cicd.review._get_per_file_diffs", return_value=fake_diffs
-        ):
+        with patch("skylos.cicd.review._get_per_file_diffs", return_value=fake_diffs):
             findings = _detect_regressions_from_diff("origin/main")
 
         assert len(findings) >= 2
@@ -663,9 +673,7 @@ class TestRegressionInSummary:
             return FakeResult()
 
         with patch("skylos.cicd.review.subprocess.run", side_effect=mock_run):
-            _post_summary_comment(
-                all_findings, diff_findings, 42, "owner/repo"
-            )
+            _post_summary_comment(all_findings, diff_findings, 42, "owner/repo")
 
         body = captured.get("body", "")
         assert "Security Regressions Detected" in body
@@ -701,9 +709,7 @@ class TestRegressionInSummary:
             return FakeResult()
 
         with patch("skylos.cicd.review.subprocess.run", side_effect=mock_run):
-            _post_summary_comment(
-                all_findings, diff_findings, 42, "owner/repo"
-            )
+            _post_summary_comment(all_findings, diff_findings, 42, "owner/repo")
 
         body = captured.get("body", "")
         assert "Security Regressions Detected" not in body

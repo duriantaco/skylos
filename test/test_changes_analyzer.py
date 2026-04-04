@@ -101,6 +101,25 @@ def tearDownModule():
             f"unittest/pytest methods incorrectly flagged: {flagged_magic}"
         )
 
+    def test_click_result_callback_not_flagged(self):
+        code = """
+import click
+
+@click.group()
+def cli():
+    pass
+
+@cli.result_callback()
+def process_result(result, verbose=False):
+    return result
+"""
+        result = self._analyze(code, "cli_app.py")
+        function_names = [f["name"] for f in result["unused_functions"]]
+
+        assert "process_result" not in function_names, (
+            "click result callback should not be flagged as unused"
+        )
+
     def test_all_edge_cases_together(self):
         code = """
 from __future__ import annotations

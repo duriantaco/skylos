@@ -329,11 +329,10 @@ def test_batch_verify_findings():
 
 def test_batch_verify_skips_with_refs():
     agent = MagicMock(spec=DeadCodeVerifierAgent)
-    # Only 1 finding will be sent to LLM (f1), f2 is skipped (has refs)
+    # Only 1 finding will be verified after refs-skipping, so the single-item
+    # fallback returns the normal graph-verifier object payload.
     agent._call_llm.return_value = json.dumps(
-        [
-            {"verdict": "TRUE_POSITIVE", "rationale": "dead"},
-        ]
+        {"verdict": "TRUE_POSITIVE", "rationale": "dead"}
     )
 
     findings = [

@@ -122,7 +122,9 @@ def test_collect_debt_signals_filters_to_changed_files():
 
 
 def test_run_debt_analysis_builds_snapshot():
-    with patch("skylos.debt.engine.run_analyze", return_value=json.dumps(SAMPLE_RESULT)):
+    with patch(
+        "skylos.debt.engine.run_analyze", return_value=json.dumps(SAMPLE_RESULT)
+    ):
         snapshot = run_debt_analysis("/repo")
 
     assert snapshot.files_scanned == 3
@@ -132,7 +134,9 @@ def test_run_debt_analysis_builds_snapshot():
 
 
 def test_run_debt_analysis_changed_mode_keeps_project_score_and_filters_hotspots():
-    with patch("skylos.debt.engine.run_analyze", return_value=json.dumps(SAMPLE_RESULT)):
+    with patch(
+        "skylos.debt.engine.run_analyze", return_value=json.dumps(SAMPLE_RESULT)
+    ):
         full_snapshot = run_debt_analysis("/repo")
         changed_snapshot = run_debt_analysis(
             "/repo",

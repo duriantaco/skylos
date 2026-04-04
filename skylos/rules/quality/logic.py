@@ -2510,6 +2510,7 @@ class BooleanTrapRule(SkylosRule):
 
         return findings if findings else None
 
+
 class BroadExceptionRule(SkylosRule):
     rule_id = "SKY-L030"
     name = "Broad Exception with Trivial Handler"

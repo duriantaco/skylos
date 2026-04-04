@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 
+
 def resolve_ts_module(source: str, importer: str, monorepo_resolver=None) -> str | None:
     if not source.startswith("."):
         if monorepo_resolver:
@@ -39,7 +40,9 @@ def build_ts_import_graph(ts_raw_imports: dict, defs: dict, monorepo_resolver=No
 
     for importer_file, raw_imports in ts_raw_imports.items():
         for imp in raw_imports:
-            resolved = resolve_ts_module(imp["source"], str(importer_file), monorepo_resolver)
+            resolved = resolve_ts_module(
+                imp["source"], str(importer_file), monorepo_resolver
+            )
             if resolved:
                 importers_of[resolved].add(str(importer_file))
                 for name in imp["names"]:
@@ -47,9 +50,7 @@ def build_ts_import_graph(ts_raw_imports: dict, defs: dict, monorepo_resolver=No
                         wildcard_edges[str(importer_file)].add(resolved)
                     else:
                         actual_name = (
-                            name.split(" as ")[0].strip()
-                            if " as " in name
-                            else name
+                            name.split(" as ")[0].strip() if " as " in name else name
                         )
                         consumed_exports[resolved].add(actual_name)
                     target_key = f"{resolved}:{name}"
@@ -58,7 +59,9 @@ def build_ts_import_graph(ts_raw_imports: dict, defs: dict, monorepo_resolver=No
 
     _resolve_wildcard_consumed(consumed_exports, wildcard_edges, defs)
     _resolve_reexport_aliases(consumed_exports, ts_raw_imports, defs, monorepo_resolver)
-    _resolve_namespace_reexports(consumed_exports, wildcard_edges, defs, ts_raw_imports, monorepo_resolver)
+    _resolve_namespace_reexports(
+        consumed_exports, wildcard_edges, defs, ts_raw_imports, monorepo_resolver
+    )
 
     return consumed_exports, wildcard_edges, importers_of
 
@@ -98,12 +101,16 @@ def _resolve_wildcard_consumed(consumed_exports, wildcard_edges, defs):
                                 defs[target_key].references += 1
 
 
-def _resolve_reexport_aliases(consumed_exports, ts_raw_imports, defs, monorepo_resolver=None):
+def _resolve_reexport_aliases(
+    consumed_exports, ts_raw_imports, defs, monorepo_resolver=None
+):
     reexport_aliases: dict[str, dict[str, str]] = {}
 
     for importer_file, raw_imports in ts_raw_imports.items():
         for imp in raw_imports:
-            resolved = resolve_ts_module(imp["source"], str(importer_file), monorepo_resolver)
+            resolved = resolve_ts_module(
+                imp["source"], str(importer_file), monorepo_resolver
+            )
             if not resolved:
                 continue
             for name in imp["names"]:
@@ -137,7 +144,9 @@ def _resolve_reexport_aliases(consumed_exports, ts_raw_imports, defs, monorepo_r
                             defs[target_key].references += 1
 
 
-def _resolve_namespace_reexports(consumed_exports, wildcard_edges, defs, ts_raw_imports, monorepo_resolver=None):
+def _resolve_namespace_reexports(
+    consumed_exports, wildcard_edges, defs, ts_raw_imports, monorepo_resolver=None
+):
     local_defs_by_file = defaultdict(set)
     for defn in defs.values():
         if defn.type != "import":
@@ -153,22 +162,19 @@ def _resolve_namespace_reexports(consumed_exports, wildcard_edges, defs, ts_raw_
                 if str(importer_file) != reexporter:
                     continue
                 for imp in raw_imports:
-                    resolved = resolve_ts_module(imp["source"], str(importer_file), monorepo_resolver)
+                    resolved = resolve_ts_module(
+                        imp["source"], str(importer_file), monorepo_resolver
+                    )
                     if resolved != source_file:
                         continue
                     if "*" in imp["names"]:
                         ns_names = set()
                         for dk, dv in defs.items():
-                            if (
-                                str(dv.filename) == reexporter
-                                and dv.type == "import"
-                            ):
+                            if str(dv.filename) == reexporter and dv.type == "import":
                                 ns_names.add(dv.simple_name)
                         for ns_name in ns_names:
                             if ns_name in consumed_from_reexporter:
-                                source_defs = local_defs_by_file.get(
-                                    source_file, set()
-                                )
+                                source_defs = local_defs_by_file.get(source_file, set())
                                 for name in source_defs:
                                     consumed_exports[source_file].add(name)
                                     target_key = f"{source_file}:{name}"
@@ -283,9 +289,7 @@ def find_dead_ts_files(files, exclude_folders, importers_of, wildcard_edges):
             norm_importers[real_target].add(os.path.realpath(imp))
     for reexporter, sources in wildcard_edges.items():
         for src in sources:
-            norm_importers[os.path.realpath(src)].add(
-                os.path.realpath(reexporter)
-            )
+            norm_importers[os.path.realpath(src)].add(os.path.realpath(reexporter))
 
     entry_points = set()
     for tf in ts_files:
@@ -371,9 +375,7 @@ def find_unused_ts_exports(demoted_exports, wildcard_edges):
         reexported_by = defaultdict(set)
         for reexporter, sources in wildcard_edges.items():
             for src in sources:
-                reexported_by[os.path.realpath(src)].add(
-                    os.path.realpath(reexporter)
-                )
+                reexported_by[os.path.realpath(src)].add(os.path.realpath(reexporter))
 
         for src_real in reexported_by:
             visited = set()

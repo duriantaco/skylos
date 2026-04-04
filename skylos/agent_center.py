@@ -418,7 +418,9 @@ def refresh_agent_state(
                 fingerprint not in debt_known if debt_baseline else False
             )
         else:
-            finding["is_new_vs_baseline"] = fingerprint not in known if baseline else False
+            finding["is_new_vs_baseline"] = (
+                fingerprint not in known if baseline else False
+            )
         finding["is_new_since_last_scan"] = fingerprint not in previous_fingerprints
         finding["is_in_changed_file"] = finding["file"] in changed_files
 
@@ -650,7 +652,9 @@ def _append_debt_hotspots(
 ) -> None:
     signals = collect_debt_signals(result, project_root=project_root)
     if not include_dead_code:
-        signals = [signal for signal in signals if signal.source_category != "dead_code"]
+        signals = [
+            signal for signal in signals if signal.source_category != "dead_code"
+        ]
     if not signals:
         return
 
@@ -730,8 +734,7 @@ def debt_hotspot_message(hotspot: dict[str, Any] | Any) -> str:
         lead = str(
             getattr(first_signal, "message", None)
             if not isinstance(first_signal, dict)
-            else first_signal.get("message")
-            or ""
+            else first_signal.get("message") or ""
         ).strip()
 
     detail = (

@@ -8,6 +8,7 @@ from skylos.adapters.litellm_adapter import LiteLLMAdapter
 def _has_litellm():
     try:
         import litellm  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -38,9 +39,16 @@ class DummyContextBuilder:
         self.analysis_calls = []
         self.fix_calls = []
 
-    def build_analysis_context(self, source, file_path=None, defs_map=None):
+    def build_analysis_context(
+        self, source, file_path=None, defs_map=None, include_review_hints=False
+    ):
         self.analysis_calls.append(
-            {"source": source, "file_path": file_path, "defs_map": defs_map}
+            {
+                "source": source,
+                "file_path": file_path,
+                "defs_map": defs_map,
+                "include_review_hints": include_review_hints,
+            }
         )
         return self.context_text
 
@@ -70,9 +78,7 @@ def test_create_agent_invalid_type_raises():
         agents.create_agent("not_real")
 
 
-@pytest.mark.skipif(
-    not _has_litellm(), reason="litellm not installed"
-)
+@pytest.mark.skipif(not _has_litellm(), reason="litellm not installed")
 def test_create_llm_adapter_returns_litellm_adapter(monkeypatch):
     cfg = agents.AgentConfig(model="gpt-4o-mini", api_key="X")
     adapter = agents.create_llm_adapter(cfg)
@@ -80,9 +86,7 @@ def test_create_llm_adapter_returns_litellm_adapter(monkeypatch):
     assert isinstance(adapter, LiteLLMAdapter)
 
 
-@pytest.mark.skipif(
-    not _has_litellm(), reason="litellm not installed"
-)
+@pytest.mark.skipif(not _has_litellm(), reason="litellm not installed")
 def test_create_llm_adapter_litellm_sets_api_base_from_env(monkeypatch):
     monkeypatch.setenv("SKYLOS_LLM_BASE_URL", "http://localhost:11434/v1")
 
@@ -107,6 +111,46 @@ def test_create_llm_adapter_forwards_max_tokens(monkeypatch):
     agents.create_llm_adapter(cfg)
 
     assert captured["max_tokens"] == 777
+
+
+def test_create_llm_adapter_forwards_temperature(monkeypatch):
+    captured = {}
+
+    class FakeLiteLLMAdapter:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "skylos.adapters.litellm_adapter.LiteLLMAdapter", FakeLiteLLMAdapter
+    )
+
+    cfg = agents.AgentConfig(model="gpt-4o-mini", api_key="X", temperature=0.05)
+    agents.create_llm_adapter(cfg)
+
+    assert captured["temperature"] == 0.05
+
+
+def test_create_llm_adapter_forwards_timeout_and_retry_attempts(monkeypatch):
+    captured = {}
+
+    class FakeLiteLLMAdapter:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "skylos.adapters.litellm_adapter.LiteLLMAdapter", FakeLiteLLMAdapter
+    )
+
+    cfg = agents.AgentConfig(
+        model="gpt-4o-mini",
+        api_key="X",
+        timeout=33,
+        retry_attempts=1,
+    )
+    agents.create_llm_adapter(cfg)
+
+    assert captured["timeout"] == 33
+    assert captured["retry_attempts"] == 1
 
 
 def test_security_agent_include_examples_true_for_small_context(monkeypatch):
@@ -212,6 +256,37 @@ def test_security_audit_agent_always_uses_complete_with_response_format(monkeypa
     )
     assert called["include_examples"] is True
 
+    assert len(fake_adapter.stream_calls) == 0
+
+
+def test_review_agent_uses_complete_with_response_format(monkeypatch):
+    ctx = "x" * 100
+    fake_builder = DummyContextBuilder(context_text=ctx)
+    fake_adapter = FakeAdapter(complete_text='{"findings": []}')
+
+    monkeypatch.setattr(agents, "ContextBuilder", lambda: fake_builder)
+    monkeypatch.setattr(agents, "create_llm_adapter", lambda config: fake_adapter)
+
+    called = {}
+
+    def fake_build_review_prompt(context, include_examples=True):
+        called["include_examples"] = include_examples
+        return ("SYS", "USER")
+
+    monkeypatch.setattr(agents, "build_review_prompt", fake_build_review_prompt)
+    monkeypatch.setattr(agents, "parse_llm_response", lambda text, fp: [])
+
+    cfg = agents.AgentConfig(api_key="x", stream=True)
+    a = agents.ReviewAgent(cfg)
+
+    out = a.analyze("src", "review.py")
+    assert out == []
+    assert called["include_examples"] is True
+    assert len(fake_adapter.complete_calls) == 1
+    assert (
+        fake_adapter.complete_calls[0]["response_format"]
+        == agents.FINDINGS_RESPONSE_FORMAT
+    )
     assert len(fake_adapter.stream_calls) == 0
 
 

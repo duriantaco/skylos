@@ -233,7 +233,10 @@ def run_defend_command(
         for result in results:
             if result.category != "defense":
                 continue
-            if not result.passed and severity_order.get(result.severity, 0) >= threshold:
+            if (
+                not result.passed
+                and severity_order.get(result.severity, 0) >= threshold
+            ):
                 exit_code = 1
                 break
 

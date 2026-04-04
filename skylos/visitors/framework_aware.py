@@ -42,6 +42,7 @@ FRAMEWORK_DECORATORS = [
     "@*.command",
     "@*.default",
     "@*.callback",
+    "@*.result_callback",
     "@*.group",
     "@*.subcommand",
     "@*.main",
@@ -127,6 +128,7 @@ FRAMEWORK_IMPORTS = {
     "pytest",
     "rest_framework",
     "pydantic",
+    "pydantic_settings",
     "celery",
     "starlette",
     "uvicorn",
@@ -267,7 +269,7 @@ class FrameworkAwareVisitor:
 
         is_pydantic = False
         for base in bases:
-            if "basemodel" in base:
+            if "basemodel" in base or "basesettings" in base:
                 is_pydantic = True
                 break
 
@@ -554,6 +556,15 @@ class FrameworkAwareVisitor:
         return None
 
     def _get_imperative_callback_target(self, call: ast.Call) -> ast.expr | None:
+        if (
+            isinstance(call.func, ast.Call)
+            and isinstance(call.func.func, ast.Attribute)
+            and call.func.func.attr == "listens_for"
+        ):
+            frameworks = self.detected_frameworks
+            if "sqlalchemy" in frameworks and call.args:
+                return call.args[0]
+
         if not isinstance(call.func, ast.Attribute):
             return None
 

@@ -214,6 +214,21 @@ class CodeGraph:
         return paths
 
     def get_security_context(self, func_name, defs_map=None):
+        return self.get_review_context(
+            func_name,
+            defs_map=defs_map,
+            include_security_hints=True,
+            include_quality_hints=False,
+        )
+
+    def get_review_context(
+        self,
+        func_name,
+        defs_map=None,
+        *,
+        include_security_hints=False,
+        include_quality_hints=False,
+    ):
         if defs_map:
             base_slice = self.get_cross_file_slice(func_name, defs_map, depth=2)
         else:
@@ -222,15 +237,29 @@ class CodeGraph:
         if not base_slice:
             return None
 
-        taint_paths = self.find_taint_paths(func_name)
+        hints = []
 
-        if taint_paths:
-            hints = ["\n# [SECURITY HINTS - Potential taint flows detected]"]
+        taint_paths = self.find_taint_paths(func_name)
+        if include_security_hints and taint_paths:
+            sec_hints = ["# [SECURITY HINTS - Potential taint flows detected]"]
             for tp in taint_paths[:5]:
                 src = tp["source"].split(":")[-1]
                 sink = tp["sink"].split(":")[-1]
-                hints.append(f"# ⚠️  {src} → {sink} (potential {tp['sink_type']})")
-            base_slice = "\n".join(hints) + "\n\n" + base_slice
+                sec_hints.append(f"# ⚠️  {src} → {sink} (potential {tp['sink_type']})")
+            hints.append("\n".join(sec_hints))
+
+        if include_quality_hints:
+            summary = self.get_function_summary(func_name)
+            if summary:
+                qual_hints = ["# [QUALITY HINTS - Structural review context]"]
+                params = summary.get("params") or []
+                qual_hints.append(f"# params={len(params)}")
+                qual_hints.append(f"# calls={len(summary.get('calls') or [])}")
+                qual_hints.append(f"# called_by={len(summary.get('called_by') or [])}")
+                hints.append("\n".join(qual_hints))
+
+        if hints:
+            base_slice = "\n\n".join(hints) + "\n\n" + base_slice
 
         return base_slice
 

@@ -309,7 +309,9 @@ exclude = ["customenv", ".claude/worktrees"]
 
     with (
         patch("skylos.cli.Progress", return_value=_progress_ctx()),
-        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
+        patch(
+            "skylos.cli.run_analyze", return_value=json.dumps(result)
+        ) as mock_analyze,
         patch("builtins.print"),
     ):
         cli.main()
@@ -343,7 +345,9 @@ exclude = ["customenv"]
 
     with (
         patch("skylos.cli.Progress", return_value=_progress_ctx()),
-        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
+        patch(
+            "skylos.cli.run_analyze", return_value=json.dumps(result)
+        ) as mock_analyze,
         patch("builtins.print"),
     ):
         cli.main()
@@ -374,7 +378,9 @@ exclude = ["customenv"]
 
     with (
         patch("skylos.cli.Progress", return_value=_progress_ctx()),
-        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
+        patch(
+            "skylos.cli.run_analyze", return_value=json.dumps(result)
+        ) as mock_analyze,
         patch("builtins.print"),
     ):
         cli.main()

@@ -314,7 +314,9 @@ def _format_review_comment(finding: dict) -> str:
 
     if kind == "security_regression":
         control_type = finding.get("control_type", "")
-        control_label = control_type.replace("_", " ").title() if control_type else "Unknown"
+        control_label = (
+            control_type.replace("_", " ").title() if control_type else "Unknown"
+        )
         parts = [
             f"⚠️ **SECURITY REGRESSION**{rule_str} — {control_label}",
             "",
@@ -467,7 +469,13 @@ def _post_summary_comment(
                 "|----------|-------|",
             ]
         )
-        for cat in ("danger", "quality", "secrets", "custom_rules", "security_regression"):
+        for cat in (
+            "danger",
+            "quality",
+            "secrets",
+            "custom_rules",
+            "security_regression",
+        ):
             count = by_category.get(cat, 0)
             if count > 0:
                 lines.append(f"| {cat} | {count} |")

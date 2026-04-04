@@ -14,6 +14,7 @@ from skylos.codemods import (
     comment_out_unused_function_cst,
 )
 from skylos.config import load_config
+from skylos.credentials import PROVIDERS
 
 from pathlib import Path
 import pathlib
@@ -712,7 +713,9 @@ def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
                 name = f.get("name") or f.get("simple_name") or ""
                 why = f.get("why_unused")
                 if why:
-                    f["message"] = f"{human_label} '{name}' is never used ({', '.join(why)})"
+                    f["message"] = (
+                        f"{human_label} '{name}' is never used ({', '.join(why)})"
+                    )
                 else:
                     f["message"] = f"{human_label} '{name}' is never used"
             if not f.get("rule_id"):
@@ -1066,8 +1069,11 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.print()
 
-    _SUPPRESS_HINT = "[muted]Suppress: # skylos: ignore (line), ignore = [\"SKY-XXX\"] (rule), or # skylos: ignore-start/end (block)[/muted]\n"
-    _DOCS_LINK = _SUPPRESS_HINT + "[muted]Full guide: https://docs.skylos.dev/guides/understanding-output[/muted]\n"
+    _SUPPRESS_HINT = '[muted]Suppress: # skylos: ignore (line), ignore = ["SKY-XXX"] (rule), or # skylos: ignore-start/end (block)[/muted]\n'
+    _DOCS_LINK = (
+        _SUPPRESS_HINT
+        + "[muted]Full guide: https://docs.skylos.dev/guides/understanding-output[/muted]\n"
+    )
 
     def _display_cap(items):
         cap = limit or len(items)
@@ -1197,7 +1203,7 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             "[muted]  • Nesting — how deeply indented the code is (depth count)[/muted]\n"
             "[muted]  • Structure — line count of a function or argument count[/muted]\n"
             "[muted]  • Duplicate strings — how many times a literal appears[/muted]\n"
-            "[muted]  • \"max N\" / \"(max N)\" — the configured threshold; tune in [tool.skylos] (complexity, nesting, max_args, max_lines, duplicate_strings)[/muted]\n"
+            '[muted]  • "max N" / "(max N)" — the configured threshold; tune in [tool.skylos] (complexity, nesting, max_args, max_lines, duplicate_strings)[/muted]\n'
             + _DOCS_LINK
         )
 
@@ -1272,9 +1278,7 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
         console.rule("[bold red]Secrets")
 
-        has_provenance = any(
-            s.get("ai_authored") is not None for s in (items or [])
-        )
+        has_provenance = any(s.get("ai_authored") is not None for s in (items or []))
 
         table = Table(expand=True)
         table.add_column("#", style="muted", width=3)
@@ -1310,7 +1314,7 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
                 f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
             )
         console.print(
-            "[muted]Provider — the service the secret belongs to (e.g. AWS, Stripe, GitHub) or \"generic\" for high-entropy strings.[/muted]\n"
+            '[muted]Provider — the service the secret belongs to (e.g. AWS, Stripe, GitHub) or "generic" for high-entropy strings.[/muted]\n'
             "[muted]Preview — a masked snippet of the detected secret.[/muted]\n"
             + _DOCS_LINK
         )
@@ -1408,9 +1412,7 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             for d in (items or [])
         )
 
-        has_provenance = any(
-            d.get("ai_authored") is not None for d in (items or [])
-        )
+        has_provenance = any(d.get("ai_authored") is not None for d in (items or []))
 
         table = Table(expand=True)
         table.add_column("#", style="muted", width=3)
@@ -2457,7 +2459,12 @@ def main() -> None:
             "--verification-mode",
             choices=["judge_all", "production"],
             default="production",
-            help="Dead-code verifier mode: judge_all sends nearly every refs==0 candidate to the LLM",
+            help="Dead-code verifier mode when --verify-dead-code is enabled",
+        )
+        p_scan.add_argument(
+            "--verify-dead-code",
+            action="store_true",
+            help="Run the slower LLM dead-code verification pass before showing final results",
         )
         p_scan.add_argument(
             "--with-fixes",
@@ -3053,19 +3060,19 @@ def main() -> None:
             provider_override=_provider_override,
             base_url_override=getattr(agent_args, "base_url", None),
             console=console,
-            allow_prompt=True,
+            allow_prompt=_is_tty(),
         )
 
         if base_url:
             os.environ["OPENAI_BASE_URL"] = base_url
             os.environ["SKYLOS_LLM_BASE_URL"] = base_url
 
-        if api_key is None:
-            sys.exit(1)
-
         if api_key is None or api_key == "":
             if not _is_local:
-                console.print("[bad]No API key provided.[/bad]")
+                env_var = PROVIDERS.get(provider) or f"{provider.upper()}_API_KEY"
+                console.print(
+                    f"[bad]No {env_var} configured. Run `skylos key` or set the environment variable.[/bad]"
+                )
                 sys.exit(1)
 
         agent_exclude_folders = list(
@@ -3131,6 +3138,8 @@ def main() -> None:
                 config = _build_analyzer_config(
                     model=model,
                     api_key=api_key,
+                    provider=provider,
+                    base_url=base_url,
                     quiet=getattr(agent_args, "quiet", False),
                 )
                 analyzer = SkylosLLM(config)
@@ -3157,6 +3166,9 @@ def main() -> None:
             agent_args.with_fixes = bool(getattr(agent_args, "with_fixes", False))
             if getattr(agent_args, "no_fixes", False):
                 agent_args.with_fixes = False
+            agent_args.skip_verification = not bool(
+                getattr(agent_args, "verify_dead_code", False)
+            )
 
             path = pathlib.Path(agent_args.path)
             if not path.exists():
@@ -3695,7 +3707,9 @@ def main() -> None:
                 try:
                     run_port = int(sys.argv[i + 1])
                 except ValueError:
-                    Console().print("[bold red]Error: --port must be an integer[/bold red]")
+                    Console().print(
+                        "[bold red]Error: --port must be an integer[/bold red]"
+                    )
                     sys.exit(1)
                 i += 2
             elif sys.argv[i] == "--port":
@@ -3964,9 +3978,15 @@ def main() -> None:
                     prov_report = analyze_provenance(git_root, base_ref=prov_base)
 
                 _finding_categories = [
-                    "danger", "quality", "secrets", "custom_rules",
-                    "unused_functions", "unused_imports", "unused_classes",
-                    "unused_variables", "unused_parameters",
+                    "danger",
+                    "quality",
+                    "secrets",
+                    "custom_rules",
+                    "unused_functions",
+                    "unused_imports",
+                    "unused_classes",
+                    "unused_variables",
+                    "unused_parameters",
                     "dependency_vulnerabilities",
                 ]
                 all_annotatable = []
@@ -3995,7 +4015,9 @@ def main() -> None:
                         )
                         agents = ai_stats.get("by_agent", {})
                         if agents:
-                            agent_parts = [f"{name}: {cnt}" for name, cnt in sorted(agents.items())]
+                            agent_parts = [
+                                f"{name}: {cnt}" for name, cnt in sorted(agents.items())
+                            ]
                             console.print(
                                 f"  [muted]Agents: {', '.join(agent_parts)}[/muted]"
                             )

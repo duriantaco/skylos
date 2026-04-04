@@ -171,8 +171,8 @@ if x is None:
         findings = check_code(rule, code)
         assert len(findings) == 0
 
-class TestBroadExceptionRule:
 
+class TestBroadExceptionRule:
     def test_exception_pass(self):
         code = """
 try:
@@ -185,7 +185,7 @@ except Exception:
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-L030"
         assert "broad" in findings[0]["message"]
-    
+
     def test_exception_continue(self):
         code = """
 for i in range(5):
@@ -198,7 +198,7 @@ for i in range(5):
         findings = check_code(rule, code)
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-L030"
-    
+
     def test_exception_return(self):
         code = """
 def foo():
@@ -211,7 +211,7 @@ def foo():
         findings = check_code(rule, code)
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-L030"
-    
+
     def test_exception_return_none(self):
         code = """
 def foo():
@@ -223,7 +223,7 @@ def foo():
         rule = BroadExceptionRule()
         findings = check_code(rule, code)
         assert len(findings) == 1
-    
+
     def test_base_exception_pass(self):
         code = """
 try:
@@ -236,7 +236,7 @@ except BaseException:
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-L030"
         assert "broad" in findings[0]["message"]
-    
+
     def test_specific_exception(self):
         code = """
 try:
@@ -247,7 +247,7 @@ except ValueError:
         rule = BroadExceptionRule()
         findings = check_code(rule, code)
         assert len(findings) == 0
-    
+
     def test_tuple_exception(self):
         code = """
 try:
@@ -281,7 +281,7 @@ except Exception as e:
         rule = BroadExceptionRule()
         findings = check_code(rule, code)
         assert len(findings) == 0
-    
+
     def test_exception_with_raise(self):
         code = """
 try:

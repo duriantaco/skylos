@@ -781,6 +781,7 @@ class Visitor(ast.NodeVisitor):
                     "property",
                     "cached_property",
                     "functools.cached_property",
+                    "hybrid_property",
                 ):
                     self.add_ref(qualified_name)
                     if self.cls:
@@ -1131,8 +1132,10 @@ class Visitor(ast.NodeVisitor):
                 "attr.s",
                 "attr.attrs",
                 "attrs",
+                "attrs.define",
                 "define",
                 "attr.define",
+                "attrs.frozen",
                 "frozen",
                 "attr.frozen",
             ):

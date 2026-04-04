@@ -114,7 +114,6 @@ class MonorepoResolver:
             if paths:
                 self._tsconfig_paths = paths
 
-
     def _ensure_package_map(self) -> dict[str, str]:
         if self._package_map is None:
             self._package_map = _build_package_map(self.project_root)

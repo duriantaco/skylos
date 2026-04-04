@@ -147,7 +147,7 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 | Objective | Command | Outcome |
 | :--- | :--- | :--- |
 | **Detect Unused Pytest Fixtures** | `skylos . --pytest-fixtures` | Find unused `@pytest.fixture` across tests + conftest |
-| **AI-Powered Analysis** | `skylos agent scan . --model gpt-4.1` | Static-first analysis plus judge-all LLM verification for dead code |
+| **AI-Powered Analysis** | `skylos agent scan . --model gpt-4.1` | Fast static + LLM file review with dead-code verification available on demand |
 | **Dead Code Verification** | `skylos agent verify . --model gpt-4.1` | Dead-code-only second pass: static findings reviewed by the LLM |
 | **Security Audit** | `skylos agent scan . --security` | Deep LLM security review with interactive file selection |
 | **Auto-Remediate** | `skylos agent remediate . --auto-pr` | Scan, fix, test, and open a PR — end to end |
@@ -293,6 +293,7 @@ Supports OpenAI, Anthropic, Google Gemini, Cohere, Mistral, Ollama, Together AI,
 * **30-Second Workflow Setup:** `skylos cicd init` generates GitHub Actions workflows with sensible defaults.
 * **Diff-Aware Enforcement:** Gate only the lines that changed, fail on severity thresholds, and keep legacy debt manageable with baselines.
 * **PR-Native Feedback:** GitHub annotations, inline review comments, and optional dashboard upload keep findings where teams already work.
+* **Corpus Guard:** Require the `Corpus Guard` workflow on PRs to catch dead-code precision regressions against curated framework and language fixtures.
 
 ### Safe Cleanup and Workflow Controls
 
@@ -601,6 +602,18 @@ Want test files included? Use `--include-folder tests`.
 
 Framework endpoints are called externally (HTTP, signals). Name resolution handles aliases. When things get unclear, we err on the side of caution.
 
+### Precision Regression Guard
+
+Skylos ships a curated corpus of small fixtures that encode framework contracts and important Python runtime patterns we must not regress on.
+
+Run it locally when you change analysis behavior:
+
+```bash
+python3 scripts/corpus_ci.py --manifest corpus/manifest.json
+```
+
+In GitHub, keep the `Corpus Guard` workflow required in branch protection. When you fix a confirmed false positive, add a focused fixture and expectation to the corpus in the same change.
+
 ## Unused Pytest Fixtures
 
 Skylos can detect pytest fixtures that are defined but never used.
@@ -628,20 +641,24 @@ Skylos uses a **hybrid architecture** that combines static analysis with LLM rea
 
 Research shows LLMs find vulnerabilities that static analysis misses, while static analysis validates LLM suggestions. However, LLMs are prone to false positives in dead code if they are asked to invent findings from raw source alone.
 
-For dead code, Skylos now uses a stricter contract:
+Skylos now splits agent workflows into a fast review lane and a slower verification lane.
+
+For dead code, Skylos uses a stricter contract:
 - static analysis generates the candidate list
 - repo facts and graph evidence are gathered around each candidate
-- `skylos agent scan` and `skylos agent verify` send nearly every `references == 0` candidate through the LLM in `judge_all` mode
-- deterministic suppressors still exist, but in `judge_all` mode they are attached as evidence instead of silently deciding the outcome
+- `skylos agent verify` is the dedicated dead-code adjudication pass
+- `skylos agent scan --verify-dead-code` adds that slower verifier back into the review pipeline when you explicitly want it
+- deterministic suppressors still exist, and in `judge_all` mode they are attached as evidence instead of silently deciding the outcome
 
-Use `--verification-mode production` if you want the cheaper deterministic-first path instead of the default judge-all review.
+Use `--verification-mode production` if you want the cheaper deterministic-first path for `agent verify`.
 
 ### Agent Commands
 
 | Command | Description |
 |---------|-------------|
-| `skylos agent scan PATH` | Full hybrid pipeline with fix suggestions and judge-all dead-code verification |
-| `skylos agent scan PATH --no-fixes` | Same pipeline, skip fix suggestions (faster) |
+| `skylos agent scan PATH` | Fast hybrid review: static findings plus one-pass LLM security/quality review |
+| `skylos agent scan PATH --verify-dead-code` | Same review path, plus the slower dead-code verification pass |
+| `skylos agent scan PATH --no-fixes` | Same review pipeline, skip fix suggestions (faster) |
 | `skylos agent scan PATH --changed` | Analyze only git-changed files |
 | `skylos agent scan PATH --security` | Security-only LLM audit with interactive file selection |
 | `skylos agent verify PATH` | Dead-code-only verification pass over static findings |
@@ -705,7 +722,7 @@ export SKYLOS_LLM_BASE_URL=http://localhost:11434/v1
 
 ### LLM PR Review
 
-`skylos agent scan --changed` analyzes git-changed files, runs static analysis, then uses the LLM to generate code-level fix suggestions for every finding (security, quality, and dead code).
+`skylos agent scan --changed` analyzes git-changed files, runs static analysis, then uses the LLM for fast file review and code-level fix suggestions. Dead-code verification is optional and not on the critical path by default.
 
 ```bash
 # Run LLM review and output JSON
@@ -717,8 +734,8 @@ skylos cicd review --input results.json --llm-input llm-results.json
 
 The hybrid pipeline runs in stages:
 1. **Static analysis** — finds security, quality, and dead code issues
-2. **Dead-code verification** — the LLM judges static dead-code candidates using graph evidence, repo facts, and surrounding context
-3. **Additional LLM analysis** — scans for logic/security issues static analysis may miss
+2. **LLM review** — one-pass file or diff review for security, logic, quality, and performance issues static analysis may miss
+3. **Optional dead-code verification** — when requested, the LLM judges static dead-code candidates using graph evidence, repo facts, and surrounding context
 4. **Code fix generation** — for each reported finding, generates the problematic code snippet and a corrected version
 
 Each PR comment shows the exact vulnerable lines and a drop-in replacement fix.
@@ -900,7 +917,7 @@ Release roles, prerequisites, branch protection guidance, semantic type policy, 
 
 | Command | Description |
 |---------|-------------|
-| `skylos agent scan <path>` | Hybrid static + LLM analysis |
+| `skylos agent scan <path>` | Fast hybrid static + LLM review |
 | `skylos agent verify <path>` | LLM-verify dead code (100% accuracy) |
 | `skylos agent remediate <path>` | Auto-fix issues and create PR |
 | `skylos agent watch <path>` | Continuous repo monitoring with optional triage pattern learning |
@@ -1338,6 +1355,14 @@ Control how you consume the watchdog's findings.
 ## Auditing and Precision
 
 By default, Skylos finds dead code. Enable additional scans with flags.
+
+For dead-code precision regressions, use the checked-in corpus guard:
+
+```bash
+python3 scripts/corpus_ci.py --manifest corpus/manifest.json
+```
+
+This is a deterministic regression suite built from curated framework and Python-language patterns. It is not a proof of correctness, but it is the main guard against reintroducing known false positives.
 
 ### Dead Code (default)
 
@@ -2008,10 +2033,10 @@ A: Yes. Coverage tracks execution, not pass/fail. Even failing tests provide cov
 A: Each quality finding has a **measured value** and a **threshold** (the configured maximum). For example, `Complexity: 14 (max 10)` means the function has 14 branches but the limit is 10. For duplicate string literals, `repeated 5× (max 3)` means the same string appears 5 times — extract it to a named constant. You can tune thresholds in `pyproject.toml` under `[tool.skylos]`.
 
 **Q: What's the difference between `skylos . --audit` and `skylos agent scan`?**
-A: `skylos agent scan` runs the full hybrid pipeline — static analysis, judge-all LLM dead-code verification, and LLM security/quality analysis with fix suggestions. Use `--no-fixes` to skip fix generation. The `--audit` flag on the base command is the legacy static-only mode.
+A: `skylos agent scan` is the fast hybrid review path: static analysis plus one-pass LLM security/quality review, with fix suggestions when enabled. Use `--verify-dead-code` if you also want the slower dead-code adjudication pass. The `--audit` flag on the base command is the legacy static-only mode.
 
 **Q: What does `--verification-mode` do?**
-A: It controls how aggressively Skylos sends dead-code candidates to the LLM. `judge_all` is the default for `agent scan` and `agent verify`; it sends nearly every `references == 0` static candidate to the LLM and treats deterministic suppressors as evidence. `production` is cheaper and lets more obvious alive cases get suppressed before the LLM sees them.
+A: It controls how aggressively Skylos sends dead-code candidates to the LLM in verification workflows. `judge_all` is the most aggressive dead-code review mode and is mainly useful for `agent verify` or `agent scan --verify-dead-code`. `production` is cheaper and lets more obvious alive cases get suppressed before the LLM sees them.
 
 **Q: Can I use local LLMs instead of OpenAI/Anthropic?**
 A: Yes! Use `--base-url` to point to Ollama, LM Studio, or any OpenAI-compatible endpoint. No API key needed for localhost.
