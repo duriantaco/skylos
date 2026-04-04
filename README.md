@@ -847,14 +847,14 @@ For the default `skylos cicd init` workflow, you do not need any Skylos-specific
 Skylos uses a single release workflow for automation:
 
 - `.github/workflows/release-please.yml` updates `CHANGELOG.md`, bumps `pyproject.toml`, opens a release PR, creates the GitHub Release when merged, then builds wheel+sdist and publishes to PyPI in the same workflow.
-- `.github/workflows/publish.yml` is kept as a manual fallback (`workflow_dispatch`) if you ever need to republish from a specific ref/tag.
+- `.github/workflows/publish.yml` is kept as a manual fallback (`workflow_dispatch`) if you ever need to republish an existing release tag.
 
 ### First-time bootstrap (already configured in this repo)
 
 Release Please is bootstrapped with:
 
-- `tools/release/.release-please-manifest.json` set to `4.2.0`
-- `tools/release/release-please-config.json` set with `bootstrap-sha` at the commit that prepared `4.2.0`
+- `tools/release/.release-please-manifest.json` set to `4.2.1`
+- `tools/release/release-please-config.json` set with `bootstrap-sha` at the commit that prepared `4.2.1` (`a498b27b6902b34e469acfddac1068635aae8122`)
 
 This prevents backfilling old history and starts automated releases from the current baseline.
 
@@ -877,7 +877,7 @@ python -m build --sdist --wheel --outdir dist
 python -m twine check dist/*
 ```
 
-If you need to manually run the fallback publish workflow, use **Actions -> Build and publish -> Run workflow** and set `ref` to the target tag (for example `v4.2.1`).
+If you need to manually run the fallback publish workflow, use **Actions -> Build and publish -> Run workflow** and set `ref` to the exact release tag (for example `v4.2.1`). Do not use a branch name.
 
 ### PR title types used for release semantics
 
