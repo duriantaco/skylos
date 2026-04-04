@@ -7,6 +7,7 @@ from skylos.llm.verify_orchestrator import (
     _build_repo_facts,
     _build_graph_context,
     _build_haiku_context,
+    _batch_verify_findings,
     _deterministic_suppress,
     _get_cached_search_results,
     _find_survivors,
@@ -29,6 +30,7 @@ from skylos.llm.verify_orchestrator import (
 from skylos.llm.dead_code_verifier import (
     DeadCodeVerifierAgent,
     Verdict,
+    VerificationResult,
 )
 
 
@@ -221,6 +223,147 @@ def test_build_graph_context_with_heuristic_refs(sample_defs_map, sample_source_
     assert "Heuristic refs" in ctx
     assert "Dynamic signals" in ctx
     assert "getattr" in ctx
+
+
+def test_build_graph_context_compacts_low_ambiguity_dead_candidate(
+    sample_defs_map,
+    sample_source_cache,
+):
+    finding = {
+        "name": "old_helper",
+        "full_name": "mymodule.old_helper",
+        "simple_name": "old_helper",
+        "type": "function",
+        "file": "/tmp/test_project/mymodule.py",
+        "line": 10,
+        "confidence": 75,
+        "references": 0,
+        "calls": [],
+        "called_by": [],
+        "decorators": [],
+        "heuristic_refs": {},
+        "dynamic_signals": [],
+        "framework_signals": [],
+        "why_unused": ["unreferenced"],
+        "why_confidence_reduced": [],
+    }
+
+    with patch(
+        "skylos.llm.verify_orchestrator._get_cached_search_results",
+        return_value={"references_definition_only": ["mymodule.py:10:def old_helper"]},
+    ):
+        ctx = _build_graph_context(
+            finding,
+            sample_defs_map,
+            sample_source_cache,
+            project_root="/tmp/test_project",
+        )
+
+    assert "Search Results Across Project" not in ctx
+    assert "Only the definition itself was found" in ctx
+    assert "low-ambiguity dead-code candidate" in ctx
+    assert len(ctx) < 2500
+
+
+def test_build_graph_context_skips_search_for_low_ambiguity_dead_candidate(
+    sample_defs_map,
+    sample_source_cache,
+):
+    finding = {
+        "name": "old_helper",
+        "full_name": "mymodule.old_helper",
+        "simple_name": "old_helper",
+        "type": "function",
+        "file": "/tmp/test_project/mymodule.py",
+        "line": 10,
+        "confidence": 75,
+        "references": 0,
+        "calls": [],
+        "called_by": [],
+        "decorators": [],
+        "heuristic_refs": {},
+        "dynamic_signals": [],
+        "framework_signals": [],
+        "why_unused": ["unreferenced"],
+        "why_confidence_reduced": [],
+    }
+
+    with patch(
+        "skylos.llm.verify_orchestrator._get_cached_search_results",
+        return_value={},
+    ):
+        ctx = _build_graph_context(
+            finding,
+            sample_defs_map,
+            sample_source_cache,
+            project_root="/tmp/test_project",
+        )
+
+    assert "low-ambiguity dead-code candidate" in ctx
+
+
+def test_deterministic_suppress_skips_search_for_private_low_ambiguity_function():
+    finding = {
+        "name": "_helper",
+        "full_name": "mod._helper",
+        "simple_name": "_helper",
+        "type": "function",
+        "file": "/tmp/test_project/mod.py",
+        "line": 5,
+        "confidence": 80,
+        "references": 0,
+        "calls": [],
+        "called_by": [],
+        "decorators": [],
+        "heuristic_refs": {},
+        "dynamic_signals": [],
+        "framework_signals": [],
+    }
+
+    with patch(
+        "skylos.llm.verify_orchestrator._get_cached_search_results",
+        side_effect=AssertionError("search should be skipped"),
+    ):
+        decision = _deterministic_suppress(
+            finding,
+            {"/tmp/test_project/mod.py": "def _helper():\n    return 1\n"},
+            project_root="/tmp/test_project",
+            repo_facts=RepoFacts(),
+        )
+
+    assert decision is None
+
+
+def test_deterministic_suppress_skips_search_for_private_function_with_callees():
+    finding = {
+        "name": "_helper",
+        "full_name": "mod._helper",
+        "simple_name": "_helper",
+        "type": "function",
+        "file": "/tmp/test_project/mod.py",
+        "line": 5,
+        "confidence": 80,
+        "references": 0,
+        "calls": ["mod.other"],
+        "called_by": [],
+        "decorators": [],
+        "heuristic_refs": {},
+        "dynamic_signals": [],
+        "framework_signals": [],
+    }
+
+    with patch(
+        "skylos.llm.verify_orchestrator._get_cached_search_results",
+        side_effect=AssertionError("search should be skipped"),
+    ):
+        decision = _deterministic_suppress(
+            finding,
+            {"/tmp/test_project/mod.py": "def _helper():\n    return other()\n"},
+            project_root="/tmp/test_project",
+            repo_facts=RepoFacts(),
+        )
+
+    assert decision is None
 
 
 def test_build_graph_context_includes_repo_facts_and_path_references(tmp_path):
@@ -708,6 +851,92 @@ def test_deterministic_suppress_callback_signature_parameter(tmp_path):
     assert decision.code == "parameter_signature_contract"
 
 
+def test_deterministic_suppress_dynamic_globals_family(tmp_path):
+    proj = tmp_path / "project"
+    proj.mkdir()
+    source_file = proj / "handlers.py"
+    source = (
+        "def handle_create(payload):\n"
+        "    return payload\n\n"
+        "def handle_update(payload):\n"
+        "    return payload\n\n"
+        "HANDLER_MAP = {\n"
+        "    action: globals()[f\"handle_{action}\"]\n"
+        "    for action in (\"create\", \"update\")\n"
+        "}\n\n"
+        "def dispatch(action, payload):\n"
+        "    return HANDLER_MAP[action](payload)\n"
+    )
+    source_file.write_text(source)
+    finding = {
+        "name": "handle_create",
+        "full_name": "handlers.handle_create",
+        "simple_name": "handle_create",
+        "type": "function",
+        "file": str(source_file),
+        "line": 1,
+    }
+
+    decision = _deterministic_suppress(
+        finding,
+        {str(source_file): source},
+        project_root=str(proj),
+        repo_facts=RepoFacts(),
+    )
+
+    assert decision is not None
+    assert decision.code == "dynamic_dispatch"
+    assert decision.hard is True
+    assert "HANDLER_MAP" in decision.evidence[0]
+
+
+def test_deterministic_suppress_dynamic_getattr_family(tmp_path):
+    proj = tmp_path / "project"
+    proj.mkdir()
+    source_file = proj / "export_service.py"
+    source = (
+        "def export_csv(data):\n"
+        "    return data\n\n"
+        "def export_json(data):\n"
+        "    return data\n\n"
+        "def run_export(data, fmt):\n"
+        "    import sys\n"
+        "    handler = getattr(sys.modules[__name__], f\"export_{fmt}\", None)\n"
+        "    return handler(data)\n"
+    )
+    source_file.write_text(source)
+    finding = {
+        "name": "export_json",
+        "full_name": "export_service.export_json",
+        "simple_name": "export_json",
+        "type": "function",
+        "file": str(source_file),
+        "line": 4,
+    }
+    defs_map = {
+        "export_service.run_export": {
+            "name": "export_service.run_export",
+            "file": str(source_file),
+            "line": 7,
+            "type": "function",
+            "dead": False,
+        }
+    }
+
+    decision = _deterministic_suppress(
+        finding,
+        {str(source_file): source},
+        project_root=str(proj),
+        repo_facts=RepoFacts(),
+        defs_map=defs_map,
+    )
+
+    assert decision is not None
+    assert decision.code == "dynamic_dispatch"
+    assert decision.hard is True
+    assert "run_export" in decision.evidence[0]
+
+
 def test_public_library_symbol_detects_src_layout(tmp_path):
     pkg_dir = tmp_path / "src" / "mypkg"
     pkg_dir.mkdir(parents=True)
@@ -1080,6 +1309,65 @@ def test_run_verification_reopens_soft_deterministic_suppression(
     assert stats["llm_calls"] == 1
 
 
+@patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
+def test_run_verification_judge_all_hard_dynamic_suppression_skips_llm(
+    MockAgent, tmp_path
+):
+    mock_instance = MockAgent.return_value
+
+    proj = tmp_path / "project"
+    proj.mkdir()
+    source_file = proj / "handlers.py"
+    source_file.write_text(
+        "def handle_create(payload):\n"
+        "    return payload\n\n"
+        "def handle_update(payload):\n"
+        "    return payload\n\n"
+        "HANDLER_MAP = {\n"
+        "    action: globals()[f\"handle_{action}\"]\n"
+        "    for action in (\"create\", \"update\")\n"
+        "}\n\n"
+        "def dispatch(action, payload):\n"
+        "    return HANDLER_MAP[action](payload)\n"
+    )
+
+    findings = [
+        {
+            "name": "handle_create",
+            "full_name": "handlers.handle_create",
+            "simple_name": "handle_create",
+            "file": str(source_file),
+            "line": 1,
+            "confidence": 70,
+            "references": 0,
+            "type": "function",
+            "calls": [],
+            "called_by": [],
+        }
+    ]
+
+    result = run_verification(
+        findings=findings,
+        defs_map={},
+        project_root=str(proj),
+        model="test",
+        api_key="test",
+        quiet=True,
+        batch_mode=False,
+        enable_entry_discovery=False,
+        enable_survivor_challenge=False,
+        verification_mode="judge_all",
+    )
+
+    verified = result["verified_findings"][0]
+    stats = result["stats"]
+    assert verified["_llm_verdict"] == "FALSE_POSITIVE"
+    assert verified["_suppression_reason"] == "dynamic_dispatch"
+    assert stats["deterministic_suppressed"] == 1
+    assert stats["llm_calls"] == 0
+    mock_instance._call_llm.assert_not_called()
+
+
 @patch("skylos.llm.verify_orchestrator._deterministic_suppress")
 @patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
 def test_run_verification_judge_all_uses_prefilter_fact_as_evidence(
@@ -1177,6 +1465,128 @@ def test_run_verification_skips_high_confidence(MockAgent, tmp_path):
 
     verified = result["verified_findings"]
     assert verified[0].get("_llm_verdict") == "SKIPPED_HIGH_CONF"
+
+
+@patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
+def test_run_verification_reports_token_usage(MockAgent, tmp_path):
+    mock_instance = MockAgent.return_value
+    mock_instance._call_llm.return_value = json.dumps(
+        {"verdict": "TRUE_POSITIVE", "rationale": "dead"}
+    )
+
+    adapter = MagicMock()
+    adapter.total_usage = {
+        "prompt_tokens": 123,
+        "completion_tokens": 45,
+        "total_tokens": 168,
+    }
+    mock_instance.get_adapter.return_value = adapter
+
+    proj = tmp_path / "project"
+    proj.mkdir()
+    source_file = proj / "mod.py"
+    source_file.write_text("def dead_func():\n    return 1\n")
+
+    findings = [
+        {
+            "name": "dead_func",
+            "full_name": "mod.dead_func",
+            "file": str(source_file),
+            "line": 1,
+            "confidence": 70,
+            "references": 0,
+            "type": "function",
+            "calls": [],
+            "called_by": [],
+        }
+    ]
+
+    result = run_verification(
+        findings=findings,
+        defs_map={},
+        project_root=str(proj),
+        model="test",
+        api_key="test",
+        quiet=True,
+        batch_mode=False,
+        enable_entry_discovery=False,
+        enable_survivor_challenge=False,
+    )
+
+    stats = result["stats"]
+    assert stats["prompt_tokens"] == 123
+    assert stats["completion_tokens"] == 45
+    assert stats["total_tokens"] == 168
+
+
+def test_run_verification_reclassifies_local_on_emit_listener_without_emit(tmp_path):
+    proj = tmp_path / "project"
+    app = proj / "app"
+    app.mkdir(parents=True)
+
+    events_file = app / "events.py"
+    events_file.write_text(
+        "class EventBus:\n"
+        "    @classmethod\n"
+        "    def on(cls, event_name):\n"
+        "        def decorator(fn):\n"
+        "            return fn\n"
+        "        return decorator\n\n"
+        "    @classmethod\n"
+        "    def emit(cls, event_name, **kwargs):\n"
+        "        return None\n\n"
+        "@EventBus.on('note_created')\n"
+        "def on_note_created(**kwargs):\n"
+        "    return kwargs\n\n"
+        "@EventBus.on('note_deleted')\n"
+        "def on_note_deleted(**kwargs):\n"
+        "    return kwargs\n"
+    )
+
+    service_file = app / "service.py"
+    service_file.write_text(
+        "from app.events import EventBus\n\n"
+        "def create_note():\n"
+        "    EventBus.emit('note_created', title='x')\n"
+    )
+
+    defs_map = {
+        "app.events.on_note_created": {
+            "name": "app.events.on_note_created",
+            "file": str(events_file),
+            "line": 13,
+            "type": "function",
+            "called_by": [],
+            "references": 0,
+            "confidence": 50,
+        },
+        "app.events.on_note_deleted": {
+            "name": "app.events.on_note_deleted",
+            "file": str(events_file),
+            "line": 17,
+            "type": "function",
+            "called_by": [],
+            "references": 0,
+            "confidence": 50,
+        },
+    }
+
+    result = run_verification(
+        findings=[],
+        defs_map=defs_map,
+        project_root=str(proj),
+        model="test",
+        api_key="test",
+        quiet=True,
+        enable_entry_discovery=False,
+    )
+
+    new_dead = result["new_dead_code"]
+    assert len(new_dead) == 1
+    assert new_dead[0]["full_name"] == "app.events.on_note_deleted"
+    assert new_dead[0]["_source"] == "registry_survivor_challenge"
+    assert "EventBus.emit('note_deleted')" in new_dead[0]["_llm_rationale"]
+    assert result["stats"]["survivors_reclassified_dead"] == 1
 
 
 @patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
@@ -1446,6 +1856,63 @@ def test_haiku_prefilter_mixed_batch():
     assert dismissed[0]["full_name"] == "db.connect"
     assert len(kept) == 1
     assert kept[0]["full_name"] == "db._init_pool"
+
+
+def test_batch_verify_falls_back_to_individual_on_batch_failure(
+    sample_finding,
+    sample_defs_map,
+):
+    finding_two = {
+        **sample_finding,
+        "name": "other_helper",
+        "full_name": "mymodule.other_helper",
+        "simple_name": "other_helper",
+        "line": 40,
+    }
+
+    agent = MagicMock(spec=DeadCodeVerifierAgent)
+
+    with patch(
+        "skylos.llm.verify_orchestrator._build_graph_context",
+        return_value="context",
+    ), patch(
+        "skylos.llm.verify_orchestrator._parse_batch_response",
+        return_value=[
+            {"verdict": Verdict.UNCERTAIN, "rationale": "LLM call failed"},
+            {"verdict": Verdict.UNCERTAIN, "rationale": "LLM call failed"},
+        ],
+    ) as parse_batch, patch(
+        "skylos.llm.verify_orchestrator.verify_with_graph_context",
+        side_effect=[
+            VerificationResult(
+                finding=sample_finding,
+                verdict=Verdict.TRUE_POSITIVE,
+                rationale="dead",
+                original_confidence=75,
+                adjusted_confidence=95,
+            ),
+            VerificationResult(
+                finding=finding_two,
+                verdict=Verdict.FALSE_POSITIVE,
+                rationale="alive",
+                original_confidence=75,
+                adjusted_confidence=20,
+            ),
+        ],
+    ) as verify_single:
+        results = _batch_verify_findings(
+            agent,
+            [sample_finding, finding_two],
+            sample_defs_map,
+            {sample_finding["file"]: "def old_helper(): pass"},
+        )
+
+    assert parse_batch.call_count == 1
+    assert verify_single.call_count == 2
+    assert [result.verdict for result in results] == [
+        Verdict.TRUE_POSITIVE,
+        Verdict.FALSE_POSITIVE,
+    ]
 
 
 def test_verify_stats_haiku_prefiltered():

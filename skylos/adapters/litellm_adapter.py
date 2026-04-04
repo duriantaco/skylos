@@ -1,21 +1,58 @@
 import os
+import time
 from .base import BaseAdapter
 from skylos.credentials import get_key, PROVIDERS
 
 
 class LiteLLMAdapter(BaseAdapter):
+    RETRYABLE_ERROR_SNIPPETS = (
+        "connection error",
+        "connection refused",
+        "failed to establish a new connection",
+        "name or service not known",
+        "nodename nor servname provided",
+        "timed out",
+        "timeout",
+        "service unavailable",
+        "internalservererror",
+        "server error",
+        "overloaded",
+        "rate limit",
+        "ratelimit",
+        "429",
+    )
+
     def __init__(
         self,
         model,
         api_key=None,
         api_base=None,
+        provider=None,
         enable_cache=True,
         max_tokens=None,
+        timeout=None,
+        retry_attempts=3,
+        temperature=0.0,
     ):
         super().__init__(model, api_key)
         self.enable_cache = enable_cache
         self.max_tokens = max_tokens
+        self.timeout = timeout
+        self.retry_attempts = max(1, int(retry_attempts or 1))
+        self.temperature = temperature
+        self.last_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        self.total_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        self.explicit_provider = (provider or "").strip().lower() or None
 
+        os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
         try:
             import litellm
 
@@ -31,6 +68,9 @@ class LiteLLMAdapter(BaseAdapter):
         self._resolve_api_key()
 
     def _detect_provider(self):
+        if self.explicit_provider:
+            return self.explicit_provider
+
         model = (self.model or "").lower()
 
         if model.startswith("ollama/"):
@@ -162,6 +202,162 @@ class LiteLLMAdapter(BaseAdapter):
 
         return False
 
+    def _should_retry_exception(self, exc):
+        msg = str(exc or "").lower()
+        if not msg:
+            return False
+        return any(snippet in msg for snippet in self.RETRYABLE_ERROR_SNIPPETS)
+
+    def _retry_delay(self, attempt):
+        return min(0.5 * (2**attempt), 2.0)
+
+    def reset_usage(self):
+        self.last_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        self.total_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+
+    def _normalize_usage(self, usage):
+        if usage is None:
+            return {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            }
+
+        if isinstance(usage, dict):
+            prompt = int(usage.get("prompt_tokens") or 0)
+            completion = int(usage.get("completion_tokens") or 0)
+            total = int(usage.get("total_tokens") or (prompt + completion))
+            return {
+                "prompt_tokens": max(prompt, 0),
+                "completion_tokens": max(completion, 0),
+                "total_tokens": max(total, 0),
+            }
+
+        prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion = int(getattr(usage, "completion_tokens", 0) or 0)
+        total = int(getattr(usage, "total_tokens", 0) or (prompt + completion))
+        return {
+            "prompt_tokens": max(prompt, 0),
+            "completion_tokens": max(completion, 0),
+            "total_tokens": max(total, 0),
+        }
+
+    def _record_usage(self, response):
+        usage = self._normalize_usage(getattr(response, "usage", None))
+        self.last_usage = usage
+        for key, value in usage.items():
+            self.total_usage[key] += value
+
+    def _complete_once(self, system_prompt, user_prompt, response_format=None):
+        self._resolve_api_key()
+
+        if (not self._is_local()) and (not self.api_key):
+            return self._missing_key_message()
+
+        if self.enable_cache and self._is_anthropic():
+            messages = [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": system_prompt,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                },
+                {"role": "user", "content": user_prompt},
+            ]
+        else:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "api_key": self.api_key,
+        }
+
+        if self.max_tokens is not None:
+            kwargs["max_tokens"] = self.max_tokens
+        if self.timeout is not None:
+            kwargs["timeout"] = self.timeout
+
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
+
+        if self._is_local():
+            kwargs["api_key"] = "not-needed"
+
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+
+        response = self.litellm.completion(**kwargs)
+        self._record_usage(response)
+        return response.choices[0].message.content.strip()
+
+    def _stream_once(self, system_prompt, user_prompt):
+        self._resolve_api_key()
+
+        if (not self._is_local()) and (not self.api_key):
+            yield self._missing_key_message()
+            return
+
+        if self.enable_cache and self._is_anthropic():
+            messages = [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": system_prompt,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                },
+                {"role": "user", "content": user_prompt},
+            ]
+        else:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "stream": True,
+            "api_key": self.api_key,
+        }
+
+        if self.max_tokens is not None:
+            kwargs["max_tokens"] = self.max_tokens
+        if self.timeout is not None:
+            kwargs["timeout"] = self.timeout
+
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
+
+        if self._is_local():
+            kwargs["api_key"] = "not-needed"
+
+        response = self.litellm.completion(**kwargs)
+        for chunk in response:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
     def _format_exception_message(self, exc):
         text = str(exc)
 
@@ -188,106 +384,39 @@ class LiteLLMAdapter(BaseAdapter):
         return "Error: {}".format(text)
 
     def complete(self, system_prompt, user_prompt, response_format=None):
-        try:
-            self._resolve_api_key()
+        last_error = None
+        for attempt in range(self.retry_attempts):
+            try:
+                return self._complete_once(
+                    system_prompt,
+                    user_prompt,
+                    response_format=response_format,
+                )
+            except Exception as e:
+                last_error = e
+                if (
+                    not self._should_retry_exception(e)
+                    or attempt == self.retry_attempts - 1
+                ):
+                    return self._format_exception_message(e)
+                time.sleep(self._retry_delay(attempt))
 
-            if (not self._is_local()) and (not self.api_key):
-                return self._missing_key_message()
-
-            if self.enable_cache and self._is_anthropic():
-                messages = [
-                    {
-                        "role": "system",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": system_prompt,
-                                "cache_control": {"type": "ephemeral"},
-                            }
-                        ],
-                    },
-                    {"role": "user", "content": user_prompt},
-                ]
-            else:
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ]
-
-            kwargs = {
-                "model": self.model,
-                "messages": messages,
-                "temperature": 0.2,
-                "api_key": self.api_key,
-            }
-
-            if self.max_tokens is not None:
-                kwargs["max_tokens"] = self.max_tokens
-
-            if self.api_base:
-                kwargs["api_base"] = self.api_base
-
-            if self._is_local():
-                kwargs["api_key"] = "not-needed"
-
-            if response_format is not None:
-                kwargs["response_format"] = response_format
-
-            response = self.litellm.completion(**kwargs)
-            return response.choices[0].message.content.strip()
-
-        except Exception as e:
-            return self._format_exception_message(e)
+        return self._format_exception_message(last_error)
 
     def stream(self, system_prompt, user_prompt):
-        try:
-            self._resolve_api_key()
-
-            if (not self._is_local()) and (not self.api_key):
-                yield self._missing_key_message()
+        last_error = None
+        for attempt in range(self.retry_attempts):
+            try:
+                yield from self._stream_once(system_prompt, user_prompt)
                 return
+            except Exception as e:
+                last_error = e
+                if (
+                    not self._should_retry_exception(e)
+                    or attempt == self.retry_attempts - 1
+                ):
+                    yield self._format_exception_message(e)
+                    return
+                time.sleep(self._retry_delay(attempt))
 
-            if self.enable_cache and self._is_anthropic():
-                messages = [
-                    {
-                        "role": "system",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": system_prompt,
-                                "cache_control": {"type": "ephemeral"},
-                            }
-                        ],
-                    },
-                    {"role": "user", "content": user_prompt},
-                ]
-            else:
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ]
-
-            kwargs = {
-                "model": self.model,
-                "messages": messages,
-                "temperature": 0.2,
-                "stream": True,
-                "api_key": self.api_key,
-            }
-
-            if self.max_tokens is not None:
-                kwargs["max_tokens"] = self.max_tokens
-
-            if self.api_base:
-                kwargs["api_base"] = self.api_base
-
-            if self._is_local():
-                kwargs["api_key"] = "not-needed"
-
-            response = self.litellm.completion(**kwargs)
-            for chunk in response:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-
-        except Exception as e:
-            yield self._format_exception_message(e)
+        yield self._format_exception_message(last_error)

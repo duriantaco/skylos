@@ -17,6 +17,7 @@ from .prompts import (
     build_quality_prompt,
     build_fix_prompt,
     build_security_audit_prompt,
+    build_review_prompt,
 )
 
 
@@ -96,9 +97,10 @@ class AgentConfig:
         self,
         model="gpt-4.1",
         api_key=None,
-        temperature=0.1,
+        temperature=0.0,
         max_tokens=2048,
         timeout=240,
+        retry_attempts=3,
         stream=True,
         enable_cache=True,
     ):
@@ -107,6 +109,7 @@ class AgentConfig:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
+        self.retry_attempts = retry_attempts
         self.stream = stream
         self.enable_cache = enable_cache
         self.provider = None
@@ -129,8 +132,12 @@ def create_llm_adapter(config):
         model=config.model,
         api_key=config.api_key,
         api_base=getattr(config, "base_url", None),
+        provider=getattr(config, "provider", None),
         enable_cache=config.enable_cache,
         max_tokens=getattr(config, "max_tokens", None),
+        timeout=getattr(config, "timeout", None),
+        retry_attempts=getattr(config, "retry_attempts", 3),
+        temperature=getattr(config, "temperature", 0.0),
     )
 
 
@@ -233,6 +240,39 @@ class SecurityAuditAgent:
         system, user = build_security_audit_prompt(
             context, include_examples=include_examples
         )
+
+        response = self.get_adapter().complete(
+            system,
+            user,
+            response_format=FINDINGS_RESPONSE_FORMAT,
+        )
+
+        return parse_llm_response(response, file_path)
+
+
+class ReviewAgent:
+    def __init__(self, config=None):
+        if config is None:
+            config = AgentConfig()
+        self.config = config
+        self.context_builder = ContextBuilder()
+        self._adapter = None
+
+    def get_adapter(self):
+        if self._adapter is None:
+            self._adapter = create_llm_adapter(self.config)
+        return self._adapter
+
+    def analyze(self, source, file_path, defs_map=None, context=None):
+        if context is None:
+            context = self.context_builder.build_analysis_context(
+                source, file_path=file_path, defs_map=defs_map
+            )
+
+        include_examples = (
+            not self.config.is_rate_limited_model() and len(context) < 10_000
+        )
+        system, user = build_review_prompt(context, include_examples=include_examples)
 
         response = self.get_adapter().complete(
             system,
@@ -674,6 +714,7 @@ class CleanupAgent:
 AGENT_REGISTRY = {
     "security": SecurityAgent,
     "quality": QualityAgent,
+    "review": ReviewAgent,
     "security_audit": SecurityAuditAgent,
     "fixer": FixerAgent,
     "false_positive_filter": FalsePositiveFilterAgent,

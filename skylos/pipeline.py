@@ -4,9 +4,11 @@ import json
 import logging
 import pathlib
 from pathlib import Path
+from concurrent.futures import as_completed
 
 from skylos.config import load_config
 from skylos.file_discovery import discover_source_files
+from skylos.llm.repo_activation import build_repo_activation_index
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +75,19 @@ def _enrich_with_llm_suggestions(
     source_cache: dict[str, str],
     model: str,
     api_key: str,
+    *,
+    provider: str | None = None,
+    base_url: str | None = None,
 ) -> None:
-    from litellm import completion
+    from skylos.adapters.litellm_adapter import LiteLLMAdapter
+
+    adapter = LiteLLMAdapter(
+        model=model,
+        api_key=api_key,
+        api_base=base_url,
+        provider=provider,
+        max_tokens=4000,
+    )
 
     by_file: dict[str, list[dict]] = {}
     for f in findings:
@@ -103,14 +116,11 @@ def _enrich_with_llm_suggestions(
         )
 
         try:
-            resp = completion(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                api_key=api_key,
-                temperature=0,
-                max_tokens=4000,
+            raw = adapter.complete(
+                "You are a code reviewer. Return only valid JSON.",
+                prompt,
             )
-            raw = resp.choices[0].message.content.strip()
+            raw = (raw or "").strip()
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1]
                 raw = raw.rsplit("```", 1)[0]
@@ -197,15 +207,25 @@ def _select_phase_2b_files(
     static_findings,
     *,
     changed_files=None,
+    force_include_files=False,
     max_files=_PHASE_2B_MAX_FILES,
+    review_index=None,
 ):
     py_files = [Path(f) for f in python_files if Path(f).suffix.lower() == ".py"]
     if not py_files:
         return []
 
-    if changed_files:
-        changed_norm = {_norm(f) for f in changed_files}
-        return [f for f in py_files if _norm(f) in changed_norm]
+    if review_index is not None:
+        ranked = review_index.rank_files(
+            changed_files=changed_files,
+            force_include_files=force_include_files,
+            max_files=max_files,
+        )
+        if ranked:
+            return ranked
+
+    if force_include_files:
+        return py_files[:max_files]
 
     by_norm = {_norm(f): f for f in py_files}
     scores = {key: 0 for key in by_norm}
@@ -226,11 +246,9 @@ def _select_phase_2b_files(
         py_files,
         key=lambda file_path: (-scores.get(_norm(file_path), 0), str(file_path)),
     )
-    return [
-        file_path
-        for file_path in ranked
-        if scores.get(_norm(file_path), 0) > 0
-    ][:max_files]
+    return [file_path for file_path in ranked if scores.get(_norm(file_path), 0) > 0][
+        :max_files
+    ]
 
 
 def run_static_on_files(
@@ -335,6 +353,7 @@ def run_pipeline(
     if not path.exists():
         console.print(f"[bad]Path not found: {path}[/bad]")
         sys.exit(1)
+    root = _infer_root(path)
 
     all_findings = []
     defs_map = {}
@@ -355,9 +374,7 @@ def run_pipeline(
     pipeline_start = time.time()
 
     if not getattr(agent_args, "llm_only", False):
-        console.print(
-            "[brand]Phase 1:[/brand] Running project scan..."
-        )
+        console.print("[brand]Phase 1:[/brand] Running project scan...")
 
         try:
             phase_1_start = time.time()
@@ -471,9 +488,20 @@ def run_pipeline(
             pass
 
     dead_code_findings = static_findings.get("dead_code", [])
-    phase_2b_files = _select_phase_2b_files(
-        files, static_findings, changed_files=changed_files
+    review_index = build_repo_activation_index(
+        files,
+        project_root=root,
+        static_findings=static_findings,
     )
+    phase_2b_files = _select_phase_2b_files(
+        files,
+        static_findings,
+        changed_files=changed_files,
+        force_include_files=path.is_file(),
+        review_index=review_index,
+    )
+    phase_2b_repo_context = review_index.context_map_for(phase_2b_files)
+    force_full_file_paths = review_index.force_full_file_paths_for(phase_2b_files)
 
     low_conf = [f for f in dead_code_findings if f.get("confidence", 100) < 20]
     if low_conf:
@@ -484,6 +512,11 @@ def run_pipeline(
     skip_2a = not dead_code_findings or getattr(agent_args, "skip_verification", False)
     skip_2b = getattr(agent_args, "static_only", False)
     _2a_state = {"failed": False}
+
+    if dead_code_findings and getattr(agent_args, "skip_verification", False):
+        console.print(
+            "[dim]Skipping dead-code verification for fast review. Use --verify-dead-code to enable it.[/dim]"
+        )
 
     dead_code_agent = None
     if not skip_2a:
@@ -618,12 +651,18 @@ def run_pipeline(
         config = AnalyzerConfig(
             model=model,
             api_key=api_key,
+            provider=getattr(agent_args, "provider", None),
+            base_url=getattr(agent_args, "base_url", None),
             quiet=getattr(agent_args, "quiet", False),
             min_confidence=min_conf_map.get(
                 getattr(agent_args, "min_confidence", "low"), Confidence.LOW
             ),
             parallel=True,
             max_workers=_max_workers,
+            smart_filter=not (path.is_file() or bool(changed_files)),
+            full_file_review=path.is_file() or bool(changed_files),
+            repo_context_map=phase_2b_repo_context,
+            force_full_file_paths=force_full_file_paths,
         )
         analyzer = SkylosLLM(config)
 
@@ -642,6 +681,7 @@ def run_pipeline(
                     "line": finding.location.line,
                     "message": finding.message,
                     "rule_id": finding.rule_id,
+                    "symbol": getattr(finding, "symbol", None),
                     "severity": (
                         finding.severity.value
                         if hasattr(finding.severity, "value")
@@ -682,10 +722,29 @@ def run_pipeline(
 
     if not skip_2a and not skip_2b:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            future_2a = executor.submit(_do_phase_2a)
-            future_2b = executor.submit(_do_phase_2b)
-            phase_2a_findings = future_2a.result()
-            phase_2b_findings = future_2b.result()
+            futures = {
+                executor.submit(_do_phase_2a): "phase_2a",
+                executor.submit(_do_phase_2b): "phase_2b",
+            }
+            completed = set()
+
+            for future in as_completed(futures):
+                phase_name = futures[future]
+                if phase_name == "phase_2a":
+                    phase_2a_findings = future.result()
+                else:
+                    phase_2b_findings = future.result()
+
+                completed.add(phase_name)
+                remaining = {"phase_2a", "phase_2b"} - completed
+                if remaining == {"phase_2a"}:
+                    console.print(
+                        "[dim]LLM audit finished. Waiting for dead-code verification...[/dim]"
+                    )
+                elif remaining == {"phase_2b"}:
+                    console.print(
+                        "[dim]Dead-code verification finished. Waiting for security & quality analysis...[/dim]"
+                    )
     elif not skip_2a:
         phase_2a_findings = _do_phase_2a()
     elif not skip_2b:
@@ -724,7 +783,14 @@ def run_pipeline(
         )
         try:
             phase_3_start = time.time()
-            _enrich_with_llm_suggestions(enrich_findings, source_cache, model, api_key)
+            _enrich_with_llm_suggestions(
+                enrich_findings,
+                source_cache,
+                model,
+                api_key,
+                provider=getattr(agent_args, "provider", None),
+                base_url=getattr(agent_args, "base_url", None),
+            )
             enriched = sum(1 for f in enrich_findings if f.get("fixed_code"))
             phase_stats["phase_3_seconds"] = round(time.time() - phase_3_start, 1)
             console.print(

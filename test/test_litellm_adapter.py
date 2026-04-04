@@ -8,10 +8,11 @@ from skylos.adapters.litellm_adapter import LiteLLMAdapter
 
 
 class _FakeLitellmResponse:
-    def __init__(self, text: str):
+    def __init__(self, text: str, usage=None):
         self.choices = [
             types.SimpleNamespace(message=types.SimpleNamespace(content=text))
         ]
+        self.usage = usage
 
 
 class _FakeLitellmChunk:
@@ -75,10 +76,12 @@ def test_init_raises_if_litellm_missing(monkeypatch):
 
 def test_init_sets_litellm_drop_params_true(monkeypatch):
     fake = _install_fake_litellm(monkeypatch)
+    monkeypatch.delenv("LITELLM_LOCAL_MODEL_COST_MAP", raising=False)
 
     ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K")
     assert ad.litellm is fake
     assert ad.litellm.drop_params is True
+    assert os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] == "true"
 
 
 def test_init_uses_keyring_when_no_key_and_not_local(monkeypatch):
@@ -115,6 +118,7 @@ def test_init_does_not_call_keyring_when_local_model(monkeypatch):
 def test_complete_success_calls_litellm_completion(monkeypatch):
     fake = _FakeLiteLLMModule(text="hello from litellm")
     _install_fake_litellm(monkeypatch, fake_module=fake)
+    monkeypatch.delenv("SKYLOS_LLM_BASE_URL", raising=False)
 
     ad = LiteLLMAdapter(model="claude-3-5-sonnet", api_key="K")
     out = ad.complete("SYS", "USER")
@@ -135,7 +139,7 @@ def test_complete_success_calls_litellm_completion(monkeypatch):
             },
             {"role": "user", "content": "USER"},
         ],
-        "temperature": 0.2,
+        "temperature": 0.0,
         "api_key": "K",
     }
 
@@ -164,6 +168,48 @@ def test_complete_adds_max_tokens_when_present(monkeypatch):
     assert fake.last_kwargs["max_tokens"] == 321
 
 
+def test_complete_adds_timeout_when_present(monkeypatch):
+    fake = _FakeLiteLLMModule(text="ok")
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+
+    ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K", timeout=12)
+    _ = ad.complete("SYS", "USER")
+
+    assert fake.last_kwargs["timeout"] == 12
+
+
+def test_complete_records_usage_tokens(monkeypatch):
+    usage = types.SimpleNamespace(
+        prompt_tokens=111,
+        completion_tokens=22,
+        total_tokens=133,
+    )
+    fake = _FakeLiteLLMModule()
+    fake.text = "ok"
+
+    def completion(**kwargs):
+        fake.last_kwargs = kwargs
+        return _FakeLitellmResponse("ok", usage=usage)
+
+    fake.completion = completion
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+
+    ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K")
+    out = ad.complete("SYS", "USER")
+
+    assert out == "ok"
+    assert ad.last_usage == {
+        "prompt_tokens": 111,
+        "completion_tokens": 22,
+        "total_tokens": 133,
+    }
+    assert ad.total_usage == {
+        "prompt_tokens": 111,
+        "completion_tokens": 22,
+        "total_tokens": 133,
+    }
+
+
 def test_complete_local_forces_api_key_not_needed(monkeypatch):
     fake = _FakeLiteLLMModule(text="local ok")
     _install_fake_litellm(monkeypatch, fake_module=fake)
@@ -188,6 +234,50 @@ def test_complete_returns_error_string_on_exception(monkeypatch):
 
     assert out.startswith("Error:")
     assert "boom" in out
+
+
+def test_complete_retries_transient_errors_then_succeeds(monkeypatch):
+    class _RetryThenSuccessLiteLLM:
+        def __init__(self):
+            self.calls = 0
+            self.drop_params = False
+
+        def completion(self, **kwargs):
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError("Connection error")
+            return _FakeLitellmResponse("ok after retry")
+
+    fake = _RetryThenSuccessLiteLLM()
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+    monkeypatch.setattr("skylos.adapters.litellm_adapter.time.sleep", lambda _: None)
+
+    ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K")
+    out = ad.complete("SYS", "USER")
+
+    assert out == "ok after retry"
+    assert fake.calls == 3
+
+
+def test_complete_honors_retry_attempt_limit(monkeypatch):
+    class _AlwaysFailLiteLLM:
+        def __init__(self):
+            self.calls = 0
+            self.drop_params = False
+
+        def completion(self, **kwargs):
+            self.calls += 1
+            raise RuntimeError("Connection error")
+
+    fake = _AlwaysFailLiteLLM()
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+    monkeypatch.setattr("skylos.adapters.litellm_adapter.time.sleep", lambda _: None)
+
+    ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K", retry_attempts=1)
+    out = ad.complete("SYS", "USER")
+
+    assert out.startswith("Error:")
+    assert fake.calls == 1
 
 
 def test_stream_success_yields_delta_chunks(monkeypatch):
@@ -247,3 +337,27 @@ def test_complete_connection_error_mentions_base_url(monkeypatch):
 
     assert out.startswith("Error:")
     assert "SKYLOS_LLM_BASE_URL" in out or "--base-url" in out
+
+
+def test_explicit_provider_overrides_model_based_key_resolution(monkeypatch):
+    _install_fake_litellm(monkeypatch)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    import skylos.adapters.litellm_adapter as adapter_mod
+
+    monkeypatch.setattr(
+        adapter_mod,
+        "PROVIDERS",
+        {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"},
+    )
+    monkeypatch.setattr(
+        adapter_mod,
+        "get_key",
+        lambda provider: "ANTHRO_KEY" if provider == "anthropic" else None,
+    )
+
+    ad = LiteLLMAdapter(model="gpt-4.1", api_key=None, provider="anthropic")
+
+    assert ad.api_key == "ANTHRO_KEY"
+    assert os.environ["ANTHROPIC_API_KEY"] == "ANTHRO_KEY"
