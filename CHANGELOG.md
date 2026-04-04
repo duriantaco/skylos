@@ -15,6 +15,18 @@
 - Fixed local web UI rendering to avoid unsafe HTML insertion patterns
 - Sync credentials are written with stricter file and dir permissions
 
+## [4.2.1] - 2026-04-03
+
+### Changed
+- `skylos agent scan` now defaults to the fast review path. Slow dead-code verification is opt-in via `--verify-dead-code`
+- Agent review is more repo-aware, with better file selection and context for quality, security, and debt-style issues
+- Added agent benchmarks and Codex comparison runs with token reporting
+
+### Fixed
+- Agent scans now fail cleanly on missing API keys instead of crashing
+- Review output is clearer when dead-code verification is still running
+- LLM provider and runtime settings now propagate correctly through the agent path
+
 ## [4.2.0] - 2026-03-30
 
 ### Added
