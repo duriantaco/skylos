@@ -1,0 +1,6 @@
+* @duriantaco
+
+.github/workflows/ @duriantaco
+tools/release/ @duriantaco
+pyproject.toml @duriantaco
+uv.lock @duriantaco
