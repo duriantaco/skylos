@@ -15,9 +15,7 @@ from skylos.rules.custom import YAMLRule, load_custom_rules, load_community_rule
 from skylos.linter import LinterVisitor
 
 
-def _make_taint_rule(
-    sources=None, sinks=None, sanitizers=None, rule_id="TEST-001"
-):
+def _make_taint_rule(sources=None, sinks=None, sanitizers=None, rule_id="TEST-001"):
     return YAMLRule(
         {
             "rule_id": rule_id,

@@ -159,10 +159,22 @@ def _validate_code_change_impl(
         "eval(": ("SKY-D201", "HIGH", "Use of eval()"),
         "exec(": ("SKY-D202", "HIGH", "Use of exec()"),
         "os.system(": ("SKY-D203", "CRITICAL", "Use of os.system()"),
-        "pickle.load(": ("SKY-D204", "CRITICAL", "Untrusted deserialization via pickle.load"),
-        "pickle.loads(": ("SKY-D205", "CRITICAL", "Untrusted deserialization via pickle.loads"),
+        "pickle.load(": (
+            "SKY-D204",
+            "CRITICAL",
+            "Untrusted deserialization via pickle.load",
+        ),
+        "pickle.loads(": (
+            "SKY-D205",
+            "CRITICAL",
+            "Untrusted deserialization via pickle.loads",
+        ),
         "yaml.load(": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
-        "marshal.loads(": ("SKY-D233", "CRITICAL", "Untrusted deserialization via marshal.loads"),
+        "marshal.loads(": (
+            "SKY-D233",
+            "CRITICAL",
+            "Untrusted deserialization via marshal.loads",
+        ),
         "__import__(": ("SKY-D240", "HIGH", "Dynamic import via __import__()"),
         "compile(": ("SKY-D241", "MEDIUM", "Dynamic code compilation"),
     }
@@ -186,52 +198,60 @@ def _validate_code_change_impl(
 
                 for pattern, (rule_id, severity, msg) in dangerous_calls.items():
                     if pattern in stripped:
-                        all_findings.append({
-                            "rule_id": rule_id,
+                        all_findings.append(
+                            {
+                                "rule_id": rule_id,
+                                "kind": "dangerous_pattern",
+                                "severity": severity,
+                                "message": f"Dangerous pattern in added code: {msg}",
+                                "file": file_path_chunk,
+                                "line": line_no,
+                                "col": 0,
+                            }
+                        )
+
+                if sql_injection_re.search(stripped):
+                    all_findings.append(
+                        {
+                            "rule_id": "SKY-D220",
                             "kind": "dangerous_pattern",
-                            "severity": severity,
-                            "message": f"Dangerous pattern in added code: {msg}",
+                            "severity": "CRITICAL",
+                            "message": "Potential SQL injection in added code: string interpolation in query",
                             "file": file_path_chunk,
                             "line": line_no,
                             "col": 0,
-                        })
-
-                if sql_injection_re.search(stripped):
-                    all_findings.append({
-                        "rule_id": "SKY-D220",
-                        "kind": "dangerous_pattern",
-                        "severity": "CRITICAL",
-                        "message": "Potential SQL injection in added code: string interpolation in query",
-                        "file": file_path_chunk,
-                        "line": line_no,
-                        "col": 0,
-                    })
+                        }
+                    )
 
                 for provider, regex in PROVIDER_PATTERNS:
                     if regex.search(stripped):
-                        all_findings.append({
-                            "rule_id": "SKY-S101",
-                            "kind": "secret",
-                            "severity": "CRITICAL",
-                            "message": f"Secret detected in added code: {provider} token/key",
-                            "file": file_path_chunk,
-                            "line": line_no,
-                            "col": 0,
-                        })
+                        all_findings.append(
+                            {
+                                "rule_id": "SKY-S101",
+                                "kind": "secret",
+                                "severity": "CRITICAL",
+                                "message": f"Secret detected in added code: {provider} token/key",
+                                "file": file_path_chunk,
+                                "line": line_no,
+                                "col": 0,
+                            }
+                        )
 
                 for m_generic in GENERIC_VALUE.finditer(stripped):
                     val = m_generic.group("val") or m_generic.group("bare")
                     if val and _entropy(val) >= DEFAULT_MIN_ENTROPY:
                         if not any(hint in val.lower() for hint in SAFE_TEST_HINTS):
-                            all_findings.append({
-                                "rule_id": "SKY-S101",
-                                "kind": "secret",
-                                "severity": "HIGH",
-                                "message": "Possible secret/credential in added code",
-                                "file": file_path_chunk,
-                                "line": line_no,
-                                "col": 0,
-                            })
+                            all_findings.append(
+                                {
+                                    "rule_id": "SKY-S101",
+                                    "kind": "secret",
+                                    "severity": "HIGH",
+                                    "message": "Possible secret/credential in added code",
+                                    "file": file_path_chunk,
+                                    "line": line_no,
+                                    "col": 0,
+                                }
+                            )
             elif not raw_line.startswith("-"):
                 line_no += 1
 
@@ -278,19 +298,28 @@ def _get_security_context_impl(path: str) -> dict:
 
     framework_indicators = {
         "Django": [
-            "manage.py", "settings.py", "django.conf", "urls.py",
+            "manage.py",
+            "settings.py",
+            "django.conf",
+            "urls.py",
         ],
         "Flask": [
-            "app.py", "wsgi.py",
+            "app.py",
+            "wsgi.py",
         ],
         "FastAPI": [
-            "main.py", "app.py",
+            "main.py",
+            "app.py",
         ],
         "Express": [
-            "app.js", "server.js", "index.js",
+            "app.js",
+            "server.js",
+            "index.js",
         ],
         "Next.js": [
-            "next.config.js", "next.config.mjs", "next.config.ts",
+            "next.config.js",
+            "next.config.mjs",
+            "next.config.ts",
         ],
     }
 
@@ -298,7 +327,9 @@ def _get_security_context_impl(path: str) -> dict:
         "Django": re.compile(r"(?:from django|import django)"),
         "Flask": re.compile(r"(?:from flask |import flask)"),
         "FastAPI": re.compile(r"(?:from fastapi |import fastapi|FastAPI\(\))"),
-        "Express": re.compile(r"""(?:require\(['"]express['"]\)|from ['"]express['"])"""),
+        "Express": re.compile(
+            r"""(?:require\(['"]express['"]\)|from ['"]express['"])"""
+        ),
         "Next.js": re.compile(r"""(?:from ['"]next/|@next/)"""),
     }
 
@@ -310,7 +341,10 @@ def _get_security_context_impl(path: str) -> dict:
 
     for item in target.rglob("*"):
         parts_item = item.parts
-        if any(skip in parts_item for skip in ("node_modules", ".git", "__pycache__", "venv", ".venv", "env")):
+        if any(
+            skip in parts_item
+            for skip in ("node_modules", ".git", "__pycache__", "venv", ".venv", "env")
+        ):
             continue
         if item.is_file():
             if item.name in scan_names or item.suffix in scan_extensions:
@@ -337,9 +371,13 @@ def _get_security_context_impl(path: str) -> dict:
     )
 
     header_names = {
-        "X-Content-Type-Options", "X-Frame-Options",
-        "Content-Security-Policy", "Strict-Transport-Security",
-        "X-XSS-Protection", "Referrer-Policy", "Permissions-Policy",
+        "X-Content-Type-Options",
+        "X-Frame-Options",
+        "Content-Security-Policy",
+        "Strict-Transport-Security",
+        "X-XSS-Protection",
+        "Referrer-Policy",
+        "Permissions-Policy",
     }
     header_middleware_re = re.compile(r"(?:SecurityMiddleware|helmet\(|secure_headers)")
 
@@ -394,6 +432,7 @@ def _get_security_context_impl(path: str) -> dict:
         if policy_path.exists():
             try:
                 import yaml
+
                 context["policy"] = yaml.safe_load(policy_path.read_text())
             except Exception:
                 context["policy"] = f"Found {policy_name} but could not parse"
@@ -866,8 +905,7 @@ def _register_tools(mcp):
             # Apply filters
             if filter_district:
                 topology["districts"] = [
-                    d for d in topology["districts"]
-                    if filter_district in d["name"]
+                    d for d in topology["districts"] if filter_district in d["name"]
                 ]
 
             if filter_dead_only:
@@ -887,7 +925,8 @@ def _register_tools(mcp):
                 for district in topology["districts"]:
                     for block in district["blocks"]:
                         block["buildings"] = [
-                            b for b in block["buildings"]
+                            b
+                            for b in block["buildings"]
                             if b["complexity"] >= min_complexity
                         ]
                     district["blocks"] = [

@@ -166,8 +166,10 @@ def compute_debt_score(
         )
 
     total_points = round(sum(hotspot.score for hotspot in hotspots), 2)
-    normalizer = max(1.0, (total_loc / 250.0)) if total_loc > 0 else max(
-        1.0, float(len(hotspots))
+    normalizer = (
+        max(1.0, (total_loc / 250.0))
+        if total_loc > 0
+        else max(1.0, float(len(hotspots)))
     )
     penalty = total_points / normalizer
     score_pct = max(0, min(100, round(100 - penalty)))

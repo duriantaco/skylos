@@ -118,9 +118,7 @@ def _run_batch(root_node, lang: Language, key: str, pattern: str) -> dict[str, l
         return {}
 
 
-def scan_danger(
-    root_node, file_path: str, lang: Language | None = None
-) -> list[dict]:
+def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list[dict]:
     findings: list[dict] = []
     if lang is None:
         lang = JAVA_LANG
@@ -200,7 +198,9 @@ def scan_danger(
                 }
             )
 
-    deserial_captures = _run_batch(root_node, lang, "danger_deserial", _DESERIAL_PATTERN)
+    deserial_captures = _run_batch(
+        root_node, lang, "danger_deserial", _DESERIAL_PATTERN
+    )
     for node in deserial_captures.get("ois_type", []):
         findings.append(
             {

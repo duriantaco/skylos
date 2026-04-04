@@ -81,7 +81,9 @@ def annotate_hotspots(
         "worsened": 0,
         "improved": 0,
         "unchanged": 0,
-        "resolved": len(set(baseline_hotspots) - current_hotspots) if count_resolved else 0,
+        "resolved": len(set(baseline_hotspots) - current_hotspots)
+        if count_resolved
+        else 0,
     }
 
     for hotspot in hotspots:
@@ -107,7 +109,9 @@ def annotate_hotspots(
     return counts
 
 
-def compare_to_baseline(snapshot: DebtSnapshot, baseline: dict | None) -> dict[str, int]:
+def compare_to_baseline(
+    snapshot: DebtSnapshot, baseline: dict | None
+) -> dict[str, int]:
     scope = ((snapshot.summary or {}).get("scope") or {}).get("hotspots", "project")
     counts = annotate_hotspots(
         snapshot.hotspots,

@@ -202,8 +202,7 @@ def run_debt_command(
                 api_key=api_key,
                 base_url=base_url,
                 top=debt_args.agent_top,
-                architecture_metrics=snapshot.summary.get("architecture_metrics")
-                or {},
+                architecture_metrics=snapshot.summary.get("architecture_metrics") or {},
             )
             snapshot.summary["agent"] = {
                 "enabled": True,

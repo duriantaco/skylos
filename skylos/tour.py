@@ -1,4 +1,3 @@
-
 import sys
 
 
@@ -104,12 +103,14 @@ def run_tour(console):
         title = f"[bold cyan][{step['step']}/{TOTAL_STEPS}] {step['title']}[/bold cyan]"
 
         console.print()
-        console.print(Panel(
-            step["body"],
-            title=title,
-            border_style="cyan",
-            padding=(1, 2),
-        ))
+        console.print(
+            Panel(
+                step["body"],
+                title=title,
+                border_style="cyan",
+                padding=(1, 2),
+            )
+        )
 
         if is_tty and i < len(STEPS) - 1:
             try:
@@ -119,5 +120,7 @@ def run_tour(console):
                 return
 
     console.print()
-    console.print("  [bold green]Tour complete![/bold green] Run [bold]skylos .[/bold] to start scanning.")
+    console.print(
+        "  [bold green]Tour complete![/bold green] Run [bold]skylos .[/bold] to start scanning."
+    )
     console.print()

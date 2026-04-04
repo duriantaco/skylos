@@ -193,9 +193,13 @@ def browser_login(console=None, base_url=None):
     verified = _verify_login_result(result.token, base_url=base_url)
     if verified is None:
         if console:
-            console.print("[warn]Could not verify login with server — using callback credentials.[/warn]")
+            console.print(
+                "[warn]Could not verify login with server — using callback credentials.[/warn]"
+            )
         else:
-            print("Warning: Could not verify login with server — using callback credentials.")
+            print(
+                "Warning: Could not verify login with server — using callback credentials."
+            )
         return result
     return verified
 

@@ -255,8 +255,12 @@ def _check_unreachable_code(
             for child in node.children:
                 if child.type in ("{", "}"):
                     continue
-                if found_terminator and child.type not in ("comment", "line_comment",
-                                                             "block_comment", "ERROR"):
+                if found_terminator and child.type not in (
+                    "comment",
+                    "line_comment",
+                    "block_comment",
+                    "ERROR",
+                ):
                     findings.append(
                         {
                             "rule_id": "SKY-UC002",

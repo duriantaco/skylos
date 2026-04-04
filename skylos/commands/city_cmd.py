@@ -22,7 +22,10 @@ def run_city_command(argv: list[str]) -> int:
     )
     city_parser.add_argument("path", nargs="?", default=".", help="Path to scan")
     city_parser.add_argument(
-        "--json", action="store_true", dest="output_json", help="Output raw topology JSON"
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output raw topology JSON",
     )
     city_parser.add_argument(
         "--quality", action="store_true", help="Include complexity data in output"

@@ -140,8 +140,7 @@ def discover_source_files(
 ) -> list[Path]:
     target = Path(path).resolve()
     ext_set = {
-        ext.lower() if ext.startswith(".") else f".{ext.lower()}"
-        for ext in extensions
+        ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in extensions
     }
 
     if target.is_file():
@@ -243,7 +242,10 @@ def _collect_forced_included_files(
             if match.is_dir():
                 for file_path in match.rglob("*"):
                     try:
-                        if file_path.is_file() and file_path.suffix.lower() in extensions:
+                        if (
+                            file_path.is_file()
+                            and file_path.suffix.lower() in extensions
+                        ):
                             files.append(file_path.resolve())
                     except OSError:
                         continue

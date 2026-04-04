@@ -10,7 +10,9 @@ def format_debt_table(snapshot: DebtSnapshot, *, top: int | None = None) -> str:
     baseline = summary.get("baseline") or {}
     scope = summary.get("scope") or {}
     hotspot_scope = scope.get("hotspots", "project")
-    project_hotspot_count = int(summary.get("project_hotspot_count") or len(snapshot.hotspots))
+    project_hotspot_count = int(
+        summary.get("project_hotspot_count") or len(snapshot.hotspots)
+    )
     ordered = sorted(
         snapshot.hotspots,
         key=lambda hotspot: (
@@ -60,9 +62,7 @@ def format_debt_table(snapshot: DebtSnapshot, *, top: int | None = None) -> str:
     lines.append("")
     lines.append("Top Hotspots:")
     for index, hotspot in enumerate(hotspots, 1):
-        dimensions = ", ".join(
-            sorted({signal.dimension for signal in hotspot.signals})
-        )
+        dimensions = ", ".join(sorted({signal.dimension for signal in hotspot.signals}))
         status = hotspot.baseline_status
         if hotspot.score_delta:
             status = f"{status} ({hotspot.score_delta:+.2f})"

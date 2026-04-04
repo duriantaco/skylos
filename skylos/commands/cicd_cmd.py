@@ -142,7 +142,9 @@ def run_cicd_command(
         return 0
 
     if cicd_args.cicd_cmd == "gate":
-        results, exit_code = _cicd_load_results(cicd_args, console_factory=console_factory)
+        results, exit_code = _cicd_load_results(
+            cicd_args, console_factory=console_factory
+        )
         if exit_code:
             return exit_code
 
@@ -170,7 +172,9 @@ def run_cicd_command(
         )
 
     if cicd_args.cicd_cmd == "annotate":
-        results, exit_code = _cicd_load_results(cicd_args, console_factory=console_factory)
+        results, exit_code = _cicd_load_results(
+            cicd_args, console_factory=console_factory
+        )
         if exit_code:
             return exit_code
 
@@ -184,7 +188,9 @@ def run_cicd_command(
     if cicd_args.cicd_cmd == "review":
         from skylos.cicd.review import run_pr_review
 
-        results, exit_code = _cicd_load_results(cicd_args, console_factory=console_factory)
+        results, exit_code = _cicd_load_results(
+            cicd_args, console_factory=console_factory
+        )
         if exit_code:
             return exit_code
 

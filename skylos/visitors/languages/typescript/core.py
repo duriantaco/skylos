@@ -384,9 +384,7 @@ class TypeScriptCore:
                                     name_text = self._get_text(name_node)
                                     if alias_node:
                                         alias_text = self._get_text(alias_node)
-                                        names.append(
-                                            f"{name_text} as {alias_text}"
-                                        )
+                                        names.append(f"{name_text} as {alias_text}")
                                     else:
                                         names.append(name_text)
                     elif clause_child.type == "identifier":
