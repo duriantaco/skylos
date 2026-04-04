@@ -132,7 +132,9 @@ def test_cli_guardrail_credits_dispatch_exits_zero(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["skylos", "credits"])
 
     with (
-        patch("skylos.commands.credits_cmd.run_credits_command", return_value=0) as mock_credits,
+        patch(
+            "skylos.commands.credits_cmd.run_credits_command", return_value=0
+        ) as mock_credits,
         pytest.raises(SystemExit) as exc,
     ):
         cli.main()
@@ -145,7 +147,9 @@ def test_cli_guardrail_doctor_dispatch_exits_zero(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["skylos", "doctor"])
 
     with (
-        patch("skylos.commands.doctor_cmd.run_doctor_command", return_value=0) as mock_doctor,
+        patch(
+            "skylos.commands.doctor_cmd.run_doctor_command", return_value=0
+        ) as mock_doctor,
         pytest.raises(SystemExit) as exc,
     ):
         cli.main()
@@ -206,7 +210,9 @@ def test_cli_guardrail_clean_dispatch_preserves_argv(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["skylos", "clean", "pkg"])
 
     with (
-        patch("skylos.commands.clean_cmd.run_clean_command", return_value=0) as mock_clean,
+        patch(
+            "skylos.commands.clean_cmd.run_clean_command", return_value=0
+        ) as mock_clean,
         pytest.raises(SystemExit) as exc,
     ):
         cli.main()
@@ -219,7 +225,9 @@ def test_cli_guardrail_whoami_dispatch_exits_zero(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["skylos", "whoami"])
 
     with (
-        patch("skylos.commands.whoami_cmd.run_whoami_command", return_value=0) as mock_whoami,
+        patch(
+            "skylos.commands.whoami_cmd.run_whoami_command", return_value=0
+        ) as mock_whoami,
         pytest.raises(SystemExit) as exc,
     ):
         cli.main()
@@ -232,7 +240,9 @@ def test_cli_guardrail_login_dispatch_exits_zero(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["skylos", "login"])
 
     with (
-        patch("skylos.commands.login_cmd.run_login_command", return_value=0) as mock_login,
+        patch(
+            "skylos.commands.login_cmd.run_login_command", return_value=0
+        ) as mock_login,
         pytest.raises(SystemExit) as exc,
     ):
         cli.main()
@@ -268,7 +278,9 @@ def test_cli_guardrail_city_dispatch_preserves_argv(monkeypatch):
         cli.main()
 
     assert exc.value.code == 0
-    mock_city.assert_called_once_with(["repo", "--json", "--quality", "--confidence", "75"])
+    mock_city.assert_called_once_with(
+        ["repo", "--json", "--quality", "--confidence", "75"]
+    )
 
 
 def test_cli_guardrail_discover_dispatch_preserves_argv(monkeypatch):
@@ -387,7 +399,9 @@ def test_cli_guardrail_rules_dispatch_preserves_argv(monkeypatch):
     )
 
     with (
-        patch("skylos.commands.rules_cmd.run_rules_command", return_value=0) as mock_rules,
+        patch(
+            "skylos.commands.rules_cmd.run_rules_command", return_value=0
+        ) as mock_rules,
         pytest.raises(SystemExit) as exc,
     ):
         cli.main()
@@ -467,7 +481,9 @@ def test_doctor_command_reports_core_statuses(tmp_path):
     repo = tmp_path / "repo"
     workflow = repo / ".github" / "workflows"
     workflow.mkdir(parents=True)
-    (repo / "pyproject.toml").write_text("[tool.skylos]\nexclude=['venv']\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text(
+        "[tool.skylos]\nexclude=['venv']\n", encoding="utf-8"
+    )
     (workflow / "skylos.yml").write_text("name: skylos\n", encoding="utf-8")
 
     home = tmp_path / "home"
@@ -479,24 +495,32 @@ def test_doctor_command_reports_core_statuses(tmp_path):
 
     with (
         patch("skylos.commands.doctor_cmd.Console", return_value=console),
-        patch("skylos.commands.doctor_cmd.platform.python_version", return_value="3.12.1"),
+        patch(
+            "skylos.commands.doctor_cmd.platform.python_version", return_value="3.12.1"
+        ),
         patch("skylos.commands.doctor_cmd._rust_available", return_value=True),
         patch("skylos.commands.doctor_cmd._llm_available", return_value=True),
         patch("skylos.commands.doctor_cmd._interactive_available", return_value=True),
-        patch("skylos.commands.doctor_cmd.load_config", return_value={"exclude": ["venv"]}),
+        patch(
+            "skylos.commands.doctor_cmd.load_config", return_value={"exclude": ["venv"]}
+        ),
         patch("skylos.commands.doctor_cmd.Path.cwd", return_value=repo),
         patch("skylos.commands.doctor_cmd.Path.home", return_value=home),
         patch("skylos.api.get_project_token", return_value="tok"),
-        patch("skylos.api.get_credit_balance", return_value={"plan": "free", "balance": 5}),
+        patch(
+            "skylos.api.get_credit_balance", return_value={"plan": "free", "balance": 5}
+        ),
     ):
         from skylos.commands.doctor_cmd import run_doctor_command
 
         exit_code = run_doctor_command()
 
     assert exit_code == 0
-    printed = " ".join(str(call.args[0]) for call in console.print.call_args_list if call.args)
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
     assert "Python 3.12.1" in printed
-    assert "Skylos 4.2.0" in printed
+    assert "Skylos 4.2.1" in printed
     assert "Cloud connected" in printed
     assert "pyproject.toml [tool.skylos] config found" in printed
     assert "GitHub Actions workflow found" in printed
@@ -511,8 +535,13 @@ def test_city_command_json_output_prints_topology(tmp_path):
     with (
         patch("skylos.commands.city_cmd.Console", return_value=Mock()),
         patch("skylos.commands.city_cmd.Progress", return_value=_progress_ctx()),
-        patch("skylos.commands.city_cmd.load_config", return_value={"exclude": ["venv"]}),
-        patch("skylos.commands.city_cmd.run_analyze", return_value=json.dumps({"unused_functions": []})) as mock_analyze,
+        patch(
+            "skylos.commands.city_cmd.load_config", return_value={"exclude": ["venv"]}
+        ),
+        patch(
+            "skylos.commands.city_cmd.run_analyze",
+            return_value=json.dumps({"unused_functions": []}),
+        ) as mock_analyze,
         patch("skylos.city.generate_topology", return_value=topology),
         patch("builtins.print") as mock_print,
     ):
@@ -533,8 +562,13 @@ def test_discover_command_json_output_prints_report(tmp_path):
     with (
         patch("skylos.commands.discover_cmd.Console", return_value=Mock()),
         patch("skylos.commands.discover_cmd.Progress", return_value=_progress_ctx()),
-        patch("skylos.discover.detector._collect_python_files", return_value=[target / "app.py"]) as mock_collect,
-        patch("skylos.discover.detector.detect_integrations", return_value=([], {})) as mock_detect,
+        patch(
+            "skylos.discover.detector._collect_python_files",
+            return_value=[target / "app.py"],
+        ) as mock_collect,
+        patch(
+            "skylos.discover.detector.detect_integrations", return_value=([], {})
+        ) as mock_detect,
         patch("skylos.discover.report.format_json", return_value=payload),
         patch("builtins.print") as mock_print,
     ):
@@ -587,7 +621,9 @@ def test_ingest_command_json_output_prints_normalized_result():
     result = {"success": True, "result": {"danger": []}, "findings_count": 0}
 
     with (
-        patch("skylos.ingest.ingest_claude_security", return_value=result) as mock_ingest,
+        patch(
+            "skylos.ingest.ingest_claude_security", return_value=result
+        ) as mock_ingest,
         patch("builtins.print") as mock_print,
     ):
         from skylos.commands.ingest_cmd import run_ingest_command
@@ -615,7 +651,9 @@ def test_provenance_command_json_output_prints_report(tmp_path):
     report.to_dict.return_value = {"summary": {"total_files": 0}, "agent_files": []}
 
     with (
-        patch("skylos.provenance.analyze_provenance", return_value=report) as mock_analyze,
+        patch(
+            "skylos.provenance.analyze_provenance", return_value=report
+        ) as mock_analyze,
         patch("builtins.print") as mock_print,
     ):
         from skylos.commands.provenance_cmd import run_provenance_command
@@ -636,6 +674,7 @@ def test_cicd_gate_command_reads_input_and_returns_gate_exit(tmp_path):
     results_path = tmp_path / "results.json"
     results_path.write_text(json.dumps({"project_root": str(tmp_path), "danger": []}))
     from skylos.commands.cicd_cmd import run_cicd_command
+
     mock_gate = Mock(return_value=0)
 
     exit_code = run_cicd_command(
@@ -667,7 +706,9 @@ def test_cli_guardrail_static_json_output_passthrough(monkeypatch):
     )
 
     with (
-        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
+        patch(
+            "skylos.cli.run_analyze", return_value=json.dumps(result)
+        ) as mock_analyze,
         patch("skylos.cli.setup_logger"),
         patch("skylos.cli.Progress") as mock_progress,
         patch("builtins.print") as mock_print,
@@ -688,7 +729,10 @@ def test_cli_guardrail_debt_changed_json_keeps_project_scope(tmp_path, monkeypat
     )
 
     with (
-        patch("skylos.cli.get_git_changed_files", return_value=[tmp_path / "app/services.py"]),
+        patch(
+            "skylos.cli.get_git_changed_files",
+            return_value=[tmp_path / "app/services.py"],
+        ),
         patch("skylos.debt.run_debt_analysis", return_value=snapshot),
         patch("skylos.debt.load_policy", return_value=None),
         patch("skylos.cli.Console", return_value=Mock()),
@@ -728,7 +772,10 @@ def test_cli_guardrail_debt_subdir_save_baseline_rejected(tmp_path, monkeypatch)
 
     assert exc.value.code == 1
     mock_save.assert_not_called()
-    assert "--save-baseline only supports project-root scans" in console.print.call_args.args[0]
+    assert (
+        "--save-baseline only supports project-root scans"
+        in console.print.call_args.args[0]
+    )
 
 
 def test_cli_guardrail_debt_top_flag_overrides_policy(tmp_path, monkeypatch):
@@ -761,7 +808,9 @@ def test_cli_guardrail_agent_watch_forwards_learn_flag(monkeypatch):
     )
 
     with (
-        patch("skylos.agent_center.watch_project", return_value={"summary": {}}) as mock_watch,
+        patch(
+            "skylos.agent_center.watch_project", return_value={"summary": {}}
+        ) as mock_watch,
         patch("builtins.print") as mock_print,
         pytest.raises(SystemExit) as exc,
     ):

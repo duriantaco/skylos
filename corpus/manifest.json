@@ -1,0 +1,736 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "flask-route-handler",
+      "path": "fixtures/flask_route_handler",
+      "description": "Flask route handlers are framework entrypoints, not dead code.",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Flask route patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["index"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "fastapi-depends-route",
+      "path": "fixtures/fastapi_depends_route",
+      "description": "FastAPI route functions and Depends providers should stay alive.",
+      "source": {
+        "repo": "https://github.com/fastapi/fastapi",
+        "license": "MIT",
+        "notes": "Distilled from official FastAPI dependency injection patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["get_db", "read_root"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "celery-task",
+      "path": "fixtures/celery_task",
+      "description": "Celery tasks are worker entrypoints and should not be flagged.",
+      "source": {
+        "repo": "https://github.com/celery/celery",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Celery task declaration patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["add"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "pluggy-hookimpl",
+      "path": "fixtures/pluggy_hookimpl",
+      "description": "Pluggy hook implementations are invoked by the plugin manager.",
+      "source": {
+        "repo": "https://github.com/pytest-dev/pluggy",
+        "license": "MIT",
+        "notes": "Distilled from official Pluggy hook implementation patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["my_hook"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "pytest-plugin-hooks",
+      "path": "fixtures/pytest_plugin_hooks",
+      "description": "Pytest plugin hooks should not regress into dead-code findings.",
+      "source": {
+        "repo": "https://github.com/pytest-dev/pytest",
+        "license": "MIT",
+        "notes": "Distilled from official pytest plugin hook names."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": [
+            "pytest_addhooks",
+            "pytest_cmdline_main",
+            "pytest_assertrepr_compare"
+          ],
+          "unused_parameters": ["config", "op", "left", "right"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "typer-callback",
+      "path": "fixtures/typer_callback",
+      "description": "Typer callback functions are CLI entrypoints.",
+      "source": {
+        "repo": "https://github.com/fastapi/typer",
+        "license": "MIT",
+        "notes": "Distilled from official Typer callback patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["main"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "starlette-add-route",
+      "path": "fixtures/starlette_add_route",
+      "description": "Imperative Starlette route registration should keep handlers alive.",
+      "source": {
+        "repo": "https://github.com/encode/starlette",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Starlette imperative routing patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["homepage"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "sanic-register-listener",
+      "path": "fixtures/sanic_register_listener",
+      "description": "Sanic listener registration should keep async callbacks alive.",
+      "source": {
+        "repo": "https://github.com/sanic-org/sanic",
+        "license": "MIT",
+        "notes": "Distilled from official Sanic listener registration patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["before_start"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "django-urlpatterns",
+      "path": "fixtures/django_urlpatterns.py",
+      "description": "Django URL patterns should keep view functions alive.",
+      "source": {
+        "repo": "https://github.com/django/django",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Django URL routing patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["home"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "django-class-based-view",
+      "path": "fixtures/django_cbv.py",
+      "description": "Django class-based views should not be treated as dead framework classes.",
+      "source": {
+        "repo": "https://github.com/django/django",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Django class-based view patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["get"],
+          "unused_classes": ["HomeView"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "drf-viewset",
+      "path": "fixtures/drf_viewset.py",
+      "description": "DRF viewsets should keep action methods and classes alive.",
+      "source": {
+        "repo": "https://github.com/encode/django-rest-framework",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Django REST Framework viewset patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["list"],
+          "unused_classes": ["UserViewSet"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "drf-serializer",
+      "path": "fixtures/drf_serializer.py",
+      "description": "DRF serializer classes, fields, and validator methods are framework-owned.",
+      "source": {
+        "repo": "https://github.com/encode/django-rest-framework",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Django REST Framework serializer patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["validate_email"],
+          "unused_classes": ["UserSerializer"],
+          "unused_variables": ["email"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "sqlalchemy-model",
+      "path": "fixtures/sqlalchemy_model.py",
+      "description": "SQLAlchemy declarative model classes and columns should not regress into dead-code reports.",
+      "source": {
+        "repo": "https://github.com/sqlalchemy/sqlalchemy",
+        "license": "MIT",
+        "notes": "Distilled from official SQLAlchemy declarative model patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": ["User"],
+          "unused_variables": ["id", "name"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "fastapi-pydantic-model",
+      "path": "fixtures/fastapi_pydantic_model.py",
+      "description": "FastAPI route models and pydantic validators should stay alive.",
+      "source": {
+        "repo": "https://github.com/fastapi/fastapi",
+        "license": "MIT",
+        "notes": "Distilled from official FastAPI request-model patterns with Pydantic."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["create_user", "validate_email"],
+          "unused_classes": ["UserIn"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "pydantic-settings-model",
+      "path": "fixtures/pydantic_settings_model.py",
+      "description": "Pydantic settings models should not be flagged as dead classes.",
+      "source": {
+        "repo": "https://github.com/pydantic/pydantic-settings",
+        "license": "MIT",
+        "notes": "Distilled from official BaseSettings patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": ["Settings"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "aiohttp-routes",
+      "path": "fixtures/aiohttp_routes.py",
+      "description": "aiohttp route table decorators should keep handlers alive.",
+      "source": {
+        "repo": "https://github.com/aio-libs/aiohttp",
+        "license": "Apache-2.0",
+        "notes": "Distilled from official aiohttp route table patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["hello"],
+          "unused_parameters": ["request"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "attrs-define-fields",
+      "path": "fixtures/attrs_define.py",
+      "description": "attrs fields should not be reported as unused variables.",
+      "source": {
+        "repo": "https://github.com/python-attrs/attrs",
+        "license": "MIT",
+        "notes": "Distilled from official attrs class definition patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_variables": ["id", "name"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "always-false-loop",
+      "path": "fixtures/always_false_loop.py",
+      "description": "An always-false loop body should be reported as unreachable dead branch.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Language-level control-flow edge case."
+      },
+      "scan": {
+        "enable_quality": true
+      },
+      "expect": {
+        "absent": {},
+        "present": {
+          "quality": ["SKY-UC001", "while_false"]
+        }
+      }
+    },
+    {
+      "id": "marshmallow-schema",
+      "path": "fixtures/marshmallow_schema.py",
+      "description": "Marshmallow schema classes and lifecycle hooks should not be treated as dead code.",
+      "source": {
+        "repo": "https://github.com/marshmallow-code/marshmallow",
+        "license": "MIT",
+        "notes": "Distilled from official Marshmallow schema hook patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["make_user"],
+          "unused_classes": ["UserSchema"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "sqlalchemy-event-listener",
+      "path": "fixtures/sqlalchemy_event_listener.py",
+      "description": "Imperative SQLAlchemy event listeners should keep callbacks alive.",
+      "source": {
+        "repo": "https://github.com/sqlalchemy/sqlalchemy",
+        "license": "MIT",
+        "notes": "Distilled from official SQLAlchemy event registration patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["on_connect"],
+          "unused_parameters": ["dbapi_connection", "connection_record"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "flask-add-url-rule",
+      "path": "fixtures/flask_add_url_rule.py",
+      "description": "Imperative Flask route registration should keep handlers alive.",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Flask add_url_rule patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["list_users"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "fastapi-add-api-route",
+      "path": "fixtures/fastapi_add_api_route.py",
+      "description": "Imperative FastAPI route registration should keep endpoint callables alive.",
+      "source": {
+        "repo": "https://github.com/fastapi/fastapi",
+        "license": "MIT",
+        "notes": "Distilled from official FastAPI add_api_route patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["read_items"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "fastapi-include-router",
+      "path": "fixtures/fastapi_include_router.py",
+      "description": "APIRouter handlers should stay alive when the router is included on the app.",
+      "source": {
+        "repo": "https://github.com/fastapi/fastapi",
+        "license": "MIT",
+        "notes": "Distilled from official APIRouter include_router patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["ping"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "django-management-command",
+      "path": "fixtures/django_management_command.py",
+      "description": "Django management command handlers are framework entrypoints.",
+      "source": {
+        "repo": "https://github.com/django/django",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Django management command patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["handle"],
+          "unused_classes": ["Command"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "django-signal-receiver",
+      "path": "fixtures/django_signal_receiver.py",
+      "description": "Django signal receivers should not be reported as dead code.",
+      "source": {
+        "repo": "https://github.com/django/django",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Django receiver patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["on_save"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "sqlalchemy-listens-for",
+      "path": "fixtures/sqlalchemy_listens_for.py",
+      "description": "Decorator-based SQLAlchemy event listeners should keep callbacks alive.",
+      "source": {
+        "repo": "https://github.com/sqlalchemy/sqlalchemy",
+        "license": "MIT",
+        "notes": "Distilled from official SQLAlchemy @event.listens_for patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["on_connect"],
+          "unused_parameters": ["dbapi_connection", "connection_record"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "marshmallow-validates-schema",
+      "path": "fixtures/marshmallow_validates_schema.py",
+      "description": "Marshmallow schema validators are framework-owned callbacks.",
+      "source": {
+        "repo": "https://github.com/marshmallow-code/marshmallow",
+        "license": "MIT",
+        "notes": "Distilled from official Marshmallow validates_schema patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["validate_schema"],
+          "unused_classes": ["UserSchema"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "python-cached-property",
+      "path": "fixtures/python_cached_property.py",
+      "description": "cached_property accessors are runtime attributes, not dead methods.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Language-level descriptor pattern."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["timeout"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "python-property-chain",
+      "path": "fixtures/python_property_chain.py",
+      "description": "Property getters and setters should stay alive as a linked descriptor chain.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Language-level property descriptor pattern."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["name"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "python-type-checking-imports",
+      "path": "fixtures/python_type_checking.py",
+      "description": "TYPE_CHECKING-only imports used in annotations should not be flagged as unused imports.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Language-level typing pattern."
+      },
+      "expect": {
+        "absent": {
+          "unused_imports": ["User"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "python-public-api-exports",
+      "path": "fixtures/python_public_api",
+      "description": "Explicit package exports in __init__.py/__all__ should protect public API symbols.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Language-level public API export pattern."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["public_function"],
+          "unused_classes": ["PublicClass"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "python-pyproject-entrypoint",
+      "path": "fixtures/python_pyproject_entrypoint",
+      "description": "PEP 621 script entrypoints declared in pyproject.toml should keep target callables alive.",
+      "source": {
+        "repo": "https://packaging.python.org",
+        "license": "PSF-2.0",
+        "notes": "Packaging-level console script pattern."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["main"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "django-admin-register",
+      "path": "fixtures/django_admin_register.py",
+      "description": "Django admin registrations should keep admin classes alive.",
+      "source": {
+        "repo": "https://github.com/django/django",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Django admin registration patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": ["UserAdmin"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "django-appconfig-ready",
+      "path": "fixtures/django_appconfig.py",
+      "description": "Django AppConfig classes and ready hooks are framework lifecycle entrypoints.",
+      "source": {
+        "repo": "https://github.com/django/django",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Django AppConfig patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": ["DemoConfig"],
+          "unused_functions": ["ready"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "celery-task-class",
+      "path": "fixtures/celery_task_class.py",
+      "description": "Custom Celery task subclasses and run methods should not be reported as dead code.",
+      "source": {
+        "repo": "https://github.com/celery/celery",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from official Celery Task subclass patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": ["DemoTask"],
+          "unused_functions": ["run"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "click-command-subclass",
+      "path": "fixtures/click_command_subclass.py",
+      "description": "Click command subclasses and invoke methods should stay alive.",
+      "source": {
+        "repo": "https://github.com/pallets/click",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from Click command subclass patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": ["DemoCommand"],
+          "unused_functions": ["invoke"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "pydantic-computed-field",
+      "path": "fixtures/pydantic_computed_field.py",
+      "description": "Pydantic computed fields are runtime-backed descriptors, not dead methods.",
+      "source": {
+        "repo": "https://github.com/pydantic/pydantic",
+        "license": "MIT",
+        "notes": "Distilled from Pydantic computed_field patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": ["User"],
+          "unused_functions": ["full_name"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "pydantic-serializer-hooks",
+      "path": "fixtures/pydantic_serializer_hooks.py",
+      "description": "Pydantic serializer hooks should not be treated as dead callback methods.",
+      "source": {
+        "repo": "https://github.com/pydantic/pydantic",
+        "license": "MIT",
+        "notes": "Distilled from field_serializer/model_serializer patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": ["User"],
+          "unused_functions": ["serialize_name", "serialize_model"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "pydantic-model-post-init",
+      "path": "fixtures/pydantic_model_post_init.py",
+      "description": "Pydantic lifecycle hooks like model_post_init should not regress into dead-code findings.",
+      "source": {
+        "repo": "https://github.com/pydantic/pydantic",
+        "license": "MIT",
+        "notes": "Distilled from Pydantic model lifecycle patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_classes": ["User"],
+          "unused_functions": ["model_post_init"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "python-enum-members",
+      "path": "fixtures/python_enum_members.py",
+      "description": "Enum members are runtime-accessed through the enum class and should not be flagged as dead variables.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Language-level Enum pattern."
+      },
+      "expect": {
+        "absent": {
+          "unused_variables": ["RED", "BLUE"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "python-abstract-base",
+      "path": "fixtures/python_abstract_base.py",
+      "description": "Abstract base class declarations are contracts, not dead code.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Language-level abstractmethod contract."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["run"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "python-protocol-implementation",
+      "path": "fixtures/python_protocol_impl.py",
+      "description": "Protocol implementations should not regress into dead method findings.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Language-level Protocol implementation pattern."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["run"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "sqlalchemy-hybrid-property",
+      "path": "fixtures/sqlalchemy_hybrid_property.py",
+      "description": "SQLAlchemy hybrid properties behave like descriptors and should not be flagged as dead methods.",
+      "source": {
+        "repo": "https://github.com/sqlalchemy/sqlalchemy",
+        "license": "MIT",
+        "notes": "Distilled from SQLAlchemy hybrid_property patterns."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["full_name"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "python-unittest-lifecycle",
+      "path": "fixtures/python_unittest_lifecycle",
+      "description": "unittest lifecycle hooks should not be reported as dead code in test files.",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Language-level unittest lifecycle pattern."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["setUpClass", "tearDownClass", "setUpModule", "tearDownModule"]
+        },
+        "present": {}
+      }
+    }
+  ]
+}

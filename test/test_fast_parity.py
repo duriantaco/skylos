@@ -35,14 +35,23 @@ def _run_dead_code_parity_scans_in_subprocess(target: Path) -> tuple[dict, dict]
     code = textwrap.dedent(
         """
         import json
+        import shutil
         import sys
+        from pathlib import Path
         import skylos.analyzer as mod
         from skylos.analyzer import Skylos
 
         target = sys.argv[1]
         exclude = ["venv", "__pycache__", ".git", "node_modules"]
+        cache_dir = Path(".skylos") / "cache"
+
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
 
         result_fast = json.loads(Skylos().analyze(target, exclude_folders=exclude))
+
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
 
         mod._fast_discover = None
 

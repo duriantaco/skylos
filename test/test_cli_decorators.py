@@ -93,6 +93,26 @@ def main(verbose: bool = False):
 
         assert 6 in visitor.framework_decorated_lines
 
+    def test_click_result_callback(self):
+        code = """
+import click
+
+@click.group()
+def cli():
+    pass
+
+@cli.result_callback()
+def process_result(result, verbose=False):
+    return result
+"""
+        tree = ast.parse(code)
+        visitor = FrameworkAwareVisitor()
+        visitor.visit(tree)
+        visitor.finalize()
+
+        assert 5 in visitor.framework_decorated_lines
+        assert 9 in visitor.framework_decorated_lines
+
     def test_generic_command_decorator(self):
         code = """
 @cli.command

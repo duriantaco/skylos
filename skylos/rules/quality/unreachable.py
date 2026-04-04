@@ -50,6 +50,24 @@ class UnreachableCodeRule(SkylosRule):
                 )
                 return findings
 
+        if isinstance(node, ast.While):
+            cond = evaluate_static_condition(node.test, file_path=filename)
+
+            if cond is False and node.body:
+                first = node.body[0]
+                findings.append(
+                    self._mk(
+                        filename,
+                        basename,
+                        line=getattr(first, "lineno", node.lineno),
+                        col=getattr(first, "col_offset", node.col_offset),
+                        msg="Dead code: loop body never runs because condition is always False",
+                        value="while_false",
+                        kind="dead_branch",
+                    )
+                )
+                return findings
+
         body = getattr(node, "body", None)
         if not isinstance(body, list):
             return findings
