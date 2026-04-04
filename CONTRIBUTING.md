@@ -36,6 +36,38 @@
     * Provide clear description of your changes.
     * Reference any related issues.
 
+### PR Title Convention (Required)
+
+Skylos uses semantic PR title validation for release automation.
+
+Required format:
+
+```text
+<type>(<scope>): <message>
+```
+
+Use one of these types:
+
+- `feat`
+- `fix`
+- `docs`
+- `refactor`
+- `test`
+- `chore`
+- `perf`
+- `style`
+- `ci`
+- `infra`
+- `revert`
+
+Example:
+
+```text
+feat(cli): add ai defense context for rag pipelines
+```
+
+Release process details and maintainer runbook: [`RELEASE_WORKFLOW.md`](RELEASE_WORKFLOW.md).
+
 ## Code Style
 - You can look at our code and just follow it accordingly. Try your best to follow best practices. 
 

@@ -1,23 +1,32 @@
 name: Build and publish
 
 on:
-  release:
-    types: [created]
   workflow_dispatch:
     inputs:
       ref:
-        description: "Git ref to build and publish (tag or branch)"
+        description: "Release tag to build and publish (for example v4.2.1)"
         required: true
-        default: "main"
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Validate release tag input
+        run: |
+          ref="${{ github.event.inputs.ref }}"
+          case "$ref" in
+            refs/tags/*|v[0-9]*)
+              ;;
+            *)
+              echo "Expected a release tag like v4.2.1, got: $ref" >&2
+              exit 1
+              ;;
+          esac
+
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.ref || github.ref }}
+          ref: ${{ github.event.inputs.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
