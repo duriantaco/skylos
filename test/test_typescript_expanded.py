@@ -443,7 +443,9 @@ class TestMixedRepoIntegration:
 
         unused_functions = {item["name"] for item in result.get("unused_functions", [])}
         unused_imports = {item["name"] for item in result.get("unused_imports", [])}
-        unused_files = {Path(item["file"]).name for item in result.get("unused_files", [])}
+        unused_files = {
+            Path(item["file"]).name for item in result.get("unused_files", [])
+        }
 
         assert "deadHelper" in unused_functions
         assert "handleLogout" not in unused_functions

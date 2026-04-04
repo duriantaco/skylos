@@ -55,8 +55,13 @@ def pick_nudge(result, args, project_root=None):
 
     dead_code_count = sum(
         len(result.get(k, []) or [])
-        for k in ("unused_functions", "unused_imports", "unused_variables",
-                   "unused_classes", "unused_parameters")
+        for k in (
+            "unused_functions",
+            "unused_imports",
+            "unused_variables",
+            "unused_classes",
+            "unused_parameters",
+        )
     )
     danger_count = len(result.get("danger", []) or [])
     quality_count = len(result.get("quality", []) or [])
@@ -69,16 +74,10 @@ def pick_nudge(result, args, project_root=None):
     ran_quality = getattr(args, "quality", False)
 
     if dead_code_count > 5:
-        return (
-            "[dim]Verify with LLM:[/dim] "
-            "[bold]skylos agent verify .[/bold]"
-        )
+        return "[dim]Verify with LLM:[/dim] [bold]skylos agent verify .[/bold]"
 
-    if (danger_count > 0 or secrets_count > 0):
-        return (
-            "[dim]Check LLM defenses:[/dim] "
-            "[bold]skylos defend .[/bold]"
-        )
+    if danger_count > 0 or secrets_count > 0:
+        return "[dim]Check LLM defenses:[/dim] [bold]skylos defend .[/bold]"
 
     if not ran_all and not (ran_danger and ran_secrets and ran_quality):
         extras = []
@@ -88,21 +87,12 @@ def pick_nudge(result, args, project_root=None):
             extras.append("secrets")
         if not ran_quality:
             extras.append("quality")
-        return (
-            f"[dim]Add {' + '.join(extras)} scanning:[/dim] "
-            "[bold]skylos . -a[/bold]"
-        )
+        return f"[dim]Add {' + '.join(extras)} scanning:[/dim] [bold]skylos . -a[/bold]"
 
     if quality_count > 10:
-        return (
-            "[dim]Auto-remediate:[/dim] "
-            "[bold]skylos agent remediate .[/bold]"
-        )
+        return "[dim]Auto-remediate:[/dim] [bold]skylos agent remediate .[/bold]"
 
     if total == 0:
-        return (
-            "[dim]Clean codebase! Share it:[/dim] "
-            "[bold]skylos badge[/bold]"
-        )
+        return "[dim]Clean codebase! Share it:[/dim] [bold]skylos badge[/bold]"
 
     return None

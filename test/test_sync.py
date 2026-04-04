@@ -333,15 +333,21 @@ def test_cmd_setup_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, cap
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".git").mkdir()
 
-    monkeypatch.setattr(syncmod, "api_get", lambda endpoint, token: {
-        "/api/sync/whoami": {
-            "project": {"id": "proj_123", "name": "Proj"},
-            "organization": {"name": "Org"},
-            "plan": "pro",
-        }
-    }[endpoint])
+    monkeypatch.setattr(
+        syncmod,
+        "api_get",
+        lambda endpoint, token: {
+            "/api/sync/whoami": {
+                "project": {"id": "proj_123", "name": "Proj"},
+                "organization": {"name": "Org"},
+                "plan": "pro",
+            }
+        }[endpoint],
+    )
     monkeypatch.setattr(syncmod, "_write_link", lambda *args, **kwargs: None)
-    monkeypatch.setattr(syncmod, "save_token", lambda *args, **kwargs: str(tmp_path / "creds.json"))
+    monkeypatch.setattr(
+        syncmod, "save_token", lambda *args, **kwargs: str(tmp_path / "creds.json")
+    )
 
     answers = iter(["y", "n", "n"])
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
@@ -359,9 +365,11 @@ def test_cmd_upgrade_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, c
     (tmp_path / ".git").mkdir()
 
     monkeypatch.setattr(syncmod, "get_token", lambda: "TOK")
-    monkeypatch.setattr(syncmod, "api_get", lambda endpoint, token: {
-        "/api/sync/whoami": {"plan": "pro"}
-    }[endpoint])
+    monkeypatch.setattr(
+        syncmod,
+        "api_get",
+        lambda endpoint, token: {"/api/sync/whoami": {"plan": "pro"}}[endpoint],
+    )
 
     syncmod.cmd_upgrade()
 

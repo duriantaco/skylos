@@ -12,7 +12,9 @@ class TestCoverageFlag:
         mock_run.return_value = MagicMock(returncode=0)
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'
 
-        with patch.object(sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]):
+        with patch.object(
+            sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]
+        ):
             try:
                 main()
             except SystemExit:
@@ -32,7 +34,9 @@ class TestCoverageFlag:
         ]
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'
 
-        with patch.object(sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]):
+        with patch.object(
+            sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]
+        ):
             try:
                 main()
             except SystemExit:
@@ -63,7 +67,9 @@ class TestCoverageFlag:
         mock_run.side_effect = track_subprocess
         mock_analyze.side_effect = track_analyze
 
-        with patch.object(sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]):
+        with patch.object(
+            sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]
+        ):
             try:
                 main()
             except SystemExit:
@@ -81,7 +87,9 @@ class TestCoverageFlag:
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'
 
         with patch.object(
-            sys, "argv", ["skylos", "/some/project", "--coverage", "--json", "--no-provenance"]
+            sys,
+            "argv",
+            ["skylos", "/some/project", "--coverage", "--json", "--no-provenance"],
         ):
             try:
                 main()
@@ -98,7 +106,9 @@ class TestCoverageFlag:
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'
 
         with patch("skylos.cli.subprocess.run") as mock_run:
-            with patch.object(sys, "argv", ["skylos", ".", "--json", "--no-provenance"]):
+            with patch.object(
+                sys, "argv", ["skylos", ".", "--json", "--no-provenance"]
+            ):
                 try:
                     main()
                 except SystemExit:
@@ -120,7 +130,9 @@ class TestCoverageFlag:
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "danger": [], "analysis_summary": {"total_files": 1}}'
 
         with patch.object(
-            sys, "argv", ["skylos", ".", "--coverage", "--danger", "--json", "--no-provenance"]
+            sys,
+            "argv",
+            ["skylos", ".", "--coverage", "--danger", "--json", "--no-provenance"],
         ):
             try:
                 main()
@@ -148,7 +160,9 @@ class TestCoverageIntegration:
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'
 
         with patch.object(Path, "exists", return_value=True):
-            with patch.object(sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]):
+            with patch.object(
+                sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]
+            ):
                 try:
                     main()
                 except SystemExit:

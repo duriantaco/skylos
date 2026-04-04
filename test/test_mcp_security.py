@@ -31,10 +31,12 @@ class TestValidateCodeChangeRegressions:
         result = _validate_code_change_impl(diff)
         assert result["status"] == "fail"
         findings = result["findings"]
-        assert any("login_required" in f.get("message", "").lower() or
-                    "auth" in f.get("message", "").lower() or
-                    f.get("kind") == "regression"
-                    for f in findings)
+        assert any(
+            "login_required" in f.get("message", "").lower()
+            or "auth" in f.get("message", "").lower()
+            or f.get("kind") == "regression"
+            for f in findings
+        )
 
 
 class TestValidateCodeChangeDangerousPatterns:
@@ -269,7 +271,9 @@ class TestGetSecurityContextFrameworks:
 
     def test_detect_express_framework(self, tmp_path):
         app_js = tmp_path / "app.js"
-        app_js.write_text("const express = require('express');\nconst app = express();\n")
+        app_js.write_text(
+            "const express = require('express');\nconst app = express();\n"
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "Express" in result["frameworks"]
 
@@ -291,43 +295,51 @@ class TestGetSecurityContextFrameworks:
 class TestGetSecurityContextAuthPatterns:
     def test_detect_login_required(self, tmp_path):
         views = tmp_path / "views.py"
-        views.write_text(textwrap.dedent("""\
+        views.write_text(
+            textwrap.dedent("""\
             from django.contrib.auth.decorators import login_required
 
             @login_required
             def dashboard(request):
                 return render(request, 'dashboard.html')
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "@login_required" in result["auth_patterns"]
 
     def test_detect_jwt_required(self, tmp_path):
         api = tmp_path / "api.py"
-        api.write_text(textwrap.dedent("""\
+        api.write_text(
+            textwrap.dedent("""\
             @jwt_required
             def protected_endpoint():
                 return {"data": "secret"}
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "@jwt_required" in result["auth_patterns"]
 
     def test_detect_fastapi_depends(self, tmp_path):
         main = tmp_path / "main.py"
-        main.write_text(textwrap.dedent("""\
+        main.write_text(
+            textwrap.dedent("""\
             from fastapi import Depends
 
             def get_items(user=Depends(get_current_user)):
                 return items
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "Depends(get_current_user)" in result["auth_patterns"]
 
     def test_detect_auth_middleware(self, tmp_path):
         app = tmp_path / "app.py"
-        app.write_text(textwrap.dedent("""\
+        app.write_text(
+            textwrap.dedent("""\
             from starlette.middleware.authentication import AuthenticationMiddleware
             app.add_middleware(AuthenticationMiddleware)
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "AuthenticationMiddleware" in result["auth_patterns"]
 
@@ -341,17 +353,21 @@ class TestGetSecurityContextAuthPatterns:
 class TestGetSecurityContextHeaders:
     def test_detect_csp_header(self, tmp_path):
         middleware = tmp_path / "middleware.py"
-        middleware.write_text(textwrap.dedent("""\
+        middleware.write_text(
+            textwrap.dedent("""\
             response.headers["Content-Security-Policy"] = "default-src 'self'"
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "Content-Security-Policy" in result["security_headers"]
 
     def test_detect_hsts_header(self, tmp_path):
         middleware = tmp_path / "middleware.py"
-        middleware.write_text(textwrap.dedent("""\
+        middleware.write_text(
+            textwrap.dedent("""\
             response.headers["Strict-Transport-Security"] = "max-age=31536000"
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "Strict-Transport-Security" in result["security_headers"]
 
@@ -371,20 +387,24 @@ class TestGetSecurityContextHeaders:
 class TestGetSecurityContextRateLimiting:
     def test_detect_rate_limit_decorator(self, tmp_path):
         api = tmp_path / "api.py"
-        api.write_text(textwrap.dedent("""\
+        api.write_text(
+            textwrap.dedent("""\
             @rate_limit(limit=100, period=60)
             def search(request):
                 return results
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert len(result["rate_limiting"]) >= 1
 
     def test_detect_slowapi(self, tmp_path):
         main = tmp_path / "main.py"
-        main.write_text(textwrap.dedent("""\
+        main.write_text(
+            textwrap.dedent("""\
             from slowapi import Limiter
             limiter = Limiter(key_func=get_remote_address)
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "slowapi" in result["rate_limiting"]
 
@@ -398,33 +418,39 @@ class TestGetSecurityContextRateLimiting:
 class TestGetSecurityContextValidation:
     def test_detect_pydantic_basemodel(self, tmp_path):
         models = tmp_path / "models.py"
-        models.write_text(textwrap.dedent("""\
+        models.write_text(
+            textwrap.dedent("""\
             from pydantic import BaseModel
 
             class User(BaseModel):
                 name: str
                 age: int
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "BaseModel" in result["input_validation"]
 
     def test_detect_marshmallow(self, tmp_path):
         schema = tmp_path / "schema.py"
-        schema.write_text(textwrap.dedent("""\
+        schema.write_text(
+            textwrap.dedent("""\
             import marshmallow
             class UserSchema(marshmallow.Schema):
                 name = fields.Str()
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "marshmallow" in result["input_validation"]
 
     def test_detect_flask_form(self, tmp_path):
         forms = tmp_path / "forms.py"
-        forms.write_text(textwrap.dedent("""\
+        forms.write_text(
+            textwrap.dedent("""\
             from flask_wtf import FlaskForm
             class LoginForm(FlaskForm):
                 username = StringField()
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "FlaskForm" in result["input_validation"]
 
@@ -438,13 +464,15 @@ class TestGetSecurityContextValidation:
 class TestGetSecurityContextPolicy:
     def test_skylos_yml_loaded(self, tmp_path):
         policy_file = tmp_path / ".skylos.yml"
-        policy_file.write_text(textwrap.dedent("""\
+        policy_file.write_text(
+            textwrap.dedent("""\
             rules:
               SKY-D201:
                 severity: CRITICAL
             exclude:
               - tests/
-        """))
+        """)
+        )
         (tmp_path / "app.py").write_text("x = 1\n")
         result = _get_security_context_impl(str(tmp_path))
         assert result["policy"] is not None
@@ -502,7 +530,8 @@ class TestGetSecurityContextSkipsDirs:
 class TestGetSecurityContextMultiplePatterns:
     def test_detects_multiple_patterns(self, tmp_path):
         app = tmp_path / "app.py"
-        app.write_text(textwrap.dedent("""\
+        app.write_text(
+            textwrap.dedent("""\
             from flask import Flask
             from pydantic import BaseModel
 
@@ -510,7 +539,8 @@ class TestGetSecurityContextMultiplePatterns:
             def dashboard():
                 response.headers["Content-Security-Policy"] = "default-src 'self'"
                 return "ok"
-        """))
+        """)
+        )
         result = _get_security_context_impl(str(tmp_path))
         assert "Flask" in result["frameworks"]
         assert "@login_required" in result["auth_patterns"]

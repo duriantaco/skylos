@@ -138,7 +138,9 @@ class TestGenerateTopology:
             }
         }
         unused = [{"name": "mod.dead_func", "type": "function"}]
-        topology = generate_topology(_make_analysis(definitions=defs, unused_functions=unused))
+        topology = generate_topology(
+            _make_analysis(definitions=defs, unused_functions=unused)
+        )
 
         building = topology["districts"][0]["blocks"][0]["buildings"][0]
         assert building["dead"] is True
@@ -223,7 +225,9 @@ class TestGenerateTopology:
                 "dead": False,
             }
         }
-        topology = generate_topology(_make_analysis(definitions=defs), canvas_size=200.0)
+        topology = generate_topology(
+            _make_analysis(definitions=defs), canvas_size=200.0
+        )
 
         district = topology["districts"][0]
         assert "x" in district
@@ -330,7 +334,9 @@ class TestFormatRichSummary:
             }
         }
         unused = [{"name": "mod.dead", "type": "function"}]
-        topology = generate_topology(_make_analysis(definitions=defs, unused_functions=unused))
+        topology = generate_topology(
+            _make_analysis(definitions=defs, unused_functions=unused)
+        )
         output = format_rich_summary(topology)
         assert "Abandoned Buildings" in output
 

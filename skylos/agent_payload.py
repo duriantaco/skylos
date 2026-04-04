@@ -89,11 +89,12 @@ def build_ranked_actions(
         if finding["category"] in {"security", "secrets"}:
             score += 60
         if finding["category"] == "debt":
-            score += float(
-                finding.get("priority_score")
-                or finding.get("hotspot_score")
-                or 0.0
-            ) * 3.0
+            score += (
+                float(
+                    finding.get("priority_score") or finding.get("hotspot_score") or 0.0
+                )
+                * 3.0
+            )
         if finding["category"] == "dead_code":
             score -= 75
         if finding.get("confidence") is not None:

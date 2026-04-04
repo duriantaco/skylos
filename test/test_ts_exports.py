@@ -36,13 +36,13 @@ class TestAliasedImports:
         app_file.write_text("import { foo as bar } from './mod';")
 
         defs = {
-            f"{mod_file}:foo": _make_def("foo", "function", str(mod_file), exported=True),
+            f"{mod_file}:foo": _make_def(
+                "foo", "function", str(mod_file), exported=True
+            ),
         }
 
         ts_raw_imports = {
-            str(app_file): [
-                {"source": "./mod", "names": ["foo as bar"], "line": 1}
-            ]
+            str(app_file): [{"source": "./mod", "names": ["foo as bar"], "line": 1}]
         }
 
         consumed, _, _ = build_ts_import_graph(ts_raw_imports, defs)
@@ -56,13 +56,13 @@ class TestAliasedImports:
         app_file.write_text("import { foo } from './mod';")
 
         defs = {
-            f"{mod_file}:foo": _make_def("foo", "function", str(mod_file), exported=True),
+            f"{mod_file}:foo": _make_def(
+                "foo", "function", str(mod_file), exported=True
+            ),
         }
 
         ts_raw_imports = {
-            str(app_file): [
-                {"source": "./mod", "names": ["foo"], "line": 1}
-            ]
+            str(app_file): [{"source": "./mod", "names": ["foo"], "line": 1}]
         }
 
         consumed, _, _ = build_ts_import_graph(ts_raw_imports, defs)
@@ -76,8 +76,12 @@ class TestAliasedImports:
         app_file.write_text("import { foo as f, bar as b } from './mod';")
 
         defs = {
-            f"{mod_file}:foo": _make_def("foo", "function", str(mod_file), exported=True),
-            f"{mod_file}:bar": _make_def("bar", "function", str(mod_file), exported=True),
+            f"{mod_file}:foo": _make_def(
+                "foo", "function", str(mod_file), exported=True
+            ),
+            f"{mod_file}:bar": _make_def(
+                "bar", "function", str(mod_file), exported=True
+            ),
         }
 
         ts_raw_imports = {
@@ -105,7 +109,9 @@ class TestDefaultReexport:
         consumer_file.write_text("import { MyComponent } from './index';")
 
         defs = {
-            f"{comp_file}:default": _make_def("default", "function", str(comp_file), exported=True),
+            f"{comp_file}:default": _make_def(
+                "default", "function", str(comp_file), exported=True
+            ),
         }
 
         ts_raw_imports = {
@@ -132,7 +138,9 @@ class TestDefaultReexport:
         consumer_file.write_text("import { publicFoo } from './barrel';")
 
         defs = {
-            f"{mod_file}:foo": _make_def("foo", "function", str(mod_file), exported=True),
+            f"{mod_file}:foo": _make_def(
+                "foo", "function", str(mod_file), exported=True
+            ),
         }
 
         ts_raw_imports = {
@@ -208,9 +216,21 @@ class TestNextjsConventionExports:
     def test_all_convention_exports_covered(self):
         """Verify key Next.js convention exports are in the set."""
         expected = {
-            "default", "generateMetadata", "generateStaticParams",
-            "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
-            "middleware", "loading", "error", "layout", "page",
+            "default",
+            "generateMetadata",
+            "generateStaticParams",
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "PATCH",
+            "HEAD",
+            "OPTIONS",
+            "middleware",
+            "loading",
+            "error",
+            "layout",
+            "page",
         }
         assert expected.issubset(_NEXTJS_CONVENTION_EXPORTS)
 
@@ -229,16 +249,14 @@ class TestWildcardPassthrough:
         consumer_file.write_text("import { helper } from './index';")
 
         defs = {
-            f"{mod_file}:helper": _make_def("helper", "function", str(mod_file), exported=True),
+            f"{mod_file}:helper": _make_def(
+                "helper", "function", str(mod_file), exported=True
+            ),
         }
 
         ts_raw_imports = {
-            str(index_file): [
-                {"source": "./mod", "names": ["*"], "line": 1}
-            ],
-            str(consumer_file): [
-                {"source": "./index", "names": ["helper"], "line": 1}
-            ],
+            str(index_file): [{"source": "./mod", "names": ["*"], "line": 1}],
+            str(consumer_file): [{"source": "./index", "names": ["helper"], "line": 1}],
         }
 
         consumed, _, _ = build_ts_import_graph(ts_raw_imports, defs)

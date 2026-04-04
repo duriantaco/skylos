@@ -407,7 +407,9 @@ class TestAnalyzerGrepVerifyOrdering:
             definition.confidence = confidence
             analyzer.defs[name] = definition
 
-        with patch("skylos.grep_verify.grep_verify_findings", return_value={}) as mock_grep:
+        with patch(
+            "skylos.grep_verify.grep_verify_findings", return_value={}
+        ) as mock_grep:
             analyzer._grep_verify()
 
         ordered_names = [
@@ -440,9 +442,13 @@ class TestAnalyzerGrepVerifyCache:
         analyzer.defs = {"mod.helper": definition}
 
         with (
-            patch("skylos.analyzer.find_git_root", return_value=project_root) as mock_root,
+            patch(
+                "skylos.analyzer.find_git_root", return_value=project_root
+            ) as mock_root,
             patch("skylos.grep_cache.GrepCache") as mock_cache_cls,
-            patch("skylos.grep_verify.grep_verify_findings", return_value={}) as mock_grep,
+            patch(
+                "skylos.grep_verify.grep_verify_findings", return_value={}
+            ) as mock_grep,
         ):
             cache = mock_cache_cls.return_value
             analyzer._grep_verify()

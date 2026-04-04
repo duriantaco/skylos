@@ -7,9 +7,7 @@ def run_whoami_command() -> int:
     console = Console()
     token = get_project_token()
     if not token:
-        console.print(
-            "[red]Not connected.[/red] Run [bold]skylos login[/bold] first."
-        )
+        console.print("[red]Not connected.[/red] Run [bold]skylos login[/bold] first.")
         return 1
 
     info = get_project_info(token)
