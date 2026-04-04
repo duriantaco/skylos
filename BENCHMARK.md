@@ -1,5 +1,7 @@
 ## Benchmark: Skylos vs Vulture (Dead-Code Detection)
 
+> This document covers the dead-code benchmark only. For the fast agent-review benchmark and Codex head-to-head comparisons, see [`agent_review_benchmarks/README.md`](./agent_review_benchmarks/README.md).
+
 This benchmark compares **Skylos** against **Vulture** on a small but *realistic* FastAPI-style Python repo. The repo is intentionally seeded with a known set of unused code so we can measure detection quality against a “ground truth”.
 
 ## What are we measuring?
