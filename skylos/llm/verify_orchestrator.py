@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -76,6 +78,7 @@ class SuppressionDecision:
     code: str
     rationale: str
     evidence: list[str] = field(default_factory=list)
+    hard: bool = False
 
 
 @dataclass
@@ -94,6 +97,9 @@ class VerifyStats:
     edges_spurious: int = 0
     haiku_prefiltered: int = 0
     llm_calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
     elapsed_seconds: float = 0.0
 
 
@@ -1296,6 +1302,212 @@ def _find_string_dispatch(
     return results[:max_results]
 
 
+def _extract_joined_string_family(
+    node: ast.AST | None,
+) -> tuple[str, str, str] | None:
+    if not isinstance(node, ast.JoinedStr):
+        return None
+
+    prefix_parts: list[str] = []
+    suffix_parts: list[str] = []
+    dynamic_name = None
+
+    for part in node.values:
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            if dynamic_name is None:
+                prefix_parts.append(part.value)
+            else:
+                suffix_parts.append(part.value)
+        elif (
+            isinstance(part, ast.FormattedValue)
+            and dynamic_name is None
+            and isinstance(part.value, ast.Name)
+        ):
+            dynamic_name = part.value.id
+        else:
+            return None
+
+    if not dynamic_name:
+        return None
+    return "".join(prefix_parts), dynamic_name, "".join(suffix_parts)
+
+
+def _match_dynamic_dispatch_name(
+    simple_name: str,
+    prefix: str,
+    suffix: str,
+) -> str | None:
+    if not simple_name.startswith(prefix):
+        return None
+    if suffix and not simple_name.endswith(suffix):
+        return None
+
+    end = len(simple_name) - len(suffix) if suffix else len(simple_name)
+    dynamic_fragment = simple_name[len(prefix) : end]
+    return dynamic_fragment or None
+
+
+def _literal_string_values(node: ast.AST | None) -> list[str]:
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        values: list[str] = []
+        for elt in node.elts:
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                values.append(elt.value)
+            else:
+                return []
+        return values
+    return []
+
+
+def _is_module_namespace_target(node: ast.AST | None) -> bool:
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        return node.func.id in {"globals", "locals", "vars"}
+
+    if not isinstance(node, ast.Subscript):
+        return False
+    if not (
+        isinstance(node.value, ast.Attribute)
+        and isinstance(node.value.value, ast.Name)
+        and node.value.value.id == "sys"
+        and node.value.attr == "modules"
+    ):
+        return False
+
+    slice_node = node.slice
+    if isinstance(slice_node, ast.Name):
+        return slice_node.id == "__name__"
+    if isinstance(slice_node, ast.Constant):
+        return slice_node.value == "__name__"
+    return False
+
+
+def _module_local_dynamic_dispatch_evidence(
+    finding: dict,
+    source: str,
+    defs_map: dict[str, Any] | None = None,
+) -> list[str]:
+    simple_name = str(finding.get("simple_name", finding.get("name", ""))).strip()
+    file_path = str(finding.get("file", ""))
+    if not simple_name or not source:
+        return []
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+
+    def _enclosing(node: ast.AST, types: tuple[type[ast.AST], ...]) -> ast.AST | None:
+        current = node
+        while current in parents:
+            current = parents[current]
+            if isinstance(current, types):
+                return current
+        return None
+
+    def _map_used_later(name: str, line_no: int) -> bool:
+        for child in ast.walk(tree):
+            if (
+                isinstance(child, ast.Name)
+                and isinstance(child.ctx, ast.Load)
+                and child.id == name
+                and getattr(child, "lineno", 0) > line_no
+            ):
+                return True
+        return False
+
+    def _dispatcher_alive(name: str) -> bool:
+        if not defs_map:
+            return False
+        for info in defs_map.values():
+            if not isinstance(info, dict):
+                continue
+            if info.get("file") != file_path:
+                continue
+            if str(info.get("name", "")).split(".")[-1] != name:
+                continue
+            return not bool(info.get("dead", True))
+        return False
+
+    for assign in ast.walk(tree):
+        if not (
+            isinstance(assign, ast.Assign)
+            and len(assign.targets) == 1
+            and isinstance(assign.targets[0], ast.Name)
+        ):
+            continue
+        map_name = assign.targets[0].id
+        comp = assign.value
+        if not isinstance(comp, ast.DictComp):
+            continue
+
+        for child in ast.walk(comp):
+            if not (
+                isinstance(child, ast.Subscript)
+                and _is_module_namespace_target(child.value)
+            ):
+                continue
+            family = _extract_joined_string_family(child.slice)
+            if not family:
+                continue
+            prefix, dynamic_name, suffix = family
+            dynamic_fragment = _match_dynamic_dispatch_name(
+                simple_name, prefix, suffix
+            )
+            if not dynamic_fragment:
+                continue
+
+            for generator in comp.generators:
+                if not (
+                    isinstance(generator.target, ast.Name)
+                    and generator.target.id == dynamic_name
+                ):
+                    continue
+                literal_values = _literal_string_values(generator.iter)
+                if (
+                    dynamic_fragment in literal_values
+                    and _map_used_later(map_name, getattr(assign, "lineno", 0))
+                ):
+                    line_no = getattr(child, "lineno", getattr(assign, "lineno", 0))
+                    return [
+                        f"{file_path}:{line_no}: `{map_name}` registers `{simple_name}` via dynamic globals()/locals() family dispatch"
+                    ]
+
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for child in ast.walk(func):
+            if not (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == "getattr"
+                and len(child.args) >= 2
+                and _is_module_namespace_target(child.args[0])
+            ):
+                continue
+            family = _extract_joined_string_family(child.args[1])
+            if not family:
+                continue
+            prefix, _dynamic_name, suffix = family
+            dynamic_fragment = _match_dynamic_dispatch_name(
+                simple_name, prefix, suffix
+            )
+            if not dynamic_fragment:
+                continue
+            if not _dispatcher_alive(func.name):
+                continue
+            line_no = getattr(child, "lineno", getattr(func, "lineno", 0))
+            return [
+                f"{file_path}:{line_no}: `{func.name}` resolves `{simple_name}` via getattr(..., f\"{prefix}{{...}}{suffix}\")"
+            ]
+
+    return []
+
+
 def _finding_complexity_tier(finding: dict, search_results: dict | None) -> int:
     """Return 1 (trivial), 2 (moderate), or 3 (complex) based on finding signals."""
     if finding.get("heuristic_refs"):
@@ -1353,15 +1565,7 @@ def _build_graph_context(
     why_unused = finding.get("why_unused", [])
     why_confidence_reduced = finding.get("why_confidence_reduced", [])
     decorators_lower = _normalize_names(decorators)
-    if project_root:
-        search_results = _get_cached_search_results(
-            finding, project_root, cache=grep_cache
-        )
-    else:
-        search_results = {}
     source = source_cache.get(file_path, "")
-    tier = _finding_complexity_tier(finding, search_results)
-    guarded_import = _conditional_import_reason(finding, source)
     repo_facts = repo_facts or RepoFacts()
     if project_root and file_path:
         rel_file = _repo_relative_path(file_path, project_root)
@@ -1376,6 +1580,14 @@ def _build_graph_context(
     else:
         collectible_test_class = False
     definition_side_effect = _definition_executes_for_side_effect(finding, source)
+    if not project_root:
+        search_results = {}
+    else:
+        search_results = _get_cached_search_results(
+            finding, project_root, cache=grep_cache
+        )
+    tier = _finding_complexity_tier(finding, search_results)
+    guarded_import = _conditional_import_reason(finding, source)
     owner_full_name = _parameter_owner_name(finding)
     parameter_contract_evidence = _parameter_contract_evidence(
         finding, source, search_results
@@ -1387,6 +1599,66 @@ def _build_graph_context(
     prefilter_evidence = finding.get("_judge_prefilter_evidence", [])
 
     parts = []
+
+    compact_search_keys = {"references_definition_only"}
+    compact_context_ok = (
+        tier <= 2
+        and kind in {"function", "import", "variable"}
+        and not called_by
+        and not decorators
+        and not heuristic_refs
+        and not dynamic_signals
+        and not framework_signals
+        and not finding.get("is_exported")
+        and not collectible_test_class
+        and not definition_side_effect
+        and not compatibility_evidence
+        and not owner_full_name
+        and not parameter_contract_evidence
+        and not discovered_entry_point
+        and not prefilter_reason
+        and not guarded_import
+        and (
+            not search_results
+            or set(search_results).issubset(compact_search_keys)
+        )
+    )
+
+    if compact_context_ok:
+        parts.append(f"## Flagged Symbol: `{full_name}`")
+        parts.append(f"- Type: {kind}")
+        parts.append(f"- File: `{rel_file or file_path}:{line}`")
+        parts.append(f"- Direct references: {refs}")
+        parts.append(f"- Static confidence: {confidence}")
+        if why_unused:
+            parts.append(f"- Why flagged: {', '.join(why_unused)}")
+        parts.append("")
+
+        if source:
+            source_lines = source.splitlines()
+            start = max(0, line - 5)
+            end = min(len(source_lines), line + 12)
+            parts.append("## Flagged Function Source")
+            for i in range(start, end):
+                marker = " >>> " if i == line - 1 else "     "
+                parts.append(f"{i + 1:4d}{marker}{source_lines[i]}")
+            parts.append("")
+
+        parts.append("## Call Graph")
+        parts.append("  NOBODY calls this function. Zero callers in entire project.")
+        parts.append("")
+
+        if "references_definition_only" in search_results:
+            parts.append("## Search Results")
+            parts.append(
+                "  Only the definition itself was found. No other usages were found across the project."
+            )
+            parts.append("")
+
+        parts.append(
+            "Decision hint: this is a low-ambiguity dead-code candidate with no dynamic, framework, export, or caller evidence."
+        )
+        return "\n".join(parts)
 
     parts.append(f"## Flagged Symbol: `{full_name}`")
     parts.append(f"- Type: {kind}")
@@ -1699,6 +1971,8 @@ def _should_audit_suppression(finding: dict) -> bool:
     if finding.get("_llm_verdict") != Verdict.FALSE_POSITIVE.value:
         return False
     if finding.get("_suppression_audited"):
+        return False
+    if finding.get("_suppression_hard"):
         return False
     if finding.get("_deterministically_suppressed"):
         return finding.get("_suppression_reason") in _SOFT_SUPPRESSION_CODES
@@ -2107,6 +2381,7 @@ def _deterministic_suppress(
     source_cache: dict[str, str],
     project_root: str = "",
     repo_facts: RepoFacts | None = None,
+    defs_map: dict[str, Any] | None = None,
     *,
     grep_cache: Any = None,
 ) -> SuppressionDecision | None:
@@ -2131,6 +2406,19 @@ def _deterministic_suppress(
             code="conditional_import",
             rationale=guarded_import,
             evidence=[f"{file_path}:{finding.get('line', 0)}"],
+        )
+
+    dynamic_family_evidence = _module_local_dynamic_dispatch_evidence(
+        finding,
+        source,
+        defs_map=defs_map,
+    )
+    if dynamic_family_evidence:
+        return SuppressionDecision(
+            code="dynamic_dispatch",
+            rationale="Module-local dynamic dispatch resolves this symbol by name family",
+            evidence=dynamic_family_evidence,
+            hard=True,
         )
 
     if kind in ("function", "method") and (
@@ -2168,6 +2456,19 @@ def _deterministic_suppress(
             rationale="MkDocs hook file is registered in project config, so hook callbacks are runtime-reachable",
             evidence=[rel_file],
         )
+
+    if (
+        kind == "function"
+        and str(simple_name).startswith("_")
+        and not finding.get("is_exported")
+        and not decorators
+        and not framework_signals
+        and not finding.get("heuristic_refs")
+        and not finding.get("dynamic_signals")
+        and not finding.get("called_by")
+        and not _is_test_context(file_path)
+    ):
+        return None
 
     registration_hits = [
         name
@@ -2222,6 +2523,7 @@ def _deterministic_suppress(
             code="dynamic_dispatch",
             rationale="Dynamic dispatch evidence references this symbol by name",
             evidence=search_results["string_dispatch"][:3],
+            hard=True,
         )
 
     if search_results.get("test_references"):
@@ -2352,29 +2654,62 @@ def _batch_verify_findings(
     batch_contexts = []
     batch_size = 0
 
-    def _flush_batch():
-        nonlocal batch, batch_contexts, batch_size
-        if not batch:
+    def _is_batch_failure(verdicts: list[dict]) -> bool:
+        if not verdicts:
+            return False
+        failure_markers = (
+            "LLM call failed",
+            "Batch parse failed",
+            "Missing from batch response",
+        )
+        return all(
+            verdict.get("verdict", Verdict.UNCERTAIN) == Verdict.UNCERTAIN
+            and any(marker in str(verdict.get("rationale", "")) for marker in failure_markers)
+            for verdict in verdicts
+        )
+
+    def _append_batch_results(
+        items: list[dict],
+        contexts: list[str],
+    ) -> None:
+        if not items:
+            return
+        if len(items) == 1:
+            results.append(
+                verify_with_graph_context(
+                    agent,
+                    items[0],
+                    defs_map,
+                    source_cache,
+                    project_root=project_root,
+                    repo_facts=repo_facts,
+                )
+            )
             return
 
         combined = "\n\n---\n\n".join(
             f"### Symbol {i + 1}: `{f.get('full_name', f.get('name'))}`\n{ctx}"
-            for i, (f, ctx) in enumerate(zip(batch, batch_contexts))
+            for i, (f, ctx) in enumerate(zip(items, contexts))
         )
         user_prompt = (
-            f"{combined}\n\nVerify all {len(batch)} symbols above. JSON array response:"
+            f"{combined}\n\nVerify all {len(items)} symbols above. JSON array response:"
         )
 
         verdicts = _parse_batch_response(
-            agent, BATCH_VERIFY_SYSTEM, user_prompt, len(batch)
+            agent, BATCH_VERIFY_SYSTEM, user_prompt, len(items)
         )
 
-        for finding, v_data in zip(batch, verdicts):
+        if _is_batch_failure(verdicts):
+            mid = len(items) // 2
+            _append_batch_results(items[:mid], contexts[:mid])
+            _append_batch_results(items[mid:], contexts[mid:])
+            return
+
+        for finding, v_data in zip(items, verdicts):
             raw_conf = _parse_confidence(finding.get("confidence", 60))
             verdict = v_data.get("verdict", Verdict.UNCERTAIN)
             rationale = v_data.get("rationale", "")
             adjusted = apply_verdict(finding, verdict)
-
             results.append(
                 VerificationResult(
                     finding=finding,
@@ -2384,6 +2719,13 @@ def _batch_verify_findings(
                     adjusted_confidence=adjusted,
                 )
             )
+
+    def _flush_batch():
+        nonlocal batch, batch_contexts, batch_size
+        if not batch:
+            return
+
+        _append_batch_results(batch, batch_contexts)
 
         batch = []
         batch_contexts = []
@@ -3045,7 +3387,14 @@ def run_verification(
     grep_cache = GrepCache()
     grep_cache.load(grep_root)
 
-    config = AgentConfig(model=model, api_key=api_key)
+    config = AgentConfig(
+        model=model,
+        api_key=api_key,
+        max_tokens=512,
+        timeout=45,
+        retry_attempts=1,
+        stream=False,
+    )
     if provider:
         config.provider = provider
     if base_url:
@@ -3116,10 +3465,11 @@ def run_verification(
                     source_cache,
                     project_root=grep_root,
                     repo_facts=repo_facts,
+                    defs_map=defs_map,
                     grep_cache=grep_cache,
                 )
                 if decision is not None:
-                    if judge_all_mode:
+                    if judge_all_mode and not decision.hard:
                         _record_prefilter_fact(
                             f,
                             code=decision.code,
@@ -3132,6 +3482,7 @@ def run_verification(
                         f["_llm_rationale"] = decision.rationale
                         f["_suppression_reason"] = decision.code
                         f["_suppression_evidence"] = list(decision.evidence)
+                        f["_suppression_hard"] = bool(decision.hard)
                         f["_deterministically_suppressed"] = True
                         f["_verified_by_llm"] = False
                         f["_adjusted_confidence"] = 20
@@ -3442,9 +3793,46 @@ def run_verification(
     if enable_survivor_challenge:
         log("Pass 4: Challenging survivors with heuristic refs...")
 
+        local_on_emit_survivors = _find_local_on_emit_survivors(
+            defs_map,
+            findings,
+            grep_root,
+        )
+        if local_on_emit_survivors:
+            stats.survivors_challenged += len(local_on_emit_survivors)
+            stats.survivors_reclassified_dead += len(local_on_emit_survivors)
+            for surv in local_on_emit_survivors:
+                owner = surv.get("_registry_owner", "registry")
+                event_name = surv.get("_event_name", "")
+                new_dead.append(
+                    {
+                        "name": surv["name"],
+                        "simple_name": surv["simple_name"],
+                        "full_name": surv["full_name"],
+                        "file": surv["file"],
+                        "line": surv["line"],
+                        "type": surv.get("type", "function"),
+                        "confidence": min(
+                            95, int(surv.get("confidence", 50) or 50) + 25
+                        ),
+                        "references": 0,
+                        "message": f"Unused {surv.get('type', 'function')}: {surv['name']}",
+                        "_category": "dead_code",
+                        "_llm_verdict": "TRUE_POSITIVE",
+                        "_llm_rationale": (
+                            f"Registered via @{owner}.on('{event_name}') but no "
+                            f"{owner}.emit('{event_name}') call exists in app/tests."
+                        ),
+                        "_source": "registry_survivor_challenge",
+                    }
+                )
+            log(
+                f"  Reclassified {len(local_on_emit_survivors)} local on/emit listeners as dead"
+            )
+
         survivors = _find_survivors(defs_map, findings)
         survivors = survivors[:max_challenge]
-        stats.survivors_challenged = len(survivors)
+        stats.survivors_challenged += len(survivors)
 
         if survivors:
             survivor_cache = _build_source_cache([], defs_map, survivors)
@@ -3510,6 +3898,14 @@ def run_verification(
 
     stats.elapsed_seconds = round(time.time() - start_time, 1)
 
+    try:
+        usage = getattr(agent.get_adapter(), "total_usage", {}) or {}
+    except Exception:
+        usage = {}
+    stats.prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    stats.completion_tokens = int(usage.get("completion_tokens") or 0)
+    stats.total_tokens = int(usage.get("total_tokens") or 0)
+
     log(f"\nDone in {stats.elapsed_seconds}s ({stats.llm_calls} LLM calls)")
 
     for f in findings:
@@ -3556,6 +3952,9 @@ def run_verification(
             "entry_points_discovered": stats.entry_points_discovered,
             "haiku_prefiltered": stats.haiku_prefiltered,
             "llm_calls": stats.llm_calls,
+            "prompt_tokens": stats.prompt_tokens,
+            "completion_tokens": stats.completion_tokens,
+            "total_tokens": stats.total_tokens,
             "elapsed_seconds": stats.elapsed_seconds,
             "verification_mode": verification_mode,
         },
@@ -3640,6 +4039,125 @@ def _find_survivors(
         ),
         reverse=True,
     )
+
+    return survivors
+
+
+_LOCAL_ON_DECORATOR_RE = re.compile(
+    r"""@(?P<owner>[A-Za-z_][A-Za-z0-9_]*)\.on\(\s*(['"])(?P<event>[^'"]+)\2\s*\)"""
+)
+
+
+def _extract_local_on_listener_registration(
+    file_path: str, line: int
+) -> tuple[str, str] | None:
+    try:
+        source = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return None
+
+    lines = source.splitlines()
+    start = max(0, line - 6)
+    end = max(0, line - 1)
+    for idx in range(end - 1, start - 1, -1):
+        text = lines[idx].strip()
+        if not text:
+            continue
+        if not text.startswith("@"):
+            break
+        match = _LOCAL_ON_DECORATOR_RE.search(text)
+        if match:
+            return match.group("owner"), match.group("event")
+    return None
+
+
+def _supports_local_on_emit_registry(file_path: str, owner: str) -> bool:
+    try:
+        source = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return False
+
+    if not re.search(rf"\bclass\s+{re.escape(owner)}\b", source):
+        return False
+
+    return bool(re.search(r"\bdef\s+emit\s*\(", source))
+
+
+def _search_local_emit_sites(
+    owner: str, event_name: str, project_root: str | Path
+) -> list[str]:
+    pattern = (
+        re.escape(owner)
+        + r"""\.emit\(\s*['"]"""
+        + re.escape(event_name)
+        + r"""['"]"""
+    )
+    matches: list[str] = []
+    for subdir in ("app", "tests"):
+        root = Path(project_root) / subdir
+        if not root.exists():
+            continue
+        matches.extend(
+            _run_grep(
+                pattern,
+                str(root),
+                use_regex=True,
+                include_globs=["*.py"],
+                max_results=20,
+            )
+        )
+    return matches[:20]
+
+
+def _find_local_on_emit_survivors(
+    defs_map: dict[str, Any],
+    already_flagged: list[dict],
+    project_root: str | Path,
+) -> list[dict]:
+    flagged_names = {f.get("full_name", f.get("name", "")) for f in already_flagged}
+    survivors: list[dict] = []
+
+    for name, info in defs_map.items():
+        if not isinstance(info, dict):
+            continue
+        if name in flagged_names:
+            continue
+        if info.get("type") not in ("function", "method"):
+            continue
+        if info.get("called_by"):
+            continue
+
+        file_path = str(info.get("file", "") or "")
+        line = int(info.get("line", 0) or 0)
+        if not file_path or line <= 0:
+            continue
+
+        registration = _extract_local_on_listener_registration(file_path, line)
+        if not registration:
+            continue
+        owner, event_name = registration
+
+        if not _supports_local_on_emit_registry(file_path, owner):
+            continue
+
+        emit_sites = _search_local_emit_sites(owner, event_name, project_root)
+        if emit_sites:
+            continue
+
+        survivors.append(
+            {
+                "name": name.split(".")[-1],
+                "full_name": name,
+                "simple_name": name.split(".")[-1],
+                "file": file_path,
+                "line": line,
+                "type": info.get("type", "function"),
+                "confidence": info.get("confidence", 50),
+                "references": int(info.get("references", 0) or 0),
+                "_registry_owner": owner,
+                "_event_name": event_name,
+            }
+        )
 
     return survivors
 

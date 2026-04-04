@@ -1,3 +1,5 @@
+import ast
+
 from skylos.llm.schemas import Finding, CodeLocation, IssueType, Severity, Confidence
 from skylos.llm.analyzer import SkylosLLM, AnalyzerConfig
 
@@ -38,8 +40,10 @@ class DummyContextBuilder:
     def __init__(self):
         self.calls = []
 
-    def build_analysis_context(self, source, file_path, defs_map=None):
-        self.calls.append(("analysis", file_path))
+    def build_analysis_context(
+        self, source, file_path, defs_map=None, include_review_hints=False
+    ):
+        self.calls.append(("analysis", file_path, include_review_hints))
         return "CTX"
 
     def build_fix_context(self, source, file_path, line, message, defs_map=None):
@@ -194,3 +198,280 @@ def test_dead_code_issue_type_raises_valueerror(tmp_path):
 
     with pytest.raises(ValueError, match="not a per-file operation"):
         llm.analyze_file(str(f), issue_types=["dead_code"])
+
+
+def test_analyzer_config_propagates_provider_and_base_url_to_agent_config():
+    cfg = AnalyzerConfig(
+        model="gpt-4.1",
+        api_key="KEY",
+        provider="anthropic",
+        base_url="https://example.test/v1",
+        quiet=True,
+    )
+
+    llm = SkylosLLM(cfg)
+
+    assert llm.agent_config.provider == "anthropic"
+    assert llm.agent_config.base_url == "https://example.test/v1"
+
+
+def test_force_full_file_paths_uses_whole_file_review(tmp_path, monkeypatch):
+    fp = tmp_path / "review.py"
+    fp.write_text(
+        "def a():\n    return 1\n\ndef b():\n    return 2\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(
+        quiet=True,
+        full_file_review=False,
+        force_full_file_paths={str(fp)},
+    )
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    calls = {"count": 0}
+
+    def fake_analyze_whole(
+        source, file_path, defs_map=None, chunk_start_line=1, issue_types=None, **kwargs
+    ):
+        calls["count"] += 1
+        return [mk_finding(file=file_path, line=1, severity=Severity.HIGH)]
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_analyze_whole)
+
+    out = llm.analyze_file(fp)
+
+    assert calls["count"] == 1
+    assert len(out) == 1
+
+
+def test_quality_selector_flags_simple_but_long_review_function():
+    cfg = AnalyzerConfig(quiet=True, enable_security=False, enable_quality=True)
+    llm = SkylosLLM(cfg)
+
+    node = ast.parse(
+        """
+def render_report(value):
+    line_1 = value
+    line_2 = value
+    line_3 = value
+    line_4 = value
+    line_5 = value
+    line_6 = value
+    line_7 = value
+    line_8 = value
+    line_9 = value
+    line_10 = value
+    return line_10
+"""
+    ).body[0]
+
+    assert llm._should_analyze_quality_function("render_report", {"node": node}) is True
+
+
+def test_small_quality_file_analyzes_all_functions(tmp_path, monkeypatch):
+    fp = tmp_path / "quality.py"
+    fp.write_text(
+        "def helper_one():\n    return 1\n\ndef helper_two():\n    return 2\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(
+        quiet=True,
+        enable_security=False,
+        enable_quality=True,
+        batch_functions=False,
+    )
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    monkeypatch.setattr(
+        analyzer_mod.CodeGraph,
+        "get_review_context",
+        lambda self, func_name, defs_map=None, **kwargs: f"CTX:{func_name}",
+    )
+    monkeypatch.setattr(
+        analyzer_mod.CodeGraph, "find_taint_paths", lambda self, func_name: []
+    )
+
+    seen_contexts = []
+
+    def fake_analyze_whole_file(
+        source,
+        file_path,
+        defs_map=None,
+        chunk_start_line=1,
+        issue_types=None,
+        **kwargs,
+    ):
+        seen_contexts.append(source)
+        return []
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_analyze_whole_file)
+
+    out = llm.analyze_file(fp, issue_types=["quality"])
+
+    assert out == []
+    assert len(seen_contexts) == 2
+    assert any("helper_one" in ctx for ctx in seen_contexts)
+    assert any("helper_two" in ctx for ctx in seen_contexts)
+
+
+def test_full_file_review_bypasses_function_filter(tmp_path, monkeypatch):
+    fp = tmp_path / "review.py"
+    source = (
+        "def helper_one():\n"
+        "    return 1\n\n"
+        "def helper_two(value):\n"
+        "    try:\n"
+        "        return int(value)\n"
+        "    except ValueError:\n"
+        "        return None\n"
+    )
+    fp.write_text(source, encoding="utf-8")
+
+    cfg = AnalyzerConfig(
+        quiet=True,
+        enable_security=True,
+        enable_quality=True,
+        full_file_review=True,
+    )
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    seen_sources = []
+
+    def fake_analyze_whole_file(
+        source,
+        file_path,
+        defs_map=None,
+        chunk_start_line=1,
+        issue_types=None,
+        **kwargs,
+    ):
+        seen_sources.append((source, file_path, issue_types))
+        return [mk_finding(file=file_path, line=4, issue_type=IssueType.QUALITY)]
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_analyze_whole_file)
+
+    out = llm.analyze_file(fp, issue_types=["quality"])
+
+    assert len(out) == 1
+    assert len(seen_sources) == 1
+    assert seen_sources[0][0] == source
+    assert seen_sources[0][1] == str(fp)
+    assert seen_sources[0][2] == ["quality"]
+
+
+def test_full_file_review_uses_combined_review_agent_when_security_and_quality_enabled(
+    tmp_path, monkeypatch
+):
+    fp = tmp_path / "review.py"
+    fp.write_text(
+        "def parse_payload(payload):\n    return int(payload)\n", encoding="utf-8"
+    )
+
+    cfg = AnalyzerConfig(
+        quiet=True,
+        enable_security=True,
+        enable_quality=True,
+        full_file_review=True,
+    )
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    seen_issue_types = []
+
+    def fake_get_agent(agent_type):
+        class _Agent:
+            def analyze(self, source, file_path, defs_map=None, context=None):
+                return []
+
+        seen_issue_types.append(agent_type)
+        return _Agent()
+
+    monkeypatch.setattr(llm, "_get_agent", fake_get_agent)
+
+    out = llm.analyze_file(fp)
+
+    assert out == []
+    assert seen_issue_types == ["review"]
+
+
+def test_full_file_review_requests_review_hints_for_quality_capable_agents(
+    tmp_path, monkeypatch
+):
+    fp = tmp_path / "review.py"
+    fp.write_text(
+        "def parse_payload(payload):\n    return int(payload)\n", encoding="utf-8"
+    )
+
+    cfg = AnalyzerConfig(
+        quiet=True,
+        enable_security=True,
+        enable_quality=True,
+        full_file_review=True,
+    )
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+    llm.context_builder = DummyContextBuilder()
+
+    def fake_get_agent(agent_type):
+        class _Agent:
+            def analyze(self, source, file_path, defs_map=None, context=None):
+                return []
+
+        return _Agent()
+
+    monkeypatch.setattr(llm, "_get_agent", fake_get_agent)
+
+    out = llm.analyze_file(fp)
+
+    assert out == []
+    assert llm.context_builder.calls == [("analysis", str(fp), True)]
+
+
+def test_analyze_files_reports_tokens_used_from_agent_adapters(tmp_path, monkeypatch):
+    fp = tmp_path / "review.py"
+    fp.write_text(
+        "def parse_payload(payload):\n    return int(payload)\n", encoding="utf-8"
+    )
+
+    cfg = AnalyzerConfig(
+        quiet=True,
+        enable_security=True,
+        enable_quality=True,
+        full_file_review=True,
+    )
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+    llm.context_builder = DummyContextBuilder()
+
+    class _Adapter:
+        def __init__(self):
+            self.total_usage = {"total_tokens": 321}
+            self.reset_calls = 0
+
+        def reset_usage(self):
+            self.reset_calls += 1
+            self.total_usage = {"total_tokens": 0}
+
+    adapter = _Adapter()
+
+    class _Agent:
+        def __init__(self):
+            self._adapter = adapter
+
+        def analyze(self, source, file_path, defs_map=None, context=None):
+            self._adapter.total_usage = {"total_tokens": 321}
+            return []
+
+    agent = _Agent()
+    llm._agents["review"] = agent
+    monkeypatch.setattr(llm, "_get_agent", lambda agent_type: agent)
+
+    result = llm.analyze_files([fp])
+
+    assert result.tokens_used == 321
+    assert adapter.reset_calls == 1

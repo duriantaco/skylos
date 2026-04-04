@@ -319,10 +319,21 @@ class ContextBuilder:
         return self.chunker.chunk_file(source, file_path)
 
     def build_analysis_context(
-        self, source_or_chunk, file_path=None, defs_map=None, include_imports=True
+        self,
+        source_or_chunk,
+        file_path=None,
+        defs_map=None,
+        include_imports=True,
+        include_review_hints=False,
+        repo_metadata=None,
     ):
         if isinstance(source_or_chunk, CodeChunk):
-            return self._build_chunk_context(source_or_chunk, defs_map)
+            return self._build_chunk_context(
+                source_or_chunk,
+                defs_map,
+                include_review_hints=include_review_hints,
+                repo_metadata=repo_metadata,
+            )
 
         source = source_or_chunk
         file_path = file_path or ""
@@ -347,7 +358,12 @@ class ContextBuilder:
             class_context=None,
             file_path=file_path,
         )
-        return self._build_chunk_context(chunk, defs_map)
+        return self._build_chunk_context(
+            chunk,
+            defs_map,
+            include_review_hints=include_review_hints,
+            repo_metadata=repo_metadata,
+        )
 
     def build_smart_slice(self, full_source, function_name):
         graph = CodeGraph()
@@ -371,13 +387,22 @@ class ContextBuilder:
         except Exception:
             return ""
 
-    def _build_chunk_context(self, chunk, defs_map=None):
+    def _build_chunk_context(
+        self,
+        chunk,
+        defs_map=None,
+        include_review_hints=False,
+        repo_metadata=None,
+    ):
         parts = []
 
         parts.append(f"=== FILE: {chunk.file_path} ===")
         parts.append(
             f"Analyzing: {chunk.chunk_type} '{chunk.name}' (lines {chunk.start_line}-{chunk.end_line})"
         )
+
+        if repo_metadata:
+            parts.append(f"\n[REPO CONTEXT]\n{repo_metadata}")
 
         if chunk.imports:
             parts.append(f"\n[IMPORTS]\n{chunk.imports}")
@@ -390,9 +415,157 @@ class ContextBuilder:
             if deps:
                 parts.append(f"\n[EXTERNAL DEPENDENCIES]\n{deps}")
 
+        if include_review_hints:
+            hints = self._build_review_hints(chunk.content)
+            if hints:
+                parts.append(f"\n[REVIEW HINTS]\n{hints}")
+
         parts.append(f"\n[CODE]\n{chunk.with_line_numbers()}")
 
         return "\n".join(parts)
+
+    def _build_review_hints(self, source):
+        try:
+            tree = ast.parse(source)
+        except Exception:
+            return ""
+
+        hints = []
+        for name, node in self._iter_review_nodes(tree):
+            hint = self._summarize_review_node(name, node)
+            if hint:
+                hints.append(hint)
+
+        if not hints:
+            return ""
+
+        return "\n".join("- " + hint for hint in hints[:20])
+
+    def _iter_review_nodes(self, tree):
+        for node in getattr(tree, "body", []):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield node.name, node
+            elif isinstance(node, ast.ClassDef):
+                for item in node.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        yield f"{node.name}.{item.name}", item
+
+    def _summarize_review_node(self, name, node):
+        control_flow = self._review_control_flow_count(node)
+        return_sites = self._review_return_sites(node)
+        line = getattr(node, "lineno", 1)
+
+        hints = []
+
+        if control_flow >= 3:
+            hints.append(
+                f"{name} (line {line}): branch-heavy function with {control_flow} control-flow blocks and {return_sites} return sites."
+            )
+
+        if self._has_mixed_return_behavior(node):
+            hints.append(
+                f"{name} (line {line}): mixed return behavior; returns both a value and bare None."
+            )
+
+        mutable_defaults = self._find_mutable_default_parameters(node)
+        if mutable_defaults:
+            joined = ", ".join(mutable_defaults)
+            hints.append(
+                f"{name} (line {line}): mutable default state; parameter default(s) {joined} are shared across calls."
+            )
+
+        swallowed = self._find_swallowed_exception(node)
+        if swallowed:
+            hints.append(
+                f"{name} (line {line}): swallowed exception; except {swallowed} only passes and hides failure."
+            )
+
+        return "\n".join(hints)
+
+    def _review_control_flow_count(self, node):
+        return sum(
+            1
+            for child in ast.walk(node)
+            if isinstance(
+                child,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.AsyncFor,
+                    ast.While,
+                    ast.Try,
+                    ast.Match,
+                    ast.With,
+                ),
+            )
+        )
+
+    def _review_return_sites(self, node):
+        return sum(1 for child in ast.walk(node) if isinstance(child, ast.Return))
+
+    def _has_mixed_return_behavior(self, node):
+        saw_value = False
+        saw_none = False
+
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Return):
+                continue
+            if child.value is None:
+                saw_none = True
+            else:
+                saw_value = True
+            if saw_value and saw_none:
+                return True
+
+        return False
+
+    def _find_swallowed_exception(self, node):
+        for child in ast.walk(node):
+            if not isinstance(child, ast.ExceptHandler):
+                continue
+            if child.body and all(isinstance(stmt, ast.Pass) for stmt in child.body):
+                return self._format_exception_name(child.type)
+        return None
+
+    def _find_mutable_default_parameters(self, node):
+        args = getattr(node, "args", None)
+        if args is None:
+            return []
+
+        names = []
+        positional = list(getattr(args, "posonlyargs", []) or []) + list(
+            getattr(args, "args", []) or []
+        )
+        defaults = list(getattr(args, "defaults", []) or [])
+        if defaults:
+            relevant_args = positional[-len(defaults) :]
+            for arg, default in zip(relevant_args, defaults):
+                if self._is_mutable_default_value(default):
+                    names.append(getattr(arg, "arg", "arg"))
+
+        for arg, default in zip(
+            getattr(args, "kwonlyargs", []) or [],
+            getattr(args, "kw_defaults", []) or [],
+        ):
+            if self._is_mutable_default_value(default):
+                names.append(getattr(arg, "arg", "arg"))
+
+        return names
+
+    def _is_mutable_default_value(self, node):
+        if node is None:
+            return False
+        return isinstance(node, (ast.List, ast.Dict, ast.Set))
+
+    def _format_exception_name(self, exc):
+        if exc is None:
+            return "Exception"
+        try:
+            return ast.unparse(exc)
+        except Exception:
+            if isinstance(exc, ast.Name):
+                return exc.id
+            return "Exception"
 
     def build_fix_context(
         self, source, file_path, issue_line, issue_message, defs_map=None
@@ -536,6 +709,31 @@ Finding:
 {"line": 32, "severity": "high", "type": "quality",
  "message": "Bare except swallows all errors silently",
  "fix": "Catch specific exceptions, log or handle appropriately"}
+
+[EXAMPLE 3: Inconsistent Return]
+Code:
+   1 | def resolve_user(flag):
+   2 |     if flag:
+   3 |         return "present"
+   4 |     return
+
+Finding:
+{"line": 1, "severity": "medium", "type": "bug",
+ "message": "Inconsistent return behavior: returns a string on one path and None on another",
+ "symbol": "resolve_user",
+ "fix": "Return a consistent type across all branches"}
+
+[EXAMPLE 4: Mutable Default State]
+Code:
+   1 | def append_tag(tag, tags=[]):
+   2 |     tags.append(tag)
+   3 |     return tags
+
+Finding:
+{"line": 1, "severity": "medium", "type": "bug",
+ "message": "Mutable default argument keeps shared state across calls",
+ "symbol": "append_tag",
+ "fix": "Use None as the default and create a new list inside the function"}
 """
 
     @classmethod

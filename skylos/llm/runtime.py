@@ -90,7 +90,7 @@ def resolve_llm_runtime(
             )
             if api_key:
                 save_key(provider, api_key)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             return provider, None, base_url, False
 
     return provider, api_key, base_url, False
