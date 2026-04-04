@@ -23,9 +23,7 @@ export async function POST(request: Request) {
 }
 """
         findings = []
-        _check_nextjs_missing_auth(
-            source, "/project/app/api/users/route.ts", findings
-        )
+        _check_nextjs_missing_auth(source, "/project/app/api/users/route.ts", findings)
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-D280"
 
@@ -40,9 +38,7 @@ export async function POST(request: Request) {
 }
 """
         findings = []
-        _check_nextjs_missing_auth(
-            source, "/project/app/api/users/route.ts", findings
-        )
+        _check_nextjs_missing_auth(source, "/project/app/api/users/route.ts", findings)
         assert len(findings) == 0
 
     def test_route_with_get_only_no_auth_ok(self):
@@ -53,9 +49,7 @@ export async function GET(request: Request) {
 }
 """
         findings = []
-        _check_nextjs_missing_auth(
-            source, "/project/app/api/items/route.ts", findings
-        )
+        _check_nextjs_missing_auth(source, "/project/app/api/items/route.ts", findings)
         assert len(findings) == 0
 
     def test_route_with_delete_no_auth(self):
@@ -66,9 +60,7 @@ export async function DELETE(request: Request) {
 }
 """
         findings = []
-        _check_nextjs_missing_auth(
-            source, "/project/app/api/items/route.ts", findings
-        )
+        _check_nextjs_missing_auth(source, "/project/app/api/items/route.ts", findings)
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-D280"
 
@@ -79,9 +71,7 @@ export async function POST(data: any) {
 }
 """
         findings = []
-        _check_nextjs_missing_auth(
-            source, "/project/src/utils/helpers.ts", findings
-        )
+        _check_nextjs_missing_auth(source, "/project/src/utils/helpers.ts", findings)
         assert len(findings) == 0
 
     def test_pages_api_route(self):
@@ -97,9 +87,7 @@ export async function POST(request: Request) {
 }
 """
         findings = []
-        _check_nextjs_missing_auth(
-            source, "/project/pages/api/users.ts", findings
-        )
+        _check_nextjs_missing_auth(source, "/project/pages/api/users.ts", findings)
         assert len(findings) == 1
 
     def test_route_with_cookies_auth(self):
@@ -112,9 +100,7 @@ export async function POST(request: Request) {
 }
 """
         findings = []
-        _check_nextjs_missing_auth(
-            source, "/project/app/api/data/route.ts", findings
-        )
+        _check_nextjs_missing_auth(source, "/project/app/api/data/route.ts", findings)
         assert len(findings) == 0
 
 
@@ -132,7 +118,9 @@ export default function Dashboard() {
 }
 """
         findings = []
-        _check_nextjs_client_secrets(source, "/project/app/dashboard/page.tsx", findings)
+        _check_nextjs_client_secrets(
+            source, "/project/app/dashboard/page.tsx", findings
+        )
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-S102"
         assert "DATABASE_URL" in findings[0]["message"]
@@ -147,7 +135,9 @@ export default function Dashboard() {
 }
 """
         findings = []
-        _check_nextjs_client_secrets(source, "/project/app/dashboard/page.tsx", findings)
+        _check_nextjs_client_secrets(
+            source, "/project/app/dashboard/page.tsx", findings
+        )
         assert len(findings) == 0
 
     def test_server_component_env_ok(self):
@@ -159,7 +149,9 @@ export default function Dashboard() {
 }
 """
         findings = []
-        _check_nextjs_client_secrets(source, "/project/app/dashboard/page.tsx", findings)
+        _check_nextjs_client_secrets(
+            source, "/project/app/dashboard/page.tsx", findings
+        )
         assert len(findings) == 0
 
     def test_multiple_secret_envs(self):

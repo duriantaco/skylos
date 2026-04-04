@@ -52,7 +52,9 @@ def run_doctor_command() -> int:
     console.print(f"  [green]OK[/green]  Skylos {skylos.__version__}")
 
     if _rust_available():
-        console.print("  [green]OK[/green]  skylos\\[fast] installed (Rust acceleration)")
+        console.print(
+            "  [green]OK[/green]  skylos\\[fast] installed (Rust acceleration)"
+        )
     else:
         console.print(
             "  [yellow]--[/yellow]  skylos\\[fast] not installed [dim](optional: pip install skylos\\[fast])[/dim]"

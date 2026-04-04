@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 
+
 ## called via cli, but imported by city.py for topology generation NOT UNUSED
 def _compute_loc(node) -> int:
     if node is None:
@@ -42,8 +43,9 @@ def _layout_strip(items: list[dict], x: float, y: float, w: float, h: float):
         return
 
     if len(items) == 1:
-        items[0].update({"x": round(x, 2), "y": round(y, 2),
-                         "w": round(w, 2), "h": round(h, 2)})
+        items[0].update(
+            {"x": round(x, 2), "y": round(y, 2), "w": round(w, 2), "h": round(h, 2)}
+        )
         return
 
     total = sum(it["_norm"] for it in items)
@@ -77,8 +79,14 @@ def _layout_strip(items: list[dict], x: float, y: float, w: float, h: float):
         offset = 0.0
         for it in row:
             it_h = (it["_norm"] / row_w) if row_w > 0 else 0
-            it.update({"x": round(x, 2), "y": round(y + offset, 2),
-                       "w": round(row_w, 2), "h": round(it_h, 2)})
+            it.update(
+                {
+                    "x": round(x, 2),
+                    "y": round(y + offset, 2),
+                    "w": round(row_w, 2),
+                    "h": round(it_h, 2),
+                }
+            )
             offset += it_h
         remaining_x = x + row_w
         remaining_w = w - row_w
@@ -88,8 +96,14 @@ def _layout_strip(items: list[dict], x: float, y: float, w: float, h: float):
         offset = 0.0
         for it in row:
             it_w = (it["_norm"] / row_h) if row_h > 0 else 0
-            it.update({"x": round(x + offset, 2), "y": round(y, 2),
-                       "w": round(it_w, 2), "h": round(row_h, 2)})
+            it.update(
+                {
+                    "x": round(x + offset, 2),
+                    "y": round(y, 2),
+                    "w": round(it_w, 2),
+                    "h": round(row_h, 2),
+                }
+            )
             offset += it_w
         remaining_y = y + row_h
         remaining_h = h - row_h
@@ -101,7 +115,7 @@ def _worst_ratio(row: list[dict], total_area: float, side: float) -> float:
         return float("inf")
 
     s2 = (total_area) ** 2
-    w2 = side ** 2
+    w2 = side**2
 
     worst = 0.0
     for it in row:
@@ -142,8 +156,13 @@ def generate_topology(analysis_result: dict, canvas_size: float = 100.0) -> dict
     definitions = analysis_result.get("definitions", {})
 
     dead_names = set()
-    for key in ("unused_functions", "unused_imports", "unused_classes",
-                "unused_variables", "unused_parameters"):
+    for key in (
+        "unused_functions",
+        "unused_imports",
+        "unused_classes",
+        "unused_variables",
+        "unused_parameters",
+    ):
         for item in analysis_result.get(key, []):
             dead_names.add(item.get("name", ""))
 
@@ -182,11 +201,13 @@ def generate_topology(analysis_result: dict, canvas_size: float = 100.0) -> dict
     district_items = []
     for directory, files_map in sorted(dir_files.items()):
         total_loc = sum(b["loc"] for bs in files_map.values() for b in bs)
-        district_items.append({
-            "directory": directory,
-            "files_map": files_map,
-            "area": max(total_loc, 1),
-        })
+        district_items.append(
+            {
+                "directory": directory,
+                "files_map": files_map,
+                "area": max(total_loc, 1),
+            }
+        )
 
     _squarify(district_items, 0, 0, canvas_size, canvas_size)
 
@@ -199,15 +220,18 @@ def generate_topology(analysis_result: dict, canvas_size: float = 100.0) -> dict
         block_items = []
         for filename, buildings in sorted(files_map.items()):
             block_loc = sum(b["loc"] for b in buildings)
-            block_items.append({
-                "filename": filename,
-                "buildings": buildings,
-                "area": max(block_loc, 1),
-            })
+            block_items.append(
+                {
+                    "filename": filename,
+                    "buildings": buildings,
+                    "area": max(block_loc, 1),
+                }
+            )
 
         pad = 0.5
-        _squarify(block_items, dx + pad, dy + pad,
-                  max(dw - 2 * pad, 0), max(dh - 2 * pad, 0))
+        _squarify(
+            block_items, dx + pad, dy + pad, max(dw - 2 * pad, 0), max(dh - 2 * pad, 0)
+        )
 
         blocks = []
         for b_item in block_items:
@@ -218,14 +242,21 @@ def generate_topology(analysis_result: dict, canvas_size: float = 100.0) -> dict
 
             building_items = []
             for bld in buildings:
-                building_items.append({
-                    **bld,
-                    "area": max(bld["loc"], 1),
-                })
+                building_items.append(
+                    {
+                        **bld,
+                        "area": max(bld["loc"], 1),
+                    }
+                )
 
             bpad = 0.3
-            _squarify(building_items, bx + bpad, by + bpad,
-                      max(bw - 2 * bpad, 0), max(bh - 2 * bpad, 0))
+            _squarify(
+                building_items,
+                bx + bpad,
+                by + bpad,
+                max(bw - 2 * bpad, 0),
+                max(bh - 2 * bpad, 0),
+            )
 
             final_buildings = []
             for bi in building_items:
@@ -233,48 +264,58 @@ def generate_topology(analysis_result: dict, canvas_size: float = 100.0) -> dict
                 total_buildings += 1
 
                 for target in bi.get("calls", []):
-                    all_edges.append({
-                        "from": bi["qualified_name"],
-                        "to": target,
-                    })
+                    all_edges.append(
+                        {
+                            "from": bi["qualified_name"],
+                            "to": target,
+                        }
+                    )
 
-                final_buildings.append({
-                    "name": bi["name"],
-                    "qualified_name": bi["qualified_name"],
-                    "type": bi["type"],
-                    "file": bi["file"],
-                    "line": bi["line"],
-                    "loc": bi["loc"],
-                    "height": bi["loc"],
-                    "complexity": bi["complexity"],
-                    "color": bi["color"],
-                    "dead": bi["dead"],
-                    "calls": bi.get("calls", []),
-                    "called_by": bi.get("called_by", []),
-                    "x": bi.get("x", 0),
-                    "y": bi.get("y", 0),
-                    "w": bi.get("w", 0),
-                    "h": bi.get("h", 0),
-                })
+                final_buildings.append(
+                    {
+                        "name": bi["name"],
+                        "qualified_name": bi["qualified_name"],
+                        "type": bi["type"],
+                        "file": bi["file"],
+                        "line": bi["line"],
+                        "loc": bi["loc"],
+                        "height": bi["loc"],
+                        "complexity": bi["complexity"],
+                        "color": bi["color"],
+                        "dead": bi["dead"],
+                        "calls": bi.get("calls", []),
+                        "called_by": bi.get("called_by", []),
+                        "x": bi.get("x", 0),
+                        "y": bi.get("y", 0),
+                        "w": bi.get("w", 0),
+                        "h": bi.get("h", 0),
+                    }
+                )
 
-            blocks.append({
-                "name": filename,
-                "path": str(Path(directory) / filename) if directory != "(root)" else filename,
-                "buildings": final_buildings,
-                "x": bx,
-                "y": by,
-                "w": bw,
-                "h": bh,
-            })
+            blocks.append(
+                {
+                    "name": filename,
+                    "path": str(Path(directory) / filename)
+                    if directory != "(root)"
+                    else filename,
+                    "buildings": final_buildings,
+                    "x": bx,
+                    "y": by,
+                    "w": bw,
+                    "h": bh,
+                }
+            )
 
-        districts.append({
-            "name": directory,
-            "blocks": blocks,
-            "x": dx,
-            "y": dy,
-            "w": dw,
-            "h": dh,
-        })
+        districts.append(
+            {
+                "name": directory,
+                "blocks": blocks,
+                "x": dx,
+                "y": dy,
+                "w": dw,
+                "h": dh,
+            }
+        )
 
     circular_deps = analysis_result.get("circular_dependencies", [])
 
@@ -282,7 +323,8 @@ def generate_topology(analysis_result: dict, canvas_size: float = 100.0) -> dict
     grade = _grade_from_avg_complexity(avg_complexity)
 
     dead_count = sum(
-        1 for d in districts
+        1
+        for d in districts
         for b in d["blocks"]
         for bld in b["buildings"]
         if bld["dead"]

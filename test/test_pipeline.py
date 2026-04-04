@@ -1,11 +1,13 @@
 import json
 import pathlib
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from skylos.pipeline import (
     _norm,
     _empty_result,
+    _enrich_with_llm_suggestions,
     _infer_root,
     _is_duplicate,
     run_static_on_files,
@@ -457,6 +459,43 @@ class TestPipelinePhase1:
 
 
 class TestPipelinePhase2a:
+    def test_default_fast_review_skips_dead_code_verifier(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        py_file = proj / "a.py"
+        py_file.write_text("x = 1")
+
+        llm_result = MagicMock()
+        llm_result.findings = []
+        console = _console()
+
+        with (
+            patch(P_STATIC_FN, return_value=_fresh_static()),
+            patch(P_PROGRESS),
+            patch(P_LLM) as mock_llm,
+            patch(P_CREATE_DC_AGENT) as mock_factory,
+        ):
+            mock_llm.return_value.analyze_files.return_value = llm_result
+
+            findings = run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(skip_verification=True),
+                console=console,
+                changed_files=[str(py_file)],
+            )
+
+        dead = [f for f in findings if f["_category"] == "dead_code"]
+        assert len(dead) == 2
+        assert all(f["_confidence"] == "medium" for f in dead)
+        mock_factory.assert_not_called()
+        printed_messages = [str(call.args[0]) for call in console.print.call_args_list]
+        assert any(
+            "Skipping dead-code verification for fast review" in message
+            for message in printed_messages
+        )
+
     def _run_with_verifier(self, verified_results, tmp_path, **extra_args):
         proj = tmp_path / "proj"
         proj.mkdir()
@@ -632,7 +671,56 @@ class TestPipelinePhase2a:
 
         dead = [f for f in findings if f["_category"] == "dead_code"]
         assert len(dead) == 0
-        mock_agent.verify_candidates.assert_not_called()
+
+    def test_parallel_agent_scan_reports_when_waiting_on_dead_code_verification(
+        self, tmp_path
+    ):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        py_file = proj / "a.py"
+        py_file.write_text("x = 1")
+
+        mock_agent = MagicMock()
+        mock_agent.healthcheck.return_value = (True, "API connection successful")
+
+        def slow_verify_candidates(**kwargs):
+            time.sleep(0.05)
+            return {
+                "verified_findings": [],
+                "new_dead_code": [],
+                "entry_points": [],
+                "stats": {},
+            }
+
+        mock_agent.verify_candidates.side_effect = slow_verify_candidates
+
+        llm_result = MagicMock()
+        llm_result.findings = []
+        console = _console()
+
+        with (
+            patch(P_STATIC_FN, return_value=_fresh_static()),
+            patch(P_PROGRESS),
+            patch(P_LLM) as mock_llm,
+            patch(P_CREATE_DC_AGENT, return_value=mock_agent),
+            patch(P_AGENTCFG),
+        ):
+            mock_llm.return_value.analyze_files.return_value = llm_result
+
+            run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(),
+                console=console,
+                changed_files=[str(py_file)],
+            )
+
+        printed_messages = [str(call.args[0]) for call in console.print.call_args_list]
+        assert any(
+            "Waiting for dead-code verification" in message
+            for message in printed_messages
+        )
 
     def test_provider_and_base_url_passed_to_agent(self, tmp_path):
         """Verify that --provider and --base-url reach the dead code agent."""
@@ -865,6 +953,122 @@ class TestPipelinePhase2b:
 
         analyze_files_args = mock_llm.return_value.analyze_files.call_args[0][0]
         assert [str(f) for f in analyze_files_args] == [str(py_file)]
+
+    @patch(P_ANALYZE)
+    @patch(P_PROGRESS)
+    @patch(P_LLM)
+    def test_single_file_scan_always_sends_target_file_to_llm_audit(
+        self, mock_llm, _prog, mock_analyze, tmp_path
+    ):
+        py_file = tmp_path / "review.py"
+        py_file.write_text("def fake_call():\n    return 1\n", encoding="utf-8")
+
+        mock_analyze.return_value = json.dumps(_empty_result())
+        llm_result = MagicMock()
+        llm_result.findings = []
+        mock_llm.return_value.analyze_files.return_value = llm_result
+
+        run_pipeline(
+            path=str(py_file),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(skip_verification=True),
+            console=_console(),
+        )
+
+        analyze_files_args = mock_llm.return_value.analyze_files.call_args[0][0]
+        assert [str(f) for f in analyze_files_args] == [str(py_file)]
+
+    @patch(P_STATIC_FN, return_value=_empty_result())
+    @patch(P_PROGRESS)
+    @patch(P_LLM)
+    @patch(P_LLM_CONF)
+    def test_changed_scan_uses_full_file_review_and_repo_context(
+        self, mock_conf, mock_llm, _prog, _static, tmp_path
+    ):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        py_file = proj / "handler.py"
+        py_file.write_text(
+            "def handler(flag):\n    if flag:\n        return 1\n    return 0\n",
+            encoding="utf-8",
+        )
+
+        mock_conf.side_effect = lambda **kwargs: SimpleNamespace(**kwargs)
+        mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+        run_pipeline(
+            path=str(proj),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(skip_verification=True),
+            console=_console(),
+            changed_files=[str(py_file)],
+        )
+
+        conf_kwargs = mock_conf.call_args.kwargs
+        assert conf_kwargs["full_file_review"] is True
+        repo_context_map = conf_kwargs["repo_context_map"]
+        assert str(py_file.resolve()) in repo_context_map
+        assert "review_score=" in repo_context_map[str(py_file.resolve())]
+
+    @patch(P_STATIC_FN, return_value=_empty_result())
+    @patch(P_PROGRESS)
+    @patch(P_LLM)
+    @patch(P_LLM_CONF)
+    def test_phase_2b_config_passes_provider_and_base_url(
+        self, mock_conf, mock_llm, _prog, _static, tmp_path
+    ):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        py_file = proj / "a.py"
+        py_file.write_text("x = 1")
+
+        mock_conf.side_effect = lambda **kwargs: SimpleNamespace(**kwargs)
+        mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+        args = _agent_args(skip_verification=True)
+        args.provider = "anthropic"
+        args.base_url = "https://custom.endpoint"
+
+        run_pipeline(
+            path=str(proj),
+            model="claude-sonnet-4-20250514",
+            api_key="k",
+            agent_args=args,
+            console=_console(),
+            changed_files=[str(py_file)],
+        )
+
+        conf_kwargs = mock_conf.call_args.kwargs
+        assert conf_kwargs["provider"] == "anthropic"
+        assert conf_kwargs["base_url"] == "https://custom.endpoint"
+
+    @patch(P_ANALYZE)
+    @patch(P_PROGRESS)
+    @patch(P_LLM)
+    @patch(P_LLM_CONF)
+    def test_single_file_scan_uses_full_file_review_config(
+        self, mock_conf, mock_llm, _prog, mock_analyze, tmp_path
+    ):
+        py_file = tmp_path / "review.py"
+        py_file.write_text("def fake_call():\n    return 1\n", encoding="utf-8")
+
+        mock_analyze.return_value = json.dumps(_empty_result())
+        mock_conf.side_effect = lambda **kwargs: SimpleNamespace(**kwargs)
+        mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+        run_pipeline(
+            path=str(py_file),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(skip_verification=True),
+            console=_console(),
+        )
+
+        conf_kwargs = mock_conf.call_args.kwargs
+        assert conf_kwargs["smart_filter"] is False
+        assert conf_kwargs["full_file_review"] is True
 
     @patch(P_ANALYZE)
     @patch(P_EXCLUDE, return_value=set())
@@ -1144,6 +1348,76 @@ class TestPipelinePhase3:
         assert "phase_3_seconds" in stats
         assert "elapsed_seconds" in stats
         assert stats["verification_mode"] == "production"
+
+    def test_enrich_suggestions_uses_adapter_with_runtime_settings(self, monkeypatch):
+        captured = {}
+
+        class FakeAdapter:
+            def __init__(
+                self,
+                *,
+                model,
+                api_key=None,
+                api_base=None,
+                provider=None,
+                enable_cache=True,
+                max_tokens=None,
+            ):
+                captured["init"] = {
+                    "model": model,
+                    "api_key": api_key,
+                    "api_base": api_base,
+                    "provider": provider,
+                    "enable_cache": enable_cache,
+                    "max_tokens": max_tokens,
+                }
+
+            def complete(self, system_prompt, user_prompt, response_format=None):
+                captured["complete"] = {
+                    "system_prompt": system_prompt,
+                    "user_prompt": user_prompt,
+                    "response_format": response_format,
+                }
+                return json.dumps(
+                    [
+                        {
+                            "line": 10,
+                            "rule_id": "SKY-Q301",
+                            "explanation": "too complex",
+                            "vulnerable_code": "bad()",
+                            "fixed_code": "good()",
+                        }
+                    ]
+                )
+
+        monkeypatch.setattr(
+            "skylos.adapters.litellm_adapter.LiteLLMAdapter",
+            FakeAdapter,
+        )
+
+        findings = [
+            {
+                "file": "/tmp/demo.py",
+                "line": 10,
+                "rule_id": "SKY-Q301",
+                "message": "Cyclomatic complexity is high",
+            }
+        ]
+
+        _enrich_with_llm_suggestions(
+            findings,
+            {str(pathlib.Path("/tmp/demo.py").resolve()): "def bad():\n    return 1\n"},
+            "claude-sonnet-4-20250514",
+            "KEY",
+            provider="anthropic",
+            base_url="https://custom.endpoint",
+        )
+
+        assert captured["init"]["provider"] == "anthropic"
+        assert captured["init"]["api_base"] == "https://custom.endpoint"
+        assert captured["init"]["max_tokens"] == 4000
+        assert findings[0]["fixed_code"] == "good()"
+        assert findings[0]["explanation"] == "too complex"
 
 
 class TestPipelineIntegration:

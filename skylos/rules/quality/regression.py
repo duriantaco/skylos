@@ -70,9 +70,7 @@ _SECURITY_HEADER_MIDDLEWARE_RE = re.compile(
     r"(?:SecurityMiddleware|helmet\(|secure_headers)"
 )
 
-_ENCRYPTION_CALLS_RE = re.compile(
-    r"(?:Fernet|AES|encrypt\(|decrypt\()"
-)
+_ENCRYPTION_CALLS_RE = re.compile(r"(?:Fernet|AES|encrypt\(|decrypt\()")
 
 _SECRET_KEY_RE = re.compile(r"SECRET_KEY\s*=")
 
@@ -189,10 +187,7 @@ def detect_security_regressions(
                 )
             )
 
-        if (
-            base_name in _RATE_LIMIT_DECORATORS
-            or dec_name in _RATE_LIMIT_DECORATORS
-        ):
+        if base_name in _RATE_LIMIT_DECORATORS or dec_name in _RATE_LIMIT_DECORATORS:
             findings.append(
                 _make_finding(
                     file_path,
@@ -295,8 +290,7 @@ def detect_security_regressions(
     for line_no, line in removed_lines:
         stripped = line.strip()
         if ("serializers." in stripped or "forms." in stripped) and (
-            "validate" in stripped.lower()
-            or "clean" in stripped.lower()
+            "validate" in stripped.lower() or "clean" in stripped.lower()
         ):
             findings.append(
                 _make_finding(

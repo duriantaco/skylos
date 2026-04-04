@@ -147,8 +147,12 @@ class JavaCore:
     def _find_containing_class(self, node) -> str | None:
         current = node.parent
         while current:
-            if current.type in ("class_declaration", "interface_declaration",
-                                "enum_declaration", "record_declaration"):
+            if current.type in (
+                "class_declaration",
+                "interface_declaration",
+                "enum_declaration",
+                "record_declaration",
+            ):
                 name_node = current.child_by_field_name("name")
                 if name_node:
                     return self._get_text(name_node)
@@ -158,16 +162,23 @@ class JavaCore:
     def _is_exported(self, node) -> bool:
         current = node.parent
         while current:
-            if current.type in ("class_declaration", "interface_declaration",
-                                "enum_declaration", "record_declaration",
-                                "method_declaration", "constructor_declaration",
-                                "field_declaration", "annotation_type_declaration"):
+            if current.type in (
+                "class_declaration",
+                "interface_declaration",
+                "enum_declaration",
+                "record_declaration",
+                "method_declaration",
+                "constructor_declaration",
+                "field_declaration",
+                "annotation_type_declaration",
+            ):
                 if current.type == "method_declaration":
                     parent = current.parent
                     if parent and parent.type == "interface_body":
                         return True
-                modifiers = current.child_by_field_name("modifiers") or \
-                    self._find_child_by_type(current, "modifiers")
+                modifiers = current.child_by_field_name(
+                    "modifiers"
+                ) or self._find_child_by_type(current, "modifiers")
                 if modifiers:
                     mod_text = self._get_text(modifiers)
                     if "public" in mod_text or "protected" in mod_text:
@@ -185,8 +196,12 @@ class JavaCore:
     def _has_annotation(self, node, annotation_name: str) -> bool:
         decl = node.parent
         while decl:
-            if decl.type in ("class_declaration", "method_declaration",
-                              "field_declaration", "constructor_declaration"):
+            if decl.type in (
+                "class_declaration",
+                "method_declaration",
+                "field_declaration",
+                "constructor_declaration",
+            ):
                 break
             decl = decl.parent
         if not decl:
@@ -279,8 +294,14 @@ class JavaCore:
                 return
 
         if type_name == "method":
-            for ann in ("GetMapping", "PostMapping", "PutMapping", "DeleteMapping",
-                        "PatchMapping", "RequestMapping"):
+            for ann in (
+                "GetMapping",
+                "PostMapping",
+                "PutMapping",
+                "DeleteMapping",
+                "PatchMapping",
+                "RequestMapping",
+            ):
                 if self._has_annotation(node, ann):
                     return
 
@@ -310,9 +331,13 @@ class JavaCore:
 
         for node in c.get("type_ref", []):
             parent = node.parent
-            if parent and parent.type in ("class_declaration", "interface_declaration",
-                                           "enum_declaration", "record_declaration",
-                                           "annotation_type_declaration"):
+            if parent and parent.type in (
+                "class_declaration",
+                "interface_declaration",
+                "enum_declaration",
+                "record_declaration",
+                "annotation_type_declaration",
+            ):
                 continue
             name = self._get_text(node)
             if not self._is_self_ref(node, name):

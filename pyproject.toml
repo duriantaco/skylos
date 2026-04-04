@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skylos"
-version = "4.2.0"
+version = "4.2.1"
 requires-python = ">=3.10"
 description = "Open-source AI code security and static analysis for Python, TypeScript, and Go. Finds dead code, secrets, vulnerabilities, and diff-aware regressions."
 authors = [{name = "Aaron Oh", email = "aaronoh2015@gmail.com"}]
@@ -134,3 +134,12 @@ strict = false
 
 [tool.uv.workspace]
 exclude = ["rust"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+norecursedirs = [
+    "agent_review_benchmarks",
+    "corpus",
+    "manual",
+    "quality_benchmarks",
+]

@@ -53,7 +53,9 @@ class TestSkylosWebApp(unittest.TestCase):
         response = self.app.get("/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b'const SKYLOS_WEB_TOKEN = "tok-\\"<\\/script>-x";', response.data)
+        self.assertIn(
+            b'const SKYLOS_WEB_TOKEN = "tok-\\"<\\/script>-x";', response.data
+        )
         self.assertNotIn(b"</script>-x", response.data)
 
     def test_analyze_missing_path(self):

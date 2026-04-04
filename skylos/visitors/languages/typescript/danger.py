@@ -681,9 +681,7 @@ def _check_nextjs_missing_auth(
         ("route.ts", "route.tsx")
     ):
         is_route = True
-    elif "/pages/api/" in normalized_path and normalized_path.endswith(
-        (".ts", ".tsx")
-    ):
+    elif "/pages/api/" in normalized_path and normalized_path.endswith((".ts", ".tsx")):
         is_route = True
 
     if not is_route:
@@ -733,7 +731,12 @@ def _check_nextjs_client_secrets(
     is_client = False
     for line in lines[:5]:
         stripped = line.strip()
-        if stripped in ('"use client"', "'use client'", '"use client";', "'use client';"):
+        if stripped in (
+            '"use client"',
+            "'use client'",
+            '"use client";',
+            "'use client';",
+        ):
             is_client = True
             break
         if stripped and not stripped.startswith(("//", "/*", "*", "import")):
@@ -770,7 +773,12 @@ def _check_nextjs_server_action_sqli(
     is_server = False
     for line in lines[:5]:
         stripped = line.strip()
-        if stripped in ('"use server"', "'use server'", '"use server";', "'use server';"):
+        if stripped in (
+            '"use server"',
+            "'use server'",
+            '"use server";',
+            "'use server';",
+        ):
             is_server = True
             break
         if stripped and not stripped.startswith(("//", "/*", "*", "import")):

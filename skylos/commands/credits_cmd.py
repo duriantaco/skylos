@@ -7,9 +7,7 @@ def run_credits_command() -> int:
     console = Console()
     token = get_project_token()
     if not token:
-        console.print(
-            "[red]Not connected.[/red] Run [bold]skylos login[/bold] first."
-        )
+        console.print("[red]Not connected.[/red] Run [bold]skylos login[/bold] first.")
         return 1
 
     data = print_credit_status(token)

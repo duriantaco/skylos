@@ -1,0 +1,27 @@
+name: Corpus Guard
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Create venv + install deps
+        run: |
+          uv venv
+          uv pip install -e .
+
+      - name: Run curated corpus guard
+        run: |
+          uv run python scripts/corpus_ci.py --manifest corpus/manifest.json | tee /tmp/corpus-summary.txt
+          cat /tmp/corpus-summary.txt >> "$GITHUB_STEP_SUMMARY"

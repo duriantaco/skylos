@@ -36,6 +36,7 @@ class CodeValidator:
             location=location,
             suggestion=finding.suggestion,
             explanation=finding.explanation,
+            symbol=getattr(finding, "symbol", None),
         )
 
         if f.location.line < 1 or f.location.line > total_lines:

@@ -195,17 +195,21 @@ def validate_rules(console, path_str):
         if not pattern:
             errors.append(f"{prefix} ({rule.get('id', '?')}): missing 'pattern'")
         elif not isinstance(pattern, dict):
-            errors.append(f"{prefix} ({rule.get('id', '?')}): 'pattern' must be a mapping")
-        elif "type" not in pattern:
             errors.append(
-                f"{prefix} ({rule.get('id', '?')}): missing 'pattern.type'"
+                f"{prefix} ({rule.get('id', '?')}): 'pattern' must be a mapping"
             )
+        elif "type" not in pattern:
+            errors.append(f"{prefix} ({rule.get('id', '?')}): missing 'pattern.type'")
         elif pattern["type"] not in valid_pattern_types:
             warnings.append(
                 f"{prefix} ({rule.get('id', '?')}): unknown pattern type '{pattern['type']}'"
             )
 
-        if pattern and isinstance(pattern, dict) and pattern.get("type") == "taint_flow":
+        if (
+            pattern
+            and isinstance(pattern, dict)
+            and pattern.get("type") == "taint_flow"
+        ):
             if not pattern.get("sources"):
                 errors.append(
                     f"{prefix} ({rule.get('id', '?')}): taint_flow requires 'sources'"

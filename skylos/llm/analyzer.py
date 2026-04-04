@@ -14,12 +14,21 @@ from skylos.llm.graph import CodeGraph
 from skylos.file_discovery import discover_source_files
 
 
+def _norm_path(path) -> str:
+    try:
+        return str(Path(path).resolve())
+    except Exception:
+        return str(path)
+
+
 class AnalyzerConfig:
     def __init__(
         self,
         model="gpt-4.1",
         api_key=None,
-        temperature=0.1,
+        provider=None,
+        base_url=None,
+        temperature=0.0,
         max_tokens=4096,
         enable_security=True,
         enable_quality=True,
@@ -35,9 +44,14 @@ class AnalyzerConfig:
         complexity_threshold=5,
         batch_functions=True,
         batch_size=10,
+        full_file_review=False,
+        repo_context_map=None,
+        force_full_file_paths=None,
     ):
         self.model = model
         self.api_key = api_key
+        self.provider = provider
+        self.base_url = base_url
         self.temperature = temperature
         self.max_tokens = max_tokens
 
@@ -59,6 +73,11 @@ class AnalyzerConfig:
         self.complexity_threshold = complexity_threshold
         self.batch_functions = batch_functions
         self.batch_size = batch_size
+        self.full_file_review = full_file_review
+        self.repo_context_map = repo_context_map or {}
+        self.force_full_file_paths = {
+            _norm_path(path) for path in (force_full_file_paths or set())
+        }
 
 
 class SkylosLLM:
@@ -78,11 +97,29 @@ class SkylosLLM:
         self.agent_config = AgentConfig()
         self.agent_config.model = self.config.model
         self.agent_config.api_key = self.config.api_key
+        self.agent_config.provider = self.config.provider
+        self.agent_config.base_url = self.config.base_url
         self.agent_config.temperature = self.config.temperature
         self.agent_config.max_tokens = self.config.max_tokens
         self.agent_config.stream = self.config.stream
 
         self._agents = {}
+
+    def _reset_usage_counters(self):
+        for agent in self._agents.values():
+            adapter = getattr(agent, "_adapter", None)
+            if adapter and hasattr(adapter, "reset_usage"):
+                adapter.reset_usage()
+
+    def _total_tokens_used(self):
+        total = 0
+        for agent in self._agents.values():
+            adapter = getattr(agent, "_adapter", None)
+            if not adapter:
+                continue
+            usage = getattr(adapter, "total_usage", None) or {}
+            total += int(usage.get("total_tokens") or 0)
+        return total
 
     def _get_agent(self, agent_type):
         if agent_type not in self._agents:
@@ -111,10 +148,72 @@ class SkylosLLM:
                 complexity += len(child.values) - 1
         return complexity
 
-    def _should_analyze_function(self, func_name, def_data, graph):
-        if not self.config.smart_filter:
-            return True
+    def _function_length(self, node):
+        start = getattr(node, "lineno", None)
+        end = getattr(node, "end_lineno", None)
+        if start is None:
+            return 0
+        if end is None:
+            end = start
+        return max(end - start + 1, 0)
 
+    def _function_parameter_count(self, node):
+        if node is None:
+            return 0
+
+        args = getattr(node, "args", None)
+        if args is None:
+            return 0
+
+        count = 0
+        for arg in getattr(args, "posonlyargs", []) or []:
+            if getattr(arg, "arg", None) not in ("self", "cls"):
+                count += 1
+        for arg in getattr(args, "args", []) or []:
+            if getattr(arg, "arg", None) not in ("self", "cls"):
+                count += 1
+        count += len(getattr(args, "kwonlyargs", []) or [])
+        return count
+
+    def _return_site_count(self, node):
+        import ast
+
+        if node is None:
+            return 0
+        return sum(1 for child in ast.walk(node) if isinstance(child, ast.Return))
+
+    def _control_flow_count(self, node):
+        import ast
+
+        if node is None:
+            return 0
+        return sum(
+            1
+            for child in ast.walk(node)
+            if isinstance(
+                child,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.AsyncFor,
+                    ast.While,
+                    ast.Try,
+                    ast.With,
+                    ast.Match,
+                ),
+            )
+        )
+
+    def _has_exception_handling(self, node):
+        import ast
+
+        if node is None:
+            return False
+        return any(
+            isinstance(child, (ast.Try, ast.TryStar)) for child in ast.walk(node)
+        )
+
+    def _should_analyze_security_function(self, func_name, def_data, graph):
         taint_paths = graph.find_taint_paths(func_name)
         if taint_paths:
             return True
@@ -152,11 +251,105 @@ class SkylosLLM:
 
         return False
 
+    def _should_analyze_quality_function(self, func_name, def_data):
+        node = def_data.get("node")
+        if node is None:
+            return False
+
+        complexity = self._estimate_complexity(node)
+        if complexity >= self.config.complexity_threshold:
+            return True
+
+        if self._function_length(node) >= 12:
+            return True
+
+        if self._function_parameter_count(node) >= 4:
+            return True
+
+        if self._return_site_count(node) >= 2:
+            return True
+
+        if self._control_flow_count(node) >= 3:
+            return True
+
+        if self._has_exception_handling(node):
+            return True
+
+        func_lower = func_name.lower()
+        quality_signals = (
+            "build",
+            "format",
+            "normalize",
+            "parse",
+            "render",
+            "resolve",
+            "validate",
+        )
+        return any(token in func_lower for token in quality_signals)
+
+    def _active_review_modes(self, issue_types=None):
+        if not issue_types:
+            modes = set()
+            if self.config.enable_security:
+                modes.add("security")
+            if self.config.enable_quality:
+                modes.add("quality")
+            return modes
+
+        modes = set()
+        for issue_type in issue_types:
+            name = str(issue_type).lower().strip()
+            if name in {"security", "security_audit"}:
+                modes.add("security")
+            if name == "quality":
+                modes.add("quality")
+        return modes
+
+    def _should_analyze_function(
+        self, func_name, def_data, graph, *, issue_types=None, total_functions=0
+    ):
+        if not self.config.smart_filter:
+            return True
+
+        modes = self._active_review_modes(issue_types)
+        if not modes:
+            return True
+
+        if "quality" in modes and total_functions and total_functions <= 3:
+            return True
+
+        return (
+            "security" in modes
+            and self._should_analyze_security_function(func_name, def_data, graph)
+        ) or (
+            "quality" in modes
+            and self._should_analyze_quality_function(func_name, def_data)
+        )
+
     def _build_batched_context(self, functions_data, graph, file_path, defs_map=None):
+        return self._build_batched_context_for_modes(
+            functions_data,
+            graph,
+            file_path,
+            defs_map=defs_map,
+            issue_types=None,
+        )
+
+    def _build_batched_context_for_modes(
+        self, functions_data, graph, file_path, defs_map=None, issue_types=None
+    ):
         parts = [f"# File: {file_path}\n"]
+        modes = self._active_review_modes(issue_types)
+        include_security_hints = "security" in modes
+        include_quality_hints = "quality" in modes
 
         for i, (func_name, def_data, taint_paths) in enumerate(functions_data):
-            context = graph.get_security_context(func_name, defs_map=defs_map)
+            context = graph.get_review_context(
+                func_name,
+                defs_map=defs_map,
+                include_security_hints=include_security_hints,
+                include_quality_hints=include_quality_hints,
+            )
             if context:
                 parts.append(f"## Function {i + 1}: {func_name}")
                 if taint_paths:
@@ -175,9 +368,9 @@ class SkylosLLM:
         issue_types=None,
         **kwargs,
     ):
-        context = self.context_builder.build_analysis_context(
-            source, file_path=file_path, defs_map=defs_map
-        )
+        normalized_issue_types = {
+            str(t).lower().strip() for t in (issue_types or []) if str(t).strip()
+        }
 
         type_to_agent = {
             "security": "security",
@@ -186,11 +379,16 @@ class SkylosLLM:
         }
 
         if not issue_types:
-            agent_types = []
-            if self.config.enable_security:
-                agent_types.append("security")
-            if self.config.enable_quality:
-                agent_types.append("quality")
+            wants_security = self.config.enable_security
+            wants_quality = self.config.enable_quality
+            if wants_security and wants_quality:
+                agent_types = ["review"]
+            else:
+                agent_types = []
+                if wants_security:
+                    agent_types.append("security")
+                if wants_quality:
+                    agent_types.append("quality")
 
             if not agent_types:
                 agent_types = ["security_audit"]
@@ -204,14 +402,37 @@ class SkylosLLM:
                         "candidates instead (pipeline Phase 2a)."
                     )
 
-            agent_types = []
-            for t in issue_types:
-                a = type_to_agent.get(str(t).lower().strip())
-                if a:
-                    agent_types.append(a)
+            if {"security", "quality"} <= normalized_issue_types:
+                agent_types = ["review"]
+            else:
+                agent_types = []
+                for t in issue_types:
+                    a = type_to_agent.get(str(t).lower().strip())
+                    if a:
+                        agent_types.append(a)
 
             if not agent_types:
                 agent_types = ["security_audit"]
+
+        include_review_hints = any(
+            agent_type in {"review", "quality"} for agent_type in agent_types
+        )
+        repo_metadata = self.config.repo_context_map.get(_norm_path(file_path))
+        try:
+            context = self.context_builder.build_analysis_context(
+                source,
+                file_path=file_path,
+                defs_map=defs_map,
+                include_review_hints=include_review_hints,
+                repo_metadata=repo_metadata,
+            )
+        except TypeError:
+            context = self.context_builder.build_analysis_context(
+                source,
+                file_path=file_path,
+                defs_map=defs_map,
+                include_review_hints=include_review_hints,
+            )
 
         all_findings = []
 
@@ -259,81 +480,131 @@ class SkylosLLM:
             self.ui.print(f"Error reading {file_path}: {e}", style="red")
             return []
 
-        graph = CodeGraph()
-        graph.build(source)
-
         all_findings = []
+        file_norm = _norm_path(file_path)
+        force_full_file_review = file_norm in self.config.force_full_file_paths
 
-        if graph.definitions:
-            functions_to_analyze = []
-            skipped = 0
+        if self.config.full_file_review or force_full_file_review:
+            all_findings = self._analyze_whole_file(
+                source,
+                str(file_path),
+                defs_map,
+                issue_types=issue_types,
+            )
+        else:
+            graph = CodeGraph()
+            graph.build(source)
 
-            for func_name, def_data in graph.definitions.items():
-                if def_data["type"] not in ("function", "method"):
-                    continue
-
-                if self._should_analyze_function(func_name, def_data, graph):
-                    taint_paths = graph.find_taint_paths(func_name)
-                    functions_to_analyze.append((func_name, def_data, taint_paths))
-                else:
-                    skipped += 1
-
-            if not self.config.quiet and skipped > 0:
-                total = len(functions_to_analyze) + skipped
-                self.ui.print(
-                    f"  Analyzing {len(functions_to_analyze)}/{total} functions (skipped {skipped} low-risk)",
-                    style="dim",
+            if graph.definitions:
+                functions_to_analyze = []
+                skipped = 0
+                function_def_count = sum(
+                    1
+                    for def_data in graph.definitions.values()
+                    if def_data["type"] in ("function", "method")
                 )
+                modes = self._active_review_modes(issue_types)
 
-            if self.config.batch_functions and len(functions_to_analyze) > 1:
-                for i in range(0, len(functions_to_analyze), self.config.batch_size):
-                    batch = functions_to_analyze[i : i + self.config.batch_size]
-                    batch_context = self._build_batched_context(
-                        batch, graph, file_path, defs_map
-                    )
-
-                    findings = self._analyze_whole_file(
-                        batch_context, str(file_path), defs_map, issue_types=issue_types
-                    )
-
-                    for finding in findings:
-                        for func_name, def_data, taint_paths in batch:
-                            if func_name.split(".")[-1] in str(finding.message):
-                                finding.location.line = (
-                                    def_data["start"] + finding.location.line
-                                )
-                                if taint_paths:
-                                    for tp in taint_paths:
-                                        if tp["sink_type"] in finding.message.lower():
-                                            finding.confidence = Confidence.HIGH
-                                break
-
-                    all_findings.extend(findings)
-            else:
-                for func_name, def_data, taint_paths in functions_to_analyze:
-                    context = graph.get_security_context(func_name)
-                    if not context:
+                for func_name, def_data in graph.definitions.items():
+                    if def_data["type"] not in ("function", "method"):
                         continue
 
-                    findings = self._analyze_whole_file(
-                        context, str(file_path), defs_map, issue_types=issue_types
+                    if self._should_analyze_function(
+                        func_name,
+                        def_data,
+                        graph,
+                        issue_types=issue_types,
+                        total_functions=function_def_count,
+                    ):
+                        taint_paths = graph.find_taint_paths(func_name)
+                        functions_to_analyze.append((func_name, def_data, taint_paths))
+                    else:
+                        skipped += 1
+
+                if not self.config.quiet and skipped > 0:
+                    total = len(functions_to_analyze) + skipped
+                    self.ui.print(
+                        f"  Analyzing {len(functions_to_analyze)}/{total} functions (skipped {skipped} low-risk)",
+                        style="dim",
                     )
 
-                    if taint_paths:
-                        for f in findings:
-                            for tp in taint_paths:
-                                if tp["sink_type"] in f.message.lower():
-                                    f.confidence = Confidence.HIGH
+                if functions_to_analyze:
+                    if self.config.batch_functions and len(functions_to_analyze) > 1:
+                        for i in range(
+                            0, len(functions_to_analyze), self.config.batch_size
+                        ):
+                            batch = functions_to_analyze[i : i + self.config.batch_size]
+                            batch_context = self._build_batched_context_for_modes(
+                                batch,
+                                graph,
+                                file_path,
+                                defs_map,
+                                issue_types=issue_types,
+                            )
 
-                    start_line = def_data["start"] + 1
-                    for f in findings:
-                        f.location.line = start_line + f.location.line - 1
+                            findings = self._analyze_whole_file(
+                                batch_context,
+                                str(file_path),
+                                defs_map,
+                                issue_types=issue_types,
+                            )
 
-                    all_findings.extend(findings)
-        else:
-            all_findings = self._analyze_whole_file(
-                source, str(file_path), defs_map, issue_types=issue_types
-            )
+                            for finding in findings:
+                                for func_name, def_data, taint_paths in batch:
+                                    if func_name.split(".")[-1] in str(finding.message):
+                                        finding.location.line = (
+                                            def_data["start"] + finding.location.line
+                                        )
+                                        if taint_paths:
+                                            for tp in taint_paths:
+                                                if (
+                                                    tp["sink_type"]
+                                                    in finding.message.lower()
+                                                ):
+                                                    finding.confidence = Confidence.HIGH
+                                        break
+
+                            all_findings.extend(findings)
+                    else:
+                        for func_name, def_data, taint_paths in functions_to_analyze:
+                            context = graph.get_review_context(
+                                func_name,
+                                defs_map=defs_map,
+                                include_security_hints="security" in modes,
+                                include_quality_hints="quality" in modes,
+                            )
+                            if not context:
+                                continue
+
+                            findings = self._analyze_whole_file(
+                                context,
+                                str(file_path),
+                                defs_map,
+                                issue_types=issue_types,
+                            )
+
+                            if taint_paths:
+                                for f in findings:
+                                    for tp in taint_paths:
+                                        if tp["sink_type"] in f.message.lower():
+                                            f.confidence = Confidence.HIGH
+
+                            start_line = def_data["start"] + 1
+                            for f in findings:
+                                f.location.line = start_line + f.location.line - 1
+
+                            all_findings.extend(findings)
+                elif "quality" in modes:
+                    all_findings = self._analyze_whole_file(
+                        source,
+                        str(file_path),
+                        defs_map,
+                        issue_types=issue_types,
+                    )
+            else:
+                all_findings = self._analyze_whole_file(
+                    source, str(file_path), defs_map, issue_types=issue_types
+                )
 
         validated, _ = self.validator.validate(all_findings, source, str(file_path))
 
@@ -377,6 +648,7 @@ class SkylosLLM:
         start_time = time.time()
         all_findings = []
         total_lines = 0
+        self._reset_usage_counters()
 
         files = [Path(f) for f in files]
 
@@ -451,6 +723,7 @@ class SkylosLLM:
             total_lines=total_lines,
             analysis_time_ms=elapsed_ms,
             model_used=self.config.model,
+            tokens_used=self._total_tokens_used(),
         )
         result.summary = self._generate_summary(result)
 

@@ -34,6 +34,12 @@ from skylos.known_patterns import (
     FLASK_RESTFUL_BASES,
     TORNADO_HANDLER_METHODS,
     TORNADO_HANDLER_BASES,
+    CELERY_TASK_METHODS,
+    CELERY_TASK_BASES,
+    CLICK_COMMAND_METHODS,
+    CLICK_COMMAND_BASES,
+    PYDANTIC_MODEL_METHODS,
+    PYDANTIC_MODEL_BASES,
     SOFT_PATTERNS,
     matches_pattern,
     has_base_class,
@@ -187,6 +193,21 @@ def _suppress(def_obj, reason=None, code=None, folder_role=None):
     return True
 
 
+def _class_base_names(simple_name, framework) -> set[str]:
+    class_defs = getattr(framework, "class_defs", {})
+    cls_node = class_defs.get(simple_name)
+    if cls_node is None:
+        return set()
+
+    base_names: set[str] = set()
+    for base in getattr(cls_node, "bases", []):
+        if isinstance(base, ast.Name):
+            base_names.add(base.id)
+        elif isinstance(base, ast.Attribute):
+            base_names.add(base.attr)
+    return base_names
+
+
 def _check_inline_ignore(def_obj, visitor):
     if getattr(visitor, "ignore_lines", None) and def_obj.line in visitor.ignore_lines:
         return _suppress(def_obj, "inline ignore comment")
@@ -279,10 +300,18 @@ def _check_framework_decorations(def_obj, framework):
 def _check_pytest_unittest(def_obj, framework):
     simple_name = def_obj.simple_name
     detected = getattr(framework, "detected_frameworks", set())
+    filename = str(def_obj.filename)
 
     if simple_name in PYTEST_HOOKS:
-        if "pytest" in detected or "conftest" in str(def_obj.filename):
+        if "pytest" in detected or "conftest" in filename:
             return _suppress(def_obj)
+
+    if def_obj.type == "parameter" and "." in def_obj.name:
+        parts = def_obj.name.split(".")
+        hook_name = parts[-2] if len(parts) >= 2 else ""
+        if hook_name in PYTEST_HOOKS:
+            if "pytest" in detected or "conftest" in filename:
+                return _suppress(def_obj, "pytest hook parameter")
 
     if simple_name in UNITTEST_METHODS:
         if has_base_class(def_obj, {"TestCase"}, framework):
@@ -294,7 +323,12 @@ def _check_pytest_unittest(def_obj, framework):
 def _check_django_drf_structural(def_obj, framework):
     detected = getattr(framework, "detected_frameworks", set())
     simple_name = def_obj.simple_name
-    _DJANGO_DRF_FRAMEWORKS = {"django", "rest_framework", "django_filters", "marshmallow"}
+    _DJANGO_DRF_FRAMEWORKS = {
+        "django",
+        "rest_framework",
+        "django_filters",
+        "marshmallow",
+    }
 
     if def_obj.type == "class" and simple_name == "Meta":
         if "." in def_obj.name and detected & _DJANGO_DRF_FRAMEWORKS:
@@ -311,6 +345,42 @@ def _check_django_drf_structural(def_obj, framework):
         fname = str(def_obj.filename)
         if "/migrations/" in fname or "\\migrations\\" in fname:
             return _suppress(def_obj)
+
+    if def_obj.type == "class":
+        class_bases = _class_base_names(simple_name, framework)
+
+        if "django" in detected and class_bases.intersection(
+            DJANGO_MODEL_BASES
+            | DJANGO_VIEW_BASES
+            | DJANGO_ADMIN_BASES
+            | DJANGO_FORM_BASES
+            | DJANGO_COMMAND_BASES
+            | DJANGO_APPCONFIG_BASES
+            | DJANGO_MIDDLEWARE_BASES
+        ):
+            return _suppress(def_obj, "Django framework class")
+
+        if "rest_framework" in detected and class_bases.intersection(
+            DRF_VIEWSET_BASES | DRF_SERIALIZER_BASES | DRF_PERMISSION_BASES
+        ):
+            return _suppress(def_obj, "DRF framework class")
+
+        if "marshmallow" in detected and "Schema" in class_bases:
+            return _suppress(def_obj, "Marshmallow schema")
+
+        if "sqlalchemy" in detected and simple_name in getattr(
+            framework, "orm_model_classes", set()
+        ):
+            return _suppress(def_obj, "ORM model class")
+
+        if "celery" in detected and class_bases.intersection(CELERY_TASK_BASES):
+            return _suppress(def_obj, "Celery task class")
+
+        if "click" in detected and class_bases.intersection(CLICK_COMMAND_BASES):
+            return _suppress(def_obj, "Click command class")
+
+        if simple_name in getattr(framework, "pydantic_models", set()):
+            return _suppress(def_obj, "Pydantic model")
 
     return None
 
@@ -442,6 +512,27 @@ def _check_web_framework_methods(def_obj, framework):
         def_obj, {"Thread", "threading.Thread"}, framework
     ):
         return _suppress(def_obj)
+
+    if simple_name in CELERY_TASK_METHODS and has_base_class(
+        def_obj, CELERY_TASK_BASES, framework
+    ):
+        return _suppress(def_obj, "Celery task method")
+
+    if simple_name in CLICK_COMMAND_METHODS and has_base_class(
+        def_obj, CLICK_COMMAND_BASES, framework
+    ):
+        return _suppress(def_obj, "Click command method")
+
+    return None
+
+
+def _check_pydantic_methods(def_obj, framework):
+    simple_name = def_obj.simple_name
+
+    if simple_name in PYDANTIC_MODEL_METHODS and has_base_class(
+        def_obj, PYDANTIC_MODEL_BASES, framework
+    ):
+        return _suppress(def_obj, "Pydantic model method")
 
     return None
 
@@ -718,6 +809,18 @@ def _check_data_model_fields(def_obj, analyzer, framework):
     if def_obj.type == "variable" and "." in def_obj.name:
         prefix = def_obj.name.rsplit(".", 1)[0]
         parent_simple = prefix.split(".")[-1]
+        detected = getattr(framework, "detected_frameworks", set())
+        class_bases = _class_base_names(parent_simple, framework)
+        if "rest_framework" in detected and class_bases.intersection(
+            DRF_SERIALIZER_BASES
+        ):
+            return _suppress(def_obj, "DRF serializer field")
+        if "marshmallow" in detected and "Schema" in class_bases:
+            return _suppress(def_obj, "Marshmallow schema field")
+
+    if def_obj.type == "variable" and "." in def_obj.name:
+        prefix = def_obj.name.rsplit(".", 1)[0]
+        parent_simple = prefix.split(".")[-1]
         if parent_simple in getattr(framework, "orm_model_classes", set()):
             return _suppress(def_obj, "ORM model column")
 
@@ -928,6 +1031,9 @@ def apply_penalties(
         return
 
     if _check_web_framework_methods(def_obj, framework) is True:
+        return
+
+    if _check_pydantic_methods(def_obj, framework) is True:
         return
 
     result = _check_abstract_overrides(def_obj, analyzer, framework)

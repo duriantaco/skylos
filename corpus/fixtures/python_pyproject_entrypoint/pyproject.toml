@@ -1,0 +1,4 @@
+[project]
+name = "sample-entrypoint"
+version = "0.1.0"
+scripts = { sample-cli = "app.cli:main" }

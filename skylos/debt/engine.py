@@ -53,7 +53,9 @@ def _relative_path(file_path: str, project_root: Path) -> str:
     if not file_path:
         return ""
     try:
-        return str(Path(file_path).resolve().relative_to(project_root)).replace("\\", "/")
+        return str(Path(file_path).resolve().relative_to(project_root)).replace(
+            "\\", "/"
+        )
     except Exception:
         return str(file_path).replace("\\", "/")
 
@@ -107,7 +109,10 @@ def _build_quality_signal(
     rule_id = str(finding.get("rule_id") or "QUALITY")
     line = int(finding.get("line") or 1)
     subject = str(
-        finding.get("name") or finding.get("simple_name") or Path(file_path).name or rule_id
+        finding.get("name")
+        or finding.get("simple_name")
+        or Path(file_path).name
+        or rule_id
     )
     message = str(finding.get("message") or rule_id)
     return DebtSignal(
@@ -238,7 +243,9 @@ def run_debt_analysis(
 
     dimension_counts: dict[str, int] = {}
     for signal in all_signals:
-        dimension_counts[signal.dimension] = dimension_counts.get(signal.dimension, 0) + 1
+        dimension_counts[signal.dimension] = (
+            dimension_counts.get(signal.dimension, 0) + 1
+        )
 
     summary = {
         "dimensions": dimension_counts,

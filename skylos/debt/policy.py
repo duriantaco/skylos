@@ -95,10 +95,7 @@ def _parse_policy(raw: dict) -> DebtPolicy:
                 raise ValueError(f"gate.min_score must be 0-100, got {min_score}")
 
         fail_on_status = gate.get("fail_on_status")
-        if (
-            fail_on_status is not None
-            and fail_on_status not in VALID_FAIL_ON_STATUS
-        ):
+        if fail_on_status is not None and fail_on_status not in VALID_FAIL_ON_STATUS:
             raise ValueError(
                 f"Invalid gate.fail_on_status '{fail_on_status}'. "
                 f"Valid: {', '.join(sorted(VALID_FAIL_ON_STATUS))}"

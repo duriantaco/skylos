@@ -299,6 +299,25 @@ app.register_middleware(auth_middleware, "request")
         assert v.is_framework_file is True
         assert 5 in v.framework_decorated_lines
 
+    def test_sqlalchemy_listens_for_curried_marks_callback(self):
+        code = """
+from sqlalchemy import event
+
+class Engine:
+    pass
+
+def on_connect(dbapi_connection, connection_record):
+    return None
+
+event.listens_for(Engine, "connect")(on_connect)
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert 7 in v.framework_decorated_lines
+
     def test_pytest_hookimpl_marks_plugin_hook(self):
         code = """
 import pytest

@@ -313,7 +313,9 @@ def test_normalize_findings_applies_debt_baseline(tmp_path):
     assert debt[0]["baseline_status"] == "worsened"
 
 
-def test_refresh_agent_state_with_only_debt_baseline_does_not_mark_quality_new(tmp_path):
+def test_refresh_agent_state_with_only_debt_baseline_does_not_mark_quality_new(
+    tmp_path,
+):
     project_root = tmp_path / "repo"
     src = project_root / "src"
     state_dir = project_root / ".skylos"
@@ -353,7 +355,9 @@ def test_refresh_agent_state_with_only_debt_baseline_does_not_mark_quality_new(t
         state, updated = refresh_agent_state(project_root, force=True)
 
     assert updated is True
-    quality = [finding for finding in state["findings"] if finding["category"] == "quality"]
+    quality = [
+        finding for finding in state["findings"] if finding["category"] == "quality"
+    ]
     debt = [finding for finding in state["findings"] if finding["category"] == "debt"]
     assert quality[0]["is_new_vs_baseline"] is False
     assert debt[0]["is_new_vs_baseline"] is False

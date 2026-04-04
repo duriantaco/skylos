@@ -67,6 +67,7 @@ class Finding:
         suggestion: str | None = None,
         code_snippet: str | None = None,
         references: list[str] | None = None,
+        symbol: str | None = None,
     ) -> None:
         self.rule_id = rule_id
         self.issue_type = issue_type
@@ -78,6 +79,7 @@ class Finding:
         self.suggestion = suggestion
         self.code_snippet = code_snippet
         self.references = references or []
+        self.symbol = symbol
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -91,6 +93,7 @@ class Finding:
             "suggestion": self.suggestion,
             "code_snippet": self.code_snippet,
             "references": self.references,
+            "symbol": self.symbol,
         }
 
     def to_sarif_result(self) -> dict[str, Any]:
@@ -269,6 +272,7 @@ FINDING_SCHEMA = {
         "explanation",
         "suggestion",
         "confidence",
+        "symbol",
     ],
     "properties": {
         "rule_id": {"type": "string", "pattern": "^SKY-[A-Z][0-9]{3}$"},
@@ -285,6 +289,7 @@ FINDING_SCHEMA = {
         "explanation": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "suggestion": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "confidence": {"type": "string", "enum": CONFIDENCE_VALUES},
+        "symbol": {"anyOf": [{"type": "string"}, {"type": "null"}]},
     },
 }
 
@@ -304,6 +309,7 @@ def parse_llm_finding(data: dict[str, Any], file_path: str) -> Finding | None:
         confidence = Confidence(str(confidence_raw).lower())
         explanation = data.get("explanation")
         suggestion = data.get("suggestion")
+        symbol = data.get("symbol")
 
         location = CodeLocation(file=file_path, line=line, end_line=end_line)
 
@@ -316,6 +322,7 @@ def parse_llm_finding(data: dict[str, Any], file_path: str) -> Finding | None:
             confidence=confidence,
             explanation=explanation,
             suggestion=suggestion,
+            symbol=symbol,
         )
     except (ValueError, KeyError):
         return None
