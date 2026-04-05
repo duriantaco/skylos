@@ -10,9 +10,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-MAX_LLM_RETRIES = 3
-RETRY_BACKOFF_BASE = 5
-
 from .dead_code_verifier import (
     DeadCodeVerifierAgent,
     Verdict,
@@ -26,14 +23,14 @@ from skylos.grep_verify import (
     _run_grep,
     multi_strategy_search as _multi_strategy_search,
     parallel_multi_strategy_search as _parallel_multi_strategy_search,
-    filter_grep_results as _filter_grep_results,
-    is_definition_line as _is_definition_line,
-    is_substring_match as _is_substring_match,
     repo_relative_path as _repo_relative_path,
     module_candidates as _module_candidates,
     parameter_owner_name as _parameter_owner_name,
     detect_language as _detect_language,
 )
+
+MAX_LLM_RETRIES = 3
+RETRY_BACKOFF_BASE = 5
 
 logger = logging.getLogger(__name__)
 
@@ -975,7 +972,7 @@ def _find_parent_class_info_ts(
     else:
         info += f"\n  Method `{simple_name}` has parent classes but could not confirm it overrides a parent method."
         info += (
-            f"\n  Check if the parent framework/library defines this method externally."
+            "\n  Check if the parent framework/library defines this method externally."
         )
 
     return info
@@ -1253,14 +1250,14 @@ def _find_parent_class_info(
                         "protocol",
                     ]
                 ):
-                    info += f"\n  HINT: Code comments/pragmas suggest this is an ABC/interface override."
+                    info += "\n  HINT: Code comments/pragmas suggest this is an ABC/interface override."
                     info += f"\n  Method `{simple_name}` is likely a required override — treat as NOT dead code."
                 else:
                     info += f"\n  Method `{simple_name}` has parent classes but could not confirm it overrides a parent method."
-                    info += f"\n  Check if the parent framework/library defines this method externally."
+                    info += "\n  Check if the parent framework/library defines this method externally."
             else:
                 info += f"\n  Method `{simple_name}` has parent classes but could not confirm it overrides a parent method."
-                info += f"\n  Check if the parent framework/library defines this method externally."
+                info += "\n  Check if the parent framework/library defines this method externally."
 
     return info
 
@@ -1455,9 +1452,7 @@ def _module_local_dynamic_dispatch_evidence(
             if not family:
                 continue
             prefix, dynamic_name, suffix = family
-            dynamic_fragment = _match_dynamic_dispatch_name(
-                simple_name, prefix, suffix
-            )
+            dynamic_fragment = _match_dynamic_dispatch_name(simple_name, prefix, suffix)
             if not dynamic_fragment:
                 continue
 
@@ -1468,9 +1463,8 @@ def _module_local_dynamic_dispatch_evidence(
                 ):
                     continue
                 literal_values = _literal_string_values(generator.iter)
-                if (
-                    dynamic_fragment in literal_values
-                    and _map_used_later(map_name, getattr(assign, "lineno", 0))
+                if dynamic_fragment in literal_values and _map_used_later(
+                    map_name, getattr(assign, "lineno", 0)
                 ):
                     line_no = getattr(child, "lineno", getattr(assign, "lineno", 0))
                     return [
@@ -1493,16 +1487,14 @@ def _module_local_dynamic_dispatch_evidence(
             if not family:
                 continue
             prefix, _dynamic_name, suffix = family
-            dynamic_fragment = _match_dynamic_dispatch_name(
-                simple_name, prefix, suffix
-            )
+            dynamic_fragment = _match_dynamic_dispatch_name(simple_name, prefix, suffix)
             if not dynamic_fragment:
                 continue
             if not _dispatcher_alive(func.name):
                 continue
             line_no = getattr(child, "lineno", getattr(func, "lineno", 0))
             return [
-                f"{file_path}:{line_no}: `{func.name}` resolves `{simple_name}` via getattr(..., f\"{prefix}{{...}}{suffix}\")"
+                f'{file_path}:{line_no}: `{func.name}` resolves `{simple_name}` via getattr(..., f"{prefix}{{...}}{suffix}")'
             ]
 
     return []
@@ -1618,10 +1610,7 @@ def _build_graph_context(
         and not discovered_entry_point
         and not prefilter_reason
         and not guarded_import
-        and (
-            not search_results
-            or set(search_results).issubset(compact_search_keys)
-        )
+        and (not search_results or set(search_results).issubset(compact_search_keys))
     )
 
     if compact_context_ok:
@@ -1790,7 +1779,7 @@ def _build_graph_context(
                         for ci in range(cs, ce):
                             parts.append(f"  {ci + 1:4d} | {clines[ci]}")
             else:
-                parts.append(f"  (not found in defs_map)")
+                parts.append("  (not found in defs_map)")
     else:
         parts.append("  NOBODY calls this function. Zero callers in entire project.")
     parts.append("")
@@ -2664,7 +2653,10 @@ def _batch_verify_findings(
         )
         return all(
             verdict.get("verdict", Verdict.UNCERTAIN) == Verdict.UNCERTAIN
-            and any(marker in str(verdict.get("rationale", "")) for marker in failure_markers)
+            and any(
+                marker in str(verdict.get("rationale", ""))
+                for marker in failure_markers
+            )
             for verdict in verdicts
         )
 
@@ -3622,7 +3614,6 @@ def run_verification(
                 )
                 stats.llm_calls += 1
                 if result.verdict != Verdict.TRUE_POSITIVE:
-                    old_verdict = finding["_llm_verdict"]
                     finding["_llm_verdict"] = result.verdict.value
                     finding["_llm_rationale"] = f"[re-verified] {result.rationale}"
                     finding["_verified_by_llm"] = result.verdict != Verdict.UNCERTAIN
@@ -3963,7 +3954,7 @@ def run_verification(
     try:
         from .feedback import record_verification_results, get_feedback_summary
 
-        feedback = record_verification_results(output)
+        record_verification_results(output)
         summary = get_feedback_summary()
 
         tuned_types = []
@@ -4087,10 +4078,7 @@ def _search_local_emit_sites(
     owner: str, event_name: str, project_root: str | Path
 ) -> list[str]:
     pattern = (
-        re.escape(owner)
-        + r"""\.emit\(\s*['"]"""
-        + re.escape(event_name)
-        + r"""['"]"""
+        re.escape(owner) + r"""\.emit\(\s*['"]""" + re.escape(event_name) + r"""['"]"""
     )
     matches: list[str] = []
     for subdir in ("app", "tests"):

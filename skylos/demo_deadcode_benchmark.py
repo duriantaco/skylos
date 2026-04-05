@@ -98,7 +98,9 @@ def load_corrected_ground_truth(
 ) -> dict[str, set[tuple[str, str]]]:
     demo_root = Path(demo_root)
     bench_path = demo_root / "benchmark_hybrid.py"
-    spec = importlib.util.spec_from_file_location("skylos_demo_benchmark_hybrid", bench_path)
+    spec = importlib.util.spec_from_file_location(
+        "skylos_demo_benchmark_hybrid", bench_path
+    )
     if spec is None or spec.loader is None:
         raise ValueError(f"unable to load benchmark file: {bench_path}")
     module = importlib.util.module_from_spec(spec)
@@ -126,10 +128,7 @@ def normalize_skylos_symbol(finding: dict[str, Any], demo_root: str | Path) -> s
     if file.startswith("./"):
         file = file[2:]
     symbol = str(
-        finding.get("simple_name")
-        or finding.get("name")
-        or finding.get("symbol")
-        or ""
+        finding.get("simple_name") or finding.get("name") or finding.get("symbol") or ""
     )
     if file == "app/api/routers/reports.py" and symbol == "format_money":
         symbol = "fmt_money"
