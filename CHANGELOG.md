@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.2.2](https://github.com/duriantaco/skylos/compare/v4.2.1...v4.2.2) (2026-04-05)
+
+
+### Bug Fixes
+
+* **release:** align release-please bootstrap with 4.2.1 ([8fb330f](https://github.com/duriantaco/skylos/commit/8fb330fb0f8905defa7574b919be04db3188b3fe))
+
 ## [Unreleased]
 
 ### Added
