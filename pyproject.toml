@@ -135,6 +135,10 @@ strict = false
 [tool.uv.workspace]
 exclude = ["rust"]
 
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["manual"]
+
 [tool.pytest.ini_options]
 testpaths = ["test"]
 norecursedirs = [

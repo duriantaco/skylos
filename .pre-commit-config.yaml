@@ -1,6 +1,22 @@
 repos:
   - repo: local
     hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uvx ruff format . --check
+        language: system
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-commit]
+
+      - id: ruff-core-lint
+        name: ruff core lint
+        entry: uvx ruff check skylos/llm skylos/adapters skylos/pipeline.py skylos/api.py
+        language: system
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-commit]
+
       - id: skylos-scan
         name: skylos report
         entry: python -m skylos.cli

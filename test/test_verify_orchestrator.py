@@ -861,8 +861,8 @@ def test_deterministic_suppress_dynamic_globals_family(tmp_path):
         "def handle_update(payload):\n"
         "    return payload\n\n"
         "HANDLER_MAP = {\n"
-        "    action: globals()[f\"handle_{action}\"]\n"
-        "    for action in (\"create\", \"update\")\n"
+        '    action: globals()[f"handle_{action}"]\n'
+        '    for action in ("create", "update")\n'
         "}\n\n"
         "def dispatch(action, payload):\n"
         "    return HANDLER_MAP[action](payload)\n"
@@ -901,7 +901,7 @@ def test_deterministic_suppress_dynamic_getattr_family(tmp_path):
         "    return data\n\n"
         "def run_export(data, fmt):\n"
         "    import sys\n"
-        "    handler = getattr(sys.modules[__name__], f\"export_{fmt}\", None)\n"
+        '    handler = getattr(sys.modules[__name__], f"export_{fmt}", None)\n'
         "    return handler(data)\n"
     )
     source_file.write_text(source)
@@ -1324,8 +1324,8 @@ def test_run_verification_judge_all_hard_dynamic_suppression_skips_llm(
         "def handle_update(payload):\n"
         "    return payload\n\n"
         "HANDLER_MAP = {\n"
-        "    action: globals()[f\"handle_{action}\"]\n"
-        "    for action in (\"create\", \"update\")\n"
+        '    action: globals()[f"handle_{action}"]\n'
+        '    for action in ("create", "update")\n'
         "}\n\n"
         "def dispatch(action, payload):\n"
         "    return HANDLER_MAP[action](payload)\n"
@@ -1872,34 +1872,38 @@ def test_batch_verify_falls_back_to_individual_on_batch_failure(
 
     agent = MagicMock(spec=DeadCodeVerifierAgent)
 
-    with patch(
-        "skylos.llm.verify_orchestrator._build_graph_context",
-        return_value="context",
-    ), patch(
-        "skylos.llm.verify_orchestrator._parse_batch_response",
-        return_value=[
-            {"verdict": Verdict.UNCERTAIN, "rationale": "LLM call failed"},
-            {"verdict": Verdict.UNCERTAIN, "rationale": "LLM call failed"},
-        ],
-    ) as parse_batch, patch(
-        "skylos.llm.verify_orchestrator.verify_with_graph_context",
-        side_effect=[
-            VerificationResult(
-                finding=sample_finding,
-                verdict=Verdict.TRUE_POSITIVE,
-                rationale="dead",
-                original_confidence=75,
-                adjusted_confidence=95,
-            ),
-            VerificationResult(
-                finding=finding_two,
-                verdict=Verdict.FALSE_POSITIVE,
-                rationale="alive",
-                original_confidence=75,
-                adjusted_confidence=20,
-            ),
-        ],
-    ) as verify_single:
+    with (
+        patch(
+            "skylos.llm.verify_orchestrator._build_graph_context",
+            return_value="context",
+        ),
+        patch(
+            "skylos.llm.verify_orchestrator._parse_batch_response",
+            return_value=[
+                {"verdict": Verdict.UNCERTAIN, "rationale": "LLM call failed"},
+                {"verdict": Verdict.UNCERTAIN, "rationale": "LLM call failed"},
+            ],
+        ) as parse_batch,
+        patch(
+            "skylos.llm.verify_orchestrator.verify_with_graph_context",
+            side_effect=[
+                VerificationResult(
+                    finding=sample_finding,
+                    verdict=Verdict.TRUE_POSITIVE,
+                    rationale="dead",
+                    original_confidence=75,
+                    adjusted_confidence=95,
+                ),
+                VerificationResult(
+                    finding=finding_two,
+                    verdict=Verdict.FALSE_POSITIVE,
+                    rationale="alive",
+                    original_confidence=75,
+                    adjusted_confidence=20,
+                ),
+            ],
+        ) as verify_single,
+    ):
         results = _batch_verify_findings(
             agent,
             [sample_finding, finding_two],

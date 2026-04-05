@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from .agents import AgentConfig, create_llm_adapter
 from .executor import RemediationExecutor
@@ -517,4 +515,4 @@ class CleanupOrchestrator:
             executor.revert_fix(str(fp))
             item.status = "reverted"
             item.skip_reason = f"tests failed: {test_result.output[:200]}"
-            log(f"    [red]Reverted[/red] — tests failed")
+            log("    [red]Reverted[/red] — tests failed")

@@ -96,7 +96,7 @@ class RemediationAgent:
 
             if batch.status == "fixed":
                 fixed_files.append(batch.file)
-                log(f"    ✓ Fixed successfully")
+                log("    ✓ Fixed successfully")
             else:
                 log(f"    ✗ Status: {batch.status} — {batch.fix_description}")
 

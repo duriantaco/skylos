@@ -256,7 +256,7 @@ def print_credit_status(token=None, quiet=False):
     plan = data.get("plan", "free")
 
     if plan == "enterprise":
-        print(f"Credits: unlimited (Enterprise)")
+        print("Credits: unlimited (Enterprise)")
     else:
         print(f"Credits: {balance:,}")
         if balance < 10:
@@ -840,12 +840,12 @@ def upload_report(
                 plan = data.get("plan", "free")
 
                 if not quiet:
-                    print(f" done!\n✓ Scan uploaded")
+                    print(" done!\n✓ Scan uploaded")
                     if grade_data:
                         g = grade_data["overall"]
                         print(f"Grade: {g['letter']} ({g['score']}/100)")
                     if passed:
-                        print(f"✅ PASS Quality gate: PASSED")
+                        print("✅ PASS Quality gate: PASSED")
                     else:
                         print(
                             f"❌ FAIL Quality gate: FAILED ({new_violations} new violation{'' if new_violations == 1 else 's'})"
@@ -855,9 +855,9 @@ def upload_report(
                         print(f"\nView: {BASE_URL}/dashboard/scans/{scan_id}")
 
                     if not passed and plan == "free":
-                        print(f"\n⚠️  Quality gate failed but continuing (Free plan)")
+                        print("\n⚠️  Quality gate failed but continuing (Free plan)")
                         print(
-                            f"💡 Upgrade to Pro to automatically block commits/CI on failures"
+                            "💡 Upgrade to Pro to automatically block commits/CI on failures"
                         )
                         print(
                             f"   Learn more: {BASE_URL}/dashboard/settings?upgrade=true"
@@ -880,7 +880,7 @@ def upload_report(
                 if not passed:
                     if strict and (not is_forced):
                         if not quiet:
-                            print(f"\n Commit blocked by quality gate")
+                            print("\n Commit blocked by quality gate")
                         sys.exit(1)
 
                     if not quiet:
@@ -985,8 +985,8 @@ def upload_defense_report(defense_json_str, quiet=False) -> dict:
 
                 if not quiet:
                     score = defense_data.get("summary", {})
-                    print(f" done!")
-                    print(f"✓ Defense scan uploaded")
+                    print(" done!")
+                    print("✓ Defense scan uploaded")
                     print(
                         f"  Defense Score: {score.get('score_pct', 0)}% ({score.get('risk_rating', 'UNKNOWN')})"
                     )
