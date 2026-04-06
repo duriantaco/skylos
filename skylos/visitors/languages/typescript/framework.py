@@ -2,94 +2,10 @@ from __future__ import annotations
 from pathlib import Path
 from tree_sitter import Language, Query, QueryCursor
 
-
-_NEXTJS_DEFAULT_EXPORT_FILES: set[str] = {
-    "page.tsx",
-    "page.jsx",
-    "page.ts",
-    "page.js",
-    "layout.tsx",
-    "layout.jsx",
-    "layout.ts",
-    "layout.js",
-    "loading.tsx",
-    "loading.jsx",
-    "loading.ts",
-    "loading.js",
-    "error.tsx",
-    "error.jsx",
-    "error.ts",
-    "error.js",
-    "not-found.tsx",
-    "not-found.jsx",
-    "not-found.ts",
-    "not-found.js",
-    "template.tsx",
-    "template.jsx",
-    "template.ts",
-    "template.js",
-    "global-error.tsx",
-    "global-error.jsx",
-    "global-error.ts",
-    "global-error.js",
-    "default.tsx",
-    "default.jsx",
-    "default.ts",
-    "default.js",
-}
-
-_ROUTE_HANDLER_FILES: set[str] = {"route.ts", "route.js", "route.tsx", "route.jsx"}
-_ROUTE_HANDLER_EXPORTS: set[str] = {
-    "GET",
-    "POST",
-    "PUT",
-    "DELETE",
-    "PATCH",
-    "HEAD",
-    "OPTIONS",
-}
-
-_MIDDLEWARE_FILES: set[str] = {
-    "middleware.ts",
-    "middleware.js",
-    "middleware.tsx",
-    "middleware.jsx",
-}
-_MIDDLEWARE_EXPORTS: set[str] = {"middleware", "config"}
-
-_INSTRUMENTATION_FILES: set[str] = {
-    "instrumentation.ts",
-    "instrumentation.js",
-    "instrumentation.tsx",
-    "instrumentation.jsx",
-}
-_INSTRUMENTATION_EXPORTS: set[str] = {"register", "onRequestError"}
-
-_NEXTJS_PAGES_ROUTER_EXPORTS: set[str] = {
-    "getServerSideProps",
-    "getStaticProps",
-    "getStaticPaths",
-}
-
-_NEXTJS_APP_ROUTER_EXPORTS: set[str] = {
-    "generateMetadata",
-    "generateStaticParams",
-}
-
-_NEXTJS_ROUTE_SEGMENT_CONFIG: set[str] = {
-    "metadata",
-    "dynamic",
-    "runtime",
-    "revalidate",
-    "fetchCache",
-    "dynamicParams",
-    "preferredRegion",
-}
-
-_ALL_NEXTJS_CONFIG_EXPORTS: set[str] = (
-    _NEXTJS_PAGES_ROUTER_EXPORTS
-    | _NEXTJS_APP_ROUTER_EXPORTS
-    | _NEXTJS_ROUTE_SEGMENT_CONFIG
+from .nextjs import (
+    NEXTJS_IMPORTED_CONVENTION_EXPORTS,
+    is_nextjs_convention_export,
+    is_nextjs_default_export_file,
 )
 
 _REACT_WRAPPERS: set[str] = {"memo", "forwardRef"}
@@ -161,7 +77,7 @@ class TSFrameworkVisitor:
 
         self._detect_frameworks()
         self._scan_file_conventions()
-        self._scan_nextjs_config_exports()
+        self._scan_nextjs_named_exports()
         self._scan_react_patterns()
         self._scan_custom_hooks()
 
@@ -180,18 +96,8 @@ class TSFrameworkVisitor:
                 self.detected_frameworks.add("react")
 
     def _scan_file_conventions(self) -> None:
-        if self._basename in _NEXTJS_DEFAULT_EXPORT_FILES:
+        if is_nextjs_default_export_file(self._file_path):
             self._mark_default_export()
-
-        if self._basename in _ROUTE_HANDLER_FILES:
-            self._mark_named_exports(_ROUTE_HANDLER_EXPORTS)
-
-        if self._basename in _MIDDLEWARE_FILES:
-            self._mark_named_exports(_MIDDLEWARE_EXPORTS)
-            self._mark_default_export()
-
-        if self._basename in _INSTRUMENTATION_FILES:
-            self._mark_named_exports(_INSTRUMENTATION_EXPORTS)
 
     def _mark_default_export(self) -> None:
         for node in self._captures.get("export_func_name", []):
@@ -247,11 +153,30 @@ class TSFrameworkVisitor:
                 self.framework_decorated_lines.add(self._line_of(node))
                 return
 
-    def _scan_nextjs_config_exports(self) -> None:
-        if "next" not in self.detected_frameworks:
-            return
+    def _scan_nextjs_named_exports(self) -> None:
+        for node in self._captures.get("export_func_name", []):
+            name = self._get_text(node)
+            if (
+                name in NEXTJS_IMPORTED_CONVENTION_EXPORTS
+                and "next" in self.detected_frameworks
+            ) or is_nextjs_convention_export(name, self._file_path):
+                self.framework_decorated_lines.add(self._line_of(node))
 
-        self._mark_named_exports(_ALL_NEXTJS_CONFIG_EXPORTS)
+        for node in self._captures.get("export_var_name", []):
+            name = self._get_text(node)
+            if (
+                name in NEXTJS_IMPORTED_CONVENTION_EXPORTS
+                and "next" in self.detected_frameworks
+            ) or is_nextjs_convention_export(name, self._file_path):
+                self.framework_decorated_lines.add(self._line_of(node))
+
+        for node in self._captures.get("export_spec_name", []):
+            text = self._get_text(node)
+            if (
+                text in NEXTJS_IMPORTED_CONVENTION_EXPORTS
+                and "next" in self.detected_frameworks
+            ) or is_nextjs_convention_export(text, self._file_path):
+                self._mark_definition_by_name(text)
 
     def _scan_react_patterns(self) -> None:
         if (
