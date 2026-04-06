@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from skylos.visitor import Definition
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
@@ -161,6 +163,10 @@ class TestNextjsConventionExports:
     def test_is_nextjs_convention_file_pages_dir(self):
         assert _is_nextjs_convention_file("/project/pages/index.tsx")
         assert _is_nextjs_convention_file("/project/pages/api/users.ts")
+
+    def test_is_nextjs_convention_file_accepts_path_objects(self):
+        assert _is_nextjs_convention_file(Path("/project/app/dashboard/page.tsx"))
+        assert _is_nextjs_convention_file(Path("/project/pages/api/users.ts"))
 
     def test_is_not_nextjs_convention_file(self):
         assert not _is_nextjs_convention_file("/project/src/utils/helpers.ts")

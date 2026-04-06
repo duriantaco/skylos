@@ -84,9 +84,7 @@ NEXTJS_CONVENTION_EXPORTS = frozenset(
 )
 
 NEXTJS_DEFAULT_EXPORT_FILES = frozenset(
-    f"{name}.{ext}"
-    for name in _NEXTJS_DEFAULT_EXPORT_BASENAMES
-    for ext in _SCRIPT_EXTS
+    f"{name}.{ext}" for name in _NEXTJS_DEFAULT_EXPORT_BASENAMES for ext in _SCRIPT_EXTS
 ).union(
     {
         "middleware.js",
@@ -105,27 +103,33 @@ NEXTJS_CONVENTION_FILES = frozenset(
 NEXTJS_CONVENTION_DIRS = ("app/", "pages/", "api/")
 
 
-def is_nextjs_convention_file(fname: str) -> bool:
-    normalized = fname.replace(os.sep, "/")
+def _normalized_path(fname: str | os.PathLike[str]) -> str:
+    return str(fname).replace(os.sep, "/")
+
+
+def is_nextjs_convention_file(fname: str | os.PathLike[str]) -> bool:
+    normalized = _normalized_path(fname)
     for directory in NEXTJS_CONVENTION_DIRS:
         if f"/{directory}" in normalized or normalized.startswith(directory):
             return True
     return False
 
 
-def is_nextjs_pages_router_file(fname: str) -> bool:
-    normalized = fname.replace(os.sep, "/")
+def is_nextjs_pages_router_file(fname: str | os.PathLike[str]) -> bool:
+    normalized = _normalized_path(fname)
     return (
-        "/pages/" in normalized or normalized.startswith("pages/")
-    ) and "/pages/api/" not in normalized and not normalized.startswith("pages/api/")
+        ("/pages/" in normalized or normalized.startswith("pages/"))
+        and "/pages/api/" not in normalized
+        and not normalized.startswith("pages/api/")
+    )
 
 
-def is_nextjs_pages_api_file(fname: str) -> bool:
-    normalized = fname.replace(os.sep, "/")
+def is_nextjs_pages_api_file(fname: str | os.PathLike[str]) -> bool:
+    normalized = _normalized_path(fname)
     return "/pages/api/" in normalized or normalized.startswith("pages/api/")
 
 
-def is_nextjs_default_export_file(fname: str) -> bool:
+def is_nextjs_default_export_file(fname: str | os.PathLike[str]) -> bool:
     basename = os.path.basename(fname)
     return (
         basename in NEXTJS_DEFAULT_EXPORT_FILES
@@ -134,7 +138,7 @@ def is_nextjs_default_export_file(fname: str) -> bool:
     )
 
 
-def is_nextjs_route_segment_file(fname: str) -> bool:
+def is_nextjs_route_segment_file(fname: str | os.PathLike[str]) -> bool:
     return os.path.basename(fname) in {
         "page.ts",
         "page.tsx",
@@ -151,7 +155,7 @@ def is_nextjs_route_segment_file(fname: str) -> bool:
     }
 
 
-def is_nextjs_metadata_file(fname: str) -> bool:
+def is_nextjs_metadata_file(fname: str | os.PathLike[str]) -> bool:
     return os.path.basename(fname) in {
         "page.ts",
         "page.tsx",
@@ -168,7 +172,7 @@ def is_nextjs_metadata_file(fname: str) -> bool:
     }
 
 
-def is_nextjs_convention_export(name: str, fname: str) -> bool:
+def is_nextjs_convention_export(name: str, fname: str | os.PathLike[str]) -> bool:
     basename = os.path.basename(fname)
 
     if name == "default" and is_nextjs_default_export_file(fname):
@@ -205,9 +209,8 @@ def is_nextjs_convention_export(name: str, fname: str) -> bool:
         return True
     if name in _NEXTJS_METADATA_EXPORTS and is_nextjs_metadata_file(fname):
         return True
-    if (
-        name in _NEXTJS_ROUTE_SEGMENT_CONFIG_EXPORTS
-        and is_nextjs_route_segment_file(fname)
+    if name in _NEXTJS_ROUTE_SEGMENT_CONFIG_EXPORTS and is_nextjs_route_segment_file(
+        fname
     ):
         return True
     if name in _NEXTJS_DYNAMIC_ROUTE_EXPORTS and os.path.basename(fname) in {

@@ -49,7 +49,9 @@ def test_not_found_default_export(tmp_path):
 
 
 def test_template_default_export(tmp_path):
-    code = "export default function Template({ children }) { return <>{children}</>; }\n"
+    code = (
+        "export default function Template({ children }) { return <>{children}</>; }\n"
+    )
     defs, fw = _scan(tmp_path, "template.tsx", code)
     assert "Template" in _decorated_names(defs, fw)
 
