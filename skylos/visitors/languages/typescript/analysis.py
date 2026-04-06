@@ -3,6 +3,19 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 
+from .nextjs import (
+    NEXTJS_CONVENTION_EXPORTS,
+    NEXTJS_CONVENTION_FILES,
+    is_nextjs_convention_export,
+    is_nextjs_convention_file,
+    is_nextjs_pages_api_file,
+    is_nextjs_pages_router_file,
+)
+
+_NEXTJS_CONVENTION_EXPORTS = NEXTJS_CONVENTION_EXPORTS
+_NEXTJS_CONVENTION_FILES = NEXTJS_CONVENTION_FILES
+_is_nextjs_convention_file = is_nextjs_convention_file
+
 
 def resolve_ts_module(source: str, importer: str, monorepo_resolver=None) -> str | None:
     if not source.startswith("."):
@@ -201,27 +214,6 @@ def demote_unconsumed_ts_exports(defs, consumed_exports):
 
 _TEST_SUFFIXES = (".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx")
 
-_NEXTJS_CONVENTION_FILES = frozenset(
-    {
-        "page.tsx",
-        "page.ts",
-        "layout.tsx",
-        "layout.ts",
-        "loading.tsx",
-        "loading.ts",
-        "error.tsx",
-        "error.ts",
-        "not-found.tsx",
-        "not-found.ts",
-        "route.ts",
-        "route.tsx",
-        "middleware.ts",
-        "middleware.tsx",
-        "layout.config.tsx",
-        "layout.config.ts",
-    }
-)
-
 _CONFIG_FILES = frozenset(
     {
         "vitest.config.ts",
@@ -263,6 +255,8 @@ def _is_ts_entry_or_infra(sf: str) -> bool:
     if "/scripts/" in sf:
         return True
     basename = os.path.basename(sf)
+    if is_nextjs_pages_router_file(sf) or is_nextjs_pages_api_file(sf):
+        return True
     if basename in _NEXTJS_CONVENTION_FILES:
         return True
     if basename in _CONFIG_FILES:
@@ -327,45 +321,6 @@ def find_dead_ts_files(files, exclude_folders, importers_of, wildcard_edges):
     return dead_files
 
 
-_NEXTJS_CONVENTION_EXPORTS = frozenset(
-    {
-        "default",
-        "generateMetadata",
-        "generateStaticParams",
-        "GET",
-        "POST",
-        "PUT",
-        "DELETE",
-        "PATCH",
-        "HEAD",
-        "OPTIONS",
-        "middleware",
-        "loading",
-        "error",
-        "layout",
-        "page",
-        "generateViewport",
-        "revalidate",
-        "dynamic",
-        "dynamicParams",
-        "fetchCache",
-        "runtime",
-        "preferredRegion",
-    }
-)
-
-_NEXTJS_CONVENTION_DIRS = ("app/", "pages/", "api/")
-
-
-def _is_nextjs_convention_file(fname: str) -> bool:
-    """Check if a file is under Next.js convention directories."""
-    normalized = fname.replace(os.sep, "/")
-    for d in _NEXTJS_CONVENTION_DIRS:
-        if f"/{d}" in normalized or normalized.startswith(d):
-            return True
-    return False
-
-
 def find_unused_ts_exports(demoted_exports, wildcard_edges):
     if not demoted_exports:
         return []
@@ -406,10 +361,7 @@ def find_unused_ts_exports(demoted_exports, wildcard_edges):
             continue
         if os.path.realpath(fname) in api_surface:
             continue
-        if (
-            defn.simple_name in _NEXTJS_CONVENTION_EXPORTS
-            and _is_nextjs_convention_file(fname)
-        ):
+        if is_nextjs_convention_export(defn.simple_name, fname):
             continue
         findings.append(
             {

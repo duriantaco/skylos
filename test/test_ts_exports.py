@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import os
-from collections import defaultdict
-
-import pytest
+from pathlib import Path
 
 from skylos.visitor import Definition
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
-    demote_unconsumed_ts_exports,
     find_unused_ts_exports,
     find_dead_ts_files,
     _is_nextjs_convention_file,
@@ -168,25 +164,31 @@ class TestNextjsConventionExports:
         assert _is_nextjs_convention_file("/project/pages/index.tsx")
         assert _is_nextjs_convention_file("/project/pages/api/users.ts")
 
+    def test_is_nextjs_convention_file_accepts_path_objects(self):
+        assert _is_nextjs_convention_file(Path("/project/app/dashboard/page.tsx"))
+        assert _is_nextjs_convention_file(Path("/project/pages/api/users.ts"))
+
     def test_is_not_nextjs_convention_file(self):
         assert not _is_nextjs_convention_file("/project/src/utils/helpers.ts")
         assert not _is_nextjs_convention_file("/project/lib/db.ts")
 
     def test_convention_exports_not_flagged(self):
-        """Exports like 'default', 'GET', 'POST' in app/ dirs should not be flagged."""
-        fname = "/project/app/api/users/route.ts"
-
+        """Valid Next.js convention exports should not be flagged."""
         demoted = []
-        for export_name in ("default", "GET", "POST", "generateMetadata"):
+        for fname, export_name in (
+            ("/project/app/dashboard/page.tsx", "default"),
+            ("/project/app/api/users/route.ts", "GET"),
+            ("/project/app/api/users/route.ts", "POST"),
+            ("/project/app/api/users/route.ts", "maxDuration"),
+        ):
             d = _make_def(export_name, "function", fname, exported=True)
             d.references = 1  # has internal refs
             d.is_exported = False  # demoted
             demoted.append(d)
 
         findings = find_unused_ts_exports(demoted, {})
-        # None should be flagged because they're all convention exports in app/
         flagged_names = {f["name"] for f in findings}
-        for export_name in ("default", "GET", "POST", "generateMetadata"):
+        for export_name in ("default", "GET", "POST", "maxDuration"):
             assert export_name not in flagged_names
 
     def test_non_convention_export_still_flagged(self):
@@ -213,12 +215,66 @@ class TestNextjsConventionExports:
         assert len(findings) == 1
         assert findings[0]["name"] == "GET"
 
+    def test_middleware_config_not_flagged(self):
+        fname = "/project/middleware.ts"
+
+        d = _make_def("config", "variable", fname, exported=True)
+        d.references = 1
+        d.is_exported = False
+
+        findings = find_unused_ts_exports([d], {})
+        assert findings == []
+
+    def test_proxy_config_not_flagged(self):
+        fname = "/project/proxy.ts"
+
+        d = _make_def("config", "variable", fname, exported=True)
+        d.references = 1
+        d.is_exported = False
+
+        findings = find_unused_ts_exports([d], {})
+        assert findings == []
+
+    def test_instrumentation_register_not_flagged(self):
+        fname = "/project/instrumentation.ts"
+
+        d = _make_def("register", "function", fname, exported=True)
+        d.references = 1
+        d.is_exported = False
+
+        findings = find_unused_ts_exports([d], {})
+        assert findings == []
+
+    def test_viewport_export_not_flagged(self):
+        fname = "/project/app/blog/layout.tsx"
+
+        d = _make_def("viewport", "variable", fname, exported=True)
+        d.references = 1
+        d.is_exported = False
+
+        findings = find_unused_ts_exports([d], {})
+        assert findings == []
+
+    def test_non_convention_config_still_flagged(self):
+        fname = "/project/app/lib/config.ts"
+
+        d = _make_def("config", "variable", fname, exported=True)
+        d.references = 1
+        d.is_exported = False
+
+        findings = find_unused_ts_exports([d], {})
+        assert len(findings) == 1
+        assert findings[0]["name"] == "config"
+
     def test_all_convention_exports_covered(self):
         """Verify key Next.js convention exports are in the set."""
         expected = {
             "default",
             "generateMetadata",
+            "metadata",
             "generateStaticParams",
+            "generateViewport",
+            "viewport",
             "GET",
             "POST",
             "PUT",
@@ -227,10 +283,16 @@ class TestNextjsConventionExports:
             "HEAD",
             "OPTIONS",
             "middleware",
+            "proxy",
+            "config",
+            "register",
+            "onRequestError",
             "loading",
             "error",
             "layout",
             "page",
+            "maxDuration",
+            "experimental_ppr",
         }
         assert expected.issubset(_NEXTJS_CONVENTION_EXPORTS)
 
@@ -282,4 +344,38 @@ class TestTypeScriptDeadFiles:
         }
 
         dead_files = find_dead_ts_files(files, [], importers_of, {})
+        assert dead_files == []
+
+    def test_nextjs_special_files_are_treated_as_entrypoints(self, tmp_path):
+        template_file = tmp_path / "app" / "template.tsx"
+        global_not_found_file = tmp_path / "app" / "global-not-found.tsx"
+        instrumentation_file = tmp_path / "instrumentation.ts"
+        instrumentation_client_file = tmp_path / "instrumentation-client.ts"
+        proxy_file = tmp_path / "proxy.ts"
+        pages_index = tmp_path / "pages" / "index.tsx"
+        pages_api = tmp_path / "pages" / "api" / "users.ts"
+
+        for path in (
+            template_file,
+            global_not_found_file,
+            instrumentation_file,
+            instrumentation_client_file,
+            proxy_file,
+            pages_index,
+            pages_api,
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+
+        files = [
+            template_file,
+            global_not_found_file,
+            instrumentation_file,
+            instrumentation_client_file,
+            proxy_file,
+            pages_index,
+            pages_api,
+        ]
+
+        dead_files = find_dead_ts_files(files, [], {}, {})
         assert dead_files == []
