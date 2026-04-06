@@ -28,3 +28,5 @@ node_modules
 .skylos
 .mcpregistry_github_token
 .mcpregistry_registry_token
+/PR_LOG.md
+/manual/
