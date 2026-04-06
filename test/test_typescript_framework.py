@@ -3,6 +3,7 @@ from skylos.visitors.languages.typescript import scan_typescript_file
 
 def _scan(tmp_path, filename, code):
     p = tmp_path / filename
+    p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(code, encoding="utf-8")
     result = scan_typescript_file(str(p))
     defs = result[0]
@@ -45,6 +46,26 @@ def test_not_found_default_export(tmp_path):
     code = "export default function NotFound() { return <h1>404</h1>; }\n"
     defs, fw = _scan(tmp_path, "not-found.tsx", code)
     assert "NotFound" in _decorated_names(defs, fw)
+
+
+def test_template_default_export(tmp_path):
+    code = (
+        "export default function Template({ children }) { return <>{children}</>; }\n"
+    )
+    defs, fw = _scan(tmp_path, "template.tsx", code)
+    assert "Template" in _decorated_names(defs, fw)
+
+
+def test_pages_router_default_export_without_next_import(tmp_path):
+    code = "export default function HomePage() { return <main>home</main>; }\n"
+    defs, fw = _scan(tmp_path, "pages/index.tsx", code)
+    assert "HomePage" in _decorated_names(defs, fw)
+
+
+def test_pages_api_default_export_without_next_import(tmp_path):
+    code = "export default function handler(req, res) { res.status(200).json({ ok: true }); }\n"
+    defs, fw = _scan(tmp_path, "pages/api/users.ts", code)
+    assert "handler" in _decorated_names(defs, fw)
 
 
 def test_default_export_via_identifier(tmp_path):
@@ -101,6 +122,56 @@ export function onRequestError(error) { console.error(error); }
     assert "onRequestError" in names
 
 
+def test_proxy_exports_without_next_import(tmp_path):
+    code = """\
+export function proxy(request) { return Response.redirect(new URL("/", request.url)); }
+export const config = { matcher: ["/((?!api|_next/static).*)"] };
+"""
+    defs, fw = _scan(tmp_path, "proxy.ts", code)
+    names = _decorated_names(defs, fw)
+    assert "proxy" in names
+    assert "config" in names
+
+
+def test_route_segment_exports_without_next_import(tmp_path):
+    code = """\
+export const runtime = "edge";
+export const maxDuration = 30;
+export async function GET() { return Response.json({ ok: true }); }
+"""
+    defs, fw = _scan(tmp_path, "route.ts", code)
+    names = _decorated_names(defs, fw)
+    assert "runtime" in names
+    assert "maxDuration" in names
+    assert "GET" in names
+
+
+def test_global_not_found_metadata_without_next_import(tmp_path):
+    code = """\
+export const metadata = { title: "Missing" };
+export default function GlobalNotFound() {
+    return <html><body>Not found</body></html>;
+}
+"""
+    defs, fw = _scan(tmp_path, "global-not-found.tsx", code)
+    names = _decorated_names(defs, fw)
+    assert "metadata" in names
+    assert "GlobalNotFound" in names
+
+
+def test_pages_router_data_exports_without_next_import(tmp_path):
+    code = """\
+export async function getServerSideProps() {
+    return { props: {} };
+}
+export default function Page() { return <div/>; }
+"""
+    defs, fw = _scan(tmp_path, "pages/index.tsx", code)
+    names = _decorated_names(defs, fw)
+    assert "getServerSideProps" in names
+    assert "Page" in names
+
+
 def test_getServerSideProps(tmp_path):
     code = """\
 import React from "react";
@@ -142,12 +213,14 @@ def test_route_segment_config(tmp_path):
 import React from "next";
 export const dynamic = "force-dynamic";
 export const revalidate = 60;
+export const experimental_ppr = true;
 export default function Page() { return <div/>; }
 """
     defs, fw = _scan(tmp_path, "page.tsx", code)
     names = _decorated_names(defs, fw)
     assert "dynamic" in names
     assert "revalidate" in names
+    assert "experimental_ppr" in names
 
 
 def test_metadata_export(tmp_path):
@@ -158,6 +231,28 @@ export default function Layout({ children }) { return <html>{children}</html>; }
 """
     defs, fw = _scan(tmp_path, "layout.tsx", code)
     assert "metadata" in _decorated_names(defs, fw)
+
+
+def test_viewport_export_without_next_import(tmp_path):
+    code = """\
+export const viewport = { themeColor: "black" };
+export default function Layout({ children }) { return <html>{children}</html>; }
+"""
+    defs, fw = _scan(tmp_path, "layout.tsx", code)
+    names = _decorated_names(defs, fw)
+    assert "viewport" in names
+    assert "Layout" in names
+
+
+def test_generateViewport_without_next_import(tmp_path):
+    code = """\
+export function generateViewport() { return { themeColor: "black" }; }
+export default function Layout({ children }) { return <html>{children}</html>; }
+"""
+    defs, fw = _scan(tmp_path, "layout.tsx", code)
+    names = _decorated_names(defs, fw)
+    assert "generateViewport" in names
+    assert "Layout" in names
 
 
 def test_react_memo(tmp_path):
