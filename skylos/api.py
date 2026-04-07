@@ -694,6 +694,48 @@ def _normalize_findings(
     return processed
 
 
+UPLOAD_FINDING_SPECS = (
+    ("danger", "SECURITY", "SKY-D000"),
+    ("quality", "QUALITY", "SKY-Q000"),
+    ("secrets", "SECRET", "SKY-S000"),
+    ("unused_functions", "DEAD_CODE", "SKY-U001"),
+    ("unused_imports", "DEAD_CODE", "SKY-U002"),
+    ("unused_variables", "DEAD_CODE", "SKY-U003"),
+    ("unused_classes", "DEAD_CODE", "SKY-U004"),
+    ("dependency_vulnerabilities", "DEPENDENCY", "SKY-SCA-000"),
+)
+
+VERIFY_FINDING_SPECS = (
+    ("danger", "SECURITY", "SKY-D000"),
+    ("secrets", "SECRET", "SKY-S000"),
+)
+
+
+def _normalize_result_sections(
+    result_json,
+    section_specs,
+    git_root,
+    *,
+    default_severity=None,
+    extract_metadata=False,
+    generate_finding_id=False,
+) -> list[dict]:
+    findings: list[dict] = []
+    for section_name, category, default_rule_id in section_specs:
+        findings.extend(
+            _normalize_findings(
+                result_json.get(section_name, []),
+                category,
+                git_root,
+                default_rule_id=default_rule_id,
+                default_severity=default_severity,
+                extract_metadata=extract_metadata,
+                generate_finding_id=generate_finding_id,
+            )
+        )
+    return findings
+
+
 def upload_report(
     result_json, is_forced=False, quiet=False, strict=False, analysis_mode="static"
 ) -> dict:
@@ -713,56 +755,11 @@ def upload_report(
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
 
-    def prepare_for_sarif(items, category, default_rule_id=None):
-        return _normalize_findings(
-            items,
-            category,
-            git_root,
-            default_rule_id=default_rule_id,
-            extract_metadata=True,
-        )
-
-    all_findings = []
-
-    all_findings.extend(
-        prepare_for_sarif(result_json.get("danger", []), "SECURITY", "SKY-D000")
-    )
-
-    all_findings.extend(
-        prepare_for_sarif(result_json.get("quality", []), "QUALITY", "SKY-Q000")
-    )
-
-    all_findings.extend(
-        prepare_for_sarif(result_json.get("secrets", []), "SECRET", "SKY-S000")
-    )
-
-    all_findings.extend(
-        prepare_for_sarif(
-            result_json.get("unused_functions", []), "DEAD_CODE", "SKY-U001"
-        )
-    )
-    all_findings.extend(
-        prepare_for_sarif(
-            result_json.get("unused_imports", []), "DEAD_CODE", "SKY-U002"
-        )
-    )
-    all_findings.extend(
-        prepare_for_sarif(
-            result_json.get("unused_variables", []), "DEAD_CODE", "SKY-U003"
-        )
-    )
-    all_findings.extend(
-        prepare_for_sarif(
-            result_json.get("unused_classes", []), "DEAD_CODE", "SKY-U004"
-        )
-    )
-
-    all_findings.extend(
-        prepare_for_sarif(
-            result_json.get("dependency_vulnerabilities", []),
-            "DEPENDENCY",
-            "SKY-SCA-000",
-        )
+    all_findings = _normalize_result_sections(
+        result_json,
+        UPLOAD_FINDING_SPECS,
+        git_root,
+        extract_metadata=True,
     )
 
     blame_map = _get_blame_map(all_findings, git_root)
@@ -1080,22 +1077,12 @@ def verify_report(result_json, quiet=False) -> dict:
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
 
-    def _norm_findings(items, category, default_rule_id=None):
-        return _normalize_findings(
-            items,
-            category,
-            git_root,
-            default_rule_id=default_rule_id,
-            default_severity="LOW",
-            generate_finding_id=True,
-        )
-
-    findings = []
-    findings.extend(
-        _norm_findings(result_json.get("danger", []), "SECURITY", "SKY-D000")
-    )
-    findings.extend(
-        _norm_findings(result_json.get("secrets", []), "SECRET", "SKY-S000")
+    findings = _normalize_result_sections(
+        result_json,
+        VERIFY_FINDING_SPECS,
+        git_root,
+        default_severity="LOW",
+        generate_finding_id=True,
     )
 
     if not findings:
