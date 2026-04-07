@@ -154,7 +154,7 @@ def test_cmd_status_not_connected(isolated_creds, capsys):
     syncmod.cmd_status()
     out = capsys.readouterr().out
     assert "Not connected" in out
-    assert "skylos sync connect" in out
+    assert "skylos login" in out
 
 
 def test_cmd_status_connected_ok(isolated_creds, monkeypatch, capsys):
@@ -193,6 +193,71 @@ def test_cmd_disconnect(isolated_creds, capsys):
     syncmod.cmd_disconnect()
     out2 = capsys.readouterr().out
     assert "No saved credentials" in out2
+
+
+def test_cmd_project_unlink_removes_only_link(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
+    repo_root = tmp_path / "repo"
+    link_path = repo_root / ".skylos" / "link.json"
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    link_path.write_text(json.dumps({"project_id": "proj_123"}))
+
+    _, creds_file = isolated_creds
+    creds_file.parent.mkdir(parents=True, exist_ok=True)
+    creds_file.write_text(json.dumps({"token": "TOK"}))
+
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo_root)
+
+    syncmod.cmd_project_unlink()
+    out = capsys.readouterr().out
+
+    assert "Removed repo link" in out
+    assert not link_path.exists()
+    assert creds_file.exists()
+
+
+def test_cmd_project_list_marks_active_project(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
+    repo_root = tmp_path / "repo"
+    link_path = repo_root / ".skylos" / "link.json"
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    link_path.write_text(json.dumps({"project_id": "proj_active"}))
+
+    _, creds_file = isolated_creds
+    creds_file.parent.mkdir(parents=True, exist_ok=True)
+    creds_file.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "proj_active": {
+                        "token": "TOK1",
+                        "project_name": "Active Project",
+                        "org_name": "Org",
+                        "plan": "pro",
+                        "saved_at": "2026-01-01T00:00:00Z",
+                    },
+                    "proj_other": {
+                        "token": "TOK2",
+                        "project_name": "Other Project",
+                        "org_name": "Org",
+                        "plan": "free",
+                        "saved_at": "2025-01-01T00:00:00Z",
+                    },
+                }
+            }
+        )
+    )
+
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo_root)
+
+    syncmod.cmd_project_list()
+    out = capsys.readouterr().out
+
+    assert "* Active Project  [proj_active]" in out
+    assert "Other Project  [proj_other]" in out
+    assert "active for this repo" in out
 
 
 def test_cmd_connect_with_token_arg_saves_creds(isolated_creds, monkeypatch, capsys):
@@ -244,7 +309,7 @@ def test_cmd_pull_not_connected_exits(isolated_creds, capsys):
         syncmod.cmd_pull()
     assert e.value.code == 1
     out = capsys.readouterr().out
-    assert "Not connected" in out or "Run 'skylos sync connect'" in out
+    assert "Not connected" in out or "Run 'skylos login'" in out
 
 
 def test_cmd_pull_writes_config_and_suppressions(

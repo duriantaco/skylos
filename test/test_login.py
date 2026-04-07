@@ -62,3 +62,31 @@ def test_verify_login_result_rejects_missing_project_id(monkeypatch):
     monkeypatch.setattr(loginmod.requests, "get", lambda *args, **kwargs: fake_response)
 
     assert loginmod._verify_login_result("TOK", base_url="https://skylos.dev") is None
+
+
+def test_run_login_existing_cancel_keeps_current(monkeypatch):
+    existing = loginmod.LoginResult(
+        token="TOK",
+        project_id="proj_123",
+        project_name="Current Project",
+        org_name="Org",
+        plan="pro",
+    )
+
+    monkeypatch.setattr(
+        loginmod, "get_current_connection", lambda base_url=None: existing
+    )
+    monkeypatch.setattr(
+        loginmod, "browser_login", lambda console=None, base_url=None: None
+    )
+
+    manual = Mock(return_value=None)
+    save = Mock()
+    monkeypatch.setattr(loginmod, "manual_token_fallback", manual)
+    monkeypatch.setattr(loginmod, "_save_login_result", save)
+
+    result = loginmod.run_login()
+
+    assert result is existing
+    manual.assert_not_called()
+    save.assert_not_called()
