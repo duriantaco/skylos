@@ -71,10 +71,15 @@ COMMANDS = [
         "desc": "Post inline PR review comments",
         "group": "CI/CD",
     },
-    {"name": "skylos login", "desc": "Connect to Skylos Cloud", "group": "Account"},
+    {"name": "skylos login", "desc": "Connect or switch Skylos Cloud project", "group": "Account"},
     {
         "name": "skylos whoami",
         "desc": "Show connected account info",
+        "group": "Account",
+    },
+    {
+        "name": "skylos project",
+        "desc": "Manage the active project for this repo",
         "group": "Account",
     },
     {"name": "skylos key", "desc": "Manage API keys", "group": "Account"},

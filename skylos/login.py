@@ -272,50 +272,29 @@ def _save_login_result(result, base_url=None):
     )
 
 
-def run_login(console=None, base_url=None):
+def get_current_connection(base_url=None):
     from skylos.sync import get_token, api_get, AuthError
 
-    existing = get_token()
-    if existing:
-        try:
-            info = api_get("/api/sync/whoami", existing)
-            project = info.get("project", {})
-            name = project.get("name", "Unknown")
-            if console:
-                console.print(f"\n[good]Already connected to: {name}[/good]")
-                console.print(
-                    "[dim]Run 'skylos sync disconnect' to disconnect first.[/dim]"
-                )
-            else:
-                print(f"\nAlready connected to: {name}")
-                print("Run 'skylos sync disconnect' to disconnect first.")
-            return LoginResult(
-                token=existing,
-                project_id=project.get("id", ""),
-                project_name=name,
-                org_name=info.get("organization", {}).get("name", "My Workspace"),
-                plan=info.get("plan", "free"),
-            )
-        except AuthError:
-            pass
-
-    result = None
-    try:
-        result = browser_login(console=console, base_url=base_url)
-    except (OSError, Exception) as e:
-        if console:
-            console.print(f"[warn]Browser auth unavailable: {e}[/warn]")
-        else:
-            print(f"Browser auth unavailable: {e}")
-
-    if result is None:
-        result = manual_token_fallback(console=console)
-
-    if result is None:
+    token = get_token()
+    if not token:
         return None
 
-    _save_login_result(result, base_url=base_url)
+    try:
+        info = api_get("/api/sync/whoami", token)
+    except AuthError:
+        return None
 
+    project = info.get("project", {})
+    return LoginResult(
+        token=token,
+        project_id=project.get("id", ""),
+        project_name=project.get("name", "Unknown"),
+        org_name=info.get("organization", {}).get("name", "My Workspace"),
+        plan=info.get("plan", "free"),
+    )
+
+
+def _print_connected_result(result, console=None):
     if console:
         console.print(f"\n[good]Connected to Skylos Cloud![/good]")
         console.print(f"  Project:      {result.project_name}")
@@ -334,6 +313,55 @@ def run_login(console=None, base_url=None):
         print(f"\n  Scans will auto-upload on every run.")
         print(f"  Use --no-upload to skip.")
         print(f"\n  For MCP/AI agents: export SKYLOS_API_KEY={result.token}")
+
+
+def run_login(console=None, base_url=None):
+    existing = get_current_connection(base_url=base_url)
+    if existing:
+        if console:
+            console.print(f"\n[good]Current project:[/good] {existing.project_name}")
+            console.print(
+                "[dim]Opening the Skylos project chooser. Close the browser to keep the current project.[/dim]"
+            )
+        else:
+            print(f"\nCurrent project: {existing.project_name}")
+            print(
+                "Opening the Skylos project chooser. Close the browser to keep the current project."
+            )
+
+    result = None
+    try:
+        result = browser_login(console=console, base_url=base_url)
+    except (OSError, Exception) as e:
+        if console:
+            console.print(f"[warn]Browser auth unavailable: {e}[/warn]")
+        else:
+            print(f"Browser auth unavailable: {e}")
+        if existing is not None:
+            if console:
+                console.print(
+                    f"[dim]Keeping current project: {existing.project_name}[/dim]"
+                )
+            else:
+                print(f"Keeping current project: {existing.project_name}")
+            return existing
+
+    if result is None:
+        if existing is not None:
+            if console:
+                console.print(
+                    f"[dim]Keeping current project: {existing.project_name}[/dim]"
+                )
+            else:
+                print(f"Keeping current project: {existing.project_name}")
+            return existing
+        result = manual_token_fallback(console=console)
+
+    if result is None:
+        return None
+
+    _save_login_result(result, base_url=base_url)
+    _print_connected_result(result, console=console)
 
     return result
 
