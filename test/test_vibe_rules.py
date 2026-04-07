@@ -1,6 +1,7 @@
 import ast
 import textwrap
 import tempfile
+import warnings
 from pathlib import Path
 
 from skylos.rules.quality.logic import (
@@ -669,11 +670,6 @@ class TestDisabledSecurity:
         assert len(l011) == 0
 
     def test_check_hostname_false(self):
-        code = """
-        import ssl
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        """
         code2 = """
         some_func(check_hostname=False)
         """
@@ -1222,6 +1218,21 @@ class TestUnfinishedGeneration:
         """
         findings = check_code(UnfinishedGenerationRule(), code)
         assert any(f["rule_id"] == "SKY-L026" for f in findings)
+
+    def test_docstring_then_ellipsis_no_deprecation_warning(self):
+        code = """
+        def validate_user(token):
+            \"\"\"Validate the given token.\"\"\"
+            ...
+        """
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            findings = check_code(UnfinishedGenerationRule(), code)
+
+        assert any(f["rule_id"] == "SKY-L026" for f in findings)
+        assert [
+            str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)
+        ] == []
 
     def test_real_implementation_not_flagged(self):
         code = """
