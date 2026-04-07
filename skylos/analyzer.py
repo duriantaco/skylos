@@ -1266,6 +1266,9 @@ class Skylos:
         if not project_root.is_dir():
             project_root = project_root.parent
 
+        project_cfg = load_config(project_root)
+        project_ignore = set(project_cfg.get("ignore", []))
+
         try:
             from skylos.pyproject_entrypoints import extract_entrypoints
 
@@ -1607,7 +1610,7 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Auto-detect git changes failed", exc_info=True)
 
-        if changed_files and enable_quality and "SKY-L021" not in cfg.get("ignore", []):
+        if changed_files and enable_quality and "SKY-L021" not in project_ignore:
             from skylos.rules.quality.regression import detect_security_regressions
 
             try:
@@ -1737,9 +1740,10 @@ class Skylos:
                         dep_root, py_files
                     )
                     if dep_findings:
-                        _ignore = cfg.get("ignore", [])
                         dep_findings = [
-                            f for f in dep_findings if f.get("rule_id") not in _ignore
+                            f
+                            for f in dep_findings
+                            if f.get("rule_id") not in project_ignore
                         ]
                         all_dangers.extend(dep_findings)
             except Exception:
@@ -1747,7 +1751,7 @@ class Skylos:
                     logger.error(traceback.format_exc())
 
             # --- SKY-D260: Prompt injection scanner (multi-file) ---
-            if "SKY-D260" not in cfg.get("ignore", []):
+            if "SKY-D260" not in project_ignore:
                 try:
                     from skylos.injection_scanner import (
                         scan_file as _injection_scan_file,
@@ -1806,10 +1810,7 @@ class Skylos:
                     if _ud_root.is_file():
                         _ud_root = _ud_root.parent
 
-                    _ud_cfg = load_config(
-                        path[0] if isinstance(path, (list, tuple)) else path
-                    )
-                    if "SKY-U005" not in _ud_cfg.get("ignore", []):
+                    if "SKY-U005" not in project_ignore:
                         ud_findings = scan_unused_dependencies(_ud_root, _ud_py_files)
                         if ud_findings:
                             all_quality.extend(ud_findings)

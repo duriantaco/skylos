@@ -816,12 +816,101 @@ def upload_report(
     if link.get("project_id"):
         payload["project_id"] = link["project_id"]
 
+    response, last_err = _post_report_payload(
+        token,
+        payload,
+        quiet=quiet,
+        initial_message="Uploading scan results...",
+    )
+    if response is None:
+        return {"success": False, "error": last_err or "Unknown error"}
+
+    if response.status_code == 401:
+        return {
+            "success": False,
+            "error": "Invalid API token. Run 'skylos sync connect' to reconnect.",
+        }
+
+    if response.status_code == 402:
+        data = {}
+        try:
+            data = response.json()
+        except (ValueError, KeyError):
+            pass
+        return {
+            "success": False,
+            "error": data.get(
+                "error",
+                "No credits remaining. Buy more at skylos.dev/dashboard/credits",
+            ),
+            "code": "NO_CREDITS",
+        }
+
+    data = response.json()
+    scan_id = data.get("scanId") or data.get("scan_id")
+    quality_gate = data.get("quality_gate", {})
+    passed = quality_gate.get("passed", True)
+    new_violations = quality_gate.get("new_violations", 0)
+
+    plan = data.get("plan", "free")
+
+    if not quiet:
+        print(" done!\n✓ Scan uploaded")
+        if grade_data:
+            g = grade_data["overall"]
+            print(f"Grade: {g['letter']} ({g['score']}/100)")
+        if passed:
+            print("✅ PASS Quality gate: PASSED")
+        else:
+            print(
+                f"❌ FAIL Quality gate: FAILED ({new_violations} new violation{'' if new_violations == 1 else 's'})"
+            )
+
+        if scan_id:
+            print(f"\nView: {BASE_URL}/dashboard/scans/{scan_id}")
+
+        if not passed and plan == "free":
+            print("\n⚠️  Quality gate failed but continuing (Free plan)")
+            print("💡 Upgrade to Pro to automatically block commits/CI on failures")
+            print(f"   Learn more: {BASE_URL}/dashboard/settings?upgrade=true")
+
+        if scan_id:
+            print(f"\n🔗 View details: {BASE_URL}/dashboard/scans/{scan_id}")
+
+    credits_left = data.get("credits_remaining")
+    if not quiet and credits_left is not None:
+        if credits_left < 50:
+            print(
+                f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
+            )
+        else:
+            print(f"\n💰 Credits remaining: {credits_left}")
+
+    if not passed:
+        if strict and (not is_forced):
+            if not quiet:
+                print("\n Commit blocked by quality gate")
+            sys.exit(1)
+
+        if not quiet:
+            print("\n⚠️ Quality gate failed, but not enforcing in local mode.")
+
+    return {
+        "success": True,
+        "scan_id": scan_id,
+        "quality_gate_passed": passed,
+        "plan": plan,
+        "credits_warning": data.get("credits_warning", False),
+    }
+
+
+def _post_report_payload(token, payload, *, quiet=False, initial_message=None):
     last_err = None
     for attempt in range(3):
         try:
             if not quiet:
-                if attempt == 0:
-                    print("Uploading scan results...", end="", flush=True)
+                if attempt == 0 and initial_message:
+                    print(initial_message, end="", flush=True)
                 else:
                     print(f" retrying ({attempt + 1}/3)...", end="", flush=True)
             response = requests.post(
@@ -830,101 +919,15 @@ def upload_report(
                 headers=_build_auth_headers(token),
                 timeout=NETWORK_TIMEOUT_LONG,
             )
-            if response.status_code in (200, 201):
-                data = response.json()
-                scan_id = data.get("scanId") or data.get("scan_id")
-                quality_gate = data.get("quality_gate", {})
-                passed = quality_gate.get("passed", True)
-                new_violations = quality_gate.get("new_violations", 0)
-
-                plan = data.get("plan", "free")
-
-                if not quiet:
-                    print(" done!\n✓ Scan uploaded")
-                    if grade_data:
-                        g = grade_data["overall"]
-                        print(f"Grade: {g['letter']} ({g['score']}/100)")
-                    if passed:
-                        print("✅ PASS Quality gate: PASSED")
-                    else:
-                        print(
-                            f"❌ FAIL Quality gate: FAILED ({new_violations} new violation{'' if new_violations == 1 else 's'})"
-                        )
-
-                    if scan_id:
-                        print(f"\nView: {BASE_URL}/dashboard/scans/{scan_id}")
-
-                    if not passed and plan == "free":
-                        print("\n⚠️  Quality gate failed but continuing (Free plan)")
-                        print(
-                            "💡 Upgrade to Pro to automatically block commits/CI on failures"
-                        )
-                        print(
-                            f"   Learn more: {BASE_URL}/dashboard/settings?upgrade=true"
-                        )
-
-                    if scan_id:
-                        print(
-                            f"\n🔗 View details: {BASE_URL}/dashboard/scans/{scan_id}"
-                        )
-
-                credits_left = data.get("credits_remaining")
-                if not quiet and credits_left is not None:
-                    if credits_left < 50:
-                        print(
-                            f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
-                        )
-                    else:
-                        print(f"\n💰 Credits remaining: {credits_left}")
-
-                if not passed:
-                    if strict and (not is_forced):
-                        if not quiet:
-                            print("\n Commit blocked by quality gate")
-                        sys.exit(1)
-
-                    if not quiet:
-                        print(
-                            "\n⚠️ Quality gate failed, but not enforcing in local mode."
-                        )
-
-                return {
-                    "success": True,
-                    "scan_id": scan_id,
-                    "quality_gate_passed": passed,
-                    "plan": plan,
-                    "credits_warning": data.get("credits_warning", False),
-                }
-
-            if not quiet:
-                print(" failed." if response.status_code >= 400 else "")
-
-            if response.status_code == 401:
-                return {
-                    "success": False,
-                    "error": "Invalid API token. Run 'skylos sync connect' to reconnect.",
-                }
-
-            if response.status_code == 402:
-                data = {}
-                try:
-                    data = response.json()
-                except (ValueError, KeyError):
-                    pass
-                return {
-                    "success": False,
-                    "error": data.get(
-                        "error",
-                        "No credits remaining. Buy more at skylos.dev/dashboard/credits",
-                    ),
-                    "code": "NO_CREDITS",
-                }
-
+            if response.status_code in (200, 201, 401, 402):
+                return response, None
+            if not quiet and response.status_code >= 400:
+                print(" failed.")
             last_err = f"Server Error {response.status_code}: {response.text}"
         except Exception as e:
             last_err = f"Connection Error: {str(e)}"
 
-    return {"success": False, "error": last_err or "Unknown error"}
+    return None, last_err or "Unknown error"
 
 
 def upload_defense_report(defense_json_str, quiet=False) -> dict:
@@ -965,69 +968,57 @@ def upload_defense_report(defense_json_str, quiet=False) -> dict:
     if link.get("project_id"):
         payload["project_id"] = link["project_id"]
 
-    if not quiet:
-        print("Uploading defense results...", end="", flush=True)
+    response, last_err = _post_report_payload(
+        token,
+        payload,
+        quiet=quiet,
+        initial_message="Uploading defense results...",
+    )
+    if response is None:
+        if not quiet:
+            print(" failed.")
+        return {"success": False, "error": last_err or "Unknown error"}
 
-    last_err = None
-    for attempt in range(3):
-        try:
-            if attempt > 0 and not quiet:
-                print(f" retrying ({attempt + 1}/3)...", end="", flush=True)
-            response = requests.post(
-                REPORT_URL,
-                json=payload,
-                headers=_build_auth_headers(token),
-                timeout=NETWORK_TIMEOUT_LONG,
+    if response.status_code == 401:
+        if not quiet:
+            print(" failed.")
+        return {
+            "success": False,
+            "error": "Invalid API token. Run 'skylos sync connect' to reconnect.",
+        }
+
+    if response.status_code == 402:
+        if not quiet:
+            print(" failed.")
+        return {
+            "success": False,
+            "error": "No credits remaining. Buy more at skylos.dev/dashboard/credits",
+            "code": "NO_CREDITS",
+        }
+
+    data = response.json()
+    scan_id = data.get("scanId") or data.get("scan_id")
+
+    if not quiet:
+        score = defense_data.get("summary", {})
+        print(" done!")
+        print("✓ Defense scan uploaded")
+        print(
+            f"  Defense Score: {score.get('score_pct', 0)}% ({score.get('risk_rating', 'UNKNOWN')})"
+        )
+        if scan_id:
+            print(f"\n🔗 View: {BASE_URL}/dashboard/scans/{scan_id}")
+
+        credits_left = data.get("credits_remaining")
+        if credits_left is not None and credits_left < 50:
+            print(
+                f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
             )
-            if response.status_code in (200, 201):
-                data = response.json()
-                scan_id = data.get("scanId") or data.get("scan_id")
 
-                if not quiet:
-                    score = defense_data.get("summary", {})
-                    print(" done!")
-                    print("✓ Defense scan uploaded")
-                    print(
-                        f"  Defense Score: {score.get('score_pct', 0)}% ({score.get('risk_rating', 'UNKNOWN')})"
-                    )
-                    if scan_id:
-                        print(f"\n🔗 View: {BASE_URL}/dashboard/scans/{scan_id}")
-
-                    credits_left = data.get("credits_remaining")
-                    if credits_left is not None and credits_left < 50:
-                        print(
-                            f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
-                        )
-
-                return {
-                    "success": True,
-                    "scan_id": scan_id,
-                }
-
-            if response.status_code == 401:
-                if not quiet:
-                    print(" failed.")
-                return {
-                    "success": False,
-                    "error": "Invalid API token. Run 'skylos sync connect' to reconnect.",
-                }
-
-            if response.status_code == 402:
-                if not quiet:
-                    print(" failed.")
-                return {
-                    "success": False,
-                    "error": "No credits remaining. Buy more at skylos.dev/dashboard/credits",
-                    "code": "NO_CREDITS",
-                }
-
-            last_err = f"Server Error {response.status_code}: {response.text}"
-        except Exception as e:
-            last_err = f"Connection Error: {str(e)}"
-
-    if not quiet:
-        print(" failed.")
-    return {"success": False, "error": last_err or "Unknown error"}
+    return {
+        "success": True,
+        "scan_id": scan_id,
+    }
 
 
 def upload_agent_run(
