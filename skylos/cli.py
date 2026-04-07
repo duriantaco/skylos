@@ -44,6 +44,21 @@ SkylosLLM = None
 AnalyzerConfig = None
 LLM_AVAILABLE = False
 
+DEFAULT_AGENT_MODEL = "gpt-4.1"
+AGENT_PROVIDER_CHOICES = (
+    "openai",
+    "anthropic",
+    "google",
+    "mistral",
+    "groq",
+    "xai",
+    "together",
+    "deepseek",
+    "ollama",
+)
+AGENT_PROVIDER_HELP = "Force LLM provider"
+AGENT_BASE_URL_HELP = "OpenAI-compatible base URL (Ollama/LM Studio/vLLM)"
+
 
 def run_analyze(*args, **kwargs):
     from skylos.analyzer import analyze as run_analyze_impl
@@ -2391,402 +2406,377 @@ sys.exit(ret)
     )
 
 
+def _add_agent_model_arg(parser, *, default=DEFAULT_AGENT_MODEL):
+    parser.add_argument("--model", default=default)
+
+
+def _add_agent_output_arg(parser):
+    parser.add_argument("--output", "-o", help="Output file")
+
+
+def _add_agent_quiet_arg(parser):
+    parser.add_argument("--quiet", "-q", action="store_true")
+
+
+def _add_agent_provider_arg(parser):
+    parser.add_argument(
+        "--provider",
+        choices=AGENT_PROVIDER_CHOICES,
+        default=None,
+        help=AGENT_PROVIDER_HELP,
+    )
+
+
+def _add_agent_base_url_arg(parser):
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help=AGENT_BASE_URL_HELP,
+    )
+
+
+def _build_agent_parser():
+    agent_parser = argparse.ArgumentParser(prog="skylos agent")
+    agent_sub = agent_parser.add_subparsers(dest="agent_cmd", required=True)
+
+    p_scan = agent_sub.add_parser("scan", help="Hybrid analysis (static + LLM)")
+    p_scan.add_argument(
+        "path", nargs="?", default=".", help="File or directory to analyze"
+    )
+    _add_agent_model_arg(p_scan)
+    p_scan.add_argument(
+        "--format", choices=["table", "tree", "json", "sarif"], default="table"
+    )
+    _add_agent_output_arg(p_scan)
+    p_scan.add_argument(
+        "--min-confidence", choices=["high", "medium", "low"], default="low"
+    )
+    p_scan.add_argument(
+        "--llm-only", action="store_true", help="Skip static, run LLM only"
+    )
+    _add_agent_quiet_arg(p_scan)
+    _add_agent_provider_arg(p_scan)
+    _add_agent_base_url_arg(p_scan)
+    p_scan.add_argument(
+        "--upload",
+        action="store_true",
+        help="Upload results to skylos.dev dashboard",
+    )
+    p_scan.add_argument(
+        "--force",
+        action="store_true",
+        help="Force upload even if quality gate fails",
+    )
+    p_scan.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit with error code if findings are reported",
+    )
+    p_scan.add_argument(
+        "--verification-mode",
+        choices=["judge_all", "production"],
+        default="production",
+        help="Dead-code verifier mode when --verify-dead-code is enabled",
+    )
+    p_scan.add_argument(
+        "--verify-dead-code",
+        action="store_true",
+        help="Run the slower LLM dead-code verification pass before showing final results",
+    )
+    p_scan.add_argument(
+        "--with-fixes",
+        action="store_true",
+        help="Generate fix suggestions for findings (slower)",
+    )
+    p_scan.add_argument(
+        "--no-fixes",
+        action="store_true",
+        help="Disable fix suggestions (compatibility alias; fixes are off by default)",
+    )
+    p_scan.add_argument(
+        "--changed",
+        action="store_true",
+        help="Analyze only git-changed files",
+    )
+    p_scan.add_argument(
+        "--security",
+        action="store_true",
+        help="Security-only LLM audit mode",
+    )
+    p_scan.add_argument(
+        "--interactive",
+        "-i",
+        action="store_true",
+        help="Interactive file selection (with --security)",
+    )
+
+    p_remediate = agent_sub.add_parser(
+        "remediate",
+        help="Scan, fix, test, and create PR for security/quality issues",
+    )
+    p_remediate.add_argument("path", nargs="?", default=".")
+    _add_agent_model_arg(p_remediate)
+    p_remediate.add_argument(
+        "--max-fixes",
+        type=int,
+        default=10,
+        help="Maximum number of findings to fix (default: 10)",
+    )
+    p_remediate.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be fixed without applying changes",
+    )
+    p_remediate.add_argument(
+        "--auto-pr",
+        action="store_true",
+        help="Automatically create a PR with fixes",
+    )
+    p_remediate.add_argument(
+        "--branch-prefix", default="skylos/fix", help="Git branch prefix"
+    )
+    p_remediate.add_argument(
+        "--test-cmd",
+        default=None,
+        help="Custom test command (default: auto-detect)",
+    )
+    p_remediate.add_argument(
+        "--severity",
+        choices=["critical", "high", "medium", "low"],
+        default=None,
+        help="Only fix findings at or above this severity",
+    )
+    p_remediate.add_argument(
+        "--standards",
+        nargs="?",
+        const="__builtin__",
+        default=None,
+        help="Enable LLM-guided cleanup mode (optional: path to custom standards .md file)",
+    )
+    _add_agent_quiet_arg(p_remediate)
+    _add_agent_provider_arg(p_remediate)
+    _add_agent_base_url_arg(p_remediate)
+
+    p_verify = agent_sub.add_parser(
+        "verify",
+        help="LLM-verify dead code findings (reduce false positives, catch more dead code)",
+    )
+    p_verify.add_argument("path", help="File or directory to analyze")
+    _add_agent_model_arg(p_verify)
+    p_verify.add_argument(
+        "--conf", type=int, default=60, help="Static analysis confidence threshold"
+    )
+    p_verify.add_argument(
+        "--max-verify",
+        type=int,
+        default=50,
+        help="Max findings to verify with LLM (default: 50)",
+    )
+    p_verify.add_argument(
+        "--max-challenge",
+        type=int,
+        default=20,
+        help="Max survivors to challenge with LLM (default: 20)",
+    )
+    p_verify.add_argument(
+        "--no-entry-discovery",
+        action="store_true",
+        help="Skip entry point discovery pass",
+    )
+    p_verify.add_argument(
+        "--no-survivor-challenge",
+        action="store_true",
+        help="Skip survivor challenge pass",
+    )
+    p_verify.add_argument(
+        "--verification-mode",
+        choices=["judge_all", "production"],
+        default="judge_all",
+        help="Dead-code verifier mode: judge_all sends nearly every refs==0 candidate to the LLM",
+    )
+    p_verify.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+    )
+    _add_agent_output_arg(p_verify)
+    _add_agent_quiet_arg(p_verify)
+    _add_agent_provider_arg(p_verify)
+    _add_agent_base_url_arg(p_verify)
+    p_verify.add_argument(
+        "--grep-workers",
+        type=int,
+        default=4,
+        help="Number of parallel grep workers (default: 4)",
+    )
+    p_verify.add_argument(
+        "--parallel-grep",
+        action="store_true",
+        help="Enable parallel grep execution for faster verification",
+    )
+    p_verify.add_argument(
+        "--fix",
+        action="store_true",
+        help="Generate removal patches for confirmed dead code",
+    )
+    p_verify.add_argument(
+        "--fix-mode",
+        choices=["delete", "comment"],
+        default="delete",
+        help="Fix mode: delete removes code, comment comments it out (default: delete)",
+    )
+    p_verify.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply generated patches (use with --fix)",
+    )
+    p_verify.add_argument(
+        "--pr",
+        action="store_true",
+        help="Create a branch, apply patches, and commit (use with --fix)",
+    )
+
+    p_watch = agent_sub.add_parser(
+        "watch",
+        help="Continuously maintain active-agent state for a repository",
+    )
+    p_watch.add_argument("path", nargs="?", default=".")
+    p_watch.add_argument("--interval", type=float, default=5.0)
+    p_watch.add_argument(
+        "--cycles",
+        type=int,
+        default=0,
+        help="Number of refresh cycles to run (0 means keep watching)",
+    )
+    p_watch.add_argument("--once", action="store_true")
+    p_watch.add_argument("--conf", type=int, default=80)
+    p_watch.add_argument("--no-baseline", action="store_true")
+    p_watch.add_argument("--state-file", default=None)
+    p_watch.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+    )
+    p_watch.add_argument("--limit", type=int, default=10)
+    p_watch.add_argument(
+        "--learn", action="store_true", help="Enable triage pattern learning"
+    )
+
+    p_precommit = agent_sub.add_parser(
+        "pre-commit",
+        help="Analyze staged files only (git hook mode)",
+    )
+    p_precommit.add_argument("path", nargs="?", default=".")
+    p_precommit.add_argument("--conf", type=int, default=80)
+    p_precommit.add_argument("--state-file", default=None)
+    p_precommit.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+    )
+
+    p_triage = agent_sub.add_parser(
+        "triage",
+        help="Manage finding triage (suggest, dismiss, snooze, restore)",
+    )
+    triage_sub = p_triage.add_subparsers(dest="triage_cmd", required=True)
+
+    t_suggest = triage_sub.add_parser(
+        "suggest",
+        help="Show auto-triage candidates based on learned patterns",
+    )
+    t_suggest.add_argument("path", nargs="?", default=".")
+    t_suggest.add_argument("--state-file", default=None)
+    t_suggest.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+    )
+
+    t_dismiss = triage_sub.add_parser(
+        "dismiss",
+        help="Dismiss a ranked action",
+    )
+    t_dismiss.add_argument("path", nargs="?", default=".")
+    t_dismiss.add_argument("action_id")
+    t_dismiss.add_argument("--state-file", default=None)
+    t_dismiss.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+    )
+    t_dismiss.add_argument("--limit", type=int, default=10)
+
+    t_snooze = triage_sub.add_parser(
+        "snooze",
+        help="Temporarily snooze a ranked action",
+    )
+    t_snooze.add_argument("path", nargs="?", default=".")
+    t_snooze.add_argument("action_id")
+    t_snooze.add_argument("--hours", type=float, default=24.0)
+    t_snooze.add_argument("--state-file", default=None)
+    t_snooze.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+    )
+    t_snooze.add_argument("--limit", type=int, default=10)
+
+    t_restore = triage_sub.add_parser(
+        "restore",
+        help="Restore a dismissed or snoozed action",
+    )
+    t_restore.add_argument("path", nargs="?", default=".")
+    t_restore.add_argument("action_id")
+    t_restore.add_argument("--state-file", default=None)
+    t_restore.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+    )
+    t_restore.add_argument("--limit", type=int, default=10)
+
+    p_status = agent_sub.add_parser(
+        "status",
+        help="Show the latest active-agent summary",
+    )
+    p_status.add_argument("path", nargs="?", default=".")
+    p_status.add_argument("--state-file", default=None)
+    p_status.add_argument("--refresh", action="store_true")
+    p_status.add_argument("--conf", type=int, default=80)
+    p_status.add_argument("--no-baseline", action="store_true")
+    p_status.add_argument(
+        "--format",
+        choices=["table", "json", "feed"],
+        default="table",
+    )
+    p_status.add_argument("--limit", type=int, default=10)
+
+    p_serve = agent_sub.add_parser(
+        "serve",
+        help="Run a local cross-platform HTTP API for the active-agent state",
+    )
+    p_serve.add_argument("path", nargs="?", default=".")
+    p_serve.add_argument("--host", default="127.0.0.1")
+    p_serve.add_argument("--port", type=int, default=5089)
+    p_serve.add_argument("--token", default=None)
+    p_serve.add_argument("--state-file", default=None)
+    p_serve.add_argument("--conf", type=int, default=80)
+    p_serve.add_argument("--no-baseline", action="store_true")
+    p_serve.add_argument("--limit", type=int, default=10)
+    p_serve.add_argument("--refresh-on-start", action="store_true")
+
+    return agent_parser
+
+
 def main() -> None:
     dispatch_result = _dispatch_early_command(sys.argv[1:])
     if dispatch_result is not None:
         sys.exit(dispatch_result)
 
     if len(sys.argv) > 1 and sys.argv[1] == "agent":
-        import argparse as agent_argparse
         # from skylos.llm.merger import merge_findings
-
-        agent_parser = agent_argparse.ArgumentParser(prog="skylos agent")
-        agent_sub = agent_parser.add_subparsers(dest="agent_cmd", required=True)
-
-        p_scan = agent_sub.add_parser("scan", help="Hybrid analysis (static + LLM)")
-        p_scan.add_argument(
-            "path", nargs="?", default=".", help="File or directory to analyze"
-        )
-        p_scan.add_argument("--model", default="gpt-4.1")
-        p_scan.add_argument(
-            "--format", choices=["table", "tree", "json", "sarif"], default="table"
-        )
-        p_scan.add_argument("--output", "-o", help="Output file")
-        p_scan.add_argument(
-            "--min-confidence", choices=["high", "medium", "low"], default="low"
-        )
-        p_scan.add_argument(
-            "--llm-only", action="store_true", help="Skip static, run LLM only"
-        )
-        p_scan.add_argument("--quiet", "-q", action="store_true")
-        p_scan.add_argument(
-            "--provider",
-            choices=[
-                "openai",
-                "anthropic",
-                "google",
-                "mistral",
-                "groq",
-                "xai",
-                "together",
-                "deepseek",
-                "ollama",
-            ],
-            default=None,
-            help="Force LLM provider",
-        )
-        p_scan.add_argument(
-            "--base-url",
-            default=None,
-            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
-        )
-        p_scan.add_argument(
-            "--upload",
-            action="store_true",
-            help="Upload results to skylos.dev dashboard",
-        )
-        p_scan.add_argument(
-            "--force",
-            action="store_true",
-            help="Force upload even if quality gate fails",
-        )
-        p_scan.add_argument(
-            "--strict",
-            action="store_true",
-            help="Exit with error code if findings are reported",
-        )
-        p_scan.add_argument(
-            "--verification-mode",
-            choices=["judge_all", "production"],
-            default="production",
-            help="Dead-code verifier mode when --verify-dead-code is enabled",
-        )
-        p_scan.add_argument(
-            "--verify-dead-code",
-            action="store_true",
-            help="Run the slower LLM dead-code verification pass before showing final results",
-        )
-        p_scan.add_argument(
-            "--with-fixes",
-            action="store_true",
-            help="Generate fix suggestions for findings (slower)",
-        )
-        p_scan.add_argument(
-            "--no-fixes",
-            action="store_true",
-            help="Disable fix suggestions (compatibility alias; fixes are off by default)",
-        )
-        p_scan.add_argument(
-            "--changed",
-            action="store_true",
-            help="Analyze only git-changed files",
-        )
-        p_scan.add_argument(
-            "--security",
-            action="store_true",
-            help="Security-only LLM audit mode",
-        )
-        p_scan.add_argument(
-            "--interactive",
-            "-i",
-            action="store_true",
-            help="Interactive file selection (with --security)",
-        )
-
-        p_remediate = agent_sub.add_parser(
-            "remediate",
-            help="Scan, fix, test, and create PR for security/quality issues",
-        )
-        p_remediate.add_argument("path", nargs="?", default=".")
-        p_remediate.add_argument("--model", default="gpt-4.1")
-        p_remediate.add_argument(
-            "--max-fixes",
-            type=int,
-            default=10,
-            help="Maximum number of findings to fix (default: 10)",
-        )
-        p_remediate.add_argument(
-            "--dry-run",
-            action="store_true",
-            help="Show what would be fixed without applying changes",
-        )
-        p_remediate.add_argument(
-            "--auto-pr",
-            action="store_true",
-            help="Automatically create a PR with fixes",
-        )
-        p_remediate.add_argument(
-            "--branch-prefix", default="skylos/fix", help="Git branch prefix"
-        )
-        p_remediate.add_argument(
-            "--test-cmd",
-            default=None,
-            help="Custom test command (default: auto-detect)",
-        )
-        p_remediate.add_argument(
-            "--severity",
-            choices=["critical", "high", "medium", "low"],
-            default=None,
-            help="Only fix findings at or above this severity",
-        )
-        p_remediate.add_argument(
-            "--standards",
-            nargs="?",
-            const="__builtin__",
-            default=None,
-            help="Enable LLM-guided cleanup mode (optional: path to custom standards .md file)",
-        )
-        p_remediate.add_argument("--quiet", "-q", action="store_true")
-        p_remediate.add_argument(
-            "--provider",
-            choices=[
-                "openai",
-                "anthropic",
-                "google",
-                "mistral",
-                "groq",
-                "xai",
-                "together",
-                "deepseek",
-                "ollama",
-            ],
-            default=None,
-            help="Force LLM provider",
-        )
-        p_remediate.add_argument(
-            "--base-url",
-            default=None,
-            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
-        )
-
-        p_verify = agent_sub.add_parser(
-            "verify",
-            help="LLM-verify dead code findings (reduce false positives, catch more dead code)",
-        )
-        p_verify.add_argument("path", help="File or directory to analyze")
-        p_verify.add_argument("--model", default="gpt-4.1")
-        p_verify.add_argument(
-            "--conf", type=int, default=60, help="Static analysis confidence threshold"
-        )
-        p_verify.add_argument(
-            "--max-verify",
-            type=int,
-            default=50,
-            help="Max findings to verify with LLM (default: 50)",
-        )
-        p_verify.add_argument(
-            "--max-challenge",
-            type=int,
-            default=20,
-            help="Max survivors to challenge with LLM (default: 20)",
-        )
-        p_verify.add_argument(
-            "--no-entry-discovery",
-            action="store_true",
-            help="Skip entry point discovery pass",
-        )
-        p_verify.add_argument(
-            "--no-survivor-challenge",
-            action="store_true",
-            help="Skip survivor challenge pass",
-        )
-        p_verify.add_argument(
-            "--verification-mode",
-            choices=["judge_all", "production"],
-            default="judge_all",
-            help="Dead-code verifier mode: judge_all sends nearly every refs==0 candidate to the LLM",
-        )
-        p_verify.add_argument(
-            "--format",
-            choices=["table", "json"],
-            default="table",
-        )
-        p_verify.add_argument("--output", "-o", help="Output file")
-        p_verify.add_argument("--quiet", "-q", action="store_true")
-        p_verify.add_argument(
-            "--provider",
-            choices=[
-                "openai",
-                "anthropic",
-                "google",
-                "mistral",
-                "groq",
-                "xai",
-                "together",
-                "deepseek",
-                "ollama",
-            ],
-            default=None,
-            help="Force LLM provider",
-        )
-        p_verify.add_argument(
-            "--base-url",
-            default=None,
-            help="OpenAI-compatible base URL (Ollama/LM Studio/vLLM)",
-        )
-        p_verify.add_argument(
-            "--grep-workers",
-            type=int,
-            default=4,
-            help="Number of parallel grep workers (default: 4)",
-        )
-        p_verify.add_argument(
-            "--parallel-grep",
-            action="store_true",
-            help="Enable parallel grep execution for faster verification",
-        )
-        p_verify.add_argument(
-            "--fix",
-            action="store_true",
-            help="Generate removal patches for confirmed dead code",
-        )
-        p_verify.add_argument(
-            "--fix-mode",
-            choices=["delete", "comment"],
-            default="delete",
-            help="Fix mode: delete removes code, comment comments it out (default: delete)",
-        )
-        p_verify.add_argument(
-            "--apply",
-            action="store_true",
-            help="Apply generated patches (use with --fix)",
-        )
-        p_verify.add_argument(
-            "--pr",
-            action="store_true",
-            help="Create a branch, apply patches, and commit (use with --fix)",
-        )
-
-        p_watch = agent_sub.add_parser(
-            "watch",
-            help="Continuously maintain active-agent state for a repository",
-        )
-        p_watch.add_argument("path", nargs="?", default=".")
-        p_watch.add_argument("--interval", type=float, default=5.0)
-        p_watch.add_argument(
-            "--cycles",
-            type=int,
-            default=0,
-            help="Number of refresh cycles to run (0 means keep watching)",
-        )
-        p_watch.add_argument("--once", action="store_true")
-        p_watch.add_argument("--conf", type=int, default=80)
-        p_watch.add_argument("--no-baseline", action="store_true")
-        p_watch.add_argument("--state-file", default=None)
-        p_watch.add_argument(
-            "--format",
-            choices=["table", "json"],
-            default="table",
-        )
-        p_watch.add_argument("--limit", type=int, default=10)
-        p_watch.add_argument(
-            "--learn", action="store_true", help="Enable triage pattern learning"
-        )
-
-        p_precommit = agent_sub.add_parser(
-            "pre-commit",
-            help="Analyze staged files only (git hook mode)",
-        )
-        p_precommit.add_argument("path", nargs="?", default=".")
-        p_precommit.add_argument("--conf", type=int, default=80)
-        p_precommit.add_argument("--state-file", default=None)
-        p_precommit.add_argument(
-            "--format",
-            choices=["table", "json"],
-            default="table",
-        )
-
-        p_triage = agent_sub.add_parser(
-            "triage",
-            help="Manage finding triage (suggest, dismiss, snooze, restore)",
-        )
-        triage_sub = p_triage.add_subparsers(dest="triage_cmd", required=True)
-
-        t_suggest = triage_sub.add_parser(
-            "suggest",
-            help="Show auto-triage candidates based on learned patterns",
-        )
-        t_suggest.add_argument("path", nargs="?", default=".")
-        t_suggest.add_argument("--state-file", default=None)
-        t_suggest.add_argument(
-            "--format",
-            choices=["table", "json"],
-            default="table",
-        )
-
-        t_dismiss = triage_sub.add_parser(
-            "dismiss",
-            help="Dismiss a ranked action",
-        )
-        t_dismiss.add_argument("path", nargs="?", default=".")
-        t_dismiss.add_argument("action_id")
-        t_dismiss.add_argument("--state-file", default=None)
-        t_dismiss.add_argument(
-            "--format",
-            choices=["table", "json"],
-            default="table",
-        )
-        t_dismiss.add_argument("--limit", type=int, default=10)
-
-        t_snooze = triage_sub.add_parser(
-            "snooze",
-            help="Temporarily snooze a ranked action",
-        )
-        t_snooze.add_argument("path", nargs="?", default=".")
-        t_snooze.add_argument("action_id")
-        t_snooze.add_argument("--hours", type=float, default=24.0)
-        t_snooze.add_argument("--state-file", default=None)
-        t_snooze.add_argument(
-            "--format",
-            choices=["table", "json"],
-            default="table",
-        )
-        t_snooze.add_argument("--limit", type=int, default=10)
-
-        t_restore = triage_sub.add_parser(
-            "restore",
-            help="Restore a dismissed or snoozed action",
-        )
-        t_restore.add_argument("path", nargs="?", default=".")
-        t_restore.add_argument("action_id")
-        t_restore.add_argument("--state-file", default=None)
-        t_restore.add_argument(
-            "--format",
-            choices=["table", "json"],
-            default="table",
-        )
-        t_restore.add_argument("--limit", type=int, default=10)
-
-        p_status = agent_sub.add_parser(
-            "status",
-            help="Show the latest active-agent summary",
-        )
-        p_status.add_argument("path", nargs="?", default=".")
-        p_status.add_argument("--state-file", default=None)
-        p_status.add_argument("--refresh", action="store_true")
-        p_status.add_argument("--conf", type=int, default=80)
-        p_status.add_argument("--no-baseline", action="store_true")
-        p_status.add_argument(
-            "--format",
-            choices=["table", "json", "feed"],
-            default="table",
-        )
-        p_status.add_argument("--limit", type=int, default=10)
-
-        p_serve = agent_sub.add_parser(
-            "serve",
-            help="Run a local cross-platform HTTP API for the active-agent state",
-        )
-        p_serve.add_argument("path", nargs="?", default=".")
-        p_serve.add_argument("--host", default="127.0.0.1")
-        p_serve.add_argument("--port", type=int, default=5089)
-        p_serve.add_argument("--token", default=None)
-        p_serve.add_argument("--state-file", default=None)
-        p_serve.add_argument("--conf", type=int, default=80)
-        p_serve.add_argument("--no-baseline", action="store_true")
-        p_serve.add_argument("--limit", type=int, default=10)
-        p_serve.add_argument("--refresh-on-start", action="store_true")
-
+        agent_parser = _build_agent_parser()
         agent_args = agent_parser.parse_args(sys.argv[2:])
         console = Console()
         cmd = agent_args.agent_cmd
