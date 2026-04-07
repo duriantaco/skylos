@@ -7,6 +7,8 @@ from skylos.llm.verify_orchestrator import (
     _build_repo_facts,
     _build_graph_context,
     _build_haiku_context,
+    _build_verification_output,
+    _collect_feedback_adjustments,
     _batch_verify_findings,
     _deterministic_suppress,
     _get_cached_search_results,
@@ -1435,8 +1437,6 @@ def test_run_verification_judge_all_uses_prefilter_fact_as_evidence(
 
 @patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
 def test_run_verification_skips_high_confidence(MockAgent, tmp_path):
-    mock_instance = MockAgent.return_value
-
     proj = tmp_path / "project"
     proj.mkdir()
 
@@ -1590,6 +1590,286 @@ def test_run_verification_reclassifies_local_on_emit_listener_without_emit(tmp_p
 
 
 @patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
+def test_run_verification_output_payload_defaults_stable(MockAgent, tmp_path):
+    mock_instance = MockAgent.return_value
+    adapter = MagicMock()
+    adapter.total_usage = {}
+    mock_instance.get_adapter.return_value = adapter
+
+    proj = tmp_path / "project"
+    app = proj / "app"
+    app.mkdir(parents=True)
+
+    events_file = app / "events.py"
+    events_file.write_text(
+        "class EventBus:\n"
+        "    @classmethod\n"
+        "    def on(cls, event_name):\n"
+        "        def decorator(fn):\n"
+        "            return fn\n"
+        "        return decorator\n\n"
+        "    @classmethod\n"
+        "    def emit(cls, event_name, **kwargs):\n"
+        "        return None\n\n"
+        "@EventBus.on('note_created')\n"
+        "def on_note_created(**kwargs):\n"
+        "    return kwargs\n\n"
+        "@EventBus.on('note_deleted')\n"
+        "def on_note_deleted(**kwargs):\n"
+        "    return kwargs\n"
+    )
+
+    service_file = app / "service.py"
+    service_file.write_text(
+        "from app.events import EventBus\n\n"
+        "def create_note():\n"
+        "    EventBus.emit('note_created', title='x')\n"
+    )
+
+    mod_file = proj / "mod.py"
+    mod_file.write_text("def obvious_dead():\n    return 1\n")
+
+    defs_map = {
+        "app.events.on_note_created": {
+            "name": "app.events.on_note_created",
+            "file": str(events_file),
+            "line": 13,
+            "type": "function",
+            "called_by": [],
+            "references": 0,
+            "confidence": 50,
+        },
+        "app.events.on_note_deleted": {
+            "name": "app.events.on_note_deleted",
+            "file": str(events_file),
+            "line": 17,
+            "type": "function",
+            "called_by": [],
+            "references": 0,
+            "confidence": 50,
+        },
+    }
+
+    findings = [
+        {
+            "name": "obvious_dead",
+            "file": str(mod_file),
+            "line": 1,
+            "confidence": 101,
+        }
+    ]
+
+    with (
+        patch(
+            "skylos.llm.verify_orchestrator._find_survivors",
+            return_value=[],
+        ),
+        patch(
+            "skylos.llm.verify_orchestrator.time.time",
+            side_effect=[100.0, 100.4],
+        ),
+    ):
+        result = run_verification(
+            findings=findings,
+            defs_map=defs_map,
+            project_root=str(proj),
+            model="test",
+            api_key="test",
+            quiet=True,
+            enable_entry_discovery=False,
+        )
+
+    verified = result["verified_findings"][0]
+    assert verified["name"] == "obvious_dead"
+    assert verified["file"] == str(mod_file)
+    assert verified["line"] == 1
+    assert verified["confidence"] == 101
+    assert verified["type"] == "function"
+    assert verified["full_name"] == "obvious_dead"
+    assert verified["references"] == 0
+    assert verified["rule_id"] == "SKY-DEAD"
+    assert verified["_source"] == "static"
+    assert verified["_llm_verdict"] == "SKIPPED_HIGH_CONF"
+    assert verified["_llm_rationale"] == "High confidence from static; skipped LLM"
+    assert verified["message"] == "Unused function: obvious_dead"
+
+    new_dead = result["new_dead_code"][0]
+    assert new_dead["name"] == "on_note_deleted"
+    assert new_dead["full_name"] == "app.events.on_note_deleted"
+    assert new_dead["file"] == str(events_file)
+    assert new_dead["line"] == 17
+    assert new_dead["type"] == "function"
+    assert new_dead["references"] == 0
+    assert new_dead["rule_id"] == "SKY-DEAD-CHALLENGE"
+    assert new_dead["_source"] == "registry_survivor_challenge"
+    assert new_dead["_llm_verdict"] == "TRUE_POSITIVE"
+    assert new_dead["message"] == "Unused function: on_note_deleted"
+    assert "EventBus.emit('note_deleted')" in new_dead["_llm_rationale"]
+
+    assert result["entry_points"] == []
+    assert result["stats"] == {
+        "total_findings": 1,
+        "verified_true_positive": 0,
+        "verified_false_positive": 0,
+        "deterministic_suppressed": 0,
+        "uncertain": 0,
+        "suppression_challenged": 0,
+        "suppression_reclassified_dead": 0,
+        "survivors_challenged": 1,
+        "survivors_reclassified_dead": 1,
+        "entry_points_discovered": 0,
+        "haiku_prefiltered": 0,
+        "llm_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "elapsed_seconds": 0.4,
+        "verification_mode": "production",
+    }
+    mock_instance._call_llm.assert_not_called()
+
+
+@patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
+def test_run_verification_attaches_feedback_summary_and_logs_tuned_types(
+    MockAgent, tmp_path
+):
+    mock_instance = MockAgent.return_value
+    adapter = MagicMock()
+    adapter.total_usage = {}
+    mock_instance.get_adapter.return_value = adapter
+
+    proj = tmp_path / "project"
+    proj.mkdir()
+    mod_file = proj / "mod.py"
+    mod_file.write_text("def obvious_dead():\n    return 1\n")
+
+    findings = [
+        {
+            "name": "obvious_dead",
+            "file": str(mod_file),
+            "line": 1,
+            "confidence": 101,
+        }
+    ]
+
+    summary = {
+        "total_runs": 42,
+        "heuristic_types": {
+            "same_file_attr": {
+                "observations": 6,
+                "real": 5,
+                "spurious": 1,
+                "accuracy_pct": 83.3,
+                "default_weight": 1.0,
+                "tuned_weight": 0.8,
+                "weight_change_pct": -20.0,
+            },
+            "same_pkg_attr": {
+                "observations": 4,
+                "real": 4,
+                "spurious": 0,
+                "accuracy_pct": 100.0,
+                "default_weight": 0.3,
+                "tuned_weight": 0.3,
+                "weight_change_pct": 0.0,
+            },
+        },
+    }
+
+    mock_log = MagicMock()
+    with (
+        patch("skylos.llm.verify_orchestrator._logger", return_value=mock_log),
+        patch(
+            "skylos.llm.feedback.record_verification_results",
+        ) as mock_record,
+        patch(
+            "skylos.llm.feedback.get_feedback_summary",
+            return_value=summary,
+        ) as mock_summary,
+        patch(
+            "skylos.llm.verify_orchestrator._find_survivors",
+            return_value=[],
+        ),
+        patch(
+            "skylos.llm.verify_orchestrator.time.time",
+            side_effect=[100.0, 100.4],
+        ),
+    ):
+        result = run_verification(
+            findings=findings,
+            defs_map={},
+            project_root=str(proj),
+            model="test",
+            api_key="test",
+            quiet=False,
+            enable_entry_discovery=False,
+        )
+
+    assert result["feedback"] == summary
+    mock_record.assert_called_once()
+    mock_summary.assert_called_once_with()
+    mock_log.assert_any_call("\nFeedback loop — heuristic weight adjustments:")
+    mock_log.assert_any_call("  same_file_attr: 1.0 → 0.8 (-20%)")
+    mock_instance._call_llm.assert_not_called()
+
+
+@patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
+def test_run_verification_feedback_failure_keeps_output(MockAgent, tmp_path):
+    mock_instance = MockAgent.return_value
+    adapter = MagicMock()
+    adapter.total_usage = {}
+    mock_instance.get_adapter.return_value = adapter
+
+    proj = tmp_path / "project"
+    proj.mkdir()
+    mod_file = proj / "mod.py"
+    mod_file.write_text("def obvious_dead():\n    return 1\n")
+
+    findings = [
+        {
+            "name": "obvious_dead",
+            "file": str(mod_file),
+            "line": 1,
+            "confidence": 101,
+        }
+    ]
+
+    with (
+        patch(
+            "skylos.llm.feedback.record_verification_results",
+            side_effect=RuntimeError("boom"),
+        ) as mock_record,
+        patch("skylos.llm.feedback.get_feedback_summary") as mock_summary,
+        patch(
+            "skylos.llm.verify_orchestrator._find_survivors",
+            return_value=[],
+        ),
+        patch(
+            "skylos.llm.verify_orchestrator.time.time",
+            side_effect=[100.0, 100.4],
+        ),
+        patch("skylos.llm.verify_orchestrator.logger.debug") as mock_debug,
+    ):
+        result = run_verification(
+            findings=findings,
+            defs_map={},
+            project_root=str(proj),
+            model="test",
+            api_key="test",
+            quiet=True,
+            enable_entry_discovery=False,
+        )
+
+    assert "feedback" not in result
+    assert result["verified_findings"][0]["_llm_verdict"] == "SKIPPED_HIGH_CONF"
+    assert result["stats"]["elapsed_seconds"] == 0.4
+    mock_record.assert_called_once()
+    mock_summary.assert_not_called()
+    mock_debug.assert_called_once()
+    mock_instance._call_llm.assert_not_called()
+
+
+@patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent")
 def test_run_verification_uses_repo_facts_for_pytest_class(MockAgent, tmp_path):
     mock_instance = MockAgent.return_value
 
@@ -1644,6 +1924,135 @@ def test_verify_stats_defaults():
     assert stats.total_findings == 0
     assert stats.verified_true_positive == 0
     assert stats.elapsed_seconds == 0.0
+
+
+def test_build_verification_output_applies_defaults_without_overwriting_fields():
+    findings = [
+        {
+            "name": "already_typed",
+            "full_name": "pkg.mod.already_typed",
+            "type": "method",
+            "references": 3,
+            "rule_id": "SKY-CUSTOM",
+            "_source": "prefilter",
+            "message": "keep this message",
+        }
+    ]
+    new_dead = [
+        {
+            "name": "listener",
+            "simple_name": "listener",
+            "file": "events.py",
+            "line": 9,
+            "_source": "registry_survivor_challenge",
+            "_llm_verdict": "TRUE_POSITIVE",
+            "message": "keep survivor message",
+        }
+    ]
+    stats = VerifyStats(
+        total_findings=2,
+        verified_true_positive=1,
+        survivors_challenged=1,
+        survivors_reclassified_dead=1,
+        llm_calls=2,
+        prompt_tokens=11,
+        completion_tokens=22,
+        total_tokens=33,
+        elapsed_seconds=1.7,
+    )
+
+    result = _build_verification_output(
+        findings=findings,
+        new_dead=new_dead,
+        discovered_eps=[
+            EntryPoint(
+                name="pkg.cli.main",
+                source="pyproject.toml",
+                reason="console_scripts",
+            )
+        ],
+        stats=stats,
+        verification_mode="production",
+    )
+
+    verified = result["verified_findings"][0]
+    assert verified["name"] == "already_typed"
+    assert verified["full_name"] == "pkg.mod.already_typed"
+    assert verified["type"] == "method"
+    assert verified["references"] == 3
+    assert verified["rule_id"] == "SKY-CUSTOM"
+    assert verified["_source"] == "prefilter"
+    assert verified["message"] == "keep this message"
+    assert verified["_category"] == "dead_code"
+
+    survivor = result["new_dead_code"][0]
+    assert survivor["name"] == "listener"
+    assert survivor["simple_name"] == "listener"
+    assert survivor["file"] == "events.py"
+    assert survivor["line"] == 9
+    assert survivor["full_name"] == "listener"
+    assert survivor["type"] == "function"
+    assert survivor["references"] == 0
+    assert survivor["rule_id"] == "SKY-DEAD-CHALLENGE"
+    assert survivor["_source"] == "registry_survivor_challenge"
+    assert survivor["message"] == "keep survivor message"
+    assert survivor["_category"] == "dead_code"
+
+    assert result["entry_points"] == [
+        {
+            "name": "pkg.cli.main",
+            "source": "pyproject.toml",
+            "reason": "console_scripts",
+        }
+    ]
+    assert result["stats"] == {
+        "total_findings": 2,
+        "verified_true_positive": 1,
+        "verified_false_positive": 0,
+        "deterministic_suppressed": 0,
+        "uncertain": 0,
+        "suppression_challenged": 0,
+        "suppression_reclassified_dead": 0,
+        "survivors_challenged": 1,
+        "survivors_reclassified_dead": 1,
+        "entry_points_discovered": 0,
+        "haiku_prefiltered": 0,
+        "llm_calls": 2,
+        "prompt_tokens": 11,
+        "completion_tokens": 22,
+        "total_tokens": 33,
+        "elapsed_seconds": 1.7,
+        "verification_mode": "production",
+    }
+
+
+def test_collect_feedback_adjustments_filters_and_formats_changes():
+    summary = {
+        "heuristic_types": {
+            "same_file_attr": {
+                "observations": 6,
+                "weight_change_pct": -20.0,
+                "default_weight": 1.0,
+                "tuned_weight": 0.8,
+            },
+            "same_pkg_attr": {
+                "observations": 4,
+                "weight_change_pct": -50.0,
+                "default_weight": 0.3,
+                "tuned_weight": 0.15,
+            },
+            "global_attr": {
+                "observations": 9,
+                "weight_change_pct": 5.0,
+                "default_weight": 0.1,
+                "tuned_weight": 0.105,
+            },
+        }
+    }
+
+    assert _collect_feedback_adjustments(summary) == [
+        "same_file_attr: 1.0 → 0.8 (-20%)"
+    ]
 
 
 def test_entry_point_dataclass():
