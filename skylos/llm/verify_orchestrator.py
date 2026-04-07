@@ -3334,6 +3334,102 @@ def _haiku_prefilter_exports(
     return kept, dismissed
 
 
+def _apply_dead_code_defaults(
+    items: list[dict[str, Any]],
+    *,
+    rule_id: str,
+    default_source: str,
+) -> None:
+    for item in items:
+        item.setdefault("_category", "dead_code")
+        item.setdefault("rule_id", rule_id)
+        item.setdefault("type", "function")
+        item.setdefault("full_name", item.get("name", "unknown"))
+        item.setdefault("references", 0)
+        item.setdefault("_source", default_source)
+        if not item.get("message"):
+            item["message"] = (
+                f"Unused {item.get('type', 'function')}: {item.get('name', 'unknown')}"
+            )
+
+
+def _build_verification_output(
+    findings: list[dict[str, Any]],
+    new_dead: list[dict[str, Any]],
+    discovered_eps: list[EntryPoint],
+    stats: VerifyStats,
+    verification_mode: str,
+) -> dict[str, Any]:
+    _apply_dead_code_defaults(
+        findings,
+        rule_id="SKY-DEAD",
+        default_source="static",
+    )
+    _apply_dead_code_defaults(
+        new_dead,
+        rule_id="SKY-DEAD-CHALLENGE",
+        default_source="llm_survivor_challenge",
+    )
+
+    return {
+        "verified_findings": findings,
+        "new_dead_code": new_dead,
+        "entry_points": [
+            {"name": ep.name, "source": ep.source, "reason": ep.reason}
+            for ep in discovered_eps
+        ],
+        "stats": {
+            "total_findings": stats.total_findings,
+            "verified_true_positive": stats.verified_true_positive,
+            "verified_false_positive": stats.verified_false_positive,
+            "deterministic_suppressed": stats.deterministic_suppressed,
+            "uncertain": stats.uncertain,
+            "suppression_challenged": stats.suppression_challenged,
+            "suppression_reclassified_dead": stats.suppression_reclassified_dead,
+            "survivors_challenged": stats.survivors_challenged,
+            "survivors_reclassified_dead": stats.survivors_reclassified_dead,
+            "entry_points_discovered": stats.entry_points_discovered,
+            "haiku_prefiltered": stats.haiku_prefiltered,
+            "llm_calls": stats.llm_calls,
+            "prompt_tokens": stats.prompt_tokens,
+            "completion_tokens": stats.completion_tokens,
+            "total_tokens": stats.total_tokens,
+            "elapsed_seconds": stats.elapsed_seconds,
+            "verification_mode": verification_mode,
+        },
+    }
+
+
+def _collect_feedback_adjustments(summary: dict[str, Any]) -> list[str]:
+    tuned_types = []
+    for htype, info in summary.get("heuristic_types", {}).items():
+        if info["observations"] >= 5:
+            change = info["weight_change_pct"]
+            if abs(change) > 5:
+                tuned_types.append(
+                    f"{htype}: {info['default_weight']} → {info['tuned_weight']} ({change:+.0f}%)"
+                )
+    return tuned_types
+
+
+def _attach_feedback_summary(output: dict[str, Any], log) -> None:
+    try:
+        from .feedback import record_verification_results, get_feedback_summary
+
+        record_verification_results(output)
+        summary = get_feedback_summary()
+
+        tuned_types = _collect_feedback_adjustments(summary)
+        if tuned_types:
+            log("\nFeedback loop — heuristic weight adjustments:")
+            for tuned in tuned_types:
+                log(f"  {tuned}")
+
+        output["feedback"] = summary
+    except Exception as e:
+        logger.debug(f"Feedback recording failed: {e}")
+
+
 def run_verification(
     findings: list[dict],
     defs_map: dict[str, Any],
@@ -3899,81 +3995,15 @@ def run_verification(
 
     log(f"\nDone in {stats.elapsed_seconds}s ({stats.llm_calls} LLM calls)")
 
-    for f in findings:
-        f.setdefault("_category", "dead_code")
-        f.setdefault("rule_id", "SKY-DEAD")
-        f.setdefault("type", "function")
-        f.setdefault("full_name", f.get("name", "unknown"))
-        f.setdefault("references", 0)
-        f.setdefault("_source", "static")
-        if not f.get("message"):
-            f["message"] = (
-                f"Unused {f.get('type', 'function')}: {f.get('name', 'unknown')}"
-            )
+    output = _build_verification_output(
+        findings=findings,
+        new_dead=new_dead,
+        discovered_eps=discovered_eps,
+        stats=stats,
+        verification_mode=verification_mode,
+    )
 
-    for f in new_dead:
-        f.setdefault("_category", "dead_code")
-        f.setdefault("rule_id", "SKY-DEAD-CHALLENGE")
-        f.setdefault("type", "function")
-        f.setdefault("full_name", f.get("name", "unknown"))
-        f.setdefault("references", 0)
-        f.setdefault("_source", "llm_survivor_challenge")
-        if not f.get("message"):
-            f["message"] = (
-                f"Unused {f.get('type', 'function')}: {f.get('name', 'unknown')}"
-            )
-
-    output = {
-        "verified_findings": findings,
-        "new_dead_code": new_dead,
-        "entry_points": [
-            {"name": ep.name, "source": ep.source, "reason": ep.reason}
-            for ep in discovered_eps
-        ],
-        "stats": {
-            "total_findings": stats.total_findings,
-            "verified_true_positive": stats.verified_true_positive,
-            "verified_false_positive": stats.verified_false_positive,
-            "deterministic_suppressed": stats.deterministic_suppressed,
-            "uncertain": stats.uncertain,
-            "suppression_challenged": stats.suppression_challenged,
-            "suppression_reclassified_dead": stats.suppression_reclassified_dead,
-            "survivors_challenged": stats.survivors_challenged,
-            "survivors_reclassified_dead": stats.survivors_reclassified_dead,
-            "entry_points_discovered": stats.entry_points_discovered,
-            "haiku_prefiltered": stats.haiku_prefiltered,
-            "llm_calls": stats.llm_calls,
-            "prompt_tokens": stats.prompt_tokens,
-            "completion_tokens": stats.completion_tokens,
-            "total_tokens": stats.total_tokens,
-            "elapsed_seconds": stats.elapsed_seconds,
-            "verification_mode": verification_mode,
-        },
-    }
-
-    try:
-        from .feedback import record_verification_results, get_feedback_summary
-
-        record_verification_results(output)
-        summary = get_feedback_summary()
-
-        tuned_types = []
-        for htype, info in summary.get("heuristic_types", {}).items():
-            if info["observations"] >= 5:
-                change = info["weight_change_pct"]
-                if abs(change) > 5:
-                    tuned_types.append(
-                        f"{htype}: {info['default_weight']} → {info['tuned_weight']} ({change:+.0f}%)"
-                    )
-
-        if tuned_types:
-            log("\nFeedback loop — heuristic weight adjustments:")
-            for t in tuned_types:
-                log(f"  {t}")
-
-        output["feedback"] = summary
-    except Exception as e:
-        logger.debug(f"Feedback recording failed: {e}")
+    _attach_feedback_summary(output, log)
 
     grep_cache.save(grep_root)
 
