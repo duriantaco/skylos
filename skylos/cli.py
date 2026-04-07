@@ -1803,6 +1803,12 @@ def _run_sync_command(argv):
     return run_sync_command(argv)
 
 
+def _run_project_command(argv):
+    from skylos.commands.project_cmd import run_project_command
+
+    return run_project_command(argv)
+
+
 def _run_city_command(argv):
     from skylos.commands.city_cmd import run_city_command
 
@@ -1829,6 +1835,7 @@ EARLY_COMMAND_HANDLERS = {
     "whoami": "_run_whoami_command",
     "login": "_run_login_command",
     "sync": "_run_sync_command",
+    "project": "_run_project_command",
     "city": "_run_city_command",
     "discover": "_run_discover_command",
     "defend": "run_defend_command",
@@ -4388,7 +4395,7 @@ def main() -> None:
             if (
                 err
                 and err
-                != "No token found. Run 'skylos sync connect' or set SKYLOS_TOKEN."
+                != "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN."
             ):
                 console.print(f"[warn]Upload failed: {err}[/warn]")
         else:
