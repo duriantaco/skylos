@@ -743,7 +743,7 @@ def upload_report(
     if not token:
         return {
             "success": False,
-            "error": "No token found. Run 'skylos login' or set SKYLOS_TOKEN.",
+            "error": "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
         }
 
     if not quiet:
@@ -825,7 +825,7 @@ def upload_report(
     if response.status_code == 401:
         return {
             "success": False,
-            "error": "Invalid API token. Run 'skylos sync connect' to reconnect.",
+            "error": "Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
         }
 
     if response.status_code == 402:
@@ -933,7 +933,7 @@ def upload_defense_report(defense_json_str, quiet=False) -> dict:
     if not token:
         return {
             "success": False,
-            "error": "No token found. Run 'skylos login' or set SKYLOS_TOKEN.",
+            "error": "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
         }
 
     import json as _json
@@ -981,7 +981,7 @@ def upload_defense_report(defense_json_str, quiet=False) -> dict:
             print(" failed.")
         return {
             "success": False,
-            "error": "Invalid API token. Run 'skylos sync connect' to reconnect.",
+            "error": "Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
         }
 
     if response.status_code == 402:
@@ -1062,7 +1062,7 @@ def verify_report(result_json, quiet=False) -> dict:
     if not token:
         return {
             "success": False,
-            "error": "Verification requires Pro token. Run 'skylos sync connect' or set SKYLOS_TOKEN.",
+            "error": "Verification requires a valid Skylos token. Run 'skylos login' or set SKYLOS_TOKEN.",
         }
 
     info = get_project_info(token) or {}

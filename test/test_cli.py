@@ -594,6 +594,17 @@ def test_main_sync_subcommand_calls_sync_main_and_exits(monkeypatch):
     fake_sync.main.assert_called_once_with(["--pull"])
 
 
+def test_main_project_subcommand_calls_project_main_and_exits(monkeypatch):
+    fake_project = types.SimpleNamespace(run_project_command=Mock(return_value=0))
+    monkeypatch.setitem(sys.modules, "skylos.commands.project_cmd", fake_project)
+
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", "project", "status"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 0
+    fake_project.run_project_command.assert_called_once_with(["status"])
+
+
 def test_main_sarif_maps_categories_rule_ids_and_lines(monkeypatch, tmp_path):
     result = {
         "analysis_summary": {"total_files": 1},

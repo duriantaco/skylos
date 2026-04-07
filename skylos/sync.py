@@ -90,14 +90,14 @@ def _linked_project_id(repo_root: Path):
         return None
 
 
-# def _read_link(repo_root: Path):
-#     p = repo_root / SKYLOS_DIR / LINK_FILE
-#     if not p.exists():
-#         return {}
-#     try:
-#         return json.loads(p.read_text() or "{}")
-#     except Exception:
-#         return {}
+def _read_link(repo_root: Path):
+    p = repo_root / SKYLOS_DIR / LINK_FILE
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text() or "{}")
+    except Exception:
+        return {}
 
 
 def _write_link(
@@ -132,6 +132,14 @@ def _write_link(
 
     link_path.write_text(json.dumps(payload, indent=2))
     return str(link_path)
+
+
+def _delete_link(repo_root: Path):
+    p = repo_root / SKYLOS_DIR / LINK_FILE
+    if not p.exists():
+        return None
+    p.unlink()
+    return str(p)
 
 
 def get_api_url():
@@ -317,7 +325,7 @@ def cmd_status():
 
     if not token:
         print("\nNot connected to Skylos Cloud.")
-        print("Run 'skylos sync connect' to connect.\n")
+        print("Run 'skylos login' or 'skylos sync connect' to connect.\n")
         return
 
     print(f"\nChecking connection...")
@@ -326,7 +334,9 @@ def cmd_status():
         info = api_get("/api/sync/whoami", token)
     except AuthError as e:
         print(f"\n✗ {e}")
-        print("Run 'skylos sync connect' to reconnect.\n")
+        print(
+            "Run 'skylos login' to reconnect, or 'skylos sync connect' to set a token manually.\n"
+        )
         return
 
     project = info.get("project", {})
@@ -346,12 +356,124 @@ def cmd_disconnect():
         print("No saved credentials found.")
 
 
+def _iter_saved_projects():
+    data = _load_creds()
+    tokens = data.get("tokens") or {}
+    items = []
+    for project_id, entry in tokens.items():
+        if not isinstance(entry, dict):
+            continue
+        items.append(
+            {
+                "project_id": str(project_id),
+                "project_name": entry.get("project_name") or "Unknown",
+                "org_name": entry.get("org_name") or "Unknown",
+                "plan": entry.get("plan") or data.get("plan") or "free",
+                "saved_at": entry.get("saved_at") or "",
+            }
+        )
+    items.sort(key=lambda item: item["saved_at"], reverse=True)
+    return items
+
+
+def cmd_project_status():
+    repo_root = _find_repo_root()
+    link = _read_link(repo_root)
+    linked_project_id = link.get("project_id")
+    active = None
+    token = get_token()
+
+    if token:
+        try:
+            active = api_get("/api/sync/whoami", token)
+        except AuthError:
+            active = None
+
+    print("\nSkylos Project Status\n")
+    print(f"  Repo:         {repo_root}")
+
+    if linked_project_id:
+        print(f"  Linked ID:    {linked_project_id}")
+        if link.get("project_name"):
+            print(f"  Linked Name:  {link.get('project_name')}")
+        if link.get("org_name"):
+            print(f"  Linked Org:   {link.get('org_name')}")
+    else:
+        print("  Linked ID:    none")
+
+    if os.environ.get("SKYLOS_TOKEN"):
+        print("  Token Source: SKYLOS_TOKEN")
+    elif linked_project_id:
+        print("  Token Source: linked project")
+    elif token:
+        print("  Token Source: saved default token")
+    else:
+        print("  Token Source: none")
+
+    if active:
+        project = active.get("project", {})
+        org = active.get("organization", {})
+        print(f"  Active Name:  {project.get('name', 'Unknown')}")
+        print(f"  Active Org:   {org.get('name', 'My Workspace')}")
+        print(f"  Plan:         {active.get('plan', 'free').capitalize()}")
+    else:
+        print("  Active Name:  not connected")
+
+    if not linked_project_id:
+        print("\nUse 'skylos project use' to select or create a project for this repo.")
+
+
+def cmd_project_list():
+    repo_root = _find_repo_root()
+    linked_project_id = _linked_project_id(repo_root)
+    items = _iter_saved_projects()
+
+    if not items:
+        print("\nNo saved Skylos projects found.")
+        print("Run 'skylos login' or 'skylos project use' first.\n")
+        return
+
+    print("\nKnown Skylos Projects\n")
+    for item in items:
+        marker = "*" if item["project_id"] == linked_project_id else " "
+        print(f"{marker} {item['project_name']}  [{item['project_id']}]")
+        print(f"    Org: {item['org_name']}   Plan: {str(item['plan']).capitalize()}")
+
+    if linked_project_id:
+        print("\n* active for this repo")
+    else:
+        print("\nNo active repo link. Use 'skylos project use' to select one.")
+
+
+def cmd_project_use():
+    from skylos.login import run_login
+
+    result = run_login()
+    if result is None:
+        print("Project selection cancelled.")
+
+
+def cmd_project_create():
+    print("\nOpening the Skylos project chooser.")
+    print("Create a new project in the browser and it will be linked to this repo.\n")
+    cmd_project_use()
+
+
+def cmd_project_unlink():
+    repo_root = _find_repo_root()
+    link_path = _delete_link(repo_root)
+    if link_path:
+        print(f"✓ Removed repo link: {link_path}")
+    else:
+        print("No repo link found.")
+
+
 def cmd_pull():
     token = get_token()
 
     if not token:
         print("Error: Not connected.")
-        print("Run 'skylos sync connect' first.")
+        print("Run 'skylos login' or 'skylos sync connect' first.")
         sys.exit(1)
 
     repo_root = _find_repo_root()
@@ -676,7 +798,8 @@ def cmd_upgrade():
     token = get_token()
     if not token:
         print("✗ Not connected.")
-        print("Run: skylos sync connect <token>\n")
+        print("Run: skylos login")
+        print("Or:  skylos sync connect <token>\n")
         return
 
     print("Checking plan...")
@@ -779,6 +902,38 @@ def main(args=None):
         cmd_setup(args[1] if len(args) > 1 else None)
     elif cmd == "upgrade":
         cmd_upgrade()
+    else:
+        print(f"Unknown command: {cmd}")
+        sys.exit(1)
+
+
+def project_main(args=None):
+    if args is None:
+        args = sys.argv[1:]
+
+    if not args:
+        print("Usage: skylos project <command>")
+        print("")
+        print("Commands:")
+        print("  status    Show the active project for this repo")
+        print("  list      Show locally known projects")
+        print("  use       Select or create a project for this repo")
+        print("  create    Open the browser flow and create a new project")
+        print("  unlink    Remove the local repo-to-project link")
+        return
+
+    cmd = args[0].lower()
+
+    if cmd == "status":
+        cmd_project_status()
+    elif cmd == "list":
+        cmd_project_list()
+    elif cmd == "use":
+        cmd_project_use()
+    elif cmd == "create":
+        cmd_project_create()
+    elif cmd == "unlink":
+        cmd_project_unlink()
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)
