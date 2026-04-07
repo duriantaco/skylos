@@ -195,7 +195,9 @@ def test_cmd_disconnect(isolated_creds, capsys):
     assert "No saved credentials" in out2
 
 
-def test_cmd_project_unlink_removes_only_link(isolated_creds, monkeypatch, tmp_path, capsys):
+def test_cmd_project_unlink_removes_only_link(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
     repo_root = tmp_path / "repo"
     link_path = repo_root / ".skylos" / "link.json"
     link_path.parent.mkdir(parents=True, exist_ok=True)
@@ -215,7 +217,9 @@ def test_cmd_project_unlink_removes_only_link(isolated_creds, monkeypatch, tmp_p
     assert creds_file.exists()
 
 
-def test_cmd_project_list_marks_active_project(isolated_creds, monkeypatch, tmp_path, capsys):
+def test_cmd_project_list_marks_active_project(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
     repo_root = tmp_path / "repo"
     link_path = repo_root / ".skylos" / "link.json"
     link_path.parent.mkdir(parents=True, exist_ok=True)

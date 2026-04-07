@@ -334,7 +334,9 @@ def cmd_status():
         info = api_get("/api/sync/whoami", token)
     except AuthError as e:
         print(f"\n✗ {e}")
-        print("Run 'skylos login' to reconnect, or 'skylos sync connect' to set a token manually.\n")
+        print(
+            "Run 'skylos login' to reconnect, or 'skylos sync connect' to set a token manually.\n"
+        )
         return
 
     project = info.get("project", {})
@@ -434,12 +436,8 @@ def cmd_project_list():
     print("\nKnown Skylos Projects\n")
     for item in items:
         marker = "*" if item["project_id"] == linked_project_id else " "
-        print(
-            f"{marker} {item['project_name']}  [{item['project_id']}]"
-        )
-        print(
-            f"    Org: {item['org_name']}   Plan: {str(item['plan']).capitalize()}"
-        )
+        print(f"{marker} {item['project_name']}  [{item['project_id']}]")
+        print(f"    Org: {item['org_name']}   Plan: {str(item['plan']).capitalize()}")
 
     if linked_project_id:
         print("\n* active for this repo")

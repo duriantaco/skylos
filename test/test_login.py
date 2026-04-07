@@ -73,8 +73,12 @@ def test_run_login_existing_cancel_keeps_current(monkeypatch):
         plan="pro",
     )
 
-    monkeypatch.setattr(loginmod, "get_current_connection", lambda base_url=None: existing)
-    monkeypatch.setattr(loginmod, "browser_login", lambda console=None, base_url=None: None)
+    monkeypatch.setattr(
+        loginmod, "get_current_connection", lambda base_url=None: existing
+    )
+    monkeypatch.setattr(
+        loginmod, "browser_login", lambda console=None, base_url=None: None
+    )
 
     manual = Mock(return_value=None)
     save = Mock()
