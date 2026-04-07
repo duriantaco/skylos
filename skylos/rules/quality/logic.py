@@ -16,6 +16,17 @@ MUTABLE_CONSTRUCTORS = {
 }
 
 
+def _string_literal_value(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+
+    value = getattr(node, "value", None)
+    if isinstance(value, str):
+        return value
+
+    return None
+
+
 class MutableDefaultRule(SkylosRule):
     rule_id = "SKY-L001"
     name = "Mutable Default Argument"
@@ -1355,14 +1366,8 @@ class UnfinishedGenerationRule(SkylosRule):
             return None
 
         stmts = body
-        if isinstance(body[0], ast.Expr) and isinstance(
-            body[0].value, (ast.Constant, ast.Str)
-        ):
-            val = body[0].value
-            if isinstance(val, ast.Constant) and isinstance(val.value, str):
-                stmts = body[1:]
-            elif isinstance(val, ast.Str):
-                stmts = body[1:]
+        if isinstance(body[0], ast.Expr) and _string_literal_value(body[0].value):
+            stmts = body[1:]
 
         if not stmts:
             return None

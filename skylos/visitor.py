@@ -1994,12 +1994,21 @@ class Visitor(ast.NodeVisitor):
 
     def visit_annotation(self, node: Optional[ast.expr]) -> None:
         if node is not None:
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                self.visit_string_annotation(node.value)
-            elif hasattr(node, "s") and isinstance(node.s, str):
-                self.visit_string_annotation(node.s)
+            annotation_str = self._annotation_string_value(node)
+            if annotation_str is not None:
+                self.visit_string_annotation(annotation_str)
             else:
                 self.visit(node)
+
+    def _annotation_string_value(self, node: ast.expr) -> Optional[str]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+
+        legacy_value = getattr(node, "value", None)
+        if isinstance(legacy_value, str):
+            return legacy_value
+
+        return None
 
     def visit_string_annotation(self, annotation_str: str) -> None:
         if not isinstance(annotation_str, str):
