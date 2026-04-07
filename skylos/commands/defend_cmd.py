@@ -5,6 +5,30 @@ from pathlib import Path
 from rich.progress import SpinnerColumn, TextColumn
 
 
+def _build_empty_defense_json() -> str:
+    return json.dumps(
+        {
+            "version": "1.0",
+            "summary": {
+                "integrations_found": 0,
+                "total_checks": 0,
+                "passed": 0,
+                "failed": 0,
+                "score_pct": 100,
+                "risk_rating": "SECURE",
+            },
+            "findings": [],
+            "ops_score": {
+                "passed": 0,
+                "total": 0,
+                "score_pct": 100,
+                "rating": "EXCELLENT",
+            },
+        },
+        indent=2,
+    )
+
+
 def run_defend_command(
     argv: list[str],
     *,
@@ -128,27 +152,7 @@ def run_defend_command(
 
     if not integrations:
         if def_args.output_json:
-            empty = json.dumps(
-                {
-                    "version": "1.0",
-                    "summary": {
-                        "integrations_found": 0,
-                        "total_checks": 0,
-                        "passed": 0,
-                        "failed": 0,
-                        "score_pct": 100,
-                        "risk_rating": "SECURE",
-                    },
-                    "findings": [],
-                    "ops_score": {
-                        "passed": 0,
-                        "total": 0,
-                        "score_pct": 100,
-                        "rating": "EXCELLENT",
-                    },
-                },
-                indent=2,
-            )
+            empty = _build_empty_defense_json()
             if def_args.output_file:
                 Path(def_args.output_file).write_text(empty, encoding="utf-8")
             else:
@@ -169,8 +173,9 @@ def run_defend_command(
 
     owasp_coverage = compute_owasp_coverage(results)
 
-    if def_args.output_json:
-        output = format_defense_json(
+    json_output = None
+    if def_args.output_json or def_args.upload:
+        json_output = format_defense_json(
             results,
             score,
             len(integrations),
@@ -180,6 +185,9 @@ def run_defend_command(
             ops_score,
             integrations=integrations,
         )
+
+    if def_args.output_json:
+        output = json_output
     else:
         output = format_defense_table(
             results,
@@ -205,17 +213,7 @@ def run_defend_command(
     if def_args.upload:
         from skylos.api import upload_defense_report
 
-        json_for_upload = format_defense_json(
-            results,
-            score,
-            len(integrations),
-            len(files),
-            str(target),
-            owasp_coverage,
-            ops_score,
-            integrations=integrations,
-        )
-        upload_result = upload_defense_report(json_for_upload)
+        upload_result = upload_defense_report(json_output)
         if not upload_result.get("success"):
             console.print(
                 f"[red]Upload failed: {upload_result.get('error', 'Unknown')}[/red]"
