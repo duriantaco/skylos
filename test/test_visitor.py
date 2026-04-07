@@ -2,6 +2,7 @@
 
 import ast
 import unittest
+import warnings
 from pathlib import Path
 import tempfile
 
@@ -687,6 +688,30 @@ def function_with_complex_annotation(param: Dict[str, List["NestedType"]]) -> No
 
         functions = [d for d in visitor.defs if d.type == "function"]
         self.assertEqual(len(functions), 2)
+
+    def test_malformed_annotations_no_deprecation_warning(self):
+        code = """
+def function_with_annotation(param: "SomeType") -> "ReturnType":
+    pass
+
+def function_with_complex_annotation(param: Dict[str, List["NestedType"]]) -> None:
+    pass
+"""
+        tree = ast.parse(code)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self.visitor.visit(tree)
+
+        functions = [d for d in self.visitor.defs if d.type == "function"]
+        self.assertEqual(len(functions), 2)
+        self.assertEqual(
+            [
+                str(w.message)
+                for w in caught
+                if issubclass(w.category, DeprecationWarning)
+            ],
+            [],
+        )
 
     def test_import_aliases_fix(self):
         """Test the fix from issue in #8"""
