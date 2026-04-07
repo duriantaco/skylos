@@ -1022,6 +1022,100 @@ def fake_call():
 
         assert dependency_findings == []
 
+    def test_analyze_repo_rules_use_root_project_ignore_config(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text(
+            """
+[tool.skylos]
+ignore = ["SKY-L021", "SKY-D222", "SKY-D260"]
+""".strip(),
+            encoding="utf-8",
+        )
+        root_file = tmp_path / "app.py"
+        root_file.write_text("def root_fn():\n    return 1\n", encoding="utf-8")
+
+        nested = tmp_path / "packages" / "nested"
+        nested.mkdir(parents=True)
+        (nested / "pyproject.toml").write_text(
+            """
+[tool.skylos]
+ignore = []
+""".strip(),
+            encoding="utf-8",
+        )
+        nested_file = nested / "module.py"
+        nested_file.write_text("def nested_fn():\n    return 2\n", encoding="utf-8")
+
+        diff_result = Mock(returncode=0, stdout="diff")
+        real_subprocess_run = subprocess.run
+
+        def selective_subprocess_run(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args")
+            if cmd[:4] == ["git", "diff", "HEAD", "--"]:
+                return diff_result
+            return real_subprocess_run(*args, **kwargs)
+
+        with (
+            patch(
+                "subprocess.run",
+                side_effect=selective_subprocess_run,
+            ),
+            patch(
+                "skylos.rules.quality.regression.detect_security_regressions",
+                return_value=[
+                    {
+                        "rule_id": "SKY-L021",
+                        "file": str(root_file),
+                        "line": 1,
+                        "message": "regression",
+                    }
+                ],
+            ),
+            patch(
+                "skylos.rules.danger.danger_hallucination.dependency_hallucination.scan_python_dependency_hallucinations",
+                return_value=[
+                    {
+                        "rule_id": "SKY-D222",
+                        "file": str(root_file),
+                        "line": 1,
+                        "message": "dependency hallucination",
+                    }
+                ],
+            ),
+            patch(
+                "skylos.injection_scanner.scan_file",
+                return_value=[
+                    {
+                        "rule_id": "SKY-D260",
+                        "file": str(root_file),
+                        "line": 1,
+                        "message": "prompt injection",
+                    }
+                ],
+            ),
+        ):
+            result = json.loads(
+                analyze(
+                    [str(root_file), str(nested_file)],
+                    conf=0,
+                    enable_danger=True,
+                    enable_quality=True,
+                    changed_files={str(root_file.resolve())},
+                    grep_verify=False,
+                )
+            )
+
+        assert "error" not in result
+        quality_rule_ids = {
+            finding.get("rule_id") for finding in result.get("quality", [])
+        }
+        danger_rule_ids = {
+            finding.get("rule_id") for finding in result.get("danger", [])
+        }
+
+        assert "SKY-L021" not in quality_rule_ids
+        assert "SKY-D222" not in danger_rule_ids
+        assert "SKY-D260" not in danger_rule_ids
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -1,4 +1,5 @@
 import os
+import json
 import importlib
 import subprocess
 import unittest
@@ -7,6 +8,7 @@ from unittest.mock import patch, MagicMock, mock_open
 import skylos.api as api
 from skylos.api import (
     upload_report,
+    upload_defense_report,
     extract_snippet,
     get_git_info,
     _detect_ci,
@@ -83,6 +85,32 @@ class TestSkylosApi(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(mock_post.call_count, 3)
         self.assertIn("Server Error 500", result["error"])
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("requests.post")
+    def test_upload_defense_report_retry_logic(
+        self, mock_post, _mock_root, _mock_git_info, mock_token
+    ):
+        mock_token.return_value = "token"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_post.return_value = mock_response
+
+        result = upload_defense_report(
+            json.dumps({"summary": {"score_pct": 92, "risk_rating": "LOW"}}),
+            quiet=True,
+        )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(mock_post.call_count, 3)
+        self.assertIn("Server Error 500", result["error"])
+        args, kwargs = mock_post.call_args
+        payload = kwargs["json"]
+        self.assertEqual(payload["tool"], "skylos-defend")
 
     def test_extract_snippet_valid(self):
         content = "line1\nline2\nline3\nline4\nline5\n"

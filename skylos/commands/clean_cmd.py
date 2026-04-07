@@ -12,6 +12,8 @@ from skylos.codemods import (
     remove_unused_import_cst,
 )
 
+SUPPORTED_FINDING_TYPES = {"function", "import"}
+
 
 def run_analyze(*args, **kwargs):
     from skylos.analyzer import analyze as run_analyze_impl
@@ -28,6 +30,19 @@ def _apply_codemod(file_path, transform, *transform_args, **transform_kwargs):
     return changed
 
 
+def _collect_findings(items, finding_type):
+    return [
+        {
+            "type": finding_type,
+            "name": item.get("name", ""),
+            "file": item.get("file", ""),
+            "line": item.get("line", 0),
+            "confidence": item.get("confidence", 100),
+        }
+        for item in items
+    ]
+
+
 def run_clean_command(argv: list[str]) -> int:
     console = Console()
     path = argv[0] if argv else "."
@@ -42,55 +57,47 @@ def run_clean_command(argv: list[str]) -> int:
 
     result = json.loads(run_analyze(path))
 
-    findings = []
-    for fn in result.get("unused_functions", []):
-        findings.append(
-            {
-                "type": "function",
-                "name": fn.get("name", ""),
-                "file": fn.get("file", ""),
-                "line": fn.get("line", 0),
-                "confidence": fn.get("confidence", 100),
-            }
-        )
-    for imp in result.get("unused_imports", []):
-        findings.append(
-            {
-                "type": "import",
-                "name": imp.get("name", ""),
-                "file": imp.get("file", ""),
-                "line": imp.get("line", 0),
-                "confidence": imp.get("confidence", 100),
-            }
-        )
-    for var in result.get("unused_variables", []):
-        findings.append(
-            {
-                "type": "variable",
-                "name": var.get("name", ""),
-                "file": var.get("file", ""),
-                "line": var.get("line", 0),
-                "confidence": var.get("confidence", 100),
-            }
-        )
-    for cls in result.get("unused_classes", []):
-        findings.append(
-            {
-                "type": "class",
-                "name": cls.get("name", ""),
-                "file": cls.get("file", ""),
-                "line": cls.get("line", 0),
-                "confidence": cls.get("confidence", 100),
-            }
-        )
+    all_findings = []
+    all_findings.extend(
+        _collect_findings(result.get("unused_functions", []), "function")
+    )
+    all_findings.extend(_collect_findings(result.get("unused_imports", []), "import"))
+    all_findings.extend(
+        _collect_findings(result.get("unused_variables", []), "variable")
+    )
+    all_findings.extend(_collect_findings(result.get("unused_classes", []), "class"))
+    all_findings.sort(key=lambda f: -f["confidence"])
 
-    findings.sort(key=lambda f: -f["confidence"])
-
-    if not findings:
+    if not all_findings:
         console.print("[green]No dead code found. Your codebase is clean![/green]")
         return 0
 
-    console.print(f"Found [bold]{len(findings)}[/bold] potential dead code items.\n")
+    unsupported_findings = [
+        finding
+        for finding in all_findings
+        if finding["type"] not in SUPPORTED_FINDING_TYPES
+    ]
+    findings = [
+        finding
+        for finding in all_findings
+        if finding["type"] in SUPPORTED_FINDING_TYPES
+    ]
+
+    if unsupported_findings:
+        unsupported_types = ", ".join(
+            sorted({finding["type"] for finding in unsupported_findings})
+        )
+        count = len(unsupported_findings)
+        console.print(
+            f"[yellow]Skipping {count} unsupported dead code item{'s' if count != 1 else ''} "
+            f"({unsupported_types}). Automatic edits currently support imports and functions only.[/yellow]\n"
+        )
+
+    if not findings:
+        console.print("[dim]No actionable dead code edits found.[/dim]")
+        return 0
+
+    console.print(f"Found [bold]{len(findings)}[/bold] actionable dead code items.\n")
 
     to_remove = []
     to_comment = []
