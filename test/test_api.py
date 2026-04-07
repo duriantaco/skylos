@@ -791,6 +791,39 @@ class TestVerifyReport(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertIn("No security findings", result["error"])
 
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_project_info")
+    @patch("skylos.api.get_git_info", return_value=("sha", "branch", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("requests.post")
+    def test_verify_report_normalizes_payload(
+        self, mock_post, _, _git, mock_info, mock_token
+    ):
+        mock_token.return_value = "token"
+        mock_info.return_value = {"plan": "pro"}
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"results": []}
+        mock_post.return_value = resp
+
+        from skylos.api import verify_report
+
+        result = verify_report(
+            {
+                "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
+                "secrets": [{"file": "secret.py", "line": 7, "message": "shh"}],
+            },
+            quiet=True,
+        )
+
+        self.assertTrue(result["success"])
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(len(payload["findings"]), 2)
+        self.assertEqual(payload["findings"][0]["category"], "SECURITY")
+        self.assertEqual(payload["findings"][0]["finding_id"], "SKY-D000::app.py::5")
+        self.assertEqual(payload["findings"][1]["category"], "SECRET")
+        self.assertEqual(payload["findings"][1]["finding_id"], "SKY-S000::secret.py::7")
+
 
 if __name__ == "__main__":
     unittest.main()
