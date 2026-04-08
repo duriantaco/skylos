@@ -481,63 +481,82 @@ class EmptyErrorHandlerRule(SkylosRule):
         findings = []
 
         if isinstance(node, ast.ExceptHandler):
-            exc_name = _exception_type_name(node.type)
-            if exc_name in _INTENTIONAL_EXCEPTIONS:
+            except_finding = self._check_except_handler(node, context)
+            if except_finding is None and _exception_type_name(node.type) in (
+                _INTENTIONAL_EXCEPTIONS
+            ):
                 return None
-
-            if not node.body:
-                findings.append(self._make_finding(node, context, "MEDIUM", "empty"))
-            elif _handler_has_real_work(node.body):
-                return None
-            elif _handler_body_is_trivial(node.body):
-                has_return = any(isinstance(s, ast.Return) for s in node.body)
-                severity = "HIGH" if has_return else "MEDIUM"
-                findings.append(self._make_finding(node, context, severity, "trivial"))
+            if except_finding:
+                findings.append(except_finding)
 
         if isinstance(node, ast.With):
-            for item in node.items:
-                ctx_expr = item.context_expr
-                if isinstance(ctx_expr, ast.Call):
-                    func = ctx_expr.func
-                    is_suppress = False
-                    if isinstance(func, ast.Attribute) and func.attr == "suppress":
-                        if (
-                            isinstance(func.value, ast.Name)
-                            and func.value.id == "contextlib"
-                        ):
-                            is_suppress = True
-                    if isinstance(func, ast.Name) and func.id == "suppress":
-                        is_suppress = True
-
-                    if is_suppress and ctx_expr.args:
-                        for arg in ctx_expr.args:
-                            arg_name = None
-                            if isinstance(arg, ast.Name):
-                                arg_name = arg.id
-                            elif isinstance(arg, ast.Attribute):
-                                arg_name = arg.attr
-                            if arg_name in ("Exception", "BaseException"):
-                                findings.append(
-                                    {
-                                        "rule_id": self.rule_id,
-                                        "kind": "logic",
-                                        "severity": "MEDIUM",
-                                        "type": "block",
-                                        "name": "suppress",
-                                        "simple_name": "suppress",
-                                        "value": "broad",
-                                        "threshold": 0,
-                                        "message": f"contextlib.suppress({arg_name}) silently swallows all errors.",
-                                        "file": context.get("filename"),
-                                        "basename": Path(
-                                            context.get("filename", "")
-                                        ).name,
-                                        "line": node.lineno,
-                                        "col": node.col_offset,
-                                    }
-                                )
+            findings.extend(self._check_with_suppress(node, context))
 
         return findings if findings else None
+
+    def _check_except_handler(self, node, context):
+        exc_name = _exception_type_name(node.type)
+        if exc_name in _INTENTIONAL_EXCEPTIONS:
+            return None
+
+        if not node.body:
+            return self._make_finding(node, context, "MEDIUM", "empty")
+
+        if _handler_has_real_work(node.body):
+            return None
+
+        if _handler_body_is_trivial(node.body):
+            has_return = any(isinstance(stmt, ast.Return) for stmt in node.body)
+            severity = "HIGH" if has_return else "MEDIUM"
+            return self._make_finding(node, context, severity, "trivial")
+
+        return None
+
+    def _check_with_suppress(self, node, context):
+        findings = []
+        for item in node.items:
+            ctx_expr = item.context_expr
+            if not isinstance(ctx_expr, ast.Call):
+                continue
+
+            if not self._is_contextlib_suppress_call(ctx_expr):
+                continue
+
+            for arg_name in self._iter_broad_suppress_args(ctx_expr):
+                findings.append(
+                    {
+                        "rule_id": self.rule_id,
+                        "kind": "logic",
+                        "severity": "MEDIUM",
+                        "type": "block",
+                        "name": "suppress",
+                        "simple_name": "suppress",
+                        "value": "broad",
+                        "threshold": 0,
+                        "message": f"contextlib.suppress({arg_name}) silently swallows all errors.",
+                        "file": context.get("filename"),
+                        "basename": Path(context.get("filename", "")).name,
+                        "line": node.lineno,
+                        "col": node.col_offset,
+                    }
+                )
+        return findings
+
+    def _is_contextlib_suppress_call(self, call):
+        func = call.func
+        if isinstance(func, ast.Attribute) and func.attr == "suppress":
+            return isinstance(func.value, ast.Name) and func.value.id == "contextlib"
+        return isinstance(func, ast.Name) and func.id == "suppress"
+
+    def _iter_broad_suppress_args(self, call):
+        for arg in call.args:
+            arg_name = None
+            if isinstance(arg, ast.Name):
+                arg_name = arg.id
+            elif isinstance(arg, ast.Attribute):
+                arg_name = arg.attr
+            if arg_name in ("Exception", "BaseException"):
+                yield arg_name
 
     def _make_finding(self, node, context, severity, value):
         return {
@@ -644,33 +663,57 @@ class MissingResourceCleanupRule(SkylosRule):
             return
 
         if isinstance(stmt, ast.Try):
-            for sub in stmt.body:
-                self._check_stmt(sub, context, findings, scope_body)
-            for sub in stmt.orelse:
-                self._check_stmt(sub, context, findings, scope_body)
+            self._check_try_stmt(stmt, context, findings, scope_body)
             return
 
-        if isinstance(stmt, ast.Assign):
-            if isinstance(stmt.value, ast.Call):
-                resource_name = _call_matches_resource(stmt.value)
-                if resource_name:
-                    if not self._is_inside_with(stmt, scope_body):
-                        var_name = self._get_assign_name(stmt)
-                        if var_name:
-                            if self._is_returned_or_yielded(var_name, scope_body):
-                                return
-                            if self._has_close_in_finally(var_name, scope_body):
-                                return
-                        findings.append(
-                            self._make_finding(stmt, context, resource_name)
-                        )
+        assignment_finding = self._check_resource_assignment(stmt, context, scope_body)
+        if assignment_finding:
+            findings.append(assignment_finding)
 
-        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-            resource_name = _call_matches_resource(stmt.value)
-            if resource_name:
-                if not self._is_inside_with(stmt, scope_body):
-                    findings.append(self._make_finding(stmt, context, resource_name))
+        expression_finding = self._check_resource_expression(stmt, context, scope_body)
+        if expression_finding:
+            findings.append(expression_finding)
 
+        self._check_nested_statements(stmt, context, findings, scope_body)
+
+    def _check_try_stmt(self, stmt, context, findings, scope_body):
+        for sub in stmt.body:
+            self._check_stmt(sub, context, findings, scope_body)
+        for sub in stmt.orelse:
+            self._check_stmt(sub, context, findings, scope_body)
+
+    def _check_resource_assignment(self, stmt, context, scope_body):
+        if not isinstance(stmt, ast.Assign):
+            return None
+        if not isinstance(stmt.value, ast.Call):
+            return None
+
+        resource_name = _call_matches_resource(stmt.value)
+        if not resource_name or self._is_inside_with(stmt, scope_body):
+            return None
+
+        var_name = self._get_assign_name(stmt)
+        if var_name:
+            if self._is_returned_or_yielded(var_name, scope_body):
+                return None
+            if self._has_close_in_finally(var_name, scope_body):
+                return None
+
+        return self._make_finding(stmt, context, resource_name)
+
+    def _check_resource_expression(self, stmt, context, scope_body):
+        if not isinstance(stmt, ast.Expr):
+            return None
+        if not isinstance(stmt.value, ast.Call):
+            return None
+
+        resource_name = _call_matches_resource(stmt.value)
+        if not resource_name or self._is_inside_with(stmt, scope_body):
+            return None
+
+        return self._make_finding(stmt, context, resource_name)
+
+    def _check_nested_statements(self, stmt, context, findings, scope_body):
         for child in ast.iter_child_nodes(stmt):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue
