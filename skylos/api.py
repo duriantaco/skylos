@@ -2,11 +2,17 @@ import os
 import logging
 import requests
 import subprocess
+import contextlib
+import gzip
+import hashlib
 from skylos.credentials import get_key
 from skylos.sarif_exporter import SarifExporter
 import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 import json
+from typing import Any
 
 from skylos.constants import (
     NETWORK_TIMEOUT_SHORT,
@@ -147,9 +153,13 @@ BASE_URL = os.getenv("SKYLOS_API_URL", "https://skylos.dev").rstrip("/")
 
 if BASE_URL.endswith("/api"):
     REPORT_URL = f"{BASE_URL}/report"
+    REPORT_INIT_URL = f"{BASE_URL}/report/init"
+    REPORT_COMPLETE_URL = f"{BASE_URL}/report/complete"
     WHOAMI_URL = f"{BASE_URL}/sync/whoami"
 else:
     REPORT_URL = f"{BASE_URL}/api/report"
+    REPORT_INIT_URL = f"{BASE_URL}/api/report/init"
+    REPORT_COMPLETE_URL = f"{BASE_URL}/api/report/complete"
     WHOAMI_URL = f"{BASE_URL}/api/sync/whoami"
 
 if BASE_URL.endswith("/api"):
@@ -158,6 +168,9 @@ if BASE_URL.endswith("/api"):
 else:
     VERIFY_URL = f"{BASE_URL}/api/verify"
     AGENT_RUNS_URL = f"{BASE_URL}/api/agent-runs"
+
+
+UPLOAD_PROTOCOL_VERSION = 1
 
 
 def _try_github_oidc_token():
@@ -388,6 +401,96 @@ def _build_auth_headers(token):
             "X-Skylos-Auth": "oidc",
         }
     return {"Authorization": f"Bearer {token}"}
+
+
+def _truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _legacy_inline_upload_limit_bytes() -> int:
+    raw = os.getenv("SKYLOS_INLINE_UPLOAD_LIMIT_BYTES", "4000000").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 4_000_000
+    return max(value, 1)
+
+
+def _json_size_bytes(payload: Any) -> int:
+    return len(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@dataclass
+class UploadArtifact:
+    name: str
+    file_path: Path
+    filename: str
+    required: bool
+    content_type: str
+    content_encoding: str
+    size_bytes: int
+    sha256: str
+
+    def to_manifest(self) -> dict[str, Any]:
+        return {
+            "required": self.required,
+            "filename": self.filename,
+            "content_type": self.content_type,
+            "content_encoding": self.content_encoding,
+            "size_bytes": self.size_bytes,
+            "sha256": self.sha256,
+        }
+
+    def cleanup(self) -> None:
+        with contextlib.suppress(OSError):
+            self.file_path.unlink()
+
+
+@dataclass
+class PreparedReportUpload:
+    legacy_payload: dict[str, Any]
+    core_payload: dict[str, Any]
+    definitions_payload: dict[str, Any] | None
+    metadata: dict[str, Any]
+    scan_summary: dict[str, Any]
+    grade_data: dict[str, Any] | None
+    legacy_payload_size_bytes: int
+
+
+def _write_gzip_json_artifact(
+    name: str,
+    payload: dict[str, Any],
+    *,
+    required: bool,
+) -> UploadArtifact:
+    fd, path_str = tempfile.mkstemp(prefix=f"skylos-upload-{name}-", suffix=".json.gz")
+    os.close(fd)
+    path = Path(path_str)
+    try:
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(payload, handle, separators=(",", ":"))
+        return UploadArtifact(
+            name=name,
+            file_path=path,
+            filename=f"{name}.json.gz",
+            required=required,
+            content_type="application/json",
+            content_encoding="gzip",
+            size_bytes=path.stat().st_size,
+            sha256=_sha256_file(path),
+        )
+    except Exception:
+        with contextlib.suppress(OSError):
+            path.unlink()
+        raise
 
 
 def detect_ai_code(git_root=None) -> dict:
@@ -736,22 +839,9 @@ def _normalize_result_sections(
     return findings
 
 
-def upload_report(
-    result_json, is_forced=False, quiet=False, strict=False, analysis_mode="static"
-) -> dict:
-    token = get_project_token()
-    if not token:
-        return {
-            "success": False,
-            "error": "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
-        }
-
-    if not quiet:
-        info = get_project_info(token)
-        if info and info.get("ok"):
-            project_name = info.get("project", {}).get("name", "Unknown")
-            print(f"Uploading to: {project_name}")
-
+def _prepare_report_upload(
+    result_json, *, is_forced=False, analysis_mode="static"
+) -> PreparedReportUpload:
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
 
@@ -771,13 +861,10 @@ def upload_report(
             f["metadata"] = meta
 
     exporter = SarifExporter(all_findings, tool_name="Skylos")
-    payload = exporter.generate()
+    core_payload = exporter.generate()
 
-    info = get_project_info(token) or {}
-    plan = (info.get("plan") or "free").lower()
     ai_code = detect_ai_code(git_root)
 
-    # PR-scoped provenance detection
     provenance_data = None
     try:
         from skylos.provenance import analyze_provenance
@@ -788,40 +875,97 @@ def upload_report(
     except (ImportError, subprocess.SubprocessError, OSError):
         logger.debug("Provenance detection failed", exc_info=True)
 
-    # Include definitions for Code City visualization
     definitions = result_json.get("definitions")
-
-    payload.update(
-        {
-            "commit_hash": commit,
-            "branch": branch,
-            "actor": actor,
-            "is_forced": bool(is_forced),
-            "ci": ci,
-            "analysis_mode": analysis_mode,
-            "ai_code": ai_code if ai_code.get("detected") else None,
-            "provenance": provenance_data,
-            "definitions": definitions,
-        }
-    )
+    metadata = {
+        "commit_hash": commit,
+        "branch": branch,
+        "actor": actor,
+        "is_forced": bool(is_forced),
+        "ci": ci,
+        "analysis_mode": analysis_mode,
+        "ai_code": ai_code if ai_code.get("detected") else None,
+        "provenance": provenance_data,
+    }
+    core_payload.update(metadata)
 
     grade_data = result_json.get("grade") if isinstance(result_json, dict) else None
     if grade_data:
-        payload["grade"] = grade_data
+        core_payload["grade"] = grade_data
+        metadata["grade"] = grade_data
 
     link = _load_repo_link(git_root)
     if link.get("project_id"):
-        payload["project_id"] = link["project_id"]
+        core_payload["project_id"] = link["project_id"]
+        metadata["project_id"] = link["project_id"]
 
-    response, last_err = _post_report_payload(
-        token,
-        payload,
-        quiet=quiet,
-        initial_message="Uploading scan results...",
+    legacy_payload = dict(core_payload)
+    legacy_payload["definitions"] = definitions
+
+    runs = core_payload.get("runs") or []
+    scan_summary = {
+        "finding_count": len(all_findings),
+        "sarif_result_count": sum(len(run.get("results") or []) for run in runs),
+        "sarif_rule_count": sum(
+            len((run.get("tool") or {}).get("driver", {}).get("rules") or [])
+            for run in runs
+        ),
+        "definitions_count": len(definitions or {}),
+    }
+
+    return PreparedReportUpload(
+        legacy_payload=legacy_payload,
+        core_payload=core_payload,
+        definitions_payload={"definitions": definitions} if definitions else None,
+        metadata=metadata,
+        scan_summary=scan_summary,
+        grade_data=grade_data,
+        legacy_payload_size_bytes=_json_size_bytes(legacy_payload),
     )
-    if response is None:
-        return {"success": False, "error": last_err or "Unknown error"}
 
+
+def _build_report_artifacts(
+    prepared: PreparedReportUpload,
+) -> dict[str, UploadArtifact]:
+    artifacts = {
+        "scan_report": _write_gzip_json_artifact(
+            "scan-report", prepared.core_payload, required=True
+        )
+    }
+    if prepared.definitions_payload:
+        artifacts["definitions"] = _write_gzip_json_artifact(
+            "definitions", prepared.definitions_payload, required=False
+        )
+    return artifacts
+
+
+def _build_report_init_payload(
+    prepared: PreparedReportUpload,
+    artifacts: dict[str, UploadArtifact],
+) -> dict[str, Any]:
+    init_payload = dict(prepared.metadata)
+    init_payload.update(
+        {
+            "upload_protocol_version": UPLOAD_PROTOCOL_VERSION,
+            "summary": {
+                **prepared.scan_summary,
+                "legacy_payload_size_bytes": prepared.legacy_payload_size_bytes,
+            },
+            "artifacts": {
+                name: artifact.to_manifest() for name, artifact in artifacts.items()
+            },
+        }
+    )
+    return init_payload
+
+
+def _finalize_report_upload(
+    response,
+    *,
+    grade_data,
+    quiet=False,
+    strict=False,
+    is_forced=False,
+) -> dict:
     if response.status_code == 401:
         return {
             "success": False,
@@ -901,22 +1045,30 @@ def upload_report(
     }
 
 
-def _post_report_payload(token, payload, *, quiet=False, initial_message=None):
+def _post_json_with_retries(
+    url,
+    headers,
+    payload,
+    *,
+    quiet=False,
+    initial_message=None,
+    accepted_statuses=(200, 201, 401, 402),
+):
     last_err = None
     for attempt in range(3):
         try:
             if not quiet:
                 if attempt == 0 and initial_message:
                     print(initial_message, end="", flush=True)
-                else:
+                elif attempt > 0:
                     print(f" retrying ({attempt + 1}/3)...", end="", flush=True)
             response = requests.post(
-                REPORT_URL,
+                url,
                 json=payload,
-                headers=_build_auth_headers(token),
+                headers=headers,
                 timeout=NETWORK_TIMEOUT_LONG,
             )
-            if response.status_code in (200, 201, 401, 402):
+            if response.status_code in accepted_statuses:
                 return response, None
             if not quiet and response.status_code >= 400:
                 print(" failed.")
@@ -925,6 +1077,319 @@ def _post_report_payload(token, payload, *, quiet=False, initial_message=None):
             last_err = f"Connection Error: {str(e)}"
 
     return None, last_err or "Unknown error"
+
+
+def _post_report_payload(token, payload, *, quiet=False, initial_message=None):
+    return _post_json_with_retries(
+        REPORT_URL,
+        _build_auth_headers(token),
+        payload,
+        quiet=quiet,
+        initial_message=initial_message,
+    )
+
+
+def _build_large_upload_protocol_error(prepared: PreparedReportUpload) -> dict:
+    limit = _legacy_inline_upload_limit_bytes()
+    error = (
+        "Connected Skylos Cloud endpoint does not support large scan uploads yet. "
+        f"This scan requires artifact upload because the inline payload is "
+        f"{prepared.legacy_payload_size_bytes} bytes and the client safety limit is "
+        f"{limit} bytes. Upgrade the Skylos Cloud endpoint to support "
+        f"{REPORT_INIT_URL} and {REPORT_COMPLETE_URL}."
+    )
+    if not _truthy_env("SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD"):
+        error += (
+            " During rollout, you can opt into a condensed compatibility upload "
+            "with SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD=1."
+        )
+    return {
+        "success": False,
+        "error": error,
+        "code": "UPLOAD_PROTOCOL_UNSUPPORTED",
+    }
+
+
+def upload_artifact(
+    artifact: UploadArtifact, instruction: dict[str, Any]
+) -> dict[str, Any]:
+    method = str(instruction.get("method") or "PUT").upper()
+    url = instruction.get("url")
+    if not url:
+        return {"success": False, "error": f"Missing upload URL for {artifact.name}."}
+
+    headers = dict(instruction.get("headers") or {})
+    accepted_statuses = tuple(instruction.get("accepted_statuses") or (200, 201, 204))
+    timeout = instruction.get("timeout_seconds") or UPLOAD_TIMEOUT
+    last_err = None
+
+    for _attempt in range(3):
+        try:
+            with artifact.file_path.open("rb") as handle:
+                if method == "PUT":
+                    req_headers = {
+                        "Content-Type": artifact.content_type,
+                        "Content-Encoding": artifact.content_encoding,
+                        **headers,
+                    }
+                    response = requests.put(
+                        url,
+                        data=handle,
+                        headers=req_headers,
+                        timeout=timeout,
+                    )
+                elif method == "POST":
+                    file_field = instruction.get("file_field") or "file"
+                    fields = dict(instruction.get("fields") or {})
+                    response = requests.post(
+                        url,
+                        data=fields,
+                        files={
+                            file_field: (
+                                artifact.filename,
+                                handle,
+                                artifact.content_type,
+                            )
+                        },
+                        headers=headers,
+                        timeout=timeout,
+                    )
+                else:
+                    return {
+                        "success": False,
+                        "error": f"Unsupported upload method for {artifact.name}: {method}",
+                    }
+
+            if response.status_code in accepted_statuses:
+                return {
+                    "success": True,
+                    "etag": response.headers.get("ETag"),
+                }
+            last_err = f"Upload Error {response.status_code}: {response.text}"
+        except Exception as e:
+            last_err = f"Upload connection error: {e}"
+
+    return {"success": False, "error": last_err or "Unknown artifact upload error"}
+
+
+def upload_report_legacy(
+    token,
+    payload,
+    *,
+    grade_data,
+    quiet=False,
+    strict=False,
+    is_forced=False,
+    initial_message="Uploading scan results...",
+) -> dict:
+    response, last_err = _post_report_payload(
+        token,
+        payload,
+        quiet=quiet,
+        initial_message=initial_message,
+    )
+    if response is None:
+        return {"success": False, "error": last_err or "Unknown error"}
+    return _finalize_report_upload(
+        response,
+        grade_data=grade_data,
+        quiet=quiet,
+        strict=strict,
+        is_forced=is_forced,
+    )
+
+
+def upload_report_v2(
+    token,
+    prepared: PreparedReportUpload,
+    *,
+    quiet=False,
+    strict=False,
+    is_forced=False,
+) -> dict:
+    artifacts = _build_report_artifacts(prepared)
+    try:
+        init_payload = _build_report_init_payload(prepared, artifacts)
+        init_response, last_err = _post_json_with_retries(
+            REPORT_INIT_URL,
+            _build_auth_headers(token),
+            init_payload,
+            quiet=quiet,
+            initial_message="Uploading scan results...",
+            accepted_statuses=(200, 201, 401, 402, 404, 405, 501),
+        )
+        if init_response is None:
+            return {"success": False, "error": last_err or "Unknown error"}
+        if init_response.status_code in (404, 405, 501):
+            return _build_large_upload_protocol_error(prepared)
+        if init_response.status_code == 401:
+            return _finalize_report_upload(
+                init_response,
+                grade_data=prepared.grade_data,
+                quiet=quiet,
+                strict=strict,
+                is_forced=is_forced,
+            )
+        if init_response.status_code == 402:
+            return _finalize_report_upload(
+                init_response,
+                grade_data=prepared.grade_data,
+                quiet=quiet,
+                strict=strict,
+                is_forced=is_forced,
+            )
+
+        init_data = init_response.json() or {}
+        artifact_instructions = init_data.get("artifacts") or {}
+        if not isinstance(artifact_instructions, dict):
+            return {
+                "success": False,
+                "error": "Invalid large-upload response: missing artifact instructions.",
+            }
+
+        uploaded_artifacts = {}
+        skipped_artifacts = []
+
+        for artifact_name, artifact in artifacts.items():
+            artifact_info = artifact_instructions.get(artifact_name)
+            if not artifact_info:
+                if artifact.required:
+                    return {
+                        "success": False,
+                        "error": f"Large-upload response omitted required artifact instructions for {artifact_name}.",
+                    }
+                skipped_artifacts.append(
+                    {"name": artifact_name, "reason": "not_requested"}
+                )
+                continue
+
+            upload_spec = artifact_info.get("upload") or artifact_info
+            upload_result = upload_artifact(artifact, upload_spec)
+            if not upload_result["success"]:
+                if artifact.required:
+                    return {
+                        "success": False,
+                        "error": upload_result["error"],
+                    }
+                skipped_artifacts.append(
+                    {
+                        "name": artifact_name,
+                        "reason": "upload_failed",
+                        "error": upload_result["error"],
+                    }
+                )
+                continue
+
+            record = {
+                "artifact_id": artifact_info.get("artifact_id")
+                or artifact_info.get("id"),
+                "key": artifact_info.get("key") or artifact_info.get("artifact_key"),
+                "filename": artifact.filename,
+                "size_bytes": artifact.size_bytes,
+                "sha256": artifact.sha256,
+                "content_type": artifact.content_type,
+                "content_encoding": artifact.content_encoding,
+            }
+            if upload_result.get("etag"):
+                record["etag"] = upload_result["etag"]
+            uploaded_artifacts[artifact_name] = record
+
+        complete_payload = {
+            "upload_protocol_version": UPLOAD_PROTOCOL_VERSION,
+            "scan_id": init_data.get("scan_id") or init_data.get("scanId"),
+            "upload_id": init_data.get("upload_id") or init_data.get("uploadId"),
+            "artifacts": uploaded_artifacts,
+        }
+        if skipped_artifacts:
+            complete_payload["skipped_artifacts"] = skipped_artifacts
+
+        complete_response, last_err = _post_json_with_retries(
+            REPORT_COMPLETE_URL,
+            _build_auth_headers(token),
+            complete_payload,
+            quiet=True,
+            accepted_statuses=(200, 201, 401, 402),
+        )
+        if complete_response is None:
+            return {"success": False, "error": last_err or "Unknown error"}
+
+        if skipped_artifacts and not quiet:
+            print(
+                "\n⚠️  Uploaded scan without optional Code City definitions during this run."
+            )
+
+        return _finalize_report_upload(
+            complete_response,
+            grade_data=prepared.grade_data,
+            quiet=quiet,
+            strict=strict,
+            is_forced=is_forced,
+        )
+    finally:
+        for artifact in artifacts.values():
+            artifact.cleanup()
+
+
+def upload_report(
+    result_json, is_forced=False, quiet=False, strict=False, analysis_mode="static"
+) -> dict:
+    token = get_project_token()
+    if not token:
+        return {
+            "success": False,
+            "error": "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
+        }
+
+    if not quiet:
+        info = get_project_info(token)
+        if info and info.get("ok"):
+            project_name = info.get("project", {}).get("name", "Unknown")
+            print(f"Uploading to: {project_name}")
+
+    prepared = _prepare_report_upload(
+        result_json,
+        is_forced=is_forced,
+        analysis_mode=analysis_mode,
+    )
+
+    if prepared.legacy_payload_size_bytes <= _legacy_inline_upload_limit_bytes():
+        return upload_report_legacy(
+            token,
+            prepared.legacy_payload,
+            grade_data=prepared.grade_data,
+            quiet=quiet,
+            strict=strict,
+            is_forced=is_forced,
+        )
+
+    upload_result = upload_report_v2(
+        token,
+        prepared,
+        quiet=quiet,
+        strict=strict,
+        is_forced=is_forced,
+    )
+    if (
+        (not upload_result.get("success"))
+        and upload_result.get("code") == "UPLOAD_PROTOCOL_UNSUPPORTED"
+        and _truthy_env("SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD")
+    ):
+        if not quiet:
+            print(
+                " Skylos Cloud artifact upload unavailable; retrying condensed compatibility upload...",
+                end="",
+                flush=True,
+            )
+        return upload_report_legacy(
+            token,
+            prepared.core_payload,
+            grade_data=prepared.grade_data,
+            quiet=quiet,
+            strict=strict,
+            is_forced=is_forced,
+            initial_message=None,
+        )
+    return upload_result
 
 
 def upload_defense_report(defense_json_str, quiet=False) -> dict:
