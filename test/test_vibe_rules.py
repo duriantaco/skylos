@@ -203,6 +203,66 @@ class TestEmptyErrorHandler:
         l007 = [f for f in findings if f["rule_id"] == "SKY-L007"]
         assert len(l007) == 0
 
+    def test_output_shape_for_except_and_broad_suppress(self):
+        rule = EmptyErrorHandlerRule()
+        context = {"filename": "sample.py", "mod": "sample"}
+
+        except_code = """
+        try:
+            x = 1
+        except Exception:
+            pass
+        """
+        suppress_code = """
+        import contextlib
+        with contextlib.suppress(Exception):
+            x = 1
+        """
+
+        def collect(code):
+            findings = []
+            tree = ast.parse(textwrap.dedent(code))
+            for node in ast.walk(tree):
+                result = rule.visit_node(node, context)
+                if result:
+                    findings.extend(result)
+            return findings
+
+        assert collect(except_code) == [
+            {
+                "rule_id": "SKY-L007",
+                "kind": "logic",
+                "severity": "MEDIUM",
+                "type": "block",
+                "name": "except",
+                "simple_name": "except",
+                "value": "trivial",
+                "threshold": 0,
+                "message": "Empty error handler silently swallows exceptions.",
+                "file": "sample.py",
+                "basename": "sample.py",
+                "line": 4,
+                "col": 0,
+            }
+        ]
+        assert collect(suppress_code) == [
+            {
+                "rule_id": "SKY-L007",
+                "kind": "logic",
+                "severity": "MEDIUM",
+                "type": "block",
+                "name": "suppress",
+                "simple_name": "suppress",
+                "value": "broad",
+                "threshold": 0,
+                "message": "contextlib.suppress(Exception) silently swallows all errors.",
+                "file": "sample.py",
+                "basename": "sample.py",
+                "line": 3,
+                "col": 0,
+            }
+        ]
+
 
 class TestMissingResourceCleanup:
     def test_open_without_with(self):
@@ -332,6 +392,63 @@ class TestMissingResourceCleanup:
         findings = check_code(MissingResourceCleanupRule(), code)
         assert len(findings) >= 1
         assert any(f["rule_id"] == "SKY-L008" for f in findings)
+
+    def test_output_shape_for_assignment_and_expression_resources(self):
+        rule = MissingResourceCleanupRule()
+        context = {"filename": "sample.py", "mod": "sample"}
+
+        assign_code = """
+        def load():
+            f = open("x.txt")
+            return 1
+        """
+        expr_code = """
+        open("x.txt")
+        """
+
+        def collect(code):
+            findings = []
+            tree = ast.parse(textwrap.dedent(code))
+            for node in ast.walk(tree):
+                result = rule.visit_node(node, context)
+                if result:
+                    findings.extend(result)
+            return findings
+
+        assert collect(assign_code) == [
+            {
+                "rule_id": "SKY-L008",
+                "kind": "logic",
+                "severity": "MEDIUM",
+                "type": "resource",
+                "name": "open",
+                "simple_name": "open",
+                "value": "no_cleanup",
+                "threshold": 0,
+                "message": "Resource 'open' opened without 'with' statement. Use a context manager to ensure cleanup.",
+                "file": "sample.py",
+                "basename": "sample.py",
+                "line": 3,
+                "col": 4,
+            }
+        ]
+        assert collect(expr_code) == [
+            {
+                "rule_id": "SKY-L008",
+                "kind": "logic",
+                "severity": "MEDIUM",
+                "type": "resource",
+                "name": "open",
+                "simple_name": "open",
+                "value": "no_cleanup",
+                "threshold": 0,
+                "message": "Resource 'open' opened without 'with' statement. Use a context manager to ensure cleanup.",
+                "file": "sample.py",
+                "basename": "sample.py",
+                "line": 2,
+                "col": 0,
+            }
+        ]
 
 
 class TestDebugLeftover:
