@@ -159,6 +159,7 @@ class Skylos:
         ".go": "Go",
         ".ts": "TypeScript",
         ".tsx": "TypeScript",
+        ".java": "Java",
     }
 
     def _count_languages(self, files) -> dict[str, int]:
@@ -1236,7 +1237,7 @@ class Skylos:
                 }
             )
 
-        logger.info(f"Analyzing {len(files)} Python files...")
+        logger.info(f"Analyzing {len(files)} files...")
 
         modmap = {}
         for f in files:
