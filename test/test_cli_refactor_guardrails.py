@@ -495,6 +495,7 @@ def test_doctor_command_reports_core_statuses(tmp_path):
 
     with (
         patch("skylos.commands.doctor_cmd.Console", return_value=console),
+        patch("skylos.commands.doctor_cmd.skylos.__version__", "9.9.9"),
         patch(
             "skylos.commands.doctor_cmd.platform.python_version", return_value="3.12.1"
         ),
@@ -520,7 +521,7 @@ def test_doctor_command_reports_core_statuses(tmp_path):
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
     assert "Python 3.12.1" in printed
-    assert "Skylos 4.2.1" in printed
+    assert "Skylos 9.9.9" in printed
     assert "Cloud connected" in printed
     assert "pyproject.toml [tool.skylos] config found" in printed
     assert "GitHub Actions workflow found" in printed
