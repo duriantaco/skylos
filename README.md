@@ -16,6 +16,7 @@
 [![GitHub forks](https://img.shields.io/github/forks/duriantaco/skylos)](https://github.com/duriantaco/skylos/network)
 ![Skylos](https://img.shields.io/badge/Skylos-PR%20Guard-2f80ed?style=flat&logo=github&logoColor=white)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
+[![SafeSkill 50/100](https://img.shields.io/badge/SafeSkill-50%2F100_Use%20with%20Caution-orange)](https://safeskill.dev/scan/duriantaco-skylos)
 
 📖 **[Website](https://skylos.dev)** · **[Documentation](https://docs.skylos.dev)** · **[Blog](https://skylos.dev/blog)** · **[GitHub Action](https://github.com/duriantaco/skylos/blob/main/action.yml)** · **[VS Code Extension](https://marketplace.visualstudio.com/items?itemName=oha.skylos-vscode-extension)** · **[MCP Server](https://github.com/duriantaco/skylos/tree/main/skylos_mcp)**
 
