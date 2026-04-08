@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.3.1](https://github.com/duriantaco/skylos/compare/v4.3.0...v4.3.1) (2026-04-08)
+
+
+### Bug Fixes
+
+* **upload:** support large scan uploads via artifact transport ([#179](https://github.com/duriantaco/skylos/issues/179)) ([7f1641f](https://github.com/duriantaco/skylos/commit/7f1641f5fdda4970e310ad96836618b6dba96124))
+
 ## [4.3.0](https://github.com/duriantaco/skylos/compare/v4.2.1...v4.3.0) (2026-04-08)
 
 
