@@ -2,6 +2,8 @@ import os
 import json
 import importlib
 import subprocess
+import gzip
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
 
@@ -197,6 +199,10 @@ class TestSkylosApi(unittest.TestCase):
             os.environ["SKYLOS_API_URL"] = "https://example.com/api"
             importlib.reload(api)
             self.assertEqual(api.REPORT_URL, "https://example.com/api/report")
+            self.assertEqual(api.REPORT_INIT_URL, "https://example.com/api/report/init")
+            self.assertEqual(
+                api.REPORT_COMPLETE_URL, "https://example.com/api/report/complete"
+            )
             self.assertEqual(api.WHOAMI_URL, "https://example.com/api/sync/whoami")
         finally:
             if old is None:
@@ -296,6 +302,330 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(payload["actor"], "jenkins-bot")
         self.assertEqual(payload["ci"]["provider"], "jenkins")
         self.assertEqual(payload["ci"]["pr_number"], 99)
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("skylos.api.get_project_info", return_value={})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("requests.put")
+    @patch("requests.post")
+    def test_upload_report_large_payload_uses_artifact_flow(
+        self,
+        mock_post,
+        mock_put,
+        _mock_ai,
+        _mock_info,
+        _mock_root,
+        _mock_git_info,
+        mock_token,
+    ):
+        mock_token.return_value = "token"
+
+        init_resp = MagicMock()
+        init_resp.status_code = 201
+        init_resp.json.return_value = {
+            "scanId": "scan_artifact",
+            "upload_id": "upload-1",
+            "artifacts": {
+                "scan_report": {
+                    "artifact_id": "artifact-scan",
+                    "key": "scan-key",
+                    "upload": {
+                        "method": "PUT",
+                        "url": "https://upload.example.com/report",
+                        "headers": {"x-test": "1"},
+                    },
+                },
+                "definitions": {
+                    "artifact_id": "artifact-defs",
+                    "key": "definitions-key",
+                    "upload": {
+                        "method": "PUT",
+                        "url": "https://upload.example.com/definitions",
+                    },
+                },
+            },
+        }
+        complete_resp = MagicMock()
+        complete_resp.status_code = 200
+        complete_resp.json.return_value = {"scanId": "scan_artifact"}
+        mock_post.side_effect = [init_resp, complete_resp]
+
+        uploaded_payloads = []
+
+        def _capture_put(*args, **kwargs):
+            upload_resp = MagicMock()
+            upload_resp.status_code = 200
+            upload_resp.headers = {}
+            upload_resp.text = "OK"
+            uploaded_payloads.append(
+                json.loads(gzip.decompress(kwargs["data"].read()).decode("utf-8"))
+            )
+            kwargs["data"].seek(0)
+            return upload_resp
+
+        mock_put.side_effect = _capture_put
+
+        with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
+            result = upload_report(
+                {
+                    "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
+                    "definitions": {"app.func": {"file": "app.py", "line": 5}},
+                },
+                quiet=True,
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["scan_id"], "scan_artifact")
+        self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(mock_put.call_count, 2)
+
+        init_payload = mock_post.call_args_list[0].kwargs["json"]
+        self.assertEqual(init_payload["upload_protocol_version"], 1)
+        self.assertEqual(init_payload["summary"]["definitions_count"], 1)
+        self.assertNotIn("definitions", init_payload)
+        self.assertIn("definitions", init_payload["artifacts"])
+        self.assertIn("scan_report", init_payload["artifacts"])
+
+        report_payload, definitions_payload = uploaded_payloads
+        self.assertNotIn("definitions", report_payload)
+        self.assertEqual(
+            definitions_payload,
+            {"definitions": {"app.func": {"file": "app.py", "line": 5}}},
+        )
+
+        complete_payload = mock_post.call_args_list[1].kwargs["json"]
+        self.assertEqual(complete_payload["scan_id"], "scan_artifact")
+        self.assertIn("scan_report", complete_payload["artifacts"])
+        self.assertIn("definitions", complete_payload["artifacts"])
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("skylos.api.get_project_info", return_value={})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("requests.put")
+    @patch("requests.post")
+    def test_upload_report_large_payload_optional_definitions_failure_still_succeeds(
+        self,
+        mock_post,
+        mock_put,
+        _mock_ai,
+        _mock_info,
+        _mock_root,
+        _mock_git_info,
+        mock_token,
+    ):
+        mock_token.return_value = "token"
+
+        init_resp = MagicMock()
+        init_resp.status_code = 201
+        init_resp.json.return_value = {
+            "scanId": "scan_artifact",
+            "upload_id": "upload-1",
+            "artifacts": {
+                "scan_report": {
+                    "artifact_id": "artifact-scan",
+                    "upload": {
+                        "method": "PUT",
+                        "url": "https://upload.example.com/report",
+                    },
+                },
+                "definitions": {
+                    "artifact_id": "artifact-defs",
+                    "upload": {
+                        "method": "PUT",
+                        "url": "https://upload.example.com/definitions",
+                    },
+                },
+            },
+        }
+        complete_resp = MagicMock()
+        complete_resp.status_code = 200
+        complete_resp.json.return_value = {"scanId": "scan_artifact"}
+        mock_post.side_effect = [init_resp, complete_resp]
+
+        ok_upload = MagicMock()
+        ok_upload.status_code = 200
+        ok_upload.headers = {}
+        ok_upload.text = "OK"
+        fail_upload = MagicMock()
+        fail_upload.status_code = 500
+        fail_upload.headers = {}
+        fail_upload.text = "boom"
+        mock_put.side_effect = [ok_upload, fail_upload, fail_upload, fail_upload]
+
+        with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
+            result = upload_report(
+                {
+                    "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
+                    "definitions": {"app.func": {"file": "app.py", "line": 5}},
+                },
+                quiet=True,
+            )
+
+        self.assertTrue(result["success"])
+        complete_payload = mock_post.call_args_list[1].kwargs["json"]
+        self.assertIn("scan_report", complete_payload["artifacts"])
+        self.assertNotIn("definitions", complete_payload["artifacts"])
+        self.assertEqual(
+            complete_payload["skipped_artifacts"][0]["name"], "definitions"
+        )
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("skylos.api.get_project_info", return_value={})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("requests.post")
+    def test_upload_report_large_payload_fails_cleanly_when_artifacts_unsupported(
+        self,
+        mock_post,
+        _mock_ai,
+        _mock_info,
+        _mock_root,
+        _mock_git_info,
+        mock_token,
+    ):
+        mock_token.return_value = "token"
+
+        init_resp = MagicMock()
+        init_resp.status_code = 404
+        init_resp.text = "Not Found"
+        mock_post.return_value = init_resp
+
+        with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
+            result = upload_report(
+                {
+                    "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
+                    "definitions": {"app.func": {"file": "app.py", "line": 5}},
+                },
+                quiet=True,
+            )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["code"], "UPLOAD_PROTOCOL_UNSUPPORTED")
+        self.assertIn("does not support large scan uploads yet", result["error"])
+        self.assertEqual(mock_post.call_count, 1)
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"]["upload_protocol_version"],
+            1,
+        )
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("skylos.api.get_project_info", return_value={})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("requests.post")
+    def test_upload_report_small_payload_skips_artifact_init(
+        self,
+        mock_post,
+        _mock_ai,
+        _mock_info,
+        _mock_root,
+        _mock_git_info,
+        mock_token,
+    ):
+        mock_token.return_value = "token"
+        legacy_resp = MagicMock()
+        legacy_resp.status_code = 200
+        legacy_resp.json.return_value = {"scanId": "scan_legacy"}
+        mock_post.return_value = legacy_resp
+
+        with patch(
+            "skylos.api._legacy_inline_upload_limit_bytes", return_value=10_000_000
+        ):
+            result = upload_report(
+                {"danger": [{"file": "app.py", "line": 5, "message": "oops"}]},
+                quiet=True,
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["scan_id"], "scan_legacy")
+        self.assertEqual(mock_post.call_count, 1)
+        self.assertEqual(mock_post.call_args.kwargs["json"]["commit_hash"], "c")
+        self.assertNotIn("upload_protocol_version", mock_post.call_args.kwargs["json"])
+
+    @patch.dict(os.environ, {"SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD": "1"}, clear=False)
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("skylos.api.get_project_info", return_value={})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("requests.post")
+    def test_upload_report_large_payload_can_use_opt_in_degraded_legacy_fallback(
+        self,
+        mock_post,
+        _mock_ai,
+        _mock_info,
+        _mock_root,
+        _mock_git_info,
+        mock_token,
+    ):
+        mock_token.return_value = "token"
+
+        init_resp = MagicMock()
+        init_resp.status_code = 404
+        init_resp.text = "Not Found"
+        legacy_resp = MagicMock()
+        legacy_resp.status_code = 200
+        legacy_resp.json.return_value = {"scanId": "scan_condensed"}
+        mock_post.side_effect = [init_resp, legacy_resp]
+
+        with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
+            result = upload_report(
+                {
+                    "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
+                    "definitions": {"app.func": {"file": "app.py", "line": 5}},
+                },
+                quiet=True,
+            )
+
+        self.assertTrue(result["success"])
+        degraded_payload = mock_post.call_args_list[1].kwargs["json"]
+        self.assertNotIn("definitions", degraded_payload)
+
+    @patch("requests.post")
+    def test_upload_artifact_supports_signed_post_form(self, mock_post):
+        resp = MagicMock()
+        resp.status_code = 204
+        resp.headers = {}
+        resp.text = ""
+        mock_post.return_value = resp
+        with tempfile.NamedTemporaryFile(delete=False) as handle:
+            handle.write(b"abc")
+            artifact_path = handle.name
+
+        artifact = api.UploadArtifact(
+            name="definitions",
+            file_path=api.Path(artifact_path),
+            filename="definitions.json.gz",
+            required=False,
+            content_type="application/json",
+            content_encoding="gzip",
+            size_bytes=3,
+            sha256="abc123",
+        )
+        try:
+            result = api.upload_artifact(
+                artifact,
+                {
+                    "method": "POST",
+                    "url": "https://uploads.example.com/definitions",
+                    "fields": {"key": "artifact-key", "policy": "abc123"},
+                    "file_field": "file",
+                    "headers": {"x-extra": "1"},
+                },
+            )
+        finally:
+            artifact.cleanup()
+
+        self.assertTrue(result["success"])
+        kwargs = mock_post.call_args.kwargs
+        self.assertEqual(kwargs["data"]["key"], "artifact-key")
+        self.assertEqual(kwargs["files"]["file"][0], "definitions.json.gz")
 
 
 class TestDetectCI(unittest.TestCase):
