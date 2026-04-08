@@ -240,8 +240,8 @@ class TestSkylos:
 
         skylos._mark_exports()
 
-        assert mock_def1.is_exported == True
-        assert mock_def2.is_exported == False
+        assert mock_def1.is_exported
+        assert not mock_def2.is_exported
 
     def test_mark_exports_explicit_exports(self, skylos):
         mock_def = Mock()
@@ -255,7 +255,7 @@ class TestSkylos:
 
         skylos._mark_exports()
 
-        assert mock_def.is_exported == True
+        assert mock_def.is_exported
 
     def test_mark_refs_direct_reference(self, skylos):
         mock_def = Mock()
@@ -405,6 +405,40 @@ class TestAnalyze:
         result = json.loads(result_json)
 
         assert result["analysis_summary"]["excluded_folders"] == ["build"]
+
+    @patch("skylos.analyzer.logger.info")
+    def test_analyze_mixed_languages_includes_java_in_summary(self, mock_log_info):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "main.py").write_text(
+                "def hello():\n    return 1\n", encoding="utf-8"
+            )
+            (root / "main.go").write_text(
+                "package main\nfunc main() {}\n", encoding="utf-8"
+            )
+            (root / "Hello.java").write_text(
+                "public class Hello {\n"
+                "    public static void main(String[] args) {\n"
+                '        System.out.println("hi");\n'
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            result_json = analyze(str(root), conf=0)
+
+        result = json.loads(result_json)
+
+        assert result["analysis_summary"]["total_files"] == 3
+        assert result["analysis_summary"]["languages"] == {
+            "Go": 1,
+            "Java": 1,
+            "Python": 1,
+        }
+        mock_log_info.assert_any_call("Analyzing 3 files...")
+        assert not any(
+            "Python files" in call.args[0] for call in mock_log_info.call_args_list
+        )
 
     def test_analyze_empty_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
