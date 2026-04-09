@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from skylos.fixgen import (
     RemovalPatch,
     _build_dependency_dag,
@@ -360,6 +361,140 @@ class TestGenerateRemovalPlan:
         patches = generate_removal_plan(findings, {"os": {"calls": []}}, tmp_path)
         assert len(patches) == 1
 
+    def test_multifile_plan_output_is_stable(self, tmp_path):
+        py_file = tmp_path / "mod.py"
+        py_file.write_text(
+            "@dec\n"
+            "def dead():\n"
+            "    helper()\n"
+            "\n"
+            "def helper():\n"
+            "    return 1\n"
+            "\n"
+            "VALUE = 1 + \\\n"
+            "    2\n"
+        )
+        import_file = tmp_path / "imports.py"
+        import_file.write_text(
+            "from os import (\n    path,\n    getcwd,\n)\nvalue = 1\n"
+        )
+        findings = [
+            {
+                "full_name": "dead",
+                "name": "dead",
+                "type": "function",
+                "file": str(py_file),
+                "line": 2,
+                "confidence": 95,
+            },
+            {
+                "full_name": "helper",
+                "name": "helper",
+                "type": "function",
+                "file": str(py_file),
+                "line": 5,
+            },
+            {
+                "full_name": "VALUE",
+                "name": "VALUE",
+                "type": "variable",
+                "file": str(py_file),
+                "line": 8,
+            },
+            {
+                "full_name": "os_import",
+                "name": "os_import",
+                "type": "import",
+                "file": str(import_file),
+                "line": 1,
+            },
+        ]
+        defs_map = {
+            "dead": {"calls": ["helper"]},
+            "helper": {"calls": []},
+            "VALUE": {"calls": []},
+            "os_import": {"calls": []},
+        }
+
+        patches = generate_removal_plan(findings, defs_map, tmp_path)
+
+        assert [
+            {
+                "file_path": p.file_path.split("/")[-1],
+                "line_range": p.line_range,
+                "replacement": p.replacement,
+                "finding_name": p.finding_name,
+                "finding_type": p.finding_type,
+                "depends_on": p.depends_on,
+                "safety_score": p.safety_score,
+            }
+            for p in patches
+        ] == [
+            {
+                "file_path": "imports.py",
+                "line_range": (1, 4),
+                "replacement": "",
+                "finding_name": "os_import",
+                "finding_type": "import",
+                "depends_on": [],
+                "safety_score": 0.95,
+            },
+            {
+                "file_path": "mod.py",
+                "line_range": (8, 9),
+                "replacement": "",
+                "finding_name": "VALUE",
+                "finding_type": "variable",
+                "depends_on": [],
+                "safety_score": 0.85,
+            },
+            {
+                "file_path": "mod.py",
+                "line_range": (5, 7),
+                "replacement": "",
+                "finding_name": "helper",
+                "finding_type": "function",
+                "depends_on": [],
+                "safety_score": 0.9,
+            },
+            {
+                "file_path": "mod.py",
+                "line_range": (1, 4),
+                "replacement": "",
+                "finding_name": "dead",
+                "finding_type": "function",
+                "depends_on": ["helper"],
+                "safety_score": 0.95,
+            },
+        ]
+
+    def test_comment_mode_output_is_stable(self, tmp_path):
+        src = tmp_path / "mod.py"
+        src.write_text("@dec\ndef dead():\n    helper()\n\nvalue = 1\n")
+        findings = [
+            {
+                "full_name": "dead",
+                "name": "dead",
+                "type": "function",
+                "file": str(src),
+                "line": 2,
+            }
+        ]
+
+        patches = generate_removal_plan(
+            findings, {"dead": {"calls": []}}, tmp_path, mode="comment"
+        )
+
+        assert [(patch.line_range, patch.replacement) for patch in patches] == [
+            (
+                (1, 4),
+                "# DEAD CODE: @dec\n"
+                "# DEAD CODE: def dead():\n"
+                "# DEAD CODE:     helper()\n"
+                "# DEAD CODE: ",
+            )
+        ]
+
 
 class TestGenerateUnifiedDiff:
     def test_basic_diff(self, tmp_path):
@@ -404,6 +539,34 @@ class TestGenerateUnifiedDiff:
     def test_empty_patches(self, tmp_path):
         diff = generate_unified_diff([], tmp_path)
         assert diff == ""
+
+    def test_multiline_import_diff_is_stable(self, tmp_path):
+        src = tmp_path / "imports.py"
+        src.write_text("from os import (\n    path,\n    getcwd,\n)\nvalue = 1\n")
+        patch = RemovalPatch(
+            file_path=str(src),
+            line_range=(1, 4),
+            replacement="",
+            finding_name="os_import",
+            finding_type="import",
+        )
+
+        diff = generate_unified_diff([patch], tmp_path)
+
+        assert diff == (
+            "--- a/imports.py\n"
+            "+++ b/imports.py\n"
+            "@@ -1,5 +1 @@\n"
+            "-from os import (\n"
+            "\n"
+            "-    path,\n"
+            "\n"
+            "-    getcwd,\n"
+            "\n"
+            "-)\n"
+            "\n"
+            " value = 1\n"
+        )
 
 
 class TestApplyPatches:
@@ -510,6 +673,17 @@ class TestValidatePatches:
     def test_empty_patches(self, tmp_path):
         errors = validate_patches([], tmp_path)
         assert errors == []
+
+    def test_invalid_python_error_text_is_stable(self, tmp_path):
+        src = tmp_path / "broken.py"
+        src.write_text("if True:\n    pass\n")
+        patch = RemovalPatch(str(src), (2, 2), "", "pass_stmt", "variable")
+
+        errors = validate_patches([patch], tmp_path)
+
+        assert errors == [
+            f"{src}: Python syntax error after removal: expected an indented block after 'if' statement on line 1 ({src.name}, line 1)"
+        ]
 
 
 class TestGenerateFixSummary:

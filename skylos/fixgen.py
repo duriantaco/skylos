@@ -20,6 +20,18 @@ from skylos.constants import (
 )
 
 logger = logging.getLogger(__name__)
+TEXT_ENCODING = "utf-8"
+PYTHON_EXTS = {".py", ".pyi"}
+JS_TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+BRACE_PAIRS = {"{": "}", "(": ")", "[": "]"}
+BRACE_CLOSERS = set(BRACE_PAIRS.values())
+BASE_SAFETY_SCORES = {
+    "import": SAFETY_VERY_HIGH,
+    "function": 0.9,
+    "variable": SAFETY_MEDIUM,
+    "class": SAFETY_LOW,
+    "method": SAFETY_MINIMAL,
+}
 
 _BRACE_LANG_EXTS = {
     ".ts": "typescript",
@@ -50,122 +62,120 @@ def _find_brace_block_end(lines: list[str], start_idx: int) -> int:
             if ch == "{":
                 depth += 1
                 found_open = True
-            elif ch == "}":
-                depth -= 1
-                if found_open and depth == 0:
-                    return i
+                continue
+            if ch != "}":
+                continue
+            depth -= 1
+            if found_open and depth == 0:
+                return i
     return min(start_idx + 1, len(lines) - 1)
+
+
+def _validate_python_syntax(file_path: str, content: str) -> list[str]:
+    try:
+        ast.parse(content, filename=file_path)
+    except SyntaxError as e:
+        return [f"{file_path}: Python syntax error after removal: {e}"]
+    return []
+
+
+def _validate_with_tempfile(
+    file_path: str,
+    content: str,
+    *,
+    tool: str,
+    suffix: str,
+    command: list[str],
+    label: str,
+) -> list[str]:
+    if not shutil.which(tool):
+        return []
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=suffix,
+            delete=False,
+            encoding=TEXT_ENCODING,
+        ) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        result = subprocess.run(
+            command + [tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=SUBPROCESS_TIMEOUT,
+        )
+        if result.returncode != 0:
+            msg = (result.stderr or result.stdout).strip()
+            return [f"{file_path}: {label} syntax error after removal: {msg}"]
+    except (subprocess.SubprocessError, OSError):
+        pass
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+    return []
+
+
+def _validate_js_ts_syntax(file_path: str, content: str, ext: str) -> list[str]:
+    suffix = ext if ext.startswith(".") else f".{ext}"
+    return _validate_with_tempfile(
+        file_path,
+        content,
+        tool="node",
+        suffix=suffix,
+        command=["node", "--check"],
+        label="JS/TS",
+    )
+
+
+def _validate_go_syntax(file_path: str, content: str) -> list[str]:
+    return _validate_with_tempfile(
+        file_path,
+        content,
+        tool="gofmt",
+        suffix=".go",
+        command=["gofmt", "-e"],
+        label="Go",
+    )
+
+
+def _validate_rust_syntax(file_path: str, content: str) -> list[str]:
+    return _validate_with_tempfile(
+        file_path,
+        content,
+        tool="rustfmt",
+        suffix=".rs",
+        command=["rustfmt", "--check"],
+        label="Rust",
+    )
 
 
 def _validate_file(file_path: str, content: str) -> list[str]:
     ext = Path(file_path).suffix.lower()
 
-    if ext in (".py", ".pyi"):
-        try:
-            ast.parse(content, filename=file_path)
-        except SyntaxError as e:
-            return [f"{file_path}: Python syntax error after removal: {e}"]
-        return []
-
-    if ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"):
-        if not shutil.which("node"):
-            return []
-        suffix = ext if ext.startswith(".") else f".{ext}"
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=suffix,
-                delete=False,
-                encoding="utf-8",
-            ) as tmp:
-                tmp.write(content)
-                tmp_path = tmp.name
-            result = subprocess.run(
-                ["node", "--check", tmp_path],
-                capture_output=True,
-                text=True,
-                timeout=SUBPROCESS_TIMEOUT,
-            )
-            if result.returncode != 0:
-                msg = (result.stderr or result.stdout).strip()
-                return [f"{file_path}: JS/TS syntax error after removal: {msg}"]
-        except (subprocess.SubprocessError, OSError):
-            pass
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
-        return []
-
+    if ext in PYTHON_EXTS:
+        return _validate_python_syntax(file_path, content)
+    if ext in JS_TS_EXTS:
+        return _validate_js_ts_syntax(file_path, content, ext)
     if ext == ".go":
-        if not shutil.which("gofmt"):
-            return []
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".go",
-                delete=False,
-                encoding="utf-8",
-            ) as tmp:
-                tmp.write(content)
-                tmp_path = tmp.name
-            result = subprocess.run(
-                ["gofmt", "-e", tmp_path],
-                capture_output=True,
-                text=True,
-                timeout=SUBPROCESS_TIMEOUT,
-            )
-            if result.returncode != 0:
-                msg = (result.stderr or result.stdout).strip()
-                return [f"{file_path}: Go syntax error after removal: {msg}"]
-        except (subprocess.SubprocessError, OSError):
-            pass
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
-        return []
-
+        return _validate_go_syntax(file_path, content)
     if ext == ".rs":
-        if not shutil.which("rustfmt"):
-            return []
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".rs",
-                delete=False,
-                encoding="utf-8",
-            ) as tmp:
-                tmp.write(content)
-                tmp_path = tmp.name
-            result = subprocess.run(
-                ["rustfmt", "--check", tmp_path],
-                capture_output=True,
-                text=True,
-                timeout=SUBPROCESS_TIMEOUT,
-            )
-            if result.returncode != 0:
-                msg = (result.stderr or result.stdout).strip()
-                return [f"{file_path}: Rust syntax error after removal: {msg}"]
-        except (subprocess.SubprocessError, OSError):
-            pass
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
-        return []
-
+        return _validate_rust_syntax(file_path, content)
     if ext == ".java":
         return _check_brace_balance(file_path, content)
-
     return []
 
 
 def _check_brace_balance(file_path: str, content: str) -> list[str]:
-    pairs = {"{": "}", "(": ")", "[": "]"}
-    closers = set(pairs.values())
     stack: list[str] = []
-    for i, ch in enumerate(content):
-        if ch in pairs:
-            stack.append(pairs[ch])
-        elif ch in closers:
-            if not stack or stack[-1] != ch:
-                return [f"{file_path}: Unbalanced '{ch}' after removal"]
-            stack.pop()
+    for ch in content:
+        if ch in BRACE_PAIRS:
+            stack.append(BRACE_PAIRS[ch])
+            continue
+        if ch not in BRACE_CLOSERS:
+            continue
+        if not stack or stack[-1] != ch:
+            return [f"{file_path}: Unbalanced '{ch}' after removal"]
+        stack.pop()
     if stack:
         return [f"{file_path}: Unclosed delimiter(s) after removal: {''.join(stack)}"]
     return []
@@ -238,24 +248,8 @@ def _compute_safety_score(finding: dict) -> float:
     Compute a safety score (0-1) for a finding based on type, confidence, and LLM verdict.
     Higher score means safer to remove.
     """
-    score = 1.0
     kind = finding.get("type", "")
-
-    if kind == "import":
-        score = SAFETY_VERY_HIGH
-
-    elif kind == "function":
-        score = 0.9
-
-    elif kind == "variable":
-        score = SAFETY_MEDIUM
-
-    elif kind == "class":
-        score = SAFETY_LOW
-
-    # Methods are riskiest (may be overrides)
-    elif kind == "method":
-        score = SAFETY_MINIMAL
+    score = BASE_SAFETY_SCORES.get(kind, 1.0)
 
     # LLM-verified findings are safer
     if finding.get("_llm_verdict") == "TRUE_POSITIVE":
@@ -307,6 +301,127 @@ def _find_import_range(lines: list[str], start_idx: int) -> int:
     return end
 
 
+def _build_name_to_finding(verified_findings: list[dict]) -> dict[str, dict]:
+    name_to_finding: dict[str, dict] = {}
+    for finding in verified_findings:
+        name = finding.get("full_name", finding.get("name", ""))
+        if name:
+            name_to_finding[name] = finding
+    return name_to_finding
+
+
+def _resolve_abs_path(file_path: str, root: Path) -> str:
+    if Path(file_path).is_absolute():
+        return file_path
+    return str(root / file_path)
+
+
+def _load_file_lines(
+    file_cache: dict[str, list[str]], abs_path: str
+) -> list[str] | None:
+    if abs_path in file_cache:
+        return file_cache[abs_path]
+    try:
+        file_cache[abs_path] = (
+            Path(abs_path).read_text(encoding=TEXT_ENCODING).splitlines()
+        )
+    except (OSError, UnicodeDecodeError):
+        return None
+    return file_cache[abs_path]
+
+
+def _find_decorator_start(lines: list[str], start_idx: int) -> int:
+    dec_start = start_idx
+    while dec_start > 0 and lines[dec_start - 1].strip().startswith("@"):
+        dec_start -= 1
+    return dec_start
+
+
+def _resolve_patch_range(
+    lines: list[str],
+    abs_path: str,
+    kind: str,
+    line: int,
+) -> tuple[int, int] | None:
+    start_idx = line - 1
+    if start_idx >= len(lines):
+        return None
+
+    ext = Path(abs_path).suffix.lower()
+    if kind in ("function", "method", "class"):
+        if ext in _BRACE_LANG_EXTS:
+            end_idx = _find_brace_block_end(lines, start_idx)
+        else:
+            end_idx = _find_block_end(lines, start_idx)
+        return _find_decorator_start(lines, start_idx), end_idx
+
+    if kind == "import":
+        return start_idx, _find_import_range(lines, start_idx)
+
+    if kind == "variable":
+        end_idx = start_idx
+        while end_idx < len(lines) - 1 and lines[end_idx].rstrip().endswith("\\"):
+            end_idx += 1
+        return start_idx, end_idx
+
+    return start_idx, start_idx
+
+
+def _build_replacement(
+    lines: list[str],
+    start_idx: int,
+    end_idx: int,
+    mode: str,
+) -> str:
+    if mode != "comment":
+        return ""
+    commented = []
+    for idx in range(start_idx, end_idx + 1):
+        commented.append(f"# DEAD CODE: {lines[idx]}")
+    return "\n".join(commented)
+
+
+def _build_patch_for_finding(
+    finding: dict,
+    *,
+    root: Path,
+    file_cache: dict[str, list[str]],
+    dag: dict[str, list[str]],
+    mode: str,
+    min_safety: float,
+) -> RemovalPatch | None:
+    safety = _compute_safety_score(finding)
+    if safety < min_safety:
+        return None
+
+    file_path = finding.get("file", "")
+    line = finding.get("line", 0)
+    kind = finding.get("type", "")
+    if not file_path or not line:
+        return None
+
+    abs_path = _resolve_abs_path(file_path, root)
+    lines = _load_file_lines(file_cache, abs_path)
+    if lines is None:
+        return None
+
+    patch_range = _resolve_patch_range(lines, abs_path, kind, line)
+    if patch_range is None:
+        return None
+    start_idx, end_idx = patch_range
+
+    name = finding.get("full_name", finding.get("name", ""))
+    return RemovalPatch(
+        file_path=abs_path,
+        line_range=(start_idx + 1, end_idx + 1),
+        replacement=_build_replacement(lines, start_idx, end_idx, mode),
+        finding_name=name,
+        finding_type=kind,
+        depends_on=dag.get(name, []),
+        safety_score=safety,
+    )
+
+
 def generate_removal_plan(
     verified_findings: list[dict],
     defs_map: dict[str, Any],
@@ -318,13 +433,7 @@ def generate_removal_plan(
     root = Path(project_root)
     dag = _build_dependency_dag(verified_findings, defs_map)
     order = _topological_sort(dag)
-
-    name_to_finding = {}
-    for f in verified_findings:
-        name = f.get("full_name", f.get("name", ""))
-        if name:
-            name_to_finding[name] = f
-
+    name_to_finding = _build_name_to_finding(verified_findings)
     patches: list[RemovalPatch] = []
     file_cache: dict[str, list[str]] = {}
 
@@ -332,72 +441,16 @@ def generate_removal_plan(
         finding = name_to_finding.get(name)
         if not finding:
             continue
-
-        safety = _compute_safety_score(finding)
-        if safety < min_safety:
-            continue
-
-        file_path = finding.get("file", "")
-        line = finding.get("line", 0)
-        kind = finding.get("type", "")
-
-        if not file_path or not line:
-            continue
-
-        abs_path = file_path if Path(file_path).is_absolute() else str(root / file_path)
-        if abs_path not in file_cache:
-            try:
-                file_cache[abs_path] = (
-                    Path(abs_path).read_text(encoding="utf-8").splitlines()
-                )
-            except (OSError, UnicodeDecodeError):
-                continue
-
-        lines = file_cache[abs_path]
-        start_idx = line - 1
-
-        if start_idx >= len(lines):
-            continue
-
-        ext = Path(abs_path).suffix.lower()
-        is_brace_lang = ext in _BRACE_LANG_EXTS
-        if kind in ("function", "method", "class"):
-            if is_brace_lang:
-                end_idx = _find_brace_block_end(lines, start_idx)
-            else:
-                end_idx = _find_block_end(lines, start_idx)
-            dec_start = start_idx
-            while dec_start > 0 and lines[dec_start - 1].strip().startswith("@"):
-                dec_start -= 1
-            start_idx = dec_start
-        elif kind == "import":
-            end_idx = _find_import_range(lines, start_idx)
-        elif kind == "variable":
-            end_idx = start_idx
-            while end_idx < len(lines) - 1 and lines[end_idx].rstrip().endswith("\\"):
-                end_idx += 1
-        else:
-            end_idx = start_idx
-
-        if mode == "comment":
-            commented = []
-            for i in range(start_idx, end_idx + 1):
-                commented.append(f"# DEAD CODE: {lines[i]}")
-            replacement = "\n".join(commented)
-        else:
-            replacement = ""
-
-        patches.append(
-            RemovalPatch(
-                file_path=abs_path,
-                line_range=(start_idx + 1, end_idx + 1),  # back to 1-indexed
-                replacement=replacement,
-                finding_name=name,
-                finding_type=kind,
-                depends_on=dag.get(name, []),
-                safety_score=safety,
-            )
+        patch = _build_patch_for_finding(
+            finding,
+            root=root,
+            file_cache=file_cache,
+            dag=dag,
+            mode=mode,
+            min_safety=min_safety,
         )
+        if patch is not None:
+            patches.append(patch)
 
     patches.sort(key=lambda p: (p.file_path, -p.line_range[0]))
 
