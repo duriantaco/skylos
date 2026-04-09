@@ -4,7 +4,7 @@ import json
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from skylos.agent_center import (
@@ -168,6 +168,199 @@ class AgentServiceController:
         }
 
 
+def _resolve_refresh_query(query: str) -> bool:
+    params = parse_qs(query or "", keep_blank_values=False)
+    return params.get("refresh", ["0"])[0] in {"1", "true", "yes"}
+
+
+def _resolve_limit_query(query: str, default: int) -> int:
+    params = parse_qs(query or "", keep_blank_values=False)
+    raw = params.get("limit", [str(default)])[0]
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(1, min(value, 100))
+
+
+def _dispatch_get_request(
+    *,
+    controller: AgentServiceController,
+    path: str,
+    query: str,
+    default_limit: int,
+) -> tuple[HTTPStatus, dict[str, Any]]:
+    if path == "/health":
+        return HTTPStatus.OK, controller.health()
+    if path == "/state":
+        return HTTPStatus.OK, controller.get_state(
+            refresh=_resolve_refresh_query(query)
+        )
+    if path == "/command-center":
+        payload = controller.get_command_center(
+            refresh=_resolve_refresh_query(query),
+            limit=_resolve_limit_query(query, default_limit),
+        )
+        return HTTPStatus.OK, payload
+    if path == "/suggestions":
+        return HTTPStatus.OK, controller.get_suggestions()
+    return HTTPStatus.NOT_FOUND, {"error": "Not found"}
+
+
+def _dispatch_post_request(
+    *,
+    controller: AgentServiceController,
+    path: str,
+    body: dict[str, Any],
+    require_action_id: Callable[[dict[str, Any]], str],
+) -> tuple[HTTPStatus, dict[str, Any]]:
+    if path == "/refresh":
+        return HTTPStatus.OK, controller.refresh(force=True)
+    if path == "/triage/dismiss":
+        return HTTPStatus.OK, controller.dismiss(require_action_id(body))
+    if path == "/triage/snooze":
+        action_id = require_action_id(body)
+        hours = float(body.get("hours", 24))
+        return HTTPStatus.OK, controller.snooze(action_id, hours=hours)
+    if path == "/triage/restore":
+        return HTTPStatus.OK, controller.restore(require_action_id(body))
+    if path == "/learn":
+        action_id = require_action_id(body)
+        action = str(body.get("action", "dismiss"))
+        return HTTPStatus.OK, controller.learn_triage(action_id, action)
+    return HTTPStatus.NOT_FOUND, {"error": "Not found"}
+
+
+class AgentServiceHandler(BaseHTTPRequestHandler):
+    server_version = "SkylosAgentService/0.1"
+    controller: AgentServiceController
+    token: str | None = None
+    default_limit: int = 10
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self._send_cors_headers()
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        if not self._is_authorized():
+            return
+
+        parsed = urlparse(self.path)
+        status, payload = _dispatch_get_request(
+            controller=self.controller,
+            path=parsed.path,
+            query=parsed.query,
+            default_limit=self.default_limit,
+        )
+        self._send_json(status, payload)
+
+    def do_POST(self) -> None:
+        if not self._is_authorized():
+            return
+
+        parsed = urlparse(self.path)
+        body = self._read_json_body()
+        status, payload = _dispatch_post_request(
+            controller=self.controller,
+            path=parsed.path,
+            body=body,
+            require_action_id=self._require_action_id,
+        )
+        self._send_json(status, payload)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+    def _is_authorized(self) -> bool:
+        if not self.token:
+            return True
+        header = self.headers.get("X-Skylos-Agent-Token", "")
+        if header == self.token:
+            return True
+        self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized"})
+        return False
+
+    def _read_json_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length)
+        if not raw:
+            return {}
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except Exception:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid JSON body"})
+            raise _HandledRequestError()
+        if not isinstance(payload, dict):
+            self._send_json(
+                HTTPStatus.BAD_REQUEST, {"error": "JSON body must be an object"}
+            )
+            raise _HandledRequestError()
+        return payload
+
+    def _require_action_id(self, body: dict[str, Any]) -> str:
+        action_id = str(body.get("action_id") or "").strip()
+        if action_id:
+            return action_id
+        self._send_json(HTTPStatus.BAD_REQUEST, {"error": "action_id is required"})
+        raise _HandledRequestError()
+
+    def _send_json(self, status: int, payload: dict[str, Any]) -> None:
+        data = json.dumps(payload, indent=2, default=str).encode("utf-8")
+        self.send_response(status)
+        self._send_cors_headers()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_cors_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header(
+            "Access-Control-Allow-Headers", "Content-Type, X-Skylos-Agent-Token"
+        )
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+
+
+class SafeAgentServiceHandler(AgentServiceHandler):
+    def do_GET(self) -> None:
+        try:
+            super().do_GET()
+        except _HandledRequestError:
+            return
+        except Exception as exc:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+
+    def do_POST(self) -> None:
+        try:
+            super().do_POST()
+        except _HandledRequestError:
+            return
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+
+
+def _bind_agent_service_handler(
+    controller: AgentServiceController,
+    *,
+    token: str | None,
+    default_limit: int,
+) -> type[SafeAgentServiceHandler]:
+    return type(
+        "BoundAgentServiceHandler",
+        (SafeAgentServiceHandler,),
+        {
+            "controller": controller,
+            "token": token,
+            "default_limit": default_limit,
+        },
+    )
+
+
 def create_agent_service(
     path: str,
     *,
@@ -188,170 +381,12 @@ def create_agent_service(
         default_limit=default_limit,
         refresh_on_start=refresh_on_start,
     )
-
-    class AgentServiceHandler(BaseHTTPRequestHandler):
-        server_version = "SkylosAgentService/0.1"
-
-        def do_OPTIONS(self) -> None:
-            self.send_response(HTTPStatus.NO_CONTENT)
-            self._send_cors_headers()
-            self.end_headers()
-
-        def do_GET(self) -> None:
-            if not self._is_authorized():
-                return
-
-            parsed = urlparse(self.path)
-            if parsed.path == "/health":
-                self._send_json(HTTPStatus.OK, controller.health())
-                return
-
-            if parsed.path == "/state":
-                refresh = self._resolve_refresh(parsed.query)
-                self._send_json(HTTPStatus.OK, controller.get_state(refresh=refresh))
-                return
-
-            if parsed.path == "/command-center":
-                limit = self._resolve_limit(parsed.query, default_limit)
-                payload = controller.get_command_center(
-                    refresh=self._resolve_refresh(parsed.query),
-                    limit=limit,
-                )
-                self._send_json(HTTPStatus.OK, payload)
-                return
-
-            if parsed.path == "/suggestions":
-                self._send_json(HTTPStatus.OK, controller.get_suggestions())
-                return
-
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
-
-        def do_POST(self) -> None:
-            if not self._is_authorized():
-                return
-
-            parsed = urlparse(self.path)
-            body = self._read_json_body()
-
-            if parsed.path == "/refresh":
-                self._send_json(HTTPStatus.OK, controller.refresh(force=True))
-                return
-
-            if parsed.path == "/triage/dismiss":
-                action_id = self._require_action_id(body)
-                self._send_json(HTTPStatus.OK, controller.dismiss(action_id))
-                return
-
-            if parsed.path == "/triage/snooze":
-                action_id = self._require_action_id(body)
-                hours = float(body.get("hours", 24))
-                self._send_json(
-                    HTTPStatus.OK, controller.snooze(action_id, hours=hours)
-                )
-                return
-
-            if parsed.path == "/triage/restore":
-                action_id = self._require_action_id(body)
-                self._send_json(HTTPStatus.OK, controller.restore(action_id))
-                return
-
-            if parsed.path == "/learn":
-                action_id = self._require_action_id(body)
-                action = str(body.get("action", "dismiss"))
-                self._send_json(
-                    HTTPStatus.OK, controller.learn_triage(action_id, action)
-                )
-                return
-
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
-
-        def log_message(self, format: str, *args: Any) -> None:
-            return
-
-        def _resolve_refresh(self, query: str) -> bool:
-            params = parse_qs(query or "", keep_blank_values=False)
-            return params.get("refresh", ["0"])[0] in {"1", "true", "yes"}
-
-        def _is_authorized(self) -> bool:
-            if not token:
-                return True
-            header = self.headers.get("X-Skylos-Agent-Token", "")
-            if header == token:
-                return True
-            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized"})
-            return False
-
-        def _read_json_body(self) -> dict[str, Any]:
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            if length <= 0:
-                return {}
-            raw = self.rfile.read(length)
-            if not raw:
-                return {}
-            try:
-                payload = json.loads(raw.decode("utf-8"))
-            except Exception:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid JSON body"})
-                raise _HandledRequestError()
-            if not isinstance(payload, dict):
-                self._send_json(
-                    HTTPStatus.BAD_REQUEST, {"error": "JSON body must be an object"}
-                )
-                raise _HandledRequestError()
-            return payload
-
-        def _require_action_id(self, body: dict[str, Any]) -> str:
-            action_id = str(body.get("action_id") or "").strip()
-            if action_id:
-                return action_id
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "action_id is required"})
-            raise _HandledRequestError()
-
-        def _resolve_limit(self, query: str, default: int) -> int:
-            params = parse_qs(query or "", keep_blank_values=False)
-            raw = params.get("limit", [str(default)])[0]
-            try:
-                value = int(raw)
-            except ValueError:
-                return default
-            return max(1, min(value, 100))
-
-        def _send_json(self, status: int, payload: dict[str, Any]) -> None:
-            data = json.dumps(payload, indent=2, default=str).encode("utf-8")
-            self.send_response(status)
-            self._send_cors_headers()
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def _send_cors_headers(self) -> None:
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header(
-                "Access-Control-Allow-Headers", "Content-Type, X-Skylos-Agent-Token"
-            )
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-
-    class SafeAgentServiceHandler(AgentServiceHandler):
-        def do_GET(self) -> None:
-            try:
-                super().do_GET()
-            except _HandledRequestError:
-                return
-            except Exception as exc:
-                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
-
-        def do_POST(self) -> None:
-            try:
-                super().do_POST()
-            except _HandledRequestError:
-                return
-            except ValueError as exc:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
-            except Exception as exc:
-                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
-
-    server = ThreadingHTTPServer((host, port), SafeAgentServiceHandler)
+    handler_class = _bind_agent_service_handler(
+        controller,
+        token=token,
+        default_limit=default_limit,
+    )
+    server = ThreadingHTTPServer((host, port), handler_class)
     server.controller = controller  # type: ignore[attr-defined]
     return server
 
