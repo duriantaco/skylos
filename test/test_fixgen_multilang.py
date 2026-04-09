@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import textwrap
+import subprocess
 from skylos.fixgen import (
     _check_brace_balance,
     _find_brace_block_end,
@@ -129,6 +130,49 @@ class TestValidateFileJava:
         """)
         errors = _validate_file("Foo.java", code)
         assert len(errors) == 1
+
+
+class TestValidateFileToolFallbacks:
+    def test_js_ts_tool_missing_returns_empty(self, monkeypatch):
+        monkeypatch.setattr("skylos.fixgen.shutil.which", lambda tool: None)
+        assert _validate_file("file.ts", "const x = 1;\n") == []
+
+    def test_go_tool_missing_returns_empty(self, monkeypatch):
+        monkeypatch.setattr("skylos.fixgen.shutil.which", lambda tool: None)
+        assert _validate_file("file.go", "package main\n") == []
+
+    def test_rust_tool_missing_returns_empty(self, monkeypatch):
+        monkeypatch.setattr("skylos.fixgen.shutil.which", lambda tool: None)
+        assert _validate_file("file.rs", "fn main() {}\n") == []
+
+    def test_js_ts_subprocess_error_is_swallowed(self, monkeypatch):
+        monkeypatch.setattr("skylos.fixgen.shutil.which", lambda tool: "/usr/bin/node")
+
+        def boom(*args, **kwargs):
+            raise subprocess.SubprocessError("boom")
+
+        monkeypatch.setattr("skylos.fixgen.subprocess.run", boom)
+        assert _validate_file("file.ts", "const x = 1;\n") == []
+
+    def test_go_subprocess_error_is_swallowed(self, monkeypatch):
+        monkeypatch.setattr("skylos.fixgen.shutil.which", lambda tool: "/usr/bin/gofmt")
+
+        def boom(*args, **kwargs):
+            raise subprocess.SubprocessError("boom")
+
+        monkeypatch.setattr("skylos.fixgen.subprocess.run", boom)
+        assert _validate_file("file.go", "package main\n") == []
+
+    def test_rust_subprocess_error_is_swallowed(self, monkeypatch):
+        monkeypatch.setattr(
+            "skylos.fixgen.shutil.which", lambda tool: "/usr/bin/rustfmt"
+        )
+
+        def boom(*args, **kwargs):
+            raise subprocess.SubprocessError("boom")
+
+        monkeypatch.setattr("skylos.fixgen.subprocess.run", boom)
+        assert _validate_file("file.rs", "fn main() {}\n") == []
 
 
 class TestValidateFileUnknown:
