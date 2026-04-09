@@ -17,6 +17,7 @@ from skylos.agent_center import (
     save_agent_state,
     snapshot_file_signatures,
     update_action_triage,
+    watch_project,
 )
 
 
@@ -364,6 +365,62 @@ def test_refresh_agent_state_with_only_debt_baseline_does_not_mark_quality_new(
     assert state["summary"]["new_findings"] == 0
 
 
+def test_refresh_agent_state_rebuilds_when_only_triage_normalization_changes(
+    tmp_path,
+):
+    project_root = tmp_path / "repo"
+    src = project_root / "src"
+    src.mkdir(parents=True)
+    target = src / "auth.py"
+    target.write_text("def login():\n    return True\n", encoding="utf-8")
+
+    signatures = snapshot_file_signatures(project_root)
+    state = rebuild_agent_state_from_existing(
+        {
+            "project_root": str(project_root),
+            "file_signatures": signatures,
+            "changed_files": [],
+            "baseline_present": False,
+            "findings": [
+                {
+                    "fingerprint": "security:1",
+                    "rule_id": "SKY-D999",
+                    "category": "security",
+                    "severity": "HIGH",
+                    "message": "Shell injection path",
+                    "file": "src/auth.py",
+                    "absolute_file": str(target),
+                    "line": 9,
+                    "confidence": 91,
+                    "is_new_vs_baseline": True,
+                    "is_new_since_last_scan": True,
+                    "is_in_changed_file": True,
+                },
+            ],
+        }
+    )
+    state["triage"] = {
+        "security:1": {
+            "status": "snoozed",
+            "updated_at": "2026-03-16T00:00:00+00:00",
+            "snoozed_until": "2000-03-16T00:00:00+00:00",
+        }
+    }
+    save_agent_state(project_root, state)
+
+    with patch(
+        "skylos.agent_center.run_analyze",
+        side_effect=AssertionError("run_analyze should not be called"),
+    ) as run_analyze_mock:
+        rebuilt, updated = refresh_agent_state(project_root)
+
+    assert updated is True
+    assert rebuilt["triage"] == {}
+    assert rebuilt["actions"][0]["id"] == "security:1"
+    assert load_agent_state(project_root) == rebuilt
+    run_analyze_mock.assert_not_called()
+
+
 def test_agent_state_round_trip(tmp_path):
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -468,3 +525,60 @@ def test_update_and_clear_action_triage_round_trip(tmp_path):
     restored = clear_action_triage(project_root, "security:1")
     assert restored["actions"][0]["id"] == "security:1"
     assert restored["triage"] == {}
+
+
+def test_watch_project_tracks_lifecycle_events_and_cache_saves(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+
+    state1 = {"findings": [{"fingerprint": "a"}], "summary": {"headline": "one"}}
+    state2 = {
+        "findings": [{"fingerprint": "a"}, {"fingerprint": "b"}],
+        "summary": {"headline": "two"},
+    }
+    state3 = {"findings": [{"fingerprint": "b"}], "summary": {"headline": "three"}}
+    sequence = [(state1, True), (state2, True), (state3, True)]
+    call_index = {"i": 0}
+
+    def fake_refresh(*args, **kwargs):
+        idx = call_index["i"]
+        call_index["i"] += 1
+        return sequence[idx]
+
+    class FakeCache:
+        def __init__(self):
+            self.loaded: list[str] = []
+            self.saved: list[str] = []
+
+        def load(self, value: str) -> None:
+            self.loaded.append(value)
+
+        def save(self, value: str) -> None:
+            self.saved.append(value)
+
+    fake_cache = FakeCache()
+
+    with (
+        patch("skylos.agent_center.refresh_agent_state", side_effect=fake_refresh),
+        patch(
+            "skylos.grep_cache.GrepCache",
+            return_value=fake_cache,
+        ),
+        patch("time.sleep", return_value=None),
+    ):
+        result = watch_project(project_root, cycles=3, interval=0)
+
+    assert result == {
+        "findings": [{"fingerprint": "b"}],
+        "summary": {"headline": "three"},
+        "_events": [
+            {
+                "type": "finding_resolved",
+                "count": 1,
+                "iteration": 2,
+            }
+        ],
+    }
+    assert fake_cache.loaded == [str(project_root.resolve())]
+    assert fake_cache.saved == [str(project_root.resolve())] * 3
+    assert call_index["i"] == 3
