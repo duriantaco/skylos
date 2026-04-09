@@ -342,6 +342,154 @@ def clear_action_triage(
     return rebuilt
 
 
+def _load_refresh_context(
+    path: str | Path,
+    *,
+    state_file: str | Path | None = None,
+    exclude_folders: list[str] | set[str] | None = None,
+) -> tuple[
+    Path,
+    dict[str, Any],
+    dict[str, dict[str, Any]],
+    bool,
+    dict[str, dict[str, int]],
+    list[str],
+]:
+    project_root = resolve_project_root(path)
+    previous_state = load_agent_state(project_root, state_file=state_file) or {}
+    triage = normalize_triage_map(previous_state.get("triage") or {})
+    triage_changed = triage != (previous_state.get("triage") or {})
+    signatures = snapshot_file_signatures(project_root, exclude_folders=exclude_folders)
+    changed_files = detect_changed_files(
+        previous_state.get("file_signatures"), signatures
+    )
+    return (
+        project_root,
+        previous_state,
+        triage,
+        triage_changed,
+        signatures,
+        changed_files,
+    )
+
+
+def _maybe_reuse_previous_state(
+    *,
+    force: bool,
+    previous_state: dict[str, Any],
+    changed_files: list[str],
+    triage_changed: bool,
+    project_root: Path,
+    triage: dict[str, dict[str, Any]],
+    state_file: str | Path | None = None,
+) -> tuple[dict[str, Any], bool] | None:
+    if force or not previous_state or changed_files:
+        return None
+    if not triage_changed:
+        return previous_state, False
+
+    rebuilt = rebuild_agent_state_from_existing(
+        previous_state, project_root=project_root, triage=triage
+    )
+    save_agent_state(project_root, rebuilt, state_file=state_file)
+    return rebuilt, True
+
+
+def _resolve_analysis_excludes(
+    project_root: Path,
+    exclude_folders: list[str] | set[str] | None = None,
+) -> list[str]:
+    return list(
+        exclude_folders
+        or parse_exclude_folders(
+            use_defaults=True,
+            config_exclude_folders=load_config(project_root).get("exclude"),
+        )
+    )
+
+
+def _run_refresh_analysis(
+    project_root: Path,
+    *,
+    conf: int,
+    enable_secrets: bool,
+    enable_danger: bool,
+    enable_quality: bool,
+    include_dead_code: bool,
+    use_baseline: bool,
+    changed_files: list[str],
+    exclude_folders: list[str] | set[str] | None = None,
+) -> list[dict[str, Any]]:
+    raw = run_analyze(
+        str(project_root),
+        conf=conf,
+        enable_secrets=enable_secrets,
+        enable_danger=enable_danger,
+        enable_quality=enable_quality,
+        exclude_folders=_resolve_analysis_excludes(
+            project_root,
+            exclude_folders=exclude_folders,
+        ),
+    )
+    result = json.loads(raw) if isinstance(raw, str) else raw
+    return normalize_findings(
+        result,
+        project_root,
+        include_dead_code=include_dead_code,
+        changed_files=changed_files,
+        use_debt_baseline=use_baseline,
+    )
+
+
+def _load_refresh_baselines(
+    project_root: Path,
+    *,
+    use_baseline: bool,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, set[str], set[str]]:
+    baseline = load_baseline(project_root) if use_baseline else None
+    debt_baseline = load_debt_baseline(project_root) if use_baseline else None
+    known = set((baseline or {}).get("fingerprints", []))
+    debt_known = {
+        str(item.get("fingerprint"))
+        for item in (debt_baseline or {}).get("hotspots", [])
+        if item.get("fingerprint")
+    }
+    return baseline, debt_baseline, known, debt_known
+
+
+def _finding_fingerprint_set(findings: list[dict[str, Any]]) -> set[str]:
+    return {
+        finding.get("fingerprint", "")
+        for finding in findings
+        if finding.get("fingerprint")
+    }
+
+
+def _annotate_finding_freshness(
+    findings: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any] | None,
+    debt_baseline: dict[str, Any] | None,
+    known: set[str],
+    debt_known: set[str],
+    previous_fingerprints: set[str],
+    changed_files: list[str],
+) -> None:
+    changed_file_set = set(changed_files)
+    for finding in findings:
+        fingerprint = finding["fingerprint"]
+        if finding.get("category") == "debt":
+            finding["is_new_vs_baseline"] = (
+                fingerprint not in debt_known if debt_baseline else False
+            )
+        else:
+            finding["is_new_vs_baseline"] = (
+                fingerprint not in known if baseline else False
+            )
+        finding["is_new_since_last_scan"] = fingerprint not in previous_fingerprints
+        finding["is_in_changed_file"] = finding["file"] in changed_file_set
+
+
 def refresh_agent_state(
     path: str | Path,
     *,
@@ -355,74 +503,56 @@ def refresh_agent_state(
     force: bool = False,
     exclude_folders: list[str] | set[str] | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    project_root = resolve_project_root(path)
-    previous_state = load_agent_state(project_root, state_file=state_file) or {}
-    triage = normalize_triage_map(previous_state.get("triage") or {})
-    triage_changed = triage != (previous_state.get("triage") or {})
-    signatures = snapshot_file_signatures(project_root, exclude_folders=exclude_folders)
-    changed_files = detect_changed_files(
-        previous_state.get("file_signatures"), signatures
+    (
+        project_root,
+        previous_state,
+        triage,
+        triage_changed,
+        signatures,
+        changed_files,
+    ) = _load_refresh_context(
+        path,
+        state_file=state_file,
+        exclude_folders=exclude_folders,
     )
 
-    if not force and previous_state and not changed_files:
-        if triage_changed:
-            rebuilt = rebuild_agent_state_from_existing(
-                previous_state, project_root=project_root, triage=triage
-            )
-            save_agent_state(project_root, rebuilt, state_file=state_file)
-            return rebuilt, True
-        return previous_state, False
+    reused = _maybe_reuse_previous_state(
+        force=force,
+        previous_state=previous_state,
+        changed_files=changed_files,
+        triage_changed=triage_changed,
+        project_root=project_root,
+        triage=triage,
+        state_file=state_file,
+    )
+    if reused is not None:
+        return reused
 
-    raw = run_analyze(
-        str(project_root),
+    normalized = _run_refresh_analysis(
+        project_root,
         conf=conf,
         enable_secrets=enable_secrets,
         enable_danger=enable_danger,
         enable_quality=enable_quality,
-        exclude_folders=list(
-            exclude_folders
-            or parse_exclude_folders(
-                use_defaults=True,
-                config_exclude_folders=load_config(project_root).get("exclude"),
-            )
-        ),
-    )
-    result = json.loads(raw) if isinstance(raw, str) else raw
-
-    normalized = normalize_findings(
-        result,
-        project_root,
         include_dead_code=include_dead_code,
+        use_baseline=use_baseline,
         changed_files=changed_files,
-        use_debt_baseline=use_baseline,
+        exclude_folders=exclude_folders,
     )
-    baseline = load_baseline(project_root) if use_baseline else None
-    debt_baseline = load_debt_baseline(project_root) if use_baseline else None
-    known = set((baseline or {}).get("fingerprints", []))
-    debt_known = {
-        str(item.get("fingerprint"))
-        for item in (debt_baseline or {}).get("hotspots", [])
-        if item.get("fingerprint")
-    }
-
-    previous_fingerprints = {
-        finding.get("fingerprint", "")
-        for finding in previous_state.get("findings", [])
-        if finding.get("fingerprint")
-    }
-
-    for finding in normalized:
-        fingerprint = finding["fingerprint"]
-        if finding.get("category") == "debt":
-            finding["is_new_vs_baseline"] = (
-                fingerprint not in debt_known if debt_baseline else False
-            )
-        else:
-            finding["is_new_vs_baseline"] = (
-                fingerprint not in known if baseline else False
-            )
-        finding["is_new_since_last_scan"] = fingerprint not in previous_fingerprints
-        finding["is_in_changed_file"] = finding["file"] in changed_files
+    baseline, debt_baseline, known, debt_known = _load_refresh_baselines(
+        project_root,
+        use_baseline=use_baseline,
+    )
+    previous_fingerprints = _finding_fingerprint_set(previous_state.get("findings", []))
+    _annotate_finding_freshness(
+        normalized,
+        baseline=baseline,
+        debt_baseline=debt_baseline,
+        known=known,
+        debt_known=debt_known,
+        previous_fingerprints=previous_fingerprints,
+        changed_files=changed_files,
+    )
 
     state = compose_agent_state(
         project_root,
@@ -434,6 +564,74 @@ def refresh_agent_state(
     )
     save_agent_state(project_root, state, state_file=state_file)
     return state, True
+
+
+def _load_optional_grep_cache(project_root: Path) -> Any | None:
+    try:
+        from skylos.grep_cache import GrepCache
+    except ImportError:
+        return None
+
+    grep_cache = GrepCache()
+    grep_cache.load(str(project_root))
+    return grep_cache
+
+
+def _load_optional_triage_learner(
+    project_root: Path,
+    *,
+    enable_learning: bool,
+) -> Any | None:
+    if not enable_learning:
+        return None
+    try:
+        from skylos.triage_learner import TriageLearner
+    except ImportError:
+        return None
+
+    learner = TriageLearner()
+    learner.load(str(project_root))
+    return learner
+
+
+def _append_lifecycle_events(
+    state: dict[str, Any],
+    *,
+    previous_fingerprints: set[str],
+    iteration: int,
+) -> set[str]:
+    current_fingerprints = _finding_fingerprint_set(state.get("findings", []))
+    if iteration <= 0:
+        return current_fingerprints
+
+    appeared = current_fingerprints - previous_fingerprints
+    resolved = previous_fingerprints - current_fingerprints
+    if appeared:
+        state.setdefault("_events", []).append(
+            {
+                "type": "finding_appeared",
+                "count": len(appeared),
+                "iteration": iteration,
+            }
+        )
+    if resolved:
+        state.setdefault("_events", []).append(
+            {
+                "type": "finding_resolved",
+                "count": len(resolved),
+                "iteration": iteration,
+            }
+        )
+    return current_fingerprints
+
+
+def _save_grep_cache(grep_cache: Any | None, project_root: Path) -> None:
+    if not grep_cache:
+        return
+    try:
+        grep_cache.save(str(project_root))
+    except Exception:
+        pass
 
 
 def watch_project(
@@ -450,29 +648,12 @@ def watch_project(
 ) -> dict[str, Any]:
     iteration = 0
     latest_state: dict[str, Any] | None = None
-
-    # Initialize grep cache for incremental re-analysis
-    grep_cache = None
-    try:
-        from skylos.grep_cache import GrepCache
-
-        grep_cache = GrepCache()
-        project_root = resolve_project_root(path)
-        grep_cache.load(str(project_root))
-    except ImportError:
-        pass
-
-    # Initialize triage learner if enabled
-    learner = None
-    if enable_learning:
-        try:
-            from skylos.triage_learner import TriageLearner
-
-            learner = TriageLearner()
-            project_root = resolve_project_root(path)
-            learner.load(str(project_root))
-        except ImportError:
-            pass
+    project_root = resolve_project_root(path)
+    grep_cache = _load_optional_grep_cache(project_root)
+    _load_optional_triage_learner(
+        project_root,
+        enable_learning=enable_learning,
+    )
 
     previous_fingerprints: set[str] = set()
 
@@ -486,45 +667,14 @@ def watch_project(
             exclude_folders=exclude_folders,
         )
 
-        # Track finding lifecycle events
-        if latest_state and iteration > 0:
-            current_fingerprints = {
-                f.get("fingerprint", "")
-                for f in latest_state.get("findings", [])
-                if f.get("fingerprint")
-            }
-            appeared = current_fingerprints - previous_fingerprints
-            resolved = previous_fingerprints - current_fingerprints
-            if appeared:
-                latest_state.setdefault("_events", []).append(
-                    {
-                        "type": "finding_appeared",
-                        "count": len(appeared),
-                        "iteration": iteration,
-                    }
-                )
-            if resolved:
-                latest_state.setdefault("_events", []).append(
-                    {
-                        "type": "finding_resolved",
-                        "count": len(resolved),
-                        "iteration": iteration,
-                    }
-                )
-            previous_fingerprints = current_fingerprints
-        elif latest_state:
-            previous_fingerprints = {
-                f.get("fingerprint", "")
-                for f in latest_state.get("findings", [])
-                if f.get("fingerprint")
-            }
-
-        # Save grep cache after each cycle
         if grep_cache and latest_state:
-            try:
-                grep_cache.save(str(resolve_project_root(path)))
-            except Exception:
-                pass
+            _save_grep_cache(grep_cache, project_root)
+        if latest_state:
+            previous_fingerprints = _append_lifecycle_events(
+                latest_state,
+                previous_fingerprints=previous_fingerprints,
+                iteration=iteration,
+            )
 
         iteration += 1
         if once:
