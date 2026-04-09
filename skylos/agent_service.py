@@ -18,6 +18,10 @@ from skylos.agent_center import (
 )
 
 
+def _error_payload(message: str) -> dict[str, str]:
+    return {"error": message}
+
+
 class AgentServiceController:
     def __init__(
         self,
@@ -128,7 +132,7 @@ class AgentServiceController:
             None,
         )
         if finding is None:
-            return {"error": f"Finding not found: {action_id}"}
+            return _error_payload(f"Finding not found: {action_id}")
 
         learner = TriageLearner()
         learner.load(str(self.project_root))
@@ -204,7 +208,7 @@ def _dispatch_get_request(
         return HTTPStatus.OK, payload
     if path == "/suggestions":
         return HTTPStatus.OK, controller.get_suggestions()
-    return HTTPStatus.NOT_FOUND, {"error": "Not found"}
+    return HTTPStatus.NOT_FOUND, _error_payload("Not found")
 
 
 def _dispatch_post_request(
@@ -228,7 +232,7 @@ def _dispatch_post_request(
         action_id = require_action_id(body)
         action = str(body.get("action", "dismiss"))
         return HTTPStatus.OK, controller.learn_triage(action_id, action)
-    return HTTPStatus.NOT_FOUND, {"error": "Not found"}
+    return HTTPStatus.NOT_FOUND, _error_payload("Not found")
 
 
 class AgentServiceHandler(BaseHTTPRequestHandler):
@@ -278,7 +282,7 @@ class AgentServiceHandler(BaseHTTPRequestHandler):
         header = self.headers.get("X-Skylos-Agent-Token", "")
         if header == self.token:
             return True
-        self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized"})
+        self._send_json(HTTPStatus.UNAUTHORIZED, _error_payload("Unauthorized"))
         return False
 
     def _read_json_body(self) -> dict[str, Any]:
@@ -291,11 +295,11 @@ class AgentServiceHandler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(raw.decode("utf-8"))
         except Exception:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid JSON body"})
+            self._send_json(HTTPStatus.BAD_REQUEST, _error_payload("Invalid JSON body"))
             raise _HandledRequestError()
         if not isinstance(payload, dict):
             self._send_json(
-                HTTPStatus.BAD_REQUEST, {"error": "JSON body must be an object"}
+                HTTPStatus.BAD_REQUEST, _error_payload("JSON body must be an object")
             )
             raise _HandledRequestError()
         return payload
@@ -304,7 +308,7 @@ class AgentServiceHandler(BaseHTTPRequestHandler):
         action_id = str(body.get("action_id") or "").strip()
         if action_id:
             return action_id
-        self._send_json(HTTPStatus.BAD_REQUEST, {"error": "action_id is required"})
+        self._send_json(HTTPStatus.BAD_REQUEST, _error_payload("action_id is required"))
         raise _HandledRequestError()
 
     def _send_json(self, status: int, payload: dict[str, Any]) -> None:
@@ -331,7 +335,7 @@ class SafeAgentServiceHandler(AgentServiceHandler):
         except _HandledRequestError:
             return
         except Exception as exc:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, _error_payload(str(exc)))
 
     def do_POST(self) -> None:
         try:
@@ -339,9 +343,9 @@ class SafeAgentServiceHandler(AgentServiceHandler):
         except _HandledRequestError:
             return
         except ValueError as exc:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            self._send_json(HTTPStatus.BAD_REQUEST, _error_payload(str(exc)))
         except Exception as exc:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, _error_payload(str(exc)))
 
 
 def _bind_agent_service_handler(
