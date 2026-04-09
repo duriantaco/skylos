@@ -124,6 +124,23 @@ def test_run_gate_interaction_failed_can_bypass(monkeypatch):
     assert called["wizard"] == 1
 
 
+def test_run_gate_interaction_legacy_typeerror_fallback(monkeypatch):
+    _silence_console(monkeypatch)
+
+    calls = []
+
+    def fake_check_gate(results, config):
+        calls.append((results, config))
+        return True, []
+
+    monkeypatch.setattr(gk, "check_gate", fake_check_gate)
+
+    rc = gk.run_gate_interaction(results={}, config={}, provenance=object())
+
+    assert rc == 0
+    assert calls == [({}, {})]
+
+
 class FakeProvenance:
     def __init__(self, agent_files):
         self.agent_files = agent_files
@@ -321,4 +338,35 @@ def test_check_gate_both_gates_can_fail():
     prov = FakeProvenance(agent_files=["ai.py"])
     passed, reasons = gk.check_gate(results, config, provenance=prov)
     assert passed is False
-    assert len(reasons) >= 2
+    assert reasons == [
+        "2 critical security issue(s)",
+        "Agent gate: 1 critical issue(s) in AI-authored files (max: 0)",
+    ]
+
+
+def test_check_gate_fail_on_critical_skips_max_critical_reason():
+    results = {
+        "danger": [
+            {"severity": "critical", "file": "app.py"},
+            {"severity": "high", "file": "app.py"},
+        ],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {
+        "gate": {
+            "fail_on_critical": True,
+            "max_critical": 0,
+            "max_high": 0,
+            "max_security": 0,
+        }
+    }
+
+    passed, reasons = gk.check_gate(results, config)
+
+    assert passed is False
+    assert reasons == [
+        "1 critical security issue(s)",
+        "1 high severity issues (max: 0)",
+        "2 total security issues (max: 0)",
+    ]

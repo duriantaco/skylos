@@ -101,3 +101,53 @@ def test_summary_markdown_failed(failing_results):
     assert "FAILED" in md
     assert "Failure Reasons" in md
     assert "critical" in md
+
+
+def test_summary_markdown_mixed_output_is_stable():
+    results = {
+        "unused_functions": [{"name": "f1"}, {"name": "f2"}],
+        "unused_imports": [{"name": "i1"}],
+        "unused_classes": [],
+        "unused_variables": [],
+        "unused_parameters": [],
+        "danger": [
+            {"severity": "CRITICAL"},
+            {"severity": "HIGH"},
+            {"severity": "HIGH"},
+            {"severity": "HIGH"},
+            {"severity": "HIGH"},
+            {"severity": "HIGH"},
+            {"severity": "HIGH"},
+            {"severity": "MEDIUM"},
+            {"severity": "LOW"},
+            {"severity": "LOW"},
+            {"severity": "LOW"},
+        ],
+        "quality": [{"rule_id": f"Q{i}"} for i in range(11)],
+        "secrets": [{"rule_id": "S1"}],
+    }
+
+    md = build_summary_markdown(
+        results,
+        False,
+        ["first failure", "second failure"],
+    )
+
+    assert md == (
+        "## Skylos Analysis Results\n"
+        "\n"
+        "| Category | Count | Status |\n"
+        "|----------|-------|--------|\n"
+        "| Security (critical) | 1 | ❌ |\n"
+        "| Security (high) | 6 | ⚠️ |\n"
+        "| Security (total) | 11 | ⚠️ |\n"
+        "| Quality | 11 | ⚠️ |\n"
+        "| Secrets | 1 | ❌ |\n"
+        "| Dead Code | 3 | ℹ️ |\n"
+        "\n"
+        "**Result: ❌ FAILED**\n"
+        "\n"
+        "### Failure Reasons\n"
+        "- first failure\n"
+        "- second failure"
+    )
