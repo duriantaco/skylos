@@ -1,5 +1,13 @@
 ## Changelog
 
+## [4.3.2](https://github.com/duriantaco/skylos/compare/v4.3.1...v4.3.2) (2026-04-10)
+
+
+### Bug Fixes
+
+* **sync:** support top-level cloud pull config ([#194](https://github.com/duriantaco/skylos/issues/194)) ([8abe838](https://github.com/duriantaco/skylos/commit/8abe838e61689ca1bcf23920a289d830f172e58e))
+* **ts:** resolve workspace exports and local imports maps ([#181](https://github.com/duriantaco/skylos/issues/181)) ([322466c](https://github.com/duriantaco/skylos/commit/322466c617c4af95af854ff9a11973158688b0d3))
+
 ## [4.3.1](https://github.com/duriantaco/skylos/compare/v4.3.0...v4.3.1) (2026-04-08)
 
 
