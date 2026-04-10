@@ -782,11 +782,11 @@ def parallel_multi_strategy_search(
     max_workers: int = _DEFAULT_GREP_WORKERS,
     cache: Any = None,
 ) -> dict[str, list[str]]:
-    simple_name = finding.get("simple_name", finding.get("name", ""))
+    simple_name = _finding_simple_name(finding)
     if not simple_name or len(simple_name) <= 1:
         return {}
 
-    lang = detect_language(finding.get("file", ""))
+    lang = _finding_language(finding)
     results: dict[str, list[str]] = {}
     results_lock = threading.Lock()
     early_exit_event = threading.Event()
@@ -816,73 +816,14 @@ def parallel_multi_strategy_search(
         if _check_early_exit():
             early_exit_event.set()
 
-    tasks: list[tuple[Callable, tuple]] = []
-
-    if lang == "python":
-        tasks.append(
-            (
-                lambda: multi_strategy_search(
-                    finding,
-                    project_root,
-                    max_per_strategy=max_per_strategy,
-                    early_exit_threshold=early_exit_threshold,
-                ),
-                "python_core",
-            )
-        )
-    else:
-
-        def _general_refs() -> dict[str, list[str]]:
-            r: dict[str, list[str]] = {}
-            boundary = rf"\b{re.escape(simple_name)}\b"
-            refs = _run_grep(
-                boundary,
-                project_root,
-                use_regex=True,
-                include_globs=_ALL_SOURCE_GLOBS,
-                max_results=max_per_strategy * 2,
-            )
-            if refs:
-                refs = [ref for ref in refs if not is_substring_match(ref, simple_name)]
-                _defs, usages = filter_grep_results(refs, finding)
-                if usages:
-                    r["references"] = usages[:max_per_strategy]
-                elif _defs:
-                    r["references_definition_only"] = [
-                        "(only the definition itself found, no usages)"
-                    ]
-            return r
-
-        tasks.append((_general_refs, "general_refs"))
-
-    if lang == "typescript":
-        tasks.append(
-            (
-                lambda: _run_ts_strategies(finding, project_root, max_per_strategy),
-                "typescript",
-            )
-        )
-    elif lang == "go":
-        tasks.append(
-            (
-                lambda: _run_go_strategies(finding, project_root, max_per_strategy),
-                "go",
-            )
-        )
-    elif lang == "java":
-        tasks.append(
-            (
-                lambda: _run_java_strategies(finding, project_root, max_per_strategy),
-                "java",
-            )
-        )
-    elif lang == "rust":
-        tasks.append(
-            (
-                lambda: _run_rust_strategies(finding, project_root, max_per_strategy),
-                "rust",
-            )
-        )
+    tasks = _build_parallel_strategy_tasks(
+        finding,
+        project_root,
+        simple_name=simple_name,
+        lang=lang,
+        max_per_strategy=max_per_strategy,
+        early_exit_threshold=early_exit_threshold,
+    )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = []
@@ -1297,6 +1238,114 @@ _DETERMINISTIC_RULES: list[tuple[str, str, str]] = [
 ]
 
 
+def _finding_simple_name(finding: dict) -> str:
+    return finding.get("simple_name", finding.get("name", ""))
+
+
+def _finding_full_name(finding: dict) -> str:
+    return finding.get("full_name", finding.get("name", ""))
+
+
+def _finding_language(finding: dict) -> str:
+    return detect_language(finding.get("file", ""))
+
+
+def _run_general_reference_strategies(
+    finding: dict,
+    project_root: str,
+    *,
+    simple_name: str,
+    max_per_strategy: int,
+) -> dict[str, list[str]]:
+    results: dict[str, list[str]] = {}
+    boundary = rf"\b{re.escape(simple_name)}\b"
+    refs = _run_grep(
+        boundary,
+        project_root,
+        use_regex=True,
+        include_globs=_ALL_SOURCE_GLOBS,
+        max_results=max_per_strategy * 2,
+    )
+    if refs:
+        refs = [ref for ref in refs if not is_substring_match(ref, simple_name)]
+        defs, usages = filter_grep_results(refs, finding)
+        if usages:
+            results["references"] = usages[:max_per_strategy]
+        elif defs:
+            results["references_definition_only"] = [
+                "(only the definition itself found, no usages)"
+            ]
+    return results
+
+
+def _build_parallel_strategy_tasks(
+    finding: dict,
+    project_root: str,
+    *,
+    simple_name: str,
+    lang: str,
+    max_per_strategy: int,
+    early_exit_threshold: int,
+) -> list[tuple[Callable[[], dict[str, list[str]]], str]]:
+    tasks: list[tuple[Callable[[], dict[str, list[str]]], str]] = []
+
+    if lang == "python":
+        tasks.append(
+            (
+                lambda: multi_strategy_search(
+                    finding,
+                    project_root,
+                    max_per_strategy=max_per_strategy,
+                    early_exit_threshold=early_exit_threshold,
+                ),
+                "python_core",
+            )
+        )
+    else:
+        tasks.append(
+            (
+                lambda: _run_general_reference_strategies(
+                    finding,
+                    project_root,
+                    simple_name=simple_name,
+                    max_per_strategy=max_per_strategy,
+                ),
+                "general_refs",
+            )
+        )
+
+    if lang == "typescript":
+        tasks.append(
+            (
+                lambda: _run_ts_strategies(finding, project_root, max_per_strategy),
+                "typescript",
+            )
+        )
+    elif lang == "go":
+        tasks.append(
+            (
+                lambda: _run_go_strategies(finding, project_root, max_per_strategy),
+                "go",
+            )
+        )
+    elif lang == "java":
+        tasks.append(
+            (
+                lambda: _run_java_strategies(finding, project_root, max_per_strategy),
+                "java",
+            )
+        )
+    elif lang == "rust":
+        tasks.append(
+            (
+                lambda: _run_rust_strategies(finding, project_root, max_per_strategy),
+                "rust",
+            )
+        )
+
+    return tasks
+
+
 def _apply_deterministic_rules(
     search_results: dict[str, list[str]],
     finding: dict,
@@ -1350,43 +1399,24 @@ def grep_verify_findings(
 ) -> dict[str, GrepVerdict]:
     verdicts: dict[str, GrepVerdict] = {}
     start_time = time.monotonic()
-
-    if parallel:
-
-        def search_fn(f: dict) -> dict[str, list[str]]:
-            return parallel_multi_strategy_search(
-                f, project_root, max_workers=max_workers, cache=cache
-            )
-    else:
-
-        def search_fn(f: dict) -> dict[str, list[str]]:
-            if cache is None:
-                return multi_strategy_search(f, project_root)
-
-            lang = detect_language(f.get("file", ""))
-            group_name = "python_core" if lang == "python" else f"serial_{lang}"
-            return _cached_group_results(
-                cache,
-                group_name,
-                f,
-                lambda: multi_strategy_search(f, project_root),
-            )
+    search_fn = _build_grep_search_fn(
+        project_root,
+        parallel=parallel,
+        max_workers=max_workers,
+        cache=cache,
+    )
 
     for finding in findings:
         if time.monotonic() - start_time > time_budget:
             break
 
-        full_name = finding.get("full_name", finding.get("name", ""))
+        full_name = _finding_full_name(finding)
         if not full_name:
             continue
 
-        if _deterministic_suppress_multilang(finding):
-            verdicts[full_name] = GrepVerdict(
-                alive=True,
-                suppression_code="lang_deterministic",
-                rationale=f"Language-specific deterministic suppression ({detect_language(finding.get('file', ''))})",
-                evidence=[finding.get("file", "")],
-            )
+        deterministic_verdict = _deterministic_suppression_verdict(finding)
+        if deterministic_verdict:
+            verdicts[full_name] = deterministic_verdict
             continue
 
         search_results = search_fn(finding)
@@ -1395,3 +1425,54 @@ def grep_verify_findings(
             verdicts[full_name] = verdict
 
     return verdicts
+
+
+def _build_grep_search_fn(
+    project_root: str,
+    *,
+    parallel: bool,
+    max_workers: int,
+    cache: Any,
+) -> Callable[[dict], dict[str, list[str]]]:
+    if parallel:
+
+        def search_fn(finding: dict) -> dict[str, list[str]]:
+            return parallel_multi_strategy_search(
+                finding, project_root, max_workers=max_workers, cache=cache
+            )
+
+        return search_fn
+
+    def search_fn(finding: dict) -> dict[str, list[str]]:
+        if cache is None:
+            return multi_strategy_search(finding, project_root)
+        return _cached_serial_search_results(finding, project_root, cache)
+
+    return search_fn
+
+
+def _cached_serial_search_results(
+    finding: dict, project_root: str, cache: Any
+) -> dict[str, list[str]]:
+    lang = _finding_language(finding)
+    group_name = "python_core" if lang == "python" else f"serial_{lang}"
+    return _cached_group_results(
+        cache,
+        group_name,
+        finding,
+        lambda: multi_strategy_search(finding, project_root),
+    )
+
+
+def _deterministic_suppression_verdict(finding: dict) -> GrepVerdict | None:
+    if not _deterministic_suppress_multilang(finding):
+        return None
+    return GrepVerdict(
+        alive=True,
+        suppression_code="lang_deterministic",
+        rationale=(
+            "Language-specific deterministic suppression "
+            f"({_finding_language(finding)})"
+        ),
+        evidence=[finding.get("file", "")],
+    )
