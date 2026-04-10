@@ -236,6 +236,44 @@ def api_get(endpoint, token):
     return resp.json()
 
 
+def _extract_project_context(info):
+    project = info.get("project", {})
+    org = info.get("organization", {})
+    plan = info.get("plan", "free")
+    project_id = project.get("id") or project.get("project_id")
+    return {
+        "project": project,
+        "org": org,
+        "plan": plan,
+        "project_id": project_id,
+    }
+
+
+def _verify_project_context(token):
+    info = api_get("/api/sync/whoami", token)
+    return _extract_project_context(info)
+
+
+def _save_repo_link_and_token(repo_root, token, context):
+    link_path = _write_link(
+        repo_root,
+        context["project_id"],
+        project_name=context["project"].get("name"),
+        org_name=context["org"].get("name"),
+        plan=context["plan"],
+        base_url=get_api_url(),
+    )
+
+    creds_path = save_token(
+        token,
+        project_id=context["project_id"],
+        project_name=context["project"].get("name"),
+        org_name=context["org"].get("name"),
+        plan=context["plan"],
+    )
+    return link_path, creds_path
+
+
 def cmd_connect(token_arg=None):
     print("\n Connect to Skylos Cloud\n")
 
@@ -274,43 +312,28 @@ def cmd_connect(token_arg=None):
     print(f"Verifying token {mask_token(token)}...")
 
     try:
-        info = api_get("/api/sync/whoami", token)
+        context = _verify_project_context(token)
     except AuthError as e:
         print(f"\n✗ {e}")
         sys.exit(1)
 
-    project = info.get("project", {})
-    org = info.get("organization", {})
-    plan = info.get("plan", "free")
+    project = context["project"]
+    org = context["org"]
+    plan = context["plan"]
 
     print(f"\n✓ Connected!\n")
     print(f"  Project:      {project.get('name', 'Unknown')}")
     print(f"  Organization: {org.get('name', 'Unknown')}")
     print(f"  Plan:         {plan.capitalize()}")
 
-    project_id = project.get("id") or project.get("project_id")
+    project_id = context["project_id"]
     if not project_id:
         print("\n✗ Server did not return project id (expected project.id).")
         sys.exit(1)
 
     repo_root = _find_repo_root()
 
-    link_path = _write_link(
-        repo_root,
-        project_id,
-        project_name=project.get("name"),
-        org_name=org.get("name"),
-        plan=plan,
-        base_url=get_api_url(),
-    )
-
-    creds_path = save_token(
-        token,
-        project_id=project_id,
-        project_name=project.get("name"),
-        org_name=org.get("name"),
-        plan=plan,
-    )
+    link_path, creds_path = _save_repo_link_and_token(repo_root, token, context)
 
     print(f"\nLinked repo: {repo_root}")
     print(f"Link file:   {link_path}")
@@ -490,19 +513,11 @@ def cmd_pull():
     try:
         print("Pulling configuration...")
         config_data = api_get("/api/sync/config", token)
-
-        config_path = skylos_dir / CONFIG_FILE
-        with config_path.open("w") as f:
-            yaml.dump(config_data.get("config", {}), f, default_flow_style=False)
-        print(f"  ✓ {config_path}")
+        _write_sync_config(skylos_dir, config_data)
 
         print("Pulling suppressions...")
         supp_data = api_get("/api/sync/suppressions", token)
-
-        supp_path = skylos_dir / SUPPRESSIONS_FILE
-        with supp_path.open("w") as f:
-            json.dump(supp_data.get("suppressions", []), f, indent=2)
-        print(f"  ✓ {supp_path} ({supp_data.get('count', 0)} suppressions)")
+        _write_sync_suppressions(skylos_dir, supp_data)
 
         print("\n✓ Sync complete!")
 
@@ -536,6 +551,20 @@ repos:
     precommit_path.write_text(config_content)
     print("  ✓ Created .pre-commit-config.yaml")
     return True
+
+
+def _write_sync_config(skylos_dir: Path, config_data):
+    config_path = skylos_dir / CONFIG_FILE
+    with config_path.open("w") as f:
+        yaml.dump(config_data.get("config", {}), f, default_flow_style=False)
+    print(f"  ✓ {config_path}")
+
+
+def _write_sync_suppressions(skylos_dir: Path, supp_data):
+    supp_path = skylos_dir / SUPPRESSIONS_FILE
+    with supp_path.open("w") as f:
+        json.dump(supp_data.get("suppressions", []), f, indent=2)
+    print(f"  ✓ {supp_path} ({supp_data.get('count', 0)} suppressions)")
 
 
 def _build_pre_push_hook() -> str:
@@ -575,38 +604,23 @@ def cmd_setup(token_arg=None):
 
     print(f"\nConnecting...")
     try:
-        info = api_get("/api/sync/whoami", token)
+        context = _verify_project_context(token)
     except AuthError as e:
         print(f"\n✗ {e}")
         return
 
-    project = info.get("project", {})
-    org = info.get("organization", {})
-    plan = info.get("plan", "free")
+    project = context["project"]
+    org = context["org"]
+    plan = context["plan"]
 
-    project_id = project.get("id") or project.get("project_id")
+    project_id = context["project_id"]
     if not project_id:
         print("\n✗ Server did not return project id (expected project.id).")
         return
 
     repo_root = _find_repo_root()
 
-    _write_link(
-        repo_root,
-        project_id,
-        project_name=project.get("name"),
-        org_name=org.get("name"),
-        plan=plan,
-        base_url=get_api_url(),
-    )
-
-    save_token(
-        token,
-        project_id=project_id,
-        project_name=project.get("name"),
-        org_name=org.get("name"),
-        plan=plan,
-    )
+    _save_repo_link_and_token(repo_root, token, context)
 
     print(f"✓ Connected!\n")
     print(f"  Project: {project.get('name', 'Unknown')}")
@@ -804,8 +818,7 @@ def cmd_upgrade():
 
     print("Checking plan...")
     try:
-        info = api_get("/api/sync/whoami", token)
-        plan = info.get("plan", "free")
+        plan = _verify_project_context(token)["plan"]
     except AuthError as e:
         print(f"✗ {e}")
         return
@@ -889,22 +902,19 @@ def main(args=None):
         return
 
     cmd = args[0].lower()
-
-    if cmd == "connect":
-        cmd_connect(args[1] if len(args) > 1 else None)
-    elif cmd == "status":
-        cmd_status()
-    elif cmd == "disconnect":
-        cmd_disconnect()
-    elif cmd == "pull":
-        cmd_pull()
-    elif cmd == "setup":
-        cmd_setup(args[1] if len(args) > 1 else None)
-    elif cmd == "upgrade":
-        cmd_upgrade()
-    else:
+    handlers = {
+        "connect": lambda: cmd_connect(args[1] if len(args) > 1 else None),
+        "status": cmd_status,
+        "disconnect": cmd_disconnect,
+        "pull": cmd_pull,
+        "setup": lambda: cmd_setup(args[1] if len(args) > 1 else None),
+        "upgrade": cmd_upgrade,
+    }
+    handler = handlers.get(cmd)
+    if handler is None:
         print(f"Unknown command: {cmd}")
         sys.exit(1)
+    handler()
 
 
 def project_main(args=None):
@@ -923,20 +933,18 @@ def project_main(args=None):
         return
 
     cmd = args[0].lower()
-
-    if cmd == "status":
-        cmd_project_status()
-    elif cmd == "list":
-        cmd_project_list()
-    elif cmd == "use":
-        cmd_project_use()
-    elif cmd == "create":
-        cmd_project_create()
-    elif cmd == "unlink":
-        cmd_project_unlink()
-    else:
+    handlers = {
+        "status": cmd_project_status,
+        "list": cmd_project_list,
+        "use": cmd_project_use,
+        "create": cmd_project_create,
+        "unlink": cmd_project_unlink,
+    }
+    handler = handlers.get(cmd)
+    if handler is None:
         print(f"Unknown command: {cmd}")
         sys.exit(1)
+    handler()
 
 
 def get_custom_rules():
