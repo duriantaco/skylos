@@ -399,6 +399,45 @@ def test_cmd_pull_writes_config_and_suppressions(
     assert supp[0]["rule_id"] == "SKY-D212"
 
 
+def test_cmd_pull_writes_top_level_config_shape(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
+    _, creds_file = isolated_creds
+    creds_file.parent.mkdir(parents=True, exist_ok=True)
+    creds_file.write_text(json.dumps({"token": "TOK"}))
+
+    monkeypatch.setattr(syncmod, "SKYLOS_DIR", str(tmp_path / ".skylos"), raising=False)
+
+    def fake_api_get(endpoint, token):
+        assert token == "TOK"
+        if endpoint == "/api/sync/whoami":
+            return {"project": {"name": "Proj"}}
+        if endpoint == "/api/sync/config":
+            return {
+                "project_id": "p1",
+                "project_name": "Proj",
+                "gate_mode": "severity",
+                "gate": {"enabled": True, "mode": "severity"},
+            }
+        if endpoint == "/api/sync/suppressions":
+            return {"suppressions": [], "count": 0}
+        raise AssertionError(f"Unexpected endpoint {endpoint}")
+
+    monkeypatch.setattr(syncmod, "api_get", fake_api_get)
+
+    syncmod.cmd_pull()
+    out = capsys.readouterr().out
+
+    assert "Sync complete" in out
+
+    skylos_dir = Path(syncmod.SKYLOS_DIR)
+    config_path = skylos_dir / syncmod.CONFIG_FILE
+
+    config_text = config_path.read_text()
+    assert "project_id: p1" in config_text
+    assert "gate_mode: severity" in config_text
+
+
 def test_cmd_pull_calls_endpoints_in_order(isolated_creds, monkeypatch, tmp_path):
     _, creds_file = isolated_creds
     creds_file.parent.mkdir(parents=True, exist_ok=True)
