@@ -303,6 +303,84 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(payload["ci"]["provider"], "jenkins")
         self.assertEqual(payload["ci"]["pr_number"], 99)
 
+    @patch("skylos.provenance.analyze_provenance")
+    @patch("skylos.api._load_repo_link", return_value={"project_id": "proj-1"})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("skylos.api.SarifExporter")
+    @patch("skylos.api._get_blame_map", return_value={("app.py", 5): "dev@example.com"})
+    @patch(
+        "skylos.api._normalize_result_sections",
+        return_value=[{"file_path": "app.py", "line_number": 5, "message": "oops"}],
+    )
+    @patch("skylos.api.get_git_root", return_value="/repo")
+    @patch("skylos.api.get_git_info", return_value=("abc123", "main", "actor", {}))
+    def test_prepare_report_upload_enriches_blame_and_provenance(
+        self,
+        _mock_git_info,
+        _mock_root,
+        _mock_normalize,
+        _mock_blame,
+        mock_exporter,
+        _mock_ai,
+        _mock_link,
+        mock_analyze_provenance,
+    ):
+        prov_report = MagicMock()
+        prov_report.agent_files = ["app.py"]
+        prov_report.to_dict.return_value = {"agent_files": ["app.py"]}
+        mock_analyze_provenance.return_value = prov_report
+        mock_exporter.return_value.generate.return_value = {
+            "version": "2.1.0",
+            "runs": [],
+        }
+
+        prepared = api._prepare_report_upload(
+            {"danger": [{"file": "app.py", "line": 5, "message": "oops"}]},
+            analysis_mode="hybrid",
+        )
+
+        finding = mock_exporter.call_args[0][0][0]
+        self.assertEqual(finding["metadata"]["blame_email"], "dev@example.com")
+        self.assertEqual(prepared.metadata["provenance"], {"agent_files": ["app.py"]})
+        self.assertEqual(prepared.metadata["project_id"], "proj-1")
+
+    @patch("skylos.provenance.analyze_provenance")
+    @patch("skylos.api._load_repo_link", return_value={})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("skylos.api.SarifExporter")
+    @patch("skylos.api._get_blame_map", return_value={})
+    @patch(
+        "skylos.api._normalize_result_sections",
+        return_value=[{"file_path": "app.py", "line_number": 5, "message": "oops"}],
+    )
+    @patch("skylos.api.get_git_root", return_value="/repo")
+    @patch("skylos.api.get_git_info", return_value=("abc123", "main", "actor", {}))
+    def test_prepare_report_upload_swallows_provenance_failure_without_empty_metadata(
+        self,
+        _mock_git_info,
+        _mock_root,
+        _mock_normalize,
+        _mock_blame,
+        mock_exporter,
+        _mock_ai,
+        _mock_link,
+        mock_analyze_provenance,
+    ):
+        mock_analyze_provenance.side_effect = subprocess.SubprocessError("boom")
+        mock_exporter.return_value.generate.return_value = {
+            "version": "2.1.0",
+            "runs": [],
+        }
+
+        prepared = api._prepare_report_upload(
+            {"danger": [{"file": "app.py", "line": 5, "message": "oops"}]},
+            analysis_mode="static",
+        )
+
+        finding = mock_exporter.call_args[0][0][0]
+        self.assertNotIn("metadata", finding)
+        self.assertIsNone(prepared.metadata["provenance"])
+
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
     @patch("skylos.api.get_git_root", return_value=None)
@@ -399,6 +477,72 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(complete_payload["scan_id"], "scan_artifact")
         self.assertIn("scan_report", complete_payload["artifacts"])
         self.assertIn("definitions", complete_payload["artifacts"])
+        self.assertEqual(
+            complete_payload["artifacts"]["scan_report"]["artifact_id"],
+            "artifact-scan",
+        )
+        self.assertEqual(
+            complete_payload["artifacts"]["scan_report"]["key"],
+            "scan-key",
+        )
+        self.assertEqual(
+            complete_payload["artifacts"]["definitions"]["artifact_id"],
+            "artifact-defs",
+        )
+        self.assertEqual(
+            complete_payload["artifacts"]["definitions"]["key"],
+            "definitions-key",
+        )
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("skylos.api.get_project_info", return_value={})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("requests.post")
+    def test_upload_report_large_payload_missing_required_artifact_instructions_fails(
+        self,
+        mock_post,
+        _mock_ai,
+        _mock_info,
+        _mock_root,
+        _mock_git_info,
+        mock_token,
+    ):
+        mock_token.return_value = "token"
+
+        init_resp = MagicMock()
+        init_resp.status_code = 201
+        init_resp.json.return_value = {
+            "scanId": "scan_artifact",
+            "upload_id": "upload-1",
+            "artifacts": {
+                "definitions": {
+                    "artifact_id": "artifact-defs",
+                    "upload": {
+                        "method": "PUT",
+                        "url": "https://upload.example.com/definitions",
+                    },
+                }
+            },
+        }
+        mock_post.return_value = init_resp
+
+        with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
+            result = upload_report(
+                {
+                    "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
+                    "definitions": {"app.func": {"file": "app.py", "line": 5}},
+                },
+                quiet=True,
+            )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(
+            result["error"],
+            "Large-upload response omitted required artifact instructions for scan_report.",
+        )
+        self.assertEqual(mock_post.call_count, 1)
 
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
@@ -471,6 +615,72 @@ class TestSkylosApi(unittest.TestCase):
         self.assertNotIn("definitions", complete_payload["artifacts"])
         self.assertEqual(
             complete_payload["skipped_artifacts"][0]["name"], "definitions"
+        )
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("skylos.api.get_project_info", return_value={})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("requests.put")
+    @patch("requests.post")
+    def test_upload_report_large_payload_optional_definitions_not_requested(
+        self,
+        mock_post,
+        mock_put,
+        _mock_ai,
+        _mock_info,
+        _mock_root,
+        _mock_git_info,
+        mock_token,
+    ):
+        mock_token.return_value = "token"
+
+        init_resp = MagicMock()
+        init_resp.status_code = 201
+        init_resp.json.return_value = {
+            "scanId": "scan_artifact",
+            "upload_id": "upload-1",
+            "artifacts": {
+                "scan_report": {
+                    "artifact_id": "artifact-scan",
+                    "upload": {
+                        "method": "PUT",
+                        "url": "https://upload.example.com/report",
+                    },
+                }
+            },
+        }
+        complete_resp = MagicMock()
+        complete_resp.status_code = 200
+        complete_resp.json.return_value = {"scanId": "scan_artifact"}
+        mock_post.side_effect = [init_resp, complete_resp]
+
+        ok_upload = MagicMock()
+        ok_upload.status_code = 200
+        ok_upload.headers = {}
+        ok_upload.text = "OK"
+        mock_put.return_value = ok_upload
+
+        with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
+            result = upload_report(
+                {
+                    "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
+                    "definitions": {"app.func": {"file": "app.py", "line": 5}},
+                },
+                quiet=True,
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(mock_put.call_count, 1)
+        complete_payload = mock_post.call_args_list[1].kwargs["json"]
+        self.assertEqual(
+            complete_payload["skipped_artifacts"],
+            [{"name": "definitions", "reason": "not_requested"}],
+        )
+        self.assertEqual(
+            list(complete_payload["artifacts"].keys()),
+            ["scan_report"],
         )
 
     @patch("skylos.api.get_project_token")
