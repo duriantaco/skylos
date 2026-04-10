@@ -22,6 +22,17 @@ def _error_payload(message: str) -> dict[str, str]:
     return {"error": message}
 
 
+def _default_allowed_origins(host: str, port: int) -> list[str]:
+    """Build the default set of allowed CORS origins for the listening address."""
+    origins: list[str] = []
+    if host in ("0.0.0.0", "127.0.0.1", "::1", "localhost", ""):
+        origins.append(f"http://127.0.0.1:{port}")
+        origins.append(f"http://localhost:{port}")
+    else:
+        origins.append(f"http://{host}:{port}")
+    return origins
+
+
 class AgentServiceController:
     def __init__(
         self,
@@ -240,6 +251,7 @@ class AgentServiceHandler(BaseHTTPRequestHandler):
     controller: AgentServiceController
     token: str | None = None
     default_limit: int = 10
+    allowed_origins: set[str] = frozenset()
 
     def do_OPTIONS(self) -> None:
         self.send_response(HTTPStatus.NO_CONTENT)
@@ -321,11 +333,14 @@ class AgentServiceHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _send_cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header(
-            "Access-Control-Allow-Headers", "Content-Type, X-Skylos-Agent-Token"
-        )
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        origin = self.headers.get("Origin", "")
+        if origin and origin in self.allowed_origins:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type, X-Skylos-Agent-Token",
+            )
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
 
 class SafeAgentServiceHandler(AgentServiceHandler):
@@ -353,6 +368,7 @@ def _bind_agent_service_handler(
     *,
     token: str | None,
     default_limit: int,
+    allowed_origins: set[str],
 ) -> type[SafeAgentServiceHandler]:
     return type(
         "BoundAgentServiceHandler",
@@ -361,6 +377,7 @@ def _bind_agent_service_handler(
             "controller": controller,
             "token": token,
             "default_limit": default_limit,
+            "allowed_origins": frozenset(allowed_origins),
         },
     )
 
@@ -376,6 +393,7 @@ def create_agent_service(
     use_baseline: bool = True,
     default_limit: int = 10,
     refresh_on_start: bool = False,
+    allowed_origins: list[str] | None = None,
 ) -> ThreadingHTTPServer:
     controller = AgentServiceController(
         path,
@@ -385,12 +403,24 @@ def create_agent_service(
         default_limit=default_limit,
         refresh_on_start=refresh_on_start,
     )
+
+    # When port=0, we need to bind first to discover the actual port so that
+    # the default allowed-origins list uses the real port number.
+    server = ThreadingHTTPServer((host, port), None)  # type: ignore[arg-type]
+    actual_host, actual_port = server.server_address
+
+    if allowed_origins is not None:
+        origins = set(allowed_origins)
+    else:
+        origins = set(_default_allowed_origins(host, actual_port))
+
     handler_class = _bind_agent_service_handler(
         controller,
         token=token,
         default_limit=default_limit,
+        allowed_origins=origins,
     )
-    server = ThreadingHTTPServer((host, port), handler_class)
+    server.RequestHandlerClass = handler_class
     server.controller = controller  # type: ignore[attr-defined]
     return server
 
@@ -406,6 +436,7 @@ def serve_agent_service(
     use_baseline: bool = True,
     default_limit: int = 10,
     refresh_on_start: bool = False,
+    allowed_origins: list[str] | None = None,
 ) -> ThreadingHTTPServer:
     server = create_agent_service(
         path,
@@ -417,6 +448,7 @@ def serve_agent_service(
         use_baseline=use_baseline,
         default_limit=default_limit,
         refresh_on_start=refresh_on_start,
+        allowed_origins=allowed_origins,
     )
     server.serve_forever()
     return server
