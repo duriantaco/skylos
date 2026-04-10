@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +48,96 @@ def _pattern_key(pattern: TriagePattern) -> str:
     return (
         f"{pattern.pattern_type}:{pattern.pattern}:{pattern.rule_id}:{pattern.action}"
     )
+
+
+def _make_pattern(
+    pattern_type: str,
+    pattern: str,
+    rule_id: str,
+    action: str,
+) -> TriagePattern:
+    return TriagePattern(
+        pattern_type=pattern_type,
+        pattern=pattern,
+        rule_id=rule_id,
+        action=action,
+    )
+
+
+def _extract_file_patterns(
+    rule_id: str,
+    file_path: str,
+    action: str,
+) -> list[TriagePattern]:
+    patterns: list[TriagePattern] = []
+    if not file_path:
+        return patterns
+
+    parts = file_path.replace("\\", "/").split("/")
+    if len(parts) > 1:
+        patterns.append(_make_pattern("file_glob", parts[0] + "/**", rule_id, action))
+
+    if "." not in file_path:
+        return patterns
+    if not any(
+        marker in file_path for marker in ("test_", "_test.", "tests/", "test/")
+    ):
+        return patterns
+
+    ext = "." + file_path.rsplit(".", 1)[-1]
+    patterns.append(_make_pattern("file_glob", f"**/test_*{ext}", rule_id, action))
+    return patterns
+
+
+def _extract_name_patterns(
+    rule_id: str,
+    name: str,
+    action: str,
+) -> list[TriagePattern]:
+    if not name:
+        return []
+    if name.startswith("test_"):
+        return [_make_pattern("name_pattern", "test_*", rule_id, action)]
+    if name.startswith("__") and name.endswith("__"):
+        return [_make_pattern("name_pattern", "__*__", rule_id, action)]
+    if name.startswith("_"):
+        return [_make_pattern("name_pattern", "_*", rule_id, action)]
+    return []
+
+
+def _extract_decorator_patterns(
+    rule_id: str,
+    decorators: Any,
+    action: str,
+) -> list[TriagePattern]:
+    if not isinstance(decorators, list):
+        return []
+
+    patterns: list[TriagePattern] = []
+    for decorator in decorators:
+        decorator_text = str(decorator).strip()
+        if decorator_text:
+            patterns.append(_make_pattern("decorator", decorator_text, rule_id, action))
+    return patterns
+
+
+def _matches_file_glob(finding: dict[str, Any], pattern: TriagePattern) -> bool:
+    return _glob_match(finding.get("file", ""), pattern.pattern)
+
+
+def _matches_name_pattern(finding: dict[str, Any], pattern: TriagePattern) -> bool:
+    name = finding.get("simple_name", finding.get("name", ""))
+    return _glob_match(name, pattern.pattern)
+
+
+def _matches_decorator_pattern(
+    finding: dict[str, Any],
+    pattern: TriagePattern,
+) -> bool:
+    decorators = finding.get("decorators", [])
+    if not isinstance(decorators, list):
+        return False
+    return any(str(decorator).strip() == pattern.pattern for decorator in decorators)
 
 
 class TriageLearner:
@@ -97,24 +187,31 @@ class TriageLearner:
         candidates = self._extract_patterns(finding, action)
 
         for candidate in candidates:
-            key = _pattern_key(candidate)
-            existing = self._patterns.get(key)
-
-            if existing is not None:
-                existing.observations += 1
-                existing.last_updated = time.time()
-                existing.confidence = existing.observations / (
-                    existing.observations + 1
-                )
-                updated.append(existing)
-            else:
-                candidate.observations = 1
-                candidate.confidence = 0.5
-                candidate.last_updated = time.time()
-                self._patterns[key] = candidate
-                updated.append(candidate)
+            self._record_candidate(candidate, updated)
 
         return updated
+
+    def _record_candidate(
+        self,
+        candidate: TriagePattern,
+        updated: list[TriagePattern],
+    ) -> None:
+        key = _pattern_key(candidate)
+        existing = self._patterns.get(key)
+        timestamp = time.time()
+
+        if existing is not None:
+            existing.observations += 1
+            existing.last_updated = timestamp
+            existing.confidence = existing.observations / (existing.observations + 1)
+            updated.append(existing)
+            return
+
+        candidate.observations = 1
+        candidate.confidence = 0.5
+        candidate.last_updated = timestamp
+        self._patterns[key] = candidate
+        updated.append(candidate)
 
     def _extract_patterns(
         self,
@@ -129,76 +226,15 @@ class TriageLearner:
         if not rule_id:
             return patterns
 
-        if file_path:
-            parts = file_path.replace("\\", "/").split("/")
-            if len(parts) > 1:
-                dir_pattern = parts[0] + "/**"
-                patterns.append(
-                    TriagePattern(
-                        pattern_type="file_glob",
-                        pattern=dir_pattern,
-                        rule_id=rule_id,
-                        action=action,
-                    )
-                )
-
-            if "." in file_path:
-                ext = "." + file_path.rsplit(".", 1)[-1]
-                if any(
-                    marker in file_path
-                    for marker in ("test_", "_test.", "tests/", "test/")
-                ):
-                    patterns.append(
-                        TriagePattern(
-                            pattern_type="file_glob",
-                            pattern=f"**/test_*{ext}",
-                            rule_id=rule_id,
-                            action=action,
-                        )
-                    )
-
-        if name:
-            if name.startswith("test_"):
-                patterns.append(
-                    TriagePattern(
-                        pattern_type="name_pattern",
-                        pattern="test_*",
-                        rule_id=rule_id,
-                        action=action,
-                    )
-                )
-            elif name.startswith("__") and name.endswith("__"):
-                patterns.append(
-                    TriagePattern(
-                        pattern_type="name_pattern",
-                        pattern="__*__",
-                        rule_id=rule_id,
-                        action=action,
-                    )
-                )
-            elif name.startswith("_"):
-                patterns.append(
-                    TriagePattern(
-                        pattern_type="name_pattern",
-                        pattern="_*",
-                        rule_id=rule_id,
-                        action=action,
-                    )
-                )
-
-        decorators = finding.get("decorators", [])
-        if isinstance(decorators, list):
-            for dec in decorators:
-                dec_str = str(dec).strip()
-                if dec_str:
-                    patterns.append(
-                        TriagePattern(
-                            pattern_type="decorator",
-                            pattern=dec_str,
-                            rule_id=rule_id,
-                            action=action,
-                        )
-                    )
+        patterns.extend(_extract_file_patterns(rule_id, file_path, action))
+        patterns.extend(_extract_name_patterns(rule_id, name, action))
+        patterns.extend(
+            _extract_decorator_patterns(
+                rule_id,
+                finding.get("decorators", []),
+                action,
+            )
+        )
 
         return patterns
 
@@ -209,16 +245,14 @@ class TriageLearner:
         best_match: tuple[str, float] | None = None
         best_confidence = 0.0
 
-        for pattern in self._patterns.values():
-            if pattern.observations < MIN_OBSERVATIONS_SUGGEST:
-                continue
-            if pattern.confidence < MIN_CONFIDENCE_SUGGEST:
-                continue
-
-            if self._matches(finding, pattern):
-                if pattern.confidence > best_confidence:
-                    best_confidence = pattern.confidence
-                    best_match = (pattern.action, pattern.confidence)
+        for pattern in self._matching_patterns(
+            finding,
+            MIN_OBSERVATIONS_SUGGEST,
+            MIN_CONFIDENCE_SUGGEST,
+        ):
+            if pattern.confidence > best_confidence:
+                best_confidence = pattern.confidence
+                best_match = (pattern.action, pattern.confidence)
 
         return best_match
 
@@ -234,19 +268,33 @@ class TriageLearner:
                 continue
             action, confidence = prediction
             if confidence >= MIN_CONFIDENCE_AUTO:
-                matching_patterns = [
-                    p
-                    for p in self._patterns.values()
-                    if (
-                        p.observations >= MIN_OBSERVATIONS_AUTO
-                        and p.confidence >= MIN_CONFIDENCE_AUTO
-                        and self._matches(finding, p)
+                matching_patterns = list(
+                    self._matching_patterns(
+                        finding,
+                        MIN_OBSERVATIONS_AUTO,
+                        MIN_CONFIDENCE_AUTO,
                     )
-                ]
+                )
                 if matching_patterns:
                     candidates.append((finding, action, confidence))
 
         return candidates
+
+    def _matching_patterns(
+        self,
+        finding: dict[str, Any],
+        min_observations: int,
+        min_confidence: float,
+    ) -> list[TriagePattern]:
+        return [
+            pattern
+            for pattern in self._patterns.values()
+            if (
+                pattern.observations >= min_observations
+                and pattern.confidence >= min_confidence
+                and self._matches(finding, pattern)
+            )
+        ]
 
     def _matches(self, finding: dict[str, Any], pattern: TriagePattern) -> bool:
         rule_id = finding.get("rule_id", "")
@@ -254,20 +302,12 @@ class TriageLearner:
             return False
 
         if pattern.pattern_type == "file_glob":
-            file_path = finding.get("file", "")
-            return _glob_match(file_path, pattern.pattern)
-
-        elif pattern.pattern_type == "name_pattern":
-            name = finding.get("simple_name", finding.get("name", ""))
-            return _glob_match(name, pattern.pattern)
-
-        elif pattern.pattern_type == "decorator":
-            decorators = finding.get("decorators", [])
-            if isinstance(decorators, list):
-                return any(str(d).strip() == pattern.pattern for d in decorators)
-            return False
-
-        elif pattern.pattern_type == "rule_type":
+            return _matches_file_glob(finding, pattern)
+        if pattern.pattern_type == "name_pattern":
+            return _matches_name_pattern(finding, pattern)
+        if pattern.pattern_type == "decorator":
+            return _matches_decorator_pattern(finding, pattern)
+        if pattern.pattern_type == "rule_type":
             return True  # rule_id already matched above
 
         return False
