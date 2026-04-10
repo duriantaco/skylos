@@ -296,6 +296,73 @@ class TestGrepVerifyFindings:
         assert "lib.helper" in first
         assert "lib.helper" in second
 
+    def test_explicit_empty_full_name_is_skipped(self, tmp_path):
+        (tmp_path / "lib.py").write_text("def helper():\n    return 42\n")
+
+        findings = [
+            {
+                "name": "helper",
+                "full_name": "",
+                "simple_name": "helper",
+                "type": "function",
+                "file": str(tmp_path / "lib.py"),
+                "line": 1,
+                "confidence": 80,
+            }
+        ]
+
+        with patch("skylos.grep_verify.multi_strategy_search") as mock_search:
+            verdicts = grep_verify_findings(findings, str(tmp_path))
+
+        assert verdicts == {}
+        mock_search.assert_not_called()
+
+    def test_deterministic_suppression_skips_search_and_cache(self, tmp_path):
+        findings = [
+            {
+                "name": "Button",
+                "full_name": "src.components.Button",
+                "simple_name": "Button",
+                "type": "import",
+                "file": str(tmp_path / "src" / "components" / "index.ts"),
+                "line": 1,
+                "confidence": 80,
+            }
+        ]
+        cache = GrepCache()
+
+        with (
+            patch("skylos.grep_verify.multi_strategy_search") as mock_search,
+            patch("skylos.grep_verify._cached_group_results") as mock_cached_group,
+        ):
+            verdicts = grep_verify_findings(findings, str(tmp_path), cache=cache)
+
+        verdict = verdicts["src.components.Button"]
+        assert verdict.alive is True
+        assert verdict.suppression_code == "lang_deterministic"
+        mock_search.assert_not_called()
+        mock_cached_group.assert_not_called()
+
+    def test_serial_cache_group_name_for_typescript(self, tmp_path):
+        finding = {
+            "name": "helper",
+            "full_name": "util.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(tmp_path / "util.ts"),
+            "line": 1,
+            "confidence": 80,
+        }
+        cache = GrepCache()
+
+        with patch(
+            "skylos.grep_verify._cached_group_results", return_value={}
+        ) as mock_cached_group:
+            grep_verify_findings([finding], str(tmp_path), cache=cache)
+
+        assert mock_cached_group.call_args.args[0] is cache
+        assert mock_cached_group.call_args.args[1] == "serial_typescript"
+
 
 class TestMethodCallWhitespace:
     def test_method_call_with_space_before_paren(self, tmp_path):
@@ -705,6 +772,51 @@ class TestParallelMultiStrategySearch:
         finding = {"simple_name": "", "type": "function", "file": "foo.py"}
         results = parallel_multi_strategy_search(finding, "/nonexistent")
         assert results == {}
+
+    def test_parallel_logs_and_ignores_strategy_group_failures(self, tmp_path):
+        finding = {
+            "name": "helper",
+            "full_name": "lib.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(tmp_path / "lib.py"),
+            "line": 1,
+        }
+
+        with (
+            patch(
+                "skylos.grep_verify._cached_group_results",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("skylos.grep_verify.logger.debug") as mock_debug,
+        ):
+            results = parallel_multi_strategy_search(
+                finding, str(tmp_path), max_workers=2
+            )
+
+        assert results == {}
+        mock_debug.assert_called()
+
+    def test_parallel_cache_group_names_for_typescript(self, tmp_path):
+        finding = {
+            "name": "helper",
+            "full_name": "util.helper",
+            "simple_name": "helper",
+            "type": "function",
+            "file": str(tmp_path / "util.ts"),
+            "line": 1,
+        }
+        cache = GrepCache()
+
+        with patch(
+            "skylos.grep_verify._cached_group_results", return_value={}
+        ) as mock_cached_group:
+            parallel_multi_strategy_search(
+                finding, str(tmp_path), max_workers=2, cache=cache
+            )
+
+        group_names = {call.args[1] for call in mock_cached_group.call_args_list}
+        assert group_names == {"general_refs", "typescript"}
 
 
 class TestGrepVerifyParallel:
