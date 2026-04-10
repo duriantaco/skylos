@@ -304,6 +304,49 @@ def test_cmd_connect_cancel_input(monkeypatch):
     assert e.value.code == 1
 
 
+def test_cmd_connect_declines_env_token_then_cancels(monkeypatch, capsys):
+    monkeypatch.setenv("SKYLOS_TOKEN", "ENV_TOKEN")
+
+    answers = iter(["n"])
+
+    def fake_input(_prompt=""):
+        try:
+            return next(answers)
+        except StopIteration:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(builtins, "input", fake_input)
+
+    with pytest.raises(SystemExit) as e:
+        syncmod.cmd_connect(None)
+
+    assert e.value.code == 1
+    out = capsys.readouterr().out
+    assert "SKYLOS_TOKEN environment variable is set" in out
+    assert "Cancelled." in out
+
+
+def test_cmd_connect_accepts_project_project_id(isolated_creds, monkeypatch, capsys):
+    def fake_api_get(endpoint, token):
+        assert endpoint == "/api/sync/whoami"
+        assert token == "TOK_ARG"
+        return {
+            "project": {"project_id": "proj_legacy", "name": "Proj"},
+            "organization": {"name": "Org"},
+            "plan": "pro",
+        }
+
+    monkeypatch.setattr(syncmod, "api_get", fake_api_get)
+
+    syncmod.cmd_connect("TOK_ARG")
+    out = capsys.readouterr().out
+
+    assert "✓ Connected!" in out
+    _, creds_file = isolated_creds
+    data = json.loads(creds_file.read_text())
+    assert data["tokens"]["proj_legacy"]["project_name"] == "Proj"
+
+
 def test_cmd_pull_not_connected_exits(isolated_creds, capsys):
     with pytest.raises(SystemExit) as e:
         syncmod.cmd_pull()
@@ -356,6 +399,36 @@ def test_cmd_pull_writes_config_and_suppressions(
     assert supp[0]["rule_id"] == "SKY-D212"
 
 
+def test_cmd_pull_calls_endpoints_in_order(isolated_creds, monkeypatch, tmp_path):
+    _, creds_file = isolated_creds
+    creds_file.parent.mkdir(parents=True, exist_ok=True)
+    creds_file.write_text(json.dumps({"token": "TOK"}))
+
+    monkeypatch.setattr(syncmod, "SKYLOS_DIR", str(tmp_path / ".skylos"), raising=False)
+
+    calls = []
+
+    def fake_api_get(endpoint, token):
+        calls.append(endpoint)
+        if endpoint == "/api/sync/whoami":
+            return {"project": {"name": "Proj"}}
+        if endpoint == "/api/sync/config":
+            return {"config": {"complexity": 12}}
+        if endpoint == "/api/sync/suppressions":
+            return {"suppressions": [], "count": 0}
+        raise AssertionError(f"Unexpected endpoint {endpoint}")
+
+    monkeypatch.setattr(syncmod, "api_get", fake_api_get)
+
+    syncmod.cmd_pull()
+
+    assert calls == [
+        "/api/sync/whoami",
+        "/api/sync/config",
+        "/api/sync/suppressions",
+    ]
+
+
 def test_main_usage_no_args(capsys):
     syncmod.main([])
     out = capsys.readouterr().out
@@ -367,6 +440,14 @@ def test_main_usage_no_args(capsys):
 def test_main_unknown_command_exits(capsys):
     with pytest.raises(SystemExit) as e:
         syncmod.main(["wat"])
+    assert e.value.code == 1
+    out = capsys.readouterr().out
+    assert "Unknown command" in out
+
+
+def test_project_main_unknown_command_exits(capsys):
+    with pytest.raises(SystemExit) as e:
+        syncmod.project_main(["wat"])
     assert e.value.code == 1
     out = capsys.readouterr().out
     assert "Unknown command" in out
@@ -423,6 +504,37 @@ def test_cmd_setup_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, cap
     assert "skylos ." not in hook
     assert "Rust/Python parity check" in hook
     assert "test/test_fast_parity.py" in hook
+
+
+def test_cmd_setup_accepts_project_project_id(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".git").mkdir()
+
+    monkeypatch.setattr(
+        syncmod,
+        "api_get",
+        lambda endpoint, token: {
+            "/api/sync/whoami": {
+                "project": {"project_id": "proj_legacy", "name": "Proj"},
+                "organization": {"name": "Org"},
+                "plan": "free",
+            }
+        }[endpoint],
+    )
+    monkeypatch.setattr(syncmod, "_write_link", lambda *args, **kwargs: None)
+    saved = {}
+
+    def fake_save_token(token, **kwargs):
+        saved.update(kwargs)
+        return str(tmp_path / "creds.json")
+
+    monkeypatch.setattr(syncmod, "save_token", fake_save_token)
+    answers = iter(["n", "n", "n"])
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
+
+    syncmod.cmd_setup("TOK")
+
+    assert saved["project_id"] == "proj_legacy"
 
 
 def test_cmd_upgrade_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, capsys):
