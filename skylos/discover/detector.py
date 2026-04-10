@@ -1049,55 +1049,73 @@ def detect_integrations(
 ) -> tuple[list[LLMIntegration], AIIntegrationGraph]:
     root = Path(path).resolve()
     if exclude_folders is None:
-        exclude_folders = {
-            "node_modules",
-            ".git",
-            "__pycache__",
-            ".venv",
-            "venv",
-            ".tox",
-            ".mypy_cache",
-            ".pytest_cache",
-            "dist",
-            "build",
-            "egg-info",
-        }
+        exclude_folders = _default_exclude_folders()
 
     integrations: list[LLMIntegration] = []
     graph = AIIntegrationGraph()
-    files_scanned = 0
 
-    py_files = _collect_python_files(root, exclude_folders)
-    for py_file in py_files:
-        files_scanned += 1
-        try:
-            source = py_file.read_text(encoding="utf-8", errors="ignore")
-            tree = ast.parse(source, filename=str(py_file))
-        except (SyntaxError, UnicodeDecodeError):
+    for py_file in _collect_python_files(root, exclude_folders):
+        scanned = _scan_python_file(root, py_file)
+        if scanned is None:
             continue
 
-        rel = str(py_file.relative_to(root))
-        visitor = _LLMDetectorVisitor(rel, source)
-        visitor.visit(tree)
-        visitor.finalize()
-
+        rel, visitor = scanned
         integrations.extend(visitor.integrations)
-
         _build_graph_from_visitor(visitor, graph, rel)
 
     return integrations, graph
 
 
+def _default_exclude_folders() -> set[str]:
+    return {
+        "node_modules",
+        ".git",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        "dist",
+        "build",
+        "egg-info",
+    }
+
+
+def _scan_python_file(
+    root: Path, py_file: Path
+) -> tuple[str, _LLMDetectorVisitor] | None:
+    try:
+        source = py_file.read_text(encoding="utf-8", errors="ignore")
+        tree = ast.parse(source, filename=str(py_file))
+    except (SyntaxError, UnicodeDecodeError):
+        return None
+
+    rel = str(py_file.relative_to(root))
+    visitor = _LLMDetectorVisitor(rel, source)
+    visitor.visit(tree)
+    visitor.finalize()
+    return rel, visitor
+
+
 def _collect_python_files(root: Path, exclude_folders: set[str]) -> list[Path]:
     files = []
     for py_file in root.rglob("*.py"):
-        parts = py_file.relative_to(root).parts
-        if any(part in exclude_folders for part in parts):
-            continue
-        if any(part.endswith(".egg-info") for part in parts):
+        if _should_skip_python_file(root, py_file, exclude_folders):
             continue
         files.append(py_file)
     return sorted(files)
+
+
+def _should_skip_python_file(
+    root: Path, py_file: Path, exclude_folders: set[str]
+) -> bool:
+    parts = py_file.relative_to(root).parts
+    if any(part in exclude_folders for part in parts):
+        return True
+    if any(part.endswith(".egg-info") for part in parts):
+        return True
+    return False
 
 
 def _build_graph_from_visitor(
@@ -1106,115 +1124,153 @@ def _build_graph_from_visitor(
     filepath: str,
 ) -> None:
     for integration in visitor.integrations:
-        call_id = f"call:{integration.location}"
+        call_id = _add_call_node(graph, integration)
+        _add_input_source_nodes(graph, filepath, integration, call_id)
+        _add_prompt_site_nodes(graph, integration, call_id)
+        _add_output_sink_nodes(graph, filepath, integration, call_id)
+        _add_tool_nodes(graph, integration, call_id)
+        _add_validation_node(graph, integration, call_id)
+
+
+def _add_call_node(graph: AIIntegrationGraph, integration: LLMIntegration) -> str:
+    call_id = f"call:{integration.location}"
+    graph.add_node(
+        GraphNode(
+            id=call_id,
+            node_type=NodeType.LLM_CALL,
+            location=integration.location,
+            label=f"{integration.provider} {integration.integration_type}",
+            metadata={
+                "provider": integration.provider,
+                "type": integration.integration_type,
+            },
+        )
+    )
+    return call_id
+
+
+def _add_input_source_nodes(
+    graph: AIIntegrationGraph,
+    filepath: str,
+    integration: LLMIntegration,
+    call_id: str,
+) -> None:
+    for src in integration.input_sources:
+        src_id = f"input:{filepath}:{src}"
         graph.add_node(
             GraphNode(
-                id=call_id,
-                node_type=NodeType.LLM_CALL,
-                location=integration.location,
-                label=f"{integration.provider} {integration.integration_type}",
-                metadata={
-                    "provider": integration.provider,
-                    "type": integration.integration_type,
-                },
+                id=src_id,
+                node_type=NodeType.INPUT_SOURCE,
+                location=f"{filepath}:{src}",
+                label=src,
+            )
+        )
+        graph.add_edge(
+            GraphEdge(
+                source_id=src_id,
+                target_id=call_id,
+                edge_type="data_flow",
+                label="user input → LLM call",
             )
         )
 
-        for src in integration.input_sources:
-            src_id = f"input:{filepath}:{src}"
-            graph.add_node(
-                GraphNode(
-                    id=src_id,
-                    node_type=NodeType.INPUT_SOURCE,
-                    location=f"{filepath}:{src}",
-                    label=src,
-                )
-            )
-            graph.add_edge(
-                GraphEdge(
-                    source_id=src_id,
-                    target_id=call_id,
-                    edge_type="data_flow",
-                    label="user input → LLM call",
-                )
-            )
 
-        for prompt in integration.prompt_sites:
-            prompt_id = f"prompt:{prompt}"
-            graph.add_node(
-                GraphNode(
-                    id=prompt_id,
-                    node_type=NodeType.PROMPT_SITE,
-                    location=prompt,
-                    label="prompt construction",
-                )
+def _add_prompt_site_nodes(
+    graph: AIIntegrationGraph, integration: LLMIntegration, call_id: str
+) -> None:
+    for prompt in integration.prompt_sites:
+        prompt_id = f"prompt:{prompt}"
+        graph.add_node(
+            GraphNode(
+                id=prompt_id,
+                node_type=NodeType.PROMPT_SITE,
+                location=prompt,
+                label="prompt construction",
             )
-            graph.add_edge(
-                GraphEdge(
-                    source_id=prompt_id,
-                    target_id=call_id,
-                    edge_type="data_flow",
-                    label="prompt → LLM call",
-                )
+        )
+        graph.add_edge(
+            GraphEdge(
+                source_id=prompt_id,
+                target_id=call_id,
+                edge_type="data_flow",
+                label="prompt → LLM call",
             )
+        )
 
-        for sink in integration.output_sinks:
-            sink_id = f"sink:{filepath}:{sink}"
-            graph.add_node(
-                GraphNode(
-                    id=sink_id,
-                    node_type=NodeType.OUTPUT_SINK,
-                    location=f"{filepath}:{sink}",
-                    label=sink,
-                )
-            )
-            graph.add_edge(
-                GraphEdge(
-                    source_id=call_id,
-                    target_id=sink_id,
-                    edge_type="data_flow",
-                    label="LLM output → dangerous sink",
-                )
-            )
 
-        for tool in integration.tools:
-            tool_id = f"tool:{tool.location}"
-            graph.add_node(
-                GraphNode(
-                    id=tool_id,
-                    node_type=NodeType.TOOL_DEF,
-                    location=tool.location,
-                    label=f"tool: {tool.name}",
-                    metadata={
-                        "has_typed_schema": tool.has_typed_schema,
-                        "dangerous_calls": tool.dangerous_calls,
-                    },
-                )
+def _add_output_sink_nodes(
+    graph: AIIntegrationGraph,
+    filepath: str,
+    integration: LLMIntegration,
+    call_id: str,
+) -> None:
+    for sink in integration.output_sinks:
+        sink_id = f"sink:{filepath}:{sink}"
+        graph.add_node(
+            GraphNode(
+                id=sink_id,
+                node_type=NodeType.OUTPUT_SINK,
+                location=f"{filepath}:{sink}",
+                label=sink,
             )
-            graph.add_edge(
-                GraphEdge(
-                    source_id=call_id,
-                    target_id=tool_id,
-                    edge_type="tool_call",
-                    label=f"LLM → tool {tool.name}",
-                )
+        )
+        graph.add_edge(
+            GraphEdge(
+                source_id=call_id,
+                target_id=sink_id,
+                edge_type="data_flow",
+                label="LLM output → dangerous sink",
             )
+        )
 
-        if integration.has_output_validation:
-            val_id = f"validation:{integration.output_validation_location}"
-            graph.add_node(
-                GraphNode(
-                    id=val_id,
-                    node_type=NodeType.VALIDATION,
-                    location=integration.output_validation_location,
-                    label="output validation",
-                )
+
+def _add_tool_nodes(
+    graph: AIIntegrationGraph, integration: LLMIntegration, call_id: str
+) -> None:
+    for tool in integration.tools:
+        tool_id = f"tool:{tool.location}"
+        graph.add_node(
+            GraphNode(
+                id=tool_id,
+                node_type=NodeType.TOOL_DEF,
+                location=tool.location,
+                label=f"tool: {tool.name}",
+                metadata={
+                    "has_typed_schema": tool.has_typed_schema,
+                    "dangerous_calls": tool.dangerous_calls,
+                },
             )
-            graph.add_edge(
-                GraphEdge(
-                    source_id=call_id,
-                    target_id=val_id,
-                    edge_type="data_flow",
-                    label="LLM output → validation",
-                )
+        )
+        graph.add_edge(
+            GraphEdge(
+                source_id=call_id,
+                target_id=tool_id,
+                edge_type="tool_call",
+                label=f"LLM → tool {tool.name}",
             )
+        )
+
+
+def _add_validation_node(
+    graph: AIIntegrationGraph, integration: LLMIntegration, call_id: str
+) -> None:
+    if not integration.has_output_validation:
+        return
+
+    val_id = f"validation:{integration.output_validation_location}"
+    graph.add_node(
+        GraphNode(
+            id=val_id,
+            node_type=NodeType.VALIDATION,
+            location=integration.output_validation_location,
+            label="output validation",
+        )
+    )
+    graph.add_edge(
+        GraphEdge(
+            source_id=call_id,
+            target_id=val_id,
+            edge_type="data_flow",
+            label="LLM output → validation",
+        )
+    )
