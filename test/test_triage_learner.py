@@ -297,6 +297,34 @@ class TestLearnFromTriage:
         result = learner.learn_from_triage({}, "dismiss")
         assert result == []
 
+    def test_pattern_output_order_is_stable(self):
+        learner = TriageLearner()
+        finding = self._make_finding(
+            file="test/test_foo.py",
+            simple_name="test_something",
+            decorators=["@pytest.fixture", "  ", "@staticmethod"],
+        )
+        result = learner.learn_from_triage(finding, "dismiss")
+        assert [(p.pattern_type, p.pattern) for p in result] == [
+            ("file_glob", "test/**"),
+            ("file_glob", "**/test_*.py"),
+            ("name_pattern", "test_*"),
+            ("decorator", "@pytest.fixture"),
+            ("decorator", "@staticmethod"),
+        ]
+
+    def test_dunder_name_pattern_is_exclusive(self):
+        learner = TriageLearner()
+        finding = self._make_finding(simple_name="__init__")
+        result = learner.learn_from_triage(finding, "dismiss")
+        assert [
+            (p.pattern_type, p.pattern)
+            for p in result
+            if p.pattern_type == "name_pattern"
+        ] == [
+            ("name_pattern", "__*__"),
+        ]
+
     def test_get_patterns(self):
         learner = TriageLearner()
         learner.learn_from_triage(self._make_finding(), "dismiss")
@@ -377,6 +405,32 @@ class TestPredictTriage:
         assert result is not None
         assert result[0] == "dismiss"
 
+    def test_equal_confidence_tie_keeps_first_inserted_match(self):
+        learner = TriageLearner()
+        first = TriagePattern(
+            pattern_type="file_glob",
+            pattern="src/**",
+            rule_id="D001",
+            action="dismiss",
+            confidence=0.9,
+            observations=10,
+        )
+        second = TriagePattern(
+            pattern_type="decorator",
+            pattern="@property",
+            rule_id="D001",
+            action="accept",
+            confidence=0.9,
+            observations=10,
+        )
+        learner._patterns[_pattern_key(first)] = first
+        learner._patterns[_pattern_key(second)] = second
+
+        result = learner.predict_triage(
+            self._make_finding(file="src/foo.py", decorators=["@property"])
+        )
+        assert result == ("dismiss", 0.9)
+
 
 class TestAutoTriageCandidates:
     def _make_finding(self, **overrides):
@@ -430,6 +484,14 @@ class TestAutoTriageCandidates:
         result = learner.get_auto_triage_candidates(findings)
         matched_rule_ids = {f["rule_id"] for f, _, _ in result}
         assert "D999" not in matched_rule_ids
+
+    def test_prediction_can_succeed_before_auto_triage_thresholds(self):
+        learner = TriageLearner()
+        finding = self._make_finding()
+        self._train_learner(learner, finding, "dismiss", MIN_OBSERVATIONS_SUGGEST)
+
+        assert learner.predict_triage(finding) is not None
+        assert learner.get_auto_triage_candidates([finding]) == []
 
 
 class TestPersistence:
