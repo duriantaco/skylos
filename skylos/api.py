@@ -851,66 +851,34 @@ def _prepare_report_upload(
         git_root,
         extract_metadata=True,
     )
-
-    blame_map = _get_blame_map(all_findings, git_root)
-    for f in all_findings:
-        email = blame_map.get((f["file_path"], f.get("line_number", 0)))
-        if email:
-            meta = f.get("metadata") or {}
-            meta["blame_email"] = email
-            f["metadata"] = meta
+    _annotate_findings_with_blame(all_findings, git_root)
 
     exporter = SarifExporter(all_findings, tool_name="Skylos")
     core_payload = exporter.generate()
 
     ai_code = detect_ai_code(git_root)
-
-    provenance_data = None
-    try:
-        from skylos.provenance import analyze_provenance
-
-        prov_report = analyze_provenance(git_root)
-        if prov_report.agent_files:
-            provenance_data = prov_report.to_dict()
-    except (ImportError, subprocess.SubprocessError, OSError):
-        logger.debug("Provenance detection failed", exc_info=True)
+    provenance_data = _detect_report_provenance_data(git_root)
 
     definitions = result_json.get("definitions")
-    metadata = {
-        "commit_hash": commit,
-        "branch": branch,
-        "actor": actor,
-        "is_forced": bool(is_forced),
-        "ci": ci,
-        "analysis_mode": analysis_mode,
-        "ai_code": ai_code if ai_code.get("detected") else None,
-        "provenance": provenance_data,
-    }
-    core_payload.update(metadata)
-
     grade_data = result_json.get("grade") if isinstance(result_json, dict) else None
-    if grade_data:
-        core_payload["grade"] = grade_data
-        metadata["grade"] = grade_data
-
     link = _load_repo_link(git_root)
-    if link.get("project_id"):
-        core_payload["project_id"] = link["project_id"]
-        metadata["project_id"] = link["project_id"]
+    project_id = link.get("project_id")
 
-    legacy_payload = dict(core_payload)
-    legacy_payload["definitions"] = definitions
-
-    runs = core_payload.get("runs") or []
-    scan_summary = {
-        "finding_count": len(all_findings),
-        "sarif_result_count": sum(len(run.get("results") or []) for run in runs),
-        "sarif_rule_count": sum(
-            len((run.get("tool") or {}).get("driver", {}).get("rules") or [])
-            for run in runs
-        ),
-        "definitions_count": len(definitions or {}),
-    }
+    metadata = _build_report_metadata(
+        commit_hash=commit,
+        branch=branch,
+        actor=actor,
+        is_forced=is_forced,
+        ci=ci,
+        analysis_mode=analysis_mode,
+        ai_code=ai_code,
+        provenance_data=provenance_data,
+        grade_data=grade_data,
+        project_id=project_id,
+    )
+    core_payload.update(metadata)
+    legacy_payload = _build_legacy_payload(core_payload, definitions)
+    scan_summary = _build_report_scan_summary(all_findings, core_payload, definitions)
 
     return PreparedReportUpload(
         legacy_payload=legacy_payload,
@@ -921,6 +889,80 @@ def _prepare_report_upload(
         grade_data=grade_data,
         legacy_payload_size_bytes=_json_size_bytes(legacy_payload),
     )
+
+
+def _annotate_findings_with_blame(all_findings: list[dict], git_root) -> None:
+    blame_map = _get_blame_map(all_findings, git_root)
+    for finding in all_findings:
+        email = blame_map.get((finding["file_path"], finding.get("line_number", 0)))
+        if email:
+            metadata = finding.get("metadata") or {}
+            metadata["blame_email"] = email
+            finding["metadata"] = metadata
+
+
+def _detect_report_provenance_data(git_root):
+    provenance_data = None
+    try:
+        from skylos.provenance import analyze_provenance
+
+        prov_report = analyze_provenance(git_root)
+        if prov_report.agent_files:
+            provenance_data = prov_report.to_dict()
+    except (ImportError, subprocess.SubprocessError, OSError):
+        logger.debug("Provenance detection failed", exc_info=True)
+    return provenance_data
+
+
+def _build_report_metadata(
+    *,
+    commit_hash,
+    branch,
+    actor,
+    is_forced=False,
+    ci=None,
+    analysis_mode="static",
+    ai_code=None,
+    provenance_data=None,
+    grade_data=None,
+    project_id=None,
+) -> dict[str, Any]:
+    metadata = {
+        "commit_hash": commit_hash,
+        "branch": branch,
+        "actor": actor,
+        "is_forced": bool(is_forced),
+        "ci": ci,
+        "analysis_mode": analysis_mode,
+        "ai_code": ai_code if ai_code and ai_code.get("detected") else None,
+        "provenance": provenance_data,
+    }
+    if grade_data:
+        metadata["grade"] = grade_data
+    if project_id:
+        metadata["project_id"] = project_id
+    return metadata
+
+
+def _build_legacy_payload(core_payload, definitions) -> dict[str, Any]:
+    legacy_payload = dict(core_payload)
+    legacy_payload["definitions"] = definitions
+    return legacy_payload
+
+
+def _build_report_scan_summary(
+    all_findings: list[dict], core_payload: dict[str, Any], definitions
+) -> dict[str, int]:
+    runs = core_payload.get("runs") or []
+    return {
+        "finding_count": len(all_findings),
+        "sarif_result_count": sum(len(run.get("results") or []) for run in runs),
+        "sarif_rule_count": sum(
+            len((run.get("tool") or {}).get("driver", {}).get("rules") or [])
+            for run in runs
+        ),
+        "definitions_count": len(definitions or {}),
+    }
 
 
 def _build_report_artifacts(
@@ -1199,6 +1241,64 @@ def upload_report_legacy(
     )
 
 
+def _missing_artifact_instruction_result(
+    artifact_name: str, artifact: UploadArtifact
+) -> dict[str, Any]:
+    if artifact.required:
+        return {
+            "success": False,
+            "error": f"Large-upload response omitted required artifact instructions for {artifact_name}.",
+        }
+    return {"name": artifact_name, "reason": "not_requested"}
+
+
+def _append_skipped_artifact(
+    skipped_artifacts: list[dict[str, Any]],
+    artifact_name: str,
+    reason: str,
+    error: str | None = None,
+) -> None:
+    record = {"name": artifact_name, "reason": reason}
+    if error is not None:
+        record["error"] = error
+    skipped_artifacts.append(record)
+
+
+def _build_uploaded_artifact_record(
+    artifact: UploadArtifact,
+    artifact_info: dict[str, Any],
+    upload_result: dict[str, Any],
+) -> dict[str, Any]:
+    record = {
+        "artifact_id": artifact_info.get("artifact_id") or artifact_info.get("id"),
+        "key": artifact_info.get("key") or artifact_info.get("artifact_key"),
+        "filename": artifact.filename,
+        "size_bytes": artifact.size_bytes,
+        "sha256": artifact.sha256,
+        "content_type": artifact.content_type,
+        "content_encoding": artifact.content_encoding,
+    }
+    if upload_result.get("etag"):
+        record["etag"] = upload_result["etag"]
+    return record
+
+
+def _build_report_complete_payload(
+    init_data: dict[str, Any],
+    uploaded_artifacts: dict[str, dict[str, Any]],
+    skipped_artifacts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    payload = {
+        "upload_protocol_version": UPLOAD_PROTOCOL_VERSION,
+        "scan_id": init_data.get("scan_id") or init_data.get("scanId"),
+        "upload_id": init_data.get("upload_id") or init_data.get("uploadId"),
+        "artifacts": uploaded_artifacts,
+    }
+    if skipped_artifacts:
+        payload["skipped_artifacts"] = skipped_artifacts
+    return payload
+
+
 def upload_report_v2(
     token,
     prepared: PreparedReportUpload,
@@ -1253,13 +1353,15 @@ def upload_report_v2(
         for artifact_name, artifact in artifacts.items():
             artifact_info = artifact_instructions.get(artifact_name)
             if not artifact_info:
-                if artifact.required:
-                    return {
-                        "success": False,
-                        "error": f"Large-upload response omitted required artifact instructions for {artifact_name}.",
-                    }
-                skipped_artifacts.append(
-                    {"name": artifact_name, "reason": "not_requested"}
+                missing_result = _missing_artifact_instruction_result(
+                    artifact_name, artifact
+                )
+                if not missing_result.get("success", True):
+                    return missing_result
+                _append_skipped_artifact(
+                    skipped_artifacts,
+                    artifact_name,
+                    missing_result["reason"],
                 )
                 continue
 
@@ -1271,37 +1373,25 @@ def upload_report_v2(
                         "success": False,
                         "error": upload_result["error"],
                     }
-                skipped_artifacts.append(
-                    {
-                        "name": artifact_name,
-                        "reason": "upload_failed",
-                        "error": upload_result["error"],
-                    }
+                _append_skipped_artifact(
+                    skipped_artifacts,
+                    artifact_name,
+                    "upload_failed",
+                    upload_result["error"],
                 )
                 continue
 
-            record = {
-                "artifact_id": artifact_info.get("artifact_id")
-                or artifact_info.get("id"),
-                "key": artifact_info.get("key") or artifact_info.get("artifact_key"),
-                "filename": artifact.filename,
-                "size_bytes": artifact.size_bytes,
-                "sha256": artifact.sha256,
-                "content_type": artifact.content_type,
-                "content_encoding": artifact.content_encoding,
-            }
-            if upload_result.get("etag"):
-                record["etag"] = upload_result["etag"]
-            uploaded_artifacts[artifact_name] = record
+            uploaded_artifacts[artifact_name] = _build_uploaded_artifact_record(
+                artifact,
+                artifact_info,
+                upload_result,
+            )
 
-        complete_payload = {
-            "upload_protocol_version": UPLOAD_PROTOCOL_VERSION,
-            "scan_id": init_data.get("scan_id") or init_data.get("scanId"),
-            "upload_id": init_data.get("upload_id") or init_data.get("uploadId"),
-            "artifacts": uploaded_artifacts,
-        }
-        if skipped_artifacts:
-            complete_payload["skipped_artifacts"] = skipped_artifacts
+        complete_payload = _build_report_complete_payload(
+            init_data,
+            uploaded_artifacts,
+            skipped_artifacts,
+        )
 
         complete_response, last_err = _post_json_with_retries(
             REPORT_COMPLETE_URL,
@@ -1352,7 +1442,7 @@ def upload_report(
         analysis_mode=analysis_mode,
     )
 
-    if prepared.legacy_payload_size_bytes <= _legacy_inline_upload_limit_bytes():
+    if _should_use_legacy_inline_report_upload(prepared):
         return upload_report_legacy(
             token,
             prepared.legacy_payload,
@@ -1369,11 +1459,7 @@ def upload_report(
         strict=strict,
         is_forced=is_forced,
     )
-    if (
-        (not upload_result.get("success"))
-        and upload_result.get("code") == "UPLOAD_PROTOCOL_UNSUPPORTED"
-        and _truthy_env("SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD")
-    ):
+    if _should_retry_with_degraded_large_upload(upload_result):
         if not quiet:
             print(
                 " Skylos Cloud artifact upload unavailable; retrying condensed compatibility upload...",
@@ -1390,6 +1476,20 @@ def upload_report(
             initial_message=None,
         )
     return upload_result
+
+
+def _should_use_legacy_inline_report_upload(
+    prepared: PreparedReportUpload,
+) -> bool:
+    return prepared.legacy_payload_size_bytes <= _legacy_inline_upload_limit_bytes()
+
+
+def _should_retry_with_degraded_large_upload(upload_result: dict[str, Any]) -> bool:
+    return (
+        (not upload_result.get("success"))
+        and upload_result.get("code") == "UPLOAD_PROTOCOL_UNSUPPORTED"
+        and _truthy_env("SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD")
+    )
 
 
 def upload_defense_report(defense_json_str, quiet=False) -> dict:
