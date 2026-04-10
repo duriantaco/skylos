@@ -21,7 +21,7 @@ This document defines how Skylos releases are prepared, created, and published.
 - **GitHub Actions (automation)**
   - Generates release PRs.
   - Creates tags/releases.
-  - Builds and publishes packages to PyPI.
+  - Publishes packages to PyPI from release tags.
 
 ## Required Guardrails and Prerequisites
 
@@ -63,6 +63,11 @@ These must be enabled for predictable releases:
    - `issues: write`
    - `pull-requests: write`
 
+6. **Preferred release token**
+   - Repo secret preferred: `RELEASE_PLEASE_TOKEN`
+   - Fallback: `GITHUB_TOKEN`
+   - For repos with required PR checks, a dedicated token/App is preferred so release PR checks can report normally.
+
 ## Release Baseline (Bootstrap)
 
 Skylos bootstraps Release Please from the existing version history using:
@@ -82,7 +87,8 @@ This prevents retroactive release generation for older history and starts automa
 2. On push to `main`, Release Please updates or opens a release PR.
 3. Maintainer reviews and merges the Release Please PR.
 4. Release Please creates the GitHub tag/release (`vX.Y.Z`).
-5. In the same workflow run, `build-and-publish`:
+5. The tag push triggers `.github/workflows/publish.yml`.
+6. `publish.yml`:
    - checks out the generated tag,
    - builds wheel + sdist,
    - validates artifacts (`twine check`),
@@ -97,9 +103,11 @@ This prevents retroactive release generation for older history and starts automa
 
 ## Operational Notes
 
-- The release and publish logic intentionally lives in one workflow (`release-please.yml`) to avoid cross-workflow timing issues.
-- `.github/workflows/publish.yml` is retained as a **manual fallback** (`workflow_dispatch`) for emergency republish of an existing release tag.
-- Publish step uses `--skip-existing` to reduce failure risk on re-runs.
+- Release orchestration and publishing are intentionally split:
+  - `release-please.yml` manages release PRs and tags.
+  - `publish.yml` publishes from immutable tags.
+- `publish.yml` runs on both `push.tags: ["v*"]` and `workflow_dispatch`.
+- Publish uses `--skip-existing` to reduce failure risk on re-runs.
 
 ## Manual Validation (Optional)
 
@@ -117,6 +125,6 @@ python -m twine check dist/*
 If automated publish fails:
 
 1. Fix the cause (token, package metadata, transient registry error).
-2. Re-run failed workflow job if safe.
-3. If needed, run `.github/workflows/publish.yml` manually with `ref=vX.Y.Z` only. Do not publish from a branch ref.
+2. Re-run failed `publish.yml` job if safe.
+3. If the release tag was created but publish did not run, trigger `.github/workflows/publish.yml` manually with `ref=vX.Y.Z` only. Do not publish from a branch ref.
 4. Confirm version appears on PyPI and matches the GitHub release tag.

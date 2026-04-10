@@ -1,6 +1,9 @@
 name: Build and publish
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       ref:
@@ -10,11 +13,13 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
 
     steps:
       - name: Validate release tag input
         run: |
-          ref="${{ github.event.inputs.ref }}"
+          ref="${RELEASE_REF}"
           case "$ref" in
             refs/tags/*|v[0-9]*)
               ;;
@@ -26,7 +31,7 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
