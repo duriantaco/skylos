@@ -264,23 +264,21 @@ def test_cli_guardrail_sync_dispatch_preserves_argv(monkeypatch):
     mock_sync.assert_called_once_with(["status"])
 
 
-def test_cli_guardrail_city_dispatch_preserves_argv(monkeypatch):
+def test_cli_guardrail_removed_city_command_exits_with_error(monkeypatch):
     monkeypatch.setattr(
         sys,
         "argv",
-        ["skylos", "city", "repo", "--json", "--quality", "--confidence", "75"],
+        ["skylos", "city", "repo"],
     )
 
     with (
-        patch("skylos.commands.city_cmd.run_city_command", return_value=0) as mock_city,
+        patch("skylos.cli.Console") as mock_console,
         pytest.raises(SystemExit) as exc,
     ):
         cli.main()
 
-    assert exc.value.code == 0
-    mock_city.assert_called_once_with(
-        ["repo", "--json", "--quality", "--confidence", "75"]
-    )
+    assert exc.value.code == 2
+    assert mock_console.return_value.print.call_count == 2
 
 
 def test_cli_guardrail_discover_dispatch_preserves_argv(monkeypatch):
@@ -526,33 +524,6 @@ def test_doctor_command_reports_core_statuses(tmp_path):
     assert "pyproject.toml [tool.skylos] config found" in printed
     assert "GitHub Actions workflow found" in printed
     assert "community rule pack(s) installed" in printed
-
-
-def test_city_command_json_output_prints_topology(tmp_path):
-    target = tmp_path / "repo"
-    target.mkdir()
-    topology = {"buildings": [{"name": "sample.py"}]}
-
-    with (
-        patch("skylos.commands.city_cmd.Console", return_value=Mock()),
-        patch("skylos.commands.city_cmd.Progress", return_value=_progress_ctx()),
-        patch(
-            "skylos.commands.city_cmd.load_config", return_value={"exclude": ["venv"]}
-        ),
-        patch(
-            "skylos.commands.city_cmd.run_analyze",
-            return_value=json.dumps({"unused_functions": []}),
-        ) as mock_analyze,
-        patch("skylos.city.generate_topology", return_value=topology),
-        patch("builtins.print") as mock_print,
-    ):
-        from skylos.commands.city_cmd import run_city_command
-
-        exit_code = run_city_command([str(target), "--json"])
-
-    assert exit_code == 0
-    mock_analyze.assert_called_once()
-    assert mock_print.call_args.args[0] == json.dumps(topology, indent=2)
 
 
 def test_discover_command_json_output_prints_report(tmp_path):

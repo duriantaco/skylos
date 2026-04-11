@@ -17,11 +17,6 @@ COMMANDS = [
         "group": "Core Analysis",
     },
     {
-        "name": "skylos city <path>",
-        "desc": "Visualize codebase as a Code City topology",
-        "group": "Core Analysis",
-    },
-    {
         "name": "skylos agent scan <path>",
         "desc": "Hybrid static + LLM analysis",
         "group": "AI Agent",
