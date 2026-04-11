@@ -1810,7 +1810,9 @@ def _run_project_command(argv):
 
 def _run_removed_city_command(_argv):
     console = Console()
-    console.print("[bold red]Error:[/bold red] `skylos city` has been removed.")
+    console.print(
+        "[bold red]Error:[/bold red] `skylos city` has been removed."
+    )
     console.print(
         "[dim]Use[/dim] [bold]skylos debt .[/bold] [dim]for technical debt hotspots or[/dim] "
         "[bold]skylos discover .[/bold] [dim]for codebase mapping.[/dim]"
