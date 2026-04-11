@@ -1403,11 +1403,6 @@ def upload_report_v2(
         if complete_response is None:
             return {"success": False, "error": last_err or "Unknown error"}
 
-        if skipped_artifacts and not quiet:
-            print(
-                "\n⚠️  Uploaded scan without optional Code City definitions during this run."
-            )
-
         return _finalize_report_upload(
             complete_response,
             grade_data=prepared.grade_data,

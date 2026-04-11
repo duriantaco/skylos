@@ -579,7 +579,6 @@ def _print_feature_hints(console: Console, args):
         "[dim]Scan for AI/LLM guardrails:[/dim] [bold]skylos defend .[/bold]",
         "[dim]Map LLM integrations:[/dim] [bold]skylos discover .[/bold]",
         "[dim]LLM-verified dead code (100% accuracy):[/dim] [bold]skylos agent verify .[/bold]",
-        "[dim]Visualize codebase topology:[/dim] [bold]skylos city .[/bold]",
         "[dim]Auto-fix dead code interactively:[/dim] [bold]skylos . -i[/bold]",
     ]
 
@@ -1809,10 +1808,16 @@ def _run_project_command(argv):
     return run_project_command(argv)
 
 
-def _run_city_command(argv):
-    from skylos.commands.city_cmd import run_city_command
-
-    return run_city_command(argv)
+def _run_removed_city_command(_argv):
+    console = Console()
+    console.print(
+        "[bold red]Error:[/bold red] `skylos city` has been removed."
+    )
+    console.print(
+        "[dim]Use[/dim] [bold]skylos debt .[/bold] [dim]for technical debt hotspots or[/dim] "
+        "[bold]skylos discover .[/bold] [dim]for codebase mapping.[/dim]"
+    )
+    raise SystemExit(2)
 
 
 def _run_discover_command(argv):
@@ -1836,7 +1841,7 @@ EARLY_COMMAND_HANDLERS = {
     "login": "_run_login_command",
     "sync": "_run_sync_command",
     "project": "_run_project_command",
-    "city": "_run_city_command",
+    "city": "_run_removed_city_command",
     "discover": "_run_discover_command",
     "defend": "run_defend_command",
     "debt": "run_debt_command",

@@ -911,7 +911,6 @@ Release roles, prerequisites, branch protection guidance, semantic type policy, 
 | `skylos debt <path>` | Technical debt hotspot analysis with baseline-aware prioritization |
 | `skylos discover <path>` | Map LLM/AI integrations in your codebase |
 | `skylos defend <path>` | Check LLM integrations for missing defenses |
-| `skylos city <path>` | Visualize codebase as a Code City topology |
 
 ### AI Agent
 
