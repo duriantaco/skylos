@@ -833,7 +833,6 @@ skylos cicd init --llm --model claude-sonnet-4-20250514
 | `skylos debt <path>` | 基于基线感知优先级的技术债务热点分析 |
 | `skylos discover <path>` | 映射代码库中的 LLM/AI 集成 |
 | `skylos defend <path>` | 检查 LLM 集成是否缺少防御措施 |
-| `skylos city <path>` | 将代码库可视化为 Code City 拓扑图 |
 
 ### AI Agent
 
