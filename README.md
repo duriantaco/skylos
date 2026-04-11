@@ -844,10 +844,11 @@ For the default `skylos cicd init` workflow, you do not need any Skylos-specific
 
 ## Release Automation
 
-Skylos uses a single release workflow for automation:
+Skylos uses a split release workflow:
 
-- `.github/workflows/release-please.yml` updates `CHANGELOG.md`, bumps `pyproject.toml`, opens a release PR, creates the GitHub Release when merged, then builds wheel+sdist and publishes to PyPI in the same workflow.
-- `.github/workflows/publish.yml` is kept as a manual fallback (`workflow_dispatch`) if you ever need to republish an existing release tag.
+- `.github/workflows/release-please.yml` updates `CHANGELOG.md`, bumps `pyproject.toml`, and opens or updates the release PR.
+- `.github/workflows/publish.yml` publishes from an immutable release tag, either automatically on `v*` tag pushes or manually via `workflow_dispatch`.
+- For protected repos, prefer a dedicated `RELEASE_PLEASE_TOKEN` secret so bot-authored release PRs can satisfy required PR checks.
 
 ### First-time bootstrap (already configured in this repo)
 
@@ -864,7 +865,8 @@ This prevents backfilling old history and starts automated releases from the cur
 2. Release Please opens/updates the release PR.
 3. Merge the release PR to `main`.
 4. Release Please creates the GitHub release tag (`vX.Y.Z`).
-5. In the same workflow run, Skylos builds and publishes to PyPI using `PYPI_TOKEN`.
+5. The tag push triggers `.github/workflows/publish.yml`.
+6. Skylos builds and publishes to PyPI from that tag using `PYPI_TOKEN`.
 
 ### Manual build/publish checks
 

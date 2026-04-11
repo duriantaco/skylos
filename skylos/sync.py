@@ -554,9 +554,15 @@ repos:
 
 
 def _write_sync_config(skylos_dir: Path, config_data):
+    config_payload = config_data.get("config")
+    if not isinstance(config_payload, dict):
+        # Backward-compat: older/newer cloud deployments may return the
+        # sync config directly at the top level instead of wrapping it.
+        config_payload = config_data if isinstance(config_data, dict) else {}
+
     config_path = skylos_dir / CONFIG_FILE
     with config_path.open("w") as f:
-        yaml.dump(config_data.get("config", {}), f, default_flow_style=False)
+        yaml.dump(config_payload, f, default_flow_style=False)
     print(f"  ✓ {config_path}")
 
 
