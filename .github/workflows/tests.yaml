@@ -9,6 +9,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        install_target:
+          - "."
+          - ".[llm]"
 
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +24,7 @@ jobs:
       - name: Create venv + install deps
         run: |
           uv venv
-          uv pip install -e ".[llm]"
+          uv pip install -e "${{ matrix.install_target }}"
           uv pip install pytest pytest-cov
 
       - name: Run tests with coverage
@@ -31,3 +37,4 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           fail_ci_if_error: false
+          flags: ${{ matrix.install_target == '.[llm]' && 'llm-extra' || 'default-install' }}
