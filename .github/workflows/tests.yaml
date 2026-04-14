@@ -18,7 +18,7 @@ jobs:
       - name: Create venv + install deps
         run: |
           uv venv
-          uv pip install -e .
+          uv pip install -e ".[llm]"
           uv pip install pytest pytest-cov
 
       - name: Run tests with coverage
