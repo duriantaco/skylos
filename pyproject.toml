@@ -93,9 +93,9 @@ Discord = "https://discord.gg/Ftn9t9tErf"
 
 [project.optional-dependencies]
 web = ["flask>=2.1.1", "flask-cors>=3.0.3"]
-llm = ["litellm>=1.81.3,<1.82.8"]
+llm = ["litellm>=1.81.3,<1.84.0"]
 test = ["pytest>=9.0.2"]
-all = ["flask>=2.1.1", "flask-cors>=3.0.3", "pytest>=9.0.2", "litellm>=1.81.3,<1.82.8"]
+all = ["flask>=2.1.1", "flask-cors>=3.0.3", "pytest>=9.0.2", "litellm>=1.81.3,<1.84.0"]
 
 [project.scripts]
 skylos = "skylos.cli:main"
