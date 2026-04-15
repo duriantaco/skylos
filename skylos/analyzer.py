@@ -992,6 +992,7 @@ class Skylos:
         all_raw_imports,
         path,
         unused_ts_exports=None,
+        workspace_inventory=None,
     ):
         """Assemble the final result dict from analysis outputs."""
         unused = []
@@ -1067,6 +1068,28 @@ class Skylos:
                 "languages": self._count_languages(files),
             },
         }
+
+        if workspace_inventory is not None:
+            project_root = (
+                self._project_root
+                if hasattr(self, "_project_root")
+                else Path(
+                    path[0] if isinstance(path, (list, tuple)) else path
+                ).resolve()
+            )
+            result["workspaces"] = workspace_inventory.to_dict(project_root)
+            result["analysis_summary"]["monorepo_detected"] = (
+                workspace_inventory.is_monorepo
+            )
+            result["analysis_summary"]["workspace_count"] = len(
+                workspace_inventory.packages
+            )
+            result["analysis_summary"]["workspace_total_packages"] = (
+                workspace_inventory.total_packages
+            )
+            result["analysis_summary"]["workspace_diagnostic_count"] = len(
+                workspace_inventory.diagnostics
+            )
 
         if enable_secrets and all_secrets:
             result["secrets"] = all_secrets
@@ -1218,24 +1241,44 @@ class Skylos:
 
         clear_go_cache()
 
+        if isinstance(path, (list, tuple)):
+            _first = Path(path[0]).resolve()
+            all_resolved = [Path(p).resolve() for p in path]
+            project_root = Path(os.path.commonpath(all_resolved))
+        else:
+            _first = Path(path).resolve()
+            project_root = _first
+        if not project_root.is_dir():
+            project_root = project_root.parent
+
         files, root = self._discover_files(path, exclude_folders)
+
+        from skylos.visitors.languages.typescript.workspace import (
+            discover_workspace_inventory,
+        )
+
+        workspace_inventory = discover_workspace_inventory(project_root)
 
         if not files:
             logger.warning(f"No Python files found in {path}")
-            return json.dumps(
-                {
-                    "unused_functions": [],
-                    "unused_imports": [],
-                    "unused_classes": [],
-                    "unused_variables": [],
-                    "unused_parameters": [],
-                    "unused_files": [],
-                    "analysis_summary": {
-                        "total_files": 0,
-                        "excluded_folders": exclude_folders if exclude_folders else [],
-                    },
-                }
-            )
+            result = {
+                "unused_functions": [],
+                "unused_imports": [],
+                "unused_classes": [],
+                "unused_variables": [],
+                "unused_parameters": [],
+                "unused_files": [],
+                "analysis_summary": {
+                    "total_files": 0,
+                    "excluded_folders": exclude_folders if exclude_folders else [],
+                    "monorepo_detected": workspace_inventory.is_monorepo,
+                    "workspace_count": len(workspace_inventory.packages),
+                    "workspace_total_packages": workspace_inventory.total_packages,
+                    "workspace_diagnostic_count": len(workspace_inventory.diagnostics),
+                },
+                "workspaces": workspace_inventory.to_dict(project_root),
+            }
+            return json.dumps(result)
 
         logger.info(f"Analyzing {len(files)} files...")
 
@@ -1256,16 +1299,6 @@ class Skylos:
         global_pattern_tracker.traced_calls.clear()
         global_pattern_tracker.traced_by_file.clear()
         global_pattern_tracker._traced_by_basename.clear()
-
-        if isinstance(path, (list, tuple)):
-            _first = Path(path[0]).resolve()
-            all_resolved = [Path(p).resolve() for p in path]
-            project_root = Path(os.path.commonpath(all_resolved))
-        else:
-            _first = Path(path).resolve()
-            project_root = _first
-        if not project_root.is_dir():
-            project_root = project_root.parent
 
         project_cfg = load_config(project_root)
         project_ignore = set(project_cfg.get("ignore", []))
@@ -1911,6 +1944,7 @@ class Skylos:
             all_raw_imports,
             path,
             unused_ts_exports=unused_ts_exports,
+            workspace_inventory=workspace_inventory,
         )
 
         return json.dumps(result, indent=2)
@@ -2366,6 +2400,22 @@ if __name__ == "__main__":
     )
 
     print("Summary:")
+    workspace_data = data.get("workspaces") or {}
+    has_workspace_report = bool(
+        workspace_data.get("root_package")
+        or workspace_data.get("packages")
+        or workspace_data.get("diagnostics")
+    )
+    if has_workspace_report:
+        print(
+            " * Workspaces: "
+            f"{workspace_data.get('total_packages', 0)} packages "
+            f"({workspace_data.get('package_count', 0)} child workspaces)"
+        )
+        if workspace_data.get("diagnostic_count"):
+            print(
+                f" * Workspace diagnostics: {workspace_data.get('diagnostic_count', 0)}"
+            )
     if data["unused_functions"]:
         print(f" * Unreachable functions: {len(data['unused_functions'])}")
     if data["unused_imports"]:
@@ -2439,6 +2489,20 @@ if __name__ == "__main__":
             line = s.get("line", 1)
             sev = s.get("severity", "HIGH")
             print(f" {i}. {msg} [{rid}] ({file}:{line}) Severity: {sev}")
+
+    if has_workspace_report:
+        print("\n - Workspaces")
+        print("============")
+        root_pkg = workspace_data.get("root_package")
+        if root_pkg:
+            print(
+                f" Root: {root_pkg.get('name')} "
+                f"({root_pkg.get('relative_path', root_pkg.get('path'))})"
+            )
+        for pkg in workspace_data.get("packages", []):
+            print(f" * {pkg.get('name')} ({pkg.get('relative_path', pkg.get('path'))})")
+        for diag in workspace_data.get("diagnostics", [])[:5]:
+            print(f" ! {diag.get('message')}")
 
     print("\n" + "─" * 50)
     if enable_danger:

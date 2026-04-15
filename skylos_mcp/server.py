@@ -470,6 +470,14 @@ def _make_summary(result: dict, focus: str | None = None) -> dict:
     summary = result.get("analysis_summary", {})
     out: dict[str, Any] = {"analysis_summary": summary}
 
+    workspace_info = result.get("workspaces") or {}
+    if (
+        workspace_info.get("root_package")
+        or workspace_info.get("packages")
+        or workspace_info.get("diagnostics")
+    ):
+        out["workspaces"] = result["workspaces"]
+
     if focus is None or focus == "dead_code":
         for key in [
             "unused_functions",
