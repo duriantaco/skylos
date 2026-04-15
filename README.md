@@ -60,7 +60,7 @@ The core use case is straightforward: run it locally, add it to CI, and gate pul
 3. **One workflow instead of three tools:** Dead code, security scanning, and PR gating live in the same CLI and CI flow.
 4. **Local-first by default:** You can keep scans on your machine and add optional AI or cloud features later if you need them.
 5. **Self-explaining output:** Every table prints a legend explaining what each column and number means — no manual required.
-6. **Monorepo inventory for TS repos:** Skylos reports workspace packages discovered from `package.json` workspaces, `pnpm-workspace.yaml`, and `tsconfig.json` references, plus undeclared package diagnostics, in JSON and MCP output.
+6. **Monorepo-aware TS resolution:** Skylos reports declared workspaces for TypeScript repos and uses those workspace boundaries during package resolution, including root-package self imports and local `tsconfig` path inheritance.
 
 ### Why Skylos over Vulture for Python dead code detection?
 

@@ -3,67 +3,171 @@ from __future__ import annotations
 import json
 import os
 from functools import lru_cache
+from pathlib import Path
+
+from skylos.visitors.languages.typescript.workspace import (
+    _load_jsonc,
+    discover_workspace_inventory,
+)
 
 
-def _find_tsconfig(project_root: str) -> str | None:
-    for name in ("tsconfig.json", "tsconfig.base.json"):
-        candidate = os.path.join(project_root, name)
-        if os.path.isfile(candidate):
-            return candidate
+def _find_nearest_tsconfig(start_path: str, stop_dir: str | None = None) -> str | None:
+    current = os.path.dirname(os.path.realpath(start_path))
+    stop_real = os.path.realpath(stop_dir) if stop_dir else None
+
+    while True:
+        for name in ("tsconfig.json", "tsconfig.base.json"):
+            candidate = os.path.join(current, name)
+            if os.path.isfile(candidate):
+                return candidate
+
+        if stop_real and current == stop_real:
+            break
+
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
     return None
 
 
-def _parse_tsconfig_paths(tsconfig_path: str) -> tuple[str, dict[str, list[str]]]:
-    try:
-        with open(tsconfig_path) as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
+def _resolve_extends_path(tsconfig_dir: str, extends: str) -> str | None:
+    if not extends:
+        return None
+
+    candidates: list[str] = []
+    if os.path.isabs(extends):
+        candidates.append(extends)
+    else:
+        candidates.append(os.path.normpath(os.path.join(tsconfig_dir, extends)))
+
+    if not extends.endswith(".json"):
+        if os.path.isabs(extends):
+            candidates.append(extends + ".json")
+        else:
+            candidates.append(
+                os.path.normpath(os.path.join(tsconfig_dir, extends + ".json"))
+            )
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.isfile(candidate):
+            return candidate
+
+    if not os.path.isabs(extends) and not extends.startswith("."):
+        current = os.path.realpath(tsconfig_dir)
+        while True:
+            package_root = os.path.join(current, "node_modules", extends)
+            package_candidates = [package_root, package_root + ".json"]
+
+            if os.path.isdir(package_root):
+                package_candidates.append(os.path.join(package_root, "tsconfig.json"))
+                package_json = _read_json_file(
+                    os.path.join(package_root, "package.json")
+                )
+                package_tsconfig = package_json.get("tsconfig")
+                if isinstance(package_tsconfig, str):
+                    package_candidates.append(
+                        os.path.normpath(os.path.join(package_root, package_tsconfig))
+                    )
+
+            for candidate in package_candidates:
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                if os.path.isfile(candidate):
+                    return candidate
+
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    return None
+
+
+def _parse_tsconfig_paths(
+    tsconfig_path: str, _seen: set[str] | None = None
+) -> tuple[str, dict[str, list[str]]]:
+    if _seen is None:
+        _seen = set()
+
+    real_tsconfig_path = os.path.realpath(tsconfig_path)
+    if real_tsconfig_path in _seen:
+        return os.path.dirname(tsconfig_path), {}
+    _seen.add(real_tsconfig_path)
+
+    data = _load_jsonc(Path(tsconfig_path))
+    if not data:
         return os.path.dirname(tsconfig_path), {}
 
     tsconfig_dir = os.path.dirname(tsconfig_path)
     compiler_opts = data.get("compilerOptions", {})
-    base_url = compiler_opts.get("baseUrl", ".")
-    base_url_abs = os.path.normpath(os.path.join(tsconfig_dir, base_url))
-    paths = compiler_opts.get("paths", {})
+
+    parent_base = tsconfig_dir
+    parent_paths: dict[str, list[str]] = {}
 
     extends = data.get("extends")
-    if extends and not paths:
-        ext_path = os.path.normpath(os.path.join(tsconfig_dir, extends))
-        if os.path.isfile(ext_path):
-            parent_base, parent_paths = _parse_tsconfig_paths(ext_path)
-            if not paths:
-                paths = parent_paths
-            if base_url == ".":
-                base_url_abs = parent_base
+    if isinstance(extends, str):
+        ext_path = _resolve_extends_path(tsconfig_dir, extends)
+        if ext_path:
+            parent_base, parent_paths = _parse_tsconfig_paths(ext_path, _seen)
+
+    base_url = compiler_opts.get("baseUrl")
+    if isinstance(base_url, str):
+        base_url_abs = os.path.normpath(os.path.join(tsconfig_dir, base_url))
+    else:
+        base_url_abs = parent_base
+
+    raw_paths = compiler_opts.get("paths", {})
+    paths: dict[str, list[str]] = dict(parent_paths)
+    if isinstance(raw_paths, dict):
+        for key, value in raw_paths.items():
+            if isinstance(value, list):
+                resolved_targets: list[str] = []
+                for item in value:
+                    if not isinstance(item, str):
+                        continue
+                    if os.path.isabs(item):
+                        resolved_targets.append(item)
+                    else:
+                        resolved_targets.append(
+                            os.path.normpath(os.path.join(base_url_abs, item))
+                        )
+                paths[key] = resolved_targets
 
     return base_url_abs, paths
 
 
 def _build_package_map(project_root: str) -> dict[str, str]:
     pkg_map: dict[str, str] = {}
-    skip = {"node_modules", ".git", "dist", "build", ".next", "__pycache__"}
+    inventory = discover_workspace_inventory(Path(project_root))
 
-    for dirpath, dirnames, filenames in os.walk(project_root):
-        dirnames[:] = [d for d in dirnames if d not in skip]
-        if "package.json" in filenames:
-            pkg_json = os.path.join(dirpath, "package.json")
-            if dirpath == project_root:
-                continue
-            try:
-                with open(pkg_json) as f:
-                    data = json.load(f)
-                name = data.get("name")
-                if name:
-                    pkg_map[name] = dirpath
-            except (json.JSONDecodeError, OSError):
-                pass
+    package_roots: list[Path] = []
+    if inventory.root_package and inventory.root_package.has_package_json:
+        package_roots.append(inventory.root_package.root)
+    for workspace in inventory.packages:
+        if workspace.has_package_json and (
+            "package.json:workspaces" in workspace.discovered_from
+            or "pnpm-workspace.yaml" in workspace.discovered_from
+        ):
+            package_roots.append(workspace.root)
+
+    for package_root in package_roots:
+        pkg_json = os.path.join(str(package_root), "package.json")
+        data = _read_json_file(pkg_json)
+        name = data.get("name")
+        if isinstance(name, str) and name.strip():
+            pkg_map[name] = str(package_root)
     return pkg_map
 
 
 @lru_cache(maxsize=None)
 def _read_json_file(path: str) -> dict:
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             return data
@@ -127,12 +231,21 @@ def _resolve_path_target(base_dir: str, target: str) -> str | None:
 def _extract_package_target(entry) -> str | None:
     if isinstance(entry, str):
         return entry
+    if isinstance(entry, list):
+        for item in entry:
+            target = _extract_package_target(item)
+            if target:
+                return target
     if isinstance(entry, dict):
         for key in ("types", "import", "default", "require", "node"):
             if key in entry:
                 target = _extract_package_target(entry[key])
                 if target:
                     return target
+        for value in entry.values():
+            target = _extract_package_target(value)
+            if target:
+                return target
     return None
 
 
@@ -159,6 +272,24 @@ def _resolve_package_exports(pkg_dir: str, subpath: str | None = None) -> str | 
     pkg_json = os.path.join(pkg_dir, "package.json")
     data = _read_json_file(pkg_json)
     exports = data.get("exports")
+    if exports is None:
+        return None
+
+    if subpath is None and not isinstance(exports, dict):
+        target = _extract_package_target(exports)
+        if not target:
+            return None
+        return _resolve_path_target(pkg_dir, target)
+
+    if subpath is None and isinstance(exports, dict):
+        if "." not in exports and not any(
+            isinstance(key, str) and key.startswith(".") for key in exports
+        ):
+            target = _extract_package_target(exports)
+            if not target:
+                return None
+            return _resolve_path_target(pkg_dir, target)
+
     if not isinstance(exports, dict):
         return None
 
@@ -234,21 +365,19 @@ def _resolve_from_pkg_dir(pkg_dir: str, subpath: str | None = None) -> str | Non
 class MonorepoResolver:
     def __init__(self, project_root: str) -> None:
         self.project_root = project_root
-        self._tsconfig_paths: dict[str, list[str]] | None = None
-        self._base_url: str = project_root
         self._package_map: dict[str, str] | None = None
-        self._initialized = False
+        self._tsconfig_cache: dict[str, tuple[str, dict[str, list[str]]]] = {}
 
-    def _ensure_init(self) -> None:
-        if self._initialized:
-            return
-        self._initialized = True
+    def _get_tsconfig_context(
+        self, importer: str
+    ) -> tuple[str, dict[str, list[str]]] | None:
+        tsconfig = _find_nearest_tsconfig(importer, self.project_root)
+        if not tsconfig:
+            return None
 
-        tsconfig = _find_tsconfig(self.project_root)
-        if tsconfig:
-            self._base_url, paths = _parse_tsconfig_paths(tsconfig)
-            if paths:
-                self._tsconfig_paths = paths
+        if tsconfig not in self._tsconfig_cache:
+            self._tsconfig_cache[tsconfig] = _parse_tsconfig_paths(tsconfig)
+        return self._tsconfig_cache[tsconfig]
 
     def _ensure_package_map(self) -> dict[str, str]:
         if self._package_map is None:
@@ -259,36 +388,32 @@ class MonorepoResolver:
         if source.startswith("."):
             return None
 
-        self._ensure_init()
-
         if source.startswith("#"):
             result = _resolve_package_imports(self.project_root, importer, source)
             if result:
                 return result
 
-        if self._tsconfig_paths:
-            result = self._resolve_via_tsconfig(source)
+        tsconfig_context = self._get_tsconfig_context(importer)
+        if tsconfig_context is not None:
+            base_url, tsconfig_paths = tsconfig_context
+            result = self._resolve_via_tsconfig(source, base_url, tsconfig_paths)
             if result:
                 return result
 
         return self._resolve_via_packages(source)
 
-    def _resolve_via_tsconfig(self, source: str) -> str | None:
-        if not self._tsconfig_paths:
-            return None
-
-        if source in self._tsconfig_paths:
-            for target_pattern in self._tsconfig_paths[source]:
-                resolved = os.path.normpath(
-                    os.path.join(self._base_url, target_pattern)
-                )
+    def _resolve_via_tsconfig(
+        self, source: str, base_url: str, tsconfig_paths: dict[str, list[str]]
+    ) -> str | None:
+        if source in tsconfig_paths:
+            for resolved in tsconfig_paths[source]:
                 if os.path.isfile(resolved):
                     return resolved
                 for suffix in (".ts", ".tsx", "/index.ts", "/index.tsx"):
                     if os.path.isfile(resolved + suffix):
                         return resolved + suffix
 
-        for pattern, targets in self._tsconfig_paths.items():
+        for pattern, targets in tsconfig_paths.items():
             if not pattern.endswith("/*"):
                 continue
             prefix = pattern[:-2]
@@ -299,13 +424,17 @@ class MonorepoResolver:
                 if not target_pattern.endswith("/*"):
                     continue
                 target_base = target_pattern[:-2]
-                resolved_base = os.path.normpath(
-                    os.path.join(self._base_url, target_base, rest)
-                )
+                resolved_base = os.path.normpath(os.path.join(target_base, rest))
                 for suffix in ("", ".ts", ".tsx", "/index.ts", "/index.tsx"):
                     candidate = resolved_base + suffix
                     if os.path.isfile(candidate):
                         return candidate
+
+        resolved_base = os.path.normpath(os.path.join(base_url, source))
+        for suffix in ("", ".ts", ".tsx", "/index.ts", "/index.tsx"):
+            candidate = resolved_base + suffix
+            if os.path.isfile(candidate):
+                return candidate
         return None
 
     def _resolve_via_packages(self, source: str) -> str | None:
