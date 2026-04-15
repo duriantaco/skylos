@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 from collections import defaultdict
+from pathlib import Path
+
+from skylos.file_discovery import should_exclude_path
 
 from .nextjs import (
     NEXTJS_CONVENTION_EXPORTS,
@@ -10,6 +14,11 @@ from .nextjs import (
     is_nextjs_convention_file,
     is_nextjs_pages_api_file,
     is_nextjs_pages_router_file,
+)
+from .resolve import (
+    _find_nearest_tsconfig,
+    _parse_tsconfig_references,
+    _resolve_path_target,
 )
 
 _NEXTJS_CONVENTION_EXPORTS = NEXTJS_CONVENTION_EXPORTS
@@ -264,13 +273,226 @@ def _is_ts_entry_or_infra(sf: str) -> bool:
     return False
 
 
-def find_dead_ts_files(files, exclude_folders, importers_of, wildcard_edges):
+def _resolve_exclude_root(files, project_root: str | None) -> Path | None:
+    if project_root:
+        return Path(project_root).resolve()
+
+    resolved_files: list[Path] = []
+    for file_path in files:
+        p = Path(str(file_path))
+        try:
+            resolved_files.append(p.resolve())
+        except OSError:
+            continue
+
+    if not resolved_files:
+        return None
+
+    try:
+        common_root = Path(os.path.commonpath([str(path) for path in resolved_files]))
+    except ValueError:
+        return None
+
+    if common_root.is_file():
+        return common_root.parent.resolve()
+    return common_root.resolve()
+
+
+def _is_excluded_path(path_str: str, exclude_folders, root_path: Path | None) -> bool:
+    if not exclude_folders or root_path is None:
+        return False
+
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = root_path / path
+
+    return should_exclude_path(path.resolve(), root_path, exclude_folders)
+
+
+def _read_json_file(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {}
+
+
+def _iter_package_entry_targets(entry):
+    if isinstance(entry, str):
+        yield entry
+        return
+    if isinstance(entry, list):
+        for item in entry:
+            yield from _iter_package_entry_targets(item)
+        return
+    if isinstance(entry, dict):
+        for value in entry.values():
+            yield from _iter_package_entry_targets(value)
+
+
+def _discover_package_entry_files(package_root: str) -> set[str]:
+    data = _read_json_file(os.path.join(package_root, "package.json"))
+    if not data:
+        return set()
+
+    targets: list[str] = []
+    seen_targets: set[str] = set()
+    for field in (
+        "main",
+        "module",
+        "types",
+        "typings",
+        "source",
+        "browser",
+        "bin",
+        "exports",
+    ):
+        for target in _iter_package_entry_targets(data.get(field)):
+            if target in seen_targets:
+                continue
+            seen_targets.add(target)
+            targets.append(target)
+
+    entry_files: set[str] = set()
+    for target in targets:
+        resolved = _resolve_path_target(package_root, target)
+        if resolved:
+            entry_files.add(os.path.realpath(resolved))
+    return entry_files
+
+
+def _workspace_package_roots(workspace_inventory) -> list[Path]:
+    package_roots: set[Path] = set()
+    if (
+        workspace_inventory
+        and workspace_inventory.root_package
+        and workspace_inventory.root_package.has_package_json
+    ):
+        package_roots.add(workspace_inventory.root_package.root.resolve())
+    if workspace_inventory:
+        for workspace in workspace_inventory.packages:
+            if workspace.has_package_json and (
+                "package.json:workspaces" in workspace.discovered_from
+                or "pnpm-workspace.yaml" in workspace.discovered_from
+            ):
+                package_roots.add(workspace.root.resolve())
+    return sorted(package_roots, key=lambda path: len(str(path)), reverse=True)
+
+
+def _find_owning_package_root(
+    file_path: Path, package_roots: list[Path]
+) -> Path | None:
+    for package_root in package_roots:
+        try:
+            file_path.relative_to(package_root)
+            return package_root
+        except ValueError:
+            continue
+    return None
+
+
+def _discover_referenced_package_roots(
+    files, project_root: str, workspace_inventory, exclude_folders=None
+) -> set[Path]:
+    project_root_path = Path(project_root).resolve()
+    exclude_root = _resolve_exclude_root(files, project_root)
+    package_roots = _workspace_package_roots(workspace_inventory)
+    if not package_roots:
+        return set()
+
+    referenced_roots: set[Path] = set()
+    active_tsconfigs: set[str] = set()
+
+    for file_path in {
+        Path(str(f)).resolve()
+        for f in files
+        if str(f).endswith((".ts", ".tsx"))
+        and not _is_excluded_path(str(f), exclude_folders, exclude_root)
+    }:
+        owning_package_root = _find_owning_package_root(file_path, package_roots)
+        if owning_package_root is None:
+            continue
+        tsconfig = _find_nearest_tsconfig(str(file_path), project_root)
+        if tsconfig:
+            active_tsconfigs.add(os.path.realpath(tsconfig))
+
+    for tsconfig in active_tsconfigs:
+        for ref_root in _parse_tsconfig_references(tsconfig):
+            resolved_root = Path(ref_root).resolve()
+            try:
+                resolved_root.relative_to(project_root_path)
+            except ValueError:
+                continue
+            if (resolved_root / "package.json").is_file():
+                referenced_roots.add(resolved_root)
+
+    return referenced_roots
+
+
+def _discover_ts_reachability_entry_files(
+    files,
+    project_root: str | None = None,
+    workspace_inventory=None,
+    exclude_folders=None,
+) -> set[str]:
+    exclude_root = _resolve_exclude_root(files, project_root)
+    ts_files = {
+        os.path.realpath(str(f))
+        for f in files
+        if str(f).endswith((".ts", ".tsx"))
+        and not _is_excluded_path(str(f), exclude_folders, exclude_root)
+    }
+    if not ts_files:
+        return set()
+
+    entry_files = {
+        tf
+        for tf in ts_files
+        if os.path.basename(tf) in _TS_ENTRY_FILES or _is_ts_entry_or_infra(tf)
+    }
+
+    if not project_root or workspace_inventory is None:
+        return entry_files
+
+    package_roots = set(_workspace_package_roots(workspace_inventory))
+    package_roots.update(
+        _discover_referenced_package_roots(
+            files,
+            project_root,
+            workspace_inventory,
+            exclude_folders=exclude_folders,
+        )
+    )
+
+    for package_root in package_roots:
+        entry_files.update(_discover_package_entry_files(str(package_root)))
+
+    return entry_files & ts_files
+
+
+def _is_ts_reachability_root(path: str, entry_files: set[str]) -> bool:
+    real_path = os.path.realpath(path)
+    return real_path in entry_files
+
+
+def find_dead_ts_files(
+    files,
+    exclude_folders,
+    importers_of,
+    wildcard_edges,
+    project_root: str | None = None,
+    workspace_inventory=None,
+):
+    exclude_root = _resolve_exclude_root(files, project_root)
     ts_files = set()
     for f in files:
         sf = str(f)
         if not sf.endswith((".ts", ".tsx")):
             continue
-        if any(ex in sf for ex in (exclude_folders or [])):
+        if _is_excluded_path(sf, exclude_folders, exclude_root):
             continue
         if _is_ts_entry_or_infra(sf):
             continue
@@ -285,10 +507,12 @@ def find_dead_ts_files(files, exclude_folders, importers_of, wildcard_edges):
         for src in sources:
             norm_importers[os.path.realpath(src)].add(os.path.realpath(reexporter))
 
-    entry_points = set()
-    for tf in ts_files:
-        if os.path.basename(tf) in _TS_ENTRY_FILES:
-            entry_points.add(tf)
+    entry_points = _discover_ts_reachability_entry_files(
+        files,
+        project_root=project_root,
+        workspace_inventory=workspace_inventory,
+        exclude_folders=exclude_folders,
+    )
 
     dead_set = set()
     for tf in ts_files - entry_points:
@@ -321,9 +545,28 @@ def find_dead_ts_files(files, exclude_folders, importers_of, wildcard_edges):
     return dead_files
 
 
-def find_unused_ts_exports(demoted_exports, wildcard_edges):
+def find_unused_ts_exports(
+    demoted_exports,
+    wildcard_edges,
+    files=None,
+    exclude_folders=None,
+    project_root: str | None = None,
+    workspace_inventory=None,
+):
     if not demoted_exports:
         return []
+
+    candidate_files: list[str] = [str(defn.filename) for defn in demoted_exports]
+    for reexporter, sources in wildcard_edges.items():
+        candidate_files.append(reexporter)
+        candidate_files.extend(sources)
+    analysis_files = files if files is not None else candidate_files
+    entry_points = _discover_ts_reachability_entry_files(
+        analysis_files,
+        project_root=project_root,
+        workspace_inventory=workspace_inventory,
+        exclude_folders=exclude_folders,
+    )
 
     api_surface = set()
     if wildcard_edges:
@@ -341,7 +584,7 @@ def find_unused_ts_exports(demoted_exports, wildcard_edges):
                 if current in visited:
                     continue
                 visited.add(current)
-                if os.path.basename(current) in ("index.ts", "index.tsx"):
+                if _is_ts_reachability_root(current, entry_points):
                     reaches_entry = True
                     break
                 for parent in reexported_by.get(current, []):
@@ -354,8 +597,7 @@ def find_unused_ts_exports(demoted_exports, wildcard_edges):
         if defn.references <= 0:
             continue
         fname = str(defn.filename)
-        basename = os.path.basename(fname)
-        if basename in ("index.ts", "index.tsx"):
+        if _is_ts_reachability_root(fname, entry_points):
             continue
         if defn.type == "method":
             continue

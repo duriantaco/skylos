@@ -42,6 +42,7 @@
 - Continue CLI cleanup by extracting command boundaries, lazy-loading heavy analysis paths.Expanded regression guardrails around dispatch, output, and exit-code behavior
 - TypeScript monorepo resolution now uses declared workspaces as the package boundary, resolves root package self-imports, and honors JSONC-style `tsconfig` path inheritance
 - TypeScript resolution now supports importer-local direct `tsconfig.json` project references for composite monorepos without leaking those references into global package resolution
+- TypeScript dead-file and unnecessary-export analysis now treats workspace package entrypoints as reachability roots, including packages kept alive through direct local `tsconfig.json` project references
 
 ### Fixed
 - Browser login callback now validates `state` and verifies the returned token metadata via `whoami`
