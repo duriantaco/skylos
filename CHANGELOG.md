@@ -35,6 +35,7 @@
 ### Added
 - Added a Simplified Chinese README (`README_CN.md`)
 - Added configurable web UI port support for `skylos run` via `--port` or `SKYLOS_PORT`
+- Added monorepo workspace inventory reporting for TypeScript projects. Skylos now reports root packages, child workspaces from `package.json` / `pnpm-workspace.yaml`, `tsconfig.json` references, and undeclared workspace package diagnostics in analysis and MCP output
 
 ### Changed
 - SKY-L030: Lint rule for `except Exception`/`except BaseException` with trivial handler (CWE-396)
