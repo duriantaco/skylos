@@ -98,3 +98,28 @@ def test_analyze_reports_workspace_inventory_without_source_files(tmp_path):
     assert result["analysis_summary"]["workspace_diagnostic_count"] == 0
     assert result["workspaces"]["root_package"]["name"] == "@repo/root"
     assert result["workspaces"]["packages"][0]["name"] == "@repo/app"
+
+
+def test_discover_workspace_inventory_includes_explicit_tsconfig_file_references(
+    tmp_path,
+):
+    (tmp_path / "packages" / "ui").mkdir(parents=True)
+
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"references": [{"path": "./packages/ui/tsconfig.lib.json"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "packages" / "ui" / "tsconfig.lib.json").write_text(
+        json.dumps({"compilerOptions": {}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "packages" / "ui" / "package.json").write_text(
+        json.dumps({"name": "@repo/ui"}),
+        encoding="utf-8",
+    )
+
+    inventory = discover_workspace_inventory(tmp_path)
+
+    packages = {pkg.name: pkg for pkg in inventory.packages}
+    assert packages["@repo/ui"].discovered_from == {"tsconfig.json:references"}
+    assert inventory.tsconfig_references == ["packages/ui/tsconfig.lib.json"]
