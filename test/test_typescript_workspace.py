@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import json
+
+from skylos.analyzer import analyze
+from skylos.visitors.languages.typescript.workspace import discover_workspace_inventory
+
+
+def test_discover_workspace_inventory_reports_sources_and_diagnostics(tmp_path):
+    (tmp_path / "packages" / "app").mkdir(parents=True)
+    (tmp_path / "packages" / "lib").mkdir(parents=True)
+    (tmp_path / "apps" / "web").mkdir(parents=True)
+    (tmp_path / "tools" / "cli").mkdir(parents=True)
+    (tmp_path / "examples" / "demo").mkdir(parents=True)
+
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "@repo/root",
+                "workspaces": ["packages/*"],
+                "dependencies": {"@repo/app": "workspace:*"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "pnpm-workspace.yaml").write_text(
+        "packages:\n  - 'apps/*'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        "{\n"
+        "  // workspace refs\n"
+        '  "references": [\n'
+        '    { "path": "./tools/cli" },\n'
+        "  ],\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    (tmp_path / "packages" / "app" / "package.json").write_text(
+        json.dumps({"name": "@repo/app", "dependencies": {"@repo/lib": "workspace:*"}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "packages" / "lib" / "package.json").write_text(
+        json.dumps({"name": "@repo/lib"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "apps" / "web" / "package.json").write_text(
+        json.dumps({"name": "@repo/web"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "examples" / "demo" / "package.json").write_text(
+        json.dumps({"name": "@repo/demo"}),
+        encoding="utf-8",
+    )
+
+    inventory = discover_workspace_inventory(tmp_path)
+
+    assert inventory.root_package is not None
+    assert inventory.root_package.name == "@repo/root"
+    assert inventory.root_package.is_root is True
+
+    packages = {pkg.name: pkg for pkg in inventory.packages}
+    assert packages["@repo/app"].discovered_from == {"package.json:workspaces"}
+    assert packages["@repo/web"].discovered_from == {"pnpm-workspace.yaml"}
+    assert packages["@repo/lib"].is_internal_dependency is True
+
+    ref_workspace = packages["tools/cli"]
+    assert ref_workspace.has_package_json is False
+    assert ref_workspace.discovered_from == {"tsconfig.json:references"}
+
+    assert inventory.tsconfig_references == ["tools/cli"]
+    assert any(
+        diag.kind == "undeclared_workspace_package"
+        and diag.path == (tmp_path / "examples" / "demo").resolve()
+        for diag in inventory.diagnostics
+    )
+
+
+def test_analyze_reports_workspace_inventory_without_source_files(tmp_path):
+    (tmp_path / "packages" / "app").mkdir(parents=True)
+
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "@repo/root", "workspaces": ["packages/*"]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "packages" / "app" / "package.json").write_text(
+        json.dumps({"name": "@repo/app"}),
+        encoding="utf-8",
+    )
+
+    result = json.loads(analyze(str(tmp_path)))
+
+    assert result["analysis_summary"]["total_files"] == 0
+    assert result["analysis_summary"]["monorepo_detected"] is True
+    assert result["analysis_summary"]["workspace_count"] == 1
+    assert result["analysis_summary"]["workspace_total_packages"] == 2
+    assert result["analysis_summary"]["workspace_diagnostic_count"] == 0
+    assert result["workspaces"]["root_package"]["name"] == "@repo/root"
+    assert result["workspaces"]["packages"][0]["name"] == "@repo/app"
