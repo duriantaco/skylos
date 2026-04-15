@@ -7,8 +7,15 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  test_matrix:
+    name: test-matrix (${{ matrix.install_target }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        install_target:
+          - "."
+          - ".[llm]"
 
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +25,7 @@ jobs:
       - name: Create venv + install deps
         run: |
           uv venv
-          uv pip install -e .
+          uv pip install -e "${{ matrix.install_target }}"
           uv pip install pytest pytest-cov
 
       - name: Run tests with coverage
@@ -31,3 +38,18 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           fail_ci_if_error: false
+          flags: ${{ matrix.install_target == '.[llm]' && 'llm-extra' || 'default-install' }}
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    needs: [test_matrix]
+    if: ${{ always() }}
+
+    steps:
+      - name: Require matrix success
+        run: |
+          if [ "${{ needs.test_matrix.result }}" != "success" ]; then
+            echo "test_matrix result: ${{ needs.test_matrix.result }}"
+            exit 1
+          fi
