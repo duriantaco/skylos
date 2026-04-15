@@ -141,6 +141,45 @@ def _parse_tsconfig_paths(
     return base_url_abs, paths
 
 
+def _parse_tsconfig_references(tsconfig_path: str) -> list[str]:
+    data = _load_jsonc(Path(tsconfig_path))
+    refs = data.get("references")
+    if not isinstance(refs, list):
+        return []
+
+    tsconfig_dir = os.path.dirname(tsconfig_path)
+    results: list[str] = []
+    seen: set[str] = set()
+
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        ref_path = ref.get("path")
+        if not isinstance(ref_path, str) or not ref_path:
+            continue
+
+        candidates = [os.path.normpath(os.path.join(tsconfig_dir, ref_path))]
+        if not ref_path.endswith(".json"):
+            candidates.append(
+                os.path.normpath(os.path.join(tsconfig_dir, ref_path + ".json"))
+            )
+
+        resolved_root: str | None = None
+        for candidate in candidates:
+            if os.path.isdir(candidate):
+                resolved_root = os.path.realpath(candidate)
+                break
+            if os.path.isfile(candidate):
+                resolved_root = os.path.realpath(os.path.dirname(candidate))
+                break
+
+        if resolved_root and resolved_root not in seen:
+            seen.add(resolved_root)
+            results.append(resolved_root)
+
+    return results
+
+
 def _build_package_map(project_root: str) -> dict[str, str]:
     pkg_map: dict[str, str] = {}
     inventory = discover_workspace_inventory(Path(project_root))
@@ -366,17 +405,21 @@ class MonorepoResolver:
     def __init__(self, project_root: str) -> None:
         self.project_root = project_root
         self._package_map: dict[str, str] | None = None
-        self._tsconfig_cache: dict[str, tuple[str, dict[str, list[str]]]] = {}
+        self._tsconfig_cache: dict[
+            str, tuple[str, dict[str, list[str]], list[str]]
+        ] = {}
 
     def _get_tsconfig_context(
         self, importer: str
-    ) -> tuple[str, dict[str, list[str]]] | None:
+    ) -> tuple[str, dict[str, list[str]], list[str]] | None:
         tsconfig = _find_nearest_tsconfig(importer, self.project_root)
         if not tsconfig:
             return None
 
         if tsconfig not in self._tsconfig_cache:
-            self._tsconfig_cache[tsconfig] = _parse_tsconfig_paths(tsconfig)
+            base_url, paths = _parse_tsconfig_paths(tsconfig)
+            references = _parse_tsconfig_references(tsconfig)
+            self._tsconfig_cache[tsconfig] = (base_url, paths, references)
         return self._tsconfig_cache[tsconfig]
 
     def _ensure_package_map(self) -> dict[str, str]:
@@ -395,8 +438,11 @@ class MonorepoResolver:
 
         tsconfig_context = self._get_tsconfig_context(importer)
         if tsconfig_context is not None:
-            base_url, tsconfig_paths = tsconfig_context
+            base_url, tsconfig_paths, project_references = tsconfig_context
             result = self._resolve_via_tsconfig(source, base_url, tsconfig_paths)
+            if result:
+                return result
+            result = self._resolve_via_project_references(source, project_references)
             if result:
                 return result
 
@@ -435,6 +481,38 @@ class MonorepoResolver:
             candidate = resolved_base + suffix
             if os.path.isfile(candidate):
                 return candidate
+        return None
+
+    def _resolve_via_project_references(
+        self, source: str, project_references: list[str]
+    ) -> str | None:
+        if not project_references:
+            return None
+
+        parts = source.split("/")
+        package_name: str | None = None
+        subpath: str | None = None
+
+        if parts[0].startswith("@") and len(parts) >= 2:
+            package_name = parts[0] + "/" + parts[1]
+            if len(parts) > 2:
+                subpath = "/".join(parts[2:])
+        elif parts:
+            package_name = parts[0]
+            if len(parts) > 1:
+                subpath = "/".join(parts[1:])
+
+        if not package_name:
+            return None
+
+        for reference_root in project_references:
+            pkg_json = os.path.join(reference_root, "package.json")
+            pkg_data = _read_json_file(pkg_json)
+            ref_name = pkg_data.get("name")
+            if ref_name != package_name:
+                continue
+            return _resolve_from_pkg_dir(reference_root, subpath)
+
         return None
 
     def _resolve_via_packages(self, source: str) -> str | None:
