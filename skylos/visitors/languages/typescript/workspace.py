@@ -264,14 +264,16 @@ def _load_jsonc(path: Path) -> dict:
     return {}
 
 
-def _parse_tsconfig_references(root: Path) -> list[Path]:
+def _parse_tsconfig_references(root: Path) -> tuple[list[Path], list[str]]:
     data = _load_jsonc(root / "tsconfig.json")
     refs = data.get("references")
     if not isinstance(refs, list):
-        return []
+        return [], []
 
     results: list[Path] = []
-    seen: set[Path] = set()
+    reported_refs: list[str] = []
+    seen_roots: set[Path] = set()
+    seen_reported: set[str] = set()
     for ref in refs:
         if not isinstance(ref, dict):
             continue
@@ -279,10 +281,24 @@ def _parse_tsconfig_references(root: Path) -> list[Path]:
         if not isinstance(ref_path, str):
             continue
         candidate = (root / ref_path).resolve()
-        if candidate.is_dir() and candidate not in seen:
-            results.append(candidate)
-            seen.add(candidate)
-    return results
+
+        resolved_root: Path | None = None
+        if candidate.is_dir():
+            resolved_root = candidate
+        elif candidate.is_file():
+            resolved_root = candidate.parent
+
+        if resolved_root is not None and resolved_root not in seen_roots:
+            results.append(resolved_root)
+            seen_roots.add(resolved_root)
+
+        if candidate.exists():
+            reported_ref = _normalize_relpath(candidate, root)
+            if reported_ref not in seen_reported:
+                reported_refs.append(reported_ref)
+                seen_reported.add(reported_ref)
+
+    return results, reported_refs
 
 
 def _collect_dependency_names(package_data: dict) -> set[str]:
@@ -426,8 +442,10 @@ def discover_workspace_inventory(project_root: Path) -> WorkspaceInventory:
             root, source_patterns, source_label
         ).items():
             workspace_sources.setdefault(pkg_root, set()).update(sources)
-    tsconfig_reference_paths = _parse_tsconfig_references(root)
-    for ref_path in tsconfig_reference_paths:
+    tsconfig_reference_roots, tsconfig_reference_paths = _parse_tsconfig_references(
+        root
+    )
+    for ref_path in tsconfig_reference_roots:
         workspace_sources.setdefault(ref_path, set()).add("tsconfig.json:references")
 
     packages: list[WorkspaceInfo] = []
@@ -473,7 +491,5 @@ def discover_workspace_inventory(project_root: Path) -> WorkspaceInventory:
         packages=packages,
         diagnostics=diagnostics,
         declared_patterns=patterns,
-        tsconfig_references=[
-            _normalize_relpath(ref_path, root) for ref_path in tsconfig_reference_paths
-        ],
+        tsconfig_references=tsconfig_reference_paths,
     )

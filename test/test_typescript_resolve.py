@@ -314,13 +314,89 @@ def test_tsconfig_reference_without_package_json_is_not_name_resolved(tmp_path):
     assert resolver.resolve("tools/build", str(importer)) is None
 
 
-def test_tsconfig_reference_with_package_json_is_not_treated_as_workspace(tmp_path):
-    importer = tmp_path / "src" / "main.ts"
+def test_tsconfig_reference_without_package_name_does_not_bare_resolve(tmp_path):
+    app_dir = tmp_path / "packages" / "app"
+    importer = app_dir / "src" / "main.ts"
 
     _write(
-        tmp_path / "tsconfig.json",
-        json.dumps({"references": [{"path": "./packages/ui"}]}),
+        app_dir / "tsconfig.json",
+        json.dumps({"references": [{"path": "../ui"}]}),
     )
+    _write(
+        tmp_path / "packages" / "ui" / "package.json",
+        json.dumps({"exports": "./src/index.ts"}),
+    )
+    _write(tmp_path / "packages" / "ui" / "src" / "index.ts", "export const ui = 1;\n")
+    _write(importer, "import { ui } from '@repo/ui';\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@repo/ui", str(importer)) is None
+
+
+def test_direct_tsconfig_reference_with_package_json_resolves_importer_locally(
+    tmp_path,
+):
+    app_dir = tmp_path / "packages" / "app"
+    importer = app_dir / "src" / "main.ts"
+    target = tmp_path / "packages" / "ui" / "src" / "index.ts"
+
+    _write(
+        app_dir / "tsconfig.json",
+        json.dumps({"references": [{"path": "../ui"}]}),
+    )
+    _write(
+        tmp_path / "packages" / "ui" / "package.json",
+        json.dumps({"name": "@repo/ui", "exports": "./src/index.ts"}),
+    )
+    _write(target, "export const ui = 1;\n")
+    _write(importer, "import { ui } from '@repo/ui';\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@repo/ui", str(importer)) == str(target)
+
+
+def test_tsconfig_reference_subpath_uses_referenced_package_exports(tmp_path):
+    app_dir = tmp_path / "packages" / "app"
+    importer = app_dir / "src" / "main.ts"
+    target = tmp_path / "packages" / "ui" / "src" / "helpers.ts"
+
+    _write(
+        app_dir / "tsconfig.json",
+        json.dumps({"references": [{"path": "../ui"}]}),
+    )
+    _write(
+        tmp_path / "packages" / "ui" / "package.json",
+        json.dumps(
+            {
+                "name": "@repo/ui",
+                "exports": {
+                    ".": "./src/index.ts",
+                    "./helpers": "./dist/helpers.js",
+                },
+            }
+        ),
+    )
+    _write(tmp_path / "packages" / "ui" / "src" / "index.ts", "export const ui = 1;\n")
+    _write(target, "export const helper = 1;\n")
+    _write(importer, "import { helper } from '@repo/ui/helpers';\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@repo/ui/helpers", str(importer)) == str(target)
+
+
+def test_project_reference_does_not_leak_to_sibling_package(tmp_path):
+    app_dir = tmp_path / "packages" / "app"
+    web_dir = tmp_path / "packages" / "web"
+    importer = web_dir / "src" / "main.ts"
+
+    _write(
+        app_dir / "tsconfig.json",
+        json.dumps({"references": [{"path": "../ui"}]}),
+    )
+    _write(web_dir / "tsconfig.json", json.dumps({"compilerOptions": {"baseUrl": "."}}))
     _write(
         tmp_path / "packages" / "ui" / "package.json",
         json.dumps({"name": "@repo/ui", "exports": "./src/index.ts"}),
@@ -331,6 +407,152 @@ def test_tsconfig_reference_with_package_json_is_not_treated_as_workspace(tmp_pa
     resolver = MonorepoResolver(str(tmp_path))
 
     assert resolver.resolve("@repo/ui", str(importer)) is None
+
+
+def test_tsconfig_paths_still_beat_project_references(tmp_path):
+    app_dir = tmp_path / "packages" / "app"
+    importer = app_dir / "src" / "main.ts"
+    local_target = app_dir / "src" / "ui.ts"
+    referenced_target = tmp_path / "packages" / "ui" / "src" / "index.ts"
+
+    _write(
+        app_dir / "tsconfig.json",
+        json.dumps(
+            {
+                "compilerOptions": {
+                    "baseUrl": ".",
+                    "paths": {"@repo/ui": ["src/ui.ts"]},
+                },
+                "references": [{"path": "../ui"}],
+            }
+        ),
+    )
+    _write(
+        tmp_path / "packages" / "ui" / "package.json",
+        json.dumps({"name": "@repo/ui", "exports": "./src/index.ts"}),
+    )
+    _write(local_target, "export const local = true;\n")
+    _write(referenced_target, "export const referenced = true;\n")
+    _write(importer, "import { local } from '@repo/ui';\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@repo/ui", str(importer)) == str(local_target)
+
+
+def test_tsconfig_reference_via_explicit_config_file_path_resolves_package(tmp_path):
+    app_dir = tmp_path / "packages" / "app"
+    importer = app_dir / "src" / "main.ts"
+    target = tmp_path / "packages" / "ui" / "src" / "index.ts"
+
+    _write(
+        app_dir / "tsconfig.json",
+        json.dumps({"references": [{"path": "../ui/tsconfig.lib.json"}]}),
+    )
+    _write(tmp_path / "packages" / "ui" / "tsconfig.lib.json", json.dumps({}))
+    _write(
+        tmp_path / "packages" / "ui" / "package.json",
+        json.dumps({"name": "@repo/ui", "exports": "./src/index.ts"}),
+    )
+    _write(target, "export const ui = 1;\n")
+    _write(importer, "import { ui } from '@repo/ui';\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@repo/ui", str(importer)) == str(target)
+
+
+def test_direct_project_reference_precedes_declared_workspace_fallback(tmp_path):
+    app_dir = tmp_path / "packages" / "app"
+    importer = app_dir / "src" / "main.ts"
+    referenced_target = tmp_path / "libs" / "ui" / "src" / "index.ts"
+    workspace_target = tmp_path / "packages" / "ui" / "src" / "index.ts"
+
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"name": "@repo/root", "workspaces": ["packages/*"]}),
+    )
+    _write(
+        app_dir / "tsconfig.json",
+        json.dumps({"references": [{"path": "../../libs/ui"}]}),
+    )
+    _write(
+        tmp_path / "libs" / "ui" / "package.json",
+        json.dumps({"name": "@repo/ui", "exports": "./src/index.ts"}),
+    )
+    _write(
+        tmp_path / "packages" / "ui" / "package.json",
+        json.dumps({"name": "@repo/ui", "exports": "./src/index.ts"}),
+    )
+    _write(referenced_target, "export const referenced = true;\n")
+    _write(workspace_target, "export const workspace = true;\n")
+    _write(importer, "import { ui } from '@repo/ui';\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@repo/ui", str(importer)) == str(referenced_target)
+
+
+def test_transitive_project_reference_does_not_resolve_without_direct_reference(
+    tmp_path,
+):
+    app_dir = tmp_path / "packages" / "app"
+    ui_dir = tmp_path / "packages" / "ui"
+    importer = app_dir / "src" / "main.ts"
+
+    _write(
+        app_dir / "tsconfig.json",
+        json.dumps({"references": [{"path": "../ui"}]}),
+    )
+    _write(
+        ui_dir / "tsconfig.json",
+        json.dumps({"references": [{"path": "../core"}]}),
+    )
+    _write(
+        tmp_path / "packages" / "core" / "package.json",
+        json.dumps({"name": "@repo/core", "exports": "./src/index.ts"}),
+    )
+    _write(
+        tmp_path / "packages" / "core" / "src" / "index.ts",
+        "export const core = 1;\n",
+    )
+    _write(importer, "import { core } from '@repo/core';\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@repo/core", str(importer)) is None
+
+
+def test_build_ts_import_graph_uses_project_reference_resolution(tmp_path):
+    app_dir = tmp_path / "packages" / "app"
+    app_file = app_dir / "src" / "index.ts"
+    index_file = tmp_path / "packages" / "ui" / "src" / "index.ts"
+
+    _write(
+        app_dir / "tsconfig.json",
+        json.dumps({"references": [{"path": "../ui"}]}),
+    )
+    _write(
+        tmp_path / "packages" / "ui" / "package.json",
+        json.dumps({"name": "@repo/ui", "exports": "./src/index.ts"}),
+    )
+    _write(index_file, 'export const Button = () => "button";')
+    _write(app_file, "import { Button } from '@repo/ui';\n")
+
+    defs = {
+        f"{index_file}:Button": _make_def("Button", str(index_file)),
+    }
+    ts_raw_imports = {
+        str(app_file): [
+            {"source": "@repo/ui", "names": ["Button"], "line": 1},
+        ]
+    }
+
+    consumed, _, _ = build_ts_import_graph(
+        ts_raw_imports, defs, MonorepoResolver(str(tmp_path))
+    )
+
+    assert "Button" in consumed[str(index_file)]
 
 
 def test_tsconfig_paths_support_jsonc_comments_and_trailing_commas(tmp_path):
