@@ -60,7 +60,7 @@ Skylos 是一款面向 Python、TypeScript 和 Go 的开源静态分析工具和
 3. **一个工作流替代三个工具：** 死代码、安全扫描和 PR 门控在同一 CLI 和 CI 流程中。
 4. **默认本地优先：** 你可以在本地运行扫描，需要时再添加可选的 AI 或云端功能。
 5. **自解释输出：** 每个表格都打印图例说明每列和数字的含义 — 无需额外文档。
-6. **面向 TS 仓库的 Monorepo 清单：** Skylos 会在 JSON 和 MCP 输出中报告从 `package.json` workspaces、`pnpm-workspace.yaml` 与 `tsconfig.json` references 发现的工作区包，以及未声明包的诊断信息。
+6. **面向 TS 仓库的 Monorepo 感知解析：** Skylos 会报告 TypeScript 仓库中声明的工作区，并在包解析时使用这些边界，包括根包自导入和本地 `tsconfig` 路径继承。
 
 ### 为什么选择 Skylos 而非 Vulture 检测 Python 死代码？
 

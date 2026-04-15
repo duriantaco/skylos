@@ -40,6 +40,7 @@
 ### Changed
 - SKY-L030: Lint rule for `except Exception`/`except BaseException` with trivial handler (CWE-396)
 - Continue CLI cleanup by extracting command boundaries, lazy-loading heavy analysis paths.Expanded regression guardrails around dispatch, output, and exit-code behavior
+- TypeScript monorepo resolution now uses declared workspaces as the package boundary, resolves root package self-imports, and honors JSONC-style `tsconfig` path inheritance
 
 ### Fixed
 - Browser login callback now validates `state` and verifies the returned token metadata via `whoami`
