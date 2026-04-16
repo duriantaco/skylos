@@ -205,8 +205,8 @@ The core product is dead code detection, security scanning, and PR gating. The A
 
 Skylos can also flag common AI-generated code mistakes. Every finding includes `vibe_category` and `ai_likelihood` (high/medium/low) metadata so you can filter them separately if you want.
 
-* **Phantom Call Detection:** Catches calls to security functions (`sanitize_input`, `validate_token`, `check_permission`, etc.) that are never defined or imported — AI hallucinates these constantly. `hallucinated_reference, high`
-* **Phantom Decorator Detection:** Catches security decorators (`@require_auth`, `@rate_limit`, `@authenticate`, etc.) that are never defined or imported. `hallucinated_reference, high`
+* **Phantom Call Detection:** Catches calls to security functions (`sanitize_input`, `validate_token`, `check_permission`, etc.) that are never defined or imported, including local-module references like `security.require_auth()`. `hallucinated_reference, high`
+* **Phantom Decorator Detection:** Catches security decorators (`@require_auth`, `@rate_limit`, `@authenticate`, etc.) that are never defined or imported, including local-module decorators like `@guards.require_auth`. `hallucinated_reference, high`
 * **Unfinished Generation:** Detects functions with only `pass`, `...`, or `raise NotImplementedError` — AI-generated stubs that silently do nothing in production. `incomplete_generation, medium`
 * **Undefined Config:** Flags `os.getenv("ENABLE_X")` referencing feature flags that are never defined anywhere in the project. `ghost_config, medium`
 * **Stale Mock Detection:** Catches `mock.patch("app.email.send_email")` where `send_email` no longer exists — AI renames functions but leaves tests pointing at the old name. `stale_reference, medium`
