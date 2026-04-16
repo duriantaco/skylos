@@ -371,7 +371,7 @@ class Skylos:
             self.defs, self.ts_consumed_exports
         )
 
-    def _find_dead_ts_files(self, files, exclude_folders):
+    def _find_dead_ts_files(self, files, exclude_folders, workspace_inventory=None):
         if not hasattr(self, "ts_consumed_exports"):
             return []
         return find_dead_ts_files(
@@ -379,14 +379,20 @@ class Skylos:
             exclude_folders,
             getattr(self, "_ts_importers_of", {}),
             getattr(self, "_ts_wildcard_edges", {}),
+            project_root=str(self._project_root),
+            workspace_inventory=workspace_inventory,
         )
 
-    def _find_unused_ts_exports(self):
+    def _find_unused_ts_exports(self, files, exclude_folders, workspace_inventory=None):
         if not hasattr(self, "_ts_demoted_exports"):
             return []
         return find_unused_ts_exports(
             self._ts_demoted_exports,
             getattr(self, "_ts_wildcard_edges", {}),
+            files=files,
+            exclude_folders=exclude_folders,
+            project_root=str(self._project_root),
+            workspace_inventory=workspace_inventory,
         )
 
     def _propagate_transitive_dead(self):
@@ -1922,10 +1928,16 @@ class Skylos:
                 progress_callback(0, 1, Path("PHASE: grep verify"))
             self._grep_verify()
 
-        dead_ts_files = self._find_dead_ts_files(files, exclude_folders)
+        dead_ts_files = self._find_dead_ts_files(
+            files, exclude_folders, workspace_inventory=workspace_inventory
+        )
         empty_files.extend(dead_ts_files)
 
-        unused_ts_exports = self._find_unused_ts_exports()
+        unused_ts_exports = self._find_unused_ts_exports(
+            files,
+            exclude_folders,
+            workspace_inventory=workspace_inventory,
+        )
 
         result = self._build_result(
             files,

@@ -5,6 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from skylos.visitor import Definition
+from skylos.visitors.languages.typescript.workspace import (
+    discover_workspace_inventory,
+)
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
     find_unused_ts_exports,
@@ -379,3 +382,88 @@ class TestTypeScriptDeadFiles:
 
         dead_files = find_dead_ts_files(files, [], {}, {})
         assert dead_files == []
+
+    def test_package_json_entrypoint_keeps_workspace_files_live(self, tmp_path):
+        public_api = tmp_path / "packages" / "ui" / "src" / "public-api.ts"
+        helper_file = tmp_path / "packages" / "ui" / "src" / "helpers.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root","workspaces":["packages/*"]}', encoding="utf-8"
+        )
+        (tmp_path / "packages" / "ui").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "packages" / "ui" / "package.json").write_text(
+            '{"name":"@repo/ui","exports":"./src/public-api.ts"}', encoding="utf-8"
+        )
+        public_api.parent.mkdir(parents=True, exist_ok=True)
+        public_api.write_text("export * from './helpers';\n", encoding="utf-8")
+        helper_file.write_text("export const helper = () => 1;\n", encoding="utf-8")
+
+        inventory = discover_workspace_inventory(tmp_path)
+        dead_files = find_dead_ts_files(
+            [public_api, helper_file],
+            [],
+            {str(helper_file): {str(public_api)}},
+            {str(public_api): {str(helper_file)}},
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert dead_files == []
+
+    def test_package_json_subpath_export_keeps_exported_file_live(self, tmp_path):
+        helper_file = tmp_path / "packages" / "ui" / "src" / "helpers.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root","workspaces":["packages/*"]}', encoding="utf-8"
+        )
+        (tmp_path / "packages" / "ui").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "packages" / "ui" / "package.json").write_text(
+            '{"name":"@repo/ui","exports":{"./helpers":"./src/helpers.ts"}}',
+            encoding="utf-8",
+        )
+        helper_file.parent.mkdir(parents=True, exist_ok=True)
+        helper_file.write_text("export const helper = () => 1;\n", encoding="utf-8")
+
+        inventory = discover_workspace_inventory(tmp_path)
+        dead_files = find_dead_ts_files(
+            [helper_file],
+            [],
+            {},
+            {},
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert dead_files == []
+
+
+class TestTypeScriptUnusedExports:
+    def test_package_json_entrypoint_export_is_not_flagged(self, tmp_path):
+        public_api = tmp_path / "packages" / "ui" / "src" / "public-api.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root","workspaces":["packages/*"]}', encoding="utf-8"
+        )
+        (tmp_path / "packages" / "ui").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "packages" / "ui" / "package.json").write_text(
+            '{"name":"@repo/ui","exports":"./src/public-api.ts"}', encoding="utf-8"
+        )
+        public_api.parent.mkdir(parents=True, exist_ok=True)
+        public_api.write_text(
+            "export function makeLabel(value: string) { return value.trim(); }\n",
+            encoding="utf-8",
+        )
+
+        inventory = discover_workspace_inventory(tmp_path)
+        defn = _make_def("makeLabel", "function", str(public_api), exported=True)
+        defn.references = 1
+        defn.is_exported = False
+
+        findings = find_unused_ts_exports(
+            [defn],
+            {},
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert findings == []
