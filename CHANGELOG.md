@@ -36,6 +36,7 @@
 - Added a Simplified Chinese README (`README_CN.md`)
 - Added configurable web UI port support for `skylos run` via `--port` or `SKYLOS_PORT`
 - Added monorepo workspace inventory reporting for TypeScript projects. Skylos now reports root packages, child workspaces from `package.json` / `pnpm-workspace.yaml`, `tsconfig.json` references, and undeclared workspace package diagnostics in analysis and MCP output
+- Added TypeScript AI defense beta support to `skylos discover` / `skylos defend` for direct Node / Next-style LLM integrations, reusing the existing guardrail engine and report format
 
 ### Changed
 - SKY-L030: Lint rule for `except Exception`/`except BaseException` with trivial handler (CWE-396)
@@ -43,6 +44,7 @@
 - TypeScript monorepo resolution now uses declared workspaces as the package boundary, resolves root package self-imports, and honors JSONC-style `tsconfig` path inheritance
 - TypeScript resolution now supports importer-local direct `tsconfig.json` project references for composite monorepos without leaking those references into global package resolution
 - TypeScript dead-file and unnecessary-export analysis now treats workspace package entrypoints as reachability roots, including packages kept alive through direct local `tsconfig.json` project references
+- AI defense file discovery for `discover` / `defend` now scans direct TypeScript and JavaScript source files in addition to Python
 
 ### Fixed
 - Browser login callback now validates `state` and verifies the returned token metadata via `whoami`

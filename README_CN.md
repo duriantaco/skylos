@@ -36,7 +36,7 @@ Skylos 是一款面向 Python、TypeScript 和 Go 的开源静态分析工具和
 - 需要比 Vulture 更少误报的 Python 团队
 - 使用 Cursor、Copilot、Claude Code 或其他 AI 编码助手的代码仓库
 - 带有 GitHub 注释和审查评论的 CI/CD 拉取请求门控
-- 需要 OWASP LLM Top 10 检查的 Python LLM 应用
+- 需要 OWASP LLM Top 10 检查的 Python 和 TypeScript LLM 应用
 
 ### 可用形式
 
@@ -51,7 +51,7 @@ Skylos 是一款面向 Python、TypeScript 和 Go 的开源静态分析工具和
 |:---|:---|:---|
 | **扫描代码仓库** | `skylos . -a` | 死代码、风险流程、密钥和代码质量发现 |
 | **门控拉取请求** | `skylos cicd init` | 带质量门控和内联注释的 GitHub Actions 工作流 |
-| **审计 LLM 应用** | `skylos defend .` | 针对 Python LLM 集成的可选 AI 防御检查 |
+| **审计 LLM 应用** | `skylos defend .` | 针对 Python 和直接 TypeScript LLM 集成的可选 AI 防御检查 |
 
 ### 团队采用 Skylos 的原因
 
@@ -61,6 +61,7 @@ Skylos 是一款面向 Python、TypeScript 和 Go 的开源静态分析工具和
 4. **默认本地优先：** 你可以在本地运行扫描，需要时再添加可选的 AI 或云端功能。
 5. **自解释输出：** 每个表格都打印图例说明每列和数字的含义 — 无需额外文档。
 6. **面向 TS Monorepo 的解析与可达性感知：** Skylos 会在 TypeScript 包解析时使用声明的工作区和导入方本地的直接 `tsconfig` 项目引用，并在死文件与不必要导出分析中保留工作区包入口点。
+7. **AI 防御现在也覆盖 TS 仓库：** `skylos discover` 和 `skylos defend` 现在可以在 Node / Next 风格代码路径中发现直接 TypeScript LLM 集成，作为 beta 能力提供。
 
 ### 为什么选择 Skylos 而非 Vulture 检测 Python 死代码？
 
@@ -224,7 +225,7 @@ Skylos 还可以标记常见的 AI 生成代码错误。每个发现包含 `vibe
 
 ### 高级：LLM 应用的 AI 防御
 
-面向 AI 应用安全的静态分析，映射 Python 代码库中的每个 LLM 调用并检查缺失的防护措施。**仅限 Python**（TypeScript/Go 支持已规划）。
+面向 AI 应用安全的静态分析，映射代码库中的每个 LLM 调用并检查缺失的防护措施。Python 支持已较成熟；直接 TypeScript / TSX 发现与共享防护检查现在以 beta 形式提供。
 
 ```bash
 # 发现所有 LLM 集成
@@ -276,6 +277,8 @@ gate:
 ```
 
 支持 OpenAI、Anthropic、Google Gemini、Cohere、Mistral、Ollama、Together AI、Groq、Fireworks、Replicate、LiteLLM、LangChain、LlamaIndex、CrewAI 和 AutoGen。
+
+当前 TypeScript beta 范围有意保持收敛：支持 `.ts` / `.tsx` / `.js` / `.jsx` 中的直接 SDK 模式，例如 OpenAI、Anthropic、Google Gemini、LiteLLM 和 Vercel AI SDK。大量包装层代码和完整 TS Agent 对等能力留待后续阶段。
 
 ### 死代码检测与清理
 * **查找未使用代码：** 识别不可达函数、孤立类和未使用导入，带置信度评分。

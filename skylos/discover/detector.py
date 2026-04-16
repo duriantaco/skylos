@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Optional
 
 from skylos.discover.integration import LLMIntegration, ToolDef
+from skylos.discover.detector_typescript import (
+    collect_typescript_files,
+    scan_typescript_file as scan_typescript_ai_file,
+)
 from skylos.discover.graph import (
     AIIntegrationGraph,
     GraphNode,
@@ -1061,7 +1065,16 @@ def detect_integrations(
 
         rel, visitor = scanned
         integrations.extend(visitor.integrations)
-        _build_graph_from_visitor(visitor, graph, rel)
+        _build_graph_from_integrations(graph, visitor.integrations, rel)
+
+    for ts_file in collect_typescript_files(root, exclude_folders):
+        scanned = scan_typescript_ai_file(root, ts_file)
+        if scanned is None:
+            continue
+
+        rel, ts_integrations = scanned
+        integrations.extend(ts_integrations)
+        _build_graph_from_integrations(graph, ts_integrations, rel)
 
     return integrations, graph
 
@@ -1070,6 +1083,10 @@ def _default_exclude_folders() -> set[str]:
     return {
         "node_modules",
         ".git",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        ".turbo",
         "__pycache__",
         ".venv",
         "venv",
@@ -1123,13 +1140,27 @@ def _build_graph_from_visitor(
     graph: AIIntegrationGraph,
     filepath: str,
 ) -> None:
-    for integration in visitor.integrations:
+    _build_graph_from_integrations(graph, visitor.integrations, filepath)
+
+
+def _build_graph_from_integrations(
+    graph: AIIntegrationGraph,
+    integrations: list[LLMIntegration],
+    filepath: str,
+) -> None:
+    for integration in integrations:
         call_id = _add_call_node(graph, integration)
         _add_input_source_nodes(graph, filepath, integration, call_id)
         _add_prompt_site_nodes(graph, integration, call_id)
         _add_output_sink_nodes(graph, filepath, integration, call_id)
         _add_tool_nodes(graph, integration, call_id)
         _add_validation_node(graph, integration, call_id)
+
+
+def _collect_ai_files(root: Path, exclude_folders: set[str]) -> list[Path]:
+    files = list(_collect_python_files(root, exclude_folders))
+    files.extend(collect_typescript_files(root, exclude_folders))
+    return sorted(files)
 
 
 def _add_call_node(graph: AIIntegrationGraph, integration: LLMIntegration) -> str:
