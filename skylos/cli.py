@@ -576,6 +576,7 @@ def _print_feature_hints(console: Console, args):
         idx = 0
 
     rotating_hints = [
+        "[dim]Run the full local bundle:[/dim] [bold]skylos suite .[/bold]",
         "[dim]Scan for AI/LLM guardrails:[/dim] [bold]skylos defend .[/bold]",
         "[dim]Map LLM integrations:[/dim] [bold]skylos discover .[/bold]",
         "[dim]LLM-verified dead code (100% accuracy):[/dim] [bold]skylos agent verify .[/bold]",
@@ -1655,6 +1656,21 @@ def run_defend_command(argv):
     )
 
 
+def run_suite_command(argv):
+    from skylos.api import get_git_root
+    from skylos.commands.suite_cmd import run_suite_command as run_suite_command_impl
+
+    return run_suite_command_impl(
+        argv,
+        console_factory=Console,
+        progress_factory=Progress,
+        parse_exclude_folders_func=parse_exclude_folders,
+        load_config_func=load_config,
+        run_analyze_func=run_analyze,
+        get_git_root_func=get_git_root,
+    )
+
+
 def run_ingest_command(argv):
     from skylos.commands.ingest_cmd import run_ingest_command as run_ingest_command_impl
 
@@ -1812,7 +1828,8 @@ def _run_removed_city_command(_argv):
     console = Console()
     console.print("[bold red]Error:[/bold red] `skylos city` has been removed.")
     console.print(
-        "[dim]Use[/dim] [bold]skylos debt .[/bold] [dim]for technical debt hotspots or[/dim] "
+        "[dim]Use[/dim] [bold]skylos suite .[/bold] [dim]for the full local bundle,[/dim] "
+        "[bold]skylos debt .[/bold] [dim]for technical debt hotspots, or[/dim] "
         "[bold]skylos discover .[/bold] [dim]for codebase mapping.[/dim]"
     )
     raise SystemExit(2)
@@ -1840,6 +1857,7 @@ EARLY_COMMAND_HANDLERS = {
     "sync": "_run_sync_command",
     "project": "_run_project_command",
     "city": "_run_removed_city_command",
+    "suite": "run_suite_command",
     "discover": "_run_discover_command",
     "defend": "run_defend_command",
     "debt": "run_debt_command",

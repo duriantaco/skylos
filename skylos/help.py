@@ -2,6 +2,11 @@ import skylos
 
 COMMANDS = [
     {
+        "name": "skylos suite <path>",
+        "desc": "Run the full local analysis bundle",
+        "group": "Core Analysis",
+    },
+    {
         "name": "skylos <path>",
         "desc": "Dead code, security, and quality analysis",
         "group": "Core Analysis",
