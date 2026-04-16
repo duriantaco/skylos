@@ -1151,5 +1151,242 @@ ignore = []
         assert "SKY-D260" not in danger_rule_ids
 
 
+class TestRepoPhantomReferences:
+    def test_analyze_flags_imported_local_module_member_call(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        pkg = tmp_path / "app"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "security.py").write_text(
+            """
+def authenticate(request):
+    return request
+""".strip(),
+            encoding="utf-8",
+        )
+        (pkg / "views.py").write_text(
+            """
+from app import security
+
+def handler(request):
+    return security.require_auth(request)
+""".strip(),
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
+        quality = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ]
+
+        assert len(quality) == 1
+        assert quality[0]["name"] == "security.require_auth"
+        assert quality[0]["vibe_category"] == "hallucinated_reference"
+
+    def test_analyze_single_file_skips_repo_phantom_reference_scan(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        pkg = tmp_path / "app"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "security.py").write_text(
+            """
+def authenticate(request):
+    return request
+""".strip(),
+            encoding="utf-8",
+        )
+        views = pkg / "views.py"
+        views.write_text(
+            """
+from app import security
+
+def handler(request):
+    return security.require_auth(request)
+""".strip(),
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(views), conf=0, enable_quality=True))
+        quality = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ]
+
+        assert quality == []
+
+    def test_analyze_subdirectory_uses_repo_root_for_phantom_scan(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        pkg = tmp_path / "app"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "security.py").write_text(
+            """
+def authenticate(request):
+    return request
+""".strip(),
+            encoding="utf-8",
+        )
+        (pkg / "views.py").write_text(
+            """
+from app import security
+
+def handler(request):
+    return security.require_auth(request)
+""".strip(),
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(pkg), conf=0, enable_quality=True))
+        quality = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ]
+
+        assert len(quality) == 1
+        assert quality[0]["name"] == "security.require_auth"
+
+    def test_analyze_nested_subproject_uses_nearest_project_root(self, tmp_path):
+        backend = tmp_path / "backend"
+        backend.mkdir()
+        (backend / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+
+        pkg = backend / "app"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "security.py").write_text(
+            """
+def authenticate(request):
+    return request
+""".strip(),
+            encoding="utf-8",
+        )
+        (pkg / "views.py").write_text(
+            """
+from app import security
+
+def handler(request):
+    return security.require_auth(request)
+""".strip(),
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(pkg), conf=0, enable_quality=True))
+        quality = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ]
+
+        assert len(quality) == 1
+        assert quality[0]["name"] == "security.require_auth"
+
+    def test_analyze_nested_subproject_ignore_applies_to_repo_phantom_scan(
+        self, tmp_path
+    ):
+        backend = tmp_path / "backend"
+        backend.mkdir()
+        (backend / "pyproject.toml").write_text(
+            """
+[tool.skylos]
+ignore = ["SKY-L012"]
+""".strip(),
+            encoding="utf-8",
+        )
+
+        pkg = backend / "app"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "security.py").write_text(
+            """
+def authenticate(request):
+    return request
+""".strip(),
+            encoding="utf-8",
+        )
+        (pkg / "views.py").write_text(
+            """
+from app import security
+
+def handler(request):
+    return security.require_auth(request)
+""".strip(),
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(backend), conf=0, enable_quality=True))
+        quality = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ]
+
+        assert quality == []
+
+    def test_analyze_repo_phantom_respects_inline_ignore_pragmas(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        pkg = tmp_path / "app"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "security.py").write_text(
+            """
+def authenticate(request):
+    return request
+""".strip(),
+            encoding="utf-8",
+        )
+        (pkg / "views.py").write_text(
+            """
+from app import security
+
+def handler(request):
+    return security.require_auth(request)  # skylos: ignore
+""".strip(),
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
+        quality = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ]
+        suppressed = [
+            f for f in result.get("suppressed", []) if f.get("rule_id") == "SKY-L012"
+        ]
+
+        assert quality == []
+        assert len(suppressed) == 1
+        assert suppressed[0]["reason"] == "inline ignore comment"
+
+    def test_analyze_subtree_resolves_repo_local_modules_outside_selection(
+        self, tmp_path
+    ):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+
+        common = tmp_path / "common"
+        common.mkdir()
+        (common / "__init__.py").write_text("", encoding="utf-8")
+        (common / "security.py").write_text(
+            """
+def authenticate(request):
+    return request
+""".strip(),
+            encoding="utf-8",
+        )
+
+        app = tmp_path / "app"
+        app.mkdir()
+        (app / "__init__.py").write_text("", encoding="utf-8")
+        (app / "views.py").write_text(
+            """
+from common import security
+
+def handler(request):
+    return security.require_auth(request)
+""".strip(),
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(app), conf=0, enable_quality=True))
+        quality = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ]
+
+        assert len(quality) == 1
+        assert quality[0]["name"] == "security.require_auth"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

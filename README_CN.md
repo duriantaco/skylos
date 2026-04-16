@@ -202,8 +202,8 @@ skylos debt . --save-baseline
 
 Skylos 还可以标记常见的 AI 生成代码错误。每个发现包含 `vibe_category` 和 `ai_likelihood`（high/medium/low）元数据，你可以按需单独过滤。
 
-* **幻觉调用检测：** 捕获对安全函数（`sanitize_input`、`validate_token`、`check_permission` 等）的调用，这些函数从未定义或导入 — AI 经常虚构这些。`hallucinated_reference, high`
-* **幻觉装饰器检测：** 捕获安全装饰器（`@require_auth`、`@rate_limit`、`@authenticate` 等），这些装饰器从未定义或导入。`hallucinated_reference, high`
+* **幻觉调用检测：** 捕获对安全函数（`sanitize_input`、`validate_token`、`check_permission` 等）的调用，这些函数从未定义或导入，也包括像 `security.require_auth()` 这样的本地模块引用。`hallucinated_reference, high`
+* **幻觉装饰器检测：** 捕获安全装饰器（`@require_auth`、`@rate_limit`、`@authenticate` 等），这些装饰器从未定义或导入，也包括像 `@guards.require_auth` 这样的本地模块装饰器。`hallucinated_reference, high`
 * **未完成生成：** 检测仅包含 `pass`、`...` 或 `raise NotImplementedError` 的函数 — AI 生成的桩代码在生产环境中静默无操作。`incomplete_generation, medium`
 * **未定义配置：** 标记引用从未在项目中定义的特性标志的 `os.getenv("ENABLE_X")`。`ghost_config, medium`
 * **过时 Mock 检测：** 捕获 `mock.patch("app.email.send_email")`，其中 `send_email` 已不存在 — AI 重命名了函数但测试仍指向旧名称。`stale_reference, medium`
