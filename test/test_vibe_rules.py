@@ -1,4 +1,6 @@
 import ast
+import os
+import shutil
 import textwrap
 import tempfile
 import warnings
@@ -20,6 +22,7 @@ from skylos.rules.quality.logic import (
     ErrorDisclosureRule,
     BroadFilePermissionsRule,
 )
+from skylos.rules.quality.phantom_refs import scan_repo_phantom_security_references
 from skylos.rules.quality.unused_deps import scan_unused_dependencies
 
 
@@ -32,6 +35,21 @@ def check_code(rule, code, filename="test.py"):
         if res:
             findings.extend(res)
     return findings
+
+
+def scan_repo_code(files):
+    tmpdir = tempfile.mkdtemp()
+    try:
+        root = Path(tmpdir)
+        (root / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        for rel_path, content in files.items():
+            target = root / rel_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(textwrap.dedent(content), encoding="utf-8")
+        py_files = sorted(root.rglob("*.py"))
+        return scan_repo_phantom_security_references(root, py_files)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class TestEmptyErrorHandler:
@@ -828,6 +846,9 @@ class TestPhantomCall:
         """
         findings = check_code(PhantomCallRule(), code)
         assert any(f["rule_id"] == "SKY-L012" for f in findings)
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert l012[0]["vibe_category"] == "hallucinated_reference"
+        assert l012[0]["ai_likelihood"] == "high"
 
     def test_defined_locally_not_flagged(self):
         code = """
@@ -882,6 +903,258 @@ class TestPhantomCall:
         findings = check_code(PhantomCallRule(), code)
         l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
         assert len(l012) == 3
+
+    def test_repo_local_module_attribute_call_phantom(self):
+        findings = scan_repo_code(
+            {
+                "app/__init__.py": "",
+                "app/security.py": """
+                    def authenticate(request):
+                        return request
+                """,
+                "app/views.py": """
+                    from app import security
+
+                    def handler(request):
+                        return security.require_auth(request)
+                """,
+            }
+        )
+
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert len(l012) == 1
+        assert l012[0]["name"] == "security.require_auth"
+        assert l012[0]["simple_name"] == "require_auth"
+
+    def test_repo_dynamic_module_not_flagged(self):
+        findings = scan_repo_code(
+            {
+                "guards/__init__.py": """
+                    def __getattr__(name):
+                        return lambda *args, **kwargs: None
+                """,
+                "app.py": """
+                    import guards
+
+                    def handler(request):
+                        return guards.require_auth(request)
+                """,
+            }
+        )
+
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert len(l012) == 0
+
+    def test_repo_function_local_import_is_detected(self):
+        findings = scan_repo_code(
+            {
+                "app/__init__.py": "",
+                "app/security.py": """
+                    def authenticate(request):
+                        return request
+                """,
+                "app/views.py": """
+                    def handler(request):
+                        from app import security
+                        return security.require_auth(request)
+                """,
+            }
+        )
+
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert len(l012) == 1
+        assert l012[0]["name"] == "security.require_auth"
+
+    def test_repo_root_package_import_chain_is_detected(self):
+        findings = scan_repo_code(
+            {
+                "app/__init__.py": "",
+                "app/security.py": """
+                    def authenticate(request):
+                        return request
+                """,
+                "app/views.py": """
+                    import app.security
+
+                    def handler(request):
+                        return app.security.require_auth(request)
+                """,
+            }
+        )
+
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert len(l012) == 1
+        assert l012[0]["name"] == "app.security.require_auth"
+
+    def test_repo_shadowed_import_name_not_flagged(self):
+        findings = scan_repo_code(
+            {
+                "app/__init__.py": "",
+                "app/security.py": """
+                    def authenticate(request):
+                        return request
+                """,
+                "app/views.py": """
+                    from app import security
+
+                    def handler(security):
+                        return security.require_auth(request=None)
+                """,
+            }
+        )
+
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert len(l012) == 0
+
+    def test_repo_imported_module_with_parse_error_not_flagged(self):
+        findings = scan_repo_code(
+            {
+                "app/__init__.py": "",
+                "app/security.py": """
+                    def broken(
+                """,
+                "app/views.py": """
+                    from app import security
+
+                    def handler(request):
+                        return security.require_auth(request)
+                """,
+            }
+        )
+
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert len(l012) == 0
+
+    def test_repo_symlinked_external_python_file_not_scanned(self):
+        tmpdir = tempfile.mkdtemp()
+        external_dir = tempfile.mkdtemp()
+        try:
+            root = Path(tmpdir)
+            external = Path(external_dir) / "security.py"
+            external.write_text(
+                textwrap.dedent(
+                    """
+                    def broken(
+                    """
+                ),
+                encoding="utf-8",
+            )
+            (root / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+            app = root / "app"
+            app.mkdir()
+            (app / "__init__.py").write_text("", encoding="utf-8")
+            os.symlink(external, app / "security.py")
+            (app / "views.py").write_text(
+                textwrap.dedent(
+                    """
+                    from app import security
+
+                    def handler(request):
+                        return security.require_auth(request)
+                    """
+                ),
+                encoding="utf-8",
+            )
+
+            py_files = sorted(root.rglob("*.py"))
+            findings = scan_repo_phantom_security_references(root, py_files)
+            l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+            assert len(l012) == 0
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            shutil.rmtree(external_dir, ignore_errors=True)
+
+    def test_repo_class_body_shadowed_alias_not_flagged(self):
+        findings = scan_repo_code(
+            {
+                "app/__init__.py": "",
+                "app/security.py": """
+                    def authenticate(request):
+                        return request
+                """,
+                "app/views.py": """
+                    from app import security
+
+                    class WrappedView:
+                        security = object()
+
+                        @security.require_auth
+                        def get(self):
+                            return "ok"
+                """,
+            }
+        )
+
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 0
+
+    def test_repo_class_body_import_is_detected(self):
+        findings = scan_repo_code(
+            {
+                "app/__init__.py": "",
+                "app/security.py": """
+                    def authenticate(fn):
+                        return fn
+                """,
+                "app/views.py": """
+                    class WrappedView:
+                        from app import security
+
+                        @security.require_auth
+                        def get(self):
+                            return "ok"
+                """,
+            }
+        )
+
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 1
+        assert l023[0]["name"] == "security.require_auth"
+
+    def test_repo_class_body_import_does_not_leak_into_method_body(self):
+        findings = scan_repo_code(
+            {
+                "app/__init__.py": "",
+                "app/security.py": """
+                    def authenticate(request):
+                        return request
+                """,
+                "app/views.py": """
+                    class WrappedView:
+                        from app import security
+
+                        def get(self, request):
+                            return security.require_auth(request)
+                """,
+            }
+        )
+
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert len(l012) == 0
+
+    def test_repo_class_body_shadow_does_not_hide_module_call_in_method_body(self):
+        findings = scan_repo_code(
+            {
+                "app/__init__.py": "",
+                "app/security.py": """
+                    def authenticate(request):
+                        return request
+                """,
+                "app/views.py": """
+                    from app import security
+
+                    class WrappedView:
+                        security = object()
+
+                        def get(self, request):
+                            return security.require_auth(request)
+                """,
+            }
+        )
+
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert len(l012) == 1
+        assert l012[0]["name"] == "security.require_auth"
 
 
 class TestInsecureRandom:
@@ -1291,6 +1564,115 @@ class TestPhantomDecorator:
         findings = check_code(PhantomDecoratorRule(), code)
         l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
         assert len(l023) == 2
+
+    def test_repo_local_module_decorator_phantom(self):
+        findings = scan_repo_code(
+            {
+                "pkg/__init__.py": "",
+                "pkg/guards.py": """
+                    def authenticate(fn):
+                        return fn
+                """,
+                "pkg/views.py": """
+                    from . import guards as auth
+
+                    @auth.require_auth
+                    def secret():
+                        return "secret"
+                """,
+            }
+        )
+
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 1
+        assert l023[0]["name"] == "auth.require_auth"
+        assert l023[0]["simple_name"] == "require_auth"
+
+    def test_repo_reexported_package_member_not_flagged(self):
+        findings = scan_repo_code(
+            {
+                "pkg/__init__.py": """
+                    from .guards import require_auth
+                """,
+                "pkg/guards.py": """
+                    def require_auth(fn):
+                        return fn
+                """,
+                "pkg/views.py": """
+                    import pkg
+
+                    @pkg.require_auth
+                    def secret():
+                        return "secret"
+                """,
+            }
+        )
+
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 0
+
+    def test_repo_module_alias_reexport_resolves(self):
+        findings = scan_repo_code(
+            {
+                "pkg/__init__.py": """
+                    from . import guards as security
+                """,
+                "pkg/guards.py": """
+                    def authenticate(fn):
+                        return fn
+                """,
+                "pkg/views.py": """
+                    import pkg
+
+                    @pkg.security.require_auth
+                    def secret():
+                        return "secret"
+                """,
+            }
+        )
+
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 1
+        assert l023[0]["name"] == "pkg.security.require_auth"
+
+    def test_repo_star_reexport_not_flagged(self):
+        findings = scan_repo_code(
+            {
+                "pkg/__init__.py": """
+                    from .guards import *
+                """,
+                "pkg/guards.py": """
+                    def require_auth(fn):
+                        return fn
+                """,
+                "pkg/views.py": """
+                    import pkg
+
+                    @pkg.require_auth
+                    def secret():
+                        return "secret"
+                """,
+            }
+        )
+
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 0
+
+    def test_third_party_module_attribute_not_flagged(self):
+        findings = scan_repo_code(
+            {
+                "app.py": """
+                    import flask_login
+
+                    @flask_login.require_auth
+                    def secret():
+                        return "secret"
+                """
+            }
+        )
+
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert len(l023) == 0
 
 
 class TestUnfinishedGeneration:

@@ -498,6 +498,294 @@ class TestMixedRepoIntegration:
         danger_rules = {f["rule_id"] for f in result.get("danger", [])}
         assert "SKY-D201" in danger_rules
 
+
+class TestTSMonorepoReachability:
+    def test_package_entrypoint_is_not_reported_dead_or_unnecessary(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "package.json").write_text(
+            json.dumps({"name": "@repo/root", "workspaces": ["packages/*"]}),
+            encoding="utf-8",
+        )
+
+        ui_root = tmp_path / "packages" / "ui"
+        ui_root.mkdir(parents=True, exist_ok=True)
+        (ui_root / "package.json").write_text(
+            json.dumps({"name": "@repo/ui", "exports": "./src/public-api.ts"}),
+            encoding="utf-8",
+        )
+        (ui_root / "src").mkdir(parents=True, exist_ok=True)
+        (ui_root / "src" / "public-api.ts").write_text(
+            "function normalize(value: string) {\n"
+            "    return value.trim();\n"
+            "}\n"
+            "\n"
+            "export function makeLabel(value: string) {\n"
+            "    return normalize(value);\n"
+            "}\n"
+            "\n"
+            'const preview = makeLabel(" demo ");\n'
+            "export const previewText = preview;\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "packages" / "app" / "src").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "packages" / "app" / "src" / "main.ts").write_text(
+            "export const main = 1;\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0))
+
+        unused_files = {
+            Path(item["file"]).name for item in result.get("unused_files", [])
+        }
+        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+
+        assert "public-api.ts" not in unused_files
+        assert "makeLabel" not in unused_exports
+        assert "previewText" not in unused_exports
+
+    def test_direct_project_reference_keeps_referenced_package_entrypoint_live(
+        self, tmp_path
+    ):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "package.json").write_text(
+            json.dumps({"name": "@repo/root", "workspaces": ["packages/app"]}),
+            encoding="utf-8",
+        )
+
+        app_root = tmp_path / "packages" / "app"
+        app_root.mkdir(parents=True, exist_ok=True)
+        (app_root / "package.json").write_text(
+            json.dumps({"name": "@repo/app"}), encoding="utf-8"
+        )
+        (app_root / "tsconfig.json").write_text(
+            json.dumps({"references": [{"path": "../ui"}]}), encoding="utf-8"
+        )
+        (app_root / "src").mkdir(parents=True, exist_ok=True)
+        (app_root / "src" / "main.ts").write_text(
+            "export const main = 1;\n",
+            encoding="utf-8",
+        )
+
+        ui_root = tmp_path / "packages" / "ui"
+        ui_root.mkdir(parents=True, exist_ok=True)
+        (ui_root / "package.json").write_text(
+            json.dumps({"name": "@repo/ui", "exports": "./src/public-api.ts"}),
+            encoding="utf-8",
+        )
+        (ui_root / "src").mkdir(parents=True, exist_ok=True)
+        (ui_root / "src" / "public-api.ts").write_text(
+            "function normalize(value: string) {\n"
+            "    return value.trim();\n"
+            "}\n"
+            "\n"
+            "export function makeLabel(value: string) {\n"
+            "    return normalize(value);\n"
+            "}\n"
+            "\n"
+            'const preview = makeLabel(" demo ");\n'
+            "export const previewText = preview;\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0))
+
+        unused_files = {
+            Path(item["file"]).name for item in result.get("unused_files", [])
+        }
+        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+
+        assert "public-api.ts" not in unused_files
+        assert "makeLabel" not in unused_exports
+        assert "previewText" not in unused_exports
+
+    def test_unscanned_referencing_workspace_does_not_keep_package_live(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "package.json").write_text(
+            json.dumps({"name": "@repo/root", "workspaces": ["packages/app"]}),
+            encoding="utf-8",
+        )
+
+        app_root = tmp_path / "packages" / "app"
+        app_root.mkdir(parents=True, exist_ok=True)
+        (app_root / "package.json").write_text(
+            json.dumps({"name": "@repo/app"}), encoding="utf-8"
+        )
+        (app_root / "tsconfig.json").write_text(
+            json.dumps({"references": [{"path": "../ui"}]}), encoding="utf-8"
+        )
+
+        ui_root = tmp_path / "packages" / "ui"
+        ui_root.mkdir(parents=True, exist_ok=True)
+        (ui_root / "package.json").write_text(
+            json.dumps({"name": "@repo/ui", "exports": "./src/public-api.ts"}),
+            encoding="utf-8",
+        )
+        (ui_root / "src").mkdir(parents=True, exist_ok=True)
+        (ui_root / "src" / "public-api.ts").write_text(
+            "export function makeLabel(value: string) {\n"
+            "    return value.trim();\n"
+            "}\n"
+            "\n"
+            'const preview = makeLabel(" demo ");\n'
+            "export const previewText = preview;\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0))
+
+        unused_files = {
+            Path(item["file"]).name for item in result.get("unused_files", [])
+        }
+        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+
+        assert "public-api.ts" in unused_files
+        assert "makeLabel" in unused_exports
+
+    def test_transitive_project_reference_does_not_keep_package_live(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "package.json").write_text(
+            json.dumps({"name": "@repo/root", "workspaces": ["packages/app"]}),
+            encoding="utf-8",
+        )
+
+        app_root = tmp_path / "packages" / "app"
+        app_root.mkdir(parents=True, exist_ok=True)
+        (app_root / "package.json").write_text(
+            json.dumps({"name": "@repo/app"}), encoding="utf-8"
+        )
+        (app_root / "tsconfig.json").write_text(
+            json.dumps({"references": [{"path": "../ui"}]}), encoding="utf-8"
+        )
+
+        ui_root = tmp_path / "packages" / "ui"
+        ui_root.mkdir(parents=True, exist_ok=True)
+        (ui_root / "package.json").write_text(
+            json.dumps({"name": "@repo/ui"}), encoding="utf-8"
+        )
+        (ui_root / "tsconfig.json").write_text(
+            json.dumps({"references": [{"path": "../core"}]}), encoding="utf-8"
+        )
+
+        core_root = tmp_path / "packages" / "core"
+        core_root.mkdir(parents=True, exist_ok=True)
+        (core_root / "package.json").write_text(
+            json.dumps({"name": "@repo/core", "exports": "./src/public-api.ts"}),
+            encoding="utf-8",
+        )
+        (core_root / "src").mkdir(parents=True, exist_ok=True)
+        (core_root / "src" / "public-api.ts").write_text(
+            "export function makeLabel(value: string) {\n"
+            "    return value.trim();\n"
+            "}\n"
+            "\n"
+            'const preview = makeLabel(" demo ");\n'
+            "export const previewText = preview;\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0))
+
+        unused_files = {
+            Path(item["file"]).name for item in result.get("unused_files", [])
+        }
+        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+
+        assert "public-api.ts" in unused_files
+        assert "makeLabel" in unused_exports
+
+    def test_excluded_referencing_workspace_does_not_keep_package_live(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "package.json").write_text(
+            json.dumps({"name": "@repo/root", "workspaces": ["packages/app"]}),
+            encoding="utf-8",
+        )
+
+        app_root = tmp_path / "packages" / "app"
+        app_root.mkdir(parents=True, exist_ok=True)
+        (app_root / "package.json").write_text(
+            json.dumps({"name": "@repo/app"}), encoding="utf-8"
+        )
+        (app_root / "tsconfig.json").write_text(
+            json.dumps({"references": [{"path": "../ui"}]}), encoding="utf-8"
+        )
+        (app_root / "src").mkdir(parents=True, exist_ok=True)
+        (app_root / "src" / "main.ts").write_text(
+            "export const main = 1;\n",
+            encoding="utf-8",
+        )
+
+        ui_root = tmp_path / "packages" / "ui"
+        ui_root.mkdir(parents=True, exist_ok=True)
+        (ui_root / "package.json").write_text(
+            json.dumps({"name": "@repo/ui", "exports": "./src/public-api.ts"}),
+            encoding="utf-8",
+        )
+        (ui_root / "src").mkdir(parents=True, exist_ok=True)
+        (ui_root / "src" / "public-api.ts").write_text(
+            "export function makeLabel(value: string) {\n"
+            "    return value.trim();\n"
+            "}\n"
+            "\n"
+            'const preview = makeLabel(" demo ");\n'
+            "export const previewText = preview;\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), conf=0, exclude_folders=["packages/app"])
+        )
+
+        unused_files = {
+            Path(item["file"]).name for item in result.get("unused_files", [])
+        }
+        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+
+        assert "public-api.ts" in unused_files
+        assert "makeLabel" in unused_exports
+
+    def test_exclude_prefix_does_not_match_similar_workspace_path(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "package.json").write_text(
+            json.dumps({"name": "@repo/root", "workspaces": ["packages/*"]}),
+            encoding="utf-8",
+        )
+
+        app_root = tmp_path / "packages" / "app"
+        app_root.mkdir(parents=True, exist_ok=True)
+        (app_root / "package.json").write_text(
+            json.dumps({"name": "@repo/app", "exports": "./src/public-api.ts"}),
+            encoding="utf-8",
+        )
+        (app_root / "src").mkdir(parents=True, exist_ok=True)
+        (app_root / "src" / "public-api.ts").write_text(
+            "export function makeLabel(value: string) {\n"
+            "    return value.trim();\n"
+            "}\n"
+            "\n"
+            'const preview = makeLabel(" demo ");\n'
+            "export const previewText = preview;\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), conf=0, exclude_folders=["packages/ap"])
+        )
+
+        unused_files = {
+            Path(item["file"]).name for item in result.get("unused_files", [])
+        }
+        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+
+        assert "public-api.ts" not in unused_files
+        assert "makeLabel" not in unused_exports
+
     def test_mixed_repo_quality_from_ts(self, tmp_path):
         from skylos.analyzer import analyze
 

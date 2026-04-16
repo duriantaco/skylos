@@ -36,7 +36,7 @@ The core use case is straightforward: run it locally, add it to CI, and gate pul
 - Python teams that want dead code detection with fewer false positives than Vulture
 - Repositories using Cursor, Copilot, Claude Code, or other AI coding assistants
 - CI/CD pull request gates with GitHub annotations and review comments
-- Python LLM applications that need OWASP LLM Top 10 checks
+- Python and TypeScript LLM applications that need OWASP LLM Top 10 checks
 
 ### Available as
 
@@ -51,7 +51,7 @@ The core use case is straightforward: run it locally, add it to CI, and gate pul
 |:---|:---|:---|
 | **Scan a repo** | `skylos . -a` | Dead code, risky flows, secrets, and code quality findings |
 | **Gate pull requests** | `skylos cicd init` | A GitHub Actions workflow with a quality gate and inline annotations |
-| **Audit an LLM app** | `skylos defend .` | Optional AI defense checks for Python LLM integrations |
+| **Audit an LLM app** | `skylos defend .` | Optional AI defense checks for Python and direct TypeScript LLM integrations |
 
 ### Why teams adopt it
 
@@ -60,7 +60,8 @@ The core use case is straightforward: run it locally, add it to CI, and gate pul
 3. **One workflow instead of three tools:** Dead code, security scanning, and PR gating live in the same CLI and CI flow.
 4. **Local-first by default:** You can keep scans on your machine and add optional AI or cloud features later if you need them.
 5. **Self-explaining output:** Every table prints a legend explaining what each column and number means — no manual required.
-6. **Monorepo-aware TS resolution:** Skylos uses declared workspaces and importer-local direct `tsconfig` project references during TypeScript package resolution, including root-package self imports and local `tsconfig` path inheritance.
+6. **Monorepo-aware TS resolution and reachability:** Skylos uses declared workspaces and importer-local direct `tsconfig` project references during TypeScript package resolution, and it keeps workspace package entrypoints alive during dead-file and unnecessary-export analysis.
+7. **AI defense now reaches TS repos too:** `skylos discover` and `skylos defend` can now pick up direct TypeScript LLM integrations in Node / Next-style codepaths as a beta surface.
 
 ### Why Skylos over Vulture for Python dead code detection?
 
@@ -204,8 +205,8 @@ The core product is dead code detection, security scanning, and PR gating. The A
 
 Skylos can also flag common AI-generated code mistakes. Every finding includes `vibe_category` and `ai_likelihood` (high/medium/low) metadata so you can filter them separately if you want.
 
-* **Phantom Call Detection:** Catches calls to security functions (`sanitize_input`, `validate_token`, `check_permission`, etc.) that are never defined or imported — AI hallucinates these constantly. `hallucinated_reference, high`
-* **Phantom Decorator Detection:** Catches security decorators (`@require_auth`, `@rate_limit`, `@authenticate`, etc.) that are never defined or imported. `hallucinated_reference, high`
+* **Phantom Call Detection:** Catches calls to security functions (`sanitize_input`, `validate_token`, `check_permission`, etc.) that are never defined or imported, including local-module references like `security.require_auth()`. `hallucinated_reference, high`
+* **Phantom Decorator Detection:** Catches security decorators (`@require_auth`, `@rate_limit`, `@authenticate`, etc.) that are never defined or imported, including local-module decorators like `@guards.require_auth`. `hallucinated_reference, high`
 * **Unfinished Generation:** Detects functions with only `pass`, `...`, or `raise NotImplementedError` — AI-generated stubs that silently do nothing in production. `incomplete_generation, medium`
 * **Undefined Config:** Flags `os.getenv("ENABLE_X")` referencing feature flags that are never defined anywhere in the project. `ghost_config, medium`
 * **Stale Mock Detection:** Catches `mock.patch("app.email.send_email")` where `send_email` no longer exists — AI renames functions but leaves tests pointing at the old name. `stale_reference, medium`
@@ -226,7 +227,7 @@ These checks run under `--danger` and look for prompt injection patterns or obfu
 
 ### Advanced: AI Defense for LLM Apps
 
-Static analysis for AI application security that maps every LLM call in your Python codebase and checks for missing guardrails. **Python only** (TypeScript/Go support planned).
+Static analysis for AI application security that maps every LLM call in your codebase and checks for missing guardrails. Python support is mature; direct TypeScript / TSX discovery and shared guardrail checks are now available in beta.
 
 ```bash
 # Discover all LLM integrations
@@ -278,6 +279,8 @@ gate:
 ```
 
 Supports OpenAI, Anthropic, Google Gemini, Cohere, Mistral, Ollama, Together AI, Groq, Fireworks, Replicate, LiteLLM, LangChain, LlamaIndex, CrewAI, and AutoGen.
+
+TypeScript beta scope today is intentionally narrow: direct SDK patterns in `.ts` / `.tsx` / `.js` / `.jsx` for providers such as OpenAI, Anthropic, Google Gemini, LiteLLM, and Vercel AI SDK. Wrapper-heavy code and full TS agent parity are follow-up work.
 
 ### Dead Code Detection & Cleanup
 * **Find Unused Code:** Identifies unreachable functions, orphan classes, and unused imports with confidence scoring.

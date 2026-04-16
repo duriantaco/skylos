@@ -74,6 +74,7 @@ from skylos.rules.quality.logic import (
     BooleanTrapRule,
     BroadExceptionRule,
 )
+from skylos.rules.quality.phantom_refs import scan_repo_phantom_security_references
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
 from skylos.rules.quality.async_blocking import AsyncBlockingRule
@@ -116,6 +117,33 @@ try:
     _heuristic_weights = get_tuned_weights()
 except (ImportError, OSError, ValueError):
     pass
+
+
+def _resolve_analysis_root(path_like: Path) -> Path:
+    current = path_like.resolve()
+    if not current.is_dir():
+        current = current.parent
+
+    probe = current
+    for _ in range(20):
+        if (probe / "pyproject.toml").exists():
+            return probe
+        if (probe / "setup.py").exists():
+            return probe
+        if (probe / ".git").exists():
+            return probe
+        if probe.parent == probe:
+            break
+        probe = probe.parent
+
+    try:
+        git_root = find_git_root(current)
+        if git_root:
+            return Path(git_root).resolve()
+    except Exception:
+        pass
+
+    return current
 
 
 def _grep_verify_rescue_priority(candidate: dict) -> tuple:
@@ -371,7 +399,7 @@ class Skylos:
             self.defs, self.ts_consumed_exports
         )
 
-    def _find_dead_ts_files(self, files, exclude_folders):
+    def _find_dead_ts_files(self, files, exclude_folders, workspace_inventory=None):
         if not hasattr(self, "ts_consumed_exports"):
             return []
         return find_dead_ts_files(
@@ -379,14 +407,20 @@ class Skylos:
             exclude_folders,
             getattr(self, "_ts_importers_of", {}),
             getattr(self, "_ts_wildcard_edges", {}),
+            project_root=str(self._project_root),
+            workspace_inventory=workspace_inventory,
         )
 
-    def _find_unused_ts_exports(self):
+    def _find_unused_ts_exports(self, files, exclude_folders, workspace_inventory=None):
         if not hasattr(self, "_ts_demoted_exports"):
             return []
         return find_unused_ts_exports(
             self._ts_demoted_exports,
             getattr(self, "_ts_wildcard_edges", {}),
+            files=files,
+            exclude_folders=exclude_folders,
+            project_root=str(self._project_root),
+            workspace_inventory=workspace_inventory,
         )
 
     def _propagate_transitive_dead(self):
@@ -1250,6 +1284,8 @@ class Skylos:
             project_root = _first
         if not project_root.is_dir():
             project_root = project_root.parent
+        if project_root.exists():
+            project_root = _resolve_analysis_root(project_root)
 
         files, root = self._discover_files(path, exclude_folders)
 
@@ -1848,6 +1884,44 @@ class Skylos:
                         ud_findings = scan_unused_dependencies(_ud_root, _ud_py_files)
                         if ud_findings:
                             all_quality.extend(ud_findings)
+
+                    if (
+                        "SKY-L012" not in project_ignore
+                        or "SKY-L023" not in project_ignore
+                    ) and project_root.exists():
+                        repo_py_files = discover_source_files(
+                            project_root,
+                            {".py"},
+                            exclude_folders=exclude_folders,
+                        )
+                        phantom_findings = scan_repo_phantom_security_references(
+                            project_root,
+                            repo_py_files,
+                            target_files=_ud_py_files,
+                        )
+                        if phantom_findings:
+                            phantom_findings = [
+                                f
+                                for f in phantom_findings
+                                if f.get("rule_id") not in project_ignore
+                            ]
+                            unsuppressed_findings = []
+                            for finding in phantom_findings:
+                                f_ignore = per_file_ignore_lines.get(
+                                    str(finding.get("file", "")), set()
+                                )
+                                if finding.get("line") in f_ignore:
+                                    all_suppressed.append(
+                                        {
+                                            **finding,
+                                            "category": "quality",
+                                            "reason": "inline ignore comment",
+                                        }
+                                    )
+                                    continue
+                                unsuppressed_findings.append(finding)
+                            phantom_findings = unsuppressed_findings
+                            all_quality.extend(phantom_findings)
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
@@ -1922,10 +1996,16 @@ class Skylos:
                 progress_callback(0, 1, Path("PHASE: grep verify"))
             self._grep_verify()
 
-        dead_ts_files = self._find_dead_ts_files(files, exclude_folders)
+        dead_ts_files = self._find_dead_ts_files(
+            files, exclude_folders, workspace_inventory=workspace_inventory
+        )
         empty_files.extend(dead_ts_files)
 
-        unused_ts_exports = self._find_unused_ts_exports()
+        unused_ts_exports = self._find_unused_ts_exports(
+            files,
+            exclude_folders,
+            workspace_inventory=workspace_inventory,
+        )
 
         result = self._build_result(
             files,
