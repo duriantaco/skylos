@@ -26,7 +26,7 @@ def run_discover_command(argv: list[str]) -> int:
     disc_args = disc_parser.parse_args(argv)
     console = Console()
 
-    from skylos.discover.detector import _collect_python_files, detect_integrations
+    from skylos.discover.detector import _collect_ai_files, detect_integrations
     from skylos.discover.report import format_json, format_table
 
     target = Path(disc_args.path).resolve()
@@ -40,6 +40,10 @@ def run_discover_command(argv: list[str]) -> int:
     exclude = {
         "node_modules",
         ".git",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        ".turbo",
         "__pycache__",
         ".venv",
         "venv",
@@ -59,7 +63,7 @@ def run_discover_command(argv: list[str]) -> int:
         transient=True,
     ) as progress:
         progress.add_task("Discovering LLM integrations...", total=None)
-        files = _collect_python_files(target, exclude)
+        files = _collect_ai_files(target, exclude)
         integrations, graph = detect_integrations(target, exclude_folders=exclude)
 
     if disc_args.output_json:
