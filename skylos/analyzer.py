@@ -74,6 +74,7 @@ from skylos.rules.quality.logic import (
     BooleanTrapRule,
     BroadExceptionRule,
 )
+from skylos.rules.quality.phantom_refs import scan_repo_phantom_security_references
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
 from skylos.rules.quality.async_blocking import AsyncBlockingRule
@@ -116,6 +117,33 @@ try:
     _heuristic_weights = get_tuned_weights()
 except (ImportError, OSError, ValueError):
     pass
+
+
+def _resolve_analysis_root(path_like: Path) -> Path:
+    current = path_like.resolve()
+    if not current.is_dir():
+        current = current.parent
+
+    probe = current
+    for _ in range(20):
+        if (probe / "pyproject.toml").exists():
+            return probe
+        if (probe / "setup.py").exists():
+            return probe
+        if (probe / ".git").exists():
+            return probe
+        if probe.parent == probe:
+            break
+        probe = probe.parent
+
+    try:
+        git_root = find_git_root(current)
+        if git_root:
+            return Path(git_root).resolve()
+    except Exception:
+        pass
+
+    return current
 
 
 def _grep_verify_rescue_priority(candidate: dict) -> tuple:
@@ -1256,6 +1284,8 @@ class Skylos:
             project_root = _first
         if not project_root.is_dir():
             project_root = project_root.parent
+        if project_root.exists():
+            project_root = _resolve_analysis_root(project_root)
 
         files, root = self._discover_files(path, exclude_folders)
 
@@ -1854,6 +1884,44 @@ class Skylos:
                         ud_findings = scan_unused_dependencies(_ud_root, _ud_py_files)
                         if ud_findings:
                             all_quality.extend(ud_findings)
+
+                    if (
+                        "SKY-L012" not in project_ignore
+                        or "SKY-L023" not in project_ignore
+                    ) and project_root.exists():
+                        repo_py_files = discover_source_files(
+                            project_root,
+                            {".py"},
+                            exclude_folders=exclude_folders,
+                        )
+                        phantom_findings = scan_repo_phantom_security_references(
+                            project_root,
+                            repo_py_files,
+                            target_files=_ud_py_files,
+                        )
+                        if phantom_findings:
+                            phantom_findings = [
+                                f
+                                for f in phantom_findings
+                                if f.get("rule_id") not in project_ignore
+                            ]
+                            unsuppressed_findings = []
+                            for finding in phantom_findings:
+                                f_ignore = per_file_ignore_lines.get(
+                                    str(finding.get("file", "")), set()
+                                )
+                                if finding.get("line") in f_ignore:
+                                    all_suppressed.append(
+                                        {
+                                            **finding,
+                                            "category": "quality",
+                                            "reason": "inline ignore comment",
+                                        }
+                                    )
+                                    continue
+                                unsuppressed_findings.append(finding)
+                            phantom_findings = unsuppressed_findings
+                            all_quality.extend(phantom_findings)
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())

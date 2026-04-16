@@ -1244,6 +1244,8 @@ class PhantomCallRule(SkylosRule):
                 "basename": basename,
                 "line": node.lineno,
                 "col": node.col_offset,
+                "vibe_category": "hallucinated_reference",
+                "ai_likelihood": "high",
             }
         ]
 
