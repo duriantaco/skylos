@@ -49,9 +49,17 @@ Skylos 是一款面向 Python、TypeScript 和 Go 的开源静态分析工具和
 
 | 目标 | 命令 | 获得的结果 |
 |:---|:---|:---|
+| **运行完整本地套件** | `skylos suite .` | 在一份报告中查看静态发现、技术债务热点、Python AI 防御和来源摘要 |
 | **扫描代码仓库** | `skylos . -a` | 死代码、风险流程、密钥和代码质量发现 |
 | **门控拉取请求** | `skylos cicd init` | 带质量门控和内联注释的 GitHub Actions 工作流 |
 | **审计 LLM 应用** | `skylos defend .` | 针对 Python 和直接 TypeScript LLM 集成的可选 AI 防御检查 |
+
+### 如果你只记住 4 个命令
+
+- `skylos suite .` 用于完整本地概览
+- `skylos .` 用于聚焦的静态扫描
+- `skylos cicd init` 用于配置 CI
+- `skylos agent scan .` 用于静态 + LLM 混合审查
 
 ### 团队采用 Skylos 的原因
 
@@ -134,6 +142,7 @@ git add .github/workflows/skylos.yml && git push
 
 | 目标 | 命令 | 结果 |
 | :--- | :--- | :--- |
+| **完整本地概览** | `skylos suite .` | 一份报告中查看静态发现、技术债务、Python AI 防御和来源摘要 |
 | **首次扫描** | `skylos .` | 带置信度评分的死代码发现 |
 | **审计风险和质量** | `skylos . -a` | 死代码、风险流程、密钥、质量和 SCA 发现 |
 | **更高置信度的死代码** | `skylos . --trace` | 将静态发现与运行时活动交叉验证 |
@@ -833,6 +842,7 @@ skylos cicd init --llm --model claude-sonnet-4-20250514
 
 | 命令 | 描述 |
 |---------|-------------|
+| `skylos suite <path>` | 完整本地套件：静态分析、技术债务、Python AI 防御和来源摘要 |
 | `skylos <path>` | 死代码、安全和质量分析 |
 | `skylos debt <path>` | 基于基线感知优先级的技术债务热点分析 |
 | `skylos discover <path>` | 映射代码库中的 LLM/AI 集成 |
@@ -1540,6 +1550,7 @@ skylos . --audit --model claude-haiku-4-5-20251001
 
 ### 组合所有功能
 ```bash
+skylos suite .                        # 静态分析 + 技术债务 + AI 防御 + 来源摘要
 skylos . -a                           # 所有静态扫描（danger + secrets + quality + sca）
 skylos agent remediate . --dry-run    # 预览 AI 辅助修复
 ```

@@ -17,6 +17,9 @@ STEPS = [
         "title": "Quick Scan",
         "step": 2,
         "body": (
+            "[bold]Everything local[/bold] (static + debt + defense + provenance):\n"
+            "  [bold cyan]skylos suite .[/bold cyan]\n"
+            "\n"
             "[bold]Basic scan[/bold] (dead code only):\n"
             "  [bold cyan]skylos .[/bold cyan]\n"
             "\n"

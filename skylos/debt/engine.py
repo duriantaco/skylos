@@ -205,31 +205,19 @@ def collect_debt_signals(
     return signals
 
 
-def run_debt_analysis(
-    path: str | Path,
+def build_debt_snapshot(
+    result: dict[str, Any],
     *,
-    exclude_folders: list[str] | set[str] | None = None,
+    project_root: str | Path,
     changed_files: list[str] | list[Path] | None = None,
-    conf: int = 80,
 ) -> DebtSnapshot:
-    target = Path(path).resolve()
-    project_root = _project_root(target)
-
-    raw = run_analyze(
-        str(target),
-        conf=conf,
-        enable_quality=True,
-        enable_danger=False,
-        enable_secrets=False,
-        exclude_folders=list(exclude_folders or []),
-    )
-    result = json.loads(raw) if isinstance(raw, str) else raw
+    project_root_path = Path(project_root).resolve()
 
     all_signals = collect_debt_signals(
         result,
-        project_root=project_root,
+        project_root=project_root_path,
     )
-    changed = _normalize_changed_files(changed_files, project_root)
+    changed = _normalize_changed_files(changed_files, project_root_path)
     all_hotspots = build_hotspots(all_signals, changed_files=changed)
     hotspots = (
         [hotspot for hotspot in all_hotspots if hotspot.file in changed]
@@ -262,11 +250,38 @@ def run_debt_analysis(
     return DebtSnapshot(
         version=DEBT_VERSION,
         timestamp=datetime.now(timezone.utc).isoformat(),
-        project=str(project_root),
+        project=str(project_root_path),
         files_scanned=int(analysis_summary.get("total_files") or 0),
         total_loc=total_loc,
         score=score,
         hotspots=hotspots,
         all_hotspots=all_hotspots,
         summary=summary,
+    )
+
+
+def run_debt_analysis(
+    path: str | Path,
+    *,
+    exclude_folders: list[str] | set[str] | None = None,
+    changed_files: list[str] | list[Path] | None = None,
+    conf: int = 80,
+) -> DebtSnapshot:
+    target = Path(path).resolve()
+    project_root = _project_root(target)
+
+    raw = run_analyze(
+        str(target),
+        conf=conf,
+        enable_quality=True,
+        enable_danger=False,
+        enable_secrets=False,
+        exclude_folders=list(exclude_folders or []),
+    )
+    result = json.loads(raw) if isinstance(raw, str) else raw
+
+    return build_debt_snapshot(
+        result,
+        project_root=project_root,
+        changed_files=changed_files,
     )

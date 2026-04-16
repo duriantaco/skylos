@@ -49,9 +49,17 @@ The core use case is straightforward: run it locally, add it to CI, and gate pul
 
 | Goal | Command | What you get |
 |:---|:---|:---|
+| **Run everything local** | `skylos suite .` | Static findings, technical debt hotspots, Python AI defense, and provenance summary in one report |
 | **Scan a repo** | `skylos . -a` | Dead code, risky flows, secrets, and code quality findings |
 | **Gate pull requests** | `skylos cicd init` | A GitHub Actions workflow with a quality gate and inline annotations |
 | **Audit an LLM app** | `skylos defend .` | Optional AI defense checks for Python and direct TypeScript LLM integrations |
+
+### If you only remember 4 commands
+
+- `skylos suite .` for the full local overview
+- `skylos .` for the focused static scan
+- `skylos cicd init` for CI setup
+- `skylos agent scan .` for hybrid static + LLM review
 
 ### Why teams adopt it
 
@@ -136,6 +144,7 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 
 | Objective | Command | Outcome |
 | :--- | :--- | :--- |
+| **Everything local** | `skylos suite .` | One report for static findings, technical debt, Python AI defense, and provenance |
 | **First scan** | `skylos .` | Dead code findings with confidence scoring |
 | **Audit risk and quality** | `skylos . -a` | Dead code, risky flows, secrets, quality, and SCA findings |
 | **Higher-confidence dead code** | `skylos . --trace` | Cross-reference static findings with runtime activity |
@@ -913,6 +922,7 @@ Release roles, prerequisites, branch protection guidance, semantic type policy, 
 
 | Command | Description |
 |---------|-------------|
+| `skylos suite <path>` | Full local bundle: static analysis, debt, Python AI defense, and provenance summary |
 | `skylos <path>` | Dead code, security, and quality analysis |
 | `skylos debt <path>` | Technical debt hotspot analysis with baseline-aware prioritization |
 | `skylos discover <path>` | Map LLM/AI integrations in your codebase |
@@ -1629,6 +1639,7 @@ skylos . --audit --model claude-haiku-4-5-20251001
 
 ### Combine Everything
 ```bash
+skylos suite .                        # Static + debt + AI defense + provenance
 skylos . -a                           # All static scans (danger + secrets + quality + sca)
 skylos agent remediate . --dry-run    # Preview AI-assisted fixes
 ```
