@@ -89,7 +89,7 @@ def run_defend_command(
     from skylos.defend.engine import run_defense_checks
     from skylos.defend.policy import compute_owasp_coverage, load_policy
     from skylos.defend.report import format_defense_json, format_defense_table
-    from skylos.discover.detector import _collect_python_files, detect_integrations
+    from skylos.discover.detector import _collect_ai_files, detect_integrations
 
     target = Path(def_args.path).resolve()
     if not target.exists():
@@ -108,6 +108,10 @@ def run_defend_command(
     exclude = {
         "node_modules",
         ".git",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        ".turbo",
         "__pycache__",
         ".venv",
         "venv",
@@ -147,7 +151,7 @@ def run_defend_command(
         transient=True,
     ) as progress:
         progress.add_task("Scanning for LLM integrations...", total=None)
-        files = _collect_python_files(target, exclude)
+        files = _collect_ai_files(target, exclude)
         integrations, graph = detect_integrations(target, exclude_folders=exclude)
 
     if not integrations:

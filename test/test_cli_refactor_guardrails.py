@@ -535,7 +535,7 @@ def test_discover_command_json_output_prints_report(tmp_path):
         patch("skylos.commands.discover_cmd.Console", return_value=Mock()),
         patch("skylos.commands.discover_cmd.Progress", return_value=_progress_ctx()),
         patch(
-            "skylos.discover.detector._collect_python_files",
+            "skylos.discover.detector._collect_ai_files",
             return_value=[target / "app.py"],
         ) as mock_collect,
         patch(
@@ -562,7 +562,7 @@ def test_defend_command_json_output_prints_empty_report(tmp_path):
     with (
         patch("skylos.defend.policy.load_policy", return_value=None),
         patch(
-            "skylos.discover.detector._collect_python_files",
+            "skylos.discover.detector._collect_ai_files",
             return_value=[target / "app.py"],
         ) as mock_collect,
         patch(
@@ -597,7 +597,7 @@ def test_defend_command_json_output_writes_empty_report_file(tmp_path):
     with (
         patch("skylos.defend.policy.load_policy", return_value=None),
         patch(
-            "skylos.discover.detector._collect_python_files",
+            "skylos.discover.detector._collect_ai_files",
             return_value=[target / "app.py"],
         ),
         patch(
@@ -631,7 +631,7 @@ def test_defend_command_json_upload_formats_once(tmp_path):
     with (
         patch("skylos.defend.policy.load_policy", return_value=None),
         patch(
-            "skylos.discover.detector._collect_python_files",
+            "skylos.discover.detector._collect_ai_files",
             return_value=[target / "app.py"],
         ),
         patch(
