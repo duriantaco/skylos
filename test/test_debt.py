@@ -7,7 +7,11 @@ import pytest
 import skylos.cli as cli
 from skylos.debt.advisor import augment_hotspots_with_advisories
 from skylos.debt.baseline import compare_to_baseline, save_baseline
-from skylos.debt.engine import collect_debt_signals, run_debt_analysis
+from skylos.debt.engine import (
+    build_debt_snapshot,
+    collect_debt_signals,
+    run_debt_analysis,
+)
 from skylos.debt.policy import _parse_policy, load_policy
 from skylos.debt.result import (
     DebtAdvisory,
@@ -150,6 +154,15 @@ def test_run_debt_analysis_changed_mode_keeps_project_score_and_filters_hotspots
     assert changed_snapshot.hotspots[0].file == "app/services.py"
     assert changed_snapshot.summary["scope"]["score"] == "project"
     assert changed_snapshot.summary["scope"]["hotspots"] == "changed"
+
+
+def test_build_debt_snapshot_reuses_static_result():
+    snapshot = build_debt_snapshot(SAMPLE_RESULT, project_root="/repo")
+
+    assert snapshot.files_scanned == 3
+    assert snapshot.total_loc == 500
+    assert snapshot.score.hotspot_count == len(snapshot.hotspots)
+    assert snapshot.summary["dimensions"]["complexity"] == 1
 
 
 def test_build_hotspots_changed_files_raise_priority_not_structural_score():

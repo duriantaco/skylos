@@ -30,6 +30,12 @@ def collect_debt_signals(*args, **kwargs):
     return collect_debt_signals_impl(*args, **kwargs)
 
 
+def build_debt_snapshot(*args, **kwargs):
+    from skylos.debt.engine import build_debt_snapshot as build_debt_snapshot_impl
+
+    return build_debt_snapshot_impl(*args, **kwargs)
+
+
 def run_debt_analysis(*args, **kwargs):
     from skylos.debt.engine import run_debt_analysis as run_debt_analysis_impl
 
@@ -40,6 +46,7 @@ __all__ = [
     "append_history",
     "annotate_hotspots",
     "augment_hotspots_with_advisories",
+    "build_debt_snapshot",
     "collect_debt_signals",
     "compare_to_baseline",
     "DebtAdvisory",
