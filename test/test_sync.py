@@ -511,7 +511,12 @@ def test_create_precommit_config_limits_gate_to_pre_commit(tmp_path, monkeypatch
 
     assert created is True
     content = (tmp_path / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    assert "Fast staged-only local hook." in content
+    assert "Full repo and diff-aware enforcement runs in CI." in content
     assert "stages: [pre-commit]" in content
+    assert "python -m skylos.cli agent pre-commit" in content
+    assert 'args: ["."]' in content
+    assert "--gate" not in content
 
 
 def test_cmd_setup_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, capsys):

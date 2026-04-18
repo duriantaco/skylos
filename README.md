@@ -149,6 +149,7 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 | **Audit risk and quality** | `skylos . -a` | Dead code, risky flows, secrets, quality, and SCA findings |
 | **Higher-confidence dead code** | `skylos . --trace` | Cross-reference static findings with runtime activity |
 | **Review only changed lines** | `skylos . --diff origin/main` | Focus findings on active work instead of legacy debt |
+| **Local staged hook** | `skylos agent pre-commit .` | Fast staged check for security, secrets, and quality |
 | **Gate locally** | `skylos --gate` | Fail on findings before code leaves your machine |
 | **Set up CI/CD** | `skylos cicd init` | Generate a GitHub Actions workflow in 30 seconds |
 | **Gate in CI** | `skylos cicd gate --input results.json` | Fail builds when issues cross your threshold |
@@ -936,7 +937,7 @@ Release roles, prerequisites, branch protection guidance, semantic type policy, 
 | `skylos agent verify <path>` | LLM-verify dead code (100% accuracy) |
 | `skylos agent remediate <path>` | Auto-fix issues and create PR |
 | `skylos agent watch <path>` | Continuous repo monitoring with optional triage pattern learning |
-| `skylos agent pre-commit <path>` | Analyze staged files (git hook) |
+| `skylos agent pre-commit <path>` | Staged local hook for security, secrets, and quality |
 | `skylos agent triage` | Manage finding triage (dismiss/snooze) |
 
 ### CI/CD
@@ -1912,7 +1913,7 @@ Commands:
   verify              LLM-verify dead code findings
   remediate           Scan, fix, test, and create PR (end-to-end)
   watch               Continuous repo monitoring
-  pre-commit          Staged-files-only analysis for git hooks
+  pre-commit          Staged local hook for security, secrets, and quality
   triage              Manage finding triage (suggest/dismiss/snooze/restore)
   status              Show active-agent summary
   serve               Local HTTP API for editor integrations

@@ -43,7 +43,7 @@ COMMANDS = [
     },
     {
         "name": "skylos agent pre-commit <path>",
-        "desc": "Analyze staged files (git hook)",
+        "desc": "Staged local hook for security, secrets, and quality",
         "group": "AI Agent",
     },
     {

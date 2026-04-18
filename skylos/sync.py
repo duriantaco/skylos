@@ -534,17 +534,20 @@ def create_precommit_config():
         return False
 
     config_content = """# Skylos pre-commit configuration
+# Fast staged-only local hook.
+# Checks security, secrets, and quality in staged source/config files.
+# Full repo and diff-aware enforcement runs in CI.
 
 repos:
   - repo: local
     hooks:
       - id: skylos-gate
-        name: Skylos Quality Gate
-        entry: python -m skylos.cli
+        name: Skylos Staged Gate
+        entry: python -m skylos.cli agent pre-commit
         language: system
         pass_filenames: false
         require_serial: true
-        args: [".", "--gate", "--danger"]
+        args: ["."]
         stages: [pre-commit]
 """
 
@@ -676,7 +679,9 @@ def cmd_setup(token_arg=None):
 
     try:
         response = (
-            input("  Install git hooks? (blocks 'git push') [Y/n]: ").strip().lower()
+            input("  Install optional pre-push parity hook? (fast push safeguard) [Y/n]: ")
+            .strip()
+            .lower()
         )
         setup_hooks = response in ["", "y", "yes"]
     except (KeyboardInterrupt, EOFError):
@@ -686,7 +691,9 @@ def cmd_setup(token_arg=None):
     if not has_precommit_file:
         try:
             response = (
-                input("  Create pre-commit config? (blocks 'git commit') [y/N]: ")
+                input(
+                    "  Create staged pre-commit config? (fast local check before commit) [y/N]: "
+                )
                 .strip()
                 .lower()
             )

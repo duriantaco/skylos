@@ -5,6 +5,7 @@ import re
 import logging
 import os
 import secrets
+import tempfile
 from types import SimpleNamespace
 from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
 from skylos.codemods import (
@@ -96,6 +97,116 @@ def discover_source_files(*args, **kwargs):
     )
 
     return discover_source_files_impl(*args, **kwargs)
+
+
+def _read_staged_text(project_root: Path, relpath: str) -> str | None:
+    result = subprocess.run(
+        ["git", "show", f":{relpath}"],
+        capture_output=True,
+        text=True,
+        cwd=project_root,
+    )
+    if result.returncode == 0:
+        return result.stdout
+    return None
+
+
+def _list_dirty_relevant_paths(project_root: Path, is_relevant_path) -> list[str]:
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True,
+        text=True,
+        cwd=project_root,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+    relevant = []
+    for line in result.stdout.strip().splitlines():
+        if not line:
+            continue
+        status = line[:2]
+        if status == "??":
+            relpath = line[3:]
+        elif len(status) == 2 and status[1] != " ":
+            relpath = line[3:]
+        else:
+            continue
+        if " -> " in relpath:
+            relpath = relpath.rsplit(" -> ", 1)[-1]
+        relpath = relpath.strip()
+        if relpath and is_relevant_path(Path(relpath)):
+            relevant.append(relpath)
+    return relevant
+
+
+def _create_precommit_snapshot(project_root: Path):
+    snapshot_dir = tempfile.TemporaryDirectory(prefix="skylos_precommit_")
+    snapshot_root = Path(snapshot_dir.name).resolve()
+    result = subprocess.run(
+        [
+            "git",
+            "checkout-index",
+            "--all",
+            "--force",
+            f"--prefix={str(snapshot_root) + os.sep}",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=project_root,
+    )
+    if result.returncode != 0:
+        snapshot_dir.cleanup()
+        return None, None
+    return snapshot_dir, snapshot_root
+
+
+def _remap_precommit_result_files(
+    result: dict, source_root: Path, target_root: Path
+) -> dict:
+    if source_root.resolve() == target_root.resolve():
+        return result
+
+    remapped = dict(result)
+    for category in [
+        "unused_functions",
+        "unused_imports",
+        "unused_classes",
+        "unused_variables",
+        "unused_parameters",
+        "unused_files",
+        "danger",
+        "quality",
+        "secrets",
+        "custom_rules",
+    ]:
+        items = result.get(category, [])
+        if not items:
+            continue
+
+        mapped_items = []
+        for item in items:
+            if not isinstance(item, dict):
+                mapped_items.append(item)
+                continue
+
+            mapped = dict(item)
+            file_value = mapped.get("file")
+            if file_value:
+                file_path = Path(str(file_value))
+                if file_path.is_absolute():
+                    try:
+                        relpath = file_path.resolve().relative_to(source_root.resolve())
+                    except ValueError:
+                        relpath = None
+                else:
+                    relpath = file_path
+                if relpath is not None:
+                    mapped["file"] = str((target_root / relpath).resolve())
+            mapped_items.append(mapped)
+
+        remapped[category] = mapped_items
+
+    return remapped
 
 
 def llm_estimate_cost(files, model):
@@ -2692,11 +2803,11 @@ def _build_agent_parser():
 
     p_precommit = agent_sub.add_parser(
         "pre-commit",
-        help="Analyze staged files only (git hook mode)",
+        help="Staged local hook: security, secrets, and quality for staged source/config files",
     )
     p_precommit.add_argument("path", nargs="?", default=".")
     p_precommit.add_argument("--conf", type=int, default=80)
-    p_precommit.add_argument("--state-file", default=None)
+    p_precommit.add_argument("--state-file", default=None, help=argparse.SUPPRESS)
     p_precommit.add_argument(
         "--format",
         choices=["table", "json"],
@@ -2814,6 +2925,7 @@ def main() -> None:
                 clear_action_triage,
                 command_center_payload,
                 load_agent_state,
+                normalize_findings,
                 refresh_agent_state,
                 render_status_table,
                 update_action_triage,
@@ -2888,48 +3000,263 @@ def main() -> None:
 
             if cmd == "pre-commit":
                 import subprocess as _sp
+                from skylos.baseline import filter_new_findings, load_baseline
 
+                source_exts = {".py", ".go", ".ts", ".tsx", ".java"}
+                config_exts = {
+                    ".yaml",
+                    ".yml",
+                    ".json",
+                    ".toml",
+                    ".ini",
+                    ".cfg",
+                    ".conf",
+                }
+
+                def _is_config_candidate(path: Path) -> bool:
+                    name = path.name.lower()
+                    if name == ".env" or name.startswith(".env."):
+                        return True
+                    return path.suffix.lower() in config_exts
+
+                project_root = find_project_root(agent_args.path)
                 staged_result = _sp.run(
                     ["git", "diff", "--cached", "--name-only"],
                     capture_output=True,
                     text=True,
-                    cwd=agent_args.path,
+                    cwd=project_root,
                 )
-                staged_files = [
+                staged_candidates = [
                     f.strip()
                     for f in staged_result.stdout.strip().splitlines()
                     if f.strip()
                 ]
-                if not staged_files:
+                if not staged_candidates:
                     console.print("[good]No staged files to analyze[/good]")
                     sys.exit(0)
 
-                state, _ = refresh_agent_state(
-                    agent_args.path,
-                    conf=agent_args.conf,
-                    state_file=agent_args.state_file,
-                    force=True,
+                staged_source_files = []
+                staged_config_files = []
+                staged_targets = set()
+                skipped_staged_files = 0
+                for relpath in staged_candidates:
+                    relpath_obj = Path(relpath)
+                    if relpath_obj.suffix.lower() in source_exts:
+                        staged_source_files.append(relpath)
+                        staged_targets.add(str((project_root / relpath).resolve()))
+                        continue
+                    if _is_config_candidate(relpath_obj):
+                        staged_config_files.append(relpath)
+                        staged_targets.add(str((project_root / relpath).resolve()))
+                        continue
+                    skipped_staged_files += 1
+
+                if not staged_targets:
+                    if skipped_staged_files:
+                        console.print(
+                            "[good]No staged source or config files to analyze[/good] "
+                            f"[dim](skipped {skipped_staged_files} unsupported staged file(s))[/dim]"
+                        )
+                    else:
+                        console.print(
+                            "[good]No staged source or config files to analyze[/good]"
+                        )
+                    sys.exit(0)
+
+                snapshot_dir = None
+                analysis_root = project_root
+                analysis_targets = staged_targets
+                snapshot_note = ""
+
+                def _is_relevant_analysis_path(path: Path) -> bool:
+                    return path.suffix.lower() in source_exts or _is_config_candidate(
+                        path
+                    )
+
+                if staged_source_files:
+                    unstaged_relevant = _list_dirty_relevant_paths(
+                        project_root, _is_relevant_analysis_path
+                    )
+                    if unstaged_relevant:
+                        snapshot_dir, snapshot_root = _create_precommit_snapshot(
+                            project_root
+                        )
+                        if snapshot_root is not None:
+                            analysis_root = snapshot_root
+                            analysis_targets = {
+                                str((analysis_root / relpath).resolve())
+                                for relpath in staged_source_files + staged_config_files
+                            }
+                            snapshot_note = (
+                                " Using staged git snapshot for exact commit results."
+                            )
+                        else:
+                            snapshot_note = (
+                                " Exact staged snapshot unavailable; using working tree context."
+                            )
+
+                exclude_folders = parse_exclude_folders(
+                    use_defaults=True,
+                    config_exclude_folders=load_config(analysis_root).get("exclude"),
                 )
-                staged_set = set(staged_files)
+                baseline = load_baseline(project_root)
+
+                try:
+                    if agent_args.format != "json":
+                        scope_parts = []
+                        if staged_source_files:
+                            scope_parts.append(f"{len(staged_source_files)} source")
+                        if staged_config_files:
+                            scope_parts.append(f"{len(staged_config_files)} config")
+                        scope_desc = " and ".join(scope_parts)
+                        skipped_note = (
+                            f" Skipped {skipped_staged_files} unsupported staged file(s)."
+                            if skipped_staged_files
+                            else ""
+                        )
+                        baseline_note = (
+                            " Baseline filtering is active." if baseline else ""
+                        )
+                        mode_note = (
+                            " Config-only change detected: running secrets check only."
+                            if staged_config_files and not staged_source_files
+                            else ""
+                        )
+                        console.print(
+                            "[brand]Commit check:[/brand] "
+                            f"reviewing {scope_desc} staged file(s). "
+                            "Checks security, secrets, and quality only."
+                            f"{mode_note}"
+                            f"{snapshot_note}"
+                            f"{skipped_note}"
+                            f"{baseline_note}"
+                        )
+
+                    if staged_config_files and not staged_source_files:
+                        from skylos.rules.secrets import scan_ctx as secret_scan_ctx
+
+                        secrets = []
+                        for relpath in staged_config_files:
+                            src = _read_staged_text(project_root, relpath)
+                            if src is None:
+                                config_path = (project_root / relpath).resolve()
+                                try:
+                                    src = config_path.read_text(
+                                        encoding="utf-8", errors="ignore"
+                                    )
+                                except OSError:
+                                    continue
+                            ctx = {
+                                "relpath": relpath,
+                                "lines": src.splitlines(True),
+                                "tree": None,
+                            }
+                            secrets.extend(list(secret_scan_ctx(ctx)))
+
+                        result = {
+                            "unused_functions": [],
+                            "unused_imports": [],
+                            "unused_classes": [],
+                            "unused_variables": [],
+                            "unused_parameters": [],
+                            "unused_files": [],
+                            "danger": [],
+                            "quality": [],
+                            "secrets": secrets,
+                            "custom_rules": [],
+                        }
+                    else:
+                        raw_result = run_analyze(
+                            str(analysis_root),
+                            conf=agent_args.conf,
+                            enable_secrets=True,
+                            enable_danger=True,
+                            enable_quality=True,
+                            exclude_folders=list(exclude_folders),
+                            changed_files=analysis_targets,
+                            grep_verify=False,
+                        )
+                        result = (
+                            json.loads(raw_result)
+                            if isinstance(raw_result, str)
+                            else raw_result
+                        )
+                        result = _remap_precommit_result_files(
+                            result, analysis_root, project_root
+                        )
+                finally:
+                    if snapshot_dir is not None:
+                        snapshot_dir.cleanup()
+
+                if baseline is not None:
+                    result = filter_new_findings(result, baseline)
+
+                for category in [
+                    "unused_functions",
+                    "unused_imports",
+                    "unused_classes",
+                    "unused_variables",
+                    "unused_parameters",
+                    "unused_files",
+                    "danger",
+                    "quality",
+                    "secrets",
+                    "custom_rules",
+                ]:
+                    items = result.get(category, [])
+                    if items:
+                        result[category] = [
+                            item
+                            for item in items
+                            if str((project_root / item.get("file", "")).resolve())
+                            in staged_targets
+                        ]
+
+                staged_findings = normalize_findings(
+                    result,
+                    project_root,
+                    changed_files=staged_source_files + staged_config_files,
+                    include_dead_code=False,
+                )
                 staged_findings = [
-                    f
-                    for f in state.get("findings", [])
-                    if f.get("file", "") in staged_set
+                    finding
+                    for finding in staged_findings
+                    if str(finding.get("category", "")).lower() != "debt"
                 ]
                 if staged_findings:
                     if agent_args.format == "json":
                         print(json.dumps(staged_findings, indent=2, default=str))
                     else:
+                        category_counts = {"security": 0, "secrets": 0, "quality": 0}
+                        for finding in staged_findings:
+                            category = str(finding.get("category", "")).lower()
+                            if category in category_counts:
+                                category_counts[category] += 1
+                        count_bits = [
+                            f"{count} {name}"
+                            for name, count in category_counts.items()
+                            if count
+                        ]
+                        count_suffix = f" ({', '.join(count_bits)})" if count_bits else ""
                         console.print(
-                            f"[warn]{len(staged_findings)} finding(s) in staged files:[/warn]"
+                            f"[warn]{len(staged_findings)} issue(s) found in staged files{count_suffix}:[/warn]"
                         )
                         for f in staged_findings[:20]:
                             sev = f.get("severity", "INFO")
                             console.print(
                                 f"  [{sev.lower()}]{sev}[/{sev.lower()}] {f['file']}:{f['line']} {f['message']}"
                             )
+                        console.print(
+                            "[dim]Scope: staged files only. Full repo and diff-aware enforcement run in CI.[/dim]"
+                        )
+                        console.print(
+                            "[dim]Next: fix the issues below and commit again. "
+                            "Use `skylos .` for a full local scan when needed.[/dim]"
+                        )
                     sys.exit(1)
-                console.print("[good]No issues in staged files[/good]")
+                console.print(
+                    "[good]No staged security, secrets, or quality issues[/good]"
+                )
                 sys.exit(0)
 
             if cmd == "triage":
