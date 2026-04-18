@@ -853,6 +853,46 @@ def test_main_command_exec_failure_exits_with_code(monkeypatch):
     assert e.value.code == 7
 
 
+def test_render_upload_failure_shows_large_upload_guidance(monkeypatch):
+    console = Mock()
+    monkeypatch.delenv("SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD", raising=False)
+
+    cli._render_upload_failure(
+        console,
+        {
+            "success": False,
+            "code": "UPLOAD_PROTOCOL_UNSUPPORTED",
+            "error": "protocol mismatch",
+        },
+    )
+
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "Upload unavailable:" in printed
+    assert "only supports inline scan uploads right now" in printed
+    assert "/api/report/init and /api/report/complete" in printed
+    assert "SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD=1" in printed
+
+
+def test_render_upload_failure_shows_generic_error_for_other_failures():
+    console = Mock()
+
+    cli._render_upload_failure(
+        console,
+        {
+            "success": False,
+            "error": "network timeout",
+        },
+    )
+
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "Upload failed:" in printed
+    assert "network timeout" in printed
+
+
 class TestDiffFlag:
     """Tests for --diff line-level filtering."""
 

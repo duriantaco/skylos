@@ -593,6 +593,28 @@ def _print_upload_destination(console: Console, project_root: Path):
     return has_link, using_env
 
 
+def _render_upload_failure(console: Console, upload_resp: dict[str, object]) -> None:
+    code = str(upload_resp.get("code") or "")
+    err = str(upload_resp.get("error") or "").strip()
+    if code == "UPLOAD_PROTOCOL_UNSUPPORTED":
+        console.print(
+            "[warn]Upload unavailable:[/warn] this Skylos Cloud endpoint only supports inline scan uploads right now."
+        )
+        console.print(
+            "[dim]Large scans need artifact upload support via /api/report/init and /api/report/complete.[/dim]"
+        )
+        if not os.getenv("SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD", "").strip():
+            console.print(
+                "[dim]Temporary workaround:[/dim] set `SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD=1` to retry with a condensed compatibility upload."
+            )
+        return
+
+    if err and err != (
+        "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN."
+    ):
+        console.print(f"[warn]Upload failed:[/warn] {err}")
+
+
 def _is_ci():
     return any(
         os.getenv(v)
@@ -3066,6 +3088,10 @@ def main() -> None:
                 snapshot_dir = None
                 analysis_root = project_root
                 analysis_targets = staged_targets
+                analysis_source_paths = [
+                    str((project_root / relpath).resolve())
+                    for relpath in staged_source_files
+                ]
                 snapshot_note = ""
 
                 def _is_relevant_analysis_path(path: Path) -> bool:
@@ -3087,6 +3113,10 @@ def main() -> None:
                                 str((analysis_root / relpath).resolve())
                                 for relpath in staged_source_files + staged_config_files
                             }
+                            analysis_source_paths = [
+                                str((analysis_root / relpath).resolve())
+                                for relpath in staged_source_files
+                            ]
                             snapshot_note = (
                                 " Using staged git snapshot for exact commit results."
                             )
@@ -3100,6 +3130,8 @@ def main() -> None:
                     config_exclude_folders=load_config(analysis_root).get("exclude"),
                 )
                 baseline = load_baseline(project_root)
+                analyzer_logger = logging.getLogger("Skylos")
+                analyzer_logger_level = analyzer_logger.level
 
                 try:
                     if agent_args.format != "json":
@@ -3166,8 +3198,29 @@ def main() -> None:
                             "custom_rules": [],
                         }
                     else:
+                        progress_state = {"last": 0}
+
+                        def _update_precommit_progress(current, total, file):
+                            if agent_args.format == "json":
+                                return
+                            step = max(total // 10, 1)
+                            should_print = (
+                                total <= 20
+                                or current == 1
+                                or current == total
+                                or current - progress_state["last"] >= step
+                            )
+                            if not should_print:
+                                return
+                            progress_state["last"] = current
+                            console.print(
+                                "[muted]Commit check progress:[/muted] "
+                                f"[{current}/{total}] {file.name}"
+                            )
+
+                        analyzer_logger.setLevel(logging.WARNING)
                         raw_result = run_analyze(
-                            str(analysis_root),
+                            analysis_source_paths,
                             conf=agent_args.conf,
                             enable_secrets=True,
                             enable_danger=True,
@@ -3175,6 +3228,7 @@ def main() -> None:
                             exclude_folders=list(exclude_folders),
                             changed_files=analysis_targets,
                             grep_verify=False,
+                            progress_callback=_update_precommit_progress,
                         )
                         result = (
                             json.loads(raw_result)
@@ -3185,6 +3239,7 @@ def main() -> None:
                             result, analysis_root, project_root
                         )
                 finally:
+                    analyzer_logger.setLevel(analyzer_logger_level)
                     if snapshot_dir is not None:
                         snapshot_dir.cleanup()
 
@@ -4483,7 +4538,9 @@ def main() -> None:
         if not args.json:
             _print_upload_destination(console, project_root)
 
-        upload_report(result, is_forced=args.force, strict=args.strict)
+        upload_resp = upload_report(result, is_forced=args.force, strict=args.strict)
+        if not upload_resp.get("success"):
+            _render_upload_failure(console, upload_resp)
 
         exit_code = run_gate_interaction(
             result=result,
@@ -4739,13 +4796,7 @@ def main() -> None:
         upload_resp = upload_report(result, is_forced=args.force, strict=args.strict)
 
         if not upload_resp.get("success"):
-            err = upload_resp.get("error")
-            if (
-                err
-                and err
-                != "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN."
-            ):
-                console.print(f"[warn]Upload failed: {err}[/warn]")
+            _render_upload_failure(console, upload_resp)
         else:
             passed = upload_resp.get("quality_gate_passed")
             if passed is None:

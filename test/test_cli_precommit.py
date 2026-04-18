@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -48,13 +49,19 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
         patch("skylos.cli.load_config", return_value={}),
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
         patch("skylos.cli.subprocess.run", side_effect=[staged, unstaged]),
-        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
         patch("skylos.baseline.load_baseline", return_value=None),
     ):
-        with pytest.raises(SystemExit) as exc_info:
-            cli.main()
+        with patch("skylos.cli.run_analyze") as mock_analyze:
+            def fake_analyze(*args, **kwargs):
+                kwargs["progress_callback"](1, 1, Path(repo / "app.py"))
+                return json.dumps(result)
+
+            mock_analyze.side_effect = fake_analyze
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
 
     assert exc_info.value.code == 1
+    assert mock_analyze.call_args.args[0] == [str((repo / "app.py").resolve())]
     assert mock_analyze.call_args.kwargs["changed_files"] == {
         str((repo / "app.py").resolve())
     }
@@ -65,6 +72,8 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
     )
     assert "Commit check:" in printed
     assert "Checks security, secrets, and quality only." in printed
+    assert "Commit check progress:" in printed
+    assert "[1/1] app.py" in printed
     assert "app.py:3" in printed
     assert "other.py" not in printed
     assert "issue(s) found in staged files" in printed
@@ -181,7 +190,7 @@ def test_agent_pre_commit_uses_staged_snapshot_for_untracked_source_changes(tmp_
             cli.main()
 
     assert exc_info.value.code == 1
-    assert mock_analyze.call_args.args[0] == str(snapshot_root)
+    assert mock_analyze.call_args.args[0] == [str((snapshot_root / "app.py").resolve())]
     assert mock_analyze.call_args.kwargs["changed_files"] == {
         str((snapshot_root / "app.py").resolve())
     }

@@ -514,7 +514,7 @@ def test_create_precommit_config_limits_gate_to_pre_commit(tmp_path, monkeypatch
     assert "Fast staged-only local hook." in content
     assert "Full repo and diff-aware enforcement runs in CI." in content
     assert "stages: [pre-commit]" in content
-    assert "python -m skylos.cli agent pre-commit" in content
+    assert "python3 -m skylos.cli agent pre-commit" in content
     assert 'args: ["."]' in content
     assert "--gate" not in content
 
