@@ -9,6 +9,7 @@ and permission checks.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 RULE_ID = "SKY-L021"
 
@@ -108,10 +109,21 @@ _CSRF_EXEMPT_RE = re.compile(r"@csrf_exempt")
 _HASH_CALL_RE = re.compile(r"(?:hashlib\.)?(\w+)\(")
 
 
+def _is_test_file(file_path: str) -> bool:
+    base = Path(file_path).name
+    return (
+        base.startswith("test_")
+        or base.endswith("_test.py")
+        or base == "conftest.py"
+    )
+
+
 def detect_security_regressions(
     diff_text: str,
     file_path: str,
 ) -> list[dict]:
+    if _is_test_file(file_path):
+        return []
 
     findings: list[dict] = []
     current_line = 0

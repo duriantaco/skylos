@@ -7,7 +7,11 @@ import os
 import secrets
 import tempfile
 from types import SimpleNamespace
-from skylos.constants import parse_exclude_folders, DEFAULT_EXCLUDE_FOLDERS
+from skylos.constants import (
+    parse_exclude_folders,
+    DEFAULT_EXCLUDE_FOLDERS,
+    get_non_library_dir_kind,
+)
 from skylos.codemods import (
     remove_unused_import_cst,
     remove_unused_function_cst,
@@ -207,6 +211,111 @@ def _remap_precommit_result_files(
         remapped[category] = mapped_items
 
     return remapped
+
+
+_PRECOMMIT_HUNK_RE = re.compile(r"^@@ .+ \+(\d+)(?:,(\d+))? @@")
+
+
+def _parse_unified_diff_ranges(diff_output: str) -> list[dict]:
+    entries = []
+    current_file = None
+
+    for line in diff_output.splitlines():
+        if line.startswith("+++ b/"):
+            current_file = line[6:]
+            continue
+
+        match = _PRECOMMIT_HUNK_RE.match(line)
+        if match and current_file:
+            start = int(match.group(1))
+            count = int(match.group(2) or 1)
+            if count > 0:
+                entries.append(
+                    {
+                        "file": current_file,
+                        "start": start,
+                        "end": start + count - 1,
+                    }
+                )
+
+    return entries
+
+
+def _normalize_precommit_path(path: str) -> str:
+    return str(path).replace("\\", "/").lstrip("./")
+
+
+def _path_suffixes(path: str) -> tuple[str, ...]:
+    normalized = _normalize_precommit_path(path)
+    if not normalized:
+        return ()
+    parts = normalized.split("/")
+    return tuple("/".join(parts[idx:]) for idx in range(len(parts)))
+
+
+def _build_changed_range_index(changed_ranges: list[dict]) -> dict[str, list[tuple[int, int]]]:
+    index: dict[str, list[tuple[int, int]]] = {}
+    for entry in changed_ranges:
+        key = _normalize_precommit_path(entry["file"])
+        index.setdefault(key, []).append((entry["start"], entry["end"]))
+    return index
+
+
+def _ranges_for_precommit_file(
+    file_path: str, changed_range_index: dict[str, list[tuple[int, int]]]
+) -> list[tuple[int, int]]:
+    for candidate in _path_suffixes(file_path):
+        ranges = changed_range_index.get(candidate)
+        if ranges:
+            return ranges
+    return []
+
+
+def _finding_is_in_changed_lines(
+    finding: dict, changed_range_index: dict[str, list[tuple[int, int]]]
+) -> bool:
+    if str(finding.get("rule_id", "")) == "SKY-L021":
+        return True
+
+    file_ranges = _ranges_for_precommit_file(
+        str(finding.get("file", "")), changed_range_index
+    )
+    if not file_ranges:
+        return False
+
+    line = int(finding.get("line") or 0)
+    return any(start <= line <= end for start, end in file_ranges)
+
+
+def _get_cached_changed_line_ranges(
+    project_root: Path, staged_paths: list[str] | None = None
+) -> list[dict]:
+    cmd = ["git", "diff", "--cached", "--unified=0"]
+    if staged_paths:
+        cmd.extend(["--", *staged_paths])
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=project_root,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+    return _parse_unified_diff_ranges(result.stdout)
+
+
+def _filter_precommit_findings_to_changed_lines(
+    findings: list[dict], changed_ranges: list[dict]
+) -> list[dict]:
+    if not changed_ranges:
+        return findings
+
+    changed_range_index = _build_changed_range_index(changed_ranges)
+    return [
+        finding
+        for finding in findings
+        if _finding_is_in_changed_lines(finding, changed_range_index)
+    ]
 
 
 def llm_estimate_cost(files, model):
@@ -3061,9 +3170,13 @@ def main() -> None:
                 staged_config_files = []
                 staged_targets = set()
                 skipped_staged_files = 0
+                skipped_test_files = 0
                 for relpath in staged_candidates:
                     relpath_obj = Path(relpath)
                     if relpath_obj.suffix.lower() in source_exts:
+                        if get_non_library_dir_kind(relpath_obj, project_root) == "test":
+                            skipped_test_files += 1
+                            continue
                         staged_source_files.append(relpath)
                         staged_targets.add(str((project_root / relpath).resolve()))
                         continue
@@ -3074,10 +3187,17 @@ def main() -> None:
                     skipped_staged_files += 1
 
                 if not staged_targets:
+                    notes = []
+                    if skipped_test_files:
+                        notes.append(f"skipped {skipped_test_files} staged test file(s)")
                     if skipped_staged_files:
+                        notes.append(
+                            f"skipped {skipped_staged_files} unsupported staged file(s)"
+                        )
+                    if notes:
                         console.print(
                             "[good]No staged source or config files to analyze[/good] "
-                            f"[dim](skipped {skipped_staged_files} unsupported staged file(s))[/dim]"
+                            f"[dim]({' ; '.join(notes)})[/dim]"
                         )
                     else:
                         console.print(
@@ -3085,6 +3205,9 @@ def main() -> None:
                         )
                     sys.exit(0)
 
+                changed_ranges = _get_cached_changed_line_ranges(
+                    project_root, staged_source_files + staged_config_files
+                )
                 snapshot_dir = None
                 analysis_root = project_root
                 analysis_targets = staged_targets
@@ -3146,6 +3269,12 @@ def main() -> None:
                             if skipped_staged_files
                             else ""
                         )
+                        skipped_test_note = (
+                            " Skipped "
+                            f"{skipped_test_files} staged test file(s); local commit gate focuses on production source/config."
+                            if skipped_test_files
+                            else ""
+                        )
                         baseline_note = (
                             " Baseline filtering is active." if baseline else ""
                         )
@@ -3160,6 +3289,7 @@ def main() -> None:
                             "Checks security, secrets, and quality only."
                             f"{mode_note}"
                             f"{snapshot_note}"
+                            f"{skipped_test_note}"
                             f"{skipped_note}"
                             f"{baseline_note}"
                         )
@@ -3278,6 +3408,9 @@ def main() -> None:
                     for finding in staged_findings
                     if str(finding.get("category", "")).lower() != "debt"
                 ]
+                staged_findings = _filter_precommit_findings_to_changed_lines(
+                    staged_findings, changed_ranges
+                )
                 if staged_findings:
                     if agent_args.format == "json":
                         print(json.dumps(staged_findings, indent=2, default=str))
