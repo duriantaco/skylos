@@ -37,6 +37,8 @@ def generate_workflow(
     )
     if analysis_flags:
         analysis_flags = " " + analysis_flags
+    baseline_flag = " --baseline" if use_baseline else ""
+    pr_base_ref = "origin/${{ github.base_ref || 'main' }}"
 
     upload_flag = ""
     upload_env_block = ""
@@ -45,6 +47,19 @@ def generate_workflow(
         upload_env_block = (
             "\n        env:\n          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}"
         )
+    analysis_run = "\n".join(
+        [
+            '          if [ "${{ github.event_name }}" = "pull_request" ]; then',
+            (
+                f"            skylos .{analysis_flags}{baseline_flag}{upload_flag} "
+                f"--diff-base {pr_base_ref} --diff {pr_base_ref} "
+                "--json -o skylos-results.json"
+            ),
+            "          else",
+            f"            skylos .{analysis_flags}{baseline_flag}{upload_flag} --json -o skylos-results.json",
+            "          fi",
+        ]
+    )
 
     llm_env = ""
     llm_step = ""
@@ -115,9 +130,8 @@ jobs:
         run: pip install skylos
 
       - name: Run Skylos Analysis
-        run: skylos .{analysis_flags}{upload_flag} --json -o skylos-results.json{
-        upload_env_block
-    }
+        run: |
+{analysis_run}{upload_env_block}
 {llm_step}{defend_step}
       - name: Quality Gate
         if: always()
@@ -131,7 +145,7 @@ jobs:
         if: github.event_name == 'pull_request' && always()
         run: skylos cicd review --input skylos-results.json{
         " --llm-input skylos-llm-results.json" if use_llm else ""
-    } --diff-base origin/${{{{ github.base_ref || 'main' }}}}
+    } --diff-base {pr_base_ref}
         env:
           GH_TOKEN: ${{{{ github.token }}}}
 {

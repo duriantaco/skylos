@@ -5,6 +5,7 @@ import subprocess
 import contextlib
 import gzip
 import hashlib
+import io
 from skylos.credentials import get_key
 from skylos.sarif_exporter import SarifExporter
 import sys
@@ -475,8 +476,15 @@ def _write_gzip_json_artifact(
     os.close(fd)
     path = Path(path_str)
     try:
-        with gzip.open(path, "wt", encoding="utf-8") as handle:
-            json.dump(payload, handle, separators=(",", ":"))
+        with path.open("wb") as raw_handle:
+            with gzip.GzipFile(
+                filename="",
+                mode="wb",
+                fileobj=raw_handle,
+                mtime=0,
+            ) as gzip_handle:
+                with io.TextIOWrapper(gzip_handle, encoding="utf-8") as handle:
+                    json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
         return UploadArtifact(
             name=name,
             file_path=path,
@@ -965,6 +973,12 @@ def _build_report_scan_summary(
     }
 
 
+def _build_report_init_idempotency_key(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"report-upload:{digest}"
+
+
 def _build_report_artifacts(
     prepared: PreparedReportUpload,
 ) -> dict[str, UploadArtifact]:
@@ -997,6 +1011,7 @@ def _build_report_init_payload(
             },
         }
     )
+    init_payload["idempotency_key"] = _build_report_init_idempotency_key(init_payload)
     return init_payload
 
 

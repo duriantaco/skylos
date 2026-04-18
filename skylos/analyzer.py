@@ -100,6 +100,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Skylos")
 
+_SECRET_CONFIG_SUFFIXES = {
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+}
+
+
+def _is_secret_config_candidate(path: Path) -> bool:
+    name = path.name.lower()
+    if name == ".env" or name.startswith(".env."):
+        return True
+    return path.suffix.lower() in _SECRET_CONFIG_SUFFIXES
+
 _GREP_VERIFY_TYPE_PRIORITY = {
     "method": 0,
     "function": 1,
@@ -1540,21 +1557,26 @@ class Skylos:
                             logger.debug("Secret scan failed for file", exc_info=True)
 
             if enable_secrets and _secrets_scan_ctx is not None:
-                _CONFIG_SUFFIXES = {
-                    ".env",
-                    ".yaml",
-                    ".yml",
-                    ".json",
-                    ".toml",
-                    ".ini",
-                    ".cfg",
-                    ".conf",
-                }
-                scanned = {str(f) for f in files}
-                for cfg_file in root.rglob("*"):
-                    if cfg_file.suffix.lower() not in _CONFIG_SUFFIXES:
+                scanned = {str(Path(f).resolve()) for f in files}
+                if changed_files is not None:
+                    cfg_candidates = []
+                    for raw_path in changed_files:
+                        cfg_file = Path(raw_path)
+                        if not cfg_file.is_absolute():
+                            cfg_file = (root / cfg_file).resolve()
+                        else:
+                            cfg_file = cfg_file.resolve()
+                        cfg_candidates.append(cfg_file)
+                else:
+                    cfg_candidates = root.rglob("*")
+
+                for cfg_file in cfg_candidates:
+                    cfg_file = Path(cfg_file)
+                    if not cfg_file.is_file():
                         continue
-                    if str(cfg_file) in scanned:
+                    if not _is_secret_config_candidate(cfg_file):
+                        continue
+                    if str(cfg_file.resolve()) in scanned:
                         continue
                     if any(ex in cfg_file.parts for ex in (exclude_folders or [])):
                         continue

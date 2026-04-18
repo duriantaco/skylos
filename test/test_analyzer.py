@@ -1151,6 +1151,57 @@ ignore = []
         assert "SKY-D260" not in danger_rule_ids
 
 
+def test_changed_files_only_scans_changed_config_files_for_secrets(tmp_path):
+    (tmp_path / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    changed_cfg = tmp_path / "settings.toml"
+    changed_cfg.write_text('token = "abc"\n', encoding="utf-8")
+    unchanged_cfg = tmp_path / "secrets.yaml"
+    unchanged_cfg.write_text("token: xyz\n", encoding="utf-8")
+
+    scanned = []
+
+    def fake_secret_scan(ctx):
+        scanned.append(ctx["relpath"])
+        return []
+
+    with patch("skylos.analyzer._secrets_scan_ctx", side_effect=fake_secret_scan):
+        json.loads(
+            analyze(
+                str(tmp_path),
+                enable_secrets=True,
+                changed_files={str(changed_cfg.resolve())},
+                grep_verify=False,
+            )
+        )
+
+    assert "settings.toml" in scanned
+    assert "secrets.yaml" not in scanned
+
+
+def test_changed_files_scans_dotenv_for_secrets(tmp_path):
+    (tmp_path / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("API_KEY=test\n", encoding="utf-8")
+
+    scanned = []
+
+    def fake_secret_scan(ctx):
+        scanned.append(ctx["relpath"])
+        return []
+
+    with patch("skylos.analyzer._secrets_scan_ctx", side_effect=fake_secret_scan):
+        json.loads(
+            analyze(
+                str(tmp_path),
+                enable_secrets=True,
+                changed_files={str(dotenv.resolve())},
+                grep_verify=False,
+            )
+        )
+
+    assert ".env" in scanned
+
+
 class TestRepoPhantomReferences:
     def test_analyze_flags_imported_local_module_member_call(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
