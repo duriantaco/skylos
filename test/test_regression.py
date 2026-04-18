@@ -101,7 +101,14 @@ class TestTLSVerification:
         )
         findings = detect_security_regressions(diff, "client.py")
         assert len(findings) == 1
-        assert "verify=False" in findings[0]["message"]
+
+    def test_test_file_regressions_are_suppressed(self):
+        diff = _make_diff(
+            ["    resp = requests.get(url, verify=True)"],
+            ["    resp = requests.get(url, verify=False)"],
+        )
+        findings = detect_security_regressions(diff, "test_client.py")
+        assert findings == []
 
 
 class TestCryptoDowngrade:

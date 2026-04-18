@@ -15,6 +15,15 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
 
     console = Mock()
     staged = Mock(stdout="app.py\nnotes.txt\n", returncode=0)
+    cached_diff = Mock(
+        stdout=(
+            "diff --git a/app.py b/app.py\n"
+            "--- a/app.py\n"
+            "+++ b/app.py\n"
+            "@@ -3 +3 @@\n"
+        ),
+        returncode=0,
+    )
     unstaged = Mock(stdout="", returncode=0)
     result = {
         "unused_functions": [],
@@ -41,6 +50,15 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
         "secrets": [],
     }
 
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "diff", "--cached", "--name-only"]:
+            return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return unstaged
+        raise AssertionError(f"Unexpected command: {cmd}")
+
     with (
         patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
         patch("skylos.cli.Console", return_value=console),
@@ -48,7 +66,7 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
         patch("skylos.cli.find_project_root", return_value=repo),
         patch("skylos.cli.load_config", return_value={}),
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
-        patch("skylos.cli.subprocess.run", side_effect=[staged, unstaged]),
+        patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.baseline.load_baseline", return_value=None),
     ):
         with patch("skylos.cli.run_analyze") as mock_analyze:
@@ -88,12 +106,30 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
 
     console = Mock()
     staged = Mock(stdout=".env\n", returncode=0)
+    cached_diff = Mock(
+        stdout=(
+            "diff --git a/.env b/.env\n"
+            "--- a/.env\n"
+            "+++ b/.env\n"
+            "@@ -1 +1 @@\n"
+        ),
+        returncode=0,
+    )
     staged_blob = Mock(stdout="API_KEY=test\n", returncode=0)
     seen_ctx = {}
 
     def fake_scan_ctx(ctx):
         seen_ctx["lines"] = list(ctx["lines"])
         return []
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "diff", "--cached", "--name-only"]:
+            return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
+        if cmd == ["git", "show", ":.env"]:
+            return staged_blob
+        raise AssertionError(f"Unexpected command: {cmd}")
 
     with (
         patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
@@ -102,7 +138,7 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
         patch("skylos.cli.find_project_root", return_value=repo),
         patch("skylos.cli.load_config", return_value={}),
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
-        patch("skylos.cli.subprocess.run", side_effect=[staged, staged_blob]),
+        patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.cli.run_analyze") as mock_analyze,
         patch("skylos.rules.secrets.scan_ctx", side_effect=fake_scan_ctx),
         patch("skylos.baseline.load_baseline", return_value=None),
@@ -131,6 +167,15 @@ def test_agent_pre_commit_uses_staged_snapshot_for_untracked_source_changes(tmp_
     snapshot_root = tmp_path / "snapshot"
     console = Mock()
     staged = Mock(stdout="app.py\n", returncode=0)
+    cached_diff = Mock(
+        stdout=(
+            "diff --git a/app.py b/app.py\n"
+            "--- a/app.py\n"
+            "+++ b/app.py\n"
+            "@@ -3 +3 @@\n"
+        ),
+        returncode=0,
+    )
     dirty_status = Mock(stdout="?? other.py\n", returncode=0)
     checkout = Mock(stdout="", returncode=0)
     result = {
@@ -161,6 +206,8 @@ def test_agent_pre_commit_uses_staged_snapshot_for_untracked_source_changes(tmp_
     def fake_run(cmd, **kwargs):
         if cmd == ["git", "diff", "--cached", "--name-only"]:
             return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
         if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
             return dirty_status
         if cmd[:4] == ["git", "checkout-index", "--all", "--force"]:
@@ -211,6 +258,15 @@ def test_agent_pre_commit_reports_skipped_unsupported_staged_files(tmp_path):
 
     console = Mock()
     staged = Mock(stdout="app.py\nlogo.png\n", returncode=0)
+    cached_diff = Mock(
+        stdout=(
+            "diff --git a/app.py b/app.py\n"
+            "--- a/app.py\n"
+            "+++ b/app.py\n"
+            "@@ -1 +1 @@\n"
+        ),
+        returncode=0,
+    )
     unstaged = Mock(stdout="", returncode=0)
     result = {
         "unused_functions": [],
@@ -222,6 +278,15 @@ def test_agent_pre_commit_reports_skipped_unsupported_staged_files(tmp_path):
         "secrets": [],
     }
 
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "diff", "--cached", "--name-only"]:
+            return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return unstaged
+        raise AssertionError(f"Unexpected command: {cmd}")
+
     with (
         patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
         patch("skylos.cli.Console", return_value=console),
@@ -229,7 +294,7 @@ def test_agent_pre_commit_reports_skipped_unsupported_staged_files(tmp_path):
         patch("skylos.cli.find_project_root", return_value=repo),
         patch("skylos.cli.load_config", return_value={}),
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
-        patch("skylos.cli.subprocess.run", side_effect=[staged, unstaged]),
+        patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
         patch("skylos.baseline.load_baseline", return_value=None),
     ):
@@ -267,3 +332,111 @@ def test_agent_pre_commit_handles_only_unsupported_staged_files(tmp_path):
     )
     assert "No staged source or config files to analyze" in printed
     assert "skipped 1 unsupported staged file(s)" in printed.lower()
+
+
+def test_agent_pre_commit_skips_staged_test_files(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "test").mkdir(parents=True)
+    (repo / "test" / "test_rules.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+
+    console = Mock()
+    staged = Mock(stdout="test/test_rules.py\n", returncode=0)
+
+    with (
+        patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
+        patch("skylos.cli.Console", return_value=console),
+        patch("skylos.cli.setup_logger"),
+        patch("skylos.cli.find_project_root", return_value=repo),
+        patch("skylos.cli.subprocess.run", return_value=staged),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 0
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "No staged source or config files to analyze" in printed
+    assert "skipped 1 staged test file(s)" in printed.lower()
+
+
+def test_agent_pre_commit_filters_non_regression_findings_to_changed_lines(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
+
+    console = Mock()
+    staged = Mock(stdout="app.py\n", returncode=0)
+    cached_diff = Mock(
+        stdout=(
+            "diff --git a/app.py b/app.py\n"
+            "--- a/app.py\n"
+            "+++ b/app.py\n"
+            "@@ -3 +3 @@\n"
+        ),
+        returncode=0,
+    )
+    unstaged = Mock(stdout="", returncode=0)
+    result = {
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_classes": [],
+        "unused_variables": [],
+        "danger": [
+            {
+                "rule_id": "SKY-D201",
+                "file": "app.py",
+                "line": 3,
+                "severity": "HIGH",
+                "message": "SQL injection",
+            }
+        ],
+        "quality": [
+            {
+                "rule_id": "SKY-Q001",
+                "file": "app.py",
+                "line": 40,
+                "severity": "HIGH",
+                "message": "Old whole-file noise",
+            },
+            {
+                "rule_id": "SKY-L021",
+                "file": "app.py",
+                "line": 80,
+                "severity": "HIGH",
+                "message": "Security control regression: TLS verification downgraded from verify=True to verify=False",
+            },
+        ],
+        "secrets": [],
+    }
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "diff", "--cached", "--name-only"]:
+            return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return unstaged
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    with (
+        patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
+        patch("skylos.cli.Console", return_value=console),
+        patch("skylos.cli.setup_logger"),
+        patch("skylos.cli.find_project_root", return_value=repo),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.parse_exclude_folders", return_value=set()),
+        patch("skylos.cli.subprocess.run", side_effect=fake_run),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.baseline.load_baseline", return_value=None),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 1
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "app.py:3" in printed
+    assert "TLS verification downgraded" in printed
+    assert "Old whole-file noise" not in printed
