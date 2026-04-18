@@ -88,6 +88,25 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(mock_post.call_count, 3)
         self.assertIn("Server Error 500", result["error"])
 
+    def test_write_gzip_json_artifact_is_deterministic(self):
+        first = api._write_gzip_json_artifact(
+            "scan-report",
+            {"summary": {"total": 1}, "findings": [{"rule_id": "RULE-1"}]},
+            required=True,
+        )
+        second = api._write_gzip_json_artifact(
+            "scan-report",
+            {"summary": {"total": 1}, "findings": [{"rule_id": "RULE-1"}]},
+            required=True,
+        )
+
+        try:
+            self.assertEqual(first.sha256, second.sha256)
+            self.assertEqual(first.size_bytes, second.size_bytes)
+        finally:
+            first.cleanup()
+            second.cleanup()
+
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
     @patch("skylos.api.get_git_root", return_value=None)
@@ -462,6 +481,7 @@ class TestSkylosApi(unittest.TestCase):
         init_payload = mock_post.call_args_list[0].kwargs["json"]
         self.assertEqual(init_payload["upload_protocol_version"], 1)
         self.assertEqual(init_payload["summary"]["definitions_count"], 1)
+        self.assertTrue(init_payload["idempotency_key"].startswith("report-upload:"))
         self.assertNotIn("definitions", init_payload)
         self.assertIn("definitions", init_payload["artifacts"])
         self.assertIn("scan_report", init_payload["artifacts"])

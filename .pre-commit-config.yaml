@@ -1,43 +1,16 @@
+# Skylos pre-commit configuration
+# Fast staged-only local hook.
+# Checks security, secrets, and quality in staged source/config files.
+# Full repo and diff-aware enforcement runs in CI.
+
 repos:
   - repo: local
     hooks:
-      - id: ruff-format
-        name: ruff format
-        entry: uvx ruff format . --check
+      - id: skylos-gate
+        name: Skylos Staged Gate
+        entry: python3 -m skylos.cli agent pre-commit
         language: system
         pass_filenames: false
         require_serial: true
+        args: ["."]
         stages: [pre-commit]
-
-      - id: ruff-core-lint
-        name: ruff core lint
-        entry: uvx ruff check skylos/llm skylos/adapters skylos/pipeline.py skylos/api.py
-        language: system
-        pass_filenames: false
-        require_serial: true
-        stages: [pre-commit]
-
-      - id: skylos-scan
-        name: skylos report
-        entry: python -m skylos.cli
-        language: system
-        pass_filenames: false
-        require_serial: true
-        args: [".", "--json", "--confidence", "70", "--danger", "--no-grep-verify"]
-        stages: [pre-commit]
-
-      - id: skylos-fail-on-findings
-        name: skylos gate
-        language: system
-        pass_filenames: false
-        require_serial: true
-        entry: python scripts/skylos_gate.py
-        stages: [pre-commit]
-
-      - id: skylos-parity
-        name: rust/python parity
-        entry: python -m pytest test/test_fast_parity.py -x -q --deselect test/test_fast_parity.py::TestEndToEndParity::test_dead_code_findings_match
-        language: system
-        pass_filenames: false
-        require_serial: true
-        stages: [pre-push]

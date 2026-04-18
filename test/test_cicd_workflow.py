@@ -44,6 +44,22 @@ def test_workflow_analysis_flags():
     assert "--secrets" not in content
 
 
+def test_workflow_uses_baseline_by_default():
+    content = generate_workflow()
+    assert "--baseline" in content
+
+
+def test_workflow_omits_baseline_when_disabled():
+    content = generate_workflow(use_baseline=False)
+    assert "--baseline" not in content
+
+
+def test_workflow_pull_request_analysis_is_diff_aware():
+    content = generate_workflow()
+    assert "--diff-base origin/${{ github.base_ref || 'main' }}" in content
+    assert "--diff origin/${{ github.base_ref || 'main' }}" in content
+
+
 def test_workflow_no_llm_by_default():
     content = generate_workflow()
     assert "SKYLOS_API_KEY" not in content
