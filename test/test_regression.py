@@ -110,6 +110,14 @@ class TestTLSVerification:
         findings = detect_security_regressions(diff, "test_client.py")
         assert findings == []
 
+    def test_tests_directory_regressions_are_suppressed(self):
+        diff = _make_diff(
+            ["    resp = requests.get(url, verify=True)"],
+            ["    resp = requests.get(url, verify=False)"],
+        )
+        findings = detect_security_regressions(diff, "tests/example.py")
+        assert findings == []
+
 
 class TestCryptoDowngrade:
     def test_sha256_to_md5(self):

@@ -115,6 +115,32 @@ def _read_staged_text(project_root: Path, relpath: str) -> str | None:
     return None
 
 
+def _scan_staged_secret_files(
+    project_root: Path,
+    relpaths: list[str],
+    *,
+    ignore_tests: bool,
+) -> list[dict]:
+    from skylos.rules.secrets import scan_ctx as secret_scan_ctx
+
+    findings: list[dict] = []
+    for relpath in relpaths:
+        src = _read_staged_text(project_root, relpath)
+        if src is None:
+            candidate = (project_root / relpath).resolve()
+            try:
+                src = candidate.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+        ctx = {
+            "relpath": relpath,
+            "lines": src.splitlines(True),
+            "tree": None,
+        }
+        findings.extend(list(secret_scan_ctx(ctx, ignore_tests=ignore_tests)))
+    return findings
+
+
 def _list_dirty_relevant_paths(project_root: Path, is_relevant_path) -> list[str]:
     result = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all"],
@@ -289,7 +315,7 @@ def _finding_is_in_changed_lines(
 
 def _get_cached_changed_line_ranges(
     project_root: Path, staged_paths: list[str] | None = None
-) -> list[dict]:
+) -> list[dict] | None:
     cmd = ["git", "diff", "--cached", "--unified=0"]
     if staged_paths:
         cmd.extend(["--", *staged_paths])
@@ -299,15 +325,15 @@ def _get_cached_changed_line_ranges(
         text=True,
         cwd=project_root,
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return []
+    if result.returncode != 0:
+        return None
     return _parse_unified_diff_ranges(result.stdout)
 
 
 def _filter_precommit_findings_to_changed_lines(
-    findings: list[dict], changed_ranges: list[dict]
+    findings: list[dict], changed_ranges: list[dict] | None
 ) -> list[dict]:
-    if not changed_ranges:
+    if changed_ranges is None:
         return findings
 
     changed_range_index = _build_changed_range_index(changed_ranges)
@@ -3168,28 +3194,34 @@ def main() -> None:
 
                 staged_source_files = []
                 staged_config_files = []
-                staged_targets = set()
+                staged_test_files = []
+                analyzer_targets = set()
+                report_targets = set()
                 skipped_staged_files = 0
-                skipped_test_files = 0
                 for relpath in staged_candidates:
                     relpath_obj = Path(relpath)
                     if relpath_obj.suffix.lower() in source_exts:
                         if get_non_library_dir_kind(relpath_obj, project_root) == "test":
-                            skipped_test_files += 1
+                            staged_test_files.append(relpath)
+                            report_targets.add(
+                                str((project_root / relpath).resolve())
+                            )
                             continue
                         staged_source_files.append(relpath)
-                        staged_targets.add(str((project_root / relpath).resolve()))
+                        abs_path = str((project_root / relpath).resolve())
+                        analyzer_targets.add(abs_path)
+                        report_targets.add(abs_path)
                         continue
                     if _is_config_candidate(relpath_obj):
                         staged_config_files.append(relpath)
-                        staged_targets.add(str((project_root / relpath).resolve()))
+                        abs_path = str((project_root / relpath).resolve())
+                        analyzer_targets.add(abs_path)
+                        report_targets.add(abs_path)
                         continue
                     skipped_staged_files += 1
 
-                if not staged_targets:
+                if not report_targets:
                     notes = []
-                    if skipped_test_files:
-                        notes.append(f"skipped {skipped_test_files} staged test file(s)")
                     if skipped_staged_files:
                         notes.append(
                             f"skipped {skipped_staged_files} unsupported staged file(s)"
@@ -3206,11 +3238,12 @@ def main() -> None:
                     sys.exit(0)
 
                 changed_ranges = _get_cached_changed_line_ranges(
-                    project_root, staged_source_files + staged_config_files
+                    project_root,
+                    staged_source_files + staged_config_files + staged_test_files,
                 )
                 snapshot_dir = None
                 analysis_root = project_root
-                analysis_targets = staged_targets
+                analysis_targets = analyzer_targets
                 analysis_source_paths = [
                     str((project_root / relpath).resolve())
                     for relpath in staged_source_files
@@ -3263,58 +3296,56 @@ def main() -> None:
                             scope_parts.append(f"{len(staged_source_files)} source")
                         if staged_config_files:
                             scope_parts.append(f"{len(staged_config_files)} config")
+                        if staged_test_files:
+                            scope_parts.append(f"{len(staged_test_files)} test")
                         scope_desc = " and ".join(scope_parts)
                         skipped_note = (
                             f" Skipped {skipped_staged_files} unsupported staged file(s)."
                             if skipped_staged_files
                             else ""
                         )
-                        skipped_test_note = (
-                            " Skipped "
-                            f"{skipped_test_files} staged test file(s); local commit gate focuses on production source/config."
-                            if skipped_test_files
+                        staged_test_note = (
+                            " Staged test files are secrets-only in local commit checks."
+                            if staged_test_files
                             else ""
                         )
                         baseline_note = (
                             " Baseline filtering is active." if baseline else ""
                         )
                         mode_note = (
-                            " Config-only change detected: running secrets check only."
-                            if staged_config_files and not staged_source_files
+                            " Running secrets check only."
+                            if not staged_source_files
                             else ""
+                        )
+                        scope_note = (
+                            "Checks security, secrets, and quality on production source/config."
+                            if staged_source_files
+                            else "Checks secrets only."
                         )
                         console.print(
                             "[brand]Commit check:[/brand] "
                             f"reviewing {scope_desc} staged file(s). "
-                            "Checks security, secrets, and quality only."
+                            f"{scope_note}"
                             f"{mode_note}"
                             f"{snapshot_note}"
-                            f"{skipped_test_note}"
+                            f"{staged_test_note}"
                             f"{skipped_note}"
                             f"{baseline_note}"
                         )
 
-                    if staged_config_files and not staged_source_files:
-                        from skylos.rules.secrets import scan_ctx as secret_scan_ctx
+                    staged_test_secrets = _scan_staged_secret_files(
+                        project_root,
+                        staged_test_files,
+                        ignore_tests=False,
+                    )
 
-                        secrets = []
-                        for relpath in staged_config_files:
-                            src = _read_staged_text(project_root, relpath)
-                            if src is None:
-                                config_path = (project_root / relpath).resolve()
-                                try:
-                                    src = config_path.read_text(
-                                        encoding="utf-8", errors="ignore"
-                                    )
-                                except OSError:
-                                    continue
-                            ctx = {
-                                "relpath": relpath,
-                                "lines": src.splitlines(True),
-                                "tree": None,
-                            }
-                            secrets.extend(list(secret_scan_ctx(ctx)))
-
+                    if not staged_source_files:
+                        secrets = _scan_staged_secret_files(
+                            project_root,
+                            staged_config_files,
+                            ignore_tests=True,
+                        )
+                        secrets.extend(staged_test_secrets)
                         result = {
                             "unused_functions": [],
                             "unused_imports": [],
@@ -3365,6 +3396,9 @@ def main() -> None:
                             if isinstance(raw_result, str)
                             else raw_result
                         )
+                        if staged_test_secrets:
+                            result["secrets"] = list(result.get("secrets") or [])
+                            result["secrets"].extend(staged_test_secrets)
                         result = _remap_precommit_result_files(
                             result, analysis_root, project_root
                         )
@@ -3394,13 +3428,15 @@ def main() -> None:
                             item
                             for item in items
                             if str((project_root / item.get("file", "")).resolve())
-                            in staged_targets
+                            in report_targets
                         ]
 
                 staged_findings = normalize_findings(
                     result,
                     project_root,
-                    changed_files=staged_source_files + staged_config_files,
+                    changed_files=(
+                        staged_source_files + staged_config_files + staged_test_files
+                    ),
                     include_dead_code=False,
                 )
                 staged_findings = [
