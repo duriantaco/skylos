@@ -9,7 +9,8 @@ and permission checks.
 from __future__ import annotations
 
 import re
-from pathlib import Path
+
+from skylos.constants import get_non_library_dir_kind
 
 RULE_ID = "SKY-L021"
 
@@ -110,12 +111,7 @@ _HASH_CALL_RE = re.compile(r"(?:hashlib\.)?(\w+)\(")
 
 
 def _is_test_file(file_path: str) -> bool:
-    base = Path(file_path).name
-    return (
-        base.startswith("test_")
-        or base.endswith("_test.py")
-        or base == "conftest.py"
-    )
+    return get_non_library_dir_kind(file_path) == "test"
 
 
 def detect_security_regressions(
