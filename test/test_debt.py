@@ -371,6 +371,13 @@ def test_user_prompt_includes_signals_architecture_and_excerpt(tmp_path):
     assert "[app/services.py:20]" in prompt
 
 
+def _stub_debt_advisor(payload: str, *, model: str = "gpt-4.1") -> DebtAdvisor:
+    advisor = DebtAdvisor.__new__(DebtAdvisor)
+    advisor.model = model
+    advisor.adapter = Mock(complete=Mock(return_value=payload))
+    return advisor
+
+
 def test_debt_advisor_summarize_hotspot_normalizes_payload(tmp_path):
     services = tmp_path / "app" / "services.py"
     services.parent.mkdir(parents=True)
@@ -382,18 +389,15 @@ def test_debt_advisor_summarize_hotspot_normalizes_payload(tmp_path):
         encoding="utf-8",
     )
     snapshot = _snapshot(str(tmp_path))
-    advisor = DebtAdvisor(model="gpt-4.1")
-    advisor.adapter = Mock(
-        complete=Mock(
-            return_value=json.dumps(
-                {
-                    "summary": "The hotspot concentrates branching logic.",
-                    "root_cause": "Control flow and responsibility are mixed.",
-                    "refactor_steps": ["Extract validation.", "", "Split branches."],
-                    "remediation_notes": ["Keep regression coverage.", ""],
-                    "confidence": "BOGUS",
-                }
-            )
+    advisor = _stub_debt_advisor(
+        json.dumps(
+            {
+                "summary": "The hotspot concentrates branching logic.",
+                "root_cause": "Control flow and responsibility are mixed.",
+                "refactor_steps": ["Extract validation.", "", "Split branches."],
+                "remediation_notes": ["Keep regression coverage.", ""],
+                "confidence": "BOGUS",
+            }
         )
     )
 
@@ -416,18 +420,15 @@ def test_debt_advisor_summarize_hotspot_returns_none_for_incomplete_payload(tmp_
         encoding="utf-8",
     )
     snapshot = _snapshot(str(tmp_path))
-    advisor = DebtAdvisor(model="gpt-4.1")
-    advisor.adapter = Mock(
-        complete=Mock(
-            return_value=json.dumps(
-                {
-                    "summary": "",
-                    "root_cause": "Control flow and responsibility are mixed.",
-                    "refactor_steps": [],
-                    "remediation_notes": [],
-                    "confidence": "low",
-                }
-            )
+    advisor = _stub_debt_advisor(
+        json.dumps(
+            {
+                "summary": "",
+                "root_cause": "Control flow and responsibility are mixed.",
+                "refactor_steps": [],
+                "remediation_notes": [],
+                "confidence": "low",
+            }
         )
     )
 
