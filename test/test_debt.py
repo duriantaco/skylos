@@ -5,7 +5,13 @@ from unittest.mock import Mock, patch
 import pytest
 
 import skylos.cli as cli
-from skylos.debt.advisor import augment_hotspots_with_advisories
+from skylos.debt.advisor import (
+    DebtAdvisor,
+    _parse_json_object,
+    _safe_excerpt,
+    _user_prompt,
+    augment_hotspots_with_advisories,
+)
 from skylos.debt.baseline import compare_to_baseline, save_baseline
 from skylos.debt.engine import (
     build_debt_snapshot,
@@ -309,6 +315,125 @@ def test_augment_hotspots_with_advisories_sets_advisory(tmp_path):
         == "The hotspot concentrates branching logic in one service function."
     )
     assert snapshot.hotspots[0].advisory.refactor_steps[0].startswith("Extract")
+
+
+def test_safe_excerpt_returns_context_and_missing_file_is_empty(tmp_path):
+    services = tmp_path / "app.py"
+    services.write_text(
+        "line 1\n"
+        "line 2\n"
+        "line 3\n"
+        "line 4\n"
+        "line 5\n",
+        encoding="utf-8",
+    )
+
+    excerpt = _safe_excerpt(services, 3, radius=1)
+
+    assert excerpt == "2: line 2\n3: line 3\n4: line 4"
+    assert _safe_excerpt(tmp_path / "missing.py", 3) == ""
+
+
+def test_parse_json_object_handles_plain_fenced_and_invalid_payloads():
+    assert _parse_json_object('{"summary":"ok"}') == {"summary": "ok"}
+    assert _parse_json_object('```json\n{"summary":"ok"}\n```') == {
+        "summary": "ok"
+    }
+    assert _parse_json_object("not json") is None
+    assert _parse_json_object("") is None
+
+
+def test_user_prompt_includes_signals_architecture_and_excerpt(tmp_path):
+    services = tmp_path / "app" / "services.py"
+    services.parent.mkdir(parents=True)
+    services.write_text(
+        "\n".join(f"line {idx}" for idx in range(1, 31)) + "\n",
+        encoding="utf-8",
+    )
+    snapshot = _snapshot(str(tmp_path))
+
+    prompt = _user_prompt(
+        snapshot.hotspots[0],
+        project_root=tmp_path,
+        architecture_metrics={
+            "system_metrics": {
+                "mean_distance": 1.2,
+                "architecture_fitness": 0.8,
+                "dip_violations": 3,
+            }
+        },
+    )
+
+    assert "Hotspot:" in prompt
+    assert "- [SKY-Q301] Cyclomatic complexity is 18 (threshold: 10)" in prompt
+    assert "Architecture context:" in prompt
+    assert "- mean_distance=1.2" in prompt
+    assert "[app/services.py:20]" in prompt
+
+
+def test_debt_advisor_summarize_hotspot_normalizes_payload(tmp_path):
+    services = tmp_path / "app" / "services.py"
+    services.parent.mkdir(parents=True)
+    services.write_text(
+        "def process_order(order):\n"
+        "    if order:\n"
+        "        return order\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+    snapshot = _snapshot(str(tmp_path))
+    advisor = DebtAdvisor(model="gpt-4.1")
+    advisor.adapter = Mock(
+        complete=Mock(
+            return_value=json.dumps(
+                {
+                    "summary": "The hotspot concentrates branching logic.",
+                    "root_cause": "Control flow and responsibility are mixed.",
+                    "refactor_steps": ["Extract validation.", "", "Split branches."],
+                    "remediation_notes": ["Keep regression coverage.", ""],
+                    "confidence": "BOGUS",
+                }
+            )
+        )
+    )
+
+    advisory = advisor.summarize_hotspot(snapshot.hotspots[0], project_root=tmp_path)
+
+    assert advisory is not None
+    assert advisory.confidence == "medium"
+    assert advisory.refactor_steps == ["Extract validation.", "Split branches."]
+    assert advisory.remediation_notes == ["Keep regression coverage."]
+
+
+def test_debt_advisor_summarize_hotspot_returns_none_for_incomplete_payload(tmp_path):
+    services = tmp_path / "app" / "services.py"
+    services.parent.mkdir(parents=True)
+    services.write_text(
+        "def process_order(order):\n"
+        "    if order:\n"
+        "        return order\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+    snapshot = _snapshot(str(tmp_path))
+    advisor = DebtAdvisor(model="gpt-4.1")
+    advisor.adapter = Mock(
+        complete=Mock(
+            return_value=json.dumps(
+                {
+                    "summary": "",
+                    "root_cause": "Control flow and responsibility are mixed.",
+                    "refactor_steps": [],
+                    "remediation_notes": [],
+                    "confidence": "low",
+                }
+            )
+        )
+    )
+
+    advisory = advisor.summarize_hotspot(snapshot.hotspots[0], project_root=tmp_path)
+
+    assert advisory is None
 
 
 def test_format_debt_table_renders_changed_scope_empty_state_and_baseline():
