@@ -9,6 +9,10 @@ from concurrent.futures import as_completed
 from skylos.config import load_config
 from skylos.file_discovery import discover_source_files
 from skylos.llm.repo_activation import build_repo_activation_index
+from skylos.llm.security_verifier import (
+    SecurityVerifier,
+    annotate_security_finding,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -700,6 +704,8 @@ def run_pipeline(
                     "_needs_review": True,
                     "_ci_blocking": False,
                 }
+                if issue_type == "security":
+                    annotate_security_finding(llm_finding)
                 results.append(llm_finding)
 
             console.print(
@@ -760,6 +766,7 @@ def run_pipeline(
             all_findings.append(f)
 
     llm_only_count = 0
+    llm_security_only = []
     for llm_f in phase_2b_findings:
         dup = _find_duplicate(llm_f, all_findings)
         if dup is not None:
@@ -770,6 +777,40 @@ def run_pipeline(
         else:
             all_findings.append(llm_f)
             llm_only_count += 1
+            if (
+                llm_f.get("_source") == "llm"
+                and llm_f.get("_category") == "security"
+            ):
+                llm_security_only.append(llm_f)
+
+    if llm_security_only:
+        console.print(
+            "[brand]Phase 2c:[/brand] Re-reviewing unmatched LLM-only security findings..."
+        )
+        verifier = SecurityVerifier(
+            model=model,
+            api_key=api_key,
+            provider=getattr(agent_args, "provider", None),
+            base_url=getattr(agent_args, "base_url", None),
+        )
+        try:
+            review = verifier.review_findings(llm_security_only)
+        except Exception as exc:
+            console.print(
+                f"[warn]Security re-review unavailable: {exc}. Keeping findings as hypothesis.[/warn]"
+            )
+        else:
+            refuted_ids = {id(finding) for finding in review["refuted_findings"]}
+            if refuted_ids:
+                all_findings = [
+                    finding for finding in all_findings if id(finding) not in refuted_ids
+                ]
+            console.print(
+                f"[good]✓ Security re-review:[/good] "
+                f"{review['supported']} supported, "
+                f"{review['refuted']} refuted, "
+                f"{review['undecided']} left as hypothesis"
+            )
 
     enrich_findings = [f for f in all_findings if not f.get("fixed_code")]
     if (

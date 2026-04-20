@@ -95,6 +95,36 @@ def run_pipeline(*args, **kwargs):
     return run_pipeline_impl(*args, **kwargs)
 
 
+def review_security_scan_result(*args, **kwargs):
+    from skylos.llm.security_verifier import (
+        SecurityVerifier,
+        annotate_security_finding,
+        is_security_finding,
+    )
+
+    result = kwargs.pop("result")
+    findings = []
+    for finding in list(result.findings):
+        if is_security_finding(finding):
+            annotate_security_finding(finding)
+            findings.append(finding)
+
+    if not findings:
+        return result
+
+    try:
+        verifier = SecurityVerifier(*args, **kwargs)
+        review = verifier.review_findings(findings)
+        refuted_ids = {id(finding) for finding in review["refuted_findings"]}
+        if refuted_ids:
+            result.findings = [
+                finding for finding in result.findings if id(finding) not in refuted_ids
+            ]
+    except Exception:
+        return result
+    return result
+
+
 def discover_source_files(*args, **kwargs):
     from skylos.file_discovery import (
         discover_source_files as discover_source_files_impl,
@@ -3715,10 +3745,22 @@ def main() -> None:
                 llm_result = analyzer.analyze_files(
                     files, issue_types=["security_audit"]
                 )
+                llm_result = review_security_scan_result(
+                    model=model,
+                    api_key=api_key,
+                    provider=provider,
+                    base_url=base_url,
+                    result=llm_result,
+                )
+                llm_result.summary = analyzer._generate_summary(llm_result)
                 analyzer.print_results(
                     llm_result, format=agent_args.format, output_file=agent_args.output
                 )
-                sys.exit(1 if llm_result.has_blockers else 0)
+                blockers_attr = getattr(llm_result, "has_blockers", False)
+                has_blockers = blockers_attr() if callable(blockers_attr) else bool(
+                    blockers_attr
+                )
+                sys.exit(1 if has_blockers else 0)
 
             changed_files = None
             if getattr(agent_args, "changed", False):

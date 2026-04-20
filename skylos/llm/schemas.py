@@ -68,6 +68,7 @@ class Finding:
         code_snippet: str | None = None,
         references: list[str] | None = None,
         symbol: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         self.rule_id = rule_id
         self.issue_type = issue_type
@@ -80,9 +81,10 @@ class Finding:
         self.code_snippet = code_snippet
         self.references = references or []
         self.symbol = symbol
+        self.metadata = metadata or {}
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "rule_id": self.rule_id,
             "issue_type": self.issue_type.value,
             "severity": self.severity.value,
@@ -95,8 +97,17 @@ class Finding:
             "references": self.references,
             "symbol": self.symbol,
         }
+        if self.metadata:
+            data["metadata"] = dict(self.metadata)
+        return data
 
     def to_sarif_result(self) -> dict[str, Any]:
+        properties = {
+            "confidence": self.confidence.value,
+            "issueType": self.issue_type.value,
+        }
+        if self.metadata:
+            properties.update(self.metadata)
         return {
             "ruleId": self.rule_id,
             "level": self._severity_to_sarif_level(),
@@ -112,10 +123,7 @@ class Finding:
                     }
                 }
             ],
-            "properties": {
-                "confidence": self.confidence.value,
-                "issueType": self.issue_type.value,
-            },
+            "properties": properties,
         }
 
     def _severity_to_sarif_level(self) -> str:
@@ -240,10 +248,24 @@ class AnalysisResult:
 
     def has_blockers(self) -> bool:
         if self.get_critical_count() > 0:
-            return True
+            for finding in self.findings:
+                if finding.severity != Severity.CRITICAL:
+                    continue
+                if self._finding_blocks_ci(finding):
+                    return True
         if self.get_high_count() > 0:
-            return True
+            for finding in self.findings:
+                if finding.severity != Severity.HIGH:
+                    continue
+                if self._finding_blocks_ci(finding):
+                    return True
         return False
+
+    def _finding_blocks_ci(self, finding: Finding) -> bool:
+        metadata = dict(getattr(finding, "metadata", None) or {})
+        if "ci_blocking" in metadata:
+            return bool(metadata["ci_blocking"])
+        return True
 
 
 ISSUE_TYPE_VALUES = []

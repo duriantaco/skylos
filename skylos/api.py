@@ -789,6 +789,10 @@ def _normalize_findings(
                 "_llm_challenged",
                 "_needs_review",
                 "_llm_uncertain",
+                "_ci_blocking",
+                "_security_evidence",
+                "_review_verdict",
+                "_review_reason",
             ):
                 val = finding.pop(meta_key, None)
                 if val is not None:
