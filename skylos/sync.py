@@ -526,6 +526,25 @@ def cmd_pull():
         sys.exit(1)
 
 
+PRECOMMIT_HOOK_DEPENDENCIES = [
+    "inquirer>=3.0.3",
+    "libcst>=1.8.2",
+    "rich>=14.0.0",
+    "textual>=1.0.0",
+    "keyring>=25.6.0,!=3.4.2",
+    "requests",
+    "tree-sitter>=0.25.2",
+    "tree-sitter-typescript>=0.23.2",
+    "tree-sitter-go>=0.23.0",
+    "tree-sitter-java>=0.23.0",
+    "pyyaml",
+    "networkx",
+    "pyperclip",
+    "ca9>=0.1.0",
+    "mcp>=1.0.0",
+]
+
+
 def create_precommit_config():
     precommit_path = Path(".pre-commit-config.yaml")
 
@@ -533,7 +552,11 @@ def create_precommit_config():
         print("  ⚠️  .pre-commit-config.yaml already exists (skipping)")
         return False
 
-    config_content = """# Skylos pre-commit configuration
+    dependency_lines = "\n".join(
+        f'          - "{dependency}"' for dependency in PRECOMMIT_HOOK_DEPENDENCIES
+    )
+
+    config_content = f"""# Skylos pre-commit configuration
 # Fast staged-only local hook.
 # Checks security, secrets, and quality in staged source/config files.
 # Full repo and diff-aware enforcement runs in CI.
@@ -543,11 +566,13 @@ repos:
     hooks:
       - id: skylos-gate
         name: Skylos Staged Gate
-        entry: python3 -m skylos.cli agent pre-commit
-        language: system
+        entry: python -m skylos.cli
+        language: python
+        additional_dependencies:
+{dependency_lines}
         pass_filenames: false
         require_serial: true
-        args: ["."]
+        args: ["agent", "pre-commit", "."]
         stages: [pre-commit]
 """
 

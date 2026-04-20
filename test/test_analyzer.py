@@ -1034,6 +1034,29 @@ event.listens_for(Engine, "connect")(on_connect)
         assert "dbapi_connection" not in unused_parameters
         assert "connection_record" not in unused_parameters
 
+    def test_analyze_marks_private_helper_dead_when_only_called_by_dead_method(
+        self, tmp_path
+    ):
+        src = tmp_path / "helper.py"
+        src.write_text(
+            """
+class Helper:
+    def run(self):
+        return self._helper()
+
+    def _helper(self):
+        return 1
+"""
+        )
+
+        result_json = analyze(str(tmp_path), conf=0)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+
+        assert "Helper.run" in unreachable
+        assert "Helper._helper" in unreachable
+
     def test_analyze_single_file_skips_project_unused_dependency_rule(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text(
             '[project]\nname = "demo"\ndependencies = ["requests", "rich"]\n',

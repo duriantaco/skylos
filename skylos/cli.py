@@ -1,4 +1,5 @@
 import argparse
+import importlib
 import json
 import sys
 import re
@@ -11,12 +12,6 @@ from skylos.constants import (
     parse_exclude_folders,
     DEFAULT_EXCLUDE_FOLDERS,
     get_non_library_dir_kind,
-)
-from skylos.codemods import (
-    remove_unused_import_cst,
-    remove_unused_function_cst,
-    comment_out_unused_import_cst,
-    comment_out_unused_function_cst,
 )
 from skylos.config import load_config
 from skylos.credentials import PROVIDERS
@@ -63,6 +58,26 @@ AGENT_PROVIDER_CHOICES = (
 )
 AGENT_PROVIDER_HELP = "Force LLM provider"
 AGENT_BASE_URL_HELP = "OpenAI-compatible base URL (Ollama/LM Studio/vLLM)"
+
+
+def _codemods_module():
+    return importlib.import_module("skylos.codemods")
+
+
+def remove_unused_import_cst(*args, **kwargs):
+    return _codemods_module().remove_unused_import_cst(*args, **kwargs)
+
+
+def remove_unused_function_cst(*args, **kwargs):
+    return _codemods_module().remove_unused_function_cst(*args, **kwargs)
+
+
+def comment_out_unused_import_cst(*args, **kwargs):
+    return _codemods_module().comment_out_unused_import_cst(*args, **kwargs)
+
+
+def comment_out_unused_function_cst(*args, **kwargs):
+    return _codemods_module().comment_out_unused_function_cst(*args, **kwargs)
 
 
 def run_analyze(*args, **kwargs):

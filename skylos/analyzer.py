@@ -136,6 +136,16 @@ except (ImportError, OSError, ValueError):
     pass
 
 
+def _definition_module_and_class(defn):
+    if getattr(defn, "type", None) != "method" or "." not in defn.name:
+        return "", ""
+
+    parts = defn.name.split(".")
+    if len(parts) < 3:
+        return "", ""
+    return ".".join(parts[:-2]), parts[-2]
+
+
 def _resolve_analysis_root(path_like: Path) -> Path:
     current = path_like.resolve()
     if not current.is_dir():
@@ -760,6 +770,13 @@ class Skylos:
                     def_obj.references += 1
 
         used_attr_names = getattr(self, "_all_used_attr_names", set())
+        used_attr_context = getattr(self, "_all_used_attr_context", set())
+        same_class_private_attr_uses = set()
+        if used_attr_context:
+            for attr_name, mod, cls_ctx, _line_no in used_attr_context:
+                if cls_ctx and attr_name.startswith("_"):
+                    same_class_private_attr_uses.add((mod, cls_ctx, attr_name))
+
         if used_attr_names:
             for defn in self.defs.values():
                 if defn.references > 0:
@@ -770,11 +787,14 @@ class Skylos:
                     pass
                 else:
                     continue
+                if defn.type == "method" and defn.simple_name.startswith("_"):
+                    defn_mod, defn_cls = _definition_module_and_class(defn)
+                    if (defn_mod, defn_cls, defn.simple_name) in same_class_private_attr_uses:
+                        continue
                 if defn.simple_name in used_attr_names:
                     defn.references += 1
                     defn._attr_name_ref_count += 1
 
-        used_attr_context = getattr(self, "_all_used_attr_context", set())
         if used_attr_context:
             context_by_attr = defaultdict(list)
             for attr_name, mod, cls_ctx, line_no in used_attr_context:
