@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,9 @@ SUPPORTED_KEY = "supported"
 REFUTED_KEY = "refuted"
 UNDECIDED_KEY = "undecided"
 REFUTED_FINDINGS_KEY = "refuted_findings"
+REVIEWED_CANDIDATES_KEY = "reviewed_candidates"
+DEFAULT_CANDIDATE_STATE = "pending_review"
+HYPOTHESIS_EVIDENCE = "hypothesis"
 
 
 @dataclass(frozen=True)
@@ -56,6 +60,31 @@ class SecurityTrustBoundary:
     reason: str
 
 
+@dataclass(frozen=True)
+class SecurityCandidateEvent:
+    stage: str
+    state: str
+    evidence: str
+    review_verdict: str | None = None
+    review_reason: str | None = None
+
+
+@dataclass
+class SecurityFindingCandidate:
+    candidate_id: str
+    fingerprint: str
+    file: str
+    line: int
+    rule_id: str
+    message: str
+    symbol: str | None = None
+    state: str = DEFAULT_CANDIDATE_STATE
+    evidence: str = HYPOTHESIS_EVIDENCE
+    review_verdict: str | None = None
+    review_reason: str | None = None
+    history: list[SecurityCandidateEvent] = field(default_factory=list)
+
+
 @dataclass
 class SecurityTaskflowRun:
     project_root: str
@@ -71,6 +100,7 @@ class SecurityTaskflowRun:
     refuted_count: int = 0
     hypothesis_count: int = 0
     final_finding_count: int = 0
+    candidate_ledger: list[SecurityFindingCandidate] = field(default_factory=list)
     result: AnalysisResult | None = None
 
     def add_stage(self, name: str, **details: Any) -> None:
@@ -116,6 +146,32 @@ class SecurityTaskflowRun:
             "refuted_count": self.refuted_count,
             "hypothesis_count": self.hypothesis_count,
             "final_finding_count": self.final_finding_count,
+            "candidate_ledger": [
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "fingerprint": candidate.fingerprint,
+                    "file": candidate.file,
+                    "line": candidate.line,
+                    "rule_id": candidate.rule_id,
+                    "message": candidate.message,
+                    "symbol": candidate.symbol,
+                    "state": candidate.state,
+                    "evidence": candidate.evidence,
+                    "review_verdict": candidate.review_verdict,
+                    "review_reason": candidate.review_reason,
+                    "history": [
+                        {
+                            "stage": event.stage,
+                            "state": event.state,
+                            "evidence": event.evidence,
+                            "review_verdict": event.review_verdict,
+                            "review_reason": event.review_reason,
+                        }
+                        for event in candidate.history
+                    ],
+                }
+                for candidate in self.candidate_ledger
+            ],
         }
 
 
@@ -133,6 +189,106 @@ def _repo_node(meta: FileActivation) -> SecurityRepoNode:
         registration_hints=tuple(meta.registration_hints),
         security_hints=tuple(meta.security_hints),
     )
+
+
+def _finding_file(finding: Any) -> str:
+    if isinstance(finding, dict):
+        location = finding.get("location") or {}
+        return str(finding.get("file") or location.get("file") or "")
+    return str(finding.location.file)
+
+
+def _finding_line(finding: Any) -> int:
+    if isinstance(finding, dict):
+        location = finding.get("location") or {}
+        return int(finding.get("line") or location.get("line") or 1)
+    return int(finding.location.line)
+
+
+def _finding_rule_id(finding: Any) -> str:
+    return str(finding.get("rule_id") if isinstance(finding, dict) else finding.rule_id)
+
+
+def _finding_message(finding: Any) -> str:
+    return str(finding.get("message") if isinstance(finding, dict) else finding.message)
+
+
+def _finding_symbol(finding: Any) -> str | None:
+    value = finding.get("symbol") if isinstance(finding, dict) else finding.symbol
+    return str(value) if value else None
+
+
+def _finding_metadata(finding: Any) -> dict[str, Any]:
+    if isinstance(finding, dict):
+        return dict(finding.get("metadata") or {})
+    return dict(getattr(finding, "metadata", None) or {})
+
+
+def _candidate_fingerprint(finding: Any) -> str:
+    raw = "|".join(
+        [
+            _finding_file(finding),
+            str(_finding_line(finding)),
+            _finding_rule_id(finding),
+            _finding_symbol(finding) or "",
+            _finding_message(finding),
+        ]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _candidate_id(finding: Any) -> str:
+    return f"sec-{_candidate_fingerprint(finding)}"
+
+
+def _candidate_event(stage: str, finding: Any) -> SecurityCandidateEvent:
+    metadata = _finding_metadata(finding)
+    return SecurityCandidateEvent(
+        stage=stage,
+        state=metadata.get("security_evidence") or DEFAULT_CANDIDATE_STATE,
+        evidence=metadata.get("security_evidence") or HYPOTHESIS_EVIDENCE,
+        review_verdict=metadata.get("review_verdict"),
+        review_reason=metadata.get("review_reason"),
+    )
+
+
+def _build_candidate_ledger(findings: list[Any]) -> list[SecurityFindingCandidate]:
+    ledger: list[SecurityFindingCandidate] = []
+    for finding in findings:
+        if not is_security_finding(finding):
+            continue
+        candidate = SecurityFindingCandidate(
+            candidate_id=_candidate_id(finding),
+            fingerprint=_candidate_fingerprint(finding),
+            file=_finding_file(finding),
+            line=_finding_line(finding),
+            rule_id=_finding_rule_id(finding),
+            message=_finding_message(finding),
+            symbol=_finding_symbol(finding),
+        )
+        candidate.history.append(
+            SecurityCandidateEvent(
+                stage=AUDIT_STAGE,
+                state=DEFAULT_CANDIDATE_STATE,
+                evidence=HYPOTHESIS_EVIDENCE,
+            )
+        )
+        ledger.append(candidate)
+    return ledger
+
+
+def _update_candidate_ledger(ledger: list[SecurityFindingCandidate], findings: list[Any]) -> None:
+    by_fingerprint = {candidate.fingerprint: candidate for candidate in ledger}
+    for finding in findings:
+        candidate = by_fingerprint.get(_candidate_fingerprint(finding))
+        if candidate is None:
+            continue
+        event = _candidate_event(VERIFY_STAGE, finding)
+        candidate.state = event.state
+        candidate.evidence = event.evidence
+        candidate.review_verdict = event.review_verdict
+        candidate.review_reason = event.review_reason
+        candidate.history.append(event)
 
 
 def _build_repo_map(
@@ -193,6 +349,7 @@ def _security_review_defaults(
         REFUTED_KEY: 0,
         UNDECIDED_KEY: len(findings),
         REFUTED_FINDINGS_KEY: [],
+        REVIEWED_CANDIDATES_KEY: findings,
     }
 
 
@@ -229,6 +386,7 @@ def _review_result_payload(
         REFUTED_KEY: int(verifier_result.get(REFUTED_KEY, 0)),
         UNDECIDED_KEY: int(verifier_result.get(UNDECIDED_KEY, 0)),
         REFUTED_FINDINGS_KEY: refuted_findings,
+        REVIEWED_CANDIDATES_KEY: findings,
     }
 
 
@@ -300,6 +458,7 @@ def _apply_review_to_run(run: SecurityTaskflowRun, review: dict[str, Any]) -> No
     run.refuted_count = int(review[REFUTED_KEY])
     run.hypothesis_count = int(review[UNDECIDED_KEY])
     run.result = review[REVIEW_RESULT_KEY]
+    _update_candidate_ledger(run.candidate_ledger, review[REVIEWED_CANDIDATES_KEY])
     run.final_finding_count = len(run.result.findings)
     run.add_stage(
         AUDIT_STAGE,
@@ -329,6 +488,7 @@ def run_security_taskflow(
     run = _build_taskflow_run(project_root, files)
     analyzer.config.repo_context_map = dict(run.repo_context_map)
     result = analyzer.analyze_files(files, issue_types=["security_audit"])
+    run.candidate_ledger = _build_candidate_ledger(result.findings)
     review = review_security_analysis_result(
         result=result,
         model=model,

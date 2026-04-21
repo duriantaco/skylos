@@ -16,6 +16,7 @@ from skylos.llm.security_taskflow import (
     FINALIZE_STAGE,
     REPO_MAP_STAGE,
     VERIFY_STAGE,
+    DEFAULT_CANDIDATE_STATE,
     run_security_taskflow,
 )
 from skylos.llm.security_verifier import annotate_security_finding
@@ -87,6 +88,7 @@ def test_run_security_taskflow_builds_repo_context_and_entry_points(tmp_path):
         VERIFY_STAGE,
         FINALIZE_STAGE,
     ]
+    assert run.candidate_ledger == []
 
 
 def test_run_security_taskflow_records_review_counts_and_filters_refuted_findings(
@@ -106,6 +108,14 @@ def test_run_security_taskflow_records_review_counts_and_filters_refuted_finding
             evidence="review_supported",
             review_verdict="SUPPORTED",
             review_reason="confirmed",
+            needs_review=True,
+            ci_blocking=False,
+        )
+        annotate_security_finding(
+            found[1],
+            evidence="refuted",
+            review_verdict="REFUTED",
+            review_reason="guarded path",
             needs_review=True,
             ci_blocking=False,
         )
@@ -135,3 +145,61 @@ def test_run_security_taskflow_records_review_counts_and_filters_refuted_finding
     assert run.final_finding_count == 1
     assert len(run.result.findings) == 1
     assert run.result.findings[0].metadata["review_verdict"] == "SUPPORTED"
+    assert len(run.candidate_ledger) == 2
+
+    supported = next(
+        candidate for candidate in run.candidate_ledger if candidate.rule_id == "SKY-L001"
+    )
+    refuted = next(
+        candidate for candidate in run.candidate_ledger if candidate.rule_id == "SKY-L002"
+    )
+    assert supported.state == "review_supported"
+    assert supported.evidence == "review_supported"
+    assert supported.review_verdict == "SUPPORTED"
+    assert [event.stage for event in supported.history] == [AUDIT_STAGE, VERIFY_STAGE]
+    assert supported.history[0].state == DEFAULT_CANDIDATE_STATE
+    assert supported.history[0].evidence == "hypothesis"
+    assert refuted.state == "refuted"
+    assert refuted.evidence == "refuted"
+    assert refuted.review_verdict == "REFUTED"
+    assert [event.stage for event in refuted.history] == [AUDIT_STAGE, VERIFY_STAGE]
+
+
+def test_run_security_taskflow_ledger_ids_are_stable_and_serialized(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("print('hi')\n", encoding="utf-8")
+    findings = [
+        _security_finding(str(app), 1, "SKY-L001"),
+        _security_finding(str(app), 2, "SKY-L002"),
+    ]
+
+    run_one = run_security_taskflow(
+        path=tmp_path,
+        files=[app],
+        analyzer=_FakeAnalyzer(AnalysisResult(findings=findings, files_analyzed=1)),
+        model="gpt-4.1",
+        api_key="k",
+    )
+    run_two = run_security_taskflow(
+        path=tmp_path,
+        files=[app],
+        analyzer=_FakeAnalyzer(
+            AnalysisResult(
+                findings=[
+                    _security_finding(str(app), 1, "SKY-L001"),
+                    _security_finding(str(app), 2, "SKY-L002"),
+                ],
+                files_analyzed=1,
+            )
+        ),
+        model="gpt-4.1",
+        api_key="k",
+    )
+
+    ids_one = [candidate.candidate_id for candidate in run_one.candidate_ledger]
+    ids_two = [candidate.candidate_id for candidate in run_two.candidate_ledger]
+    assert ids_one == ids_two
+
+    serialized = run_one.to_dict()
+    assert [item["candidate_id"] for item in serialized["candidate_ledger"]] == ids_one
+    assert serialized["candidate_ledger"][0]["history"][0]["stage"] == AUDIT_STAGE
