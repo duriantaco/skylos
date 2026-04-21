@@ -78,9 +78,16 @@ def test_run_security_taskflow_builds_repo_context_and_entry_points(tmp_path):
     assert app_key in analyzer.config.repo_context_map
     assert "conventional entry file `app.py`" in analyzer.config.repo_context_map[app_key]
     assert "network boundary" in analyzer.config.repo_context_map[app_key]
+    assert "framework: flask" in analyzer.config.repo_context_map[app_key]
+    assert "user-controlled sources: request.args.get" in analyzer.config.repo_context_map[app_key]
+    assert "dangerous sinks: requests.get" in analyzer.config.repo_context_map[app_key]
     assert any(item.path == app_key for item in run.entry_points)
     assert any(item.path == app_key for item in run.trust_boundaries)
     assert run.preferred_audit_targets
+    repo_node = next(item for item in run.repo_map if item.path == app_key)
+    assert repo_node.framework == "flask"
+    assert "request.args.get" in repo_node.sources
+    assert "requests.get" in repo_node.sinks
     assert [stage.name for stage in run.stages] == [
         REPO_MAP_STAGE,
         ENTRY_POINTS_STAGE,
@@ -203,3 +210,36 @@ def test_run_security_taskflow_ledger_ids_are_stable_and_serialized(tmp_path):
     serialized = run_one.to_dict()
     assert [item["candidate_id"] for item in serialized["candidate_ledger"]] == ids_one
     assert serialized["candidate_ledger"][0]["history"][0]["stage"] == AUDIT_STAGE
+
+
+def test_run_security_taskflow_extracts_fastapi_facts_and_guards(tmp_path):
+    app = tmp_path / "api.py"
+    app.write_text(
+        "from fastapi import FastAPI, Request\n"
+        "from urllib.parse import urlparse\n"
+        "import httpx\n\n"
+        "app = FastAPI()\n\n"
+        "@app.get('/proxy')\n"
+        "async def proxy(request: Request):\n"
+        "    target = request.query_params.get('url')\n"
+        "    if urlparse(target).netloc not in {'internal.local'}:\n"
+        "        target = 'https://internal.local/health'\n"
+        "    return httpx.get(target).text\n",
+        encoding="utf-8",
+    )
+
+    analyzer = _FakeAnalyzer(AnalysisResult(findings=[], files_analyzed=1))
+    run = run_security_taskflow(
+        path=tmp_path,
+        files=[app],
+        analyzer=analyzer,
+        model="gpt-4.1",
+        api_key="k",
+    )
+
+    app_key = str(app.resolve())
+    context = analyzer.config.repo_context_map[app_key]
+    assert "framework: fastapi" in context
+    assert "user-controlled sources: request.query_params.get" in context
+    assert "dangerous sinks: httpx.get" in context
+    assert "guards/sanitizers: urlparse" in context

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +30,10 @@ REFUTED_FINDINGS_KEY = "refuted_findings"
 REVIEWED_CANDIDATES_KEY = "reviewed_candidates"
 DEFAULT_CANDIDATE_STATE = "pending_review"
 HYPOTHESIS_EVIDENCE = "hypothesis"
+MAX_SECURITY_FACTS = 6
+FLASK_FRAMEWORK = "flask"
+FASTAPI_FRAMEWORK = "fastapi"
+DJANGO_FRAMEWORK = "django"
 
 
 @dataclass(frozen=True)
@@ -43,9 +48,13 @@ class SecurityRepoNode:
     path: str
     review_score: int
     prefer_full_file_review: bool
+    framework: str | None = None
     entrypoint_reasons: tuple[str, ...] = ()
     registration_hints: tuple[str, ...] = ()
     security_hints: tuple[str, ...] = ()
+    sources: tuple[str, ...] = ()
+    sinks: tuple[str, ...] = ()
+    guards: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,6 +67,26 @@ class SecurityEntrypoint:
 class SecurityTrustBoundary:
     path: str
     reason: str
+
+
+@dataclass(frozen=True)
+class SecurityFileFacts:
+    framework: str | None = None
+    sources: tuple[str, ...] = ()
+    sinks: tuple[str, ...] = ()
+    guards: tuple[str, ...] = ()
+
+    def to_context_lines(self) -> list[str]:
+        lines = []
+        if self.framework:
+            lines.append(f"- framework: {self.framework}")
+        if self.sources:
+            lines.append("- user-controlled sources: " + ", ".join(self.sources[:MAX_SECURITY_FACTS]))
+        if self.sinks:
+            lines.append("- dangerous sinks: " + ", ".join(self.sinks[:MAX_SECURITY_FACTS]))
+        if self.guards:
+            lines.append("- guards/sanitizers: " + ", ".join(self.guards[:MAX_SECURITY_FACTS]))
+        return lines
 
 
 @dataclass(frozen=True)
@@ -119,9 +148,13 @@ class SecurityTaskflowRun:
                     "path": node.path,
                     "review_score": node.review_score,
                     "prefer_full_file_review": node.prefer_full_file_review,
+                    "framework": node.framework,
                     "entrypoint_reasons": list(node.entrypoint_reasons),
                     "registration_hints": list(node.registration_hints),
                     "security_hints": list(node.security_hints),
+                    "sources": list(node.sources),
+                    "sinks": list(node.sinks),
+                    "guards": list(node.guards),
                 }
                 for node in self.repo_map
             ],
@@ -181,14 +214,161 @@ def _project_root(path: str | Path) -> Path:
 
 
 def _repo_node(meta: FileActivation) -> SecurityRepoNode:
+    facts = _extract_security_file_facts(Path(meta.path))
     return SecurityRepoNode(
         path=meta.path,
         review_score=meta.review_score,
         prefer_full_file_review=meta.prefer_full_file_review,
+        framework=facts.framework,
         entrypoint_reasons=tuple(meta.entrypoint_reasons),
         registration_hints=tuple(meta.registration_hints),
         security_hints=tuple(meta.security_hints),
+        sources=facts.sources,
+        sinks=facts.sinks,
+        guards=facts.guards,
     )
+
+
+def _framework_from_import(name: str) -> str | None:
+    lowered = name.lower()
+    if lowered.startswith("flask"):
+        return FLASK_FRAMEWORK
+    if lowered.startswith("fastapi"):
+        return FASTAPI_FRAMEWORK
+    if lowered.startswith("django"):
+        return DJANGO_FRAMEWORK
+    return None
+
+
+def _dotted_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_name(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    if isinstance(node, ast.Call):
+        return _dotted_name(node.func)
+    if isinstance(node, ast.Subscript):
+        return _dotted_name(node.value)
+    return ""
+
+
+def _call_name(node: ast.AST) -> str:
+    return _dotted_name(node.func) if isinstance(node, ast.Call) else ""
+
+
+def _is_shell_enabled_call(node: ast.Call) -> bool:
+    return any(
+        keyword.arg == "shell"
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is True
+        for keyword in node.keywords
+    )
+
+
+def _names_from_tree(tree: ast.AST) -> tuple[str | None, set[str], set[str], set[str]]:
+    framework: str | None = None
+    sources: set[str] = set()
+    sinks: set[str] = set()
+    guards: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                framework = framework or _framework_from_import(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            framework = framework or _framework_from_import(module)
+
+        if not isinstance(node, ast.Call):
+            continue
+
+        call_name = _call_name(node)
+        if not call_name:
+            continue
+
+        if call_name in {
+            "request.args.get",
+            "request.form.get",
+            "request.headers.get",
+            "request.query_params.get",
+            "request.GET.get",
+            "request.POST.get",
+            "request.files.get",
+            "request.get_json",
+        }:
+            sources.add(call_name)
+        if call_name in {"request.json.get"}:
+            sources.add(call_name)
+
+        if call_name in {"redirect", "flask.redirect"}:
+            sinks.add("redirect")
+        elif call_name in {"render_template_string", "flask.render_template_string"}:
+            sinks.add("render_template_string")
+        elif call_name in {
+            "requests.get",
+            "requests.post",
+            "httpx.get",
+            "httpx.post",
+            "urllib.request.urlopen",
+        }:
+            sinks.add(call_name)
+        elif call_name in {"subprocess.run", "subprocess.check_output", "subprocess.Popen"}:
+            sinks.add(f"{call_name}(shell=True)" if _is_shell_enabled_call(node) else call_name)
+        elif call_name.endswith(".execute") or call_name.endswith(".executemany"):
+            sinks.add(call_name)
+        elif call_name in {"open", "Path.read_text", "Path.write_text", "Path.open"}:
+            sinks.add(call_name)
+        elif call_name in {"jwt.decode", "jose.jwt.decode"}:
+            sinks.add(call_name)
+
+        if call_name in {"html.escape", "markupsafe.escape"}:
+            guards.add(call_name)
+        elif call_name in {"urlparse", "urllib.parse.urlparse"}:
+            guards.add("urlparse")
+        elif call_name in {"os.path.basename", "secure_filename", "Path.resolve"}:
+            guards.add(call_name)
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in node.decorator_list:
+                decorator_name = _dotted_name(decorator)
+                if decorator_name.endswith("login_required") or decorator_name.endswith(
+                    "requires_auth"
+                ):
+                    guards.add(decorator_name.split(".")[-1])
+
+    return framework, sources, sinks, guards
+
+
+def _extract_security_file_facts(file_path: Path) -> SecurityFileFacts:
+    try:
+        source = file_path.read_text(encoding="utf-8")
+    except OSError:
+        return SecurityFileFacts()
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return SecurityFileFacts()
+
+    framework, sources, sinks, guards = _names_from_tree(tree)
+    return SecurityFileFacts(
+        framework=framework,
+        sources=tuple(sorted(sources)),
+        sinks=tuple(sorted(sinks)),
+        guards=tuple(sorted(guards)),
+    )
+
+
+def _repo_context_for_node(meta: SecurityRepoNode) -> str:
+    facts = SecurityFileFacts(
+        framework=meta.framework,
+        sources=meta.sources,
+        sinks=meta.sinks,
+        guards=meta.guards,
+    )
+    return "\n".join(facts.to_context_lines())
 
 
 def _finding_file(finding: Any) -> str:
@@ -305,19 +485,28 @@ def _build_repo_map(
         project_root=project_root,
         static_findings={},
     )
-    repo_context_map: dict[str, str] = {}
-    for path, meta in review_index.by_path.items():
-        context_block = meta.context_block()
-        if context_block:
-            repo_context_map[str(Path(path).resolve())] = context_block
-    preferred_targets = [
-        str(Path(path).resolve())
-        for path in review_index.rank_files(max_files=MAX_PREFERRED_AUDIT_TARGETS)
-    ]
     repo_map = sorted(
         (_repo_node(meta) for meta in review_index.by_path.values()),
         key=lambda node: (-node.review_score, node.path),
     )
+    repo_node_by_path = {node.path: node for node in repo_map}
+    repo_context_map: dict[str, str] = {}
+    for path, meta in review_index.by_path.items():
+        context_parts = []
+        base_context = meta.context_block()
+        if base_context:
+            context_parts.append(base_context)
+        node = repo_node_by_path.get(str(Path(path).resolve()))
+        if node is not None:
+            facts_context = _repo_context_for_node(node)
+            if facts_context:
+                context_parts.append(facts_context)
+        if context_parts:
+            repo_context_map[str(Path(path).resolve())] = "\n".join(context_parts)
+    preferred_targets = [
+        str(Path(path).resolve())
+        for path in review_index.rank_files(max_files=MAX_PREFERRED_AUDIT_TARGETS)
+    ]
 
     entry_points: list[SecurityEntrypoint] = []
     trust_boundaries: list[SecurityTrustBoundary] = []
