@@ -111,33 +111,19 @@ def run_pipeline(*args, **kwargs):
 
 
 def review_security_scan_result(*args, **kwargs):
-    from skylos.llm.security_verifier import (
-        SecurityVerifier,
-        annotate_security_finding,
-        is_security_finding,
+    from skylos.llm.security_taskflow import (
+        review_security_analysis_result as review_security_analysis_result_impl,
     )
 
-    result = kwargs.pop("result")
-    findings = []
-    for finding in list(result.findings):
-        if is_security_finding(finding):
-            annotate_security_finding(finding)
-            findings.append(finding)
+    return review_security_analysis_result_impl(*args, **kwargs)["result"]
 
-    if not findings:
-        return result
 
-    try:
-        verifier = SecurityVerifier(*args, **kwargs)
-        review = verifier.review_findings(findings)
-        refuted_ids = {id(finding) for finding in review["refuted_findings"]}
-        if refuted_ids:
-            result.findings = [
-                finding for finding in result.findings if id(finding) not in refuted_ids
-            ]
-    except Exception:
-        return result
-    return result
+def run_security_taskflow(*args, **kwargs):
+    from skylos.llm.security_taskflow import (
+        run_security_taskflow as run_security_taskflow_impl,
+    )
+
+    return run_security_taskflow_impl(*args, **kwargs)
 
 
 def discover_source_files(*args, **kwargs):
@@ -397,6 +383,29 @@ def _filter_precommit_findings_to_changed_lines(
         for finding in findings
         if _finding_is_in_changed_lines(finding, changed_range_index)
     ]
+
+
+LOCAL_PRECOMMIT_BLOCKING_QUALITY_RULE_IDS = {"SKY-L021"}
+
+
+def _precommit_blocks_finding(finding: dict) -> bool:
+    category = str(finding.get("category", "")).lower()
+    if category in {"security", "secrets"}:
+        return True
+    if category != "quality":
+        return True
+    return str(finding.get("rule_id", "")) in LOCAL_PRECOMMIT_BLOCKING_QUALITY_RULE_IDS
+
+
+def _apply_precommit_gate_policy(findings: list[dict]) -> tuple[list[dict], int]:
+    blocking = []
+    suppressed = 0
+    for finding in findings:
+        if _precommit_blocks_finding(finding):
+            blocking.append(finding)
+        else:
+            suppressed += 1
+    return blocking, suppressed
 
 
 def llm_estimate_cost(files, model):
@@ -3392,7 +3401,7 @@ def main() -> None:
                             else ""
                         )
                         scope_note = (
-                            "Checks security, secrets, and quality on production source/config."
+                            "Checks security, secrets, and high-signal quality regressions on production source/config."
                             if staged_source_files
                             else "Checks secrets only."
                         )
@@ -3531,6 +3540,9 @@ def main() -> None:
                 staged_findings = _filter_precommit_findings_to_changed_lines(
                     staged_findings, changed_ranges
                 )
+                staged_findings, suppressed_local_findings = _apply_precommit_gate_policy(
+                    staged_findings
+                )
                 if staged_findings:
                     if agent_args.format == "json":
                         print(json.dumps(staged_findings, indent=2, default=str))
@@ -3561,7 +3573,17 @@ def main() -> None:
                             "[dim]Next: fix the issues below and commit again. "
                             "Use `skylos .` for a full local scan when needed.[/dim]"
                         )
+                        console.print(
+                            "[dim]Note: this hook blocked the commit before Git created a new commit. "
+                            "If you push now, GitHub will still show this branch as identical to main.[/dim]"
+                        )
                     sys.exit(1)
+                if suppressed_local_findings and agent_args.format != "json":
+                    console.print(
+                        "[dim]Local pre-commit suppressed "
+                        f"{suppressed_local_findings} non-blocking quality finding(s); "
+                        "full quality enforcement still runs in CI.[/dim]"
+                    )
                 console.print(
                     "[good]No staged security, secrets, or quality issues[/good]"
                 )
@@ -3796,17 +3818,16 @@ def main() -> None:
                     quiet=getattr(agent_args, "quiet", False),
                 )
                 analyzer = SkylosLLM(config)
-                llm_result = analyzer.analyze_files(
-                    files, issue_types=["security_audit"]
-                )
-                llm_result = review_security_scan_result(
+                taskflow = run_security_taskflow(
+                    path=path,
+                    files=files,
+                    analyzer=analyzer,
                     model=model,
                     api_key=api_key,
                     provider=provider,
                     base_url=base_url,
-                    result=llm_result,
                 )
-                llm_result.summary = analyzer._generate_summary(llm_result)
+                llm_result = taskflow.result
                 analyzer.print_results(
                     llm_result, format=agent_args.format, output_file=agent_args.output
                 )
