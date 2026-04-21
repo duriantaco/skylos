@@ -280,6 +280,58 @@
       }
     },
     {
+      "id": "flask-handler-security",
+      "path": "fixtures/flask_handler_security/app.py",
+      "description": "A Flask handler file should surface request-driven SQL injection and shell injection while keeping the parameterized handler quiet.",
+      "taxonomy": ["security", "control_flow", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from the manual security-audit regression where low-complexity Flask handlers were skipped before review."
+      },
+      "scan": {
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 12.0
+      },
+      "expect": {
+        "present": {
+          "security": ["user", "ls"]
+        },
+        "absent": {
+          "security": ["safe"]
+        }
+      }
+    },
+    {
+      "id": "flask-getter-shell",
+      "path": "fixtures/flask_getter_shell/app.py",
+      "description": "Getter-based request access should still surface command injection when shell=True is used, while the argv-based helper stays quiet.",
+      "taxonomy": ["security", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from the manual request.args.get to subprocess.run(shell=True) regression."
+      },
+      "scan": {
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 12.0
+      },
+      "expect": {
+        "present": {
+          "security": ["run_tool"]
+        },
+        "absent": {
+          "security": ["run_safe"]
+        }
+      }
+    },
+    {
       "id": "debt-hotspot-service",
       "path": "fixtures/debt_hotspot_service",
       "description": "A central service module imported by multiple entry surfaces should be surfaced as a debt hotspot when it is wide, branch-heavy, and swallows failures.",

@@ -270,6 +270,12 @@ class TestHelperFunctions:
         assert (
             get_non_library_dir_kind("/project/benchmarks/bench_api.py") == "benchmark"
         )
+        assert (
+            get_non_library_dir_kind(
+                "/project/agent_review_benchmarks/fixtures/app.py"
+            )
+            == "benchmark"
+        )
         assert get_non_library_dir_kind("/project/src/app.py") is None
 
     def test_get_non_library_dir_kind_uses_project_relative_path(self):

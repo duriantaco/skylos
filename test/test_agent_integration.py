@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +12,7 @@ from skylos.llm.schemas import (
     IssueType,
     Severity,
 )
+from skylos.llm.security_verifier import annotate_security_finding
 
 
 def _security_scan_result(file_path: str) -> AnalysisResult:
@@ -49,6 +51,55 @@ def _make_security_scan_analyzer(result: AnalysisResult) -> SkylosLLM:
     analyzer = SkylosLLM(AnalyzerConfig(quiet=True))
     analyzer.analyze_files = MagicMock(return_value=result)
     return analyzer
+
+
+class _DeterministicSecurityAuditAgent:
+    def analyze(self, source, file_path, defs_map=None, context=None):
+        findings = []
+        for line_no, line in enumerate(source.splitlines(), start=1):
+            if "SELECT * FROM users WHERE id = %s" in line and "%" in line:
+                findings.append(
+                    Finding(
+                        rule_id="SKY-S001",
+                        issue_type=IssueType.SECURITY,
+                        severity=Severity.CRITICAL,
+                        message="SQL injection vulnerability: user input is directly interpolated into SQL query string.",
+                        location=CodeLocation(file=file_path, line=line_no),
+                        confidence=Confidence.HIGH,
+                    )
+                )
+            if (
+                "subprocess.check_output" in line or "subprocess.run" in line
+            ) and "shell=True" in line:
+                findings.append(
+                    Finding(
+                        rule_id="SKY-C011",
+                        issue_type=IssueType.SECURITY,
+                        severity=Severity.CRITICAL,
+                        message="Command injection vulnerability: untrusted user input passed to subprocess with shell=True.",
+                        location=CodeLocation(file=file_path, line=line_no),
+                        confidence=Confidence.HIGH,
+                    )
+                )
+        return findings
+
+
+def _supported_security_review(findings):
+    for finding in findings:
+        annotate_security_finding(
+            finding,
+            evidence="review_supported",
+            review_verdict="SUPPORTED",
+            review_reason="deterministic test review",
+            needs_review=True,
+            ci_blocking=False,
+        )
+    return {
+        "supported": len(findings),
+        "refuted": 0,
+        "undecided": 0,
+        "refuted_findings": [],
+    }
 
 
 def test_agent_review_passes_exclude_folders():
@@ -483,3 +534,144 @@ def test_security_audit_sarif_output_handles_supported_refuted_and_hypothesis(tm
     assert by_rule["SKY-L003"]["properties"]["security_evidence"] == "hypothesis"
     assert by_rule["SKY-L003"]["properties"]["review_verdict"] == "UNCERTAIN"
     assert by_rule["SKY-L003"]["properties"]["ci_blocking"] is False
+
+
+def test_security_audit_json_output_reports_vulnerable_repo_and_skips_safe_file(
+    tmp_path,
+):
+    vuln = tmp_path / "vuln_app.py"
+    vuln.write_text(
+        "from flask import Flask, request\n"
+        "import subprocess\n\n"
+        "app = Flask(__name__)\n\n"
+        "@app.get('/user')\n"
+        "def user():\n"
+        "    user_id = request.args.get('id')\n"
+        "    query = \"SELECT * FROM users WHERE id = %s\" % user_id\n"
+        "    return query\n\n"
+        "@app.get('/ls')\n"
+        "def ls():\n"
+        "    cmd = request.args['cmd']\n"
+        "    return subprocess.check_output(cmd, shell=True)\n",
+        encoding="utf-8",
+    )
+    safe = tmp_path / "safe_app.py"
+    safe.write_text(
+        "from flask import Flask, request\n"
+        "import sqlite3\n\n"
+        "app = Flask(__name__)\n\n"
+        "@app.get('/safe')\n"
+        "def safe():\n"
+        "    user_id = request.args.get('id')\n"
+        "    conn = sqlite3.connect(':memory:')\n"
+        "    return conn.execute(\"SELECT * FROM users WHERE id = ?\", (user_id,)).fetchall()\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "security.json"
+
+    def _create_agent(agent_type, config=None):
+        assert agent_type == "security_audit"
+        return _DeterministicSecurityAuditAgent()
+
+    with (
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch("skylos.cli._is_tty", return_value=False),
+        patch("skylos.cli.llm_estimate_cost", return_value=(1, 0.01)),
+        patch("skylos.llm.analyzer.create_agent", side_effect=_create_agent),
+        patch(
+            "skylos.llm.security_verifier.SecurityVerifier.review_findings",
+            side_effect=_supported_security_review,
+        ),
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "scan",
+                str(tmp_path),
+                "--security",
+                "--format",
+                "json",
+                "--output",
+                str(output),
+            ],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    findings = payload["findings"]
+    assert len(findings) == 2
+    by_rule = {finding["rule_id"]: finding for finding in findings}
+    assert set(by_rule) == {"SKY-S001", "SKY-C011"}
+    assert all(Path(item["location"]["file"]).name == "vuln_app.py" for item in findings)
+    assert all(item["metadata"]["security_evidence"] == "review_supported" for item in findings)
+    assert all(item["metadata"]["review_verdict"] == "SUPPORTED" for item in findings)
+
+
+def test_security_audit_json_output_reports_getter_based_command_injection(tmp_path):
+    sample = tmp_path / "app.py"
+    sample.write_text(
+        "from flask import Flask, request\n"
+        "import subprocess\n\n"
+        "app = Flask(__name__)\n\n"
+        "@app.get('/run')\n"
+        "def run_cmd():\n"
+        "    cmd = request.args.get('cmd')\n"
+        "    return subprocess.run(cmd, shell=True)\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "security.json"
+
+    def _create_agent(agent_type, config=None):
+        assert agent_type == "security_audit"
+        return _DeterministicSecurityAuditAgent()
+
+    with (
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch("skylos.cli._is_tty", return_value=False),
+        patch("skylos.cli.llm_estimate_cost", return_value=(1, 0.01)),
+        patch("skylos.llm.analyzer.create_agent", side_effect=_create_agent),
+        patch(
+            "skylos.llm.security_verifier.SecurityVerifier.review_findings",
+            side_effect=_supported_security_review,
+        ),
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "scan",
+                str(tmp_path),
+                "--security",
+                "--format",
+                "json",
+                "--output",
+                str(output),
+            ],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    findings = payload["findings"]
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "SKY-C011"
+    assert findings[0]["metadata"]["security_evidence"] == "review_supported"
+    assert findings[0]["metadata"]["review_verdict"] == "SUPPORTED"
