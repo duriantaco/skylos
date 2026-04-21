@@ -364,6 +364,69 @@ def test_full_file_review_bypasses_function_filter(tmp_path, monkeypatch):
     assert seen_sources[0][2] == ["quality"]
 
 
+def test_security_audit_uses_whole_file_review_even_without_full_file_mode(
+    tmp_path, monkeypatch
+):
+    fp = tmp_path / "app.py"
+    source = (
+        "from flask import request\n\n"
+        "def user():\n"
+        "    query = \"SELECT * FROM users WHERE id = %s\" % request.args['id']\n"
+        "    return query\n"
+    )
+    fp.write_text(source, encoding="utf-8")
+
+    cfg = AnalyzerConfig(
+        quiet=True,
+        enable_security=True,
+        enable_quality=False,
+        full_file_review=False,
+    )
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    seen_sources = []
+
+    def fake_analyze_whole_file(
+        source,
+        file_path,
+        defs_map=None,
+        chunk_start_line=1,
+        issue_types=None,
+        **kwargs,
+    ):
+        seen_sources.append((source, file_path, issue_types))
+        return [mk_finding(file=file_path, line=3, issue_type=IssueType.SECURITY)]
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_analyze_whole_file)
+
+    out = llm.analyze_file(fp, issue_types=["security_audit"])
+
+    assert len(out) == 1
+    assert len(seen_sources) == 1
+    assert seen_sources[0][0] == source
+    assert seen_sources[0][1] == str(fp)
+    assert seen_sources[0][2] == ["security_audit"]
+
+
+def test_security_selector_flags_flask_request_get_route():
+    source = (
+        "from flask import request\n"
+        "import subprocess\n\n"
+        "def ls():\n"
+        "    cmd = request.args.get('cmd')\n"
+        "    return subprocess.run(cmd, shell=True)\n"
+    )
+
+    graph = analyzer_mod.CodeGraph()
+    graph.build(source)
+
+    cfg = AnalyzerConfig(quiet=True, enable_security=True, enable_quality=False)
+    llm = SkylosLLM(cfg)
+
+    assert llm._should_analyze_security_function("ls", graph.definitions["ls"], graph)
+
+
 def test_full_file_review_uses_combined_review_agent_when_security_and_quality_enabled(
     tmp_path, monkeypatch
 ):

@@ -13,6 +13,8 @@ from skylos.config import load_config
 from skylos.llm.graph import CodeGraph
 from skylos.file_discovery import discover_source_files
 
+SECURITY_AUDIT_ISSUE = "security_audit"
+
 
 def _norm_path(path) -> str:
     try:
@@ -299,11 +301,20 @@ class SkylosLLM:
         modes = set()
         for issue_type in issue_types:
             name = str(issue_type).lower().strip()
-            if name in {"security", "security_audit"}:
+            if name in {"security", SECURITY_AUDIT_ISSUE}:
                 modes.add("security")
             if name == "quality":
                 modes.add("quality")
         return modes
+
+    @staticmethod
+    def _normalized_issue_types(issue_types=None):
+        return {str(t).lower().strip() for t in (issue_types or []) if str(t).strip()}
+
+    def _should_use_whole_file_review(self, file_norm, issue_types=None):
+        if self.config.full_file_review or file_norm in self.config.force_full_file_paths:
+            return True
+        return SECURITY_AUDIT_ISSUE in self._normalized_issue_types(issue_types)
 
     def _should_analyze_function(
         self, func_name, def_data, graph, *, issue_types=None, total_functions=0
@@ -368,14 +379,12 @@ class SkylosLLM:
         issue_types=None,
         **kwargs,
     ):
-        normalized_issue_types = {
-            str(t).lower().strip() for t in (issue_types or []) if str(t).strip()
-        }
+        normalized_issue_types = self._normalized_issue_types(issue_types)
 
         type_to_agent = {
             "security": "security",
             "quality": "quality",
-            "security_audit": "security_audit",
+            SECURITY_AUDIT_ISSUE: SECURITY_AUDIT_ISSUE,
         }
 
         if not issue_types:
@@ -391,7 +400,7 @@ class SkylosLLM:
                     agent_types.append("quality")
 
             if not agent_types:
-                agent_types = ["security_audit"]
+                agent_types = [SECURITY_AUDIT_ISSUE]
         else:
             # Fail fast if caller asks for dead_code through per-file analysis
             for t in issue_types:
@@ -412,7 +421,7 @@ class SkylosLLM:
                         agent_types.append(a)
 
             if not agent_types:
-                agent_types = ["security_audit"]
+                agent_types = [SECURITY_AUDIT_ISSUE]
 
         include_review_hints = any(
             agent_type in {"review", "quality"} for agent_type in agent_types
@@ -482,9 +491,8 @@ class SkylosLLM:
 
         all_findings = []
         file_norm = _norm_path(file_path)
-        force_full_file_review = file_norm in self.config.force_full_file_paths
 
-        if self.config.full_file_review or force_full_file_review:
+        if self._should_use_whole_file_review(file_norm, issue_types):
             all_findings = self._analyze_whole_file(
                 source,
                 str(file_path),
@@ -834,7 +842,7 @@ def analyze(path, model="gpt-4.1", issue_types=None, **kwargs):
 
 
 def audit(path, model="gpt-4.1", **kwargs):
-    return analyze(path, model=model, issue_types=["security_audit"], **kwargs)
+    return analyze(path, model=model, issue_types=[SECURITY_AUDIT_ISSUE], **kwargs)
 
 
 def fix(file_path, line, message, model="gpt-4.1"):
