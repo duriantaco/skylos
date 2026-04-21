@@ -33,6 +33,8 @@ IMPORTANCE_WEIGHTS = {
 }
 
 DEFAULT_SCAN_MAX_FILES = 8
+ALLOWED_SCAN_ISSUE_TYPES = {"quality", "security", "security_audit"}
+SCAN_ISSUE_TYPES_FIELD = "issue_types"
 
 
 @dataclass(frozen=True)
@@ -129,6 +131,35 @@ def validate_manifest(
                 raise ValueError(
                     f"agent review benchmark case {case_id} scan.max_files must be a positive integer"
                 )
+        if isinstance(scan_cfg, dict) and SCAN_ISSUE_TYPES_FIELD in scan_cfg:
+            issue_types = scan_cfg.get(SCAN_ISSUE_TYPES_FIELD)
+            if not isinstance(issue_types, list) or not issue_types:
+                raise ValueError(
+                    f"agent review benchmark case {case_id} scan.issue_types must be a non-empty list"
+                )
+            invalid_issue_types = [
+                issue_type
+                for issue_type in issue_types
+                if not isinstance(issue_type, str) or not issue_type.strip()
+            ]
+            if invalid_issue_types:
+                raise ValueError(
+                    f"agent review benchmark case {case_id} scan.issue_types must only contain strings"
+                )
+            unsupported_issue_types = sorted(
+                {
+                    issue_type
+                    for issue_type in issue_types
+                    if issue_type not in ALLOWED_SCAN_ISSUE_TYPES
+                }
+            )
+            if unsupported_issue_types:
+                allowed = ", ".join(sorted(ALLOWED_SCAN_ISSUE_TYPES))
+                raise ValueError(
+                    "agent review benchmark case "
+                    f"{case_id} has unsupported scan.issue_types value "
+                    f"'{unsupported_issue_types[0]}'. Allowed: {allowed}"
+                )
 
         expect = case.get("expect")
         if not isinstance(expect, dict):
@@ -223,6 +254,7 @@ def _scan_case(
 ) -> dict[str, Any]:
     scan_cfg = case.get("scan") if isinstance(case, dict) else {}
     max_files = int((scan_cfg or {}).get("max_files") or DEFAULT_SCAN_MAX_FILES)
+    issue_types = list((scan_cfg or {}).get(SCAN_ISSUE_TYPES_FIELD) or [])
     prepared = prepare_case_scan(case_path, max_files=max_files)
 
     config = AnalyzerConfig(
@@ -239,7 +271,7 @@ def _scan_case(
         repo_context_map=prepared["repo_context_map"],
     )
     analyzer = SkylosLLM(config)
-    result = analyzer.analyze_files(prepared["files"])
+    result = analyzer.analyze_files(prepared["files"], issue_types=issue_types or None)
 
     symbols = {
         _normalize_symbol(getattr(finding, "symbol", None))
