@@ -13,6 +13,7 @@ from skylos.llm.schemas import (
 )
 from skylos.llm.security_taskflow import (
     AUDIT_STAGE,
+    CHALLENGE_STAGE,
     ENTRY_POINTS_STAGE,
     FINALIZE_STAGE,
     REPO_MAP_STAGE,
@@ -94,6 +95,7 @@ def test_run_security_taskflow_builds_repo_context_and_entry_points(tmp_path):
         ENTRY_POINTS_STAGE,
         AUDIT_STAGE,
         VERIFY_STAGE,
+        CHALLENGE_STAGE,
         FINALIZE_STAGE,
     ]
     assert run.candidate_ledger == []
@@ -316,3 +318,77 @@ def test_run_security_taskflow_writes_run_artifacts(tmp_path):
     assert summary_payload["final_finding_count"] == 1
     assert summary_payload["stages"][-1]["name"] == FINALIZE_STAGE
     assert summary_payload["artifact_write_error"] is None
+
+
+def test_run_security_taskflow_challenges_uncertain_findings(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("print('hi')\n", encoding="utf-8")
+    findings = [_security_finding(str(app), 1, "SKY-L001")]
+    analyzer = _FakeAnalyzer(AnalysisResult(findings=findings, files_analyzed=1))
+
+    def _review(found):
+        annotate_security_finding(
+            found[0],
+            evidence="hypothesis",
+            review_verdict="UNCERTAIN",
+            review_reason="not enough local context",
+            needs_review=True,
+            ci_blocking=False,
+        )
+        return {
+            "supported": 0,
+            "refuted": 0,
+            "undecided": 1,
+            "refuted_findings": [],
+        }
+
+    def _challenge(found):
+        annotate_security_finding(
+            found[0],
+            evidence="review_supported",
+            review_verdict="SUPPORTED",
+            review_reason="challenge found enough local evidence",
+            needs_review=True,
+            ci_blocking=False,
+        )
+        return {
+            "supported": 1,
+            "refuted": 0,
+            "undecided": 0,
+            "refuted_findings": [],
+        }
+
+    with (
+        patch(
+            "skylos.llm.security_taskflow.SecurityVerifier.review_findings",
+            side_effect=_review,
+        ),
+        patch(
+            "skylos.llm.security_taskflow.SecurityVerifier.challenge_findings",
+            side_effect=_challenge,
+        ),
+    ):
+        run = run_security_taskflow(
+            path=tmp_path,
+            files=[app],
+            analyzer=analyzer,
+            model="gpt-4.1",
+            api_key="k",
+        )
+
+    assert run.supported_count == 1
+    assert run.refuted_count == 0
+    assert run.hypothesis_count == 0
+    candidate = run.candidate_ledger[0]
+    assert candidate.state == "review_supported"
+    assert candidate.review_verdict == "SUPPORTED"
+    assert [event.stage for event in candidate.history] == [
+        AUDIT_STAGE,
+        VERIFY_STAGE,
+        CHALLENGE_STAGE,
+    ]
+    assert candidate.history[1].evidence == "hypothesis"
+    assert candidate.history[2].evidence == "review_supported"
+    assert run.stages[-2].name == CHALLENGE_STAGE
+    assert run.stages[-2].details["challenged"] == 1
+    assert run.stages[-2].details["supported"] == 1
