@@ -22,6 +22,7 @@ REPO_MAP_STAGE = "repo_map"
 ENTRY_POINTS_STAGE = "entry_points"
 AUDIT_STAGE = "audit"
 VERIFY_STAGE = "verify"
+CHALLENGE_STAGE = "challenge"
 FINALIZE_STAGE = "finalize"
 MAX_PREFERRED_AUDIT_TARGETS = 12
 REVIEW_RESULT_KEY = "result"
@@ -438,6 +439,17 @@ def _finding_metadata(finding: Any) -> dict[str, Any]:
     return dict(getattr(finding, "metadata", None) or {})
 
 
+def _finding_evidence(finding: Any) -> str:
+    metadata = _finding_metadata(finding)
+    return str(metadata.get("security_evidence") or HYPOTHESIS_EVIDENCE)
+
+
+def _finding_review_verdict(finding: Any) -> str | None:
+    metadata = _finding_metadata(finding)
+    verdict = metadata.get("review_verdict")
+    return str(verdict).upper() if verdict else None
+
+
 def _candidate_fingerprint(finding: Any) -> str:
     raw = "|".join(
         [
@@ -491,18 +503,48 @@ def _build_candidate_ledger(findings: list[Any]) -> list[SecurityFindingCandidat
     return ledger
 
 
-def _update_candidate_ledger(ledger: list[SecurityFindingCandidate], findings: list[Any]) -> None:
+def _update_candidate_ledger(
+    ledger: list[SecurityFindingCandidate],
+    findings: list[Any],
+    *,
+    stage: str,
+) -> None:
     by_fingerprint = {candidate.fingerprint: candidate for candidate in ledger}
     for finding in findings:
         candidate = by_fingerprint.get(_candidate_fingerprint(finding))
         if candidate is None:
             continue
-        event = _candidate_event(VERIFY_STAGE, finding)
+        event = _candidate_event(stage, finding)
         candidate.state = event.state
         candidate.evidence = event.evidence
         candidate.review_verdict = event.review_verdict
         candidate.review_reason = event.review_reason
         candidate.history.append(event)
+
+
+def _refresh_run_counts(run: SecurityTaskflowRun) -> None:
+    run.candidate_count = len(run.candidate_ledger)
+    run.supported_count = sum(
+        1 for candidate in run.candidate_ledger if candidate.state == "review_supported"
+    )
+    run.refuted_count = sum(
+        1 for candidate in run.candidate_ledger if candidate.state == "refuted"
+    )
+    run.hypothesis_count = sum(
+        1
+        for candidate in run.candidate_ledger
+        if candidate.state not in {"review_supported", "refuted"}
+    )
+    run.final_finding_count = len(run.result.findings) if run.result is not None else 0
+
+
+def _challenge_candidates(findings: list[Any]) -> list[Any]:
+    return [
+        finding
+        for finding in findings
+        if _finding_evidence(finding) == HYPOTHESIS_EVIDENCE
+        or _finding_review_verdict(finding) == "UNCERTAIN"
+    ]
 
 
 def _build_repo_map(
@@ -723,6 +765,34 @@ def review_security_analysis_result(
     return _review_result_payload(result, findings, verifier_result)
 
 
+def challenge_security_analysis_result(
+    *,
+    result: AnalysisResult,
+    findings: list[Any],
+    model: str,
+    api_key: str | None,
+    provider: str | None = None,
+    base_url: str | None = None,
+) -> dict[str, Any]:
+    challengers = _challenge_candidates(findings)
+    challenge = _security_review_defaults(result, challengers)
+    if not challengers:
+        return challenge
+
+    try:
+        verifier = SecurityVerifier(
+            model=model,
+            api_key=api_key,
+            provider=provider,
+            base_url=base_url,
+        )
+        verifier_result = verifier.challenge_findings(challengers)
+    except Exception:
+        return challenge
+
+    return _review_result_payload(result, challengers, verifier_result)
+
+
 def _build_taskflow_run(
     project_root: Path,
     files: list[Path],
@@ -762,23 +832,42 @@ def _build_taskflow_run(
 
 
 def _apply_review_to_run(run: SecurityTaskflowRun, review: dict[str, Any]) -> None:
-    run.candidate_count = int(review[CANDIDATE_COUNT_KEY])
-    run.supported_count = int(review[SUPPORTED_KEY])
-    run.refuted_count = int(review[REFUTED_KEY])
-    run.hypothesis_count = int(review[UNDECIDED_KEY])
     run.result = review[REVIEW_RESULT_KEY]
-    _update_candidate_ledger(run.candidate_ledger, review[REVIEWED_CANDIDATES_KEY])
-    run.final_finding_count = len(run.result.findings)
+    _update_candidate_ledger(
+        run.candidate_ledger,
+        review[REVIEWED_CANDIDATES_KEY],
+        stage=VERIFY_STAGE,
+    )
+    _refresh_run_counts(run)
     run.add_stage(
         AUDIT_STAGE,
         files_analyzed=len(run.scanned_files),
-        candidate_findings=run.candidate_count,
+        candidate_findings=len(run.candidate_ledger),
     )
     run.add_stage(
         VERIFY_STAGE,
-        supported=run.supported_count,
-        refuted=run.refuted_count,
-        hypothesis=run.hypothesis_count,
+        supported=int(review[SUPPORTED_KEY]),
+        refuted=int(review[REFUTED_KEY]),
+        hypothesis=int(review[UNDECIDED_KEY]),
+    )
+
+
+def _apply_challenge_to_run(run: SecurityTaskflowRun, challenge: dict[str, Any]) -> None:
+    challenged = challenge[REVIEWED_CANDIDATES_KEY]
+    if challenged:
+        run.result = challenge[REVIEW_RESULT_KEY]
+        _update_candidate_ledger(
+            run.candidate_ledger,
+            challenged,
+            stage=CHALLENGE_STAGE,
+        )
+        _refresh_run_counts(run)
+    run.add_stage(
+        CHALLENGE_STAGE,
+        challenged=len(challenged),
+        supported=int(challenge[SUPPORTED_KEY]),
+        refuted=int(challenge[REFUTED_KEY]),
+        hypothesis=int(challenge[UNDECIDED_KEY]),
     )
 
 
@@ -805,6 +894,15 @@ def run_security_taskflow(
         base_url=base_url,
     )
     _apply_review_to_run(run, review)
+    challenge = challenge_security_analysis_result(
+        result=run.result,
+        findings=review[REVIEWED_CANDIDATES_KEY],
+        model=model,
+        api_key=api_key,
+        provider=provider,
+        base_url=base_url,
+    )
+    _apply_challenge_to_run(run, challenge)
     run.result.summary = str(analyzer._generate_summary(run.result))
     run.add_stage(
         FINALIZE_STAGE,
