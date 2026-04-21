@@ -89,7 +89,10 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
     assert "Commit check:" in printed
-    assert "Checks security, secrets, and quality on production source/config." in printed
+    assert (
+        "Checks security, secrets, and high-signal quality regressions on production source/config."
+        in printed
+    )
     assert "Commit check progress:" in printed
     assert "[1/1] app.py" in printed
     assert "app.py:3" in printed
@@ -97,6 +100,7 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
     assert "issue(s) found in staged files" in printed
     assert "Full repo and diff-aware enforcement run in CI." in printed
     assert "fix the issues below and commit again" in printed
+    assert "hook blocked the commit before Git created a new commit" in printed
 
 
 def test_agent_pre_commit_includes_staged_config_files(tmp_path):
@@ -701,3 +705,77 @@ def test_agent_pre_commit_deletion_only_diffs_drop_whole_file_noise(tmp_path):
     )
     assert "validation call was removed" in printed
     assert "Old whole-file noise" not in printed
+
+
+def test_agent_pre_commit_suppresses_structural_quality_noise_locally(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "taskflow.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    console = Mock()
+    staged = Mock(stdout="taskflow.py\n", returncode=0)
+    cached_diff = Mock(
+        stdout=(
+            "diff --git a/taskflow.py b/taskflow.py\n"
+            "--- a/taskflow.py\n"
+            "+++ b/taskflow.py\n"
+            "@@ -1 +1 @@\n"
+        ),
+        returncode=0,
+    )
+    unstaged = Mock(stdout="", returncode=0)
+    result = {
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_classes": [],
+        "unused_variables": [],
+        "danger": [],
+        "quality": [
+            {
+                "rule_id": "SKY-Q301",
+                "file": "taskflow.py",
+                "line": 1,
+                "severity": "MEDIUM",
+                "message": "Function is 54 lines long (limit: 50).",
+            },
+            {
+                "rule_id": "SKY-Q302",
+                "file": "taskflow.py",
+                "line": 1,
+                "severity": "LOW",
+                "message": "String literal 'result' repeated 3 times (threshold: 3).",
+            },
+        ],
+        "secrets": [],
+    }
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "diff", "--cached", "--name-only"]:
+            return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return unstaged
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    with (
+        patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
+        patch("skylos.cli.Console", return_value=console),
+        patch("skylos.cli.setup_logger"),
+        patch("skylos.cli.find_project_root", return_value=repo),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.parse_exclude_folders", return_value=set()),
+        patch("skylos.cli.subprocess.run", side_effect=fake_run),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.baseline.load_baseline", return_value=None),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 0
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "non-blocking quality finding(s)" in printed
+    assert "No staged security, secrets, or quality issues" in printed
+    assert "Function is 54 lines long" not in printed
