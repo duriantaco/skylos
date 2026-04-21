@@ -134,6 +134,7 @@ P_CREATE_DC_AGENT = "skylos.llm.agents.create_dead_code_agent"
 P_AGENTCFG = "skylos.llm.agents.AgentConfig"
 P_PROGRESS = "rich.progress.Progress"
 P_STATIC_FN = "skylos.pipeline.run_static_on_files"
+P_SECURITY_VERIFIER = "skylos.pipeline.SecurityVerifier"
 
 
 class TestNorm:
@@ -778,8 +779,15 @@ class TestPipelinePhase2b:
             patch(P_STATIC_FN, return_value=_empty_result()),
             patch(P_PROGRESS),
             patch(P_LLM) as mock_llm,
+            patch(P_SECURITY_VERIFIER) as mock_verifier,
         ):
             mock_llm.return_value.analyze_files.return_value = llm_result
+            mock_verifier.return_value.review_findings.return_value = {
+                "supported": 0,
+                "refuted": 0,
+                "undecided": len(llm_findings_list),
+                "refuted_findings": [],
+            }
 
             findings = run_pipeline(
                 path=str(proj),
@@ -801,6 +809,7 @@ class TestPipelinePhase2b:
         assert len(llm) == 1
         assert llm[0]["_needs_review"] is True
         assert llm[0]["_ci_blocking"] is False
+        assert llm[0]["_security_evidence"] == "hypothesis"
 
     def test_llm_dead_code_discoveries_included(self, tmp_path):
         findings = self._run_with_llm_findings(
@@ -855,8 +864,15 @@ class TestPipelinePhase2b:
             patch(P_STATIC_FN, return_value=_fresh_static()),
             patch(P_PROGRESS),
             patch(P_LLM) as mock_llm,
+            patch(P_SECURITY_VERIFIER) as mock_verifier,
         ):
             mock_llm.return_value.analyze_files.return_value = llm_result
+            mock_verifier.return_value.review_findings.return_value = {
+                "supported": 0,
+                "refuted": 0,
+                "undecided": 0,
+                "refuted_findings": [],
+            }
 
             findings = run_pipeline(
                 path=str(proj),
@@ -867,8 +883,79 @@ class TestPipelinePhase2b:
                 changed_files=[str(proj / "a.py")],
             )
 
+        mock_verifier.return_value.review_findings.assert_not_called()
         llm_only = [f for f in findings if f["_source"] == "llm"]
         assert len(llm_only) == 0
+
+    def test_unmatched_security_findings_use_rereview_metadata(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a.py").write_text("x = 1")
+
+        llm_result = MagicMock()
+        llm_result.findings = [_llm_finding(issue_type="security")]
+
+        with (
+            patch(P_STATIC_FN, return_value=_empty_result()),
+            patch(P_PROGRESS),
+            patch(P_LLM) as mock_llm,
+            patch(P_SECURITY_VERIFIER) as mock_verifier,
+        ):
+            mock_llm.return_value.analyze_files.return_value = llm_result
+
+            def _review(findings):
+                findings[0]["_security_evidence"] = "review_supported"
+                findings[0]["_review_verdict"] = "SUPPORTED"
+                return {
+                    "supported": 1,
+                    "refuted": 0,
+                    "undecided": 0,
+                    "refuted_findings": [],
+                }
+
+            mock_verifier.return_value.review_findings.side_effect = _review
+
+            findings = run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(skip_verification=True),
+                console=_console(),
+                changed_files=[str(proj / "a.py")],
+            )
+
+        llm = [f for f in findings if f["_source"] == "llm"]
+        assert llm[0]["_security_evidence"] == "review_supported"
+        assert llm[0]["_review_verdict"] == "SUPPORTED"
+
+    def test_security_rereview_failure_keeps_hypothesis(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a.py").write_text("x = 1")
+
+        llm_result = MagicMock()
+        llm_result.findings = [_llm_finding(issue_type="security")]
+
+        with (
+            patch(P_STATIC_FN, return_value=_empty_result()),
+            patch(P_PROGRESS),
+            patch(P_LLM) as mock_llm,
+            patch(P_SECURITY_VERIFIER) as mock_verifier,
+        ):
+            mock_llm.return_value.analyze_files.return_value = llm_result
+            mock_verifier.return_value.review_findings.side_effect = RuntimeError("down")
+
+            findings = run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(skip_verification=True),
+                console=_console(),
+                changed_files=[str(proj / "a.py")],
+            )
+
+        llm = [f for f in findings if f["_source"] == "llm"]
+        assert llm[0]["_security_evidence"] == "hypothesis"
 
     def test_static_only_skips_llm_analysis(self, tmp_path):
         proj = tmp_path / "proj"
@@ -1226,10 +1313,17 @@ class TestPipelineOutput:
             patch(P_STATIC_FN, return_value=_fresh_static()),
             patch(P_PROGRESS),
             patch(P_LLM) as mock_llm,
+            patch(P_SECURITY_VERIFIER) as mock_verifier,
         ):
             mock_llm.return_value.analyze_files.return_value = MagicMock(
                 findings=[_llm_finding(issue_type="security")]
             )
+            mock_verifier.return_value.review_findings.return_value = {
+                "supported": 0,
+                "refuted": 0,
+                "undecided": 1,
+                "refuted_findings": [],
+            }
 
             findings = run_pipeline(
                 path=str(proj),
@@ -1253,10 +1347,17 @@ class TestPipelineOutput:
             patch(P_STATIC_FN, return_value=_fresh_static()),
             patch(P_PROGRESS),
             patch(P_LLM) as mock_llm,
+            patch(P_SECURITY_VERIFIER) as mock_verifier,
         ):
             mock_llm.return_value.analyze_files.return_value = MagicMock(
                 findings=[_llm_finding(issue_type="security")]
             )
+            mock_verifier.return_value.review_findings.return_value = {
+                "supported": 0,
+                "refuted": 0,
+                "undecided": 1,
+                "refuted_findings": [],
+            }
 
             findings = run_pipeline(
                 path=str(proj),
@@ -1470,10 +1571,17 @@ class TestPipelineIntegration:
             patch(P_LLM) as mock_llm,
             patch(P_CREATE_DC_AGENT, return_value=mock_agent),
             patch(P_AGENTCFG),
+            patch(P_SECURITY_VERIFIER) as mock_verifier,
         ):
             mock_llm.return_value.analyze_files.return_value = MagicMock(
                 findings=[llm_sec]
             )
+            mock_verifier.return_value.review_findings.return_value = {
+                "supported": 1,
+                "refuted": 0,
+                "undecided": 0,
+                "refuted_findings": [],
+            }
 
             findings = run_pipeline(
                 path=str(proj),

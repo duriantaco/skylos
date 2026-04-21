@@ -1,6 +1,54 @@
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from skylos.llm.analyzer import AnalyzerConfig, SkylosLLM
+from skylos.llm.schemas import (
+    AnalysisResult,
+    CodeLocation,
+    Confidence,
+    Finding,
+    IssueType,
+    Severity,
+)
+
+
+def _security_scan_result(file_path: str) -> AnalysisResult:
+    return AnalysisResult(
+        findings=[
+            Finding(
+                rule_id="SKY-L001",
+                issue_type=IssueType.SECURITY,
+                severity=Severity.HIGH,
+                message="Possible SQL injection",
+                location=CodeLocation(file=file_path, line=1),
+                confidence=Confidence.HIGH,
+            ),
+            Finding(
+                rule_id="SKY-L002",
+                issue_type=IssueType.SECURITY,
+                severity=Severity.HIGH,
+                message="Possible command injection",
+                location=CodeLocation(file=file_path, line=2),
+                confidence=Confidence.HIGH,
+            ),
+            Finding(
+                rule_id="SKY-L003",
+                issue_type=IssueType.SECURITY,
+                severity=Severity.HIGH,
+                message="Possible SSRF",
+                location=CodeLocation(file=file_path, line=3),
+                confidence=Confidence.HIGH,
+            ),
+        ],
+        files_analyzed=1,
+    )
+
+
+def _make_security_scan_analyzer(result: AnalysisResult) -> SkylosLLM:
+    analyzer = SkylosLLM(AnalyzerConfig(quiet=True))
+    analyzer.analyze_files = MagicMock(return_value=result)
+    return analyzer
 
 
 def test_agent_review_passes_exclude_folders():
@@ -289,3 +337,149 @@ def test_security_audit_passes_provider_and_base_url_into_analyzer_config(tmp_pa
     kwargs = mock_build.call_args.kwargs
     assert kwargs["provider"] == "anthropic"
     assert kwargs["base_url"] == "https://custom.endpoint"
+
+
+def test_security_audit_json_output_handles_supported_refuted_and_hypothesis(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text("a = 1\nb = 2\nc = 3\n", encoding="utf-8")
+    output = tmp_path / "security.json"
+
+    analyzer = _make_security_scan_analyzer(_security_scan_result(str(sample)))
+
+    def _review(findings):
+        findings[0].metadata["security_evidence"] = "review_supported"
+        findings[0].metadata["review_verdict"] = "SUPPORTED"
+        findings[0].metadata["review_reason"] = "source reaches string-built query"
+        findings[1].metadata["security_evidence"] = "refuted"
+        findings[1].metadata["review_verdict"] = "REFUTED"
+        findings[1].metadata["review_reason"] = "input is constrained"
+        findings[2].metadata["security_evidence"] = "hypothesis"
+        findings[2].metadata["review_verdict"] = "UNCERTAIN"
+        findings[2].metadata["review_reason"] = "not enough local context"
+        return {
+            "supported": 1,
+            "refuted": 1,
+            "undecided": 1,
+            "refuted_findings": [findings[1]],
+        }
+
+    with (
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch("skylos.cli._is_tty", return_value=False),
+        patch("skylos.cli.llm_estimate_cost", return_value=(1, 0.01)),
+        patch("skylos.cli.discover_source_files", return_value=[sample]),
+        patch("skylos.cli.SkylosLLM", return_value=analyzer),
+        patch(
+            "skylos.llm.security_verifier.SecurityVerifier.review_findings",
+            side_effect=_review,
+        ),
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "scan",
+                str(tmp_path),
+                "--security",
+                "--format",
+                "json",
+                "--output",
+                str(output),
+            ],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    findings = payload["findings"]
+    assert len(findings) == 2
+
+    by_rule = {finding["rule_id"]: finding for finding in findings}
+    assert "SKY-L002" not in by_rule
+    assert by_rule["SKY-L001"]["metadata"]["security_evidence"] == "review_supported"
+    assert by_rule["SKY-L001"]["metadata"]["review_verdict"] == "SUPPORTED"
+    assert by_rule["SKY-L001"]["metadata"]["ci_blocking"] is False
+    assert by_rule["SKY-L003"]["metadata"]["security_evidence"] == "hypothesis"
+    assert by_rule["SKY-L003"]["metadata"]["review_verdict"] == "UNCERTAIN"
+    assert by_rule["SKY-L003"]["metadata"]["ci_blocking"] is False
+
+
+def test_security_audit_sarif_output_handles_supported_refuted_and_hypothesis(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text("a = 1\nb = 2\nc = 3\n", encoding="utf-8")
+    output = tmp_path / "security.sarif"
+
+    analyzer = _make_security_scan_analyzer(_security_scan_result(str(sample)))
+
+    def _review(findings):
+        findings[0].metadata["security_evidence"] = "review_supported"
+        findings[0].metadata["review_verdict"] = "SUPPORTED"
+        findings[0].metadata["review_reason"] = "source reaches string-built query"
+        findings[1].metadata["security_evidence"] = "refuted"
+        findings[1].metadata["review_verdict"] = "REFUTED"
+        findings[1].metadata["review_reason"] = "input is constrained"
+        findings[2].metadata["security_evidence"] = "hypothesis"
+        findings[2].metadata["review_verdict"] = "UNCERTAIN"
+        findings[2].metadata["review_reason"] = "not enough local context"
+        return {
+            "supported": 1,
+            "refuted": 1,
+            "undecided": 1,
+            "refuted_findings": [findings[1]],
+        }
+
+    with (
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch("skylos.cli._is_tty", return_value=False),
+        patch("skylos.cli.llm_estimate_cost", return_value=(1, 0.01)),
+        patch("skylos.cli.discover_source_files", return_value=[sample]),
+        patch("skylos.cli.SkylosLLM", return_value=analyzer),
+        patch(
+            "skylos.llm.security_verifier.SecurityVerifier.review_findings",
+            side_effect=_review,
+        ),
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "scan",
+                str(tmp_path),
+                "--security",
+                "--format",
+                "sarif",
+                "--output",
+                str(output),
+            ],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    results = payload["runs"][0]["results"]
+    assert len(results) == 2
+
+    by_rule = {result["ruleId"]: result for result in results}
+    assert "SKY-L002" not in by_rule
+    assert by_rule["SKY-L001"]["properties"]["security_evidence"] == "review_supported"
+    assert by_rule["SKY-L001"]["properties"]["review_verdict"] == "SUPPORTED"
+    assert by_rule["SKY-L001"]["properties"]["ci_blocking"] is False
+    assert by_rule["SKY-L003"]["properties"]["security_evidence"] == "hypothesis"
+    assert by_rule["SKY-L003"]["properties"]["review_verdict"] == "UNCERTAIN"
+    assert by_rule["SKY-L003"]["properties"]["ci_blocking"] is False

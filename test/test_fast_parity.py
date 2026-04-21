@@ -505,6 +505,32 @@ class Result:
 
 
 class TestEndToEndParity:
+    def test_dead_private_helper_method_parity(self, tmp_path):
+        src = tmp_path / "helper.py"
+        src.write_text(
+            """
+class Helper:
+    def run(self):
+        return self._helper()
+
+    def _helper(self):
+        return 1
+""",
+            encoding="utf-8",
+        )
+
+        result_rust, result_py = _run_dead_code_parity_scans_in_subprocess(tmp_path)
+
+        def _names(result):
+            return {f["name"] for f in result.get("unused_functions", [])}
+
+        rust_names = _names(result_rust)
+        py_names = _names(result_py)
+
+        assert "Helper.run" in rust_names
+        assert "Helper._helper" in rust_names
+        assert rust_names == py_names
+
     def test_dead_code_findings_match(self):
         result_rust, result_py = _run_dead_code_parity_scans_in_subprocess(SKYLOS_PKG)
 

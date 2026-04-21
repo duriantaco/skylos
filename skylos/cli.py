@@ -1,4 +1,5 @@
 import argparse
+import importlib
 import json
 import sys
 import re
@@ -11,12 +12,6 @@ from skylos.constants import (
     parse_exclude_folders,
     DEFAULT_EXCLUDE_FOLDERS,
     get_non_library_dir_kind,
-)
-from skylos.codemods import (
-    remove_unused_import_cst,
-    remove_unused_function_cst,
-    comment_out_unused_import_cst,
-    comment_out_unused_function_cst,
 )
 from skylos.config import load_config
 from skylos.credentials import PROVIDERS
@@ -65,6 +60,26 @@ AGENT_PROVIDER_HELP = "Force LLM provider"
 AGENT_BASE_URL_HELP = "OpenAI-compatible base URL (Ollama/LM Studio/vLLM)"
 
 
+def _codemods_module():
+    return importlib.import_module("skylos.codemods")
+
+
+def remove_unused_import_cst(*args, **kwargs):
+    return _codemods_module().remove_unused_import_cst(*args, **kwargs)
+
+
+def remove_unused_function_cst(*args, **kwargs):
+    return _codemods_module().remove_unused_function_cst(*args, **kwargs)
+
+
+def comment_out_unused_import_cst(*args, **kwargs):
+    return _codemods_module().comment_out_unused_import_cst(*args, **kwargs)
+
+
+def comment_out_unused_function_cst(*args, **kwargs):
+    return _codemods_module().comment_out_unused_function_cst(*args, **kwargs)
+
+
 def run_analyze(*args, **kwargs):
     from skylos.analyzer import analyze as run_analyze_impl
 
@@ -93,6 +108,36 @@ def run_pipeline(*args, **kwargs):
     from skylos.pipeline import run_pipeline as run_pipeline_impl
 
     return run_pipeline_impl(*args, **kwargs)
+
+
+def review_security_scan_result(*args, **kwargs):
+    from skylos.llm.security_verifier import (
+        SecurityVerifier,
+        annotate_security_finding,
+        is_security_finding,
+    )
+
+    result = kwargs.pop("result")
+    findings = []
+    for finding in list(result.findings):
+        if is_security_finding(finding):
+            annotate_security_finding(finding)
+            findings.append(finding)
+
+    if not findings:
+        return result
+
+    try:
+        verifier = SecurityVerifier(*args, **kwargs)
+        review = verifier.review_findings(findings)
+        refuted_ids = {id(finding) for finding in review["refuted_findings"]}
+        if refuted_ids:
+            result.findings = [
+                finding for finding in result.findings if id(finding) not in refuted_ids
+            ]
+    except Exception:
+        return result
+    return result
 
 
 def discover_source_files(*args, **kwargs):
@@ -3715,10 +3760,22 @@ def main() -> None:
                 llm_result = analyzer.analyze_files(
                     files, issue_types=["security_audit"]
                 )
+                llm_result = review_security_scan_result(
+                    model=model,
+                    api_key=api_key,
+                    provider=provider,
+                    base_url=base_url,
+                    result=llm_result,
+                )
+                llm_result.summary = analyzer._generate_summary(llm_result)
                 analyzer.print_results(
                     llm_result, format=agent_args.format, output_file=agent_args.output
                 )
-                sys.exit(1 if llm_result.has_blockers else 0)
+                blockers_attr = getattr(llm_result, "has_blockers", False)
+                has_blockers = blockers_attr() if callable(blockers_attr) else bool(
+                    blockers_attr
+                )
+                sys.exit(1 if has_blockers else 0)
 
             changed_files = None
             if getattr(agent_args, "changed", False):

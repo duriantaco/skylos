@@ -12,8 +12,12 @@ class CodeGraph:
 
         self.taint_sources = {
             "request.args",
+            "request.args.get",
             "request.form",
+            "request.form.get",
             "request.json",
+            "request.json.get",
+            "request.get_json",
             "request.data",
             "input",
             "raw_input",
@@ -31,8 +35,10 @@ class CodeGraph:
             "exec",
             "subprocess.call",
             "subprocess.run",
+            "subprocess.check_output",
             "subprocess.Popen",
             "os.system",
+            "os.popen",
             "render_template_string",
             "open",
         }
@@ -369,6 +375,8 @@ class DataFlowVisitor(ast.NodeVisitor):
             for tgt in targets:
                 self.flows.append((src, tgt, node.lineno))
 
+        self.visit(node.value)
+
     def visit_AugAssign(self, node):
         if isinstance(node.target, ast.Name):
             target = node.target.id
@@ -377,9 +385,12 @@ class DataFlowVisitor(ast.NodeVisitor):
             for src in sources:
                 self.flows.append((src, target, node.lineno))
 
+        self.visit(node.value)
+
     def visit_Return(self, node):
         if node.value:
             self.returns.extend(self._extract_names(node.value))
+            self.visit(node.value)
 
     def visit_Call(self, node):
         call_name = self._get_call_name(node)
@@ -456,6 +467,14 @@ class DataFlowVisitor(ast.NodeVisitor):
                 names.add(chain)
 
         elif isinstance(node, ast.Call):
+            call_name = self._get_call_name(node)
+            if call_name in {
+                "request.args.get",
+                "request.form.get",
+                "request.json.get",
+                "request.get_json",
+            }:
+                names.add(call_name)
             for arg in node.args:
                 self._visit_for_names(arg, names)
             for keyword in node.keywords:
