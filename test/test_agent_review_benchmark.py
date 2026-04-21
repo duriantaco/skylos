@@ -1,8 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
 import skylos.agent_review_benchmark as benchmark
 from skylos.agent_review_benchmark import (
+    ALLOWED_SCAN_ISSUE_TYPES,
     AGENT_REVIEW_TAXONOMY,
     format_summary,
     load_manifest,
@@ -10,6 +12,7 @@ from skylos.agent_review_benchmark import (
     run_manifest,
     validate_manifest,
 )
+from skylos.llm.schemas import AnalysisResult
 
 
 MANIFEST_PATH = (
@@ -21,13 +24,15 @@ def test_checked_in_agent_review_manifest_validates():
     manifest = load_manifest(MANIFEST_PATH)
     cases = validate_manifest(manifest, MANIFEST_PATH)
 
-    assert len(cases) >= 13
+    assert len(cases) >= 15
     assert {case["id"] for case in cases} >= {
         "complexity-hotspot",
         "inconsistent-return",
         "empty-error-handler",
         "clean-module",
         "cross-file-sql-injection",
+        "flask-handler-security",
+        "flask-getter-shell",
         "debt-hotspot-service",
         "repo-clean-service",
     }
@@ -163,3 +168,78 @@ def test_prepare_case_scan_directory_selects_repo_files(tmp_path):
     assert "service.py" in reviewed
     assert prepared["full_file_review"] is True
     assert str(service.resolve()) in prepared["repo_context_map"]
+
+
+def test_scan_case_passes_issue_types_into_analyzer(tmp_path, monkeypatch):
+    fixture = tmp_path / "app.py"
+    fixture.write_text("def run_tool():\n    return 1\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        benchmark,
+        "prepare_case_scan",
+        lambda case_path, max_files=benchmark.DEFAULT_SCAN_MAX_FILES: {
+            "project_root": tmp_path,
+            "files": [fixture],
+            "repo_context_map": {},
+            "full_file_review": True,
+        },
+    )
+
+    seen: dict[str, object] = {}
+
+    class FakeAnalyzer:
+        def __init__(self, config):
+            seen["config"] = config
+
+        def analyze_files(self, files, defs_map=None, static_findings=None, issue_types=None):
+            seen["files"] = list(files)
+            seen["issue_types"] = list(issue_types or [])
+            return AnalysisResult(findings=[], summary="No issues found", tokens_used=0)
+
+    monkeypatch.setattr(benchmark, "SkylosLLM", FakeAnalyzer)
+
+    result = benchmark._scan_case(
+        fixture,
+        model="gpt-4.1",
+        api_key="KEY",
+        provider=None,
+        base_url=None,
+        case={"scan": {"issue_types": ["security_audit"]}},
+    )
+
+    assert result["finding_count"] == 0
+    assert seen["files"] == [fixture]
+    assert seen["issue_types"] == ["security_audit"]
+
+
+def test_validate_manifest_rejects_unknown_scan_issue_type(tmp_path):
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text("def demo():\n    return 1\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "bad-scan-mode",
+                "path": "fixture.py",
+                "taxonomy": ["security"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "test only",
+                },
+                "scan": {"issue_types": ["security_audit", "not_a_mode"]},
+                "expect": {"present": {}, "absent": {}},
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc:
+        validate_manifest(load_manifest(manifest_path), manifest_path)
+
+    assert "unsupported scan.issue_types value" in str(exc.value)
+    for allowed in ALLOWED_SCAN_ISSUE_TYPES:
+        assert allowed in str(exc.value)

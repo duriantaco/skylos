@@ -152,9 +152,14 @@ def get_non_library_dir_kind(p, project_root=None, extra_dirs=None) -> str | Non
         parts = str(p).replace("\\", "/").split("/")
 
     for part in parts:
-        kind = merged.get(part.lower())
+        lowered = part.lower()
+        kind = merged.get(lowered)
         if kind:
             return kind
+        if lowered.endswith("_benchmark") or lowered.endswith("_benchmarks"):
+            return "benchmark"
+        if lowered.endswith("_example") or lowered.endswith("_examples"):
+            return "example"
 
     basename = str(p).replace("\\", "/").rsplit("/", 1)[-1].lower()
     if (

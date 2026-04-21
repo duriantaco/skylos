@@ -392,6 +392,75 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_only(tmp_path):
     assert "No staged security, secrets, or quality issues" in printed
 
 
+def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "agent_review_benchmarks" / "fixtures").mkdir(parents=True)
+    bench_file = (
+        repo
+        / "agent_review_benchmarks"
+        / "fixtures"
+        / "demo"
+        / "app.py"
+    )
+    bench_file.parent.mkdir(parents=True)
+    bench_file.write_text("def demo():\n    pass\n", encoding="utf-8")
+
+    console = Mock()
+    staged = Mock(
+        stdout="agent_review_benchmarks/fixtures/demo/app.py\n",
+        returncode=0,
+    )
+    cached_diff = Mock(
+        stdout=(
+            "diff --git a/agent_review_benchmarks/fixtures/demo/app.py "
+            "b/agent_review_benchmarks/fixtures/demo/app.py\n"
+            "--- a/agent_review_benchmarks/fixtures/demo/app.py\n"
+            "+++ b/agent_review_benchmarks/fixtures/demo/app.py\n"
+            "@@ -1 +1 @@\n"
+        ),
+        returncode=0,
+    )
+    staged_blob = Mock(stdout="def demo():\n    pass\n", returncode=0)
+    seen_ignore_tests = []
+
+    def fake_scan_ctx(ctx, *, ignore_tests=True, **kwargs):
+        seen_ignore_tests.append(ignore_tests)
+        return []
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "diff", "--cached", "--name-only"]:
+            return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
+        if cmd == ["git", "show", ":agent_review_benchmarks/fixtures/demo/app.py"]:
+            return staged_blob
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    with (
+        patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
+        patch("skylos.cli.Console", return_value=console),
+        patch("skylos.cli.setup_logger"),
+        patch("skylos.cli.find_project_root", return_value=repo),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.parse_exclude_folders", return_value=set()),
+        patch("skylos.cli.subprocess.run", side_effect=fake_run),
+        patch("skylos.rules.secrets.scan_ctx", side_effect=fake_scan_ctx),
+        patch("skylos.baseline.load_baseline", return_value=None),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 0
+    assert seen_ignore_tests == [False]
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "reviewing 1 benchmark staged file(s)" in printed
+    assert "Checks secrets only." in printed
+    assert "Staged benchmark files are secrets-only in local commit checks." in printed
+    assert "No staged security, secrets, or quality issues" in printed
+
+
 def test_agent_pre_commit_scans_staged_test_files_for_secrets_alongside_source(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

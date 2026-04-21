@@ -43,3 +43,9 @@ The checked-in suite is intentionally difficult. It includes:
 - resource cleanup mistakes
 - duplicated branch conditions
 - tricky clean async/control-flow modules that should stay quiet
+- request-driven Flask SQL injection and shell-injection handlers
+- getter-based command injection with a nearby safe argv-based helper
+
+Benchmark cases can optionally declare `scan.issue_types`, which lets the suite
+exercise stricter review lanes such as `["security_audit"]` instead of the
+default mixed fast-review path.

@@ -186,6 +186,16 @@ def _scan_staged_secret_files(
     return findings
 
 
+def _join_phrase(parts: list[str]) -> str:
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return " ".join((parts[0], "and", parts[1]))
+    return f"{', '.join(parts[:-1])}, {' '.join(('and', parts[-1]))}"
+
+
 def _list_dirty_relevant_paths(project_root: Path, is_relevant_path) -> list[str]:
     result = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all"],
@@ -3239,15 +3249,20 @@ def main() -> None:
 
                 staged_source_files = []
                 staged_config_files = []
-                staged_test_files = []
+                staged_secret_only_files = {
+                    "test": [],
+                    "benchmark": [],
+                    "example": [],
+                }
                 analyzer_targets = set()
                 report_targets = set()
                 skipped_staged_files = 0
                 for relpath in staged_candidates:
                     relpath_obj = Path(relpath)
                     if relpath_obj.suffix.lower() in source_exts:
-                        if get_non_library_dir_kind(relpath_obj, project_root) == "test":
-                            staged_test_files.append(relpath)
+                        kind = get_non_library_dir_kind(relpath_obj, project_root)
+                        if kind in staged_secret_only_files:
+                            staged_secret_only_files[kind].append(relpath)
                             report_targets.add(
                                 str((project_root / relpath).resolve())
                             )
@@ -3284,7 +3299,13 @@ def main() -> None:
 
                 changed_ranges = _get_cached_changed_line_ranges(
                     project_root,
-                    staged_source_files + staged_config_files + staged_test_files,
+                    staged_source_files
+                    + staged_config_files
+                    + [
+                        relpath
+                        for paths in staged_secret_only_files.values()
+                        for relpath in paths
+                    ],
                 )
                 snapshot_dir = None
                 analysis_root = project_root
@@ -3341,17 +3362,25 @@ def main() -> None:
                             scope_parts.append(f"{len(staged_source_files)} source")
                         if staged_config_files:
                             scope_parts.append(f"{len(staged_config_files)} config")
-                        if staged_test_files:
-                            scope_parts.append(f"{len(staged_test_files)} test")
+                        for kind in ("test", "benchmark", "example"):
+                            paths = staged_secret_only_files[kind]
+                            if paths:
+                                scope_parts.append(f"{len(paths)} {kind}")
                         scope_desc = " and ".join(scope_parts)
                         skipped_note = (
                             f" Skipped {skipped_staged_files} unsupported staged file(s)."
                             if skipped_staged_files
                             else ""
                         )
+                        secret_only_kinds = [
+                            kind
+                            for kind in ("test", "benchmark", "example")
+                            if staged_secret_only_files[kind]
+                        ]
                         staged_test_note = (
-                            " Staged test files are secrets-only in local commit checks."
-                            if staged_test_files
+                            " Staged "
+                            f"{_join_phrase(secret_only_kinds)} files are secrets-only in local commit checks."
+                            if secret_only_kinds
                             else ""
                         )
                         baseline_note = (
@@ -3378,9 +3407,13 @@ def main() -> None:
                             f"{baseline_note}"
                         )
 
-                    staged_test_secrets = _scan_staged_secret_files(
+                    staged_secret_only_secrets = _scan_staged_secret_files(
                         project_root,
-                        staged_test_files,
+                        [
+                            relpath
+                            for paths in staged_secret_only_files.values()
+                            for relpath in paths
+                        ],
                         ignore_tests=False,
                     )
 
@@ -3390,7 +3423,7 @@ def main() -> None:
                             staged_config_files,
                             ignore_tests=True,
                         )
-                        secrets.extend(staged_test_secrets)
+                        secrets.extend(staged_secret_only_secrets)
                         result = {
                             "unused_functions": [],
                             "unused_imports": [],
@@ -3441,9 +3474,9 @@ def main() -> None:
                             if isinstance(raw_result, str)
                             else raw_result
                         )
-                        if staged_test_secrets:
+                        if staged_secret_only_secrets:
                             result["secrets"] = list(result.get("secrets") or [])
-                            result["secrets"].extend(staged_test_secrets)
+                            result["secrets"].extend(staged_secret_only_secrets)
                         result = _remap_precommit_result_files(
                             result, analysis_root, project_root
                         )
@@ -3480,7 +3513,13 @@ def main() -> None:
                     result,
                     project_root,
                     changed_files=(
-                        staged_source_files + staged_config_files + staged_test_files
+                        staged_source_files
+                        + staged_config_files
+                        + [
+                            relpath
+                            for paths in staged_secret_only_files.values()
+                            for relpath in paths
+                        ]
                     ),
                     include_dead_code=False,
                 )
