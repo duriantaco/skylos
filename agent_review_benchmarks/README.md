@@ -45,7 +45,33 @@ The checked-in suite is intentionally difficult. It includes:
 - tricky clean async/control-flow modules that should stay quiet
 - request-driven Flask SQL injection and shell-injection handlers
 - getter-based command injection with a nearby safe argv-based helper
+- request-driven Flask SSRF with a nearby constant-url health probe
+- request-driven path traversal with a nearby fixed-path file reader
+- upload-path traversal with a nearby basename-sanitized handler
+- JWT verification bypass with a nearby algorithm-pinned decode helper
+- FastAPI query-parameter SSRF with a nearby constant-url probe
+- open redirect with a nearby urlparse-guarded redirect helper
+- reflected XSS with a nearby escaped template path
 
 Benchmark cases can optionally declare `scan.issue_types`, which lets the suite
 exercise stricter review lanes such as `["security_audit"]` instead of the
 default mixed fast-review path.
+
+Security cases should also declare `security_classes` so the corpus scales by
+major vulnerability family rather than by an unbounded list of one-off case
+names. The current class buckets are:
+
+- `sql_injection`
+- `command_injection`
+- `ssrf`
+- `path_traversal`
+- `file_upload`
+- `auth_bypass`
+- `xss`
+- `open_redirect`
+- `deserialization`
+- `archive_extraction`
+- `secrets_exposure`
+
+This keeps the benchmark representative instead of exhaustive: we want a few
+strong vulnerable/safe cases per class, not a thousand disconnected examples.

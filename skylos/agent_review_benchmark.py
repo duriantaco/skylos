@@ -25,6 +25,20 @@ AGENT_REVIEW_TAXONOMY: dict[str, str] = {
     "technical_debt": "Repo hotspots with high fan-in, wide APIs, and thin resilience.",
 }
 
+SECURITY_BENCHMARK_CLASSES: dict[str, str] = {
+    "sql_injection": "Tainted input reaches SQL/query construction or execution.",
+    "command_injection": "Untrusted input reaches a shell or command-execution sink.",
+    "ssrf": "Untrusted input reaches an outbound HTTP or network fetch sink.",
+    "path_traversal": "Untrusted path segments reach filesystem read/write/delete sinks.",
+    "file_upload": "User-controlled uploads or filenames reach unsafe storage/serving paths.",
+    "auth_bypass": "Authentication or token verification is disabled or trivially bypassed.",
+    "xss": "Untrusted content reaches HTML/JS rendering without contextual escaping.",
+    "open_redirect": "Untrusted URL input reaches redirect/navigation sinks.",
+    "deserialization": "Untrusted data reaches unsafe deserialize/load primitives.",
+    "archive_extraction": "Archive extraction or unpack flows allow path escape or overwrite.",
+    "secrets_exposure": "Secrets, credentials, or agent config are exposed or mishandled.",
+}
+
 IMPORTANCE_WEIGHTS = {
     "low": 1.0,
     "medium": 1.0,
@@ -120,6 +134,26 @@ def validate_manifest(
                 f"agent review benchmark case {case_id} must declare source metadata"
             )
 
+        security_classes = case.get("security_classes", [])
+        if security_classes not in (None, []) and not isinstance(security_classes, list):
+            raise ValueError(
+                f"agent review benchmark case {case_id} security_classes must be a list when provided"
+            )
+        if isinstance(security_classes, list):
+            invalid_security_classes = [
+                label
+                for label in security_classes
+                if not isinstance(label, str)
+                or not label.strip()
+                or label not in SECURITY_BENCHMARK_CLASSES
+            ]
+            if invalid_security_classes:
+                allowed = ", ".join(sorted(SECURITY_BENCHMARK_CLASSES))
+                raise ValueError(
+                    f"agent review benchmark case {case_id} has unknown security class "
+                    f"'{invalid_security_classes[0]}'. Allowed: {allowed}"
+                )
+
         scan_cfg = case.get("scan", {})
         if scan_cfg and not isinstance(scan_cfg, dict):
             raise ValueError(
@@ -187,6 +221,12 @@ def validate_manifest(
                         raise ValueError(
                             f"agent review benchmark case {case_id} {mode_name}.{category} has invalid symbol"
                         )
+
+        security_present = (expect.get("present") or {}).get("security") or []
+        if "security" in taxonomy and security_present and not security_classes:
+            raise ValueError(
+                f"agent review benchmark case {case_id} must declare security_classes when it expects present security findings"
+            )
 
     return cases
 

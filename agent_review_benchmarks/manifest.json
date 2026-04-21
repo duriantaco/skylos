@@ -232,6 +232,7 @@
       "path": "fixtures/cross_file_sql_injection",
       "description": "A repo-style data flow should surface the query builder that interpolates untrusted input into SQL across files.",
       "taxonomy": ["security", "control_flow"],
+      "security_classes": ["sql_injection"],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/pallets/flask",
@@ -258,6 +259,7 @@
       "path": "fixtures/shell_hook_runner",
       "description": "A repo-style CLI hook runner should surface shell injection on the dynamic command path but not on the allowlisted path.",
       "taxonomy": ["security", "maintainability"],
+      "security_classes": ["command_injection"],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/pallets/click",
@@ -284,6 +286,7 @@
       "path": "fixtures/flask_handler_security/app.py",
       "description": "A Flask handler file should surface request-driven SQL injection and shell injection while keeping the parameterized handler quiet.",
       "taxonomy": ["security", "control_flow", "precision_guard"],
+      "security_classes": ["sql_injection", "command_injection"],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/pallets/flask",
@@ -310,6 +313,7 @@
       "path": "fixtures/flask_getter_shell/app.py",
       "description": "Getter-based request access should still surface command injection when shell=True is used, while the argv-based helper stays quiet.",
       "taxonomy": ["security", "precision_guard"],
+      "security_classes": ["command_injection"],
       "importance": "critical",
       "source": {
         "repo": "https://github.com/pallets/flask",
@@ -328,6 +332,195 @@
         },
         "absent": {
           "security": ["run_safe"]
+        }
+      }
+    },
+    {
+      "id": "flask-ssrf",
+      "path": "fixtures/flask_ssrf/app.py",
+      "description": "A Flask handler file should surface request-driven SSRF while keeping the constant-url health probe quiet.",
+      "taxonomy": ["security", "precision_guard"],
+      "security_classes": ["ssrf"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from request.args URL fetches that should stay visible in the security audit lane."
+      },
+      "scan": {
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 12.0
+      },
+      "expect": {
+        "present": {
+          "security": ["fetch_avatar"]
+        },
+        "absent": {
+          "security": ["fetch_health"]
+        }
+      }
+    },
+    {
+      "id": "flask-path-traversal",
+      "path": "fixtures/flask_path_traversal/app.py",
+      "description": "A Flask handler file should surface request-driven path traversal while keeping the fixed help-file reader quiet.",
+      "taxonomy": ["security", "precision_guard"],
+      "security_classes": ["path_traversal"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from user-controlled filename joins that should surface under the owning handler."
+      },
+      "scan": {
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 12.0
+      },
+      "expect": {
+        "present": {
+          "security": ["download_file"]
+        },
+        "absent": {
+          "security": ["read_help"]
+        }
+      }
+    },
+    {
+      "id": "flask-upload-traversal",
+      "path": "fixtures/flask_upload_traversal/app.py",
+      "description": "A Flask upload handler should surface request-driven filename traversal while keeping the basename-sanitized variant quiet.",
+      "taxonomy": ["security", "precision_guard"],
+      "security_classes": ["path_traversal", "file_upload"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from file upload handlers that join unsanitized user filenames into a server-side upload path."
+      },
+      "scan": {
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 12.0
+      },
+      "expect": {
+        "present": {
+          "security": ["upload_file"]
+        },
+        "absent": {
+          "security": ["upload_safe"]
+        }
+      }
+    },
+    {
+      "id": "jwt-insecure-decode",
+      "path": "fixtures/jwt_insecure_decode/auth.py",
+      "description": "A JWT helper should surface signature verification bypass while keeping the algorithm-pinned decode quiet.",
+      "taxonomy": ["security", "precision_guard"],
+      "security_classes": ["auth_bypass"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/jpadilla/pyjwt",
+        "license": "MIT",
+        "notes": "Distilled from unsafe decode helpers that disable signature verification."
+      },
+      "scan": {
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 10.0
+      },
+      "expect": {
+        "present": {
+          "security": ["decode_session"]
+        },
+        "absent": {
+          "security": ["decode_signed_session"]
+        }
+      }
+    },
+    {
+      "id": "fastapi-query-ssrf",
+      "path": "fixtures/fastapi_query_ssrf/app.py",
+      "description": "A FastAPI handler should surface query-parameter SSRF while keeping the constant health probe quiet.",
+      "taxonomy": ["security", "precision_guard"],
+      "security_classes": ["ssrf"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/fastapi/fastapi",
+        "license": "MIT",
+        "notes": "Distilled from FastAPI request-driven URL fetches that should remain visible in the security audit lane."
+      },
+      "scan": {
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 12.0
+      },
+      "expect": {
+        "present": {
+          "security": ["mirror_url"]
+        },
+        "absent": {
+          "security": ["fetch_status"]
+        }
+      }
+    },
+    {
+      "id": "flask-open-redirect",
+      "path": "fixtures/flask_open_redirect/app.py",
+      "description": "A Flask redirect handler should surface user-controlled redirect targets while keeping the urlparse-guarded variant quiet.",
+      "taxonomy": ["security", "precision_guard"],
+      "security_classes": ["open_redirect"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from redirect handlers that forward a request parameter into redirect() without validation."
+      },
+      "scan": {
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 12.0
+      },
+      "expect": {
+        "present": {
+          "security": ["bounce"]
+        },
+        "absent": {
+          "security": ["bounce_safe"]
+        }
+      }
+    },
+    {
+      "id": "flask-reflected-xss",
+      "path": "fixtures/flask_reflected_xss/app.py",
+      "description": "A Flask template handler should surface reflected XSS while keeping the escaped template variable path quiet.",
+      "taxonomy": ["security", "precision_guard"],
+      "security_classes": ["xss"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from inline template rendering that embeds unescaped user input into HTML."
+      },
+      "scan": {
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 12.0
+      },
+      "expect": {
+        "present": {
+          "security": ["profile"]
+        },
+        "absent": {
+          "security": ["safe_profile"]
         }
       }
     },
