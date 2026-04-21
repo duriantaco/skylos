@@ -149,7 +149,7 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 | **Audit risk and quality** | `skylos . -a` | Dead code, risky flows, secrets, quality, and SCA findings |
 | **Higher-confidence dead code** | `skylos . --trace` | Cross-reference static findings with runtime activity |
 | **Review only changed lines** | `skylos . --diff origin/main` | Focus findings on active work instead of legacy debt |
-| **Local staged hook** | `skylos agent pre-commit .` | Fast staged check for security, secrets, and quality |
+| **Local staged hook** | `skylos agent pre-commit .` | Fast staged check for security, secrets, and high-signal quality regressions |
 | **Gate locally** | `skylos --gate` | Fail on findings before code leaves your machine |
 | **Set up CI/CD** | `skylos cicd init` | Generate a GitHub Actions workflow in 30 seconds |
 | **Gate in CI** | `skylos cicd gate --input results.json` | Fail builds when issues cross your threshold |
@@ -161,7 +161,7 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 | **Detect Unused Pytest Fixtures** | `skylos . --pytest-fixtures` | Find unused `@pytest.fixture` across tests + conftest |
 | **AI-Powered Analysis** | `skylos agent scan . --model gpt-4.1` | Fast static + LLM file review with dead-code verification available on demand |
 | **Dead Code Verification** | `skylos agent verify . --model gpt-4.1` | Dead-code-only second pass: static findings reviewed by the LLM |
-| **Security Audit** | `skylos agent scan . --security` | Deep LLM security review with interactive file selection |
+| **Security Audit** | `skylos agent scan . --security` | Staged security audit with repo map, file facts, and verifier-backed evidence |
 | **Auto-Remediate** | `skylos agent remediate . --auto-pr` | Scan, fix, test, and open a PR — end to end |
 | **Code Cleanup** | `skylos agent remediate . --standards` | LLM-guided code quality cleanup against coding standards |
 | **PR Review** | `skylos agent scan . --changed` | Analyze only git-changed files |
@@ -172,6 +172,15 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 | **AI Defense: Defend** | `skylos defend .` | Check LLM integrations for missing guardrails |
 | **AI Defense: CI Gate** | `skylos defend . --fail-on critical --min-score 70` | Block PRs with critical AI defense gaps |
 | **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
+
+### Security Taskflow
+
+`skylos agent scan . --security` now runs as an internal security taskflow instead of a single opaque LLM pass:
+
+- `repo_map` derives repo context, entrypoint hints, trust boundaries, and framework-aware file facts such as sources, sinks, and guards
+- `audit` performs whole-file security review with those facts in prompt context
+- `verify` re-reviews surviving findings and records evidence such as `hypothesis`, `review_supported`, and `refuted`
+- a candidate ledger keeps stable finding IDs and stage transitions internally so later workflow/reporting layers can build on the same evidence model
 
 ## Technical Debt Hotspots
 
@@ -674,7 +683,7 @@ Use `--verification-mode production` if you want the cheaper deterministic-first
 | `skylos agent scan PATH --verify-dead-code` | Same review path, plus the slower dead-code verification pass |
 | `skylos agent scan PATH --no-fixes` | Same review pipeline, skip fix suggestions (faster) |
 | `skylos agent scan PATH --changed` | Analyze only git-changed files |
-| `skylos agent scan PATH --security` | Security-only LLM audit with interactive file selection |
+| `skylos agent scan PATH --security` | Security-only taskflow audit with repo map, file facts, and verifier-backed evidence |
 | `skylos agent verify PATH` | Dead-code-only verification pass over static findings |
 | `skylos agent verify PATH --fix --pr` | Verify, generate removal patches, create branch and commit |
 | `skylos agent remediate PATH` | End-to-end: scan, fix, test, and create PR |
@@ -937,7 +946,7 @@ Release roles, prerequisites, branch protection guidance, semantic type policy, 
 | `skylos agent verify <path>` | LLM-verify dead code (100% accuracy) |
 | `skylos agent remediate <path>` | Auto-fix issues and create PR |
 | `skylos agent watch <path>` | Continuous repo monitoring with optional triage pattern learning |
-| `skylos agent pre-commit <path>` | Staged local hook for security, secrets, and quality |
+| `skylos agent pre-commit <path>` | Staged local hook for security, secrets, and high-signal quality regressions |
 | `skylos agent triage` | Manage finding triage (dismiss/snooze) |
 
 ### CI/CD
@@ -1913,7 +1922,7 @@ Commands:
   verify              LLM-verify dead code findings
   remediate           Scan, fix, test, and create PR (end-to-end)
   watch               Continuous repo monitoring
-  pre-commit          Staged local hook for security, secrets, and quality
+  pre-commit          Staged local hook for security, secrets, and high-signal quality regressions
   triage              Manage finding triage (suggest/dismiss/snooze/restore)
   status              Show active-agent summary
   serve               Local HTTP API for editor integrations
@@ -1927,7 +1936,7 @@ Agent scan options:
   --min-confidence LEVEL       Filter: high, medium, low
   --no-fixes                   Skip fix suggestions (faster)
   --changed                    Analyze only git-changed files
-  --security                   Security-only LLM audit mode
+  --security                   Security-only taskflow audit with repo context and verifier-backed evidence
   -i, --interactive            Interactive file selection (with --security)
 
 Agent remediate options:
