@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -243,3 +244,75 @@ def test_run_security_taskflow_extracts_fastapi_facts_and_guards(tmp_path):
     assert "user-controlled sources: request.query_params.get" in context
     assert "dangerous sinks: httpx.get" in context
     assert "guards/sanitizers: urlparse" in context
+
+
+def test_run_security_taskflow_writes_run_artifacts(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("print('hi')\n", encoding="utf-8")
+    findings = [_security_finding(str(app), 1, "SKY-L001")]
+    analyzer = _FakeAnalyzer(AnalysisResult(findings=findings, files_analyzed=1))
+
+    def _review(found):
+        annotate_security_finding(
+            found[0],
+            evidence="review_supported",
+            review_verdict="SUPPORTED",
+            review_reason="confirmed",
+            needs_review=True,
+            ci_blocking=False,
+        )
+        return {
+            "supported": 1,
+            "refuted": 0,
+            "undecided": 0,
+            "refuted_findings": [],
+        }
+
+    with (
+        patch(
+            "skylos.llm.security_taskflow._generate_run_id",
+            return_value="run-test-123",
+        ),
+        patch(
+            "skylos.llm.security_taskflow.SecurityVerifier.review_findings",
+            side_effect=_review,
+        ),
+    ):
+        run = run_security_taskflow(
+            path=tmp_path,
+            files=[app],
+            analyzer=analyzer,
+            model="gpt-4.1",
+            api_key="k",
+        )
+
+    artifacts_dir = tmp_path / ".skylos" / "runs" / "run-test-123"
+    assert run.run_id == "run-test-123"
+    assert Path(run.artifacts_dir) == artifacts_dir
+
+    repo_map_payload = json.loads((artifacts_dir / "repo_map.json").read_text())
+    candidates_payload = json.loads((artifacts_dir / "candidates.json").read_text())
+    verified_payload = json.loads((artifacts_dir / "verified.json").read_text())
+    summary_payload = json.loads((artifacts_dir / "summary.json").read_text())
+
+    assert repo_map_payload["run_id"] == "run-test-123"
+    assert repo_map_payload["project_root"] == str(tmp_path.resolve())
+    assert repo_map_payload["repo_map"][0]["path"] == str(app.resolve())
+
+    assert candidates_payload["run_id"] == "run-test-123"
+    assert candidates_payload["candidate_count"] == 1
+    assert candidates_payload["candidates"][0]["rule_id"] == "SKY-L001"
+    assert candidates_payload["candidates"][0]["history"][1]["stage"] == VERIFY_STAGE
+
+    assert verified_payload["run_id"] == "run-test-123"
+    assert verified_payload["supported_count"] == 1
+    assert verified_payload["final_finding_count"] == 1
+    assert verified_payload["result"]["findings"][0]["metadata"]["review_verdict"] == "SUPPORTED"
+
+    assert summary_payload["run_id"] == "run-test-123"
+    assert summary_payload["artifacts_dir"] == str(artifacts_dir)
+    assert summary_payload["candidate_count"] == 1
+    assert summary_payload["supported_count"] == 1
+    assert summary_payload["final_finding_count"] == 1
+    assert summary_payload["stages"][-1]["name"] == FINALIZE_STAGE
+    assert summary_payload["artifact_write_error"] is None
