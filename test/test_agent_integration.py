@@ -404,7 +404,7 @@ def test_security_audit_skips_confirmation_without_tty(tmp_path):
     sample.write_text("print('hi')\n")
 
     fake_llm = MagicMock()
-    fake_llm.analyze_files.return_value = MagicMock(has_blockers=False)
+    fake_llm.analyze_files.return_value = AnalysisResult(findings=[], files_analyzed=1)
 
     with (
         patch(
@@ -434,7 +434,7 @@ def test_security_audit_uses_gitignore_aware_discovery(tmp_path):
     sample.write_text("print('hi')\n")
 
     fake_llm = MagicMock()
-    fake_llm.analyze_files.return_value = MagicMock(has_blockers=False)
+    fake_llm.analyze_files.return_value = AnalysisResult(findings=[], files_analyzed=1)
 
     with (
         patch(
@@ -465,12 +465,44 @@ def test_security_audit_uses_gitignore_aware_discovery(tmp_path):
     )
 
 
+def test_security_audit_uses_security_taskflow_runner(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text("print('hi')\n")
+
+    fake_llm = MagicMock()
+    fake_taskflow = MagicMock(result=AnalysisResult(findings=[], files_analyzed=1))
+
+    with (
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch("skylos.cli._is_tty", return_value=False),
+        patch("skylos.cli.llm_estimate_cost", return_value=(1, 0.01)),
+        patch("skylos.cli.SkylosLLM", return_value=fake_llm),
+        patch("skylos.cli.run_security_taskflow", return_value=fake_taskflow) as mock_run,
+        patch(
+            "sys.argv",
+            ["skylos", "agent", "scan", str(tmp_path), "--security"],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+    mock_run.assert_called_once()
+    assert mock_run.call_args.kwargs["files"] == [sample]
+    fake_llm.analyze_files.assert_not_called()
+
+
 def test_security_audit_passes_provider_and_base_url_into_analyzer_config(tmp_path):
     sample = tmp_path / "sample.py"
     sample.write_text("print('hi')\n")
 
     fake_llm = MagicMock()
-    fake_llm.analyze_files.return_value = MagicMock(has_blockers=False)
+    fake_llm.analyze_files.return_value = AnalysisResult(findings=[], files_analyzed=1)
     sentinel_config = object()
 
     with (
