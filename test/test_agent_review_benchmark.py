@@ -6,6 +6,7 @@ import skylos.agent_review_benchmark as benchmark
 from skylos.agent_review_benchmark import (
     ALLOWED_SCAN_ISSUE_TYPES,
     AGENT_REVIEW_TAXONOMY,
+    SECURITY_BENCHMARK_CLASSES,
     format_summary,
     load_manifest,
     prepare_case_scan,
@@ -24,7 +25,7 @@ def test_checked_in_agent_review_manifest_validates():
     manifest = load_manifest(MANIFEST_PATH)
     cases = validate_manifest(manifest, MANIFEST_PATH)
 
-    assert len(cases) >= 15
+    assert len(cases) >= 22
     assert {case["id"] for case in cases} >= {
         "complexity-hotspot",
         "inconsistent-return",
@@ -33,12 +34,35 @@ def test_checked_in_agent_review_manifest_validates():
         "cross-file-sql-injection",
         "flask-handler-security",
         "flask-getter-shell",
+        "flask-ssrf",
+        "flask-path-traversal",
+        "flask-upload-traversal",
+        "jwt-insecure-decode",
+        "fastapi-query-ssrf",
+        "flask-open-redirect",
+        "flask-reflected-xss",
         "debt-hotspot-service",
         "repo-clean-service",
     }
 
     labels = {label for case in cases for label in case["taxonomy"]}
     assert labels <= set(AGENT_REVIEW_TAXONOMY)
+    security_labels = {
+        label
+        for case in cases
+        for label in case.get("security_classes", [])
+    }
+    assert security_labels <= set(SECURITY_BENCHMARK_CLASSES)
+    assert security_labels >= {
+        "sql_injection",
+        "command_injection",
+        "ssrf",
+        "path_traversal",
+        "file_upload",
+        "auth_bypass",
+        "open_redirect",
+        "xss",
+    }
 
 
 def test_agent_review_runner_reports_symbol_and_budget_failures(tmp_path, monkeypatch):
@@ -243,3 +267,66 @@ def test_validate_manifest_rejects_unknown_scan_issue_type(tmp_path):
     assert "unsupported scan.issue_types value" in str(exc.value)
     for allowed in ALLOWED_SCAN_ISSUE_TYPES:
         assert allowed in str(exc.value)
+
+
+def test_validate_manifest_rejects_unknown_security_class(tmp_path):
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text("def demo(user_input):\n    return user_input\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "bad-security-class",
+                "path": "fixture.py",
+                "taxonomy": ["security"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "test only",
+                },
+                "security_classes": ["not_a_class"],
+                "expect": {"present": {"security": ["demo"]}, "absent": {}},
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc:
+        validate_manifest(load_manifest(manifest_path), manifest_path)
+
+    assert "unknown security class" in str(exc.value)
+    for allowed in SECURITY_BENCHMARK_CLASSES:
+        assert allowed in str(exc.value)
+
+
+def test_validate_manifest_requires_security_class_for_positive_security_case(tmp_path):
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text("def demo(user_input):\n    return user_input\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "missing-security-class",
+                "path": "fixture.py",
+                "taxonomy": ["security"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "test only",
+                },
+                "expect": {"present": {"security": ["demo"]}, "absent": {}},
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc:
+        validate_manifest(load_manifest(manifest_path), manifest_path)
+
+    assert "must declare security_classes" in str(exc.value)
