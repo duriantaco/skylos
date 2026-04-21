@@ -182,6 +182,62 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 - `verify` re-reviews surviving findings and records evidence such as `hypothesis`, `review_supported`, and `refuted`
 - a candidate ledger keeps stable finding IDs and stage transitions internally so later workflow/reporting layers can build on the same evidence model
 
+#### Example
+
+```python
+from fastapi import FastAPI, Request
+from urllib.parse import urlparse
+import httpx
+
+app = FastAPI()
+
+@app.get("/proxy")
+async def proxy(request: Request):
+    target = request.query_params.get("url")
+    return httpx.get(target).text
+
+@app.get("/safe")
+async def safe_proxy(request: Request):
+    target = request.query_params.get("url")
+    if urlparse(target).netloc not in {"internal.local"}:
+        target = "https://internal.local/health"
+    return httpx.get(target).text
+```
+
+```bash
+skylos agent scan . --security --format json -o security.json
+```
+
+```json
+{
+  "findings": [
+    {
+      "rule_id": "SKY-D216",
+      "severity": "critical",
+      "message": "Possible SSRF: tainted URL passed to HTTP client.",
+      "location": {
+        "file": "app.py",
+        "line": 10
+      },
+      "symbol": "proxy",
+      "metadata": {
+        "security_evidence": "review_supported",
+        "review_verdict": "SUPPORTED",
+        "review_reason": "challenge pass resolved the SSRF flow"
+      }
+    }
+  ],
+  "summary": "Found 1 issues: 1 critical"
+}
+```
+
+The same run also writes taskflow artifacts under `.skylos/runs/<run-id>/`:
+
+- `repo_map.json`
+- `candidates.json`
+- `verified.json`
+- `summary.json`
+
 ## Technical Debt Hotspots
 
 Use `skylos debt <path>` to rank structural debt hotspots without collapsing everything into a single urgency number.
