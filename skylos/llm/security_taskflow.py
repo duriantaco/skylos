@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .repo_activation import FileActivation, build_repo_activation_index
 from .schemas import AnalysisResult
@@ -34,6 +37,12 @@ MAX_SECURITY_FACTS = 6
 FLASK_FRAMEWORK = "flask"
 FASTAPI_FRAMEWORK = "fastapi"
 DJANGO_FRAMEWORK = "django"
+SKYLOS_DIRNAME = ".skylos"
+RUNS_DIRNAME = "runs"
+REPO_MAP_FILENAME = "repo_map.json"
+CANDIDATES_FILENAME = "candidates.json"
+VERIFIED_FILENAME = "verified.json"
+SUMMARY_FILENAME = "summary.json"
 
 
 @dataclass(frozen=True)
@@ -116,8 +125,10 @@ class SecurityFindingCandidate:
 
 @dataclass
 class SecurityTaskflowRun:
+    run_id: str
     project_root: str
     scanned_files: list[str]
+    artifacts_dir: str
     repo_context_map: dict[str, str] = field(default_factory=dict)
     repo_map: list[SecurityRepoNode] = field(default_factory=list)
     preferred_audit_targets: list[str] = field(default_factory=list)
@@ -131,6 +142,7 @@ class SecurityTaskflowRun:
     final_finding_count: int = 0
     candidate_ledger: list[SecurityFindingCandidate] = field(default_factory=list)
     result: AnalysisResult | None = None
+    artifact_write_error: str | None = None
 
     def add_stage(self, name: str, **details: Any) -> None:
         self.stages.append(
@@ -139,78 +151,100 @@ class SecurityTaskflowRun:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "run_id": self.run_id,
             "project_root": self.project_root,
+            "artifacts_dir": self.artifacts_dir,
             "scanned_files": list(self.scanned_files),
             "preferred_audit_targets": list(self.preferred_audit_targets),
             "repo_context_map": dict(self.repo_context_map),
-            "repo_map": [
-                {
-                    "path": node.path,
-                    "review_score": node.review_score,
-                    "prefer_full_file_review": node.prefer_full_file_review,
-                    "framework": node.framework,
-                    "entrypoint_reasons": list(node.entrypoint_reasons),
-                    "registration_hints": list(node.registration_hints),
-                    "security_hints": list(node.security_hints),
-                    "sources": list(node.sources),
-                    "sinks": list(node.sinks),
-                    "guards": list(node.guards),
-                }
-                for node in self.repo_map
-            ],
-            "entry_points": [
-                {"path": item.path, "reasons": list(item.reasons)}
-                for item in self.entry_points
-            ],
+            "repo_map": [_repo_node_dict(node) for node in self.repo_map],
+            "entry_points": [_entry_point_dict(item) for item in self.entry_points],
             "trust_boundaries": [
-                {"path": item.path, "reason": item.reason}
-                for item in self.trust_boundaries
+                _trust_boundary_dict(item) for item in self.trust_boundaries
             ],
-            "stages": [
-                {
-                    "name": stage.name,
-                    "status": stage.status,
-                    "details": dict(stage.details),
-                }
-                for stage in self.stages
-            ],
+            "stages": [_stage_dict(stage) for stage in self.stages],
             "candidate_count": self.candidate_count,
             "supported_count": self.supported_count,
             "refuted_count": self.refuted_count,
             "hypothesis_count": self.hypothesis_count,
             "final_finding_count": self.final_finding_count,
             "candidate_ledger": [
-                {
-                    "candidate_id": candidate.candidate_id,
-                    "fingerprint": candidate.fingerprint,
-                    "file": candidate.file,
-                    "line": candidate.line,
-                    "rule_id": candidate.rule_id,
-                    "message": candidate.message,
-                    "symbol": candidate.symbol,
-                    "state": candidate.state,
-                    "evidence": candidate.evidence,
-                    "review_verdict": candidate.review_verdict,
-                    "review_reason": candidate.review_reason,
-                    "history": [
-                        {
-                            "stage": event.stage,
-                            "state": event.state,
-                            "evidence": event.evidence,
-                            "review_verdict": event.review_verdict,
-                            "review_reason": event.review_reason,
-                        }
-                        for event in candidate.history
-                    ],
-                }
-                for candidate in self.candidate_ledger
+                _candidate_dict(candidate) for candidate in self.candidate_ledger
             ],
+            "artifact_write_error": self.artifact_write_error,
         }
 
 
 def _project_root(path: str | Path) -> Path:
     resolved = Path(path).resolve()
     return resolved.parent if resolved.is_file() else resolved
+
+
+def _generate_run_id() -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{timestamp}-{uuid4().hex[:8]}"
+
+
+def _artifacts_dir(project_root: Path, run_id: str) -> Path:
+    return project_root / SKYLOS_DIRNAME / RUNS_DIRNAME / run_id
+
+
+def _repo_node_dict(node: SecurityRepoNode) -> dict[str, Any]:
+    return {
+        "path": node.path,
+        "review_score": node.review_score,
+        "prefer_full_file_review": node.prefer_full_file_review,
+        "framework": node.framework,
+        "entrypoint_reasons": list(node.entrypoint_reasons),
+        "registration_hints": list(node.registration_hints),
+        "security_hints": list(node.security_hints),
+        "sources": list(node.sources),
+        "sinks": list(node.sinks),
+        "guards": list(node.guards),
+    }
+
+
+def _entry_point_dict(entry_point: SecurityEntrypoint) -> dict[str, Any]:
+    return {"path": entry_point.path, "reasons": list(entry_point.reasons)}
+
+
+def _trust_boundary_dict(boundary: SecurityTrustBoundary) -> dict[str, Any]:
+    return {"path": boundary.path, "reason": boundary.reason}
+
+
+def _stage_dict(stage: SecurityTaskStage) -> dict[str, Any]:
+    return {
+        "name": stage.name,
+        "status": stage.status,
+        "details": dict(stage.details),
+    }
+
+
+def _candidate_event_dict(event: SecurityCandidateEvent) -> dict[str, Any]:
+    return {
+        "stage": event.stage,
+        "state": event.state,
+        "evidence": event.evidence,
+        "review_verdict": event.review_verdict,
+        "review_reason": event.review_reason,
+    }
+
+
+def _candidate_dict(candidate: SecurityFindingCandidate) -> dict[str, Any]:
+    return {
+        "candidate_id": candidate.candidate_id,
+        "fingerprint": candidate.fingerprint,
+        "file": candidate.file,
+        "line": candidate.line,
+        "rule_id": candidate.rule_id,
+        "message": candidate.message,
+        "symbol": candidate.symbol,
+        "state": candidate.state,
+        "evidence": candidate.evidence,
+        "review_verdict": candidate.review_verdict,
+        "review_reason": candidate.review_reason,
+        "history": [_candidate_event_dict(event) for event in candidate.history],
+    }
 
 
 def _repo_node(meta: FileActivation) -> SecurityRepoNode:
@@ -579,6 +613,89 @@ def _review_result_payload(
     }
 
 
+def _write_json_payload(file_path: Path, payload: dict[str, Any]) -> None:
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _repo_map_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
+    return {
+        "run_id": run.run_id,
+        "project_root": run.project_root,
+        "scanned_files": list(run.scanned_files),
+        "preferred_audit_targets": list(run.preferred_audit_targets),
+        "repo_context_map": dict(run.repo_context_map),
+        "repo_map": [_repo_node_dict(node) for node in run.repo_map],
+        "entry_points": [_entry_point_dict(item) for item in run.entry_points],
+        "trust_boundaries": [
+            _trust_boundary_dict(item) for item in run.trust_boundaries
+        ],
+    }
+
+
+def _candidate_ledger_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
+    return {
+        "run_id": run.run_id,
+        "candidate_count": run.candidate_count,
+        "candidates": [_candidate_dict(candidate) for candidate in run.candidate_ledger],
+    }
+
+
+def _verified_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
+    result_payload = run.result.to_dict() if run.result is not None else AnalysisResult().to_dict()
+    return {
+        "run_id": run.run_id,
+        "supported_count": run.supported_count,
+        "refuted_count": run.refuted_count,
+        "hypothesis_count": run.hypothesis_count,
+        "final_finding_count": run.final_finding_count,
+        "result": result_payload,
+    }
+
+
+def _summary_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
+    return {
+        "run_id": run.run_id,
+        "project_root": run.project_root,
+        "artifacts_dir": run.artifacts_dir,
+        "scanned_files": list(run.scanned_files),
+        "candidate_count": run.candidate_count,
+        "supported_count": run.supported_count,
+        "refuted_count": run.refuted_count,
+        "hypothesis_count": run.hypothesis_count,
+        "final_finding_count": run.final_finding_count,
+        "summary": str(run.result.summary) if run.result is not None else "",
+        "stages": [_stage_dict(stage) for stage in run.stages],
+        "artifact_write_error": run.artifact_write_error,
+    }
+
+
+def _record_artifact_error(run: SecurityTaskflowRun, filename: str, exc: OSError) -> None:
+    message = f"{filename}: {exc}"
+    if run.artifact_write_error:
+        run.artifact_write_error = f"{run.artifact_write_error}; {message}"
+    else:
+        run.artifact_write_error = message
+
+
+def _write_run_artifacts(run: SecurityTaskflowRun) -> None:
+    artifact_dir = Path(run.artifacts_dir)
+    payloads = (
+        (REPO_MAP_FILENAME, _repo_map_payload(run)),
+        (CANDIDATES_FILENAME, _candidate_ledger_payload(run)),
+        (VERIFIED_FILENAME, _verified_payload(run)),
+        (SUMMARY_FILENAME, _summary_payload(run)),
+    )
+    for filename, payload in payloads:
+        try:
+            _write_json_payload(artifact_dir / filename, payload)
+        except OSError as exc:
+            _record_artifact_error(run, filename, exc)
+
+
 def review_security_analysis_result(
     *,
     result: AnalysisResult,
@@ -611,6 +728,7 @@ def _build_taskflow_run(
     files: list[Path],
 ) -> SecurityTaskflowRun:
     normalized_files = [str(Path(file_path).resolve()) for file_path in files]
+    run_id = _generate_run_id()
     (
         repo_context_map,
         repo_map,
@@ -619,8 +737,10 @@ def _build_taskflow_run(
         trust_boundaries,
     ) = _build_repo_map(project_root, files)
     run = SecurityTaskflowRun(
+        run_id=run_id,
         project_root=str(project_root),
         scanned_files=normalized_files,
+        artifacts_dir=str(_artifacts_dir(project_root, run_id)),
         repo_context_map=repo_context_map,
         repo_map=repo_map,
         preferred_audit_targets=preferred_targets,
@@ -660,7 +780,6 @@ def _apply_review_to_run(run: SecurityTaskflowRun, review: dict[str, Any]) -> No
         refuted=run.refuted_count,
         hypothesis=run.hypothesis_count,
     )
-    run.add_stage(FINALIZE_STAGE, findings=run.final_finding_count)
 
 
 def run_security_taskflow(
@@ -686,5 +805,12 @@ def run_security_taskflow(
         base_url=base_url,
     )
     _apply_review_to_run(run, review)
-    run.result.summary = analyzer._generate_summary(run.result)
+    run.result.summary = str(analyzer._generate_summary(run.result))
+    run.add_stage(
+        FINALIZE_STAGE,
+        findings=run.final_finding_count,
+        run_id=run.run_id,
+        artifacts_dir=run.artifacts_dir,
+    )
+    _write_run_artifacts(run)
     return run
