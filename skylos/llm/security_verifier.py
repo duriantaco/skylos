@@ -25,6 +25,8 @@ SUPPORTED_COUNT = "supported"
 REFUTED_COUNT = "refuted"
 UNDECIDED_COUNT = "undecided"
 REFUTED_FINDINGS_KEY = "refuted_findings"
+REVIEW_MODE = "review"
+CHALLENGE_MODE = "challenge"
 
 REVIEW_DECISION_SCHEMA = {
     "type": "object",
@@ -223,6 +225,19 @@ class SecurityVerifier:
     def review_findings(
         self, findings: list[Finding | dict[str, Any]]
     ) -> dict[str, Any]:
+        return self._review_findings(findings, mode=REVIEW_MODE)
+
+    def challenge_findings(
+        self, findings: list[Finding | dict[str, Any]]
+    ) -> dict[str, Any]:
+        return self._review_findings(findings, mode=CHALLENGE_MODE)
+
+    def _review_findings(
+        self,
+        findings: list[Finding | dict[str, Any]],
+        *,
+        mode: str,
+    ) -> dict[str, Any]:
         reviewable = [finding for finding in findings if is_security_finding(finding)]
         for finding in reviewable:
             annotate_security_finding(finding)
@@ -231,7 +246,7 @@ class SecurityVerifier:
         result = _new_review_result(len(reviewable), len(reviewed))
         grouped = _group_findings_by_file(reviewed)
         for file_path, file_findings in grouped.items():
-            self._review_file(file_path, file_findings, result)
+            self._review_file(file_path, file_findings, result, mode=mode)
         return result
 
     def _review_file(
@@ -239,6 +254,8 @@ class SecurityVerifier:
         file_path: str,
         findings: list[Finding | dict[str, Any]],
         result: dict[str, Any],
+        *,
+        mode: str,
     ) -> None:
         source = _read_source(file_path)
         if source is None:
@@ -246,7 +263,13 @@ class SecurityVerifier:
             return
 
         for batch in _iter_batches(findings, self.batch_size):
-            self._review_batch_into_result(batch, source, file_path, result)
+            self._review_batch_into_result(
+                batch,
+                source,
+                file_path,
+                result,
+                mode=mode,
+            )
 
     def _review_batch_into_result(
         self,
@@ -254,8 +277,10 @@ class SecurityVerifier:
         source: str,
         file_path: str,
         result: dict[str, Any],
+        *,
+        mode: str,
     ) -> None:
-        decisions = self._review_batch(findings, source, file_path)
+        decisions = self._review_batch(findings, source, file_path, mode=mode)
         if not decisions:
             result[UNDECIDED_COUNT] += len(findings)
             return
@@ -305,9 +330,16 @@ class SecurityVerifier:
         findings: list[Finding | dict[str, Any]],
         source: str,
         file_path: str,
+        *,
+        mode: str,
     ) -> list[dict[str, str]]:
-        user = self._build_review_prompt(findings, source.splitlines(), file_path)
-        response = self._request_review(user)
+        user = self._build_review_prompt(
+            findings,
+            source.splitlines(),
+            file_path,
+            mode=mode,
+        )
+        response = self._request_review(user, mode=mode)
         return self._normalize_decisions(response, len(findings))
 
     def _build_review_prompt(
@@ -315,21 +347,37 @@ class SecurityVerifier:
         findings: list[Finding | dict[str, Any]],
         lines: list[str],
         file_path: str,
+        *,
+        mode: str,
     ) -> str:
         blocks = [
             self._build_review_block(index, finding, lines)
             for index, finding in enumerate(findings, start=1)
         ]
+        opening = self._prompt_opening(mode, len(findings), file_path)
         return "\n\n".join(
             [
-                f"Review {len(findings)} candidate security finding(s) from {file_path}.",
-                "Each candidate is independent. Ignore any prior scan confidence.",
+                opening,
+                self._prompt_guidance(mode),
                 "",
                 "\n\n".join(blocks),
                 "",
                 'Return JSON with shape: {"reviews":[{"id":1,"verdict":"SUPPORTED|REFUTED|UNCERTAIN","reason":"brief reason"}]}',
             ]
         )
+
+    def _prompt_opening(self, mode: str, count: int, file_path: str) -> str:
+        if mode == CHALLENGE_MODE:
+            return f"Challenge {count} uncertain security finding(s) from {file_path}."
+        return f"Review {count} candidate security finding(s) from {file_path}."
+
+    def _prompt_guidance(self, mode: str) -> str:
+        if mode == CHALLENGE_MODE:
+            return (
+                "Each candidate was previously left uncertain. Re-check the shown code and "
+                "commit to SUPPORTED or REFUTED when the local context is enough."
+            )
+        return "Each candidate is independent. Ignore any prior scan confidence."
 
     def _build_review_block(
         self, index: int, finding: Finding | dict[str, Any], lines: list[str]
@@ -358,8 +406,30 @@ class SecurityVerifier:
         ]
         return "\n".join(context_lines)
 
-    def _request_review(self, user: str) -> str | None:
-        system = """You are Skylos Security Verifier.
+    def _request_review(self, user: str, *, mode: str) -> str | None:
+        system = self._system_prompt(mode)
+        try:
+            return self.get_adapter().complete(
+                system,
+                user,
+                response_format=REVIEW_DECISION_FORMAT,
+            )
+        except Exception:
+            return None
+
+    def _system_prompt(self, mode: str) -> str:
+        if mode == CHALLENGE_MODE:
+            return """You are Skylos Security Challenger.
+Your job is to re-check previously uncertain security findings using only the code context provided.
+
+Verdicts:
+- SUPPORTED: the finding is plausibly real based on the shown code
+- REFUTED: the finding is not supported by the shown code, or the code appears safe
+- UNCERTAIN: the context is still insufficient to decide
+
+Try to resolve uncertainty when the shown code is enough. Use UNCERTAIN only if the evidence genuinely remains incomplete.
+Respond with JSON only."""
+        return """You are Skylos Security Verifier.
 Your job is to re-review candidate security findings using only the code context provided.
 
 Verdicts:
@@ -369,14 +439,6 @@ Verdicts:
 
 Be conservative. If the context is incomplete, return UNCERTAIN.
 Respond with JSON only."""
-        try:
-            return self.get_adapter().complete(
-                system,
-                user,
-                response_format=REVIEW_DECISION_FORMAT,
-            )
-        except Exception:
-            return None
 
     def _normalize_decisions(
         self, response: str | None, expected_count: int

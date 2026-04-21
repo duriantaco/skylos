@@ -566,6 +566,17 @@ def test_security_audit_json_output_handles_supported_refuted_and_hypothesis(tmp
             "refuted_findings": [findings[1]],
         }
 
+    def _challenge(findings):
+        findings[0].metadata["security_evidence"] = "hypothesis"
+        findings[0].metadata["review_verdict"] = "UNCERTAIN"
+        findings[0].metadata["review_reason"] = "still not enough local context"
+        return {
+            "supported": 0,
+            "refuted": 0,
+            "undecided": len(findings),
+            "refuted_findings": [],
+        }
+
     with (
         patch(
             "skylos.cli.resolve_llm_runtime",
@@ -578,6 +589,10 @@ def test_security_audit_json_output_handles_supported_refuted_and_hypothesis(tmp
         patch(
             "skylos.llm.security_verifier.SecurityVerifier.review_findings",
             side_effect=_review,
+        ),
+        patch(
+            "skylos.llm.security_verifier.SecurityVerifier.challenge_findings",
+            side_effect=_challenge,
         ),
         patch(
             "sys.argv",
@@ -639,6 +654,17 @@ def test_security_audit_sarif_output_handles_supported_refuted_and_hypothesis(tm
             "refuted_findings": [findings[1]],
         }
 
+    def _challenge(findings):
+        findings[0].metadata["security_evidence"] = "hypothesis"
+        findings[0].metadata["review_verdict"] = "UNCERTAIN"
+        findings[0].metadata["review_reason"] = "still not enough local context"
+        return {
+            "supported": 0,
+            "refuted": 0,
+            "undecided": len(findings),
+            "refuted_findings": [],
+        }
+
     with (
         patch(
             "skylos.cli.resolve_llm_runtime",
@@ -651,6 +677,10 @@ def test_security_audit_sarif_output_handles_supported_refuted_and_hypothesis(tm
         patch(
             "skylos.llm.security_verifier.SecurityVerifier.review_findings",
             side_effect=_review,
+        ),
+        patch(
+            "skylos.llm.security_verifier.SecurityVerifier.challenge_findings",
+            side_effect=_challenge,
         ),
         patch(
             "sys.argv",
@@ -686,6 +716,82 @@ def test_security_audit_sarif_output_handles_supported_refuted_and_hypothesis(tm
     assert by_rule["SKY-L003"]["properties"]["security_evidence"] == "hypothesis"
     assert by_rule["SKY-L003"]["properties"]["review_verdict"] == "UNCERTAIN"
     assert by_rule["SKY-L003"]["properties"]["ci_blocking"] is False
+
+
+def test_security_audit_json_output_challenge_pass_resolves_uncertain_finding(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text("a = 1\nb = 2\nc = 3\n", encoding="utf-8")
+    output = tmp_path / "security.json"
+
+    analyzer = _make_security_scan_analyzer(_security_scan_result(str(sample)))
+
+    def _review(findings):
+        findings[0].metadata["security_evidence"] = "hypothesis"
+        findings[0].metadata["review_verdict"] = "UNCERTAIN"
+        findings[0].metadata["review_reason"] = "not enough local context"
+        return {
+            "supported": 0,
+            "refuted": 0,
+            "undecided": 1,
+            "refuted_findings": [],
+        }
+
+    def _challenge(findings):
+        findings[0].metadata["security_evidence"] = "review_supported"
+        findings[0].metadata["review_verdict"] = "SUPPORTED"
+        findings[0].metadata["review_reason"] = "challenge resolved the local data flow"
+        return {
+            "supported": 1,
+            "refuted": 0,
+            "undecided": 0,
+            "refuted_findings": [],
+        }
+
+    with (
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch("skylos.cli._is_tty", return_value=False),
+        patch("skylos.cli.llm_estimate_cost", return_value=(1, 0.01)),
+        patch("skylos.cli.discover_source_files", return_value=[sample]),
+        patch("skylos.cli.SkylosLLM", return_value=analyzer),
+        patch(
+            "skylos.llm.security_verifier.SecurityVerifier.review_findings",
+            side_effect=_review,
+        ),
+        patch(
+            "skylos.llm.security_verifier.SecurityVerifier.challenge_findings",
+            side_effect=_challenge,
+        ),
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "scan",
+                str(tmp_path),
+                "--security",
+                "--format",
+                "json",
+                "--output",
+                str(output),
+            ],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    findings = payload["findings"]
+    assert len(findings) == 3
+    by_rule = {finding["rule_id"]: finding for finding in findings}
+    assert by_rule["SKY-L001"]["metadata"]["security_evidence"] == "review_supported"
+    assert by_rule["SKY-L001"]["metadata"]["review_verdict"] == "SUPPORTED"
 
 
 def test_security_audit_json_output_reports_vulnerable_repo_and_skips_safe_file(
