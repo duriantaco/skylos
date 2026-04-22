@@ -8,6 +8,7 @@ What it checks:
 - whether clean files stay quiet
 - whether review latency stays within a reasonable budget
 - how many Skylos API tokens the fast review lane spends per case
+- how security coverage is landing by benchmark class
 - how many Codex tokens are consumed during the head-to-head compare run
 
 What it does not check:
@@ -52,6 +53,8 @@ The checked-in suite is intentionally difficult. It includes:
 - FastAPI query-parameter SSRF with a nearby constant-url probe
 - open redirect with a nearby urlparse-guarded redirect helper
 - reflected XSS with a nearby escaped template path
+- unsafe pickle deserialization with a nearby JSON-only handler
+- unsafe tar extraction with a nearby member-validated extraction path
 
 Benchmark cases can optionally declare `scan.issue_types`, which lets the suite
 exercise stricter review lanes such as `["security_audit"]` instead of the

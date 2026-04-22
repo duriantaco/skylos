@@ -25,7 +25,7 @@ def test_checked_in_agent_review_manifest_validates():
     manifest = load_manifest(MANIFEST_PATH)
     cases = validate_manifest(manifest, MANIFEST_PATH)
 
-    assert len(cases) >= 22
+    assert len(cases) >= 24
     assert {case["id"] for case in cases} >= {
         "complexity-hotspot",
         "inconsistent-return",
@@ -41,6 +41,8 @@ def test_checked_in_agent_review_manifest_validates():
         "fastapi-query-ssrf",
         "flask-open-redirect",
         "flask-reflected-xss",
+        "flask-pickle-deserialization",
+        "flask-archive-extraction",
         "debt-hotspot-service",
         "repo-clean-service",
     }
@@ -62,6 +64,8 @@ def test_checked_in_agent_review_manifest_validates():
         "auth_bypass",
         "open_redirect",
         "xss",
+        "deserialization",
+        "archive_extraction",
     }
 
 
@@ -118,6 +122,7 @@ def test_agent_review_runner_reports_symbol_and_budget_failures(tmp_path, monkey
 def test_format_summary_includes_agent_metrics():
     summary = {
         "case_count": 1,
+        "pass_count": 1,
         "failure_count": 0,
         "model": "gpt-4.1",
         "total_elapsed_seconds": 0.25,
@@ -129,10 +134,21 @@ def test_format_summary_includes_agent_metrics():
         },
         "total_tokens_used": 99,
         "avg_tokens_per_case": 99.0,
+        "security_scorecard": {
+            "sql_injection": {
+                "description": SECURITY_BENCHMARK_CLASSES["sql_injection"],
+                "case_count": 1,
+                "pass_count": 1,
+                "failed_case_count": 0,
+                "pass_rate": 1.0,
+                "weighted_score": 100.0,
+            }
+        },
         "cases": [
             {
                 "id": "empty-error-handler",
                 "importance": "critical",
+                "security_classes": [],
                 "elapsed_seconds": 0.25,
                 "scores": {"overall_score": 100.0},
                 "tokens_used": 99,
@@ -147,9 +163,192 @@ def test_format_summary_includes_agent_metrics():
     assert "Agent review benchmark score: 100.0/100" in rendered
     assert "Agent review benchmark model: gpt-4.1" in rendered
     assert "Agent review benchmark total tokens: 99" in rendered
+    assert "sql_injection: cases=1 pass=1 fail=0 score=100.0" in rendered
     assert "symbols: parse_payload" in rendered
 
 
+def test_run_manifest_builds_security_scorecard(tmp_path, monkeypatch):
+    first = tmp_path / "pickle_case.py"
+    second = tmp_path / "archive_case.py"
+    first.write_text("def restore_session():\n    return 1\n", encoding="utf-8")
+    second.write_text("def extract_bundle():\n    return 1\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "pickle-case",
+                "path": "pickle_case.py",
+                "taxonomy": ["security"],
+                "security_classes": ["deserialization", "archive_extraction"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "test only",
+                },
+                "budget": {"max_seconds": 1.0},
+                "expect": {"present": {"security": ["restore_session"]}, "absent": {}},
+            },
+            {
+                "id": "archive-case",
+                "path": "archive_case.py",
+                "taxonomy": ["security"],
+                "security_classes": ["archive_extraction"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "test only",
+                },
+                "budget": {"max_seconds": 1.0},
+                "expect": {"present": {"security": ["extract_bundle"]}, "absent": {}},
+            },
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(
+        benchmark,
+        "_scan_case",
+        lambda case_path, model, api_key, provider, base_url, case=None: {
+            "finding_count": 1 if case["id"] == "pickle-case" else 0,
+            "symbols": ["restore_session"] if case["id"] == "pickle-case" else [],
+            "summary": "ok",
+            "tokens_used": 11,
+            "reviewed_files": [str(case_path)],
+        },
+    )
+
+    ticks = iter([0.0, 0.1, 0.2, 0.3])
+    monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
+
+    summary = run_manifest(manifest_path, model="gpt-4.1", api_key="KEY")
+
+    assert summary["pass_count"] == 1
+    assert summary["failure_count"] == 1
+    assert summary["security_scorecard"]["deserialization"] == {
+        "description": SECURITY_BENCHMARK_CLASSES["deserialization"],
+        "case_count": 1,
+        "pass_count": 1,
+        "failed_case_count": 0,
+        "pass_rate": 1.0,
+        "weighted_score": 100.0,
+    }
+    assert summary["security_scorecard"]["archive_extraction"] == {
+        "description": SECURITY_BENCHMARK_CLASSES["archive_extraction"],
+        "case_count": 2,
+        "pass_count": 1,
+        "failed_case_count": 1,
+        "pass_rate": 0.5,
+        "weighted_score": 75.0,
+    }
+
+
+def test_precision_guard_allows_expected_positive_findings(tmp_path, monkeypatch):
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text("def restore_session():\n    return 1\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "mixed-security-case",
+                "path": "fixture.py",
+                "taxonomy": ["security", "precision_guard"],
+                "security_classes": ["deserialization"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "test only",
+                },
+                "budget": {"max_seconds": 1.0},
+                "expect": {
+                    "present": {"security": ["restore_session"]},
+                    "absent": {"security": ["restore_session_safe"]},
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(
+        benchmark,
+        "_scan_case",
+        lambda case_path, model, api_key, provider, base_url, case=None: {
+            "finding_count": 1,
+            "symbols": ["restore_session"],
+            "summary": "Found 1 issue",
+            "tokens_used": 13,
+            "reviewed_files": [str(case_path)],
+        },
+    )
+
+    ticks = iter([0.0, 0.1])
+    monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
+
+    summary = run_manifest(manifest_path, model="gpt-4.1", api_key="KEY")
+
+    assert summary["pass_count"] == 1
+    assert summary["failure_count"] == 0
+    assert summary["cases"][0]["failures"] == []
+    assert summary["cases"][0]["scores"]["overall_score"] == 100.0
+
+
+def test_precision_guard_still_rejects_findings_for_clean_case(tmp_path, monkeypatch):
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text("def normalize_name():\n    return 'ok'\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "clean-precision-case",
+                "path": "fixture.py",
+                "taxonomy": ["precision_guard"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "test only",
+                },
+                "budget": {"max_seconds": 1.0},
+                "expect": {
+                    "present": {},
+                    "absent": {"quality": ["normalize_name"]},
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(
+        benchmark,
+        "_scan_case",
+        lambda case_path, model, api_key, provider, base_url, case=None: {
+            "finding_count": 1,
+            "symbols": ["normalize_name"],
+            "summary": "Found 1 issue",
+            "tokens_used": 13,
+            "reviewed_files": [str(case_path)],
+        },
+    )
+
+    ticks = iter([0.0, 0.1])
+    monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
+
+    summary = run_manifest(manifest_path, model="gpt-4.1", api_key="KEY")
+
+    assert summary["pass_count"] == 0
+    assert summary["failure_count"] == 2
+    assert {failure["mode"] for failure in summary["cases"][0]["failures"]} == {
+        "absent",
+        "precision_guard",
+    }
 def test_prepare_case_scan_directory_selects_repo_files(tmp_path):
     proj = tmp_path / "case"
     tests = proj / "tests"
