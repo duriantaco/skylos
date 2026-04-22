@@ -40,16 +40,39 @@ jobs:
           fail_ci_if_error: false
           flags: ${{ matrix.install_target == '.[llm]' && 'llm-extra' || 'default-install' }}
 
+  docker_smoke:
+    name: docker-smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t skylos:test .
+
+      - name: Check CLI version
+        run: docker run --rm skylos:test --version
+
+      - name: Run fixture scan
+        run: |
+          docker run --rm \
+            -v "$PWD/quality_benchmarks/fixtures/argument_overload:/work" \
+            -w /work \
+            skylos:test \
+            . --json --no-provenance > /tmp/skylos-docker-smoke.json
+          grep -q '"unused_functions"' /tmp/skylos-docker-smoke.json
+
   test:
     name: test
     runs-on: ubuntu-latest
-    needs: [test_matrix]
+    needs: [test_matrix, docker_smoke]
     if: ${{ always() }}
 
     steps:
       - name: Require matrix success
         run: |
-          if [ "${{ needs.test_matrix.result }}" != "success" ]; then
+          if [ "${{ needs.test_matrix.result }}" != "success" ] || [ "${{ needs.docker_smoke.result }}" != "success" ]; then
             echo "test_matrix result: ${{ needs.test_matrix.result }}"
+            echo "docker_smoke result: ${{ needs.docker_smoke.result }}"
             exit 1
           fi
