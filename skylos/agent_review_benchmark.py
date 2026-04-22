@@ -331,6 +331,17 @@ def _count_expectations(expectations: dict[str, list[str]]) -> int:
     return sum(len(items) for items in expectations.values())
 
 
+def _dedupe_labels(labels: list[str] | None) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for label in labels or []:
+        if label in seen:
+            continue
+        seen.add(label)
+        ordered.append(label)
+    return ordered
+
+
 def _evaluate_expectations(case: dict[str, Any], symbols: set[str], finding_count: int):
     expect = case.get("expect", {})
     present = expect.get("present", {}) or {}
@@ -461,6 +472,7 @@ def run_case(
         "id": case["id"],
         "importance": case.get("importance", "high"),
         "taxonomy": list(case.get("taxonomy") or []),
+        "security_classes": _dedupe_labels(case.get("security_classes")),
         "elapsed_seconds": round(elapsed_seconds, 4),
         "finding_count": scan_result["finding_count"],
         "symbols": scan_result["symbols"],
@@ -477,6 +489,55 @@ def run_case(
         ),
         "failures": [failure.to_dict() for failure in failures],
     }
+
+
+def _build_security_scorecard(
+    case_results: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    totals: dict[str, dict[str, float]] = {}
+
+    for case in case_results:
+        labels = _dedupe_labels(case.get("security_classes"))
+        if not labels:
+            continue
+
+        weight = IMPORTANCE_WEIGHTS[case["importance"]]
+        case_failed = 1.0 if case.get("failures") else 0.0
+        case_passed = 0.0 if case_failed else 1.0
+
+        for label in labels:
+            bucket = totals.setdefault(
+                label,
+                {
+                    "case_count": 0.0,
+                    "pass_count": 0.0,
+                    "failed_case_count": 0.0,
+                    "weight": 0.0,
+                    "overall_score": 0.0,
+                },
+            )
+            bucket["case_count"] += 1
+            bucket["pass_count"] += case_passed
+            bucket["failed_case_count"] += case_failed
+            bucket["weight"] += weight
+            bucket["overall_score"] += case["scores"]["overall_score"] * weight
+
+    scorecard = {}
+    for label, bucket in sorted(totals.items()):
+        case_count = int(bucket["case_count"])
+        pass_count = int(bucket["pass_count"])
+        scorecard[label] = {
+            "description": SECURITY_BENCHMARK_CLASSES[label],
+            "case_count": case_count,
+            "pass_count": pass_count,
+            "failed_case_count": int(bucket["failed_case_count"]),
+            "pass_rate": round(pass_count / case_count, 4) if case_count else 0.0,
+            "weighted_score": round(
+                bucket["overall_score"] / (bucket["weight"] or 1.0), 2
+            ),
+        }
+
+    return scorecard
 
 
 def run_manifest(
@@ -535,10 +596,12 @@ def run_manifest(
             "overall_score": 0.0,
         }
 
+    pass_count = sum(1 for case in case_results if not case["failures"])
     return {
         "manifest": str(Path(manifest_path).resolve()),
         "model": model,
         "case_count": len(case_results),
+        "pass_count": pass_count,
         "failure_count": sum(len(case["failures"]) for case in case_results),
         "total_elapsed_seconds": round(total_elapsed, 4),
         "total_tokens_used": total_tokens,
@@ -546,6 +609,7 @@ def run_manifest(
         if case_results
         else 0.0,
         "scores": scores,
+        "security_scorecard": _build_security_scorecard(case_results),
         "cases": case_results,
     }
 
@@ -566,6 +630,13 @@ def format_summary(summary: dict[str, Any]) -> str:
         f"Agent review benchmark avg tokens/case: {summary.get('avg_tokens_per_case', 0.0)}",
         f"Agent review benchmark total time: {summary['total_elapsed_seconds']:.4f}s",
     ]
+    if summary.get("security_scorecard"):
+        lines.append("Security classes:")
+        for label, bucket in sorted(summary["security_scorecard"].items()):
+            lines.append(
+                f"  {label}: cases={bucket['case_count']} pass={bucket['pass_count']} "
+                f"fail={bucket['failed_case_count']} score={bucket['weighted_score']}"
+            )
     for case in summary["cases"]:
         status = "PASS" if not case["failures"] else "FAIL"
         lines.append(
