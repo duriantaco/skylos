@@ -525,6 +525,60 @@
       }
     },
     {
+      "id": "flask-pickle-deserialization",
+      "path": "fixtures/flask_pickle_deserialization/app.py",
+      "description": "A Flask handler should surface unsafe pickle deserialization on request data while keeping the JSON-only path quiet.",
+      "taxonomy": ["security", "precision_guard"],
+      "security_classes": ["deserialization"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from request handlers that feed user-controlled bytes into pickle.loads."
+      },
+      "scan": {
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 12.0
+      },
+      "expect": {
+        "present": {
+          "security": ["restore_session"]
+        },
+        "absent": {
+          "security": ["restore_session_safe"]
+        }
+      }
+    },
+    {
+      "id": "flask-archive-extraction",
+      "path": "fixtures/flask_archive_extraction/app.py",
+      "description": "A Flask upload handler should surface unsafe archive extraction while keeping the validated member path quiet.",
+      "taxonomy": ["security", "precision_guard"],
+      "security_classes": ["archive_extraction"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from upload handlers that unpack tar archives without validating member paths."
+      },
+      "scan": {
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 12.0
+      },
+      "expect": {
+        "present": {
+          "security": ["extract_bundle"]
+        },
+        "absent": {
+          "security": ["extract_bundle_safe"]
+        }
+      }
+    },
+    {
       "id": "debt-hotspot-service",
       "path": "fixtures/debt_hotspot_service",
       "description": "A central service module imported by multiple entry surfaces should be surfaced as a debt hotspot when it is wide, branch-heavy, and swallows failures.",

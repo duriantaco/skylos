@@ -69,6 +69,9 @@ def _score(
 ):
     present = _expected_symbols(case, "present")
     absent = _expected_symbols(case, "absent")
+    is_clean_precision_guard = "precision_guard" in (case.get("taxonomy") or []) and not (
+        present
+    )
 
     present_total = len(present)
     present_matched = len(found_symbols & present)
@@ -76,7 +79,7 @@ def _score(
     absent_total = len(absent)
     absent_violations = len(found_symbols & absent)
 
-    if "precision_guard" in (case.get("taxonomy") or []):
+    if is_clean_precision_guard:
         absent_total += 1
         if finding_count > 0:
             absent_violations += 1
