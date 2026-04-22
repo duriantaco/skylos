@@ -1,5 +1,33 @@
 ## Changelog
 
+## [4.5.0](https://github.com/duriantaco/skylos/compare/v4.4.0...v4.5.0) (2026-04-22)
+
+
+### Features
+
+* **docker:** publish official GHCR image for Skylos CLI ([#230](https://github.com/duriantaco/skylos/issues/230)) ([0300f87](https://github.com/duriantaco/skylos/commit/0300f87997c0497f23b368a2f2ccbc609dab199e))
+* **docker:** publish official GHCR image for Skylos CLI ([#231](https://github.com/duriantaco/skylos/issues/231)) ([96cc2b7](https://github.com/duriantaco/skylos/commit/96cc2b795c102fb29de55072b8097c8966d22f46))
+* **security:** add challenge pass for uncertain findings ([#226](https://github.com/duriantaco/skylos/issues/226)) ([a2b2927](https://github.com/duriantaco/skylos/commit/a2b2927e6a7c019fcadc0bf41e41cb4027a69153))
+* **security:** add review evidence for llm security findings ([#218](https://github.com/duriantaco/skylos/issues/218)) ([1670cde](https://github.com/duriantaco/skylos/commit/1670cde0cec58f8e8cc3a4645ec993f1fb877718))
+* **security:** add security taskflow foundation and relax local pre-commit gate ([#221](https://github.com/duriantaco/skylos/issues/221)) ([1fa404b](https://github.com/duriantaco/skylos/commit/1fa404bc3f82d218f62b12336481be0b586844b5))
+* **security:** add taskflow candidate ledger ([#222](https://github.com/duriantaco/skylos/issues/222)) ([2459fb6](https://github.com/duriantaco/skylos/commit/2459fb6e214c8482d5af89967ff87706cbc986a1))
+* **security:** add taskflow file facts ([#223](https://github.com/duriantaco/skylos/issues/223)) ([78cc52c](https://github.com/duriantaco/skylos/commit/78cc52c6f7ff5de971359bd44f0c7db463573c35))
+* **security:** persist taskflow run artifacts ([#225](https://github.com/duriantaco/skylos/issues/225)) ([3338eef](https://github.com/duriantaco/skylos/commit/3338eef2564d7dddece9761344381d797d23cb06))
+
+
+### Bug Fixes
+
+* **cli:** improve pre-commit UX and harden large upload flow ([#210](https://github.com/duriantaco/skylos/issues/210)) ([30fa686](https://github.com/duriantaco/skylos/commit/30fa686fd051ee39ca3049386d36ad75c23a290a))
+* **cli:** reduce false positives in local pre-commit gating ([#213](https://github.com/duriantaco/skylos/issues/213)) ([e0b3a3e](https://github.com/duriantaco/skylos/commit/e0b3a3e4d562a655e2333e67bd4d31d9ad5b760c))
+* **cli:** reduce false positives in local pre-commit gating ([#214](https://github.com/duriantaco/skylos/issues/214)) ([5959fa8](https://github.com/duriantaco/skylos/commit/5959fa8ce3ad4d5e1937aebada649886e51abb59))
+* **cli:** scan staged test files for secrets only ([#215](https://github.com/duriantaco/skylos/issues/215)) ([9b1f199](https://github.com/duriantaco/skylos/commit/9b1f199f800144f60a2c976c442dcb1887a6763a))
+
+
+### Documentation
+
+* **readme:** add security taskflow example ([#227](https://github.com/duriantaco/skylos/issues/227)) ([6434f2a](https://github.com/duriantaco/skylos/commit/6434f2aa5b38537e5e11174e326f59a9fc4ec02e))
+* **readme:** update security taskflow docs ([#224](https://github.com/duriantaco/skylos/issues/224)) ([251fe4d](https://github.com/duriantaco/skylos/commit/251fe4d52aec576e87f96189ce4d938e6fe766bd))
+
 ## [4.4.0](https://github.com/duriantaco/skylos/compare/v4.3.2...v4.4.0) (2026-04-16)
 
 
