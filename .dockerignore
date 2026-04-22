@@ -3,10 +3,17 @@
 __pycache__
 *.pyc
 node_modules
+.github
 .pytest_cache
 .mypy_cache
 .ruff_cache
 skylos-demo
+agent_review_benchmarks
+corpus
+editors
+quality_benchmarks
+rust
+test
 assets
 manual
 *.egg-info
