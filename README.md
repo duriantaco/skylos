@@ -476,14 +476,15 @@ pip install .
 
 ### Container Image
 
-The release workflow also publishes a first-party multi-arch CLI image to GHCR.
+Skylos publishes an official first-party multi-arch CLI image to GHCR:
+`ghcr.io/duriantaco/skylos`
 
 ```bash
 # floating tag for the latest stable release
 docker pull ghcr.io/duriantaco/skylos:latest
 
-# exact release tag
-docker pull ghcr.io/duriantaco/skylos:4.4.0
+# exact release tag (replace X.Y.Z with a real release like 4.5.0)
+docker pull ghcr.io/duriantaco/skylos:X.Y.Z
 
 # check the CLI inside the container
 docker run --rm ghcr.io/duriantaco/skylos:latest --version
@@ -497,6 +498,7 @@ docker run --rm \
 ```
 
 Stable releases publish `latest`, `major`, `major.minor`, and full `major.minor.patch` tags. Pre-releases publish the exact version tag only.
+For CI, prefer an exact `X.Y.Z` tag instead of `latest`.
 
 ### 🎯 What's Next?
 
@@ -952,6 +954,7 @@ Skylos uses a split release workflow:
 - `.github/workflows/release-please.yml` updates `CHANGELOG.md`, bumps `pyproject.toml`, and opens or updates the release PR.
 - `.github/workflows/publish.yml` publishes from an immutable release tag, pushing both PyPI artifacts and the multi-arch GHCR image `ghcr.io/duriantaco/skylos`.
 - For protected repos, prefer a dedicated `RELEASE_PLEASE_TOKEN` secret so bot-authored release PRs can satisfy required PR checks.
+- On the first GHCR publish, make the `skylos` package public if anonymous pulls return `403 Forbidden`.
 
 ### First-time bootstrap (already configured in this repo)
 
@@ -995,7 +998,16 @@ docker run --rm \
   . --json --no-provenance
 ```
 
-If you need to manually run the fallback publish workflow, use **Actions -> Build and publish -> Run workflow** and set `ref` to the exact release tag (for example `v4.2.1`). Do not use a branch name.
+If you need to manually run the fallback publish workflow, use **Actions -> Build and publish -> Run workflow** and set `ref` to the exact release tag (for example `vX.Y.Z`). Do not use a branch name.
+
+After the first successful GHCR publish, verify the package is publicly pullable:
+
+```bash
+docker pull ghcr.io/duriantaco/skylos:latest
+docker run --rm ghcr.io/duriantaco/skylos:latest --version
+```
+
+If `docker pull` fails with `403 Forbidden`, go to **GitHub -> Packages -> skylos -> Package settings** and change visibility to **Public**.
 
 ### PR title types used for release semantics
 
