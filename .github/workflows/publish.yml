@@ -10,6 +10,10 @@ on:
         description: "Release tag to build and publish (for example v4.2.1)"
         required: true
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -77,3 +81,88 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "packaging>=24.2" "twine>=6.1.0"
           python -m twine upload --skip-existing dist/*
+
+  container:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ghcr.io/duriantaco/skylos
+      RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
+      - name: Derive image metadata
+        id: meta
+        shell: bash
+        run: |
+          ref="${RELEASE_REF#refs/tags/}"
+          version="${ref#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+            IFS='.' read -r major minor patch <<< "$version"
+            echo "major=$major" >> "$GITHUB_OUTPUT"
+            echo "minor=$minor" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build smoke image
+        run: docker build -t skylos:smoke .
+
+      - name: Smoke test CLI entrypoint
+        run: docker run --rm skylos:smoke --version
+
+      - name: Smoke test real scan
+        run: |
+          docker run --rm \
+            -v "$PWD/quality_benchmarks/fixtures/argument_overload:/work" \
+            -w /work \
+            skylos:smoke \
+            . --json --no-provenance > /tmp/skylos-smoke.json
+          grep -q '"unused_functions"' /tmp/skylos-smoke.json
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        shell: bash
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          STABLE: ${{ steps.meta.outputs.stable }}
+          MAJOR: ${{ steps.meta.outputs.major }}
+          MINOR: ${{ steps.meta.outputs.minor }}
+        run: |
+          revision="$(git rev-parse HEAD)"
+          tags=(
+            "--tag" "${IMAGE_NAME}:${VERSION}"
+          )
+          if [[ "$STABLE" == "true" ]]; then
+            tags+=(
+              "--tag" "${IMAGE_NAME}:${MAJOR}.${MINOR}"
+              "--tag" "${IMAGE_NAME}:${MAJOR}"
+              "--tag" "${IMAGE_NAME}:latest"
+            )
+          fi
+
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            "${tags[@]}" \
+            --label "org.opencontainers.image.title=skylos" \
+            --label "org.opencontainers.image.description=Open-source AI code security and static analysis for Python, TypeScript, and Go." \
+            --label "org.opencontainers.image.url=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.revision=${revision}" \
+            --push \
+            .
