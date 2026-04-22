@@ -474,6 +474,30 @@ pip install .
 >
 > **`skylos[llm]`** installs `litellm` for LLM-powered features (`skylos agent verify`, `skylos agent remediate`, `--llm`). Core static analysis works without it.
 
+### Container Image
+
+The release workflow also publishes a first-party multi-arch CLI image to GHCR.
+
+```bash
+# floating tag for the latest stable release
+docker pull ghcr.io/duriantaco/skylos:latest
+
+# exact release tag
+docker pull ghcr.io/duriantaco/skylos:4.4.0
+
+# check the CLI inside the container
+docker run --rm ghcr.io/duriantaco/skylos:latest --version
+
+# scan the current repository from a container
+docker run --rm \
+  -v "$PWD":/work \
+  -w /work \
+  ghcr.io/duriantaco/skylos:latest \
+  . --json --no-provenance
+```
+
+Stable releases publish `latest`, `major`, `major.minor`, and full `major.minor.patch` tags. Pre-releases publish the exact version tag only.
+
 ### 🎯 What's Next?
 
 After installation, we recommend:
@@ -926,7 +950,7 @@ For the default `skylos cicd init` workflow, you do not need any Skylos-specific
 Skylos uses a split release workflow:
 
 - `.github/workflows/release-please.yml` updates `CHANGELOG.md`, bumps `pyproject.toml`, and opens or updates the release PR.
-- `.github/workflows/publish.yml` publishes from an immutable release tag, either automatically on `v*` tag pushes or manually via `workflow_dispatch`.
+- `.github/workflows/publish.yml` publishes from an immutable release tag, pushing both PyPI artifacts and the multi-arch GHCR image `ghcr.io/duriantaco/skylos`.
 - For protected repos, prefer a dedicated `RELEASE_PLEASE_TOKEN` secret so bot-authored release PRs can satisfy required PR checks.
 
 ### First-time bootstrap (already configured in this repo)
@@ -946,6 +970,7 @@ This prevents backfilling old history and starts automated releases from the cur
 4. Release Please creates the GitHub release tag (`vX.Y.Z`).
 5. The tag push triggers `.github/workflows/publish.yml`.
 6. Skylos builds and publishes to PyPI from that tag using `PYPI_TOKEN`.
+7. The same workflow smoke-tests and pushes `ghcr.io/duriantaco/skylos` for `linux/amd64` and `linux/arm64`.
 
 ### Manual build/publish checks
 
@@ -956,6 +981,18 @@ python -m pip install --upgrade pip
 python -m pip install "build>=1.2.2" "twine>=6.1.0"
 python -m build --sdist --wheel --outdir dist
 python -m twine check dist/*
+```
+
+If you need to validate the container locally before a release:
+
+```bash
+docker build -t skylos:local .
+docker run --rm skylos:local --version
+docker run --rm \
+  -v "$PWD/quality_benchmarks/fixtures/argument_overload:/work" \
+  -w /work \
+  skylos:local \
+  . --json --no-provenance
 ```
 
 If you need to manually run the fallback publish workflow, use **Actions -> Build and publish -> Run workflow** and set `ref` to the exact release tag (for example `v4.2.1`). Do not use a branch name.
