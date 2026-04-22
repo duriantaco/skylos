@@ -246,6 +246,109 @@ def test_run_manifest_builds_security_scorecard(tmp_path, monkeypatch):
     }
 
 
+def test_precision_guard_allows_expected_positive_findings(tmp_path, monkeypatch):
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text("def restore_session():\n    return 1\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "mixed-security-case",
+                "path": "fixture.py",
+                "taxonomy": ["security", "precision_guard"],
+                "security_classes": ["deserialization"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "test only",
+                },
+                "budget": {"max_seconds": 1.0},
+                "expect": {
+                    "present": {"security": ["restore_session"]},
+                    "absent": {"security": ["restore_session_safe"]},
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(
+        benchmark,
+        "_scan_case",
+        lambda case_path, model, api_key, provider, base_url, case=None: {
+            "finding_count": 1,
+            "symbols": ["restore_session"],
+            "summary": "Found 1 issue",
+            "tokens_used": 13,
+            "reviewed_files": [str(case_path)],
+        },
+    )
+
+    ticks = iter([0.0, 0.1])
+    monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
+
+    summary = run_manifest(manifest_path, model="gpt-4.1", api_key="KEY")
+
+    assert summary["pass_count"] == 1
+    assert summary["failure_count"] == 0
+    assert summary["cases"][0]["failures"] == []
+    assert summary["cases"][0]["scores"]["overall_score"] == 100.0
+
+
+def test_precision_guard_still_rejects_findings_for_clean_case(tmp_path, monkeypatch):
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text("def normalize_name():\n    return 'ok'\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "clean-precision-case",
+                "path": "fixture.py",
+                "taxonomy": ["precision_guard"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "test only",
+                },
+                "budget": {"max_seconds": 1.0},
+                "expect": {
+                    "present": {},
+                    "absent": {"quality": ["normalize_name"]},
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(
+        benchmark,
+        "_scan_case",
+        lambda case_path, model, api_key, provider, base_url, case=None: {
+            "finding_count": 1,
+            "symbols": ["normalize_name"],
+            "summary": "Found 1 issue",
+            "tokens_used": 13,
+            "reviewed_files": [str(case_path)],
+        },
+    )
+
+    ticks = iter([0.0, 0.1])
+    monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
+
+    summary = run_manifest(manifest_path, model="gpt-4.1", api_key="KEY")
+
+    assert summary["pass_count"] == 0
+    assert summary["failure_count"] == 2
+    assert {failure["mode"] for failure in summary["cases"][0]["failures"]} == {
+        "absent",
+        "precision_guard",
+    }
 def test_prepare_case_scan_directory_selects_repo_files(tmp_path):
     proj = tmp_path / "case"
     tests = proj / "tests"

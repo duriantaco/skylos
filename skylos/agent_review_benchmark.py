@@ -346,6 +346,9 @@ def _evaluate_expectations(case: dict[str, Any], symbols: set[str], finding_coun
     expect = case.get("expect", {})
     present = expect.get("present", {}) or {}
     absent = expect.get("absent", {}) or {}
+    is_clean_precision_guard = "precision_guard" in (case.get("taxonomy") or []) and not (
+        present
+    )
 
     failures: list[AgentReviewBenchmarkFailure] = []
     present_total = _count_expectations(present)
@@ -384,7 +387,7 @@ def _evaluate_expectations(case: dict[str, Any], symbols: set[str], finding_coun
                             )
                         )
 
-    if "precision_guard" in (case.get("taxonomy") or []) and finding_count > 0:
+    if is_clean_precision_guard and finding_count > 0:
         absent_total += 1
         absent_violations += 1
         failures.append(
