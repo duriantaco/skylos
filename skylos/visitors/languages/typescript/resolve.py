@@ -10,6 +10,17 @@ from skylos.visitors.languages.typescript.workspace import (
     discover_workspace_inventory,
 )
 
+_SOURCE_FILE_SUFFIXES = (
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    "/index.ts",
+    "/index.tsx",
+    "/index.js",
+    "/index.jsx",
+)
+
 
 def _find_nearest_tsconfig(start_path: str, stop_dir: str | None = None) -> str | None:
     current = os.path.dirname(os.path.realpath(start_path))
@@ -237,33 +248,44 @@ def _find_nearest_package_dir(start_path: str, stop_dir: str) -> str | None:
     return None
 
 
-def _normalize_package_target(target: str) -> str:
-    normalized = target.replace("dist/", "src/").replace("/prod/", "/")
-    for ext_from, ext_to in [
-        (".js", ".ts"),
-        (".jsx", ".tsx"),
-        (".mjs", ".ts"),
-        (".cjs", ".ts"),
-    ]:
-        normalized = normalized.replace(ext_from, ext_to)
-    return normalized
+def _candidate_package_targets(target: str) -> list[str]:
+    base_target = target.replace("dist/", "src/").replace("/prod/", "/")
+    candidates = [base_target]
 
+    if base_target.endswith(".js"):
+        candidates.extend(
+            [
+                base_target[:-3] + ".ts",
+                base_target[:-3] + ".tsx",
+                base_target[:-3] + ".jsx",
+            ]
+        )
+    elif base_target.endswith(".jsx"):
+        candidates.extend([base_target[:-4] + ".tsx", base_target[:-4] + ".js"])
+    elif base_target.endswith(".mjs") or base_target.endswith(".cjs"):
+        base_no_ext = base_target.rsplit(".", 1)[0]
+        candidates.extend([base_no_ext + ".ts", base_no_ext + ".js"])
 
-def _resolve_path_target(base_dir: str, target: str) -> str | None:
-    normalized_target = _normalize_package_target(target)
-    resolved_base = os.path.normpath(os.path.join(base_dir, normalized_target))
-
-    candidates = [resolved_base]
-    for suffix in (".ts", ".tsx", "/index.ts", "/index.tsx"):
-        candidates.append(resolved_base + suffix)
-
+    ordered: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
         if candidate in seen:
             continue
         seen.add(candidate)
-        if os.path.isfile(candidate):
-            return candidate
+        ordered.append(candidate)
+    return ordered
+
+
+def _resolve_path_target(base_dir: str, target: str) -> str | None:
+    seen: set[str] = set()
+    for candidate_target in _candidate_package_targets(target):
+        resolved_base = os.path.normpath(os.path.join(base_dir, candidate_target))
+        for candidate in [resolved_base, *[resolved_base + suffix for suffix in _SOURCE_FILE_SUFFIXES]]:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if os.path.isfile(candidate):
+                return candidate
     return None
 
 
@@ -368,7 +390,7 @@ def _resolve_from_pkg_dir(pkg_dir: str, subpath: str | None = None) -> str | Non
         return resolved_via_exports
 
     if subpath:
-        for suffix in (".ts", ".tsx", "/index.ts", "/index.tsx"):
+        for suffix in _SOURCE_FILE_SUFFIXES:
             candidate = os.path.join(pkg_dir, "src", subpath + suffix)
             if os.path.isfile(candidate):
                 return candidate
@@ -377,7 +399,16 @@ def _resolve_from_pkg_dir(pkg_dir: str, subpath: str | None = None) -> str | Non
                 return candidate
         return None
 
-    for entry in ("src/index.ts", "src/index.tsx", "index.ts", "index.tsx"):
+    for entry in (
+        "src/index.ts",
+        "src/index.tsx",
+        "src/index.js",
+        "src/index.jsx",
+        "index.ts",
+        "index.tsx",
+        "index.js",
+        "index.jsx",
+    ):
         candidate = os.path.join(pkg_dir, entry)
         if os.path.isfile(candidate):
             return candidate
@@ -390,12 +421,10 @@ def _resolve_from_pkg_dir(pkg_dir: str, subpath: str | None = None) -> str | Non
             for field in ("module", "main"):
                 val = data.get(field)
                 if val:
-                    src_val = val.replace("dist/", "src/").replace("/prod/", "/")
-                    for ext_from, ext_to in [(".js", ".ts"), (".jsx", ".tsx")]:
-                        src_val = src_val.replace(ext_from, ext_to)
-                    candidate = os.path.normpath(os.path.join(pkg_dir, src_val))
-                    if os.path.isfile(candidate):
-                        return candidate
+                    for src_val in _candidate_package_targets(val):
+                        candidate = os.path.normpath(os.path.join(pkg_dir, src_val))
+                        if os.path.isfile(candidate):
+                            return candidate
         except (json.JSONDecodeError, OSError):
             pass
     return None
@@ -455,7 +484,7 @@ class MonorepoResolver:
             for resolved in tsconfig_paths[source]:
                 if os.path.isfile(resolved):
                     return resolved
-                for suffix in (".ts", ".tsx", "/index.ts", "/index.tsx"):
+                for suffix in _SOURCE_FILE_SUFFIXES:
                     if os.path.isfile(resolved + suffix):
                         return resolved + suffix
 
@@ -471,13 +500,13 @@ class MonorepoResolver:
                     continue
                 target_base = target_pattern[:-2]
                 resolved_base = os.path.normpath(os.path.join(target_base, rest))
-                for suffix in ("", ".ts", ".tsx", "/index.ts", "/index.tsx"):
+                for suffix in ("", *_SOURCE_FILE_SUFFIXES):
                     candidate = resolved_base + suffix
                     if os.path.isfile(candidate):
                         return candidate
 
         resolved_base = os.path.normpath(os.path.join(base_url, source))
-        for suffix in ("", ".ts", ".tsx", "/index.ts", "/index.tsx"):
+        for suffix in ("", *_SOURCE_FILE_SUFFIXES):
             candidate = resolved_base + suffix
             if os.path.isfile(candidate):
                 return candidate

@@ -770,7 +770,7 @@ def _check_settings_config(def_obj):
 
 def _check_data_model_fields(def_obj, analyzer, framework):
     simple_name = def_obj.simple_name
-    _is_ts = str(def_obj.filename).endswith((".ts", ".tsx"))
+    _is_ts = str(def_obj.filename).endswith((".ts", ".tsx", ".js", ".jsx"))
 
     if def_obj.type == "variable" and simple_name == "_" and not _is_ts:
         return _suppress(def_obj)
@@ -873,7 +873,7 @@ def _check_data_model_fields(def_obj, analyzer, framework):
 
 def _apply_standard_reductions(def_obj, analyzer, visitor, framework, confidence):
     simple_name = def_obj.simple_name
-    _is_ts = str(def_obj.filename).endswith((".ts", ".tsx"))
+    _is_ts = str(def_obj.filename).endswith((".ts", ".tsx", ".js", ".jsx"))
 
     if simple_name.startswith("_") and not simple_name.startswith("__") and not _is_ts:
         confidence -= PENALTIES["private_name"]

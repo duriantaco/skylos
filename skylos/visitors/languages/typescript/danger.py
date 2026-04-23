@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from tree_sitter import Language, Query, QueryCursor
 import tree_sitter_typescript as tsts
 
@@ -671,6 +672,37 @@ _MUTATING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 _NEXTJS_ROUTE_PATTERNS = ("/app/", "/pages/api/")
 
 
+def _has_mutating_exported_route_handler(source_text: str) -> bool:
+    for method in _MUTATING_METHODS:
+        if (
+            f"export async function {method}" in source_text
+            or f"export function {method}" in source_text
+            or f"export const {method}" in source_text
+        ):
+            return True
+    return False
+
+
+def _has_mutating_pages_api_handler(source_text: str) -> bool:
+    if "export default" not in source_text:
+        return False
+
+    for method in _MUTATING_METHODS:
+        quoted = rf"['\"]{method}['\"]"
+        patterns = (
+            rf"\breq\.method\s*===?\s*{quoted}",
+            rf"\bmethod\s*===?\s*{quoted}",
+            rf"\bcase\s+{quoted}",
+        )
+        if any(re.search(pattern, source_text) for pattern in patterns):
+            return True
+
+    if re.search(r"\[(?:[^\]]+)\]\.includes\(\s*req\.method\s*\)", source_text):
+        return any(f"'{method}'" in source_text or f'"{method}"' in source_text for method in _MUTATING_METHODS)
+
+    return False
+
+
 def _check_nextjs_missing_auth(
     source_bytes: bytes, file_path: str, findings: list[dict]
 ) -> None:
@@ -678,10 +710,12 @@ def _check_nextjs_missing_auth(
     normalized_path = str(file_path).replace(os.sep, "/")
     is_route = False
     if "/app/" in normalized_path and normalized_path.endswith(
-        ("route.ts", "route.tsx")
+        ("route.ts", "route.tsx", "route.js", "route.jsx")
     ):
         is_route = True
-    elif "/pages/api/" in normalized_path and normalized_path.endswith((".ts", ".tsx")):
+    elif "/pages/api/" in normalized_path and normalized_path.endswith(
+        (".ts", ".tsx", ".js", ".jsx")
+    ):
         is_route = True
 
     if not is_route:
@@ -689,15 +723,9 @@ def _check_nextjs_missing_auth(
 
     source_text = source_bytes.decode("utf-8", errors="replace")
 
-    has_mutating = False
-    for method in _MUTATING_METHODS:
-        if (
-            f"export async function {method}" in source_text
-            or f"export function {method}" in source_text
-            or f"export const {method}" in source_text
-        ):
-            has_mutating = True
-            break
+    has_mutating = _has_mutating_exported_route_handler(source_text)
+    if not has_mutating and "/pages/api/" in normalized_path:
+        has_mutating = _has_mutating_pages_api_handler(source_text)
 
     if not has_mutating:
         return

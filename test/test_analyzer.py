@@ -191,7 +191,9 @@ class TestSkylos:
         files, root = skylos._get_python_files("/project")
 
         mock_discover.assert_called_once_with(
-            mock_dir, {".py", ".go", ".ts", ".tsx", ".java"}, exclude_folders=None
+            mock_dir,
+            {".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".java"},
+            exclude_folders=None,
         )
         assert files == mock_files
         assert root == mock_dir
@@ -439,6 +441,50 @@ class TestAnalyze:
         assert not any(
             "Python files" in call.args[0] for call in mock_log_info.call_args_list
         )
+
+    @patch("skylos.analyzer.logger.info")
+    def test_analyze_mixed_languages_includes_javascript_in_summary(
+        self, mock_log_info
+    ):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "main.py").write_text(
+                "def hello():\n    return 1\n", encoding="utf-8"
+            )
+            (root / "app.js").write_text(
+                "export function runUnsafe(input) {\n"
+                "  eval(input);\n"
+                "}\n"
+                "runUnsafe('hi');\n",
+                encoding="utf-8",
+            )
+
+            result_json = analyze(str(root), conf=0)
+
+        result = json.loads(result_json)
+
+        assert result["analysis_summary"]["total_files"] == 2
+        assert result["analysis_summary"]["languages"] == {
+            "JavaScript": 1,
+            "Python": 1,
+        }
+        mock_log_info.assert_any_call("Analyzing 2 files...")
+
+    @patch("skylos.analyzer.scan_typescript_file")
+    def test_proc_file_dispatches_js_to_typescript_scanner(self, mock_scan):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
+            f.write("export function run() { return 1; }\n")
+            f.flush()
+
+            mock_scan.return_value = tuple(range(13))
+
+            try:
+                result = proc_file(f.name, "test_module")
+            finally:
+                Path(f.name).unlink()
+
+        mock_scan.assert_called_once()
+        assert result == tuple(range(13))
 
     def test_analyze_empty_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:

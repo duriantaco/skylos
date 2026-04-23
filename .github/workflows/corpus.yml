@@ -14,7 +14,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
       - uses: astral-sh/setup-uv@v4
+
+      - name: Build repo Go engine
+        run: |
+          mkdir -p /tmp/skylos-go-build /tmp/skylos-go-gopath
+          cd skylos/engines/go
+          GOCACHE=/tmp/skylos-go-build GOPATH=/tmp/skylos-go-gopath go build -o skylos-go ./cmd/skylos-go
 
       - name: Create venv + install deps
         run: |
