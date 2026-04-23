@@ -1693,7 +1693,7 @@ class Skylos:
                     }
                 )
 
-        if changed_files is None and enable_quality:
+        if changed_files is None and (enable_quality or enable_danger):
             try:
                 import subprocess
 
@@ -1728,18 +1728,39 @@ class Skylos:
 
         if changed_files and enable_quality and "SKY-L021" not in project_ignore:
             from skylos.rules.quality.regression import detect_security_regressions
+            from skylos.security_contracts import resolve_diff_base_ref
 
             try:
                 import subprocess
 
+                diff_base = resolve_diff_base_ref(root)
+
                 for cf in changed_files:
+                    rel_cf = (
+                        str(Path(cf).resolve().relative_to(root))
+                        if Path(cf).is_absolute()
+                        else str(cf)
+                    )
+                    diff_cmd = (
+                        ["git", "diff", f"{diff_base}...HEAD", "--", rel_cf]
+                        if diff_base
+                        else ["git", "diff", "HEAD", "--", rel_cf]
+                    )
                     diff_result = subprocess.run(
-                        ["git", "diff", "HEAD", "--", cf],
+                        diff_cmd,
                         capture_output=True,
                         text=True,
                         timeout=10,
                         cwd=str(root),
                     )
+                    if diff_result.returncode != 0 and diff_base:
+                        diff_result = subprocess.run(
+                            ["git", "diff", "HEAD", "--", rel_cf],
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                            cwd=str(root),
+                        )
                     if diff_result.returncode == 0 and diff_result.stdout.strip():
                         reg_findings = detect_security_regressions(
                             diff_result.stdout,
@@ -1749,6 +1770,21 @@ class Skylos:
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Security regression scan failed", exc_info=True)
+
+        if changed_files and enable_danger and "SKY-SC001" not in project_ignore:
+            from skylos.security_contracts import detect_security_contract_regressions
+
+            try:
+                all_dangers.extend(
+                    detect_security_contract_regressions(
+                        root,
+                        project_cfg,
+                        changed_files=changed_files,
+                    )
+                )
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error("Security contract scan failed", exc_info=True)
 
         self.pattern_trackers = pattern_trackers
 

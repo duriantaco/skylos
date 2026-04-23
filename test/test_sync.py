@@ -369,7 +369,20 @@ def test_cmd_pull_writes_config_and_suppressions(
         if endpoint == "/api/sync/whoami":
             return {"project": {"name": "Proj"}}
         if endpoint == "/api/sync/config":
-            return {"config": {"complexity": 12, "nesting": 4}}
+            return {
+                "config": {
+                    "complexity_threshold": 12,
+                    "nesting_threshold": 4,
+                    "security_contracts": [
+                        {
+                            "framework": "fastapi",
+                            "file": "app/api/routes.py",
+                            "handler": "list_users",
+                            "guards": ["require_admin"],
+                        }
+                    ],
+                }
+            }
         if endpoint == "/api/sync/suppressions":
             return {"suppressions": [{"rule_id": "SKY-D212"}], "count": 1}
         raise AssertionError(f"Unexpected endpoint {endpoint}")
@@ -391,8 +404,10 @@ def test_cmd_pull_writes_config_and_suppressions(
     assert supp_path.exists()
 
     config_text = config_path.read_text()
-    assert "complexity" in config_text
-    assert "nesting" in config_text
+    assert "complexity_threshold" in config_text
+    assert "nesting_threshold" in config_text
+    assert "security_contracts" in config_text
+    assert "list_users" in config_text
 
     supp = json.loads(supp_path.read_text())
     assert isinstance(supp, list)
@@ -585,6 +600,41 @@ def test_cmd_setup_accepts_project_project_id(monkeypatch, tmp_path, capsys):
     assert saved["project_id"] == "proj_legacy"
 
 
+def test_cmd_setup_writes_workflow_that_syncs_cloud_policy(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".git").mkdir()
+
+    monkeypatch.setattr(
+        syncmod,
+        "api_get",
+        lambda endpoint, token: {
+            "/api/sync/whoami": {
+                "project": {"id": "proj_123", "name": "Proj"},
+                "organization": {"name": "Org"},
+                "plan": "pro",
+            }
+        }[endpoint],
+    )
+    monkeypatch.setattr(syncmod, "_write_link", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        syncmod, "save_token", lambda *args, **kwargs: str(tmp_path / "creds.json")
+    )
+
+    answers = iter(["n", "n", "y"])
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
+
+    syncmod.cmd_setup("TOK")
+
+    workflow = (tmp_path / ".github" / "workflows" / "skylos.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "Pull Skylos Cloud Policy" in workflow
+    assert "skylos sync pull" in workflow
+    assert "SKYLOS_TOKEN" in workflow
+
+
 def test_cmd_upgrade_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".git").mkdir()
@@ -602,3 +652,8 @@ def test_cmd_upgrade_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, c
     assert "skylos ." not in hook
     assert "Rust/Python parity check" in hook
     assert "test/test_fast_parity.py" in hook
+    workflow = (tmp_path / ".github" / "workflows" / "skylos.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "Pull Skylos Cloud Policy" in workflow
+    assert "skylos sync pull" in workflow

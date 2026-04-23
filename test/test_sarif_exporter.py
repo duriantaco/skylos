@@ -157,3 +157,30 @@ def test_results_include_location_region_and_snippet_when_present(monkeypatch):
     assert loc["region"]["startLine"] == 3
     assert loc["region"]["startColumn"] == 5
     assert loc["region"]["snippet"]["text"] == "import os\n"
+
+
+def test_results_include_skylos_metadata_when_present():
+    findings = [
+        {
+            "rule_id": "SKY-SC001",
+            "severity": "HIGH",
+            "message": "Security contract failed",
+            "file_path": "app/routes/admin.py",
+            "line_number": 12,
+            "category": "SECURITY",
+            "metadata": {
+                "security_evidence": {
+                    "contract_id": "admin-route-auth",
+                    "missing_guards": ["require_admin"],
+                }
+            },
+        }
+    ]
+
+    sarif = SarifExporter(findings).generate()
+    result = sarif["runs"][0]["results"][0]
+
+    assert result["properties"]["skylos_metadata"]["security_evidence"] == {
+        "contract_id": "admin-route-auth",
+        "missing_guards": ["require_admin"],
+    }
