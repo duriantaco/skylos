@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 from pathlib import Path
 
 
@@ -18,7 +19,18 @@ def _cicd_load_results(args, *, console_factory):
     try:
         from skylos import analyze
 
-        return json.loads(analyze(path)), 0
+        previous_diff_base = os.environ.get("SKYLOS_DIFF_BASE")
+        diff_base = getattr(args, "diff_base", None)
+        try:
+            if diff_base:
+                os.environ["SKYLOS_DIFF_BASE"] = diff_base
+            return json.loads(analyze(path)), 0
+        finally:
+            if diff_base:
+                if previous_diff_base is None:
+                    os.environ.pop("SKYLOS_DIFF_BASE", None)
+                else:
+                    os.environ["SKYLOS_DIFF_BASE"] = previous_diff_base
     except Exception as e:
         console_factory().print(f"[bold red]Analysis failed: {e}[/bold red]")
         return None, 1

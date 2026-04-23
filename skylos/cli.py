@@ -2550,6 +2550,7 @@ def _build_main_scan_context(args):
         use_defaults=use_defaults,
         include_folders=args.include_folders,
     )
+    _apply_config_driven_analysis_flags(args, project_cfg, console)
 
     return SimpleNamespace(
         project_root=project_root,
@@ -2557,6 +2558,42 @@ def _build_main_scan_context(args):
         console=console,
         final_exclude_folders=final_exclude_folders,
     )
+
+
+def _apply_config_driven_analysis_flags(args, project_cfg, console):
+    security_contracts_configured = bool(project_cfg.get("security_contracts") or [])
+    explicit_category_flags = any(
+        getattr(args, name, False) for name in ("danger", "secrets", "quality")
+    )
+
+    enabled_from_policy = []
+    if not explicit_category_flags:
+        if bool(project_cfg.get("security_enabled", False)) or security_contracts_configured:
+            args.danger = True
+            enabled_from_policy.append("danger")
+        if bool(project_cfg.get("secrets_enabled", False)):
+            args.secrets = True
+            enabled_from_policy.append("secrets")
+        if bool(project_cfg.get("quality_enabled", False)):
+            args.quality = True
+            enabled_from_policy.append("quality")
+
+        if enabled_from_policy and not getattr(args, "json", False):
+            console.print(
+                "[brand]Using synced/local Skylos policy:[/brand] enabling "
+                + ", ".join(enabled_from_policy)
+                + " analysis."
+            )
+        return
+
+    # Security contracts are explicit security policy. If they are configured,
+    # always run danger analysis so the contracts cannot be silently skipped.
+    if not getattr(args, "danger", False) and security_contracts_configured:
+        args.danger = True
+        if not getattr(args, "json", False):
+            console.print(
+                "[brand]Security contracts configured:[/brand] enabling danger analysis automatically."
+            )
 
 
 def _print_main_scan_banner(args, console, final_exclude_folders):
@@ -2735,6 +2772,7 @@ sys.exit(ret)
     changed_files = None
     if getattr(args, "diff_base", None):
         try:
+            os.environ["SKYLOS_DIFF_BASE"] = args.diff_base
             diff_result = subprocess.run(
                 ["git", "diff", "--name-only", f"{args.diff_base}...HEAD"],
                 cwd=project_root,

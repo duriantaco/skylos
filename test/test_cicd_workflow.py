@@ -19,6 +19,7 @@ def test_workflow_has_all_steps():
     assert "Checkout" in step_names
     assert "Setup Python" in step_names
     assert "Install Skylos" in step_names
+    assert "Pull Skylos Cloud Policy" in step_names
     assert "Run Skylos Analysis" in step_names
     assert "Quality Gate" in step_names
     assert "GitHub Annotations" in step_names
@@ -100,14 +101,18 @@ def test_workflow_schedule_trigger():
 def test_workflow_no_upload_by_default():
     content = generate_workflow()
     assert "--upload" not in content
-    assert "SKYLOS_TOKEN" not in content
+    assert "Pull Skylos Cloud Policy" in content
+    assert "skylos sync pull" in content
 
 
 def test_workflow_with_upload():
     content = generate_workflow(use_upload=True)
     parsed = yaml.safe_load(content)
     steps = parsed["jobs"]["skylos"]["steps"]
+    sync_step = next(s for s in steps if s.get("name") == "Pull Skylos Cloud Policy")
     analysis_step = next(s for s in steps if s.get("name") == "Run Skylos Analysis")
+    assert "skylos sync pull" in sync_step["run"]
+    assert sync_step["env"]["SKYLOS_TOKEN"] == "${{ secrets.SKYLOS_TOKEN }}"
     assert "--upload" in analysis_step["run"]
     assert analysis_step["env"]["SKYLOS_TOKEN"] == "${{ secrets.SKYLOS_TOKEN }}"
 

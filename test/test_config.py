@@ -37,6 +37,82 @@ class TestSkylosConfig(unittest.TestCase):
         self.assertEqual(config["complexity"], 99)
         self.assertEqual(config["nesting"], DEFAULTS["nesting"])
 
+    def test_load_config_ignores_symlinked_pyproject(self):
+        with tempfile.TemporaryDirectory() as outside_dir:
+            outside_toml = Path(outside_dir) / "outside.toml"
+            outside_toml.write_text("[tool.skylos]\ncomplexity = 99", encoding="utf-8")
+            (self.root / "pyproject.toml").symlink_to(outside_toml)
+
+            config = load_config(self.root)
+
+        self.assertEqual(config["complexity"], DEFAULTS["complexity"])
+
+    def test_load_config_reads_synced_yaml_without_pyproject(self):
+        skylos_dir = self.root / ".skylos"
+        skylos_dir.mkdir()
+        (skylos_dir / "config.yaml").write_text(
+            """
+complexity_threshold: 12
+function_length_threshold: 40
+exclude_paths:
+  - generated/**
+security_contracts:
+  - framework: fastapi
+    file: app/api/routes.py
+    handler: list_users
+    guards:
+      - require_admin
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root)
+
+        self.assertEqual(config["complexity"], 12)
+        self.assertEqual(config["max_lines"], 40)
+        self.assertEqual(config["exclude"], ["generated/**"])
+        self.assertEqual(len(config["security_contracts"]), 1)
+        self.assertEqual(config["security_contracts"][0]["handler"], "list_users")
+
+    def test_load_config_local_pyproject_overrides_synced_yaml(self):
+        skylos_dir = self.root / ".skylos"
+        skylos_dir.mkdir()
+        (skylos_dir / "config.yaml").write_text(
+            """
+complexity_threshold: 12
+exclude_paths:
+  - generated/**
+security_contracts:
+  - framework: fastapi
+    file: app/api/routes.py
+    handler: list_users
+    guards:
+      - require_admin
+""".strip(),
+            encoding="utf-8",
+        )
+        (self.root / "pyproject.toml").write_text(
+            """
+[tool.skylos]
+complexity = 99
+exclude = ["local/**"]
+
+[[tool.skylos.security_contracts]]
+framework = "fastapi"
+file = "app/api/admin.py"
+handler = "admin_panel"
+guards = ["require_staff"]
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root)
+
+        self.assertEqual(config["complexity"], 99)
+        self.assertEqual(config["exclude"], ["local/**"])
+        self.assertEqual(len(config["security_contracts"]), 1)
+        self.assertEqual(config["security_contracts"][0]["handler"], "admin_panel")
+
     def test_load_config_with_gate_logic(self):
         toml_path = self.root / "pyproject.toml"
         toml_path.write_text(

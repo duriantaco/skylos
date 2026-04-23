@@ -376,6 +376,67 @@ class TestMainFunction:
                 "Error during analysis: Analysis failed"
             )
 
+    def test_main_auto_enables_danger_for_security_contracts(self, mock_skylos_result):
+        test_args = ["cli.py", "test_path", "--json", "--no-provenance"]
+
+        with (
+            patch("sys.argv", test_args),
+            patch("skylos.cli.run_analyze") as mock_analyze,
+            patch("builtins.print"),
+            patch("skylos.cli.setup_logger") as mock_setup_logger,
+            patch("skylos.cli.load_config") as mock_load_config,
+            patch("skylos.cli.Progress") as mock_progress,
+        ):
+            mock_logger = Mock()
+            mock_logger.console = Mock()
+            mock_setup_logger.return_value = mock_logger
+            mock_load_config.return_value = {
+                "exclude": [],
+                "security_contracts": [
+                    {
+                        "framework": "fastapi",
+                        "file": "app/api/routes.py",
+                        "handler": "list_users",
+                        "guards": ["require_admin"],
+                    }
+                ],
+            }
+            mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
+            mock_analyze.return_value = json.dumps(mock_skylos_result)
+
+            main()
+
+            assert mock_analyze.call_args.kwargs["enable_danger"] is True
+
+    def test_main_uses_policy_enabled_categories_when_no_flags(self, mock_skylos_result):
+        test_args = ["cli.py", "test_path", "--json", "--no-provenance"]
+
+        with (
+            patch("sys.argv", test_args),
+            patch("skylos.cli.run_analyze") as mock_analyze,
+            patch("builtins.print"),
+            patch("skylos.cli.setup_logger") as mock_setup_logger,
+            patch("skylos.cli.load_config") as mock_load_config,
+            patch("skylos.cli.Progress") as mock_progress,
+        ):
+            mock_logger = Mock()
+            mock_logger.console = Mock()
+            mock_setup_logger.return_value = mock_logger
+            mock_load_config.return_value = {
+                "exclude": [],
+                "security_enabled": True,
+                "secrets_enabled": True,
+                "quality_enabled": True,
+            }
+            mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
+            mock_analyze.return_value = json.dumps(mock_skylos_result)
+
+            main()
+
+            assert mock_analyze.call_args.kwargs["enable_danger"] is True
+            assert mock_analyze.call_args.kwargs["enable_secrets"] is True
+            assert mock_analyze.call_args.kwargs["enable_quality"] is True
+
 
 def _progress_ctx():
     cm = Mock()
