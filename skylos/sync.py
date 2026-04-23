@@ -794,6 +794,16 @@ jobs:
       
       - name: Install Skylos
         run: pip install skylos
+
+      - name: Pull Skylos Cloud Policy
+        env:
+          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}
+        run: |
+          if [ -n "$SKYLOS_TOKEN" ]; then
+            skylos sync pull
+          else
+            echo "SKYLOS_TOKEN not set; skipping Skylos Cloud policy sync."
+          fi
       
       - name: Run Skylos Scan
         env:
@@ -905,6 +915,16 @@ jobs:
       
       - name: Install Skylos
         run: pip install skylos
+
+      - name: Pull Skylos Cloud Policy
+        env:
+          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}
+        run: |
+          if [ -n "$SKYLOS_TOKEN" ]; then
+            skylos sync pull
+          else
+            echo "SKYLOS_TOKEN not set; skipping Skylos Cloud policy sync."
+          fi
       
       - name: Run Skylos Scan
         env:

@@ -151,11 +151,25 @@ class SarifExporter:
 
             category = str(finding.get("category") or "QUALITY").upper()
 
+            properties = {"category": category}
+
+            kind = finding.get("kind")
+            if kind:
+                properties["kind"] = str(kind)
+
+            control_type = finding.get("control_type")
+            if control_type:
+                properties["control_type"] = str(control_type)
+
+            metadata = finding.get("metadata")
+            if isinstance(metadata, dict) and metadata:
+                properties["skylos_metadata"] = metadata
+
             result_obj = {
                 "ruleId": rule_id,
                 "level": level,
                 "message": {"text": message_text},
-                "properties": {"category": category},
+                "properties": properties,
                 "locations": [
                     {
                         "physicalLocation": {

@@ -106,6 +106,18 @@ def generate_workflow(
     if use_claude_security:
         permissions_block += "\n  security-events: write"
 
+    sync_step = """
+      - name: Pull Skylos Cloud Policy
+        env:
+          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}
+        run: |
+          if [ -n "$SKYLOS_TOKEN" ]; then
+            skylos sync pull
+          else
+            echo "SKYLOS_TOKEN not set; skipping Skylos Cloud policy sync."
+          fi
+"""
+
     workflow = f"""name: Skylos Analysis
 
 {trigger_block}
@@ -128,6 +140,7 @@ jobs:
 
       - name: Install Skylos
         run: pip install skylos
+{sync_step}
 
       - name: Run Skylos Analysis
         run: |
