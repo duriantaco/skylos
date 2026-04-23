@@ -1,5 +1,6 @@
 from pathlib import Path
 import fnmatch
+import copy
 
 DEFAULTS = {
     "complexity": 10,
@@ -7,6 +8,7 @@ DEFAULTS = {
     "max_args": 5,
     "max_lines": 50,
     "duplicate_strings": 3,
+    "security_contracts": [],
     "ignore": [],
     "exclude": [],
     "whitelist": [],
@@ -32,19 +34,60 @@ def load_config(start_path) -> dict:
     if current.is_file():
         current = current.parent
 
+    root_config, sync_config = _find_config_paths(current)
+    final_cfg = copy.deepcopy(DEFAULTS)
+
+    if sync_config:
+        final_cfg = _merge_user_config(final_cfg, _load_synced_config(sync_config))
+
+    if not root_config:
+        return final_cfg
+
+    try:
+        return _merge_user_config(final_cfg, _load_pyproject_user_config(root_config))
+    except Exception:
+        return final_cfg
+
+
+def _is_safe_config_file(config_path: Path, expected_name: str) -> bool:
+    if not isinstance(config_path, Path):
+        return False
+    if config_path.name != expected_name:
+        return False
+    if config_path.is_symlink() or not config_path.is_file():
+        return False
+    try:
+        config_path.resolve(strict=True)
+    except OSError:
+        return False
+    return True
+
+
+def _find_config_paths(start_dir: Path) -> tuple[Path | None, Path | None]:
+    current = start_dir
     root_config = None
+    sync_config = None
 
     while True:
+        sync_path = current / ".skylos" / "config.yaml"
+        if sync_config is None and sync_path.exists():
+            sync_config = sync_path
+
         toml_path = current / "pyproject.toml"
         if toml_path.exists():
             root_config = toml_path
             break
+
         if current.parent == current:
             break
         current = current.parent
 
-    if not root_config:
-        return DEFAULTS.copy()
+    return root_config, sync_config
+
+
+def _load_pyproject_user_config(root_config: Path) -> dict:
+    if not _is_safe_config_file(root_config, "pyproject.toml"):
+        return {}
 
     try:
         import tomllib
@@ -52,45 +95,100 @@ def load_config(start_path) -> dict:
         try:
             import tomli as tomllib
         except ImportError:
-            return DEFAULTS.copy()
+            return {}
+
+    with root_config.open("rb") as f:
+        data = tomllib.load(f)
+
+    user_cfg = dict(data.get("tool", {}).get("skylos", {}) or {})
+    gate_cfg = data.get("tool", {}).get("skylos", {}).get("gate", {})
+    if gate_cfg:
+        user_cfg["gate"] = gate_cfg
+    return user_cfg
+
+
+def _load_synced_config(sync_config: Path) -> dict:
+    if not _is_safe_config_file(sync_config, "config.yaml"):
+        return {}
 
     try:
-        with open(root_config, "rb") as f:
-            data = tomllib.load(f)
+        import yaml
+    except ImportError:
+        return {}
 
-        user_cfg = data.get("tool", {}).get("skylos", {})
+    try:
+        raw = yaml.safe_load(sync_config.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
 
-        gate_cfg = data.get("tool", {}).get("skylos", {}).get("gate", {})
-        user_cfg["gate"] = gate_cfg
+    if not isinstance(raw, dict):
+        return {}
 
-        final_cfg = DEFAULTS.copy()
-        final_cfg.update(user_cfg)
+    normalized = dict(raw)
+    alias_map = {
+        "complexity_threshold": "complexity",
+        "nesting_threshold": "nesting",
+        "arg_count_threshold": "max_args",
+        "function_length_threshold": "max_lines",
+        "exclude_paths": "exclude",
+    }
+    for source_key, target_key in alias_map.items():
+        if source_key in raw and target_key not in normalized:
+            normalized[target_key] = raw[source_key]
 
-        final_cfg["masking"] = DEFAULTS["masking"].copy()
-        final_cfg["masking"].update(user_cfg.get("masking", {}) or {})
+    if "gate" not in normalized:
+        gate_cfg = {}
+        if "gate_enabled" in raw:
+            gate_cfg["enabled"] = raw.get("gate_enabled")
+        if "gate_mode" in raw:
+            gate_cfg["mode"] = raw.get("gate_mode")
+        if gate_cfg:
+            normalized["gate"] = gate_cfg
 
-        whitelist_section = user_cfg.get("whitelist", {})
-        if isinstance(whitelist_section, list):
-            final_cfg["whitelist"] = whitelist_section
-            final_cfg["whitelist_documented"] = {}
-            final_cfg["whitelist_temporary"] = {}
-            final_cfg["lower_confidence"] = []
+    return normalized
 
-        elif isinstance(whitelist_section, dict):
-            final_cfg["whitelist"] = whitelist_section.get("names", [])
-            final_cfg["whitelist_documented"] = whitelist_section.get("documented", {})
-            final_cfg["whitelist_temporary"] = whitelist_section.get("temporary", {})
-            final_cfg["lower_confidence"] = whitelist_section.get(
-                "lower_confidence", []
-            )
 
+def _merge_user_config(base_cfg: dict, user_cfg: dict | None) -> dict:
+    if not isinstance(user_cfg, dict):
+        return copy.deepcopy(base_cfg)
+
+    final_cfg = copy.deepcopy(base_cfg)
+
+    for key, value in user_cfg.items():
+        if key == "whitelist":
+            continue
+        if key == "masking":
+            merged_masking = copy.deepcopy(DEFAULTS["masking"])
+            merged_masking.update(final_cfg.get("masking", {}) or {})
+            merged_masking.update(value or {})
+            final_cfg["masking"] = merged_masking
+            continue
+        if key == "gate" and isinstance(value, dict):
+            merged_gate = {}
+            merged_gate.update(final_cfg.get("gate", {}) or {})
+            merged_gate.update(value)
+            final_cfg["gate"] = merged_gate
+            continue
+        final_cfg[key] = value
+
+    whitelist_section = user_cfg.get("whitelist")
+    if isinstance(whitelist_section, list):
+        final_cfg["whitelist"] = whitelist_section
+        final_cfg["whitelist_documented"] = {}
+        final_cfg["whitelist_temporary"] = {}
+        final_cfg["lower_confidence"] = []
+    elif isinstance(whitelist_section, dict):
+        final_cfg["whitelist"] = whitelist_section.get("names", [])
+        final_cfg["whitelist_documented"] = whitelist_section.get("documented", {})
+        final_cfg["whitelist_temporary"] = whitelist_section.get("temporary", {})
+        final_cfg["lower_confidence"] = whitelist_section.get("lower_confidence", [])
+
+    if "overrides" in user_cfg:
         final_cfg["overrides"] = user_cfg.get("overrides", {})
+    if "non_library_dirs" in user_cfg:
         final_cfg["non_library_dirs"] = user_cfg.get("non_library_dirs", {})
 
-        return final_cfg
-
-    except Exception:
-        return DEFAULTS.copy()
+    return final_cfg
 
 
 def is_path_excluded(filepath, cfg) -> bool:
