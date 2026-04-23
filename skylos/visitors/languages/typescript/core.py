@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from tree_sitter import Language, Parser, Query, QueryCursor
 import tree_sitter_typescript as tsts
 from skylos.visitor import Definition
@@ -34,6 +36,7 @@ _LIFECYCLE_METHODS: set[str] = {
 
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 _PARSER_CACHE: dict[int, Parser] = {}
+_JSX_EXTENSIONS = {".tsx", ".jsx", ".js"}
 
 _DEFS_PATTERN = """
 (function_declaration name: (identifier) @func_def)
@@ -117,7 +120,10 @@ class TypeScriptCore:
         self.refs: list[tuple[str, str]] = []
         self.imports: list[dict[str, str | int]] = []
 
-        if str(file_path).endswith(".tsx") and TSX_LANG:
+        self._suffix = Path(str(file_path)).suffix.lower()
+        self._uses_jsx_parser = self._suffix in _JSX_EXTENSIONS
+
+        if self._uses_jsx_parser and TSX_LANG:
             self.lang: Language | None = TSX_LANG
         else:
             self.lang = TS_LANG
@@ -183,7 +189,7 @@ class TypeScriptCore:
         for k, v in ts_only.items():
             self._defs_captures.setdefault(k, []).extend(v)
         self._refs_captures = self._run_batch("refs", _REFS_PATTERN)
-        if str(self.file_path).endswith(".tsx"):
+        if self._uses_jsx_parser:
             jsx_refs = self._run_batch("refs_jsx", _REFS_JSX_PATTERN)
             for k, v in jsx_refs.items():
                 self._refs_captures.setdefault(k, []).extend(v)

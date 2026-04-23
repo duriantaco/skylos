@@ -24,6 +24,17 @@ from .resolve import (
 _NEXTJS_CONVENTION_EXPORTS = NEXTJS_CONVENTION_EXPORTS
 _NEXTJS_CONVENTION_FILES = NEXTJS_CONVENTION_FILES
 _is_nextjs_convention_file = is_nextjs_convention_file
+_TS_JS_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx")
+_TS_JS_ENTRY_SUFFIXES = (
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    "/index.ts",
+    "/index.tsx",
+    "/index.js",
+    "/index.jsx",
+)
 
 
 def resolve_ts_module(source: str, importer: str, monorepo_resolver=None) -> str | None:
@@ -34,24 +45,27 @@ def resolve_ts_module(source: str, importer: str, monorepo_resolver=None) -> str
     base = os.path.dirname(importer)
     target = os.path.normpath(os.path.join(base, source))
 
+    candidates: list[str] = []
     if target.endswith(".js"):
-        ts_target = target[:-3] + ".ts"
-        if os.path.isfile(ts_target):
-            return ts_target
-        tsx_target = target[:-3] + ".tsx"
-        if os.path.isfile(tsx_target):
-            return tsx_target
+        candidates.extend(
+            [target[:-3] + ".ts", target[:-3] + ".tsx", target, target[:-3] + ".jsx"]
+        )
     elif target.endswith(".jsx"):
-        tsx_target = target[:-4] + ".tsx"
-        if os.path.isfile(tsx_target):
-            return tsx_target
+        candidates.extend([target[:-4] + ".tsx", target[:-4] + ".js", target])
+    else:
+        candidates.append(target)
 
-    for suffix in (".ts", ".tsx", "/index.ts", "/index.tsx"):
+    for suffix in _TS_JS_ENTRY_SUFFIXES:
         candidate = target + suffix
+        candidates.append(candidate)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
         if os.path.isfile(candidate):
             return candidate
-    if os.path.isfile(target):
-        return target
     return None
 
 
@@ -209,7 +223,7 @@ def demote_unconsumed_ts_exports(defs, consumed_exports):
     for _name, defn in defs.items():
         if not defn.is_exported:
             continue
-        if not str(defn.filename).endswith((".ts", ".tsx")):
+        if not str(defn.filename).endswith(_TS_JS_EXTENSIONS):
             continue
         if defn.type == "import":
             continue
@@ -221,24 +235,49 @@ def demote_unconsumed_ts_exports(defs, consumed_exports):
     return demoted
 
 
-_TEST_SUFFIXES = (".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx")
+_TEST_SUFFIXES = (
+    ".test.ts",
+    ".test.tsx",
+    ".test.js",
+    ".test.jsx",
+    ".spec.ts",
+    ".spec.tsx",
+    ".spec.js",
+    ".spec.jsx",
+)
 
 _CONFIG_FILES = frozenset(
     {
         "vitest.config.ts",
         "vitest.config.mts",
+        "vitest.config.js",
+        "vitest.config.mjs",
         "jest.config.ts",
+        "jest.config.js",
+        "jest.config.cjs",
         "tsconfig.ts",
         "source.config.ts",
         "source.config.tsx",
+        "source.config.js",
+        "source.config.jsx",
         "tailwind.config.ts",
+        "tailwind.config.js",
+        "tailwind.config.cjs",
         "next.config.ts",
         "next.config.mts",
+        "next.config.js",
+        "next.config.mjs",
         "postcss.config.ts",
+        "postcss.config.js",
+        "postcss.config.cjs",
         "eslint.config.ts",
         "eslint.config.mts",
+        "eslint.config.js",
+        "eslint.config.mjs",
         "vite.config.ts",
         "vite.config.mts",
+        "vite.config.js",
+        "vite.config.mjs",
     }
 )
 
@@ -246,8 +285,12 @@ _TS_ENTRY_FILES = frozenset(
     {
         "index.ts",
         "index.tsx",
+        "index.js",
+        "index.jsx",
         "main.ts",
         "main.tsx",
+        "main.js",
+        "main.jsx",
     }
 )
 
@@ -409,7 +452,7 @@ def _discover_referenced_package_roots(
     for file_path in {
         Path(str(f)).resolve()
         for f in files
-        if str(f).endswith((".ts", ".tsx"))
+        if str(f).endswith(_TS_JS_EXTENSIONS)
         and not _is_excluded_path(str(f), exclude_folders, exclude_root)
     }:
         owning_package_root = _find_owning_package_root(file_path, package_roots)
@@ -442,7 +485,7 @@ def _discover_ts_reachability_entry_files(
     ts_files = {
         os.path.realpath(str(f))
         for f in files
-        if str(f).endswith((".ts", ".tsx"))
+        if str(f).endswith(_TS_JS_EXTENSIONS)
         and not _is_excluded_path(str(f), exclude_folders, exclude_root)
     }
     if not ts_files:
@@ -490,7 +533,7 @@ def find_dead_ts_files(
     ts_files = set()
     for f in files:
         sf = str(f)
-        if not sf.endswith((".ts", ".tsx")):
+        if not sf.endswith(_TS_JS_EXTENSIONS):
             continue
         if _is_excluded_path(sf, exclude_folders, exclude_root):
             continue
@@ -535,7 +578,7 @@ def find_dead_ts_files(
         dead_files.append(
             {
                 "rule_id": "SKY-E003",
-                "message": "Unused TypeScript file (not imported by any other file)",
+                "message": "Unused TypeScript/JavaScript file (not imported by any other file)",
                 "file": tf,
                 "line": 1,
                 "severity": "LOW",

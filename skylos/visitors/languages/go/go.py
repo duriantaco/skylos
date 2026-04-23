@@ -24,10 +24,13 @@ _GO_RULE_REMAP = {
     "SKY-G211": "SKY-D211",  # SQL injection
     "SKY-G212": "SKY-D212",  # Command injection
     "SKY-G215": "SKY-D215",  # Path traversal
+    "SKY-G305": "SKY-D215",  # Archive extraction path traversal
     "SKY-G216": "SKY-D216",  # SSRF
     "SKY-G207": "SKY-D207",  # Weak hash MD5
     "SKY-G208": "SKY-D208",  # Weak hash SHA1
+    "SKY-G209": "SKY-D250",  # Weak random source
     "SKY-G210": "SKY-D210",  # TLS verification disabled
+    "SKY-G221": "SKY-D252",  # Insecure cookie flags
     "SKY-G220": "SKY-D230",  # Open redirect
 }
 

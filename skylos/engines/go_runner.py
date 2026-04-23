@@ -16,6 +16,21 @@ class GoEngineError(RuntimeError):
     pass
 
 
+def _is_runnable_go_engine(candidate: Path) -> bool:
+    try:
+        proc = subprocess.run(
+            [str(candidate), "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return False
+    return proc.returncode == 0
+
+
 def discover_go_modules(scan_root):
     scan_root = Path(scan_root).resolve()
     modules = []
@@ -53,18 +68,21 @@ def resolve_go_engine_bin():
     override = os.getenv("SKYLOS_GO_BIN")
     if override:
         p = Path(override).expanduser()
-        if p.is_file():
+        if p.is_file() and _is_runnable_go_engine(p):
             return str(p)
-        raise GoEngineError("SKYLOS_GO_BIN is set but binary does not exist: %s" % p)
+        raise GoEngineError(
+            "SKYLOS_GO_BIN is set but the binary is missing or not runnable on this platform: %s"
+            % p
+        )
 
     exe = "skylos-go.exe" if os.name == "nt" else "skylos-go"
-    found = shutil.which(exe) or shutil.which("skylos-go")
-    if found:
-        return found
-
     pkg_dir = Path(__file__).resolve().parent / "go" / exe
-    if pkg_dir.is_file():
+    if pkg_dir.is_file() and _is_runnable_go_engine(pkg_dir):
         return str(pkg_dir)
+
+    found = shutil.which(exe) or shutil.which("skylos-go")
+    if found and _is_runnable_go_engine(Path(found)):
+        return found
 
     raise GoEngineError(
         "Go engine binary not found (skylos-go).\n"
