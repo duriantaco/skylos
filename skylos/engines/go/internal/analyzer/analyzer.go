@@ -561,16 +561,39 @@ func (a *Analyzer) checkArchiveLoopBody(body *ast.BlockStmt, entryVars map[strin
 	}
 
 	taintedPaths := make(map[string]bool)
-	guarded := false
+	cleanedPaths := make(map[string]bool)
+	guardVars := make(map[string]archiveGuardMode)
+	guardedPaths := make(map[string]bool)
+	a.scanArchiveStatements(body.List, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, false, path)
+}
 
-	ast.Inspect(body, func(n ast.Node) bool {
-		switch node := n.(type) {
+type archiveGuardMode int
+
+const (
+	archiveGuardNone archiveGuardMode = iota
+	archiveGuardRejectBad
+	archiveGuardAllowGood
+)
+
+func (a *Analyzer) scanArchiveStatements(stmts []ast.Stmt, entryVars map[string]bool, taintedPaths map[string]bool, cleanedPaths map[string]bool, guardVars map[string]archiveGuardMode, guardedPaths map[string]bool, guarded bool, path string) bool {
+	currentGuarded := guarded
+
+	for _, stmt := range stmts {
+		switch node := stmt.(type) {
 		case *ast.AssignStmt:
 			a.recordArchiveTaintedPaths(node.Lhs, node.Rhs, entryVars, taintedPaths)
+			a.recordArchiveCleanedPaths(node.Lhs, node.Rhs, entryVars, taintedPaths, cleanedPaths)
+			a.recordArchiveGuardVars(node.Lhs, node.Rhs, entryVars, taintedPaths, cleanedPaths, guardVars)
+			a.recordArchiveGuardedPaths(node.Lhs, node.Rhs, entryVars, taintedPaths, cleanedPaths, guardedPaths, currentGuarded)
+			if sink := a.archiveSinkInExprs(node.Rhs, entryVars, taintedPaths, cleanedPaths, guardedPaths, currentGuarded); sink != nil {
+				a.addFinding(sink, path, "SKY-G305", "HIGH", "Archive Extraction Path Traversal",
+					"Archive entry path is written to disk without validating traversal segments. Reject '..' paths or ensure the cleaned output path stays under the extraction root.")
+				return true
+			}
 		case *ast.DeclStmt:
 			gen, ok := node.Decl.(*ast.GenDecl)
 			if !ok {
-				return true
+				continue
 			}
 			for _, spec := range gen.Specs {
 				valueSpec, ok := spec.(*ast.ValueSpec)
@@ -582,33 +605,257 @@ func (a *Analyzer) checkArchiveLoopBody(body *ast.BlockStmt, entryVars map[strin
 					lhs = append(lhs, name)
 				}
 				a.recordArchiveTaintedPaths(lhs, valueSpec.Values, entryVars, taintedPaths)
+				a.recordArchiveCleanedPaths(lhs, valueSpec.Values, entryVars, taintedPaths, cleanedPaths)
+				a.recordArchiveGuardVars(lhs, valueSpec.Values, entryVars, taintedPaths, cleanedPaths, guardVars)
+				a.recordArchiveGuardedPaths(lhs, valueSpec.Values, entryVars, taintedPaths, cleanedPaths, guardedPaths, currentGuarded)
+				if sink := a.archiveSinkInExprs(valueSpec.Values, entryVars, taintedPaths, cleanedPaths, guardedPaths, currentGuarded); sink != nil {
+					a.addFinding(sink, path, "SKY-G305", "HIGH", "Archive Extraction Path Traversal",
+						"Archive entry path is written to disk without validating traversal segments. Reject '..' paths or ensure the cleaned output path stays under the extraction root.")
+					return true
+				}
 			}
-		case *ast.CallExpr:
-			if a.isArchiveGuard(node, entryVars, taintedPaths) {
-				guarded = true
-			}
-			if !guarded && a.isArchiveSink(node, entryVars, taintedPaths) {
-				a.addFinding(node, path, "SKY-G305", "HIGH", "Archive Extraction Path Traversal",
+		case *ast.ExprStmt:
+			call, ok := node.X.(*ast.CallExpr)
+			if ok && a.isArchiveSink(call, entryVars, taintedPaths, cleanedPaths, guardedPaths, currentGuarded) {
+				a.addFinding(call, path, "SKY-G305", "HIGH", "Archive Extraction Path Traversal",
 					"Archive entry path is written to disk without validating traversal segments. Reject '..' paths or ensure the cleaned output path stays under the extraction root.")
-				return false
+				return true
+			}
+		case *ast.IfStmt:
+			if node.Init != nil {
+				if a.scanArchiveStatements([]ast.Stmt{node.Init}, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+					return true
+				}
+			}
+
+			mode := a.archiveGuardModeForExpr(node.Cond, entryVars, taintedPaths, cleanedPaths, guardVars)
+			if mode == archiveGuardRejectBad && a.archiveBlockTerminates(node.Body) {
+				if node.Else != nil && a.scanArchiveElse(node.Else, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, true, path) {
+					return true
+				}
+				currentGuarded = true
+				continue
+			}
+
+			if mode == archiveGuardAllowGood {
+				if a.scanArchiveStatements(node.Body.List, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, true, path) {
+					return true
+				}
+				if node.Else != nil && a.scanArchiveElse(node.Else, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+					return true
+				}
+				continue
+			}
+
+			if a.scanArchiveStatements(node.Body.List, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+				return true
+			}
+			if node.Else != nil && a.scanArchiveElse(node.Else, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+				return true
+			}
+		case *ast.BlockStmt:
+			if a.scanArchiveStatements(node.List, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+				return true
+			}
+		case *ast.ForStmt:
+			if node.Init != nil {
+				if a.scanArchiveStatements([]ast.Stmt{node.Init}, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+					return true
+				}
+			}
+			if a.scanArchiveStatements(node.Body.List, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+				return true
+			}
+			if node.Post != nil {
+				if a.scanArchiveStatements([]ast.Stmt{node.Post}, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+					return true
+				}
+			}
+		case *ast.RangeStmt:
+			if a.scanArchiveStatements(node.Body.List, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+				return true
+			}
+		case *ast.SwitchStmt:
+			if node.Init != nil {
+				if a.scanArchiveStatements([]ast.Stmt{node.Init}, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+					return true
+				}
+			}
+			if a.scanArchiveStatements(node.Body.List, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+				return true
+			}
+		case *ast.TypeSwitchStmt:
+			if node.Init != nil {
+				if a.scanArchiveStatements([]ast.Stmt{node.Init}, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+					return true
+				}
+			}
+			if a.scanArchiveStatements(node.Body.List, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+				return true
+			}
+		case *ast.SelectStmt:
+			if a.scanArchiveStatements(node.Body.List, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+				return true
+			}
+		case *ast.CaseClause:
+			if a.scanArchiveStatements(node.Body, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+				return true
+			}
+		case *ast.CommClause:
+			if a.scanArchiveStatements(node.Body, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, currentGuarded, path) {
+				return true
 			}
 		}
-		return true
-	})
+	}
+
+	return false
+}
+
+func (a *Analyzer) scanArchiveElse(stmt ast.Stmt, entryVars map[string]bool, taintedPaths map[string]bool, cleanedPaths map[string]bool, guardVars map[string]archiveGuardMode, guardedPaths map[string]bool, guarded bool, path string) bool {
+	switch node := stmt.(type) {
+	case *ast.BlockStmt:
+		return a.scanArchiveStatements(node.List, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, guarded, path)
+	case *ast.IfStmt:
+		return a.scanArchiveStatements([]ast.Stmt{node}, entryVars, taintedPaths, cleanedPaths, guardVars, guardedPaths, guarded, path)
+	default:
+		return false
+	}
 }
 
 func (a *Analyzer) recordArchiveTaintedPaths(lhs []ast.Expr, rhs []ast.Expr, entryVars map[string]bool, taintedPaths map[string]bool) {
-	for idx, expr := range rhs {
-		if !a.exprUsesArchiveEntry(expr, entryVars, taintedPaths) {
+	if len(rhs) == 1 {
+		if call, ok := rhs[0].(*ast.CallExpr); ok {
+			if resultIdxs, handled := a.archiveTaintedResultIndices(call, entryVars, taintedPaths); handled {
+				for idx, expr := range lhs {
+					ident, ok := expr.(*ast.Ident)
+					if !ok || ident.Name == "_" {
+						continue
+					}
+					if resultIdxs[idx] {
+						taintedPaths[ident.Name] = true
+						continue
+					}
+					delete(taintedPaths, ident.Name)
+				}
+				return
+			}
+		}
+	}
+
+	for idx := 0; idx < len(lhs); idx++ {
+		if idx >= len(lhs) {
+			break
+		}
+		ident, ok := lhs[idx].(*ast.Ident)
+		if !ok || ident.Name == "_" {
 			continue
 		}
+		if idx < len(rhs) && a.exprUsesArchiveEntry(rhs[idx], entryVars, taintedPaths) {
+			taintedPaths[ident.Name] = true
+			continue
+		}
+		delete(taintedPaths, ident.Name)
+	}
+}
+
+func (a *Analyzer) recordArchiveCleanedPaths(lhs []ast.Expr, rhs []ast.Expr, entryVars map[string]bool, taintedPaths map[string]bool, cleanedPaths map[string]bool) {
+	for idx, expr := range rhs {
 		if idx >= len(lhs) {
 			continue
 		}
-		if ident, ok := lhs[idx].(*ast.Ident); ok && ident.Name != "_" {
-			taintedPaths[ident.Name] = true
+		ident, ok := lhs[idx].(*ast.Ident)
+		if !ok || ident.Name == "_" {
+			continue
+		}
+		call, ok := expr.(*ast.CallExpr)
+		if !ok {
+			delete(cleanedPaths, ident.Name)
+			continue
+		}
+		pkg, fn := a.getFuncInfo(call.Fun)
+		if (pkg == "path/filepath" || pkg == "path") && fn == "Clean" && len(call.Args) >= 1 && a.exprUsesArchiveEntry(call.Args[0], entryVars, taintedPaths) {
+			cleanedPaths[ident.Name] = true
+			continue
+		}
+		delete(cleanedPaths, ident.Name)
+	}
+}
+
+func (a *Analyzer) recordArchiveGuardVars(lhs []ast.Expr, rhs []ast.Expr, entryVars map[string]bool, taintedPaths map[string]bool, cleanedPaths map[string]bool, guardVars map[string]archiveGuardMode) {
+	for idx, expr := range rhs {
+		if idx >= len(lhs) {
+			continue
+		}
+		ident, ok := lhs[idx].(*ast.Ident)
+		if !ok || ident.Name == "_" {
+			continue
+		}
+		mode := a.archiveGuardModeForExpr(expr, entryVars, taintedPaths, cleanedPaths, guardVars)
+		if mode == archiveGuardNone {
+			delete(guardVars, ident.Name)
+			continue
+		}
+		guardVars[ident.Name] = mode
+	}
+}
+
+func (a *Analyzer) recordArchiveGuardedPaths(lhs []ast.Expr, rhs []ast.Expr, entryVars map[string]bool, taintedPaths map[string]bool, cleanedPaths map[string]bool, guardedPaths map[string]bool, guarded bool) {
+	if len(rhs) == 1 {
+		if call, ok := rhs[0].(*ast.CallExpr); ok {
+			if resultIdxs, handled := a.archiveGuardedResultIndices(call, entryVars, taintedPaths, cleanedPaths, guardedPaths, guarded); handled {
+				for idx, expr := range lhs {
+					ident, ok := expr.(*ast.Ident)
+					if !ok || ident.Name == "_" {
+						continue
+					}
+					if resultIdxs[idx] {
+						guardedPaths[ident.Name] = true
+						continue
+					}
+					delete(guardedPaths, ident.Name)
+				}
+				return
+			}
 		}
 	}
+
+	for idx := 0; idx < len(lhs); idx++ {
+		ident, ok := lhs[idx].(*ast.Ident)
+		if !ok || ident.Name == "_" {
+			continue
+		}
+		if idx >= len(rhs) || !a.exprUsesArchiveEntry(rhs[idx], entryVars, taintedPaths) {
+			delete(guardedPaths, ident.Name)
+			continue
+		}
+		if a.archiveExprPreservesGuard(rhs[idx], entryVars, taintedPaths, cleanedPaths, guardedPaths, guarded) {
+			guardedPaths[ident.Name] = true
+			continue
+		}
+		delete(guardedPaths, ident.Name)
+	}
+}
+
+func (a *Analyzer) archiveTaintedResultIndices(call *ast.CallExpr, entryVars map[string]bool, taintedPaths map[string]bool) (map[int]bool, bool) {
+	pkg, fn := a.getFuncInfo(call.Fun)
+	switch {
+	case pkg == "strings" && fn == "Cut":
+		if len(call.Args) >= 1 && a.exprUsesArchiveEntry(call.Args[0], entryVars, taintedPaths) {
+			return map[int]bool{0: true, 1: true}, true
+		}
+	}
+	return nil, false
+}
+
+func (a *Analyzer) archiveGuardedResultIndices(call *ast.CallExpr, entryVars map[string]bool, taintedPaths map[string]bool, cleanedPaths map[string]bool, guardedPaths map[string]bool, guarded bool) (map[int]bool, bool) {
+	pkg, fn := a.getFuncInfo(call.Fun)
+	switch {
+	case pkg == "strings" && fn == "Cut":
+		if len(call.Args) >= 1 && a.archiveExprPreservesGuard(call.Args[0], entryVars, taintedPaths, cleanedPaths, guardedPaths, guarded) {
+			return map[int]bool{0: true, 1: true}, true
+		}
+	}
+	return nil, false
 }
 
 func (a *Analyzer) exprUsesArchiveEntry(expr ast.Expr, entryVars map[string]bool, taintedPaths map[string]bool) bool {
@@ -643,38 +890,149 @@ func (a *Analyzer) exprUsesArchiveEntry(expr ast.Expr, entryVars map[string]bool
 	return false
 }
 
-func (a *Analyzer) isArchiveGuard(call *ast.CallExpr, entryVars map[string]bool, taintedPaths map[string]bool) bool {
-	pkg, fn := a.getFuncInfo(call.Fun)
-
-	switch {
-	case pkg == "strings" && fn == "Contains":
-		if len(call.Args) >= 2 && a.exprUsesArchiveEntry(call.Args[0], entryVars, taintedPaths) {
-			if lit, ok := call.Args[1].(*ast.BasicLit); ok && strings.Contains(lit.Value, "..") {
-				return true
+func (a *Analyzer) archiveGuardModeForExpr(expr ast.Expr, entryVars map[string]bool, taintedPaths map[string]bool, cleanedPaths map[string]bool, guardVars map[string]archiveGuardMode) archiveGuardMode {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return guardVars[e.Name]
+	case *ast.ParenExpr:
+		return a.archiveGuardModeForExpr(e.X, entryVars, taintedPaths, cleanedPaths, guardVars)
+	case *ast.UnaryExpr:
+		if e.Op != token.NOT {
+			return archiveGuardNone
+		}
+		switch a.archiveGuardModeForExpr(e.X, entryVars, taintedPaths, cleanedPaths, guardVars) {
+		case archiveGuardRejectBad:
+			return archiveGuardAllowGood
+		case archiveGuardAllowGood:
+			return archiveGuardRejectBad
+		default:
+			return archiveGuardNone
+		}
+	case *ast.BinaryExpr:
+		left := a.archiveGuardModeForExpr(e.X, entryVars, taintedPaths, cleanedPaths, guardVars)
+		right := a.archiveGuardModeForExpr(e.Y, entryVars, taintedPaths, cleanedPaths, guardVars)
+		switch e.Op {
+		case token.LOR:
+			if left == archiveGuardRejectBad && right == archiveGuardRejectBad {
+				return archiveGuardRejectBad
+			}
+		case token.LAND:
+			if left == archiveGuardAllowGood && right == archiveGuardAllowGood {
+				return archiveGuardAllowGood
 			}
 		}
-	case pkg == "strings" && fn == "HasPrefix":
-		if len(call.Args) >= 1 && a.exprUsesArchiveEntry(call.Args[0], entryVars, taintedPaths) {
+		return archiveGuardNone
+	case *ast.CallExpr:
+		pkg, fn := a.getFuncInfo(e.Fun)
+		switch {
+		case pkg == "strings" && fn == "Contains":
+			if len(e.Args) >= 2 && a.exprUsesArchiveEntry(e.Args[0], entryVars, taintedPaths) {
+				if lit, ok := e.Args[1].(*ast.BasicLit); ok && strings.Contains(lit.Value, "..") {
+					return archiveGuardRejectBad
+				}
+			}
+		case pkg == "strings" && fn == "HasPrefix":
+			if len(e.Args) >= 1 {
+				if ident, ok := e.Args[0].(*ast.Ident); ok && cleanedPaths[ident.Name] {
+					return archiveGuardAllowGood
+				}
+			}
+		case pkg == "path/filepath" && fn == "IsLocal":
+			if len(e.Args) >= 1 && a.exprUsesArchiveEntry(e.Args[0], entryVars, taintedPaths) {
+				return archiveGuardAllowGood
+			}
+		}
+	}
+
+	return archiveGuardNone
+}
+
+func (a *Analyzer) archiveExprPreservesGuard(expr ast.Expr, entryVars map[string]bool, taintedPaths map[string]bool, cleanedPaths map[string]bool, guardedPaths map[string]bool, guarded bool) bool {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		if entryVars[e.Name] {
+			return guarded
+		}
+		if guarded && cleanedPaths[e.Name] {
 			return true
 		}
-	case pkg == "path/filepath" && fn == "Rel":
-		if len(call.Args) >= 2 && a.exprUsesArchiveEntry(call.Args[1], entryVars, taintedPaths) {
-			return true
+		return guardedPaths[e.Name]
+	case *ast.SelectorExpr:
+		if e.Sel != nil && e.Sel.Name == "Name" {
+			if id, ok := e.X.(*ast.Ident); ok && entryVars[id.Name] {
+				return guarded
+			}
+			if inner, ok := e.X.(*ast.SelectorExpr); ok {
+				if id, ok := inner.X.(*ast.Ident); ok && entryVars[id.Name] {
+					return guarded
+				}
+			}
 		}
-	case pkg == "path/filepath" && fn == "Clean":
-		if len(call.Args) >= 1 && a.exprUsesArchiveEntry(call.Args[0], entryVars, taintedPaths) {
-			return true
+		return false
+	case *ast.ParenExpr:
+		return a.archiveExprPreservesGuard(e.X, entryVars, taintedPaths, cleanedPaths, guardedPaths, guarded)
+	case *ast.CallExpr:
+		pkg, fn := a.getFuncInfo(e.Fun)
+		if (pkg != "path/filepath" && pkg != "path") || (fn != "Join" && fn != "Clean") {
+			return false
 		}
-	case pkg == "path" && fn == "Clean":
-		if len(call.Args) >= 1 && a.exprUsesArchiveEntry(call.Args[0], entryVars, taintedPaths) {
-			return true
+		usesArchive := false
+		for _, arg := range e.Args {
+			if !a.exprUsesArchiveEntry(arg, entryVars, taintedPaths) {
+				continue
+			}
+			usesArchive = true
+			if !a.archiveExprPreservesGuard(arg, entryVars, taintedPaths, cleanedPaths, guardedPaths, guarded) {
+				return false
+			}
 		}
+		return usesArchive
+	default:
+		return false
+	}
+}
+
+func (a *Analyzer) archiveBlockTerminates(body *ast.BlockStmt) bool {
+	if body == nil || len(body.List) == 0 {
+		return false
+	}
+
+	last := body.List[len(body.List)-1]
+	switch stmt := last.(type) {
+	case *ast.BranchStmt:
+		return stmt.Tok == token.CONTINUE || stmt.Tok == token.BREAK
+	case *ast.ReturnStmt:
+		return true
 	}
 
 	return false
 }
 
-func (a *Analyzer) isArchiveSink(call *ast.CallExpr, entryVars map[string]bool, taintedPaths map[string]bool) bool {
+func (a *Analyzer) archiveSinkInExprs(exprs []ast.Expr, entryVars map[string]bool, taintedPaths map[string]bool, cleanedPaths map[string]bool, guardedPaths map[string]bool, guarded bool) *ast.CallExpr {
+	for _, expr := range exprs {
+		var sink *ast.CallExpr
+		ast.Inspect(expr, func(n ast.Node) bool {
+			if sink != nil {
+				return false
+			}
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if a.isArchiveSink(call, entryVars, taintedPaths, cleanedPaths, guardedPaths, guarded) {
+				sink = call
+				return false
+			}
+			return true
+		})
+		if sink != nil {
+			return sink
+		}
+	}
+	return nil
+}
+
+func (a *Analyzer) isArchiveSink(call *ast.CallExpr, entryVars map[string]bool, taintedPaths map[string]bool, cleanedPaths map[string]bool, guardedPaths map[string]bool, guarded bool) bool {
 	pkg, fn := a.getFuncInfo(call.Fun)
 	if !contains([]string{"os", "io/ioutil"}, pkg) {
 		return false
@@ -690,7 +1048,8 @@ func (a *Analyzer) isArchiveSink(call *ast.CallExpr, entryVars map[string]bool, 
 		return false
 	}
 
-	return a.exprUsesArchiveEntry(call.Args[0], entryVars, taintedPaths)
+	return a.exprUsesArchiveEntry(call.Args[0], entryVars, taintedPaths) &&
+		!a.archiveExprPreservesGuard(call.Args[0], entryVars, taintedPaths, cleanedPaths, guardedPaths, guarded)
 }
 
 func (a *Analyzer) hasImportPath(path string) bool {

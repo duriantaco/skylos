@@ -138,3 +138,351 @@ func unzip(path string, dest string) error {
 """,
     )
     assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_zip_slip_filepath_islocal_guard_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/zip"
+    "os"
+    "path/filepath"
+)
+
+func unzip(path string, dest string) error {
+    reader, _ := zip.OpenReader(path)
+    for _, file := range reader.File {
+        if !filepath.IsLocal(file.Name) {
+            continue
+        }
+        target := filepath.Join(dest, file.Name)
+        out, _ := os.Create(target)
+        _ = out
+    }
+    return nil
+}
+""",
+    )
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_zip_slip_filepath_islocal_alias_guard_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/zip"
+    "os"
+    "path/filepath"
+)
+
+func unzip(path string, dest string) error {
+    reader, _ := zip.OpenReader(path)
+    for _, file := range reader.File {
+        ok := filepath.IsLocal(file.Name)
+        if !ok {
+            continue
+        }
+        target := filepath.Join(dest, file.Name)
+        out, _ := os.Create(target)
+        _ = out
+    }
+    return nil
+}
+""",
+    )
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_zip_slip_filepath_islocal_noop_still_flags(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/zip"
+    "os"
+    "path/filepath"
+)
+
+func unzip(path string, dest string) error {
+    reader, _ := zip.OpenReader(path)
+    for _, file := range reader.File {
+        _ = filepath.IsLocal(file.Name)
+        target := filepath.Join(dest, file.Name)
+        out, _ := os.Create(target)
+        _ = out
+    }
+    return nil
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_zip_slip_combined_guard_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/zip"
+    "os"
+    "path/filepath"
+    "strings"
+)
+
+func unzip(path string, dest string) error {
+    reader, _ := zip.OpenReader(path)
+    for _, file := range reader.File {
+        if !filepath.IsLocal(file.Name) || strings.Contains(file.Name, "..") {
+            continue
+        }
+        target := filepath.Join(dest, file.Name)
+        out, _ := os.Create(target)
+        _ = out
+    }
+    return nil
+}
+""",
+    )
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_zip_slip_reassigned_guard_alias_still_flags(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/zip"
+    "os"
+    "path/filepath"
+)
+
+func unzip(path string, dest string) error {
+    reader, _ := zip.OpenReader(path)
+    for _, file := range reader.File {
+        ok := filepath.IsLocal(file.Name)
+        ok = true
+        if !ok {
+            continue
+        }
+        target := filepath.Join(dest, file.Name)
+        out, _ := os.Create(target)
+        _ = out
+    }
+    return nil
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_zip_slip_clean_prefix_guard_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/zip"
+    "os"
+    "path/filepath"
+    "strings"
+)
+
+func unzip(path string, dest string) error {
+    reader, _ := zip.OpenReader(path)
+    cleanDest := filepath.Clean(dest) + string(os.PathSeparator)
+    for _, file := range reader.File {
+        target := filepath.Join(dest, file.Name)
+        cleaned := filepath.Clean(target)
+        if !strings.HasPrefix(cleaned, cleanDest) {
+            continue
+        }
+        out, _ := os.Create(cleaned)
+        _ = out
+    }
+    return nil
+}
+""",
+    )
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_zip_slip_reassigned_guarded_name_still_flags(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/zip"
+    "os"
+    "path/filepath"
+    "strings"
+)
+
+func unzip(path string, dest string) error {
+    reader, _ := zip.OpenReader(path)
+    for _, file := range reader.File {
+        name := file.Name
+        if strings.Contains(name, "..") {
+            continue
+        }
+        name = filepath.Base(file.Name) + file.Name
+        target := filepath.Join(dest, name)
+        out, _ := os.Create(target)
+        _ = out
+    }
+    return nil
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_zip_slip_break_guard_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/zip"
+    "os"
+    "path/filepath"
+    "strings"
+)
+
+func unzip(path string, dest string) error {
+    reader, _ := zip.OpenReader(path)
+    for _, file := range reader.File {
+        if strings.Contains(file.Name, "..") {
+            break
+        }
+        target := filepath.Join(dest, file.Name)
+        out, _ := os.Create(target)
+        _ = out
+    }
+    return nil
+}
+""",
+    )
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_tar_fs_validpath_is_not_treated_as_safe_guard(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/tar"
+    "io/fs"
+    "os"
+    "path/filepath"
+)
+
+func untar(reader *tar.Reader, dest string) error {
+    for {
+        header, err := reader.Next()
+        if err != nil {
+            return err
+        }
+        if !fs.ValidPath(header.Name) {
+            continue
+        }
+        target := filepath.Join(dest, header.Name)
+        out, _ := os.Create(target)
+        _ = out
+    }
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_zip_slip_new_tainted_alias_after_guard_still_flags(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/zip"
+    "os"
+    "path/filepath"
+)
+
+func unzip(path string, dest string) error {
+    reader, _ := zip.OpenReader(path)
+    for _, file := range reader.File {
+        if !filepath.IsLocal(file.Name) {
+            continue
+        }
+        name := "../" + file.Name
+        target := filepath.Join(dest, name)
+        out, _ := os.Create(target)
+        _ = out
+    }
+    return nil
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_zip_slip_sink_inside_switch_is_detected(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/zip"
+    "os"
+    "path/filepath"
+)
+
+func unzip(path string, dest string) error {
+    reader, _ := zip.OpenReader(path)
+    for _, file := range reader.File {
+        target := filepath.Join(dest, file.Name)
+        switch {
+        default:
+            out, _ := os.Create(target)
+            _ = out
+        }
+    }
+    return nil
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_zip_slip_strings_cut_second_result_still_flags(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/zip"
+    "os"
+    "path/filepath"
+    "strings"
+)
+
+func unzip(path string, dest string) error {
+    reader, _ := zip.OpenReader(path)
+    for _, file := range reader.File {
+        _, name, _ := strings.Cut(file.Name, "/")
+        target := filepath.Join(dest, name)
+        out, _ := os.Create(target)
+        _ = out
+    }
+    return nil
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
