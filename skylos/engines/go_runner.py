@@ -58,13 +58,14 @@ def resolve_go_engine_bin():
         raise GoEngineError("SKYLOS_GO_BIN is set but binary does not exist: %s" % p)
 
     exe = "skylos-go.exe" if os.name == "nt" else "skylos-go"
-    found = shutil.which(exe) or shutil.which("skylos-go")
-    if found:
-        return found
-
     pkg_dir = Path(__file__).resolve().parent / "go" / exe
     if pkg_dir.is_file():
         return str(pkg_dir)
+
+    exe = "skylos-go.exe" if os.name == "nt" else "skylos-go"
+    found = shutil.which(exe) or shutil.which("skylos-go")
+    if found:
+        return found
 
     raise GoEngineError(
         "Go engine binary not found (skylos-go).\n"

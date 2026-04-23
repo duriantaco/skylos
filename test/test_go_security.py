@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from skylos.engines.go_runner import GoEngineError, resolve_go_engine_bin
 from skylos.visitors.languages.go import clear_go_cache, scan_go_file
+
+
+@pytest.fixture(autouse=True)
+def _pin_repo_go_engine(monkeypatch):
+    engine_name = "skylos-go.exe" if os.name == "nt" else "skylos-go"
+    engine_bin = (
+        Path(__file__).resolve().parent.parent / "skylos" / "engines" / "go" / engine_name
+    )
+    if not engine_bin.is_file():
+        pytest.skip("repo skylos-go engine binary not available")
+    monkeypatch.setenv("SKYLOS_GO_BIN", str(engine_bin))
+    clear_go_cache()
 
 
 def _scan_go(tmp_path: Path, code: str) -> list[dict]:
