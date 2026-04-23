@@ -62,9 +62,21 @@ def test_pages_router_default_export_without_next_import(tmp_path):
     assert "HomePage" in _decorated_names(defs, fw)
 
 
+def test_pages_router_js_default_export_without_next_import(tmp_path):
+    code = "export default function HomePage() { return <main>home</main>; }\n"
+    defs, fw = _scan(tmp_path, "pages/index.js", code)
+    assert "HomePage" in _decorated_names(defs, fw)
+
+
 def test_pages_api_default_export_without_next_import(tmp_path):
     code = "export default function handler(req, res) { res.status(200).json({ ok: true }); }\n"
     defs, fw = _scan(tmp_path, "pages/api/users.ts", code)
+    assert "handler" in _decorated_names(defs, fw)
+
+
+def test_pages_api_js_default_export_without_next_import(tmp_path):
+    code = "export default function handler(req, res) { res.status(200).json({ ok: true }); }\n"
+    defs, fw = _scan(tmp_path, "pages/api/users.js", code)
     assert "handler" in _decorated_names(defs, fw)
 
 
@@ -75,6 +87,15 @@ function MyPage() { return <div/>; }
 export default MyPage;
 """
     defs, fw = _scan(tmp_path, "page.tsx", code)
+    assert "MyPage" in _decorated_names(defs, fw)
+
+
+def test_page_jsx_default_export_identifier(tmp_path):
+    code = """\
+function MyPage() { return <div/>; }
+export default MyPage;
+"""
+    defs, fw = _scan(tmp_path, "page.jsx", code)
     assert "MyPage" in _decorated_names(defs, fw)
 
 

@@ -60,6 +60,25 @@ _STRING_PATTERN = """
 (string_literal) @string_node
 """
 
+_ARCHIVE_ENTRY_HINTS = (
+    "ZipInputStream",
+    "ZipEntry",
+    "JarInputStream",
+    "JarEntry",
+    "TarArchiveInputStream",
+    "TarArchiveEntry",
+)
+
+_ARCHIVE_NAME_HINTS = (".getName()", ".getRealName()")
+_ARCHIVE_SINK_HINTS = ("new File(", ".resolve(", "Paths.get(", "Path.of(")
+_ARCHIVE_GUARD_HINTS = (
+    ".normalize(",
+    "normalize()",
+    "toRealPath(",
+    "getCanonicalPath(",
+    "getCanonicalFile(",
+)
+
 _SECRET_PREFIXES = (
     "sk-",
     "sk_live_",
@@ -116,6 +135,60 @@ def _run_batch(root_node, lang: Language, key: str, pattern: str) -> dict[str, l
         return cursor.captures(root_node)
     except Exception:
         return {}
+
+
+def _iter_nodes(root_node):
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(reversed(node.children))
+
+
+def _scan_archive_extraction(root_node, file_path: str, source_bytes: bytes) -> list[dict]:
+    findings: list[dict] = []
+    seen_lines: set[int] = set()
+
+    for node in _iter_nodes(root_node):
+        if node.type not in {"method_declaration", "constructor_declaration"}:
+            continue
+
+        method_text = _get_text(source_bytes, node)
+        if not any(hint in method_text for hint in _ARCHIVE_ENTRY_HINTS):
+            continue
+        if not any(hint in method_text for hint in _ARCHIVE_NAME_HINTS):
+            continue
+        if not any(hint in method_text for hint in _ARCHIVE_SINK_HINTS):
+            continue
+
+        has_path_guard = any(hint in method_text for hint in _ARCHIVE_GUARD_HINTS) and (
+            "startsWith(" in method_text or "starts_with(" in method_text
+        )
+        if has_path_guard:
+            continue
+
+        line_offset = 0
+        for idx, line in enumerate(method_text.splitlines()):
+            if any(hint in line for hint in _ARCHIVE_NAME_HINTS):
+                line_offset = idx
+                break
+
+        line_no = node.start_point[0] + line_offset + 1
+        if line_no in seen_lines:
+            continue
+        seen_lines.add(line_no)
+        findings.append(
+            {
+                "rule_id": "SKY-D215",
+                "severity": "HIGH",
+                "message": "Archive entry name is written to disk without canonical path validation. Normalize the target path and enforce it stays under the extraction directory.",
+                "file": str(file_path),
+                "line": line_no,
+                "col": 0,
+            }
+        )
+
+    return findings
 
 
 def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list[dict]:
@@ -212,6 +285,8 @@ def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list
                 "col": 0,
             }
         )
+
+    findings.extend(_scan_archive_extraction(root_node, file_path, source_bytes))
 
     is_test_file = get_non_library_dir_kind(file_path) == "test"
     string_captures = _run_batch(root_node, lang, "danger_strings", _STRING_PATTERN)

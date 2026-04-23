@@ -81,9 +81,51 @@ export default function handler(req, res) {
         res.json({ ok: true });
     }
 }
+"""
+        findings = []
+        _check_nextjs_missing_auth(source, "/project/pages/api/users.ts", findings)
+        assert len(findings) == 1
 
-export async function POST(request: Request) {
-    return Response.json({});
+    def test_pages_api_route_js(self):
+        source = b"""
+export default function handler(req, res) {
+    if (req.method === 'POST') {
+        res.json({ ok: true });
+    }
+}
+"""
+        findings = []
+        _check_nextjs_missing_auth(source, "/project/pages/api/users.js", findings)
+        assert len(findings) == 1
+
+    def test_pages_api_route_with_auth_is_safe(self):
+        source = b"""
+import { getServerSession } from "next-auth";
+
+export default async function handler(req, res) {
+    if (req.method === 'POST') {
+        const session = await getServerSession(req, res);
+        if (!session) {
+            return res.status(401).json({ error: "Unauthorized" });
+        }
+        return res.status(200).json({ ok: true });
+    }
+    return res.status(405).end();
+}
+"""
+        findings = []
+        _check_nextjs_missing_auth(source, "/project/pages/api/users.ts", findings)
+        assert findings == []
+
+    def test_pages_api_switch_handler_delete(self):
+        source = b"""
+export default function handler(req, res) {
+    switch (req.method) {
+        case "DELETE":
+            return res.status(200).json({ ok: true });
+        default:
+            return res.status(405).end();
+    }
 }
 """
         findings = []
