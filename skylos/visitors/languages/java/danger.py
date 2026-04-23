@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from tree_sitter import Language, Query, QueryCursor
 import tree_sitter_java as tsj
 
@@ -70,7 +71,21 @@ _ARCHIVE_ENTRY_HINTS = (
 )
 
 _ARCHIVE_NAME_HINTS = (".getName()", ".getRealName()")
-_ARCHIVE_SINK_HINTS = ("new File(", ".resolve(", "Paths.get(", "Path.of(")
+_ARCHIVE_SINK_HINTS = (
+    "new FileOutputStream(",
+    "Files.copy(",
+    "Files.write(",
+    "Files.writeString(",
+    "Files.newOutputStream(",
+)
+
+_ARCHIVE_SINK_ARGS = {
+    "new FileOutputStream(": (0,),
+    "Files.copy(": (1,),
+    "Files.write(": (0,),
+    "Files.writeString(": (0,),
+    "Files.newOutputStream(": (0,),
+}
 _ARCHIVE_GUARD_HINTS = (
     ".normalize(",
     "normalize()",
@@ -78,6 +93,60 @@ _ARCHIVE_GUARD_HINTS = (
     "getCanonicalPath(",
     "getCanonicalFile(",
 )
+
+_LOCAL_ALIAS_PATTERN = re.compile(
+    r"(?ms)^\s*(?:(?:final)\s+)*(?:[\w<>\[\],.?]+\s+)?(?P<var>[A-Za-z_]\w*)\s*=\s*(?P<expr>.*?);",
+)
+
+_REQUEST_SOURCE_PATTERNS = (
+    re.compile(
+        r"(?ms)^\s*(?:[\w<>\[\],.?]+\s+)?(?P<var>[A-Za-z_]\w*)\s*=\s*(?:request|req)\.(?:getParameter|getPathInfo|getHeader)\s*\(",
+    ),
+    re.compile(
+        r"@(?:RequestParam|PathVariable)(?:\([^)]*\))?\s+(?:final\s+)?(?:[\w<>\[\],.?]+\s+)*(?P<var>[A-Za-z_]\w*)",
+        re.MULTILINE,
+    ),
+)
+
+_REQUEST_PATH_SINK_PATTERNS = (
+    "new FileInputStream(",
+    "new FileReader(",
+    "new FileOutputStream(",
+    "Files.readAllBytes(",
+    "Files.readString(",
+    "Files.newInputStream(",
+    "Files.newOutputStream(",
+    "Files.copy(",
+    "Files.write(",
+    "Files.writeString(",
+)
+
+_REQUEST_SINK_ARGS = {
+    "new FileInputStream(": (0,),
+    "new FileReader(": (0,),
+    "new FileOutputStream(": (0,),
+    "Files.readAllBytes(": (0,),
+    "Files.readString(": (0,),
+    "Files.newInputStream(": (0,),
+    "Files.newOutputStream(": (0,),
+    "Files.copy(": (0, 1),
+    "Files.write(": (0,),
+    "Files.writeString(": (0,),
+}
+
+_REQUEST_GUARD_HINTS = (
+    ".normalize(",
+    "normalize()",
+    "toRealPath(",
+    "getCanonicalPath(",
+    "getCanonicalFile(",
+)
+
+_REQUEST_INLINE_SOURCE_PATTERN = re.compile(
+    r"\b(?:request|req)\.(?:getParameter|getPathInfo|getHeader)\s*\("
+)
+
+_CONTROL_FLOW_HINTS = ("throw ", "return", "continue", "break")
 
 _SECRET_PREFIXES = (
     "sk-",
@@ -145,6 +214,159 @@ def _iter_nodes(root_node):
         stack.extend(reversed(node.children))
 
 
+def _names_in_line(line: str, names: set[str]) -> set[str]:
+    return {
+        name for name in names if re.search(rf"\b{re.escape(name)}\b", line)
+    }
+
+
+def _line_mentions_names(line: str, names: set[str]) -> bool:
+    return bool(_names_in_line(line, names))
+
+
+def _guard_block_contains_sink(lines: list[str], guard_idx: int, sink_idx: int) -> bool:
+    depth = 0
+    opened = False
+
+    for idx in range(guard_idx, sink_idx + 1):
+        line = lines[idx]
+        opens = line.count("{")
+        closes = line.count("}")
+        if opens:
+            opened = True
+        depth += opens
+        depth -= closes
+        if idx < sink_idx and opened and depth <= 0:
+            return False
+
+    return opened and depth > 0
+
+
+def _guard_without_braces_contains_sink(
+    lines: list[str], guard_idx: int, sink_idx: int
+) -> bool:
+    line = lines[guard_idx]
+    if "{" in line:
+        return False
+    if sink_idx == guard_idx:
+        return True
+    for idx in range(guard_idx + 1, len(lines)):
+        if not lines[idx].strip():
+            continue
+        return idx == sink_idx
+    return False
+
+
+def _has_named_path_guard(
+    lines: list[str], names: set[str], hints: tuple[str, ...], sink_idx: int
+) -> bool:
+    has_normalize = False
+
+    for idx, line in enumerate(lines):
+        mentioned = _names_in_line(line, names)
+        if not mentioned:
+            continue
+        if any(hint in line for hint in hints):
+            has_normalize = True
+        if (
+            has_normalize
+            and "if" in line
+            and ("startsWith(" in line or "starts_with(" in line)
+            and ("!" in line or "== false" in line or "false ==" in line)
+        ):
+            trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
+            if any(token in trailing for token in _CONTROL_FLOW_HINTS):
+                return True
+        if (
+            idx <= sink_idx
+            and has_normalize
+            and "if" in line
+            and ("startsWith(" in line or "starts_with(" in line)
+            and "!" not in line
+            and "== false" not in line
+            and "false ==" not in line
+            and (
+                _guard_block_contains_sink(lines, idx, sink_idx)
+                or _guard_without_braces_contains_sink(lines, idx, sink_idx)
+            )
+        ):
+            return True
+
+    return False
+
+
+def _extract_call_args(line: str, token: str) -> list[str]:
+    start = line.find(token)
+    if start < 0:
+        return []
+
+    idx = start + len(token)
+    depth = 1
+    current: list[str] = []
+    args: list[str] = []
+
+    while idx < len(line):
+        ch = line[idx]
+        if ch == "(":
+            depth += 1
+            current.append(ch)
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                arg = "".join(current).strip()
+                if arg:
+                    args.append(arg)
+                break
+            current.append(ch)
+        elif ch == "," and depth == 1:
+            args.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+        idx += 1
+
+    return args
+
+
+def _iter_assignment_events(text: str) -> list[tuple[int, str, str]]:
+    return [
+        (text[: match.start()].count("\n"), match.group("var"), match.group("expr"))
+        for match in _LOCAL_ALIAS_PATTERN.finditer(text)
+    ]
+
+
+def _iter_sink_calls(
+    text: str, sink_args: dict[str, tuple[int, ...]]
+) -> list[tuple[int, list[str]]]:
+    calls: list[tuple[int, list[str]]] = []
+    for token, positions in sink_args.items():
+        search_from = 0
+        while True:
+            idx = text.find(token, search_from)
+            if idx < 0:
+                break
+            args = _extract_call_args(text[idx:], token)
+            selected_args = [args[pos] for pos in positions if pos < len(args)]
+            calls.append((text[:idx].count("\n"), selected_args))
+            search_from = idx + 1
+    calls.sort(key=lambda item: item[0])
+    return calls
+
+
+def _sink_tainted_names(
+    args: list[str],
+    names: set[str],
+    direct_pattern: re.Pattern[str] | None = None,
+) -> set[str]:
+    for arg in args:
+        if direct_pattern and direct_pattern.search(arg):
+            return {"__direct__"}
+        matched = _names_in_line(arg, names)
+        if matched:
+            return matched
+    return set()
+
+
 def _scan_archive_extraction(root_node, file_path: str, source_bytes: bytes) -> list[dict]:
     findings: list[dict] = []
     seen_lines: set[int] = set()
@@ -156,37 +378,155 @@ def _scan_archive_extraction(root_node, file_path: str, source_bytes: bytes) -> 
         method_text = _get_text(source_bytes, node)
         if not any(hint in method_text for hint in _ARCHIVE_ENTRY_HINTS):
             continue
-        if not any(hint in method_text for hint in _ARCHIVE_NAME_HINTS):
-            continue
         if not any(hint in method_text for hint in _ARCHIVE_SINK_HINTS):
             continue
 
-        has_path_guard = any(hint in method_text for hint in _ARCHIVE_GUARD_HINTS) and (
-            "startsWith(" in method_text or "starts_with(" in method_text
+        lines = method_text.splitlines()
+        tainted_vars: set[str] = set()
+        latest_assignment: dict[str, int] = {}
+        events: list[tuple[int, int, object]] = []
+        events.extend(
+            (line_offset, 0, (alias, expr))
+            for line_offset, alias, expr in _iter_assignment_events(method_text)
         )
-        if has_path_guard:
+        events.extend(
+            (line_offset, 1, args)
+            for line_offset, args in _iter_sink_calls(method_text, _ARCHIVE_SINK_ARGS)
+        )
+        events.sort(key=lambda item: (item[0], item[1]))
+
+        for line_offset, kind, payload in events:
+            if kind == 0:
+                alias, expr = payload
+                if any(hint in expr for hint in _ARCHIVE_NAME_HINTS) or any(
+                    re.search(rf"\b{re.escape(name)}\b", expr) for name in tainted_vars
+                ):
+                    tainted_vars.add(alias)
+                else:
+                    tainted_vars.discard(alias)
+                latest_assignment[alias] = line_offset
+                continue
+
+            args = payload
+            used_names = _sink_tainted_names(args, tainted_vars)
+            direct_entry_name = bool(
+                _sink_tainted_names(
+                    args,
+                    set(),
+                    re.compile(r"\.(?:getName|getRealName)\s*\("),
+                )
+            )
+            if not used_names and not direct_entry_name:
+                continue
+
+            guard_start = 0
+            if used_names:
+                guard_start = max(latest_assignment.get(name, 0) for name in used_names)
+            if used_names and _has_named_path_guard(
+                lines[guard_start : line_offset + 1],
+                used_names,
+                _ARCHIVE_GUARD_HINTS,
+                line_offset - guard_start,
+            ):
+                continue
+
+            line_no = node.start_point[0] + line_offset + 1
+            if line_no in seen_lines:
+                continue
+            seen_lines.add(line_no)
+            findings.append(
+                {
+                    "rule_id": "SKY-D215",
+                    "severity": "HIGH",
+                    "message": "Archive entry name is written to disk without canonical path validation. Normalize the target path and enforce it stays under the extraction directory.",
+                    "file": str(file_path),
+                    "line": line_no,
+                    "col": 0,
+                }
+            )
+            break
+
+    return findings
+
+
+def _scan_request_path_traversal(root_node, file_path: str, source_bytes: bytes) -> list[dict]:
+    findings: list[dict] = []
+    seen_lines: set[int] = set()
+
+    for node in _iter_nodes(root_node):
+        if node.type not in {"method_declaration", "constructor_declaration"}:
             continue
 
-        line_offset = 0
-        for idx, line in enumerate(method_text.splitlines()):
-            if any(hint in line for hint in _ARCHIVE_NAME_HINTS):
-                line_offset = idx
-                break
+        method_text = _get_text(source_bytes, node)
+        tainted_vars: set[str] = {
+            match.group("var") for match in _REQUEST_SOURCE_PATTERNS[1].finditer(method_text)
+        }
+        latest_assignment: dict[str, int] = {
+            name: 0 for name in tainted_vars
+        }
 
-        line_no = node.start_point[0] + line_offset + 1
-        if line_no in seen_lines:
+        if not tainted_vars and not _REQUEST_INLINE_SOURCE_PATTERN.search(method_text):
             continue
-        seen_lines.add(line_no)
-        findings.append(
-            {
-                "rule_id": "SKY-D215",
-                "severity": "HIGH",
-                "message": "Archive entry name is written to disk without canonical path validation. Normalize the target path and enforce it stays under the extraction directory.",
-                "file": str(file_path),
-                "line": line_no,
-                "col": 0,
-            }
+
+        lines = method_text.splitlines()
+        events = []
+        events.extend(
+            (line_offset, 0, (alias, expr))
+            for line_offset, alias, expr in _iter_assignment_events(method_text)
         )
+        events.extend(
+            (line_offset, 1, args)
+            for line_offset, args in _iter_sink_calls(method_text, _REQUEST_SINK_ARGS)
+        )
+        events.sort(key=lambda item: (item[0], item[1]))
+
+        for line_offset, kind, payload in events:
+            if kind == 0:
+                alias, expr = payload
+                if _REQUEST_INLINE_SOURCE_PATTERN.search(expr) or any(
+                    re.search(rf"\b{re.escape(name)}\b", expr) for name in tainted_vars
+                ):
+                    tainted_vars.add(alias)
+                else:
+                    tainted_vars.discard(alias)
+                latest_assignment[alias] = line_offset
+                continue
+
+            used_names = _sink_tainted_names(
+                payload,
+                tainted_vars,
+                _REQUEST_INLINE_SOURCE_PATTERN,
+            )
+            if not used_names:
+                continue
+
+            guard_start = max(
+                (latest_assignment.get(name, 0) for name in used_names if name != "__direct__"),
+                default=0,
+            )
+            if used_names and _has_named_path_guard(
+                lines[guard_start : line_offset + 1],
+                used_names,
+                _REQUEST_GUARD_HINTS,
+                line_offset - guard_start,
+            ):
+                continue
+
+            line_no = node.start_point[0] + line_offset + 1
+            if line_no in seen_lines:
+                continue
+            seen_lines.add(line_no)
+            findings.append(
+                {
+                    "rule_id": "SKY-D215",
+                    "severity": "HIGH",
+                    "message": "Request-controlled path reaches a filesystem sink without canonical path validation. Normalize the path and enforce it stays under the intended root.",
+                    "file": str(file_path),
+                    "line": line_no,
+                    "col": 0,
+                }
+            )
+            break
 
     return findings
 
@@ -287,6 +627,7 @@ def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list
         )
 
     findings.extend(_scan_archive_extraction(root_node, file_path, source_bytes))
+    findings.extend(_scan_request_path_traversal(root_node, file_path, source_bytes))
 
     is_test_file = get_non_library_dir_kind(file_path) == "test"
     string_captures = _run_batch(root_node, lang, "danger_strings", _STRING_PATTERN)

@@ -641,6 +641,7 @@ def scan_danger(
     _check_nextjs_missing_auth(source_bytes, file_path, findings)
     _check_nextjs_client_secrets(source_bytes, file_path, findings)
     _check_nextjs_server_action_sqli(source_bytes, file_path, findings)
+    _check_archive_extraction_path_traversal(root_node, source_bytes, file_path, findings)
 
     return findings
 
@@ -670,6 +671,53 @@ _AUTH_EVIDENCE = frozenset(
 _MUTATING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 
 _NEXTJS_ROUTE_PATTERNS = ("/app/", "/pages/api/")
+
+_ARCHIVE_LIBRARY_HINTS = (
+    "unzip.Parse(",
+    "unzipper.Parse(",
+    ".on('entry'",
+    '.on("entry"',
+    "yauzl",
+    "AdmZip",
+    "adm-zip",
+    'require("unzipper")',
+    "require('unzipper')",
+    'require("adm-zip")',
+    "require('adm-zip')",
+    'from "yauzl"',
+    "from 'yauzl'",
+)
+
+_ARCHIVE_ENTRY_PROPERTY_PATTERN = re.compile(
+    r"\b(?:(?:entry|header|[A-Za-z_$][A-Za-z0-9_$]*Entry)\.(?:path|fileName|name))\b"
+)
+
+_ARCHIVE_ALIAS_PATTERN = re.compile(
+    r"(?ms)^\s*(?:(?:const|let|var)\s+)?(?P<alias>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*[^=;]+)?\s*=\s*(?P<expr>.*?);"
+)
+
+_ARCHIVE_SINK_ARGS = {
+    "fs.createWriteStream(": (0,),
+    "createWriteStream(": (0,),
+    "fs.writeFile(": (0,),
+    "fs.writeFileSync(": (0,),
+    "fs.promises.writeFile(": (0,),
+    "writeFile(": (0,),
+    "writeFileSync(": (0,),
+}
+
+_ARCHIVE_GUARD_TOKENS = (
+    ".includes('..')",
+    '.includes("..")',
+    ".indexOf('..')",
+    '.indexOf("..")',
+)
+
+_ARCHIVE_SCOPE_NODE_TYPES = frozenset(
+    {"function_declaration", "function_expression", "arrow_function", "method_definition"}
+)
+
+_ARCHIVE_CONTROL_FLOW_HINTS = ("return", "continue", "throw", "break")
 
 
 def _has_mutating_exported_route_handler(source_text: str) -> bool:
@@ -747,6 +795,272 @@ def _check_nextjs_missing_auth(
                 "col": 0,
             }
         )
+
+
+def _check_archive_extraction_path_traversal(
+    root_node, source_bytes: bytes, file_path: str, findings: list[dict]
+) -> None:
+    source_text = source_bytes.decode("utf-8", errors="replace")
+    if not any(hint in source_text for hint in _ARCHIVE_LIBRARY_HINTS):
+        return
+
+    for scope_lines, start_line in _iter_archive_scopes(root_node, source_text):
+        scope_text = "\n".join(scope_lines)
+        if not scope_text.strip():
+            continue
+        tainted_names: set[str] = set()
+        latest_assignment: dict[str, int] = {}
+        events: list[tuple[int, int, object]] = []
+        events.extend(
+            (
+                scope_text[: match.start()].count("\n"),
+                0,
+                (match.group("alias"), match.group("expr")),
+            )
+            for match in _ARCHIVE_ALIAS_PATTERN.finditer(scope_text)
+        )
+        events.extend(
+            (line_offset, 1, args)
+            for line_offset, args in _iter_archive_sink_calls(scope_text)
+        )
+        events.sort(key=lambda item: (item[0], item[1]))
+
+        for line_offset, kind, payload in events:
+            if kind == 0:
+                alias, expr = payload
+                if _ARCHIVE_ENTRY_PROPERTY_PATTERN.search(expr) or any(
+                    re.search(rf"\b{re.escape(name)}\b", expr) for name in tainted_names
+                ):
+                    tainted_names.add(alias)
+                else:
+                    tainted_names.discard(alias)
+                latest_assignment[alias] = line_offset
+                continue
+
+            used_names = _archive_sink_tainted_names(payload, tainted_names)
+            direct_entry = bool(_archive_sink_tainted_names(payload, set(), True))
+            if not used_names and not direct_entry:
+                continue
+
+            guard_start = 0
+            if used_names:
+                guard_start = max(latest_assignment.get(name, 0) for name in used_names)
+            if _archive_lines_have_guard(
+                scope_lines[guard_start : line_offset + 1],
+                used_names,
+                direct_entry,
+                line_offset - guard_start,
+            ):
+                continue
+
+            findings.append(
+                {
+                    "rule_id": "SKY-D215",
+                    "severity": "HIGH",
+                    "message": "Archive entry path reaches a filesystem write sink without traversal validation. Reject '..' entries or normalize the output path before writing.",
+                    "file": str(file_path),
+                    "line": start_line + line_offset + 1,
+                    "col": 0,
+                }
+            )
+            return
+
+
+def _iter_nodes(root_node):
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(reversed(node.children))
+
+
+def _iter_archive_scopes(root_node, source_text: str) -> list[tuple[list[str], int]]:
+    all_lines = source_text.splitlines()
+    scopes = [root_node]
+    scopes.extend(
+        node for node in _iter_nodes(root_node) if node.type in _ARCHIVE_SCOPE_NODE_TYPES
+    )
+    return [_scope_lines_without_nested_scopes(scope, all_lines) for scope in scopes]
+
+
+def _archive_guard_block_contains_sink(lines: list[str], guard_idx: int, sink_idx: int) -> bool:
+    depth = 0
+    opened = False
+
+    for idx in range(guard_idx, sink_idx + 1):
+        line = lines[idx]
+        opens = line.count("{")
+        closes = line.count("}")
+        if opens:
+            opened = True
+        depth += opens
+        depth -= closes
+        if idx < sink_idx and opened and depth <= 0:
+            return False
+
+    return opened and depth > 0
+
+
+def _archive_guard_without_braces_contains_sink(
+    lines: list[str], guard_idx: int, sink_idx: int
+) -> bool:
+    line = lines[guard_idx]
+    if "{" in line:
+        return False
+    if sink_idx == guard_idx:
+        return True
+    for idx in range(guard_idx + 1, len(lines)):
+        if not lines[idx].strip():
+            continue
+        return idx == sink_idx
+    return False
+
+
+def _archive_lines_have_guard(
+    lines: list[str], names: set[str], direct_entry: bool, sink_idx: int
+) -> bool:
+    has_normalize = False
+
+    for idx, line in enumerate(lines):
+        if direct_entry:
+            mentioned = bool(_ARCHIVE_ENTRY_PROPERTY_PATTERN.search(line))
+        else:
+            mentioned = any(
+                re.search(rf"\b{re.escape(name)}\b", line) for name in names
+            )
+        if not mentioned:
+            continue
+
+        if "if" in line and any(token in line for token in _ARCHIVE_GUARD_TOKENS):
+            trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
+            if any(token in trailing for token in _ARCHIVE_CONTROL_FLOW_HINTS):
+                return True
+        if "normalize(" in line:
+            has_normalize = True
+        if (
+            has_normalize
+            and "if" in line
+            and "startsWith(" in line
+            and ("!" in line or "=== false" in line or "== false" in line)
+        ):
+            trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
+            if any(token in trailing for token in _ARCHIVE_CONTROL_FLOW_HINTS):
+                return True
+        if (
+            idx <= sink_idx
+            and has_normalize
+            and "if" in line
+            and "startsWith(" in line
+            and "!" not in line
+            and "=== false" not in line
+            and "== false" not in line
+            and (
+                _archive_guard_block_contains_sink(lines, idx, sink_idx)
+                or _archive_guard_without_braces_contains_sink(lines, idx, sink_idx)
+            )
+        ):
+            return True
+
+    return False
+
+
+def _extract_call_args(line: str, token: str) -> list[str]:
+    start = line.find(token)
+    if start < 0:
+        return []
+
+    idx = start + len(token)
+    depth = 1
+    current: list[str] = []
+    args: list[str] = []
+
+    while idx < len(line):
+        ch = line[idx]
+        if ch == "(":
+            depth += 1
+            current.append(ch)
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                arg = "".join(current).strip()
+                if arg:
+                    args.append(arg)
+                break
+            current.append(ch)
+        elif ch == "," and depth == 1:
+            args.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+        idx += 1
+
+    return args
+
+
+def _archive_sink_tainted_names(
+    args: list[str], names: set[str], direct_entry: bool = False
+) -> set[str]:
+    for arg in args:
+        if direct_entry and _ARCHIVE_ENTRY_PROPERTY_PATTERN.search(arg):
+            return {"__direct__"}
+        matched = {
+            name for name in names if re.search(rf"\b{re.escape(name)}\b", arg)
+        }
+        if matched:
+            return matched
+    return set()
+
+
+def _nearest_archive_child_scopes(node) -> list:
+    scopes: list = []
+    stack = list(reversed(node.children))
+    while stack:
+        current = stack.pop()
+        if current.type in _ARCHIVE_SCOPE_NODE_TYPES:
+            scopes.append(current)
+            continue
+        stack.extend(reversed(current.children))
+    return scopes
+
+
+def _scope_lines_without_nested_scopes(node, all_lines: list[str]) -> tuple[list[str], int]:
+    start = node.start_point[0]
+    end = node.end_point[0]
+    scope_lines = list(all_lines[start : end + 1])
+
+    for child in _nearest_archive_child_scopes(node):
+        child_start = max(child.start_point[0] - start, 0)
+        child_end = min(child.end_point[0] - start, len(scope_lines) - 1)
+        for idx in range(child_start, child_end + 1):
+            scope_lines[idx] = ""
+
+    return scope_lines, start
+
+
+def _iter_archive_sink_calls(text: str) -> list[tuple[int, list[str]]]:
+    calls: list[tuple[int, list[str]]] = []
+    seen_offsets: set[int] = set()
+
+    for token, positions in _ARCHIVE_SINK_ARGS.items():
+        search_from = 0
+        while True:
+            idx = text.find(token, search_from)
+            if idx < 0:
+                break
+            if idx in seen_offsets:
+                search_from = idx + 1
+                continue
+            seen_offsets.add(idx)
+
+            args = _extract_call_args(text[idx:], token)
+            selected_args = [
+                args[pos] for pos in positions if pos < len(args)
+            ]
+            calls.append((text[:idx].count("\n"), selected_args))
+            search_from = idx + 1
+
+    calls.sort(key=lambda item: item[0])
+    return calls
 
 
 def _check_nextjs_client_secrets(
