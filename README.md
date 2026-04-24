@@ -185,6 +185,24 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 
 Skylos now prints an explicit upload manifest before every non-JSON upload so it is clear which scan family is being sent.
 
+For monorepos, run Skylos from the service root you want to own in Cloud, for example `cd apps/api && skylos suite . --upload`. The CLI sends the repo-relative project root (`apps/api`) with the upload so Skylos Cloud can route the scan to the matching `repo + project root` binding instead of mixing all services in one project.
+
+### SonarQube Migration
+
+If you already have `sonar-project.properties`, generate a Skylos migration report:
+
+```bash
+skylos sonar import sonar-project.properties
+```
+
+Write the mapped Skylos exclusion/gate config:
+
+```bash
+skylos sonar import sonar-project.properties --write-config
+```
+
+The first importer maps Sonar project metadata, `sonar.sources`, test paths, and common exclusion keys into a Skylos migration report plus `.skylos/config.yaml`. Quality profiles, issue history, and coverage thresholds still require manual review.
+
 ### Security Taskflow
 
 `skylos agent scan . --security` now runs as an internal security taskflow instead of a single opaque LLM pass:
@@ -1062,6 +1080,7 @@ Release roles, prerequisites, branch protection guidance, semantic type policy, 
 | `skylos debt <path>` | Technical debt hotspot analysis with baseline-aware prioritization |
 | `skylos discover <path>` | Map LLM/AI integrations in your codebase |
 | `skylos defend <path>` | Check LLM integrations for missing defenses |
+| `skylos sonar import <file>` | Convert `sonar-project.properties` into a Skylos migration report/config |
 
 ### AI Agent
 

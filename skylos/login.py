@@ -6,7 +6,7 @@ import socket
 import subprocess
 import time
 import webbrowser
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
@@ -16,12 +16,13 @@ TIMEOUT_SECONDS = 300
 
 
 class LoginResult:
-    def __init__(self, token, project_id, project_name, org_name, plan):
+    def __init__(self, token, project_id, project_name, org_name, plan, repo_subpath=""):
         self.token = token
         self.project_id = project_id
         self.project_name = project_name
         self.org_name = org_name
         self.plan = plan
+        self.repo_subpath = repo_subpath or ""
 
 
 def _find_free_port():
@@ -65,6 +66,25 @@ def _get_repo_url():
         return url
     except Exception:
         return None
+
+
+def _get_repo_subpath():
+    try:
+        git_root = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+        if not git_root:
+            return ""
+        from skylos.project_context import repo_subpath_for_project
+
+        return repo_subpath_for_project(os.getcwd(), git_root)
+    except Exception:
+        return ""
 
 
 class _CallbackHandler(http.server.BaseHTTPRequestHandler):
@@ -130,6 +150,7 @@ def browser_login(console=None, base_url=None):
     port = _find_free_port()
     repo_name = _get_repo_name() or ""
     repo_url = _get_repo_url() or ""
+    repo_path = _get_repo_subpath()
     state = secrets.token_urlsafe(24)
 
     _CallbackHandler.result = None
@@ -138,7 +159,7 @@ def browser_login(console=None, base_url=None):
     server = http.server.HTTPServer(("127.0.0.1", port), _CallbackHandler)
     server.timeout = 5
 
-    connect_url = f"{base_url}/cli/connect?port={port}&repo={repo_name}&repo_url={repo_url}&state={state}"
+    connect_url = f"{base_url}/cli/connect?{urlencode({'port': port, 'repo': repo_name, 'repo_url': repo_url, 'repo_path': repo_path, 'state': state})}"
 
     if console:
         console.print("\n[bold]Opening browser to connect to Skylos Cloud...[/bold]")
@@ -246,6 +267,7 @@ def manual_token_fallback(console=None):
         project_name=project.get("name", "Unknown"),
         org_name=org.get("name", "My Workspace"),
         plan=info.get("plan", "free"),
+        repo_subpath=project.get("repo_subpath", ""),
     )
 
 
@@ -260,6 +282,7 @@ def _save_login_result(result, base_url=None):
         project_name=result.project_name,
         org_name=result.org_name,
         plan=result.plan,
+        repo_subpath=result.repo_subpath,
     )
 
     _write_link(
@@ -268,6 +291,7 @@ def _save_login_result(result, base_url=None):
         project_name=result.project_name,
         org_name=result.org_name,
         plan=result.plan,
+        repo_subpath=result.repo_subpath,
         base_url=base_url or DEFAULT_BASE_URL,
     )
 
@@ -291,6 +315,7 @@ def get_current_connection(base_url=None):
         project_name=project.get("name", "Unknown"),
         org_name=info.get("organization", {}).get("name", "My Workspace"),
         plan=info.get("plan", "free"),
+        repo_subpath=project.get("repo_subpath", ""),
     )
 
 
@@ -300,6 +325,8 @@ def _print_connected_result(result, console=None):
         console.print(f"  Project:      {result.project_name}")
         console.print(f"  Organization: {result.org_name}")
         console.print(f"  Plan:         {result.plan.capitalize()}")
+        if result.repo_subpath:
+            console.print(f"  Project root: {result.repo_subpath}")
         console.print(f"\n  Scans will auto-upload on every run.")
         console.print(f"  Use [bold]--no-upload[/bold] to skip.")
         console.print(
@@ -310,6 +337,8 @@ def _print_connected_result(result, console=None):
         print(f"  Project:      {result.project_name}")
         print(f"  Organization: {result.org_name}")
         print(f"  Plan:         {result.plan.capitalize()}")
+        if result.repo_subpath:
+            print(f"  Project root: {result.repo_subpath}")
         print(f"\n  Scans will auto-upload on every run.")
         print(f"  Use --no-upload to skip.")
         print(f"\n  For MCP/AI agents: export SKYLOS_API_KEY={result.token}")
@@ -392,6 +421,7 @@ def _parse_callback_request(path: str, *, expected_state: str | None):
             project_name=params.get("project_name", ["Unknown"])[0] or "Unknown",
             org_name=params.get("org_name", ["My Workspace"])[0] or "My Workspace",
             plan=params.get("plan", ["free"])[0] or "free",
+            repo_subpath=params.get("repo_subpath", [""])[0] or "",
         ),
     )
 
@@ -433,4 +463,5 @@ def _verify_login_result(token: str, *, base_url: str) -> LoginResult | None:
         project_name=project.get("name", "Unknown"),
         org_name=org.get("name", "My Workspace"),
         plan=info.get("plan", "free"),
+        repo_subpath=project.get("repo_subpath", ""),
     )
