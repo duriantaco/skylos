@@ -20,13 +20,13 @@ What it does not check:
 Run it with:
 
 ```bash
-python3 scripts/agent_review_benchmark.py --manifest agent_review_benchmarks/manifest.json
+python3 scripts/agent_review_benchmark.py --manifest benchmarks/agent_review/manifest.json
 ```
 
 Compare against Codex with:
 
 ```bash
-python3 scripts/compare_codex_skylos_agent_review.py --manifest agent_review_benchmarks/manifest.json
+python3 scripts/compare_codex_skylos_agent_review.py --manifest benchmarks/agent_review/manifest.json
 ```
 
 The compare script reads token usage from `codex exec --json` `turn.completed` events, so Codex token totals are now measured directly during head-to-head runs.

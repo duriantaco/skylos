@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "sql-tainted-param",
+      "path": "fixtures/sql_tainted_param",
+      "description": "Tainted SQL query passed as a function parameter should be detected even when execute() receives params separately.",
+      "taxonomy": ["sql_injection"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Regression fixture distilled from a confirmed false negative in Skylos SQL flow analysis."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D211"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "sql-constant-format",
+      "path": "fixtures/sql_constant_format",
+      "description": "Statically built SQL using constant .format() arguments should not be reported as SQL injection.",
+      "taxonomy": ["sql_injection", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Regression fixture distilled from a confirmed SQL false-positive pattern."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D211", "SKY-D217"]
+        }
+      }
+    },
+    {
+      "id": "ssrf-tainted-host",
+      "path": "fixtures/ssrf_tainted_host",
+      "description": "User-controlled host interpolation should be detected as SSRF.",
+      "taxonomy": ["ssrf"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Regression fixture for host-level SSRF taint."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D216"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "ssrf-fixed-host-path",
+      "path": "fixtures/ssrf_fixed_host_path",
+      "description": "Fixed-host URL interpolation should not be reported as SSRF when only the path segment is tainted.",
+      "taxonomy": ["ssrf", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Regression fixture distilled from a confirmed SSRF false-positive pattern."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D216"]
+        }
+      }
+    },
+    {
+      "id": "subprocess-alias-shell",
+      "path": "fixtures/subprocess_alias_shell",
+      "description": "subprocess imported with an alias should still be detected when shell=True is used.",
+      "taxonomy": ["command_injection"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Regression fixture distilled from a confirmed dangerous-call alias false negative."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D209"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "yaml-safeloader-positional",
+      "path": "fixtures/yaml_safeloader_positional",
+      "description": "yaml.load with positional yaml.SafeLoader should not be reported as unsafe deserialization.",
+      "taxonomy": ["deserialization", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Regression fixture distilled from a confirmed SafeLoader false positive."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D206"]
+        }
+      }
+    }
+  ]
+}

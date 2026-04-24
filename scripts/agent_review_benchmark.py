@@ -10,8 +10,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from skylos.agent_review_benchmark import format_summary, run_manifest
-from skylos.llm.runtime import resolve_llm_runtime
+from skylos.agent_review_benchmark import format_summary, run_manifest  # noqa: E402
+from skylos.llm.runtime import resolve_llm_runtime  # noqa: E402
 
 
 def main() -> int:
@@ -20,7 +20,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--manifest",
-        default=str(Path("agent_review_benchmarks") / "manifest.json"),
+        default=str(REPO_ROOT / "benchmarks" / "agent_review" / "manifest.json"),
         help="Path to the agent review benchmark manifest JSON file.",
     )
     parser.add_argument("--model", default="gpt-4.1")

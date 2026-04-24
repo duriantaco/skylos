@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import concurrent.futures
+import io
 import logging
 import re
 import subprocess
 import threading
 import time
+import tokenize
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -77,6 +79,31 @@ _LANG_GLOBS: dict[str, list[str]] = {
     "rust": ["*.rs"],
 }
 
+_IGNORED_GREP_PATH_PARTS = (
+    "/.git/",
+    "/.mypy_cache/",
+    "/.pytest_cache/",
+    "/.ruff_cache/",
+    "/.skylos/",
+    "/.venv/",
+    "/venv/",
+    "/__pycache__/",
+    "/node_modules/",
+    ".egg-info",
+)
+_GREP_EXCLUDE_DIRS = (
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".skylos",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+    "*.egg-info",
+)
+
 
 def detect_language(file_path: str) -> str:
     ext = Path(file_path).suffix.lower()
@@ -111,7 +138,8 @@ def _cached_group_results(
     finding_file = finding.get("file", "")
     content_hash = _fch(finding_file) if finding_file else ""
     cache_key = (
-        f"group:{group_name}:{simple_name}:{finding.get('full_name', '')}:"
+        f"{_GREP_VERIFY_CACHE_VERSION}:group:{group_name}:"
+        f"{simple_name}:{finding.get('full_name', '')}:"
         f"{finding.get('type', '')}:{content_hash}"
     )
     cached = cache.get(cache_key)
@@ -163,14 +191,21 @@ def _run_grep(
     includes = []
     for g in include_globs:
         includes.extend(["--include", g])
+    excludes = []
+    for d in _GREP_EXCLUDE_DIRS:
+        excludes.extend(["--exclude-dir", d])
 
     try:
-        cmd = ["grep", *grep_flags, *includes, pattern, project_root]
+        cmd = ["grep", *grep_flags, *includes, *excludes, pattern, project_root]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         lines = result.stdout.strip().splitlines()
-        return [l for l in lines if "__pycache__" not in l and ".egg-info" not in l][
-            :max_results
-        ]
+        filtered = []
+        for line in lines:
+            normalized = line.replace("\\", "/")
+            if any(part in normalized for part in _IGNORED_GREP_PATH_PARTS):
+                continue
+            filtered.append(line)
+        return filtered[:max_results]
     except Exception as e:
         logger.debug("grep failed for pattern %r: %s", pattern, e)
         return []
@@ -391,6 +426,39 @@ def is_substring_match(grep_line: str, simple_name: str) -> bool:
     return True
 
 
+def _grep_line_path(grep_line: str) -> str:
+    parts = grep_line.split(":", 2)
+    if len(parts) >= 2 and parts[1].strip().isdigit():
+        return parts[0]
+    return ""
+
+
+def _grep_line_content(grep_line: str) -> str:
+    parts = grep_line.split(":", 2)
+    if len(parts) >= 3 and parts[1].strip().isdigit():
+        return parts[2]
+    return grep_line
+
+
+def _python_line_has_name_token(grep_line: str, simple_name: str) -> bool:
+    content = _grep_line_content(grep_line)
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(content).readline)
+        return any(
+            token.type == tokenize.NAME and token.string == simple_name
+            for token in tokens
+        )
+    except tokenize.TokenError:
+        return bool(re.search(rf"\b{re.escape(simple_name)}\b", content))
+
+
+def _is_python_source_reference(grep_line: str, simple_name: str) -> bool:
+    path = _grep_line_path(grep_line)
+    if path and Path(path).suffix.lower() not in _PYTHON_EXTS:
+        return False
+    return _python_line_has_name_token(grep_line, simple_name)
+
+
 def _deduplicate_grep_results(
     results: dict[str, list[str]],
 ) -> dict[str, list[str]]:
@@ -430,6 +498,7 @@ _STRONG_ALIVE_STRATEGIES = {
 
 _MAX_RESULTS_PER_STRATEGY = 5
 _DEFAULT_GREP_WORKERS = 4
+_GREP_VERIFY_CACHE_VERSION = "v3"
 
 
 def _deterministic_suppress_ts(finding: dict) -> bool:
@@ -488,7 +557,6 @@ def _deterministic_suppress_php(finding: dict) -> bool:
 
 
 def _deterministic_suppress_rust(finding: dict) -> bool:
-    simple_name = finding.get("simple_name", finding.get("name", ""))
     decorators = finding.get("decorators", [])
 
     if isinstance(decorators, list):
@@ -933,18 +1001,28 @@ def multi_strategy_search(
         return False
 
     boundary_pattern = rf"\b{simple_name}\b"
-    refs = _run_grep(
-        boundary_pattern, project_root, use_regex=True, max_results=max_per_strategy * 2
-    )
-    if refs:
-        refs = [r for r in refs if not is_substring_match(r, simple_name)]
-        _defs, usages = filter_grep_results(refs, finding)
-        if usages:
-            results["references"] = usages[:max_per_strategy]
-        elif _defs:
-            results["references_definition_only"] = [
-                "(only the definition itself found, no usages)"
+    if kind != "import":
+        refs = _run_grep(
+            boundary_pattern,
+            project_root,
+            use_regex=True,
+            include_globs=["*.py", "*.pyi"],
+            max_results=max_per_strategy * 2,
+        )
+        if refs:
+            refs = [
+                r
+                for r in refs
+                if not is_substring_match(r, simple_name)
+                and _is_python_source_reference(r, simple_name)
             ]
+            _defs, usages = filter_grep_results(refs, finding)
+            if usages:
+                results["references"] = usages[:max_per_strategy]
+            elif _defs:
+                results["references_definition_only"] = [
+                    "(only the definition itself found, no usages)"
+                ]
 
     if _should_early_exit():
         return _deduplicate_grep_results(results)
@@ -975,18 +1053,19 @@ def multi_strategy_search(
             if usages:
                 results["method_calls"] = usages[:max_per_strategy]
 
-    import_pattern = rf"import.*\b{simple_name}\b"
-    import_refs = _run_grep(
-        import_pattern,
-        project_root,
-        use_regex=True,
-        include_globs=["*.py"],
-        max_results=max_per_strategy,
-    )
-    if import_refs:
-        _defs, usages = filter_grep_results(import_refs, finding)
-        if usages:
-            results["imports"] = usages[:max_per_strategy]
+    if kind != "import":
+        import_pattern = rf"import.*\b{simple_name}\b"
+        import_refs = _run_grep(
+            import_pattern,
+            project_root,
+            use_regex=True,
+            include_globs=["*.py"],
+            max_results=max_per_strategy,
+        )
+        if import_refs:
+            _defs, usages = filter_grep_results(import_refs, finding)
+            if usages:
+                results["imports"] = usages[:max_per_strategy]
 
     if _should_early_exit():
         return _deduplicate_grep_results(results)
@@ -1135,7 +1214,9 @@ def multi_strategy_search(
         if callback_refs:
             results["callback_registrations"] = callback_refs[:max_per_strategy]
 
-        _parse_int = lambda v: int(v) if isinstance(v, (int, float)) else 0
+        def _parse_int(value):
+            return int(value) if isinstance(value, (int, float)) else 0
+
         signature_pattern = rf"def\s+{re.escape(owner_simple_name)}\s*\([^)]*\b{re.escape(simple_name)}\b"
         signature_refs = _run_grep(
             signature_pattern,

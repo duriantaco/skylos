@@ -143,8 +143,7 @@ extend-exclude = ["manual"]
 [tool.pytest.ini_options]
 testpaths = ["test"]
 norecursedirs = [
-    "agent_review_benchmarks",
+    "benchmarks",
     "corpus",
     "manual",
-    "quality_benchmarks",
 ]

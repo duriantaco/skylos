@@ -13,14 +13,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from skylos.agent_review_benchmark import (
+from skylos.agent_review_benchmark import (  # noqa: E402
     IMPORTANCE_WEIGHTS,
     load_manifest,
     prepare_case_scan,
     validate_manifest,
 )
-from skylos.llm.analyzer import AnalyzerConfig, SkylosLLM
-from skylos.llm.runtime import resolve_llm_runtime
+from skylos.llm.analyzer import AnalyzerConfig, SkylosLLM  # noqa: E402
+from skylos.llm.runtime import resolve_llm_runtime  # noqa: E402
 
 
 SCHEMA = {
@@ -333,7 +333,8 @@ def main() -> int:
         description="Compare Codex vs Skylos on the agent review benchmark."
     )
     parser.add_argument(
-        "--manifest", default=str(Path("agent_review_benchmarks") / "manifest.json")
+        "--manifest",
+        default=str(REPO_ROOT / "benchmarks" / "agent_review" / "manifest.json"),
     )
     parser.add_argument("--skylos-model", default="gpt-4.1")
     parser.add_argument("--codex-model", default="gpt-5.4")

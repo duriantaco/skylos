@@ -272,7 +272,7 @@ class TestHelperFunctions:
         )
         assert (
             get_non_library_dir_kind(
-                "/project/agent_review_benchmarks/fixtures/app.py"
+                "/project/benchmarks/agent_review/fixtures/app.py"
             )
             == "benchmark"
         )

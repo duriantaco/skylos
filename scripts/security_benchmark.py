@@ -10,17 +10,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from skylos.quality_benchmark import format_summary, run_manifest  # noqa: E402
+from skylos.security_benchmark import format_summary, run_manifest  # noqa: E402
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run the Skylos quality benchmark suite."
+        description="Run the Skylos deterministic security benchmark suite."
     )
     parser.add_argument(
         "--manifest",
-        default=str(REPO_ROOT / "benchmarks" / "quality" / "manifest.json"),
-        help="Path to the quality benchmark manifest JSON file.",
+        default=str(REPO_ROOT / "benchmarks" / "security" / "manifest.json"),
+        help="Path to the security benchmark manifest JSON file.",
     )
     parser.add_argument(
         "--case",
