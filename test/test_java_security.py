@@ -98,6 +98,58 @@ class App {
     assert "SKY-D215" not in _rule_ids(findings)
 
 
+def test_archive_extraction_canonical_string_prefix_without_separator_still_flags(
+    tmp_path,
+):
+    findings = _scan_java(
+        tmp_path,
+        """import java.io.*;
+import java.util.zip.*;
+
+class App {
+  void unzip(ZipInputStream zis, File destDir) throws Exception {
+    ZipEntry entry;
+    while ((entry = zis.getNextEntry()) != null) {
+      File file = new File(destDir, entry.getName());
+      String targetPath = file.getCanonicalPath();
+      String basePath = destDir.getCanonicalPath();
+      if (!targetPath.startsWith(basePath)) {
+        throw new IOException("bad zip");
+      }
+      FileOutputStream fos = new FileOutputStream(file);
+    }
+  }
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_archive_extraction_canonical_string_prefix_with_separator_is_safe(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.io.*;
+import java.util.zip.*;
+
+class App {
+  void unzip(ZipInputStream zis, File destDir) throws Exception {
+    ZipEntry entry;
+    while ((entry = zis.getNextEntry()) != null) {
+      File file = new File(destDir, entry.getName());
+      String targetPath = file.getCanonicalPath();
+      String basePath = destDir.getCanonicalPath() + File.separator;
+      if (!targetPath.startsWith(basePath)) {
+        throw new IOException("bad zip");
+      }
+      FileOutputStream fos = new FileOutputStream(file);
+    }
+  }
+}
+""",
+    )
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
 def test_archive_extraction_mixed_safe_and_unsafe_still_flags(tmp_path):
     findings = _scan_java(
         tmp_path,
@@ -214,6 +266,52 @@ class App {
       throw new IllegalArgumentException("bad path");
     }
     return Files.readString(target);
+  }
+}
+""",
+    )
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_request_path_canonical_string_prefix_without_separator_still_flags(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.io.*;
+import javax.servlet.http.HttpServletRequest;
+
+class App {
+  String read(HttpServletRequest request) throws Exception {
+    File base = new File("/srv/data");
+    File target = new File(base, request.getParameter("file"));
+    String targetPath = target.getCanonicalPath();
+    String basePath = base.getCanonicalPath();
+    if (!targetPath.startsWith(basePath)) {
+      throw new IllegalArgumentException("bad path");
+    }
+    return new BufferedReader(new FileReader(target)).readLine();
+  }
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_request_path_canonical_string_prefix_with_separator_is_safe(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.io.*;
+import javax.servlet.http.HttpServletRequest;
+
+class App {
+  String read(HttpServletRequest request) throws Exception {
+    File base = new File("/srv/data");
+    File target = new File(base, request.getParameter("file"));
+    String targetPath = target.getCanonicalPath();
+    String basePath = base.getCanonicalPath() + File.separator;
+    if (!targetPath.startsWith(basePath)) {
+      throw new IllegalArgumentException("bad path");
+    }
+    return new BufferedReader(new FileReader(target)).readLine();
   }
 }
 """,
