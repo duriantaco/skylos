@@ -486,3 +486,170 @@ func unzip(path string, dest string) error {
 """,
     )
     assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_tar_symlink_extraction_flags(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/tar"
+    "os"
+    "path/filepath"
+)
+
+func untar(reader *tar.Reader, dest string) error {
+    for {
+        header, err := reader.Next()
+        if err != nil {
+            return err
+        }
+        if header.Typeflag != tar.TypeSymlink {
+            continue
+        }
+        target := filepath.Join(dest, header.Name)
+        _ = os.Symlink(header.Linkname, target)
+    }
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_tar_symlink_rel_guard_without_evalsymlinks_still_flags(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/tar"
+    "os"
+    "path/filepath"
+    "strings"
+)
+
+func untar(reader *tar.Reader, dest string) error {
+    cleanDest := filepath.Clean(dest) + string(os.PathSeparator)
+    for {
+        header, err := reader.Next()
+        if err != nil {
+            return err
+        }
+        if header.Typeflag != tar.TypeSymlink {
+            continue
+        }
+        target := filepath.Join(dest, header.Name)
+        cleanTarget := filepath.Clean(target)
+        if !strings.HasPrefix(cleanTarget, cleanDest) {
+            continue
+        }
+        linkTarget := filepath.Join(dest, header.Linkname)
+        relTarget, _ := filepath.Rel(dest, linkTarget)
+        if strings.HasPrefix(relTarget, "..") {
+            continue
+        }
+        _ = os.Symlink(linkTarget, cleanTarget)
+    }
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_tar_symlink_evalsymlinks_rel_guard_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/tar"
+    "os"
+    "path/filepath"
+    "strings"
+)
+
+func untar(reader *tar.Reader, dest string) error {
+    cleanDest := filepath.Clean(dest) + string(os.PathSeparator)
+    for {
+        header, err := reader.Next()
+        if err != nil {
+            return err
+        }
+        if header.Typeflag != tar.TypeSymlink {
+            continue
+        }
+        target := filepath.Join(dest, header.Name)
+        cleanTarget := filepath.Clean(target)
+        if !strings.HasPrefix(cleanTarget, cleanDest) {
+            continue
+        }
+        linkTarget := filepath.Join(dest, header.Linkname)
+        resolvedTarget, err := filepath.EvalSymlinks(linkTarget)
+        if err != nil {
+            continue
+        }
+        relTarget, err := filepath.Rel(dest, resolvedTarget)
+        if err != nil {
+            continue
+        }
+        if strings.HasPrefix(relTarget, "..") {
+            continue
+        }
+        _ = os.Symlink(resolvedTarget, cleanTarget)
+    }
+}
+""",
+    )
+    assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_tar_symlink_mixed_safe_and_unsafe_still_flags(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "archive/tar"
+    "os"
+    "path/filepath"
+    "strings"
+)
+
+func untar(reader *tar.Reader, dest string) error {
+    cleanDest := filepath.Clean(dest) + string(os.PathSeparator)
+    for {
+        header, err := reader.Next()
+        if err != nil {
+            return err
+        }
+        if header.Typeflag != tar.TypeSymlink {
+            continue
+        }
+        target := filepath.Join(dest, header.Name)
+        cleanTarget := filepath.Clean(target)
+        if !strings.HasPrefix(cleanTarget, cleanDest) {
+            continue
+        }
+        if strings.HasPrefix(header.Name, "safe/") {
+            linkTarget := filepath.Join(dest, header.Linkname)
+            resolvedTarget, err := filepath.EvalSymlinks(linkTarget)
+            if err != nil {
+                continue
+            }
+            relTarget, err := filepath.Rel(dest, resolvedTarget)
+            if err != nil {
+                continue
+            }
+            if strings.HasPrefix(relTarget, "..") {
+                continue
+            }
+            _ = os.Symlink(resolvedTarget, cleanTarget)
+            continue
+        }
+        _ = os.Symlink(header.Linkname, cleanTarget)
+    }
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
