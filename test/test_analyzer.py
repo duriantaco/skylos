@@ -237,6 +237,29 @@ class TestSkylos:
         assert root == project.resolve()
         assert files == [keep_file.resolve()]
 
+    def test_get_python_files_fast_discovery_honors_nested_excludes(
+        self, skylos, tmp_path, monkeypatch
+    ):
+        project = tmp_path / "proj"
+        legacy_dir = project / "src" / "legacy"
+        modern_dir = project / "src" / "modern"
+        legacy_dir.mkdir(parents=True)
+        modern_dir.mkdir(parents=True)
+        legacy_file = legacy_dir / "old.py"
+        legacy_file.write_text("def old_dead():\n    pass\n", encoding="utf-8")
+        keep_file = modern_dir / "keep.py"
+        keep_file.write_text("def keep():\n    return 1\n", encoding="utf-8")
+
+        def fake_fast_discover(root, extensions, excludes):
+            return [str(legacy_file), str(keep_file)]
+
+        monkeypatch.setattr("skylos.analyzer._fast_discover", fake_fast_discover)
+
+        files, root = skylos._get_python_files(project, exclude_folders=["src/legacy"])
+
+        assert root == project.resolve()
+        assert files == [keep_file]
+
     def test_mark_exports_in_init(self, skylos):
         mock_def1 = Mock()
         mock_def1.in_init = True
@@ -521,6 +544,32 @@ class TestAnalyze:
 
         mock_scan.assert_called_once()
         assert result == tuple(range(13))
+
+    def test_analyze_quality_includes_architecture_findings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "abstract_mod.py").write_text(
+                "from abc import ABC\n"
+                "import concrete_mod\n"
+                "class Base(ABC):\n"
+                "    pass\n"
+                "class Base2(ABC):\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+            (root / "concrete_mod.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+            result_json = analyze(str(root), enable_quality=True, grep_verify=False)
+
+        result = json.loads(result_json)
+        assert result.get("architecture_metrics")
+        assert any(
+            f.get("rule_id") in {"SKY-Q802", "SKY-Q803", "SKY-Q804"}
+            for f in result.get("quality", [])
+        )
+        assert result["analysis_summary"]["quality_count"] == len(
+            result.get("quality", [])
+        )
 
     @patch("skylos.analyzer.scan_typescript_file")
     def test_proc_file_dispatches_mjs_to_typescript_scanner(self, mock_scan):

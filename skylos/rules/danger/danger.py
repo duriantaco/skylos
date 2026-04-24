@@ -34,6 +34,8 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.file_path = file_path
         self.findings = findings
         self._symbol_stack = ["<module>"]
+        self.aliases = {}
+        self.assigned_calls_stack = [{}]
 
     def _current_symbol(self):
         if self._symbol_stack:
@@ -52,21 +54,53 @@ class _DangerousCallsChecker(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node):
         self._symbol_stack.append(node.name)
+        self.assigned_calls_stack.append({})
         self.generic_visit(node)
+        self.assigned_calls_stack.pop()
         self._symbol_stack.pop()
 
     def visit_AsyncFunctionDef(self, node):
         self._symbol_stack.append(node.name)
+        self.assigned_calls_stack.append({})
         self.generic_visit(node)
+        self.assigned_calls_stack.pop()
         self._symbol_stack.pop()
 
     def visit_ClassDef(self, node):
         self._symbol_stack.append(node.name)
+        self.assigned_calls_stack.append({})
         self.generic_visit(node)
+        self.assigned_calls_stack.pop()
         self._symbol_stack.pop()
 
+    def visit_Import(self, node):
+        for alias in node.names:
+            local = alias.asname or alias.name.split(".", 1)[0]
+            self.aliases[local] = alias.name
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node):
+        if node.module:
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                local = alias.asname or alias.name
+                self.aliases[local] = f"{node.module}.{alias.name}"
+        self.generic_visit(node)
+
+    def visit_Assign(self, node):
+        if isinstance(node.value, ast.Call):
+            call_name = qualified_name_from_call(
+                node.value, self.aliases, self.assigned_calls_stack[-1]
+            )
+            if call_name:
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        self.assigned_calls_stack[-1][target.id] = call_name
+        self.generic_visit(node)
+
     def visit_Call(self, node):
-        name = qualified_name_from_call(node)
+        name = qualified_name_from_call(node, self.aliases, self.assigned_calls_stack[-1])
         if name:
             for rule_key, tup in DANGEROUS_CALLS.items():
                 rule_id, severity, message = tup[0], tup[1], tup[2]
@@ -78,7 +112,9 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                 if not _matches_rule(name, rule_key):
                     continue
 
-                if rule_key == "yaml.load" and not _yaml_load_without_safeloader(node):
+                if rule_key == "yaml.load" and not _yaml_load_without_safeloader(
+                    node, self.aliases
+                ):
                     continue
 
                 if (

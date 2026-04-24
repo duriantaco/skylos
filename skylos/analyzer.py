@@ -297,7 +297,11 @@ class Skylos:
 
             try:
                 rust_files = _fast_discover(str(p), ext_list, simple_excludes)
-                all_files = [Path(f) for f in rust_files]
+                all_files = [
+                    Path(f)
+                    for f in rust_files
+                    if not should_exclude_path(Path(f), root, exclude_folders)
+                ]
             except Exception:
                 all_files = discover_source_files(
                     p, exts, exclude_folders=exclude_folders
@@ -1273,7 +1277,7 @@ class Skylos:
                 if circular_findings:
                     result["circular_dependencies"] = circular_findings
 
-                if enable_quality and "SKY-Q802" not in project_cfg.get("ignore", []):
+                if enable_quality:
                     try:
                         from skylos.architecture import get_architecture_findings
 
@@ -1298,8 +1302,23 @@ class Skylos:
                             module_files=mod_files,
                             module_trees=mod_trees,
                         )
+                        ignored_rules = set(project_cfg.get("ignore", []))
+                        if arch_findings:
+                            arch_findings = [
+                                f
+                                for f in arch_findings
+                                if f.get("rule_id") not in ignored_rules
+                            ]
                         if arch_findings:
                             all_quality.extend(arch_findings)
+                            from skylos.rules.quality.standards import enrich_finding
+
+                            for finding in arch_findings:
+                                enrich_finding(finding)
+                            result.setdefault("quality", []).extend(arch_findings)
+                            result["analysis_summary"]["quality_count"] = len(
+                                result.get("quality", []) or []
+                            )
                         if arch_summary:
                             result["architecture_metrics"] = arch_summary
                     except Exception:
