@@ -10,6 +10,7 @@ def run_debt_command(
     resolve_llm_runtime_func,
     parse_exclude_folders_func,
     load_config_func,
+    upload_debt_report_func,
 ) -> int:
     debt_parser = argparse.ArgumentParser(
         prog="skylos debt",
@@ -21,6 +22,11 @@ def run_debt_command(
     )
     debt_parser.add_argument(
         "-o", "--output", dest="output_file", help="Write output to file"
+    )
+    debt_parser.add_argument(
+        "--upload",
+        action="store_true",
+        help="Upload technical debt results to Skylos Cloud dashboard",
     )
     debt_parser.add_argument(
         "--top",
@@ -263,7 +269,28 @@ def run_debt_command(
     else:
         console.print(output)
 
-    exit_code = 0
+    upload_failed = False
+    if debt_args.upload:
+        if not debt_args.output_json:
+            from skylos.upload_manifest import (
+                build_debt_manifest,
+                print_upload_manifest,
+            )
+
+            print_upload_manifest(console, [build_debt_manifest()])
+
+        upload_result = upload_debt_report_func(
+            snapshot,
+            quiet=debt_args.output_json,
+        )
+        if not upload_result.get("success"):
+            upload_failed = True
+            if not debt_args.output_json:
+                console.print(
+                    f"[red]Upload failed: {upload_result.get('error', 'Unknown')}[/red]"
+                )
+
+    exit_code = 1 if upload_failed else 0
     min_score = debt_args.min_score
     if policy and policy.gate_min_score is not None and min_score is None:
         min_score = policy.gate_min_score

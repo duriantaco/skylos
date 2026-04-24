@@ -852,7 +852,11 @@ def _normalize_result_sections(
 
 
 def _prepare_report_upload(
-    result_json, *, is_forced=False, analysis_mode="static"
+    result_json,
+    *,
+    is_forced=False,
+    analysis_mode="static",
+    scan_bundle_id=None,
 ) -> PreparedReportUpload:
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
@@ -869,7 +873,11 @@ def _prepare_report_upload(
     core_payload = exporter.generate()
 
     ai_code = detect_ai_code(git_root)
-    provenance_data = _detect_report_provenance_data(git_root)
+    if isinstance(result_json, dict) and "provenance" in result_json:
+        raw_provenance = result_json.get("provenance")
+        provenance_data = raw_provenance if isinstance(raw_provenance, dict) else None
+    else:
+        provenance_data = _detect_report_provenance_data(git_root)
 
     definitions = result_json.get("definitions")
     grade_data = result_json.get("grade") if isinstance(result_json, dict) else None
@@ -887,6 +895,7 @@ def _prepare_report_upload(
         provenance_data=provenance_data,
         grade_data=grade_data,
         project_id=project_id,
+        scan_bundle_id=scan_bundle_id,
     )
     core_payload.update(metadata)
     legacy_payload = _build_legacy_payload(core_payload, definitions)
@@ -900,6 +909,79 @@ def _prepare_report_upload(
         scan_summary=scan_summary,
         grade_data=grade_data,
         legacy_payload_size_bytes=_json_size_bytes(legacy_payload),
+    )
+
+
+def _coerce_debt_snapshot_dict(debt_report) -> dict[str, Any]:
+    if isinstance(debt_report, dict):
+        return dict(debt_report)
+    to_dict = getattr(debt_report, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        if isinstance(payload, dict):
+            return dict(payload)
+    raise TypeError("Debt report must be a dict or expose to_dict().")
+
+
+def _prepare_debt_upload(
+    debt_report, *, is_forced=False, scan_bundle_id=None
+) -> PreparedReportUpload:
+    commit, branch, actor, ci = get_git_info()
+    git_root = get_git_root()
+    link = _load_repo_link(git_root)
+    project_id = link.get("project_id")
+
+    debt_payload = _coerce_debt_snapshot_dict(debt_report)
+    debt_score = debt_payload.get("score") or {}
+    debt_hotspots = debt_payload.get("hotspots") or []
+    debt_summary = debt_payload.get("summary") or {}
+
+    metadata = _build_report_metadata(
+        commit_hash=commit,
+        branch=branch,
+        actor=actor,
+        is_forced=is_forced,
+        ci=ci,
+        analysis_mode="debt",
+        project_id=project_id,
+        scan_bundle_id=scan_bundle_id,
+    )
+
+    core_payload = {
+        "tool": "skylos-debt",
+        "summary": {
+            "debt_score_pct": int(debt_score.get("score_pct") or 100),
+            "debt_hotspots": len(debt_hotspots),
+            "debt_signals": int(debt_score.get("signal_count") or 0),
+            "files_scanned": int(debt_payload.get("files_scanned") or 0),
+            "total_loc": int(debt_payload.get("total_loc") or 0),
+        },
+        "findings": [],
+        "debt_score": debt_score,
+        "debt_summary": debt_summary,
+        "debt_hotspots": debt_hotspots,
+        "debt_version": debt_payload.get("version"),
+        "debt_timestamp": debt_payload.get("timestamp"),
+    }
+    core_payload.update(metadata)
+
+    scan_summary = {
+        "finding_count": 0,
+        "sarif_result_count": 0,
+        "sarif_rule_count": 0,
+        "definitions_count": 0,
+        "debt_hotspot_count": len(debt_hotspots),
+        "debt_signal_count": int(debt_score.get("signal_count") or 0),
+    }
+
+    return PreparedReportUpload(
+        legacy_payload=dict(core_payload),
+        core_payload=core_payload,
+        definitions_payload=None,
+        metadata=metadata,
+        scan_summary=scan_summary,
+        grade_data=None,
+        legacy_payload_size_bytes=_json_size_bytes(core_payload),
     )
 
 
@@ -938,6 +1020,7 @@ def _build_report_metadata(
     provenance_data=None,
     grade_data=None,
     project_id=None,
+    scan_bundle_id=None,
 ) -> dict[str, Any]:
     metadata = {
         "commit_hash": commit_hash,
@@ -953,6 +1036,8 @@ def _build_report_metadata(
         metadata["grade"] = grade_data
     if project_id:
         metadata["project_id"] = project_id
+    if scan_bundle_id:
+        metadata["scan_bundle_id"] = str(scan_bundle_id)
     return metadata
 
 
@@ -1435,7 +1520,12 @@ def upload_report_v2(
 
 
 def upload_report(
-    result_json, is_forced=False, quiet=False, strict=False, analysis_mode="static"
+    result_json,
+    is_forced=False,
+    quiet=False,
+    strict=False,
+    analysis_mode="static",
+    scan_bundle_id=None,
 ) -> dict:
     token = get_project_token()
     if not token:
@@ -1454,6 +1544,7 @@ def upload_report(
         result_json,
         is_forced=is_forced,
         analysis_mode=analysis_mode,
+        scan_bundle_id=scan_bundle_id,
     )
 
     if _should_use_legacy_inline_report_upload(prepared):
@@ -1492,6 +1583,70 @@ def upload_report(
     return upload_result
 
 
+def upload_debt_report(
+    debt_report,
+    *,
+    is_forced=False,
+    quiet=False,
+    strict=False,
+    scan_bundle_id=None,
+) -> dict:
+    token = get_project_token()
+    if not token:
+        return {
+            "success": False,
+            "error": "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
+        }
+
+    if not quiet:
+        info = get_project_info(token)
+        if info and info.get("ok"):
+            project_name = info.get("project", {}).get("name", "Unknown")
+            print(f"Uploading to: {project_name}")
+
+    prepared = _prepare_debt_upload(
+        debt_report,
+        is_forced=is_forced,
+        scan_bundle_id=scan_bundle_id,
+    )
+
+    if _should_use_legacy_inline_report_upload(prepared):
+        return upload_report_legacy(
+            token,
+            prepared.legacy_payload,
+            grade_data=prepared.grade_data,
+            quiet=quiet,
+            strict=strict,
+            is_forced=is_forced,
+            initial_message="Uploading debt results...",
+        )
+
+    upload_result = upload_report_v2(
+        token,
+        prepared,
+        quiet=quiet,
+        strict=strict,
+        is_forced=is_forced,
+    )
+    if _should_retry_with_degraded_large_upload(upload_result):
+        if not quiet:
+            print(
+                " Skylos Cloud artifact upload unavailable; retrying condensed compatibility upload...",
+                end="",
+                flush=True,
+            )
+        return upload_report_legacy(
+            token,
+            prepared.core_payload,
+            grade_data=prepared.grade_data,
+            quiet=quiet,
+            strict=strict,
+            is_forced=is_forced,
+            initial_message="Uploading debt results...",
+        )
+    return upload_result
+
+
 def _should_use_legacy_inline_report_upload(
     prepared: PreparedReportUpload,
 ) -> bool:
@@ -1506,7 +1661,7 @@ def _should_retry_with_degraded_large_upload(upload_result: dict[str, Any]) -> b
     )
 
 
-def upload_defense_report(defense_json_str, quiet=False) -> dict:
+def upload_defense_report(defense_json_str, quiet=False, scan_bundle_id=None) -> dict:
     """Upload defense scan results to the cloud dashboard."""
     token = get_project_token()
     if not token:
@@ -1543,6 +1698,8 @@ def upload_defense_report(defense_json_str, quiet=False) -> dict:
 
     if link.get("project_id"):
         payload["project_id"] = link["project_id"]
+    if scan_bundle_id:
+        payload["scan_bundle_id"] = str(scan_bundle_id)
 
     response, last_err = _post_report_payload(
         token,

@@ -12,6 +12,10 @@ def _console_factory():
     return Console(file=io.StringIO(), force_terminal=False, color_system=None)
 
 
+def _noop_upload(*_args, **_kwargs):
+    return {"success": True}
+
+
 def _static_result(project_root: str) -> dict:
     return {
         "analysis_summary": {"total_files": 3, "total_loc": 120},
@@ -80,6 +84,9 @@ def test_suite_json_outputs_combined_sections(tmp_path, capsys):
             load_config_func=lambda _path: {},
             run_analyze_func=lambda *_args, **_kwargs: json.dumps(static_result),
             get_git_root_func=lambda: None,
+            upload_report_func=_noop_upload,
+            upload_defense_report_func=_noop_upload,
+            upload_debt_report_func=_noop_upload,
         )
 
     assert exit_code == 0
@@ -110,6 +117,9 @@ def test_suite_rejects_file_paths(tmp_path):
         load_config_func=lambda _path: {},
         run_analyze_func=lambda *_args, **_kwargs: "{}",
         get_git_root_func=lambda: None,
+        upload_report_func=_noop_upload,
+        upload_defense_report_func=_noop_upload,
+        upload_debt_report_func=_noop_upload,
     )
 
     assert exit_code == 1
@@ -138,3 +148,123 @@ def test_main_suite_subcommand_calls_run_suite_and_exits(monkeypatch):
     assert runner.call_args.kwargs["load_config_func"] is cli.load_config
     assert runner.call_args.kwargs["run_analyze_func"] is cli.run_analyze
     assert callable(runner.call_args.kwargs["get_git_root_func"])
+    assert callable(runner.call_args.kwargs["upload_report_func"])
+    assert callable(runner.call_args.kwargs["upload_defense_report_func"])
+    assert callable(runner.call_args.kwargs["upload_debt_report_func"])
+
+
+def test_suite_json_upload_passes_quiet_and_selected_categories(tmp_path, capsys):
+    static_result = _static_result(str(tmp_path))
+    static_upload = patch(
+        "skylos.commands.suite_cmd.run_suite",
+        return_value={
+            "static": static_result,
+            "debt": {
+                "score": {"score_pct": 82, "signal_count": 4},
+                "hotspots": [{"file": "app.py"}],
+                "summary": {},
+            },
+            "defense": {"summary": {"score_pct": 100}},
+            "provenance": {"enabled": False},
+            "summary": {
+                "static": {
+                    "dead_code": 1,
+                    "security": 1,
+                    "quality": 1,
+                    "secrets": 1,
+                }
+            },
+        },
+    )
+
+    with (
+        static_upload,
+        patch("skylos.commands.suite_cmd.format_suite_json", return_value='{"ok":true}'),
+    ):
+        uploaded = {}
+
+        def _upload_static(payload, **kwargs):
+            uploaded["static_payload"] = payload
+            uploaded["static_kwargs"] = kwargs
+            return {"success": True}
+
+        def _upload_defense(payload, **kwargs):
+            uploaded["defense_payload"] = payload
+            uploaded["defense_kwargs"] = kwargs
+            return {"success": True}
+
+        def _upload_debt(payload, **kwargs):
+            uploaded["debt_payload"] = payload
+            uploaded["debt_kwargs"] = kwargs
+            return {"success": True}
+
+        exit_code = run_suite_command(
+            [
+                str(tmp_path),
+                "--json",
+                "--upload",
+                "--families",
+                "static,debt",
+                "--static-categories",
+                "quality,dead_code",
+            ],
+            console_factory=_console_factory,
+            progress_factory=Progress,
+            parse_exclude_folders_func=lambda **kwargs: [],
+            load_config_func=lambda _path: {},
+            run_analyze_func=lambda *_args, **_kwargs: json.dumps(static_result),
+            get_git_root_func=lambda: None,
+            upload_report_func=_upload_static,
+            upload_defense_report_func=_upload_defense,
+            upload_debt_report_func=_upload_debt,
+        )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == '{"ok":true}'
+    assert uploaded["static_kwargs"]["quiet"] is True
+    assert uploaded["debt_kwargs"]["quiet"] is True
+    assert uploaded["static_kwargs"]["scan_bundle_id"]
+    assert uploaded["debt_kwargs"]["scan_bundle_id"]
+    assert (
+        uploaded["static_kwargs"]["scan_bundle_id"]
+        == uploaded["debt_kwargs"]["scan_bundle_id"]
+    )
+    assert "defense_payload" not in uploaded
+    assert "danger" not in uploaded["static_payload"]
+    assert "quality" in uploaded["static_payload"]
+    assert "unused_functions" in uploaded["static_payload"]
+
+
+def test_suite_upload_exits_nonzero_when_static_quality_gate_fails(tmp_path):
+    static_result = _static_result(str(tmp_path))
+
+    with (
+        patch(
+            "skylos.commands.suite_cmd.run_suite",
+            return_value={
+                "static": static_result,
+                "debt": {"score": {}, "hotspots": [], "summary": {}},
+                "defense": {"summary": {"score_pct": 100}},
+                "provenance": {"enabled": False},
+                "summary": {"static": {}},
+            },
+        ),
+        patch("skylos.commands.suite_cmd.format_suite_table", return_value="suite"),
+    ):
+        exit_code = run_suite_command(
+            [str(tmp_path), "--upload", "--families", "static"],
+            console_factory=_console_factory,
+            progress_factory=Progress,
+            parse_exclude_folders_func=lambda **kwargs: [],
+            load_config_func=lambda _path: {},
+            run_analyze_func=lambda *_args, **_kwargs: json.dumps(static_result),
+            get_git_root_func=lambda: None,
+            upload_report_func=lambda *_args, **_kwargs: {
+                "success": True,
+                "quality_gate_passed": False,
+            },
+            upload_defense_report_func=_noop_upload,
+            upload_debt_report_func=_noop_upload,
+        )
+
+    assert exit_code == 1

@@ -173,6 +173,18 @@ If you are evaluating Skylos, start with the core workflow below. The LLM and AI
 | **AI Defense: CI Gate** | `skylos defend . --fail-on critical --min-score 70` | Block PRs with critical AI defense gaps |
 | **Whitelist** | `skylos whitelist 'handle_*'` | Suppress known dynamic patterns |
 
+### Cloud Uploads
+
+| Objective | Command | What uploads |
+| :--- | :--- | :--- |
+| **Upload one code scan** | `skylos . --danger --quality --upload` | One `Code Scan` with `danger`, `quality`, and `dead_code` data |
+| **Upload one defense scan** | `skylos defend . --upload` | One `AI Defense` scan |
+| **Upload one debt scan** | `skylos debt . --upload` | One `Technical Debt` scan |
+| **Upload the full suite** | `skylos suite . --upload` | Separate `Code Scan`, `AI Defense`, and `Technical Debt` scans linked as one suite bundle |
+| **Upload everything except danger** | `skylos suite . --upload --families static,defense,debt --static-categories quality,secrets,dead_code,dependency` | Code/debt/defense uploads without `danger` findings in the code-scan payload |
+
+Skylos now prints an explicit upload manifest before every non-JSON upload so it is clear which scan family is being sent.
+
 ### Security Taskflow
 
 `skylos agent scan . --security` now runs as an internal security taskflow instead of a single opaque LLM pass:
@@ -253,6 +265,9 @@ skylos debt .
 # Review only changed hotspots without distorting the project score
 skylos debt . --changed
 
+# Upload debt results to Skylos Cloud
+skylos debt . --upload
+
 # Compare the current project against a saved debt baseline
 skylos debt . --baseline
 
@@ -261,6 +276,8 @@ skylos debt . --save-baseline
 ```
 
 Debt policy files such as `skylos-debt.yaml` are discovered from the scan target upward, and explicit CLI flags like `--top` override policy defaults.
+
+Debt uploads land in Skylos Cloud as their own `Technical Debt` scan family. They do not get mixed into the recurring code issue inbox.
 
 ### Demo
 [![Skylos demo](https://img.youtube.com/vi/BjMdSP2zZl8/0.jpg)](https://www.youtube.com/watch?v=BjMdSP2zZl8)
@@ -316,6 +333,9 @@ skylos defend . --fail-on critical --min-score 70
 
 # JSON output for dashboards and pipelines
 skylos defend . --json -o defense-report.json
+
+# Upload defense results to Skylos Cloud
+skylos defend . --upload
 
 # Filter by OWASP LLM Top 10 category
 skylos defend . --owasp LLM01,LLM04
