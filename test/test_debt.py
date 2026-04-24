@@ -539,6 +539,29 @@ def test_cli_debt_json_outputs_snapshot_and_exits_zero(tmp_path, monkeypatch):
     assert payload["hotspots"][0]["file"] == "app/services.py"
 
 
+def test_cli_debt_json_upload_uses_quiet_mode(tmp_path, monkeypatch):
+    snapshot = _snapshot(str(tmp_path))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "debt", str(tmp_path), "--json", "--upload"],
+    )
+
+    with (
+        patch("skylos.debt.run_debt_analysis", return_value=snapshot),
+        patch("skylos.api.upload_debt_report", return_value={"success": True}) as mock_upload,
+        patch("builtins.print") as mock_print,
+        patch("skylos.cli.Console", return_value=Mock()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    mock_upload.assert_called_once_with(snapshot, quiet=True)
+    payload = json.loads(mock_print.call_args.args[0])
+    assert payload["score"]["score_pct"] == 93
+
+
 def test_cli_debt_with_agent_includes_advisory_in_json(tmp_path, monkeypatch):
     snapshot = _snapshot(str(tmp_path))
     monkeypatch.setattr(

@@ -243,6 +243,7 @@ def run_suite(
         "summary": None,
         "ai_security_stats": None,
     }
+    static_result["provenance"] = None
     if not no_provenance:
         try:
             from skylos.file_discovery import find_git_root
@@ -272,6 +273,7 @@ def run_suite(
             ai_stats = compute_ai_security_stats(annotatable)
             static_result["ai_security_stats"] = ai_stats
             static_result["provenance_summary"] = provenance_report.summary
+            static_result["provenance"] = provenance_report.to_dict()
             provenance_section.update(
                 {
                     "available": True,

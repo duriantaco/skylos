@@ -785,6 +785,57 @@ def test_main_upload_gate_failed_exits_when_not_forced(monkeypatch):
         assert e.value.code == 1
 
 
+def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", ".", "--json", "--upload"])
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch(
+            "skylos.cli.upload_report",
+            return_value={"success": True, "quality_gate_passed": True},
+        ) as mock_upload,
+        patch("builtins.print") as mock_print,
+    ):
+        cli.main()
+
+    mock_upload.assert_called_once()
+    upload_result = mock_upload.call_args.args[0]
+    assert upload_result["analysis_summary"] == {"total_files": 1}
+    assert upload_result["danger"] == []
+    assert upload_result["quality"] == []
+    assert upload_result["secrets"] == []
+    assert "provenance_summary" in upload_result
+    assert mock_upload.call_args.kwargs == {
+        "is_forced": False,
+        "strict": False,
+        "quiet": True,
+    }
+    mock_print.assert_called_once()
+    printed_payload = json.loads(mock_print.call_args.args[0])
+    assert printed_payload["analysis_summary"] == {"total_files": 1}
+    assert printed_payload["danger"] == []
+    assert printed_payload["quality"] == []
+    assert printed_payload["secrets"] == []
+    assert "provenance_summary" in printed_payload
+
+
 def test_main_upload_gate_failed_does_not_exit_when_forced(monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1},

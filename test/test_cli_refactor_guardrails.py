@@ -661,7 +661,7 @@ def test_defend_command_json_upload_formats_once(tmp_path):
 
     assert exit_code == 0
     mock_json.assert_called_once()
-    mock_upload.assert_called_once_with(json_payload)
+    mock_upload.assert_called_once_with(json_payload, quiet=True)
     mock_print.assert_called_once_with(json_payload)
 
 

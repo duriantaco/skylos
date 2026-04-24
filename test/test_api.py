@@ -11,6 +11,7 @@ import skylos.api as api
 from skylos.api import (
     upload_report,
     upload_defense_report,
+    upload_debt_report,
     extract_snippet,
     get_git_info,
     _detect_ci,
@@ -132,6 +133,52 @@ class TestSkylosApi(unittest.TestCase):
         args, kwargs = mock_post.call_args
         payload = kwargs["json"]
         self.assertEqual(payload["tool"], "skylos-defend")
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("requests.post")
+    def test_upload_debt_report_sends_debt_payload(
+        self, mock_post, _mock_root, _mock_git_info, mock_token
+    ):
+        mock_token.return_value = "token"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"scanId": "scan_debt_123"}
+        mock_post.return_value = mock_response
+
+        result = upload_debt_report(
+            {
+                "version": "1.0",
+                "timestamp": "2026-04-23T00:00:00+00:00",
+                "project": "/repo",
+                "files_scanned": 7,
+                "total_loc": 321,
+                "score": {
+                    "score_pct": 84,
+                    "signal_count": 9,
+                    "hotspot_count": 2,
+                },
+                "summary": {"dimensions": {"architecture": 2}},
+                "hotspots": [{"fingerprint": "hotspot:app.py", "file": "app.py"}],
+            },
+            quiet=True,
+            scan_bundle_id="bundle-123",
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["scan_id"], "scan_debt_123")
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["tool"], "skylos-debt")
+        self.assertEqual(payload["analysis_mode"], "debt")
+        self.assertEqual(payload["scan_bundle_id"], "bundle-123")
+        self.assertEqual(payload["summary"]["debt_score_pct"], 84)
+        self.assertEqual(payload["summary"]["debt_hotspots"], 1)
+        self.assertEqual(payload["summary"]["files_scanned"], 7)
+        self.assertEqual(payload["debt_summary"], {"dimensions": {"architecture": 2}})
+        self.assertEqual(payload["debt_hotspots"][0]["file"], "app.py")
+        self.assertNotIn("project_path", payload)
 
     def test_extract_snippet_valid(self):
         content = "line1\nline2\nline3\nline4\nline5\n"
@@ -398,6 +445,44 @@ class TestSkylosApi(unittest.TestCase):
 
         finding = mock_exporter.call_args[0][0][0]
         self.assertNotIn("metadata", finding)
+        self.assertIsNone(prepared.metadata["provenance"])
+
+    @patch("skylos.api._detect_report_provenance_data")
+    @patch("skylos.api._load_repo_link", return_value={})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("skylos.api.SarifExporter")
+    @patch("skylos.api._get_blame_map", return_value={})
+    @patch(
+        "skylos.api._normalize_result_sections",
+        return_value=[{"file_path": "app.py", "line_number": 5, "message": "oops"}],
+    )
+    @patch("skylos.api.get_git_root", return_value="/repo")
+    @patch("skylos.api.get_git_info", return_value=("abc123", "main", "actor", {}))
+    def test_prepare_report_upload_respects_explicit_null_provenance(
+        self,
+        _mock_git_info,
+        _mock_root,
+        _mock_normalize,
+        _mock_blame,
+        mock_exporter,
+        _mock_ai,
+        _mock_link,
+        mock_detect_provenance,
+    ):
+        mock_exporter.return_value.generate.return_value = {
+            "version": "2.1.0",
+            "runs": [],
+        }
+
+        prepared = api._prepare_report_upload(
+            {
+                "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
+                "provenance": None,
+            },
+            analysis_mode="static",
+        )
+
+        mock_detect_provenance.assert_not_called()
         self.assertIsNone(prepared.metadata["provenance"])
 
     @patch("skylos.api.get_project_token")
