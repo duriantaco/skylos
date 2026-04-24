@@ -110,6 +110,17 @@ _SECRET_CONFIG_SUFFIXES = {
     ".conf",
 }
 
+_TS_JS_SOURCE_EXTS = (
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mts",
+    ".cts",
+    ".mjs",
+    ".cjs",
+)
+
 
 def _is_secret_config_candidate(path: Path) -> bool:
     name = path.name.lower()
@@ -214,8 +225,12 @@ class Skylos:
         ".go": "Go",
         ".ts": "TypeScript",
         ".tsx": "TypeScript",
+        ".mts": "TypeScript",
+        ".cts": "TypeScript",
         ".js": "JavaScript",
         ".jsx": "JavaScript",
+        ".mjs": "JavaScript",
+        ".cjs": "JavaScript",
         ".java": "Java",
     }
 
@@ -237,8 +252,20 @@ class Skylos:
             return [p], p.parent
 
         root = p
-        exts = {".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".java"}
-        ext_list = ["py", "go", "ts", "tsx", "js", "jsx", "java"]
+        exts = {".py", ".go", *(_TS_JS_SOURCE_EXTS), ".java"}
+        ext_list = [
+            "py",
+            "go",
+            "ts",
+            "tsx",
+            "js",
+            "jsx",
+            "mts",
+            "cts",
+            "mjs",
+            "cjs",
+            "java",
+        ]
 
         # use rust file discovery when avail
         if _fast_discover is not None and os.path.isdir(str(p)):
@@ -315,7 +342,7 @@ class Skylos:
             all_exported_names.update(export_names)
 
         for def_name, def_obj in self.defs.items():
-            if str(def_obj.filename).endswith((".ts", ".tsx", ".js", ".jsx")):
+            if str(def_obj.filename).endswith(_TS_JS_SOURCE_EXTS):
                 continue
             if def_obj.simple_name in all_exported_names:
                 def_obj.is_exported = True
@@ -1492,7 +1519,7 @@ class Skylos:
                 if file_raw_imports:
                     if str(file).endswith(".py"):
                         all_raw_imports[file] = file_raw_imports
-                    elif str(file).endswith((".ts", ".tsx", ".js", ".jsx")):
+                    elif str(file).endswith(_TS_JS_SOURCE_EXTS):
                         ts_raw_imports[file] = file_raw_imports
 
                 if pattern_tracker_obj:
@@ -1510,9 +1537,7 @@ class Skylos:
                 for definition in defs:
                     if definition.type == "import":
                         key = f"{definition.filename}:{definition.name}"
-                    elif str(definition.filename).endswith(
-                        (".ts", ".tsx", ".js", ".jsx")
-                    ):
+                    elif str(definition.filename).endswith(_TS_JS_SOURCE_EXTS):
                         key = f"{definition.filename}:{definition.name}"
                     else:
                         key = definition.name
@@ -2140,7 +2165,7 @@ def proc_file(
 
     cfg = load_config(file)
 
-    if str(file).endswith((".ts", ".tsx", ".js", ".jsx")):
+    if str(file).endswith(_TS_JS_SOURCE_EXTS):
         out = scan_typescript_file(file, cfg)
         if isinstance(out, tuple) and len(out) < 13:
             return (*out, *([None] * (13 - len(out))))

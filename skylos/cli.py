@@ -3298,7 +3298,19 @@ def main() -> None:
                 import subprocess as _sp
                 from skylos.baseline import filter_new_findings, load_baseline
 
-                source_exts = {".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".java"}
+                source_exts = {
+                    ".py",
+                    ".go",
+                    ".ts",
+                    ".tsx",
+                    ".js",
+                    ".jsx",
+                    ".mts",
+                    ".cts",
+                    ".mjs",
+                    ".cjs",
+                    ".java",
+                }
                 config_exts = {
                     ".yaml",
                     ".yml",
