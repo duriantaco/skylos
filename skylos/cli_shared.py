@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def get_git_changed_files(root_path):
-    supported_exts = {".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".java"}
+    supported_exts = {".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".java", ".php"}
 
     def _collect_supported(output, repo_root):
         files = []
