@@ -22,6 +22,9 @@ class TestAllowedSuffixes:
     def test_go_suffix_allowed(self):
         assert ".go" in ALLOWED_FILE_SUFFIXES
 
+    def test_php_suffix_allowed(self):
+        assert ".php" in ALLOWED_FILE_SUFFIXES
+
 
 class TestEnvFileScanning:
     def test_detects_aws_key_in_env(self):

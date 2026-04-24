@@ -21,6 +21,7 @@ from skylos.constants import AUTO_CALLED, MARKREFS_TICK_DEFAULT
 
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
+from skylos.visitors.languages.php import scan_php_file
 from skylos.visitors.languages.typescript import scan_typescript_file
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
@@ -120,6 +121,7 @@ _TS_JS_SOURCE_EXTS = (
     ".mjs",
     ".cjs",
 )
+_PHP_SOURCE_EXTS = (".php",)
 
 
 def _is_secret_config_candidate(path: Path) -> bool:
@@ -232,6 +234,7 @@ class Skylos:
         ".mjs": "JavaScript",
         ".cjs": "JavaScript",
         ".java": "Java",
+        ".php": "PHP",
     }
 
     def _count_languages(self, files) -> dict[str, int]:
@@ -252,7 +255,7 @@ class Skylos:
             return [p], p.parent
 
         root = p
-        exts = {".py", ".go", *(_TS_JS_SOURCE_EXTS), ".java"}
+        exts = {".py", ".go", *(_TS_JS_SOURCE_EXTS), ".java", *(_PHP_SOURCE_EXTS)}
         ext_list = [
             "py",
             "go",
@@ -265,6 +268,7 @@ class Skylos:
             "mjs",
             "cjs",
             "java",
+            "php",
         ]
 
         # use rust file discovery when avail
@@ -2179,6 +2183,12 @@ def proc_file(
 
     if str(file).endswith(".java"):
         out = scan_java_file(file, cfg)
+        if isinstance(out, tuple) and len(out) < 13:
+            return (*out, *([None] * (13 - len(out))))
+        return out[:13]
+
+    if str(file).endswith(".php"):
+        out = scan_php_file(file, cfg)
         if isinstance(out, tuple) and len(out) < 13:
             return (*out, *([None] * (13 - len(out))))
         return out[:13]
