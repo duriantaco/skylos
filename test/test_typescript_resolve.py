@@ -156,6 +156,42 @@ def test_build_ts_import_graph_resolves_extensionless_js_imports(tmp_path):
     assert importers_of[str(helper_file)] == {str(app_file)}
 
 
+def test_build_ts_import_graph_resolves_extensionless_mts_imports(tmp_path):
+    app_file = tmp_path / "src" / "app.mts"
+    helper_file = tmp_path / "src" / "helper.mts"
+
+    _write(app_file, "import { helper } from './helper';\nhelper();\n")
+    _write(helper_file, "export function helper() { return 1; }\n")
+
+    defs = {f"{helper_file}:helper": _make_def("helper", str(helper_file))}
+    ts_raw_imports = {
+        str(app_file): [{"source": "./helper", "names": ["helper"], "line": 1}]
+    }
+
+    consumed, _, importers_of = build_ts_import_graph(ts_raw_imports, defs)
+
+    assert consumed[str(helper_file)] == {"helper"}
+    assert importers_of[str(helper_file)] == {str(app_file)}
+
+
+def test_build_ts_import_graph_resolves_mjs_import_to_mts_source(tmp_path):
+    app_file = tmp_path / "src" / "app.mts"
+    helper_file = tmp_path / "src" / "helper.mts"
+
+    _write(app_file, "import { helper } from './helper.mjs';\nhelper();\n")
+    _write(helper_file, "export function helper() { return 1; }\n")
+
+    defs = {f"{helper_file}:helper": _make_def("helper", str(helper_file))}
+    ts_raw_imports = {
+        str(app_file): [{"source": "./helper.mjs", "names": ["helper"], "line": 1}]
+    }
+
+    consumed, _, importers_of = build_ts_import_graph(ts_raw_imports, defs)
+
+    assert consumed[str(helper_file)] == {"helper"}
+    assert importers_of[str(helper_file)] == {str(app_file)}
+
+
 def test_package_local_tsconfig_paths_override_root_in_monorepo(tmp_path):
     app_dir = tmp_path / "packages" / "app"
     importer = app_dir / "src" / "index.ts"
@@ -193,6 +229,35 @@ def test_package_local_tsconfig_paths_override_root_in_monorepo(tmp_path):
 
     assert resolver.resolve("@app/components/Button", str(importer)) == str(
         local_target
+    )
+
+
+def test_workspace_package_exports_mjs_target_resolves_to_mts_source(tmp_path):
+    ui_dir = tmp_path / "packages" / "ui"
+    app_file = tmp_path / "packages" / "app" / "src" / "index.ts"
+
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"name": "@workspace/root", "workspaces": ["packages/*"]}),
+    )
+    _write(
+        ui_dir / "package.json",
+        json.dumps(
+            {
+                "name": "@workspace/ui",
+                "exports": {
+                    ".": "./dist/index.mjs",
+                },
+            }
+        ),
+    )
+    _write(ui_dir / "src" / "index.mts", 'export const Button = () => "button";')
+    _write(app_file, "export const main = 1;\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@workspace/ui", str(app_file)) == str(
+        ui_dir / "src" / "index.mts"
     )
 
 
