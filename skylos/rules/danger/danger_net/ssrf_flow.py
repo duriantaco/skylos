@@ -97,6 +97,12 @@ def _has_safe_base_url(node):
     return False
 
 
+def _tainted_url_is_ssrf_relevant(checker, node):
+    if isinstance(node, ast.JoinedStr) and _has_safe_base_url(node):
+        return False
+    return checker.is_tainted(node)
+
+
 def _is_interpolated_string(node):
     if isinstance(node, ast.JoinedStr):
         if _has_safe_base_url(node):
@@ -166,7 +172,9 @@ class _SSRFFlowChecker(TaintVisitor):
             if func in self.HTTP_METHODS and node.args:
                 if self._is_likely_http_receiver(node):
                     url_arg = node.args[0]
-                    if _is_interpolated_string(url_arg) or self.is_tainted(url_arg):
+                    if _is_interpolated_string(url_arg) or _tainted_url_is_ssrf_relevant(
+                        self, url_arg
+                    ):
                         self.findings.append(
                             {
                                 "rule_id": "SKY-D216",
@@ -181,7 +189,9 @@ class _SSRFFlowChecker(TaintVisitor):
 
         if qn and qn.endswith(".urlopen") and node.args:
             url_arg = node.args[0]
-            if _is_interpolated_string(url_arg) or self.is_tainted(url_arg):
+            if _is_interpolated_string(url_arg) or _tainted_url_is_ssrf_relevant(
+                self, url_arg
+            ):
                 self.findings.append(
                     {
                         "rule_id": "SKY-D216",

@@ -43,3 +43,13 @@ def test_requests_constant_url_ok(tmp_path):
     )
     out = _scan_one(tmp_path, "ssrf_ok.py", code)
     assert "SKY-D216" not in _rule_ids(out)
+
+
+def test_requests_fixed_host_interpolated_path_ok(tmp_path):
+    code = (
+        "import requests\n"
+        "def f(user_id):\n"
+        "    requests.get(f'https://api.example.com/users/{user_id}', timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_fixed_host.py", code)
+    assert "SKY-D216" not in _rule_ids(out)
