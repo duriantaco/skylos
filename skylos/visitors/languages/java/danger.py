@@ -147,6 +147,9 @@ _REQUEST_INLINE_SOURCE_PATTERN = re.compile(
 )
 
 _CONTROL_FLOW_HINTS = ("throw ", "return", "continue", "break")
+_STARTSWITH_CALL_PATTERN = re.compile(
+    r"(?P<receiver>[A-Za-z_][\w.()]+)\.startsWith\s*\((?P<arg>[^)]*)\)"
+)
 
 _SECRET_PREFIXES = (
     "sk-",
@@ -257,23 +260,87 @@ def _guard_without_braces_contains_sink(
     return False
 
 
+def _collect_canonical_string_vars(lines: list[str]) -> tuple[set[str], set[str]]:
+    canonical_vars: set[str] = set()
+    slash_terminated_vars: set[str] = set()
+
+    for line in lines:
+        match = _LOCAL_ALIAS_PATTERN.match(line)
+        if not match:
+            continue
+        var = match.group("var")
+        expr = match.group("expr")
+        if "getCanonicalPath(" not in expr:
+            continue
+        canonical_vars.add(var)
+        if _expr_is_slash_terminated_base(expr):
+            slash_terminated_vars.add(var)
+
+    return canonical_vars, slash_terminated_vars
+
+
+def _expr_is_slash_terminated_base(expr: str) -> bool:
+    return any(
+        token in expr
+        for token in (
+            "File.separator",
+            "java.io.File.separator",
+            '"/"',
+            '"\\\\"',
+            "separatorChar",
+        )
+    )
+
+
+def _line_has_safe_startswith_guard(
+    line: str, canonical_vars: set[str], slash_terminated_vars: set[str]
+) -> bool:
+    for match in _STARTSWITH_CALL_PATTERN.finditer(line):
+        receiver = match.group("receiver").strip()
+        arg = match.group("arg").strip()
+        receiver_is_canonical_string = (
+            receiver in canonical_vars or "getCanonicalPath()" in receiver
+        )
+        arg_is_canonical_string = arg in canonical_vars or "getCanonicalPath()" in arg
+
+        if receiver_is_canonical_string and arg_is_canonical_string:
+            if arg in slash_terminated_vars or _expr_is_slash_terminated_base(arg):
+                return True
+            continue
+
+        return True
+
+    return False
+
+
 def _has_named_path_guard(
     lines: list[str], names: set[str], hints: tuple[str, ...], sink_idx: int
 ) -> bool:
     has_normalize = False
+    canonical_vars, slash_terminated_vars = _collect_canonical_string_vars(lines)
+    known_guard_vars = canonical_vars | slash_terminated_vars
 
     for idx, line in enumerate(lines):
         mentioned = _names_in_line(line, names)
-        if not mentioned:
+        startswith_line = "startsWith(" in line or "starts_with(" in line
+        if not mentioned and not (
+            has_normalize
+            and startswith_line
+            and _line_mentions_names(line, known_guard_vars)
+        ):
             continue
         if any(hint in line for hint in hints):
             has_normalize = True
         if (
             has_normalize
             and "if" in line
-            and ("startsWith(" in line or "starts_with(" in line)
+            and startswith_line
             and ("!" in line or "== false" in line or "false ==" in line)
         ):
+            if not _line_has_safe_startswith_guard(
+                line, canonical_vars, slash_terminated_vars
+            ):
+                continue
             trailing = "\n".join(lines[idx : min(len(lines), idx + 4)])
             if any(token in trailing for token in _CONTROL_FLOW_HINTS):
                 return True
@@ -281,10 +348,13 @@ def _has_named_path_guard(
             idx <= sink_idx
             and has_normalize
             and "if" in line
-            and ("startsWith(" in line or "starts_with(" in line)
+            and startswith_line
             and "!" not in line
             and "== false" not in line
             and "false ==" not in line
+            and _line_has_safe_startswith_guard(
+                line, canonical_vars, slash_terminated_vars
+            )
             and (
                 _guard_block_contains_sink(lines, idx, sink_idx)
                 or _guard_without_braces_contains_sink(lines, idx, sink_idx)
