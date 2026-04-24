@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from skylos.visitor import Definition
+from skylos.visitors.languages.typescript import scan_typescript_file
 from skylos.visitors.languages.typescript.workspace import (
     discover_workspace_inventory,
 )
@@ -21,6 +22,10 @@ def _make_def(name, typ, filename, line=1, exported=False):
     d = Definition(name, typ, filename, line)
     d.is_exported = exported
     return d
+
+
+def _scan_raw_imports(*paths: Path) -> dict[str, list[dict]]:
+    return {str(path): scan_typescript_file(str(path))[12] for path in paths}
 
 
 # ---------- Aliased import consumption ----------
@@ -349,6 +354,27 @@ class TestTypeScriptDeadFiles:
         dead_files = find_dead_ts_files(files, [], importers_of, {})
         assert dead_files == []
 
+    def test_main_mjs_is_treated_as_entrypoint(self, tmp_path):
+        main_file = tmp_path / "src" / "main.mjs"
+        helper_file = tmp_path / "src" / "helper.mjs"
+
+        helper_file.parent.mkdir(parents=True, exist_ok=True)
+        main_file.write_text("import './helper.mjs';\n", encoding="utf-8")
+        helper_file.write_text("export const helper = true;\n", encoding="utf-8")
+
+        _, wildcard_edges, importers_of = build_ts_import_graph(
+            _scan_raw_imports(main_file, helper_file),
+            {},
+        )
+        dead_files = find_dead_ts_files(
+            [main_file, helper_file],
+            [],
+            importers_of,
+            wildcard_edges,
+        )
+
+        assert dead_files == []
+
     def test_nextjs_special_files_are_treated_as_entrypoints(self, tmp_path):
         template_file = tmp_path / "app" / "template.tsx"
         global_not_found_file = tmp_path / "app" / "global-not-found.tsx"
@@ -436,6 +462,240 @@ class TestTypeScriptDeadFiles:
 
         assert dead_files == []
 
+    def test_package_json_script_entrypoint_keeps_cli_graph_live(self, tmp_path):
+        cli_file = tmp_path / "src" / "cli.ts"
+        helper_file = tmp_path / "src" / "helpers.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root","scripts":{"dev":"tsx src/cli.ts"}}',
+            encoding="utf-8",
+        )
+        cli_file.parent.mkdir(parents=True, exist_ok=True)
+        cli_file.write_text("import './helpers';\n", encoding="utf-8")
+        helper_file.write_text("export const helper = () => 1;\n", encoding="utf-8")
+
+        inventory = discover_workspace_inventory(tmp_path)
+        dead_files = find_dead_ts_files(
+            [cli_file, helper_file],
+            [],
+            {str(helper_file): {str(cli_file)}},
+            {},
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert dead_files == []
+
+    def test_vite_config_lib_entries_keep_nonstandard_entries_live(self, tmp_path):
+        lib_entry = tmp_path / "src" / "library-entry.ts"
+        worker_entry = tmp_path / "src" / "worker-entry.ts"
+        helper_file = tmp_path / "src" / "helpers.ts"
+        vite_config = tmp_path / "vite.config.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root"}',
+            encoding="utf-8",
+        )
+        lib_entry.parent.mkdir(parents=True, exist_ok=True)
+        vite_config.write_text(
+            """
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  build: {
+    lib: {
+      entry: {
+        library: "src/library-entry.ts",
+        worker: "src/worker-entry.ts",
+      },
+    },
+  },
+});
+""",
+            encoding="utf-8",
+        )
+        lib_entry.write_text("import './helpers';\n", encoding="utf-8")
+        worker_entry.write_text("export const worker = true;\n", encoding="utf-8")
+        helper_file.write_text("export const helper = () => 1;\n", encoding="utf-8")
+
+        inventory = discover_workspace_inventory(tmp_path)
+        dead_files = find_dead_ts_files(
+            [vite_config, lib_entry, worker_entry, helper_file],
+            [],
+            {str(helper_file): {str(lib_entry)}},
+            {},
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert dead_files == []
+
+    def test_vitest_custom_config_include_keeps_matching_file_live(self, tmp_path):
+        vitest_config = tmp_path / "tooling" / "vitest.workspace.ts"
+        check_file = tmp_path / "checks" / "login.ts"
+        helper_file = tmp_path / "src" / "support.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root","scripts":{"test":"vitest --config tooling/vitest.workspace.ts"}}',
+            encoding="utf-8",
+        )
+        vitest_config.parent.mkdir(parents=True, exist_ok=True)
+        check_file.parent.mkdir(parents=True, exist_ok=True)
+        helper_file.parent.mkdir(parents=True, exist_ok=True)
+
+        vitest_config.write_text(
+            """
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    include: ["checks/**/*.ts"],
+  },
+});
+""",
+            encoding="utf-8",
+        )
+        check_file.write_text("import '../src/support';\n", encoding="utf-8")
+        helper_file.write_text("export const support = true;\n", encoding="utf-8")
+
+        inventory = discover_workspace_inventory(tmp_path)
+        dead_files = find_dead_ts_files(
+            [vitest_config, check_file, helper_file],
+            [],
+            {str(helper_file): {str(check_file)}},
+            {},
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert dead_files == []
+
+    def test_playwright_custom_config_testdir_keeps_matching_file_live(self, tmp_path):
+        playwright_config = tmp_path / "tooling" / "playwright.e2e.ts"
+        test_file = tmp_path / "browser" / "login.ts"
+        helper_file = tmp_path / "src" / "driver.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root","scripts":{"e2e":"playwright test --config tooling/playwright.e2e.ts"}}',
+            encoding="utf-8",
+        )
+        playwright_config.parent.mkdir(parents=True, exist_ok=True)
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        helper_file.parent.mkdir(parents=True, exist_ok=True)
+
+        playwright_config.write_text(
+            """
+import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  testDir: "../browser",
+});
+""",
+            encoding="utf-8",
+        )
+        test_file.write_text("import '../src/driver';\n", encoding="utf-8")
+        helper_file.write_text("export const driver = true;\n", encoding="utf-8")
+
+        inventory = discover_workspace_inventory(tmp_path)
+        dead_files = find_dead_ts_files(
+            [playwright_config, test_file, helper_file],
+            [],
+            {str(helper_file): {str(test_file)}},
+            {},
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert dead_files == []
+
+    def test_dynamic_import_keeps_module_graph_live(self, tmp_path):
+        app_file = tmp_path / "src" / "main.ts"
+        feature_file = tmp_path / "src" / "feature.ts"
+        helper_file = tmp_path / "src" / "helper.ts"
+
+        helper_file.parent.mkdir(parents=True, exist_ok=True)
+        app_file.write_text("async function load() { await import('./feature'); }\n", encoding="utf-8")
+        feature_file.write_text("import './helper';\nexport const feature = true;\n", encoding="utf-8")
+        helper_file.write_text("export const helper = true;\n", encoding="utf-8")
+
+        _, wildcard_edges, importers_of = build_ts_import_graph(
+            _scan_raw_imports(app_file, feature_file, helper_file),
+            {},
+        )
+        dead_files = find_dead_ts_files(
+            [app_file, feature_file, helper_file],
+            [],
+            importers_of,
+            wildcard_edges,
+        )
+
+        assert dead_files == []
+
+    def test_require_resolve_keeps_module_live(self, tmp_path):
+        app_file = tmp_path / "src" / "main.ts"
+        feature_file = tmp_path / "src" / "feature.ts"
+
+        feature_file.parent.mkdir(parents=True, exist_ok=True)
+        app_file.write_text("const target = require.resolve('./feature');\n", encoding="utf-8")
+        feature_file.write_text("export const feature = true;\n", encoding="utf-8")
+
+        _, wildcard_edges, importers_of = build_ts_import_graph(
+            _scan_raw_imports(app_file, feature_file),
+            {},
+        )
+        dead_files = find_dead_ts_files(
+            [app_file, feature_file],
+            [],
+            importers_of,
+            wildcard_edges,
+        )
+
+        assert dead_files == []
+
+    def test_import_meta_resolve_keeps_module_live(self, tmp_path):
+        app_file = tmp_path / "src" / "main.ts"
+        feature_file = tmp_path / "src" / "feature.ts"
+
+        feature_file.parent.mkdir(parents=True, exist_ok=True)
+        app_file.write_text("const target = import.meta.resolve('./feature');\n", encoding="utf-8")
+        feature_file.write_text("export const feature = true;\n", encoding="utf-8")
+
+        _, wildcard_edges, importers_of = build_ts_import_graph(
+            _scan_raw_imports(app_file, feature_file),
+            {},
+        )
+        dead_files = find_dead_ts_files(
+            [app_file, feature_file],
+            [],
+            importers_of,
+            wildcard_edges,
+        )
+
+        assert dead_files == []
+
+    def test_import_meta_glob_keeps_matched_routes_live(self, tmp_path):
+        app_file = tmp_path / "src" / "main.ts"
+        route_file = tmp_path / "src" / "routes" / "index.ts"
+        helper_file = tmp_path / "src" / "routes" / "helper.ts"
+
+        route_file.parent.mkdir(parents=True, exist_ok=True)
+        app_file.write_text("const routes = import.meta.glob('./routes/**/*.ts');\n", encoding="utf-8")
+        route_file.write_text("import './helper';\nexport const route = true;\n", encoding="utf-8")
+        helper_file.write_text("export const helper = true;\n", encoding="utf-8")
+
+        _, wildcard_edges, importers_of = build_ts_import_graph(
+            _scan_raw_imports(app_file, route_file, helper_file),
+            {},
+        )
+        dead_files = find_dead_ts_files(
+            [app_file, route_file, helper_file],
+            [],
+            importers_of,
+            wildcard_edges,
+        )
+
+        assert dead_files == []
+
 
 class TestTypeScriptUnusedExports:
     def test_package_json_entrypoint_export_is_not_flagged(self, tmp_path):
@@ -467,3 +727,192 @@ class TestTypeScriptUnusedExports:
         )
 
         assert findings == []
+
+    def test_package_json_script_entry_export_is_not_flagged(self, tmp_path):
+        cli_file = tmp_path / "src" / "cli.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root","scripts":{"dev":"tsx src/cli.ts"}}',
+            encoding="utf-8",
+        )
+        cli_file.parent.mkdir(parents=True, exist_ok=True)
+        cli_file.write_text("export function run() { return true; }\n", encoding="utf-8")
+
+        inventory = discover_workspace_inventory(tmp_path)
+        defn = _make_def("run", "function", str(cli_file), exported=True)
+        defn.references = 1
+        defn.is_exported = False
+
+        findings = find_unused_ts_exports(
+            [defn],
+            {},
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert findings == []
+
+    def test_default_cli_mts_export_is_not_flagged(self, tmp_path):
+        cli_file = tmp_path / "src" / "cli.mts"
+
+        cli_file.parent.mkdir(parents=True, exist_ok=True)
+        cli_file.write_text(
+            "export function runCli() { return true; }\n", encoding="utf-8"
+        )
+
+        defn = _make_def("runCli", "function", str(cli_file), exported=True)
+        defn.references = 1
+        defn.is_exported = False
+
+        findings = find_unused_ts_exports(
+            [defn],
+            {},
+            files=[str(cli_file)],
+        )
+
+        assert findings == []
+
+    def test_vite_config_entry_export_is_not_flagged(self, tmp_path):
+        vite_config = tmp_path / "vite.config.ts"
+        entry_file = tmp_path / "src" / "library-entry.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root"}',
+            encoding="utf-8",
+        )
+        entry_file.parent.mkdir(parents=True, exist_ok=True)
+        vite_config.write_text(
+            """
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  build: {
+    lib: {
+      entry: "src/library-entry.ts",
+    },
+  },
+});
+""",
+            encoding="utf-8",
+        )
+        entry_file.write_text(
+            "export function buildLibrary() { return true; }\n",
+            encoding="utf-8",
+        )
+
+        inventory = discover_workspace_inventory(tmp_path)
+        defn = _make_def("buildLibrary", "function", str(entry_file), exported=True)
+        defn.references = 1
+        defn.is_exported = False
+
+        findings = find_unused_ts_exports(
+            [defn],
+            {},
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert findings == []
+
+    def test_vitest_root_export_is_still_flagged_as_dev_only(self, tmp_path):
+        vitest_config = tmp_path / "tooling" / "vitest.workspace.ts"
+        check_file = tmp_path / "checks" / "login.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root","scripts":{"test":"vitest --config tooling/vitest.workspace.ts"}}',
+            encoding="utf-8",
+        )
+        vitest_config.parent.mkdir(parents=True, exist_ok=True)
+        check_file.parent.mkdir(parents=True, exist_ok=True)
+        vitest_config.write_text(
+            """
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    include: ["checks/**/*.ts"],
+  },
+});
+""",
+            encoding="utf-8",
+        )
+        check_file.write_text(
+            "export function runCheck() { return true; }\n", encoding="utf-8"
+        )
+
+        inventory = discover_workspace_inventory(tmp_path)
+        defn = _make_def("runCheck", "function", str(check_file), exported=True)
+        defn.references = 1
+        defn.is_exported = False
+
+        findings = find_unused_ts_exports(
+            [defn],
+            {},
+            files=[str(vitest_config), str(check_file)],
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert len(findings) == 1
+        assert findings[0]["name"] == "runCheck"
+
+    def test_playwright_root_export_is_still_flagged_as_dev_only(self, tmp_path):
+        playwright_config = tmp_path / "tooling" / "playwright.e2e.ts"
+        test_file = tmp_path / "browser" / "login.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root","scripts":{"e2e":"playwright test --config tooling/playwright.e2e.ts"}}',
+            encoding="utf-8",
+        )
+        playwright_config.parent.mkdir(parents=True, exist_ok=True)
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        playwright_config.write_text(
+            """
+import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  testDir: "../browser",
+});
+""",
+            encoding="utf-8",
+        )
+        test_file.write_text(
+            "export function runBrowserTest() { return true; }\n",
+            encoding="utf-8",
+        )
+
+        inventory = discover_workspace_inventory(tmp_path)
+        defn = _make_def(
+            "runBrowserTest", "function", str(test_file), exported=True
+        )
+        defn.references = 1
+        defn.is_exported = False
+
+        findings = find_unused_ts_exports(
+            [defn],
+            {},
+            files=[str(playwright_config), str(test_file)],
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert len(findings) == 1
+        assert findings[0]["name"] == "runBrowserTest"
+
+    def test_dynamic_import_consumes_all_exports_for_unused_export_detection(self, tmp_path):
+        app_file = tmp_path / "src" / "main.ts"
+        feature_file = tmp_path / "src" / "feature.ts"
+
+        feature_file.parent.mkdir(parents=True, exist_ok=True)
+        app_file.write_text("async function load() { await import('./feature'); }\n", encoding="utf-8")
+        feature_file.write_text("export function renderFeature() { return true; }\n", encoding="utf-8")
+
+        defn = _make_def("renderFeature", "function", str(feature_file), exported=True)
+        defs = {f"{feature_file}:renderFeature": defn}
+
+        consumed, _, _ = build_ts_import_graph(
+            _scan_raw_imports(app_file, feature_file),
+            defs,
+        )
+
+        assert "renderFeature" in consumed[str(feature_file)]

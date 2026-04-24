@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import glob
+import os
 from pathlib import Path
 
 from tree_sitter import Language, Parser, Query, QueryCursor
@@ -93,6 +95,11 @@ _IMPORTS_PATTERN = """
 (import_clause (identifier) @import_name)
 (import_clause (namespace_import (identifier) @import_name))
 """
+
+_RAW_IMPORT_FILE_EXTENSIONS = frozenset(
+    {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"}
+)
+_DYNAMIC_GLOB_METHODS = frozenset({"glob", "globEager"})
 
 
 def _get_query(lang: Language, key: str, pattern: str) -> Query | None:
@@ -348,6 +355,7 @@ class TypeScriptCore:
 
     def _scan_raw_imports(self) -> None:
         self.raw_imports: list[dict] = []
+        self._raw_import_seen: set[tuple[str, int, bool]] = set()
         c = self._defs_captures
 
         for src_node in c.get("import_src", []):
@@ -375,6 +383,8 @@ class TypeScriptCore:
                         "line": src_node.start_point[0] + 1,
                     }
                 )
+
+        self._scan_dynamic_raw_imports()
 
     def _extract_import_names_from_stmt(self, import_stmt) -> list[str]:
         names = []
@@ -421,6 +431,139 @@ class TypeScriptCore:
                 else:
                     names.append("*")
         return names if names else ["*"]
+
+    def _iter_nodes(self, root_node):
+        stack = [root_node]
+        while stack:
+            node = stack.pop()
+            yield node
+            stack.extend(reversed(node.children))
+
+    def _string_literal_value(self, node) -> str | None:
+        if node is None or node.type != "string":
+            return None
+        return self._get_text(node).strip("'\"")
+
+    def _append_raw_import(
+        self, source_path: str, line: int, consume_all_exports: bool = False
+    ) -> None:
+        key = (source_path, line, consume_all_exports)
+        if key in self._raw_import_seen:
+            return
+        self._raw_import_seen.add(key)
+        self.raw_imports.append(
+            {
+                "source": source_path,
+                "names": ["*"],
+                "line": line,
+                "consume_all_exports": consume_all_exports,
+            }
+        )
+
+    def _relative_source_for_match(self, matched_path: str) -> str:
+        relative = os.path.relpath(matched_path, os.path.dirname(self.file_path))
+        normalized = relative.replace(os.sep, "/")
+        if normalized.startswith("."):
+            return normalized
+        return f"./{normalized}"
+
+    def _string_sources_from_node(self, node) -> list[str]:
+        if node is None:
+            return []
+        if node.type == "string":
+            value = self._string_literal_value(node)
+            return [value] if value else []
+        if node.type == "array":
+            sources: list[str] = []
+            for child in node.named_children:
+                value = self._string_literal_value(child)
+                if value:
+                    sources.append(value)
+            return sources
+        return []
+
+    def _glob_import_sources(self, node) -> list[str]:
+        matches: list[str] = []
+        for pattern in self._string_sources_from_node(node):
+            if not pattern:
+                continue
+            if os.path.isabs(pattern):
+                full_pattern = pattern
+            else:
+                full_pattern = os.path.join(os.path.dirname(self.file_path), pattern)
+            for matched in glob.glob(full_pattern, recursive=True):
+                if not os.path.isfile(matched):
+                    continue
+                if Path(matched).suffix.lower() not in _RAW_IMPORT_FILE_EXTENSIONS:
+                    continue
+                matches.append(
+                    self._relative_source_for_match(os.path.realpath(matched))
+                )
+        return matches
+
+    def _scan_dynamic_raw_imports(self) -> None:
+        if not self.root_node:
+            return
+
+        for node in self._iter_nodes(self.root_node):
+            if node.type != "call_expression":
+                continue
+
+            function_node = node.child_by_field_name("function")
+            arguments_node = node.child_by_field_name("arguments")
+            if function_node is None or arguments_node is None:
+                continue
+            if not arguments_node.named_children:
+                continue
+
+            first_arg = arguments_node.named_children[0]
+            line = node.start_point[0] + 1
+
+            if function_node.type == "import":
+                for source_path in self._string_sources_from_node(first_arg):
+                    self._append_raw_import(
+                        source_path, line, consume_all_exports=True
+                    )
+                continue
+
+            if function_node.type != "member_expression":
+                continue
+
+            object_node = function_node.child_by_field_name("object")
+            property_node = function_node.child_by_field_name("property")
+            if object_node is None or property_node is None:
+                continue
+
+            property_name = self._get_text(property_node)
+
+            if (
+                object_node.type == "identifier"
+                and self._get_text(object_node) == "require"
+                and property_name == "resolve"
+            ):
+                for source_path in self._string_sources_from_node(first_arg):
+                    self._append_raw_import(
+                        source_path, line, consume_all_exports=True
+                    )
+                continue
+
+            if object_node.type != "meta_property":
+                continue
+            if self._get_text(object_node) != "import.meta":
+                continue
+
+            if property_name == "resolve":
+                for source_path in self._string_sources_from_node(first_arg):
+                    self._append_raw_import(
+                        source_path, line, consume_all_exports=True
+                    )
+                continue
+
+            if property_name in _DYNAMIC_GLOB_METHODS:
+                for source_path in self._glob_import_sources(first_arg):
+                    self._append_raw_import(
+                        source_path, line, consume_all_exports=True
+                    )
 
     def _build_call_graph(self) -> None:
         self.call_pairs: list[tuple[str, str]] = []

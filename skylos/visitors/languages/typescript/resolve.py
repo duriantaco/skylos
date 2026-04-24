@@ -15,10 +15,18 @@ _SOURCE_FILE_SUFFIXES = (
     ".tsx",
     ".js",
     ".jsx",
+    ".mts",
+    ".cts",
+    ".mjs",
+    ".cjs",
     "/index.ts",
     "/index.tsx",
     "/index.js",
     "/index.jsx",
+    "/index.mts",
+    "/index.cts",
+    "/index.mjs",
+    "/index.cjs",
 )
 
 
@@ -257,6 +265,8 @@ def _candidate_package_targets(target: str) -> list[str]:
             [
                 base_target[:-3] + ".ts",
                 base_target[:-3] + ".tsx",
+                base_target[:-3] + ".mts",
+                base_target[:-3] + ".cts",
                 base_target[:-3] + ".jsx",
             ]
         )
@@ -264,7 +274,16 @@ def _candidate_package_targets(target: str) -> list[str]:
         candidates.extend([base_target[:-4] + ".tsx", base_target[:-4] + ".js"])
     elif base_target.endswith(".mjs") or base_target.endswith(".cjs"):
         base_no_ext = base_target.rsplit(".", 1)[0]
-        candidates.extend([base_no_ext + ".ts", base_no_ext + ".js"])
+        candidates.extend(
+            [
+                base_no_ext + ".mts",
+                base_no_ext + ".cts",
+                base_no_ext + ".ts",
+                base_no_ext + ".tsx",
+                base_no_ext + ".js",
+                base_no_ext + ".jsx",
+            ]
+        )
 
     ordered: list[str] = []
     seen: set[str] = set()
@@ -404,10 +423,18 @@ def _resolve_from_pkg_dir(pkg_dir: str, subpath: str | None = None) -> str | Non
         "src/index.tsx",
         "src/index.js",
         "src/index.jsx",
+        "src/index.mts",
+        "src/index.cts",
+        "src/index.mjs",
+        "src/index.cjs",
         "index.ts",
         "index.tsx",
         "index.js",
         "index.jsx",
+        "index.mts",
+        "index.cts",
+        "index.mjs",
+        "index.cjs",
     ):
         candidate = os.path.join(pkg_dir, entry)
         if os.path.isfile(candidate):

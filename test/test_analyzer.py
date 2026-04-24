@@ -192,7 +192,19 @@ class TestSkylos:
 
         mock_discover.assert_called_once_with(
             mock_dir,
-            {".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".java"},
+            {
+                ".py",
+                ".go",
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                ".mts",
+                ".cts",
+                ".mjs",
+                ".cjs",
+                ".java",
+            },
             exclude_folders=None,
         )
         assert files == mock_files
@@ -451,7 +463,7 @@ class TestAnalyze:
             (root / "main.py").write_text(
                 "def hello():\n    return 1\n", encoding="utf-8"
             )
-            (root / "app.js").write_text(
+            (root / "app.mjs").write_text(
                 "export function runUnsafe(input) {\n"
                 "  eval(input);\n"
                 "}\n"
@@ -473,6 +485,22 @@ class TestAnalyze:
     @patch("skylos.analyzer.scan_typescript_file")
     def test_proc_file_dispatches_js_to_typescript_scanner(self, mock_scan):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
+            f.write("export function run() { return 1; }\n")
+            f.flush()
+
+            mock_scan.return_value = tuple(range(13))
+
+            try:
+                result = proc_file(f.name, "test_module")
+            finally:
+                Path(f.name).unlink()
+
+        mock_scan.assert_called_once()
+        assert result == tuple(range(13))
+
+    @patch("skylos.analyzer.scan_typescript_file")
+    def test_proc_file_dispatches_mjs_to_typescript_scanner(self, mock_scan):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".mjs", delete=False) as f:
             f.write("export function run() { return 1; }\n")
             f.flush()
 
