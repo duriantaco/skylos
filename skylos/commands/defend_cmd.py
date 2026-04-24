@@ -214,16 +214,30 @@ def run_defend_command(
     else:
         console.print(output)
 
+    upload_failed = False
     if def_args.upload:
-        from skylos.api import upload_defense_report
-
-        upload_result = upload_defense_report(json_output)
-        if not upload_result.get("success"):
-            console.print(
-                f"[red]Upload failed: {upload_result.get('error', 'Unknown')}[/red]"
+        if not def_args.output_json:
+            from skylos.upload_manifest import (
+                build_defense_manifest,
+                print_upload_manifest,
             )
 
-    exit_code = 0
+            print_upload_manifest(console, [build_defense_manifest()])
+
+        from skylos.api import upload_defense_report
+
+        upload_result = upload_defense_report(
+            json_output,
+            quiet=def_args.output_json,
+        )
+        if not upload_result.get("success"):
+            upload_failed = True
+            if not def_args.output_json:
+                console.print(
+                    f"[red]Upload failed: {upload_result.get('error', 'Unknown')}[/red]"
+                )
+
+    exit_code = 1 if upload_failed else 0
 
     fail_on = def_args.fail_on
     if policy and policy.gate_fail_on and not fail_on:
