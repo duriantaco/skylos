@@ -42,6 +42,7 @@ _PYTHON_EXTS = {".py", ".pyi"}
 _TS_EXTS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 _GO_EXTS = {".go"}
 _JAVA_EXTS = {".java"}
+_PHP_EXTS = {".php"}
 _RUST_EXTS = {".rs"}
 
 _ALL_SOURCE_GLOBS = [
@@ -55,6 +56,7 @@ _ALL_SOURCE_GLOBS = [
     "*.cjs",
     "*.go",
     "*.java",
+    "*.php",
     "*.rs",
     "*.rst",
     "*.md",
@@ -71,6 +73,7 @@ _LANG_GLOBS: dict[str, list[str]] = {
     "typescript": ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs"],
     "go": ["*.go"],
     "java": ["*.java"],
+    "php": ["*.php"],
     "rust": ["*.rs"],
 }
 
@@ -85,6 +88,8 @@ def detect_language(file_path: str) -> str:
         return "go"
     if ext in _JAVA_EXTS:
         return "java"
+    if ext in _PHP_EXTS:
+        return "php"
     if ext in _RUST_EXTS:
         return "rust"
     return "python"
@@ -240,6 +245,17 @@ def module_candidates(file_path: str, project_root: str | Path) -> list[str]:
                 break
         return [".".join(parts)] if parts else []
 
+    elif lang == "php":
+        if not rel.endswith(".php"):
+            return []
+        stem = rel[:-4]
+        parts = [p for p in stem.split("/") if p]
+        if not parts:
+            return []
+        if parts[0] in {"src", "app", "lib"} and len(parts) > 1:
+            parts = parts[1:]
+        return list(dict.fromkeys(["/".join(parts), ".".join(parts)]))
+
     elif lang == "rust":
         if not rel.endswith(".rs"):
             return []
@@ -316,6 +332,17 @@ def is_definition_line(grep_line: str, finding: dict) -> bool:
         f"private void {simple_name}",
         f"public void {simple_name}",
         f"protected void {simple_name}",
+        # PHP
+        f"function {simple_name}",
+        f"class {simple_name}",
+        f"interface {simple_name}",
+        f"trait {simple_name}",
+        f"private function {simple_name}",
+        f"public function {simple_name}",
+        f"protected function {simple_name}",
+        f"private ${simple_name}",
+        f"public ${simple_name}",
+        f"protected ${simple_name}",
         # Rust
         f"fn {simple_name}",
         f"pub fn {simple_name}",
@@ -446,6 +473,20 @@ def _deterministic_suppress_java(finding: dict) -> bool:
     return False
 
 
+def _deterministic_suppress_php(finding: dict) -> bool:
+    simple_name = finding.get("simple_name", finding.get("name", ""))
+    file_path = str(finding.get("file", "")).lower()
+
+    if simple_name in {"__construct", "__destruct", "__invoke", "__toString"}:
+        return True
+
+    if "/tests/" in file_path or file_path.endswith("test.php"):
+        if simple_name.startswith("test") or simple_name in {"setUp", "tearDown"}:
+            return True
+
+    return False
+
+
 def _deterministic_suppress_rust(finding: dict) -> bool:
     simple_name = finding.get("simple_name", finding.get("name", ""))
     decorators = finding.get("decorators", [])
@@ -472,6 +513,8 @@ def _deterministic_suppress_multilang(finding: dict) -> bool:
         return _deterministic_suppress_go(finding)
     elif lang == "java":
         return _deterministic_suppress_java(finding)
+    elif lang == "php":
+        return _deterministic_suppress_php(finding)
     elif lang == "rust":
         return _deterministic_suppress_rust(finding)
     return False

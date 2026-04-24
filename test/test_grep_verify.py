@@ -544,6 +544,9 @@ class TestDetectLanguage:
     def test_java(self):
         assert detect_language("App.java") == "java"
 
+    def test_php(self):
+        assert detect_language("index.php") == "php"
+
     def test_rust(self):
         assert detect_language("lib.rs") == "rust"
 
@@ -590,6 +593,13 @@ class TestModuleCandidatesMultiLang:
         candidates = module_candidates(str(f), str(tmp_path))
         assert "utils" in candidates
 
+    def test_php_module(self, tmp_path):
+        f = tmp_path / "src" / "Controller" / "UserController.php"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.touch()
+        candidates = module_candidates(str(f), str(tmp_path))
+        assert "Controller.UserController" in candidates
+
 
 class TestIsDefinitionLineMultiLang:
     def test_ts_function(self):
@@ -631,6 +641,12 @@ class TestIsDefinitionLineMultiLang:
     def test_java_class(self):
         finding = {"file": "/repo/App.java", "line": 3, "simple_name": "App"}
         assert is_definition_line("/repo/App.java:3:public class App {", finding)
+
+    def test_php_method(self):
+        finding = {"file": "/repo/App.php", "line": 7, "simple_name": "helper"}
+        assert is_definition_line(
+            "/repo/App.php:7:    private function helper($x) {", finding
+        )
 
 
 class TestDeterministicSuppressMultiLang:
@@ -699,6 +715,10 @@ class TestSourceGlobs:
     def test_go_globs(self):
         globs = source_globs_for_language("go")
         assert "*.go" in globs
+
+    def test_php_globs(self):
+        globs = source_globs_for_language("php")
+        assert "*.php" in globs
 
     def test_unknown_defaults_python(self):
         globs = source_globs_for_language("unknown")
