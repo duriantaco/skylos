@@ -99,6 +99,38 @@ def test_save_token_writes_file(isolated_creds):
         assert (creds_file.parent.stat().st_mode & 0o777) == 0o700
 
 
+def test_get_token_uses_repo_subpath_link(isolated_creds, monkeypatch, tmp_path):
+    _, creds_file = isolated_creds
+    repo = tmp_path / "repo"
+    api_dir = repo / "apps" / "api"
+    web_dir = repo / "apps" / "web"
+    api_dir.mkdir(parents=True)
+    web_dir.mkdir(parents=True)
+
+    syncmod._write_link(
+        repo,
+        "proj-api",
+        project_name="API",
+        repo_subpath="apps/api",
+    )
+    syncmod._write_link(
+        repo,
+        "proj-web",
+        project_name="Web",
+        repo_subpath="apps/web",
+    )
+    syncmod.save_token("TOK_API", project_id="proj-api", repo_subpath="apps/api")
+    syncmod.save_token("TOK_WEB", project_id="proj-web", repo_subpath="apps/web")
+
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo)
+
+    monkeypatch.chdir(api_dir)
+    assert syncmod.get_token() == "TOK_API"
+
+    monkeypatch.chdir(web_dir)
+    assert syncmod.get_token() == "TOK_WEB"
+
+
 def test_clear_token(isolated_creds):
     _, creds_file = isolated_creds
     creds_file.parent.mkdir(parents=True, exist_ok=True)

@@ -85,9 +85,12 @@ def _linked_project_id(repo_root: Path):
         return None
     try:
         data = json.loads(p.read_text() or "{}")
-        return data.get("project_id")
     except Exception:
         return None
+    repo_subpath = _current_repo_subpath(repo_root)
+    subpath_entry = _project_entry_for_subpath(data, repo_subpath)
+    project_id = subpath_entry.get("project_id") or data.get("project_id")
+    return str(project_id).strip() if project_id else None
 
 
 def _read_link(repo_root: Path):
@@ -100,12 +103,41 @@ def _read_link(repo_root: Path):
         return {}
 
 
+def _normalize_repo_subpath_value(value) -> str:
+    try:
+        from skylos.project_context import normalize_repo_subpath
+
+        normalized = normalize_repo_subpath(value)
+        return normalized or ""
+    except Exception:
+        return str(value or "").strip("/")
+
+
+def _current_repo_subpath(repo_root: Path) -> str:
+    try:
+        from skylos.project_context import repo_subpath_for_project
+
+        return repo_subpath_for_project(Path.cwd(), repo_root)
+    except Exception:
+        return ""
+
+
+def _project_entry_for_subpath(link: dict, repo_subpath: str) -> dict:
+    projects = link.get("projects")
+    if isinstance(projects, dict):
+        entry = projects.get(repo_subpath)
+        if isinstance(entry, dict):
+            return entry
+    return {}
+
+
 def _write_link(
     repo_root: Path,
     project_id,
     project_name=None,
     org_name=None,
     plan=None,
+    repo_subpath=None,
     *,
     base_url=None,
 ):
@@ -113,9 +145,12 @@ def _write_link(
     skylos_dir.mkdir(parents=True, exist_ok=True)
 
     link_path = skylos_dir / LINK_FILE
+    existing = _read_link(repo_root)
+    normalized_subpath = _normalize_repo_subpath_value(repo_subpath)
     payload = {
         "project_id": str(project_id),
         "linked_at": _utc_now_iso(),
+        "repo_subpath": normalized_subpath,
     }
     if base_url:
         payload["base_url"] = str(base_url).rstrip("/")
@@ -125,6 +160,18 @@ def _write_link(
         payload["org_name"] = org_name
     if plan:
         payload["plan"] = str(plan).lower()
+    projects = existing.get("projects") if isinstance(existing, dict) else {}
+    if not isinstance(projects, dict):
+        projects = {}
+    projects[normalized_subpath] = {
+        "project_id": str(project_id),
+        "project_name": project_name,
+        "org_name": org_name,
+        "plan": str(plan).lower() if plan else None,
+        "repo_subpath": normalized_subpath,
+        "linked_at": payload["linked_at"],
+    }
+    payload["projects"] = projects
     # if folder_id:
     #     payload["folder_id"] = str(folder_id)
     # if folder_name:
@@ -170,7 +217,9 @@ def get_token():
     return None
 
 
-def save_token(token, project_id=None, project_name=None, org_name=None, plan=None):
+def save_token(
+    token, project_id=None, project_name=None, org_name=None, plan=None, repo_subpath=None
+):
     data = _load_creds()
     now = _utc_now_iso()
 
@@ -191,6 +240,8 @@ def save_token(token, project_id=None, project_name=None, org_name=None, plan=No
             tokens[pid]["project_name"] = project_name
         if org_name:
             tokens[pid]["org_name"] = org_name
+        if repo_subpath is not None:
+            tokens[pid]["repo_subpath"] = _normalize_repo_subpath_value(repo_subpath)
 
         data["tokens"] = tokens
 

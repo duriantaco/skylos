@@ -71,6 +71,56 @@ class TestSkylosApi(unittest.TestCase):
             "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
         )
 
+    def test_get_project_token_uses_repo_subpath_link(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = api.Path(td) / "repo"
+            api_dir = repo / "apps" / "api"
+            web_dir = repo / "apps" / "web"
+            api_dir.mkdir(parents=True)
+            web_dir.mkdir(parents=True)
+            link_dir = repo / ".skylos"
+            link_dir.mkdir()
+            (link_dir / "link.json").write_text(
+                json.dumps(
+                    {
+                        "project_id": "proj-web",
+                        "projects": {
+                            "apps/api": {"project_id": "proj-api"},
+                            "apps/web": {"project_id": "proj-web"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            creds = api.Path(td) / "credentials.json"
+            creds.write_text(
+                json.dumps(
+                    {
+                        "tokens": {
+                            "proj-api": {"token": "TOK_API"},
+                            "proj-web": {"token": "TOK_WEB"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            cwd = os.getcwd()
+            try:
+                os.chdir(api_dir)
+                with patch.dict(os.environ, {"SKYLOS_TOKEN": ""}, clear=False), patch(
+                    "skylos.api._try_github_oidc_token", return_value=None
+                ), patch(
+                    "skylos.api._get_repo_root_for_link", return_value=repo
+                ), patch(
+                    "skylos.api.GLOBAL_CREDS_FILE", creds
+                ), patch(
+                    "skylos.api.get_key", return_value=None
+                ):
+                    self.assertEqual(api.get_project_token(), "TOK_API")
+            finally:
+                os.chdir(cwd)
+
     @patch("subprocess.check_output")
     @patch("skylos.api.get_project_token")
     @patch("requests.post")

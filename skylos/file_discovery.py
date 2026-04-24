@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from fnmatch import fnmatchcase
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
@@ -26,6 +27,22 @@ def should_exclude_path(
         exclude_normalized = exclude_folder.replace("\\", "/").rstrip("/")
 
         if "*" in exclude_normalized:
+            patterns = {exclude_normalized}
+            if exclude_normalized.startswith("**/"):
+                patterns.add(exclude_normalized[3:])
+            if exclude_normalized.endswith("/**"):
+                patterns.add(exclude_normalized[:-3])
+            if exclude_normalized.startswith("**/") and exclude_normalized.endswith("/**"):
+                patterns.add(exclude_normalized[3:-3])
+
+            for pattern in patterns:
+                if rel_path_str == pattern or fnmatchcase(rel_path_str, pattern):
+                    return True
+                if pattern.endswith("/**"):
+                    directory = pattern[:-3]
+                    if rel_path_str == directory or rel_path_str.startswith(directory + "/"):
+                        return True
+
             suffix = exclude_normalized.replace("*", "")
             for part in path_parts:
                 if part.endswith(suffix):

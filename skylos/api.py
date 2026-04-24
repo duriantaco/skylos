@@ -207,7 +207,7 @@ def get_project_token() -> str | None:
     repo_root = _get_repo_root_for_link()
     link_path = repo_root / LINK_FILE
     link = _read_json(link_path) or {}
-    linked_project_id = link.get("project_id") or link.get("projectId")
+    linked_project_id = _linked_project_id_for_current_path(link, repo_root)
 
     creds = _read_json(GLOBAL_CREDS_FILE) or {}
 
@@ -304,6 +304,31 @@ def _load_repo_link(git_root):
         return json.loads(open(p, "r", encoding="utf-8").read() or "{}")
     except (OSError, json.JSONDecodeError, ValueError):
         return {}
+
+
+def _current_repo_subpath(git_root) -> str:
+    try:
+        if not git_root:
+            return ""
+        from skylos.project_context import repo_subpath_for_project
+
+        return repo_subpath_for_project(Path.cwd(), git_root)
+    except Exception:
+        return ""
+
+
+def _linked_project_id_for_current_path(link: dict, git_root) -> str | None:
+    repo_subpath = _current_repo_subpath(git_root)
+    projects = link.get("projects") if isinstance(link, dict) else None
+    if isinstance(projects, dict):
+        entry = projects.get(repo_subpath)
+        if isinstance(entry, dict):
+            project_id = entry.get("project_id") or entry.get("projectId")
+            if project_id:
+                return str(project_id)
+
+    project_id = link.get("project_id") or link.get("projectId")
+    return str(project_id) if project_id else None
 
 
 def get_git_info() -> tuple[str, str, str, dict]:
@@ -860,6 +885,7 @@ def _prepare_report_upload(
 ) -> PreparedReportUpload:
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
+    project_root = _infer_upload_project_root(result_json, git_root)
 
     all_findings = _normalize_result_sections(
         result_json,
@@ -896,6 +922,7 @@ def _prepare_report_upload(
         grade_data=grade_data,
         project_id=project_id,
         scan_bundle_id=scan_bundle_id,
+        project_root=project_root,
     )
     core_payload.update(metadata)
     legacy_payload = _build_legacy_payload(core_payload, definitions)
@@ -928,6 +955,7 @@ def _prepare_debt_upload(
 ) -> PreparedReportUpload:
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
+    project_root = _infer_upload_project_root(debt_report, git_root)
     link = _load_repo_link(git_root)
     project_id = link.get("project_id")
 
@@ -945,6 +973,7 @@ def _prepare_debt_upload(
         analysis_mode="debt",
         project_id=project_id,
         scan_bundle_id=scan_bundle_id,
+        project_root=project_root,
     )
 
     core_payload = {
@@ -1008,6 +1037,39 @@ def _detect_report_provenance_data(git_root):
     return provenance_data
 
 
+def _infer_upload_project_root(payload, git_root) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+
+    candidates = []
+    for key in ("project_root", "repo_subpath"):
+        if key in payload:
+            candidates.append(payload.get(key))
+    summary = payload.get("analysis_summary")
+    if isinstance(summary, dict) and "project_root" in summary:
+        candidates.append(summary.get("project_root"))
+    if "project" in payload:
+        candidates.append(payload.get("project"))
+
+    try:
+        from skylos.project_context import normalize_repo_subpath, repo_subpath_for_project
+    except Exception:
+        return None
+
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if isinstance(candidate, str):
+            if candidate.strip() == "":
+                return ""
+            if Path(candidate).is_absolute():
+                return repo_subpath_for_project(candidate, git_root)
+            normalized = normalize_repo_subpath(candidate)
+            if normalized is not None:
+                return normalized
+    return None
+
+
 def _build_report_metadata(
     *,
     commit_hash,
@@ -1021,6 +1083,7 @@ def _build_report_metadata(
     grade_data=None,
     project_id=None,
     scan_bundle_id=None,
+    project_root=None,
 ) -> dict[str, Any]:
     metadata = {
         "commit_hash": commit_hash,
@@ -1038,6 +1101,8 @@ def _build_report_metadata(
         metadata["project_id"] = project_id
     if scan_bundle_id:
         metadata["scan_bundle_id"] = str(scan_bundle_id)
+    if project_root is not None:
+        metadata["project_root"] = str(project_root)
     return metadata
 
 
@@ -1391,6 +1456,7 @@ def _build_report_complete_payload(
     init_data: dict[str, Any],
     uploaded_artifacts: dict[str, dict[str, Any]],
     skipped_artifacts: list[dict[str, Any]],
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = {
         "upload_protocol_version": UPLOAD_PROTOCOL_VERSION,
@@ -1398,6 +1464,8 @@ def _build_report_complete_payload(
         "upload_id": init_data.get("upload_id") or init_data.get("uploadId"),
         "artifacts": uploaded_artifacts,
     }
+    if metadata and "project_root" in metadata:
+        payload["project_root"] = metadata["project_root"]
     if skipped_artifacts:
         payload["skipped_artifacts"] = skipped_artifacts
     return payload
@@ -1495,6 +1563,7 @@ def upload_report_v2(
             init_data,
             uploaded_artifacts,
             skipped_artifacts,
+            prepared.metadata,
         )
 
         complete_response, last_err = _post_json_with_retries(
@@ -1679,6 +1748,7 @@ def upload_defense_report(defense_json_str, quiet=False, scan_bundle_id=None) ->
 
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
+    project_root = _infer_upload_project_root(defense_data, git_root)
 
     link = _load_repo_link(git_root)
 
@@ -1695,6 +1765,8 @@ def upload_defense_report(defense_json_str, quiet=False, scan_bundle_id=None) ->
         "defense_findings": defense_data.get("findings", []),
         "defense_integrations": defense_data.get("integrations", []),
     }
+    if project_root is not None:
+        payload["project_root"] = project_root
 
     if link.get("project_id"):
         payload["project_id"] = link["project_id"]

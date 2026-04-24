@@ -2193,6 +2193,26 @@ def _run_project_command(argv):
     return run_project_command(argv)
 
 
+def _run_sonar_command(argv):
+    from skylos.commands.sonar_cmd import run_sonar_command
+
+    return run_sonar_command(argv, console_factory=Console)
+
+
+def _attach_upload_project_context(result: dict, project_root: pathlib.Path) -> None:
+    try:
+        from skylos.api import get_git_root as _get_git_root
+        from skylos.project_context import project_context_for_upload
+
+        upload_context = project_context_for_upload(project_root, _get_git_root())
+        result["project_root"] = upload_context["project_root"]
+        result.setdefault("analysis_summary", {})["project_root"] = upload_context[
+            "project_root"
+        ]
+    except Exception:
+        pass
+
+
 def _run_removed_city_command(_argv):
     console = Console()
     console.print("[bold red]Error:[/bold red] `skylos city` has been removed.")
@@ -2225,6 +2245,7 @@ EARLY_COMMAND_HANDLERS = {
     "login": "_run_login_command",
     "sync": "_run_sync_command",
     "project": "_run_project_command",
+    "sonar": "_run_sonar_command",
     "city": "_run_removed_city_command",
     "suite": "run_suite_command",
     "discover": "_run_discover_command",
@@ -4891,6 +4912,7 @@ def main() -> None:
                 print(result_json)
 
             if args.upload:
+                _attach_upload_project_context(result, project_root)
                 upload_resp = upload_report(
                     result,
                     is_forced=args.force,
@@ -4936,6 +4958,7 @@ def main() -> None:
             _print_upload_destination(console, project_root)
             _print_main_upload_manifest(console, args, result)
 
+        _attach_upload_project_context(result, project_root)
         upload_resp = upload_report(result, is_forced=args.force, strict=args.strict)
         if not upload_resp.get("success"):
             _render_upload_failure(console, upload_resp)
@@ -5192,6 +5215,7 @@ def main() -> None:
                 return
 
         _print_main_upload_manifest(console, args, result)
+        _attach_upload_project_context(result, project_root)
         upload_resp = upload_report(result, is_forced=args.force, strict=args.strict)
 
         if not upload_resp.get("success"):

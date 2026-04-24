@@ -817,7 +817,11 @@ def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
 
     mock_upload.assert_called_once()
     upload_result = mock_upload.call_args.args[0]
-    assert upload_result["analysis_summary"] == {"total_files": 1}
+    assert upload_result["project_root"] == ""
+    assert upload_result["analysis_summary"] == {
+        "total_files": 1,
+        "project_root": "",
+    }
     assert upload_result["danger"] == []
     assert upload_result["quality"] == []
     assert upload_result["secrets"] == []
