@@ -118,7 +118,7 @@ class _XSSFlowChecker(TaintVisitor):
             func_name = qn.split(".")[-1]
             if func_name in self.SAFE_MARK_FUNCS:
                 arg0 = node.args[0]
-                if _is_interpolated_string(arg0) or self.is_tainted(arg0):
+                if self._html_built_with_taint(arg0) or self.is_tainted(arg0):
                     self.findings.append(
                         {
                             "rule_id": "SKY-D226",

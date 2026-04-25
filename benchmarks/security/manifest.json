@@ -126,6 +126,306 @@
           "danger": ["SKY-D206"]
         }
       }
+    },
+    {
+      "id": "path-traversal-tainted-join",
+      "path": "fixtures/path_traversal_tainted_join",
+      "description": "User-controlled path segments joined into a filesystem path should be reported as path traversal.",
+      "taxonomy": ["path_traversal"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for tainted os.path.join data reaching open()."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D215"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "path-traversal-basename",
+      "path": "fixtures/path_traversal_basename",
+      "description": "Path input sanitized with os.path.basename before opening a fixed directory should stay quiet.",
+      "taxonomy": ["path_traversal", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden precision fixture for basename path sanitization."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D215"]
+        }
+      }
+    },
+    {
+      "id": "xss-mark-safe",
+      "path": "fixtures/xss_mark_safe",
+      "description": "Tainted HTML interpolated into Markup should be reported as XSS.",
+      "taxonomy": ["xss"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for untrusted content marked safe."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D226"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "xss-escape-safe",
+      "path": "fixtures/xss_escape_safe",
+      "description": "Escaped content wrapped with Markup should not be reported as XSS.",
+      "taxonomy": ["xss", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden precision fixture for HTML escaping before Markup."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D226"]
+        }
+      }
+    },
+    {
+      "id": "open-redirect-tainted",
+      "path": "fixtures/open_redirect_tainted",
+      "description": "User-controlled redirect targets should be reported as open redirect.",
+      "taxonomy": ["open_redirect"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for Flask request parameter redirect flow."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D230"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "open-redirect-local-guard",
+      "path": "fixtures/open_redirect_local_guard",
+      "description": "Redirect targets guarded to local paths should stay quiet.",
+      "taxonomy": ["open_redirect", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden precision fixture for local-path redirect guards."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D230"]
+        }
+      }
+    },
+    {
+      "id": "jwt-verify-disabled",
+      "path": "fixtures/jwt_verify_disabled",
+      "description": "JWT decode with signature verification disabled should be reported.",
+      "taxonomy": ["auth_bypass"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for JWT verification bypass."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D232"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "cors-wildcard",
+      "path": "fixtures/cors_wildcard",
+      "description": "Wildcard CORS configuration should be reported.",
+      "taxonomy": ["cors"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for permissive CORS settings."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D231"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "go-zip-slip",
+      "path": "fixtures/go_zip_slip",
+      "description": "Go archive extraction that joins an archive entry name into a filesystem path should be reported as Zip Slip path traversal.",
+      "languages": ["go"],
+      "taxonomy": ["path_traversal", "go"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/securego/gosec",
+        "license": "Apache-2.0",
+        "notes": "Distilled from Go archive extraction path traversal patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D215"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "go-zip-slip-safe",
+      "path": "fixtures/go_zip_slip_safe",
+      "description": "Go archive extraction guarded with filepath.IsLocal should stay quiet.",
+      "languages": ["go"],
+      "taxonomy": ["path_traversal", "go", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/securego/gosec",
+        "license": "Apache-2.0",
+        "notes": "Distilled from Go archive extraction sanitizer patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D215"]
+        }
+      }
+    },
+    {
+      "id": "java-path-traversal",
+      "path": "fixtures/java_path_traversal",
+      "description": "Java servlet request parameters used in filesystem paths should be reported as path traversal.",
+      "languages": ["java"],
+      "taxonomy": ["path_traversal", "java"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/spotbugs/spotbugs",
+        "license": "LGPL-2.1-only",
+        "notes": "Distilled from Java servlet path traversal patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D215"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "java-path-traversal-safe",
+      "path": "fixtures/java_path_traversal_safe",
+      "description": "Java request path resolution guarded with normalize and startsWith should stay quiet.",
+      "languages": ["java"],
+      "taxonomy": ["path_traversal", "java", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/spotbugs/spotbugs",
+        "license": "LGPL-2.1-only",
+        "notes": "Distilled from Java path traversal sanitizer patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D215"]
+        }
+      }
+    },
+    {
+      "id": "typescript-eval",
+      "path": "fixtures/typescript_eval",
+      "description": "TypeScript eval of caller-controlled input should be reported as code execution.",
+      "languages": ["typescript"],
+      "taxonomy": ["command_injection", "typescript"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/semgrep/semgrep-rules",
+        "license": "LGPL-2.1-only",
+        "notes": "Distilled from JavaScript and TypeScript unsafe eval patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D201"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "typescript-eval-safe",
+      "path": "fixtures/typescript_eval_safe",
+      "description": "TypeScript JSON parsing should not be treated as eval or code execution.",
+      "languages": ["typescript"],
+      "taxonomy": ["command_injection", "typescript", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/semgrep/semgrep-rules",
+        "license": "LGPL-2.1-only",
+        "notes": "Distilled precision guard for non-eval parsing."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D201"]
+        }
+      }
     }
   ]
 }

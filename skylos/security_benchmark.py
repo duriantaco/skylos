@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +22,10 @@ SECURITY_TAXONOMY: dict[str, str] = {
     "open_redirect": "Untrusted URLs reach redirect/navigation sinks.",
     "auth_bypass": "Authentication or token verification is bypassed or disabled.",
     "cors": "CORS policy is overly permissive or credential unsafe.",
+    "go": "Go security flow and sanitizer patterns.",
+    "java": "Java security flow and sanitizer patterns.",
+    "javascript": "JavaScript security flow and sanitizer patterns.",
+    "typescript": "TypeScript security flow and sanitizer patterns.",
     "precision_guard": "Clean patterns that should stay free of noisy security findings.",
 }
 
@@ -35,6 +41,27 @@ DEFAULT_SCAN = {
     "enable_danger": True,
     "enable_secrets": False,
     "grep_verify": False,
+}
+
+SUPPORTED_SCANNERS = {"skylos", "bandit"}
+SUPPORTED_LANGUAGES = {"python", "go", "java", "javascript", "typescript"}
+SCANNER_LANGUAGE_SUPPORT = {
+    "skylos": SUPPORTED_LANGUAGES,
+    "bandit": {"python"},
+}
+
+_BANDIT_TO_SKYLOS_RULE = {
+    "B301": "SKY-D204",
+    "B302": "SKY-D205",
+    "B403": "SKY-D204",
+    "B506": "SKY-D206",
+    "B602": "SKY-D209",
+    "B604": "SKY-D209",
+    "B605": "SKY-D209",
+    "B606": "SKY-D209",
+    "B607": "SKY-D209",
+    "B608": "SKY-D211",
+    "B310": "SKY-D216",
 }
 
 
@@ -106,6 +133,15 @@ def validate_manifest(
                 raise ValueError(
                     f"security benchmark case {case_id} has unknown taxonomy "
                     f"'{label}'. Allowed: {allowed}"
+                )
+
+        languages = _case_languages(case)
+        for language in languages:
+            if language not in SUPPORTED_LANGUAGES:
+                allowed = ", ".join(sorted(SUPPORTED_LANGUAGES))
+                raise ValueError(
+                    f"security benchmark case {case_id} has unsupported language "
+                    f"'{language}'. Allowed: {allowed}"
                 )
 
         importance = case.get("importance", "high")
@@ -188,6 +224,32 @@ def validate_manifest(
     return cases
 
 
+def _case_languages(case: dict[str, Any]) -> list[str]:
+    raw = case.get("languages")
+    if raw is None:
+        return ["python"]
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(
+            f"security benchmark case {case.get('id', '<unknown>')} languages must be a non-empty list"
+        )
+    languages = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(
+                f"security benchmark case {case.get('id', '<unknown>')} languages must contain strings"
+            )
+        languages.append(item.strip().lower())
+    return languages
+
+
+def _scanner_supports_case(scanner: str, case: dict[str, Any]) -> bool:
+    supported = SCANNER_LANGUAGE_SUPPORT.get(scanner)
+    if supported is None:
+        allowed = ", ".join(sorted(SUPPORTED_SCANNERS))
+        raise ValueError(f"unsupported security benchmark scanner '{scanner}': {allowed}")
+    return set(_case_languages(case)).issubset(supported)
+
+
 def _finding_tokens(finding: dict[str, Any]) -> set[str]:
     tokens: set[str] = set()
     for key in (
@@ -229,6 +291,66 @@ def _scan_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str,
     finally:
         analyzer_logger.setLevel(prev_level)
     return json.loads(raw)
+
+
+def _scan_bandit_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str, Any]:
+    bandit = shutil.which("bandit")
+    if not bandit:
+        raise RuntimeError(
+            "bandit scanner is not installed. Install it separately to run "
+            "`python scripts/security_benchmark.py --scanner bandit`."
+        )
+
+    completed = subprocess.run(
+        [bandit, "-r", ".", "-f", "json", "-q"],
+        cwd=str(case_path),
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+    )
+    if completed.returncode not in (0, 1):
+        stderr = completed.stderr.strip()
+        stdout = completed.stdout.strip()
+        detail = stderr or stdout or f"exit code {completed.returncode}"
+        raise RuntimeError(f"bandit benchmark scan failed: {detail}")
+
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"bandit benchmark scan emitted invalid JSON: {exc}") from exc
+
+    danger = []
+    for finding in payload.get("results", []) or []:
+        if not isinstance(finding, dict):
+            continue
+        test_id = finding.get("test_id")
+        if not isinstance(test_id, str):
+            continue
+        danger.append(
+            {
+                "rule_id": _BANDIT_TO_SKYLOS_RULE.get(test_id, test_id),
+                "bandit_rule_id": test_id,
+                "message": finding.get("issue_text", ""),
+                "file": finding.get("filename", ""),
+                "line": finding.get("line_number", 0),
+                "severity": finding.get("issue_severity", ""),
+            }
+        )
+    return {"danger": danger}
+
+
+def _scan_case_with_scanner(
+    case_path: Path,
+    scan: dict[str, Any] | None = None,
+    *,
+    scanner: str,
+) -> dict[str, Any]:
+    if scanner == "skylos":
+        return _scan_case(case_path, scan=scan)
+    if scanner == "bandit":
+        return _scan_bandit_case(case_path, scan=scan)
+    allowed = ", ".join(sorted(SUPPORTED_SCANNERS))
+    raise ValueError(f"unsupported security benchmark scanner '{scanner}': {allowed}")
 
 
 def _count_expectations(expectations: dict[str, list[str]]) -> int:
@@ -342,12 +464,21 @@ def _score_counts(
     }
 
 
-def run_case(case: dict[str, Any], manifest_path: str | Path) -> dict[str, Any]:
+def run_case(
+    case: dict[str, Any],
+    manifest_path: str | Path,
+    *,
+    scanner: str = "skylos",
+) -> dict[str, Any]:
     manifest_root = Path(manifest_path).parent
     case_path = (manifest_root / case["path"]).resolve()
 
     start = time.perf_counter()
-    result = _scan_case(case_path, scan=case.get("scan"))
+    result = _scan_case_with_scanner(
+        case_path,
+        scan=case.get("scan"),
+        scanner=scanner,
+    )
     elapsed_seconds = time.perf_counter() - start
 
     failures, tp, fp, fn, tn = _evaluate_expectations(case, result)
@@ -375,6 +506,7 @@ def run_case(case: dict[str, Any], manifest_path: str | Path) -> dict[str, Any]:
         "id": case["id"],
         "path": str(case_path),
         "description": case.get("description", ""),
+        "languages": _case_languages(case),
         "taxonomy": list(case.get("taxonomy", [])),
         "importance": case.get("importance", "high"),
         "elapsed_seconds": round(elapsed_seconds, 4),
@@ -420,20 +552,33 @@ def _aggregate_scores(
 
 
 def run_manifest(
-    manifest_path: str | Path, selected_cases: set[str] | None = None
+    manifest_path: str | Path,
+    selected_cases: set[str] | None = None,
+    *,
+    scanner: str = "skylos",
 ) -> dict[str, Any]:
     manifest = load_manifest(manifest_path)
     cases = validate_manifest(manifest, manifest_path)
     selected = set(selected_cases or set())
 
     case_results = []
+    skipped_cases = []
     taxonomy_totals: dict[str, dict[str, float]] = {}
     total_elapsed = 0.0
 
     for case in cases:
         if selected and case["id"] not in selected:
             continue
-        result = run_case(case, manifest_path)
+        if not _scanner_supports_case(scanner, case):
+            skipped_cases.append(
+                {
+                    "id": case["id"],
+                    "languages": _case_languages(case),
+                    "reason": f"{scanner} does not support this case language set",
+                }
+            )
+            continue
+        result = run_case(case, manifest_path, scanner=scanner)
         case_results.append(result)
         total_elapsed += result["elapsed_seconds"]
 
@@ -484,7 +629,10 @@ def run_manifest(
 
     return {
         "manifest": str(Path(manifest_path).resolve()),
+        "scanner": scanner,
         "case_count": len(case_results),
+        "skipped_case_count": len(skipped_cases),
+        "skipped_cases": skipped_cases,
         "pass_count": pass_count,
         "failure_count": failure_count,
         "total_elapsed_seconds": round(total_elapsed, 4),
@@ -499,7 +647,9 @@ def format_summary(summary: dict[str, Any]) -> str:
     counts = summary["counts"]
     scores = summary["scores"]
     lines = [
+        f"Security benchmark scanner: {summary.get('scanner', 'skylos')}",
         f"Security benchmark cases: {summary['case_count']}",
+        f"Security benchmark skipped cases: {summary.get('skipped_case_count', 0)}",
         f"Security benchmark failures: {summary['failure_count']}",
         (
             "Security benchmark counts: "
@@ -545,5 +695,9 @@ def format_summary(summary: dict[str, Any]) -> str:
                 f"  {failure['failure_type']} {failure['mode']} "
                 f"{failure['category']} -> {failure['expected']} (found: {found})"
             )
+
+    for skipped in summary.get("skipped_cases", []):
+        languages = ", ".join(skipped.get("languages", []))
+        lines.append(f"SKIP {skipped['id']} [{languages}] {skipped['reason']}")
 
     return "\n".join(lines)

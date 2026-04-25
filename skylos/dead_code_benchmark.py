@@ -18,8 +18,19 @@ from skylos.analyzer import analyze
 DEAD_CODE_TAXONOMY: dict[str, str] = {
     "basic_detection": "Core unused import, function, class, variable, and parameter detection.",
     "framework_precision": "Framework-owned symbols that should not be reported as dead code.",
+    "go": "Go dead-code and entrypoint liveness patterns.",
+    "java": "Java dead-code and entrypoint liveness patterns.",
+    "javascript": "JavaScript dead-code and module liveness patterns.",
+    "typescript": "TypeScript dead-code and module liveness patterns.",
     "fastapi": "FastAPI route and dependency injection liveness patterns.",
     "flask": "Flask route and registration liveness patterns.",
+    "django": "Django management command, URL, admin, and lifecycle liveness patterns.",
+    "celery": "Celery task decorator and worker entrypoint liveness patterns.",
+    "pytest": "Pytest test and fixture entrypoint liveness patterns.",
+    "pydantic": "Pydantic model validator and serializer liveness patterns.",
+    "alembic": "Alembic migration lifecycle function liveness patterns.",
+    "plugin_loading": "String-based importlib and plugin module liveness patterns.",
+    "package_entrypoint": "Package metadata entrypoint liveness patterns.",
     "sqlalchemy": "SQLAlchemy declarative model and repository liveness patterns.",
     "cli_entrypoint": "CLI decorators and framework command entrypoints.",
     "multi_file": "Cross-file package and service-layer liveness patterns.",
@@ -52,7 +63,13 @@ DEFAULT_SCAN = {
     "grep_verify": True,
 }
 
-SUPPORTED_SCANNERS = {"skylos", "vulture"}
+SUPPORTED_SCANNERS = {"skylos", "vulture", "ruff"}
+SUPPORTED_LANGUAGES = {"python", "go", "java", "javascript", "typescript"}
+SCANNER_LANGUAGE_SUPPORT = {
+    "skylos": SUPPORTED_LANGUAGES,
+    "vulture": {"python"},
+    "ruff": {"python"},
+}
 
 _VULTURE_OUTPUT_RE = re.compile(
     r"^(?P<file>.*?):(?P<line>\d+): unused (?P<label>[a-z_ ]+) "
@@ -68,6 +85,8 @@ _VULTURE_KIND_TO_CATEGORY = {
     "attribute": "unused_variables",
     "property": "unused_variables",
 }
+
+_RUFF_SYMBOL_RE = re.compile(r"`(?P<symbol>[^`]+)`")
 
 
 @dataclass(frozen=True)
@@ -205,6 +224,15 @@ def _validate_case(
                 f"dead-code case {case_id} has unknown taxonomy '{label}'. Allowed: {allowed}"
             )
 
+    languages = _case_languages(case)
+    for language in languages:
+        if language not in SUPPORTED_LANGUAGES:
+            allowed = ", ".join(sorted(SUPPORTED_LANGUAGES))
+            raise ValueError(
+                f"dead-code case {case_id} has unsupported language '{language}'. "
+                f"Allowed: {allowed}"
+            )
+
     importance = case.get("importance", "high")
     if importance not in IMPORTANCE_WEIGHTS:
         allowed = ", ".join(sorted(IMPORTANCE_WEIGHTS))
@@ -311,6 +339,32 @@ def validate_external_targets(
             require_path_exists=False,
         )
     return targets
+
+
+def _case_languages(case: dict[str, Any]) -> list[str]:
+    raw = case.get("languages")
+    if raw is None:
+        return ["python"]
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(
+            f"dead-code case {case.get('id', '<unknown>')} languages must be a non-empty list"
+        )
+    languages = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(
+                f"dead-code case {case.get('id', '<unknown>')} languages must contain strings"
+            )
+        languages.append(item.strip().lower())
+    return languages
+
+
+def _scanner_supports_case(scanner: str, case: dict[str, Any]) -> bool:
+    supported = SCANNER_LANGUAGE_SUPPORT.get(scanner)
+    if supported is None:
+        allowed = ", ".join(sorted(SUPPORTED_SCANNERS))
+        raise ValueError(f"unsupported dead-code benchmark scanner '{scanner}': {allowed}")
+    return set(_case_languages(case)).issubset(supported)
 
 
 def _norm_rel_path(value: str, project_root: Path) -> str:
@@ -461,6 +515,75 @@ def _scan_vulture_case(case_path: Path, case: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _scan_ruff_case(case_path: Path, case: dict[str, Any]) -> dict[str, Any]:
+    ruff = shutil.which("ruff")
+    if not ruff:
+        raise RuntimeError(
+            "ruff scanner is not installed. Install it separately to run "
+            "`python scripts/dead_code_benchmark.py --scanner ruff`."
+        )
+
+    scan_paths = case.get("scan_paths") or []
+    scan_args = list(scan_paths) if scan_paths else ["."]
+    cmd = [
+        ruff,
+        "check",
+        *scan_args,
+        "--select",
+        "F401,F841",
+        "--output-format",
+        "json",
+        "--isolated",
+    ]
+    completed = subprocess.run(
+        cmd,
+        cwd=str(case_path),
+        capture_output=True,
+        text=True,
+        timeout=float((case.get("budget") or {}).get("max_seconds", 30.0)) + 5.0,
+    )
+    if completed.returncode not in (0, 1):
+        stderr = completed.stderr.strip()
+        stdout = completed.stdout.strip()
+        detail = stderr or stdout or f"exit code {completed.returncode}"
+        raise RuntimeError(f"ruff benchmark scan failed: {detail}")
+
+    result = {category: [] for category in CATEGORY_TO_KIND}
+    try:
+        findings = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"ruff benchmark scan emitted invalid JSON: {exc}") from exc
+
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        code = finding.get("code")
+        message = finding.get("message", "")
+        if not isinstance(code, str) or not isinstance(message, str):
+            continue
+        match = _RUFF_SYMBOL_RE.search(message)
+        if not match:
+            continue
+        symbol = _norm_symbol(match.group("symbol"), "import")
+        category = None
+        if code == "F401":
+            category = "unused_imports"
+            symbol = symbol.split(".")[-1]
+        elif code == "F841":
+            category = "unused_variables"
+        if not category:
+            continue
+        location = finding.get("location") or {}
+        result[category].append(
+            {
+                "file": finding.get("filename", ""),
+                "line": int(location.get("row", 0) or 0),
+                "simple_name": symbol,
+            }
+        )
+    return result
+
+
 def _scan_case_with_scanner(
     case_path: Path, case: dict[str, Any], *, scanner: str
 ) -> dict[str, Any]:
@@ -468,6 +591,8 @@ def _scan_case_with_scanner(
         return _scan_case(case_path, case)
     if scanner == "vulture":
         return _scan_vulture_case(case_path, case)
+    if scanner == "ruff":
+        return _scan_ruff_case(case_path, case)
     allowed = ", ".join(sorted(SUPPORTED_SCANNERS))
     raise ValueError(f"unsupported dead-code benchmark scanner '{scanner}': {allowed}")
 
@@ -546,7 +671,11 @@ def _score_counts(
 
 
 def run_case(
-    case: dict[str, Any], manifest_path: str | Path, *, scanner: str = "skylos"
+    case: dict[str, Any],
+    manifest_path: str | Path,
+    *,
+    scanner: str = "skylos",
+    strict_labels: bool = False,
 ) -> dict[str, Any]:
     manifest_root = Path(manifest_path).parent
     case_path = _case_path(
@@ -626,6 +755,18 @@ def run_case(
 
     labeled_keys = expected_unused_keys | expected_used_keys
     unlabeled_findings = sorted(key.label() for key in findings - labeled_keys)
+    if strict_labels:
+        false_positives += len(unlabeled_findings)
+        for finding in unlabeled_findings:
+            failures.append(
+                DeadCodeBenchmarkFailure(
+                    case_id=case["id"],
+                    failure_type="unlabeled",
+                    mode="strict_labels",
+                    expected="explicit unused/used label",
+                    found=[finding],
+                )
+            )
     findings_by_kind: dict[str, int] = {}
     for key in findings:
         findings_by_kind[key.kind] = findings_by_kind.get(key.kind, 0) + 1
@@ -634,6 +775,7 @@ def run_case(
         "id": case["id"],
         "path": str(case_path),
         "description": case.get("description", ""),
+        "languages": _case_languages(case),
         "taxonomy": list(case.get("taxonomy", [])),
         "importance": case.get("importance", "high"),
         "elapsed_seconds": round(elapsed_seconds, 4),
@@ -727,7 +869,12 @@ def _taxonomy_summary(case_results: list[dict[str, Any]]) -> dict[str, dict[str,
 
 
 def _summary(
-    case_results: list[dict[str, Any]], manifest_path: str | Path, *, scanner: str
+    case_results: list[dict[str, Any]],
+    manifest_path: str | Path,
+    *,
+    scanner: str,
+    strict_labels: bool,
+    skipped_cases: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     scores, counts = _aggregate_scores(case_results)
     failure_count = sum(len(case["failures"]) for case in case_results)
@@ -736,7 +883,10 @@ def _summary(
     return {
         "manifest": str(Path(manifest_path).resolve()),
         "scanner": scanner,
+        "strict_labels": strict_labels,
         "case_count": len(case_results),
+        "skipped_case_count": len(skipped_cases or []),
+        "skipped_cases": list(skipped_cases or []),
         "pass_count": pass_count,
         "failure_count": failure_count,
         "total_elapsed_seconds": round(total_elapsed, 4),
@@ -752,17 +902,41 @@ def run_manifest(
     selected_cases: set[str] | None = None,
     *,
     scanner: str = "skylos",
+    strict_labels: bool = False,
 ) -> dict[str, Any]:
     manifest = load_manifest(manifest_path)
     cases = validate_manifest(manifest, manifest_path)
     selected = set(selected_cases or set())
 
-    case_results = [
-        run_case(case, manifest_path, scanner=scanner)
-        for case in cases
-        if not selected or case["id"] in selected
-    ]
-    return _summary(case_results, manifest_path, scanner=scanner)
+    case_results = []
+    skipped_cases = []
+    for case in cases:
+        if selected and case["id"] not in selected:
+            continue
+        if not _scanner_supports_case(scanner, case):
+            skipped_cases.append(
+                {
+                    "id": case["id"],
+                    "languages": _case_languages(case),
+                    "reason": f"{scanner} does not support this case language set",
+                }
+            )
+            continue
+        case_results.append(
+            run_case(
+                case,
+                manifest_path,
+                scanner=scanner,
+                strict_labels=strict_labels,
+            )
+        )
+    return _summary(
+        case_results,
+        manifest_path,
+        scanner=scanner,
+        strict_labels=strict_labels,
+        skipped_cases=skipped_cases,
+    )
 
 
 def _select_external_targets(
@@ -792,20 +966,47 @@ def run_external_targets(
     selected_targets: set[str] | None = None,
     *,
     scanner: str = "skylos",
+    strict_labels: bool = False,
 ) -> dict[str, Any]:
     selected = set(selected_targets or set())
     targets = _select_external_targets(external_targets_path, selected)
-    case_results = [
-        run_case(target, external_targets_path, scanner=scanner) for target in targets
-    ]
-    return _summary(case_results, external_targets_path, scanner=scanner)
+    case_results = []
+    skipped_cases = []
+    for target in targets:
+        if not _scanner_supports_case(scanner, target):
+            skipped_cases.append(
+                {
+                    "id": target["id"],
+                    "languages": _case_languages(target),
+                    "reason": f"{scanner} does not support this target language set",
+                }
+            )
+            continue
+        case_results.append(
+            run_case(
+                target,
+                external_targets_path,
+                scanner=scanner,
+                strict_labels=strict_labels,
+            )
+        )
+    return _summary(
+        case_results,
+        external_targets_path,
+        scanner=scanner,
+        strict_labels=strict_labels,
+        skipped_cases=skipped_cases,
+    )
 
 
 def format_summary(summary: dict[str, Any]) -> str:
     counts = summary["counts"]
     scores = summary["scores"]
     lines = [
+        f"Dead-code benchmark scanner: {summary.get('scanner', 'skylos')}",
+        f"Dead-code benchmark strict labels: {summary.get('strict_labels', False)}",
         f"Dead-code benchmark cases: {summary['case_count']}",
+        f"Dead-code benchmark skipped cases: {summary.get('skipped_case_count', 0)}",
         f"Dead-code benchmark failures: {summary['failure_count']}",
         (
             "Dead-code benchmark counts: "
@@ -856,5 +1057,9 @@ def format_summary(summary: dict[str, Any]) -> str:
             preview = ", ".join(case["unlabeled_findings"][:5])
             suffix = " ..." if len(case["unlabeled_findings"]) > 5 else ""
             lines.append(f"  unlabeled preview: {preview}{suffix}")
+
+    for skipped in summary.get("skipped_cases", []):
+        languages = ", ".join(skipped.get("languages", []))
+        lines.append(f"SKIP {skipped['id']} [{languages}] {skipped['reason']}")
 
     return "\n".join(lines)

@@ -19,13 +19,26 @@ The benchmark uses two expectation modes:
 - `present`: required findings. Missing these creates false negatives.
 - `absent`: forbidden findings. Seeing these creates false positives.
 
+Labels are scanner-independent ground truth: they describe the vulnerable or
+safe behavior in the fixture, not the current Skylos output. Positive and
+negative fixtures should be paired when a rule has realistic sanitizer or guard
+logic.
+
 ## Run
 
 ```bash
 python scripts/security_benchmark.py
 python scripts/security_benchmark.py --json
 python scripts/security_benchmark.py --case sql-tainted-param
+python scripts/security_benchmark.py --scanner bandit
+python scripts/security_compare_scanners.py
 ```
+
+Competitor scanners are optional local tools, not project dependencies. If a
+competitor such as Bandit is unavailable, the comparison script reports it as
+skipped and still prints the Skylos scorecard. Python-only scanners are scored
+only on Python cases; Go, Java, and TypeScript cases are reported as skipped for
+that scanner instead of being counted as false negatives.
 
 ## Adding Cases
 
@@ -34,3 +47,9 @@ python scripts/security_benchmark.py --case sql-tainted-param
 3. Keep expectations rule-specific where possible.
 4. Prefer one semantic claim per fixture.
 5. Add both positive and negative cases for risky rule changes.
+
+Current golden cases cover SQL injection, SSRF, command injection, YAML loader
+precision, path traversal, XSS, open redirect, JWT verification bypass, and CORS
+misconfiguration. The cross-language cases currently cover Go Zip Slip
+path traversal, Java servlet path traversal, and TypeScript unsafe eval with
+matched safe guards.

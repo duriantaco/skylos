@@ -24,7 +24,8 @@
           {"kind": "import", "file": "app.py", "symbol": "json"},
           {"kind": "function", "file": "app.py", "symbol": "unused_helper"},
           {"kind": "class", "file": "app.py", "symbol": "UnusedWorker"},
-          {"kind": "variable", "file": "app.py", "symbol": "UNUSED_SETTING"}
+          {"kind": "variable", "file": "app.py", "symbol": "UNUSED_SETTING"},
+          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
         ],
         "used": [
           {"kind": "function", "file": "app.py", "symbol": "used_helper"},
@@ -81,7 +82,8 @@
       },
       "expect": {
         "unused": [
-          {"kind": "function", "file": "app.py", "symbol": "unused_handler"}
+          {"kind": "function", "file": "app.py", "symbol": "unused_handler"},
+          {"kind": "function", "file": "app.py", "symbol": "dispatch"}
         ],
         "used": [
           {"kind": "function", "file": "app.py", "symbol": "handle_create"},
@@ -109,7 +111,8 @@
       },
       "expect": {
         "unused": [
-          {"kind": "class", "file": "models.py", "symbol": "Tag"}
+          {"kind": "class", "file": "models.py", "symbol": "Tag"},
+          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
         ],
         "used": [
           {"kind": "class", "file": "models.py", "symbol": "Base"},
@@ -117,6 +120,7 @@
           {"kind": "class", "file": "models.py", "symbol": "AuditLog"},
           {"kind": "variable", "file": "models.py", "symbol": "id"},
           {"kind": "variable", "file": "models.py", "symbol": "title"},
+          {"kind": "variable", "file": "models.py", "symbol": "name"},
           {"kind": "function", "file": "repository.py", "symbol": "create_note"}
         ]
       }
@@ -142,6 +146,7 @@
       "expect": {
         "unused": [
           {"kind": "function", "file": "app.py", "symbol": "unused_view_helper"},
+          {"kind": "function", "file": "app.py", "symbol": "format"},
           {"kind": "class", "file": "app.py", "symbol": "UnusedFormatter"}
         ],
         "used": [
@@ -173,14 +178,327 @@
         "unused": [
           {"kind": "import", "file": "service.py", "symbol": "json"},
           {"kind": "function", "file": "service.py", "symbol": "_unused_reconcile"},
+          {"kind": "function", "file": "service.py", "symbol": "apply"},
           {"kind": "class", "file": "service.py", "symbol": "UnusedStrategy"},
-          {"kind": "variable", "file": "service.py", "symbol": "UNUSED_STATUS"}
+          {"kind": "variable", "file": "service.py", "symbol": "UNUSED_STATUS"},
+          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
         ],
         "used": [
           {"kind": "function", "file": "app.py", "symbol": "run_checkout"},
           {"kind": "function", "file": "service.py", "symbol": "create_invoice"},
           {"kind": "class", "file": "repository.py", "symbol": "InvoiceRepository"},
           {"kind": "variable", "file": "service.py", "symbol": "ACTIVE_STATUS"}
+        ]
+      }
+    },
+    {
+      "id": "django-management-command",
+      "path": "fixtures/django_management_command",
+      "description": "Django management command classes and lifecycle methods are CLI entrypoints while unrelated helpers remain dead code.",
+      "taxonomy": ["framework_precision", "django", "cli_entrypoint", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/django/django",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from Django management command modules under management/commands."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "shop/management/commands/rebuild_index.py", "symbol": "unused_export_job"},
+          {"kind": "function", "file": "shop/management/commands/rebuild_index.py", "symbol": "build"},
+          {"kind": "class", "file": "shop/management/commands/rebuild_index.py", "symbol": "UnusedCommandHelper"}
+        ],
+        "used": [
+          {"kind": "class", "file": "shop/management/commands/rebuild_index.py", "symbol": "Command"},
+          {"kind": "function", "file": "shop/management/commands/rebuild_index.py", "symbol": "add_arguments"},
+          {"kind": "function", "file": "shop/management/commands/rebuild_index.py", "symbol": "handle"},
+          {"kind": "function", "file": "shop/management/commands/rebuild_index.py", "symbol": "rebuild_index"},
+          {"kind": "variable", "file": "shop/management/commands/rebuild_index.py", "symbol": "args"},
+          {"kind": "variable", "file": "shop/management/commands/rebuild_index.py", "symbol": "help"}
+        ]
+      }
+    },
+    {
+      "id": "celery-task-entrypoints",
+      "path": "fixtures/celery_tasks",
+      "description": "Celery task decorators should keep worker functions alive while unregistered helpers are reported.",
+      "taxonomy": ["framework_precision", "celery", "dynamic_dispatch", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/celery/celery",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from production task modules using app.task and shared_task."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "app.py", "symbol": "unused_task_helper"},
+          {"kind": "function", "file": "app.py", "symbol": "serialize"},
+          {"kind": "class", "file": "app.py", "symbol": "UnusedTaskPayload"}
+        ],
+        "used": [
+          {"kind": "function", "file": "app.py", "symbol": "send_receipt"},
+          {"kind": "function", "file": "app.py", "symbol": "rebuild_rollups"},
+          {"kind": "variable", "file": "app.py", "symbol": "celery_app"}
+        ]
+      }
+    },
+    {
+      "id": "pytest-fixture-entrypoints",
+      "path": "fixtures/pytest_fixtures",
+      "description": "Pytest tests and fixtures are runtime entrypoints even when referenced through parameter injection.",
+      "taxonomy": ["framework_precision", "pytest", "dynamic_dispatch", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pytest-dev/pytest",
+        "license": "MIT",
+        "notes": "Distilled from tests that reference fixtures by argument name and custom fixture aliases."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [],
+        "used": [
+          {"kind": "function", "file": "tests/test_orders.py", "symbol": "api_client"},
+          {"kind": "function", "file": "tests/test_orders.py", "symbol": "payload_fixture"},
+          {"kind": "function", "file": "tests/test_orders.py", "symbol": "test_create_order"}
+        ]
+      }
+    },
+    {
+      "id": "pydantic-validator-entrypoints",
+      "path": "fixtures/pydantic_validators",
+      "description": "Pydantic validators are framework-called methods while unrelated helpers are still reportable.",
+      "taxonomy": ["framework_precision", "pydantic", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pydantic/pydantic",
+        "license": "MIT",
+        "notes": "Distilled from Pydantic v2 field_validator and model_validator usage."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "app.py", "symbol": "unused_normalizer"},
+          {"kind": "class", "file": "app.py", "symbol": "UnusedSchema"},
+          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
+        ],
+        "used": [
+          {"kind": "class", "file": "app.py", "symbol": "UserInput"},
+          {"kind": "function", "file": "app.py", "symbol": "normalize_email"},
+          {"kind": "function", "file": "app.py", "symbol": "ensure_domain"},
+          {"kind": "function", "file": "app.py", "symbol": "build_user"},
+          {"kind": "variable", "file": "app.py", "symbol": "cls"},
+          {"kind": "variable", "file": "app.py", "symbol": "email"},
+          {"kind": "variable", "file": "app.py", "symbol": "name"}
+        ]
+      }
+    },
+    {
+      "id": "alembic-migration-entrypoints",
+      "path": "fixtures/alembic_migration",
+      "description": "Alembic migration lifecycle functions and revision metadata are entrypoints; helper code can still be dead.",
+      "taxonomy": ["framework_precision", "alembic", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/sqlalchemy/alembic",
+        "license": "MIT",
+        "notes": "Distilled from Alembic revision modules under versions/."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "versions/20260425_add_orders.py", "symbol": "unused_migration_helper"},
+          {"kind": "class", "file": "versions/20260425_add_orders.py", "symbol": "UnusedMigrationState"}
+        ],
+        "used": [
+          {"kind": "function", "file": "versions/20260425_add_orders.py", "symbol": "upgrade"},
+          {"kind": "function", "file": "versions/20260425_add_orders.py", "symbol": "downgrade"},
+          {"kind": "variable", "file": "versions/20260425_add_orders.py", "symbol": "revision"},
+          {"kind": "variable", "file": "versions/20260425_add_orders.py", "symbol": "down_revision"}
+        ]
+      }
+    },
+    {
+      "id": "importlib-plugin-loading",
+      "path": "fixtures/importlib_plugins",
+      "description": "String-based importlib plugin loading should keep loaded plugin hooks alive while stale plugin code is reported.",
+      "taxonomy": ["dynamic_dispatch", "plugin_loading", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic fixture for importlib.import_module plugin references."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "app.py", "symbol": "unused_loader"},
+          {"kind": "function", "file": "plugins/email.py", "symbol": "unused_plugin_hook"},
+          {"kind": "class", "file": "plugins/email.py", "symbol": "UnusedPlugin"},
+          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
+        ],
+        "used": [
+          {"kind": "function", "file": "app.py", "symbol": "load_plugin"},
+          {"kind": "function", "file": "app.py", "symbol": "run_notification"},
+          {"kind": "function", "file": "plugins/email.py", "symbol": "send_email"},
+          {"kind": "variable", "file": "app.py", "symbol": "PLUGIN_MODULE"}
+        ]
+      }
+    },
+    {
+      "id": "package-entrypoints",
+      "path": "fixtures/package_entrypoints",
+      "description": "pyproject project.scripts entrypoints should keep CLI functions alive.",
+      "taxonomy": ["package_entrypoint", "cli_entrypoint", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://packaging.python.org",
+        "license": "MIT",
+        "notes": "Distilled from Python package console-script metadata."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [],
+        "used": [
+          {"kind": "function", "file": "bench/cli.py", "symbol": "main"},
+          {"kind": "function", "file": "bench/cli.py", "symbol": "format_status"}
+        ]
+      }
+    },
+    {
+      "id": "go-service-entrypoints",
+      "path": "fixtures/go_service",
+      "description": "Go HTTP handler references should keep live handlers reachable while stale package-private helpers are reported.",
+      "languages": ["go"],
+      "taxonomy": ["go", "basic_detection", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/golang/go",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from small Go services that register net/http handlers."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "main.go", "symbol": "unusedReconciler"}
+        ],
+        "used": [
+          {"kind": "function", "file": "main.go", "symbol": "main"},
+          {"kind": "function", "file": "main.go", "symbol": "healthHandler"},
+          {"kind": "function", "file": "main.go", "symbol": "formatStatus"}
+        ]
+      }
+    },
+    {
+      "id": "java-service-entrypoints",
+      "path": "fixtures/java_service",
+      "description": "Java application entrypoints and method calls should stay live while unused methods and classes are reported.",
+      "languages": ["java"],
+      "taxonomy": ["java", "basic_detection", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/openjdk/jdk",
+        "license": "GPL-2.0-only WITH Classpath-exception-2.0",
+        "notes": "Distilled from Java service classes with application entrypoints and stale helpers."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "App.java", "symbol": "unusedFormatter"},
+          {"kind": "class", "file": "App.java", "symbol": "UnusedController"},
+          {"kind": "function", "file": "App.java", "symbol": "render"}
+        ],
+        "used": [
+          {"kind": "class", "file": "App.java", "symbol": "App"},
+          {"kind": "function", "file": "App.java", "symbol": "main"},
+          {"kind": "function", "file": "App.java", "symbol": "handle"},
+          {"kind": "function", "file": "App.java", "symbol": "formatStatus"}
+        ]
+      }
+    },
+    {
+      "id": "ts-js-package-reachability",
+      "path": "fixtures/ts_js_package",
+      "description": "TypeScript package entrypoints and imports should keep live exports reachable while stale TS and JS exports are reported.",
+      "languages": ["typescript", "javascript"],
+      "taxonomy": ["typescript", "javascript", "package_entrypoint", "basic_detection", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/microsoft/TypeScript",
+        "license": "Apache-2.0",
+        "notes": "Distilled from package.json main entrypoints and mixed TS/JS module graphs."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "src/service.ts", "symbol": "unusedTransform"},
+          {"kind": "function", "file": "src/legacy.js", "symbol": "legacySync"},
+          {"kind": "file", "file": "src/legacy.js", "symbol": "src/legacy.js"}
+        ],
+        "used": [
+          {"kind": "function", "file": "src/service.ts", "symbol": "runJob"},
+          {"kind": "function", "file": "src/service.ts", "symbol": "formatJob"}
         ]
       }
     }

@@ -139,10 +139,27 @@ _MIGRATION_ATTRS = {
     "operations",
 }
 
+_ALEMBIC_MODULE_ATTRS = {
+    "revision",
+    "down_revision",
+    "branch_labels",
+    "depends_on",
+}
+
 _DJANGO_MODULE_VARS = {
     "urlpatterns",
     "app_name",
     "default_app_config",
+}
+
+_DJANGO_COMMAND_ATTRS = {
+    "help",
+    "missing_args_message",
+    "requires_migrations_checks",
+    "requires_system_checks",
+    "stealth_options",
+    "suppressed_base_arguments",
+    "output_transaction",
 }
 
 _DRF_BACKEND_METHODS = {
@@ -226,6 +243,28 @@ def _class_declares_attr(def_obj, attr_name: str) -> bool:
             if isinstance(target, ast.Name) and target.id == attr_name:
                 return True
     return False
+
+
+def _name_parent_has_base(def_obj, required_bases, framework) -> bool:
+    parts = str(getattr(def_obj, "name", "")).split(".")
+    if len(parts) < 2:
+        return False
+
+    class_defs = getattr(framework, "class_defs", {})
+    for part in parts[:-1]:
+        cls_node = class_defs.get(part)
+        if cls_node is None:
+            continue
+        for base in getattr(cls_node, "bases", []):
+            base_name = getattr(base, "id", None) or getattr(base, "attr", None)
+            if base_name in required_bases:
+                return True
+    return False
+
+
+def _is_alembic_revision_path(filename: str) -> bool:
+    normalized = filename.replace("\\", "/")
+    return "/versions/" in normalized and normalized.endswith(".py")
 
 
 def _check_inline_ignore(def_obj, visitor):
@@ -340,6 +379,19 @@ def _check_pytest_unittest(def_obj, framework):
     return None
 
 
+def _check_alembic_migration(def_obj):
+    if not _is_alembic_revision_path(str(def_obj.filename)):
+        return None
+
+    if def_obj.type == "function" and def_obj.simple_name in {"upgrade", "downgrade"}:
+        return _suppress(def_obj, "Alembic migration lifecycle function")
+
+    if def_obj.type == "variable" and def_obj.simple_name in _ALEMBIC_MODULE_ATTRS:
+        return _suppress(def_obj, "Alembic revision metadata")
+
+    return None
+
+
 def _check_django_drf_structural(def_obj, framework):
     detected = getattr(framework, "detected_frameworks", set())
     simple_name = def_obj.simple_name
@@ -365,6 +417,10 @@ def _check_django_drf_structural(def_obj, framework):
         fname = str(def_obj.filename)
         if "/migrations/" in fname or "\\migrations\\" in fname:
             return _suppress(def_obj)
+
+    if def_obj.type == "variable" and simple_name in _DJANGO_COMMAND_ATTRS:
+        if _name_parent_has_base(def_obj, DJANGO_COMMAND_BASES, framework):
+            return _suppress(def_obj, "Django management command attribute")
 
     if def_obj.type == "class":
         class_bases = _class_base_names(simple_name, framework)
@@ -400,9 +456,6 @@ def _check_django_drf_structural(def_obj, framework):
         if "click" in detected and class_bases.intersection(CLICK_COMMAND_BASES):
             return _suppress(def_obj, "Click command class")
 
-        if simple_name in getattr(framework, "pydantic_models", set()):
-            return _suppress(def_obj, "Pydantic model")
-
     return None
 
 
@@ -426,6 +479,16 @@ def _check_django_methods(def_obj, framework):
     for methods, bases in _DJANGO_CHECKS:
         if simple_name in methods and has_base_class(def_obj, bases, framework):
             return _suppress(def_obj)
+
+    if def_obj.type == "parameter" and "." in def_obj.name:
+        parts = def_obj.name.split(".")
+        parent_method = parts[-2] if len(parts) >= 2 else ""
+        if parent_method in DJANGO_COMMAND_METHODS and _name_parent_has_base(
+            def_obj,
+            DJANGO_COMMAND_BASES,
+            framework,
+        ):
+            return _suppress(def_obj, "Django management command parameter")
 
     if simple_name.startswith("clean_") and has_base_class(
         def_obj, DJANGO_FORM_BASES, framework
@@ -1040,6 +1103,9 @@ def apply_penalties(
         return
 
     if _check_pytest_unittest(def_obj, framework) is True:
+        return
+
+    if _check_alembic_migration(def_obj) is True:
         return
 
     if _check_django_drf_structural(def_obj, framework) is True:

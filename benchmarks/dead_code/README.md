@@ -14,7 +14,11 @@ The benchmark framework lives in the Skylos repo because it must version with an
 - Recall: `TP / (TP + FN)`.
 - F1: harmonic mean of precision and recall.
 
-The benchmark also reports unlabeled findings separately. Those are not counted as false positives unless they match an explicit `used` expectation, because a fixture may contain additional real dead code that is outside the specific claim being tested.
+Labels are scanner-independent ground truth: they describe whether the symbol is
+semantically live in the fixture, not whether Skylos currently reports it. The
+default run reports unlabeled findings separately. `--strict-labels` counts any
+finding outside the explicit `unused` and `used` labels as a false positive, and
+the comparison runner uses that strict mode by default.
 
 ## Run
 
@@ -23,16 +27,24 @@ python scripts/dead_code_benchmark.py
 python scripts/dead_code_benchmark.py --json
 python scripts/dead_code_benchmark.py --case basic-unused-symbols
 python scripts/dead_code_benchmark.py --target /Users/oha/skylos-demo
+python scripts/dead_code_benchmark.py --strict-labels
 ```
 
 Optional competitor baseline:
 
 ```bash
 python scripts/dead_code_benchmark.py --scanner vulture
+python scripts/dead_code_benchmark.py --scanner ruff
+python scripts/dead_code_compare_scanners.py
 ```
 
 Competitor scanners are not project dependencies. Install them separately when
 you want a head-to-head run, then score them against the same manifest labels.
+The comparison command uses strict labels by default, so any scanner finding
+outside the explicit unused/used labels is counted as a false positive.
+Python-only scanners are scored only on Python cases; non-Python cases are
+reported as skipped for that scanner instead of being counted as false
+negatives.
 
 ## Case Shape
 
@@ -42,6 +54,7 @@ Each case declares explicit unused and used symbols:
 {
   "id": "basic-unused-symbols",
   "path": "fixtures/basic_unused_symbols",
+  "languages": ["python"],
   "expect": {
     "unused": [
       {"kind": "function", "file": "app.py", "symbol": "unused_helper"}
@@ -71,5 +84,9 @@ Supported kinds:
 5. Run `python scripts/dead_code_benchmark.py` before and after analyzer changes.
 
 Current stricter cases include FastAPI dependency entrypoints, Flask blueprint
-and CLI entrypoints, decorator registries, SQLAlchemy mixed model modules, and
-multi-file service/repository layers.
+and CLI entrypoints, decorator registries, SQLAlchemy mixed model modules,
+multi-file service/repository layers, Django management commands, Celery tasks,
+pytest fixtures, Pydantic validators, Alembic revisions, importlib plugins, and
+package console-script entrypoints. The cross-language cases currently cover Go
+HTTP handler reachability, Java application entrypoints and stale methods, and
+mixed TypeScript/JavaScript package reachability.

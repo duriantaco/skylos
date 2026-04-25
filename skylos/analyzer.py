@@ -402,6 +402,8 @@ class Skylos:
             for def_name, def_obj in self.defs.items():
                 if def_obj.type not in ("function", "method"):
                     continue
+                if str(def_obj.filename).endswith(".java"):
+                    continue
                 if "." not in def_obj.name:
                     continue
                 parent = def_obj.name.rsplit(".", 1)[0]
@@ -441,6 +443,8 @@ class Skylos:
                         def_obj.is_exported = True
                         def_obj.references = max(def_obj.references, 1)
                     elif def_obj.type in ("function", "method") and "." in def_obj.name:
+                        if str(def_obj.filename).endswith(".java"):
+                            continue
                         parent = def_obj.name.rsplit(".", 1)[0]
                         if (
                             parent in transitive_classes
