@@ -56,6 +56,141 @@ func main() {
     assert "SKY-D250" in _rule_ids(findings)
 
 
+def test_exec_command_shell_concat_flags_command_injection(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "os/exec"
+
+func run(name string) error {
+    return exec.Command("sh", "-c", "git " + name).Run()
+}
+""",
+    )
+    assert "SKY-D212" in _rule_ids(findings)
+
+
+def test_exec_command_bash_login_shell_concat_flags_command_injection(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "os/exec"
+
+func run(name string) error {
+    return exec.Command("bash", "-lc", "git " + name).Run()
+}
+""",
+    )
+    assert "SKY-D212" in _rule_ids(findings)
+
+
+def test_exec_command_bash_option_operand_concat_flags_command_injection(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "os/exec"
+
+func run(name string) error {
+    return exec.Command("bash", "-o", "pipefail", "-c", "git " + name).Run()
+}
+""",
+    )
+    assert "SKY-D212" in _rule_ids(findings)
+
+
+def test_exec_command_powershell_command_flags_command_injection(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "os/exec"
+
+func run(script string) error {
+    return exec.Command("powershell", "-NoProfile", "-Command", script).Run()
+}
+""",
+    )
+    assert "SKY-D212" in _rule_ids(findings)
+
+
+def test_exec_command_windows_cmd_path_flags_command_injection(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        r"""package main
+
+import "os/exec"
+
+func run(name string) error {
+    return exec.Command(`C:\Windows\System32\cmd.exe`, "/c", "git " + name).Run()
+}
+""",
+    )
+    assert "SKY-D212" in _rule_ids(findings)
+
+
+def test_exec_command_shell_positional_arg_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "os/exec"
+
+func run(branch string) error {
+    return exec.Command("sh", "-c", `git checkout -- "$1"`, "sh", branch).Run()
+}
+""",
+    )
+    assert "SKY-D212" not in _rule_ids(findings)
+
+
+def test_exec_command_shell_script_arg_with_dash_c_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "os/exec"
+
+func run(user string) error {
+    return exec.Command("sh", "script.sh", "-c", user).Run()
+}
+""",
+    )
+    assert "SKY-D212" not in _rule_ids(findings)
+
+
+def test_exec_command_powershell_file_arg_with_command_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "os/exec"
+
+func run(user string) error {
+    return exec.Command("powershell", "-File", "script.ps1", "-Command", user).Run()
+}
+""",
+    )
+    assert "SKY-D212" not in _rule_ids(findings)
+
+
+def test_exec_command_constant_binary_variable_argv_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "os/exec"
+
+func run(name string) error {
+    return exec.Command("git", name).Run()
+}
+""",
+    )
+    assert "SKY-D212" not in _rule_ids(findings)
+
+
 def test_insecure_cookie_remapped_to_shared_rule(tmp_path):
     findings = _scan_go(
         tmp_path,

@@ -102,6 +102,87 @@ class TestTSDangerRules:
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D212" in ids
 
+    def test_fetch_concatenated_host_flags_ssrf(self, tmp_path):
+        code = (
+            "export function fetchTenant(req: any) {\n"
+            "  return fetch('https://' + req.query.host + '/api');\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D216" in ids
+
+    def test_fetch_fixed_host_variable_path_is_safe(self, tmp_path):
+        code = (
+            "export function fetchAvatar(userId: string) {\n"
+            "  return fetch('https://cdn.example.com/avatars/' + userId);\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D216" not in ids
+
+    def test_fetch_split_fixed_host_variable_path_is_safe(self, tmp_path):
+        code = (
+            "export function fetchAvatar(userId: string) {\n"
+            "  return fetch('https://api.example.com' + '/avatars/' + userId);\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D216" not in ids
+
+    def test_fetch_split_scheme_host_flags_ssrf(self, tmp_path):
+        code = (
+            "export function fetchTenant(req: any) {\n"
+            "  return fetch('https:' + '//' + req.query.host + '/api');\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D216" in ids
+
+    def test_axios_concatenated_host_flags_ssrf(self, tmp_path):
+        code = (
+            "import axios from 'axios';\n"
+            "export function fetchTenant(req: any) {\n"
+            "  return axios.get('https://' + req.query.host + '/api');\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D216" in ids
+
+    def test_fetch_non_null_expression_url_flags_ssrf(self, tmp_path):
+        code = (
+            "export function fetchTenant(req: any) {\n"
+            "  return fetch(req.query.url!);\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D216" in ids
+
+    def test_fetch_as_expression_url_flags_ssrf(self, tmp_path):
+        code = (
+            "export function fetchTenant(req: any) {\n"
+            "  return fetch(req.query.url as string);\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D216" in ids
+
+    def test_fetch_angle_bracket_type_assertion_url_flags_ssrf(self, tmp_path):
+        code = (
+            "export function fetchTenant(req: any) {\n"
+            "  return fetch(<string>req.query.url);\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D216" in ids
+
 
 class TestTSQualityRules:
     def test_cyclomatic_complexity(self, tmp_path):
