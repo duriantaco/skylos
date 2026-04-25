@@ -97,8 +97,96 @@ def _has_safe_base_url(node):
     return False
 
 
+def _constant_string(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _has_absolute_host(value):
+    if not isinstance(value, str) or "://" not in value:
+        return False
+    scheme, rest = value.split("://", 1)
+    host = rest.split("/", 1)[0]
+    return bool(scheme and host)
+
+
+def _leftmost_constant_prefix(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+            if isinstance(value, ast.FormattedValue):
+                return ""
+        return ""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _leftmost_constant_prefix(node.left)
+    return ""
+
+
+def _urljoin_target_can_override_host(node):
+    literal = _constant_string(node)
+    if literal is not None:
+        return literal.startswith(("http://", "https://", "//"))
+
+    prefix = _leftmost_constant_prefix(node)
+    if prefix.startswith(("http://", "https://", "//")):
+        return True
+
+    if isinstance(node, ast.JoinedStr):
+        return any(
+            isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and ("://" in value.value or value.value.startswith("//"))
+            for value in node.values
+        )
+
+    return False
+
+
+def _urljoin_target_is_host_constrained(node):
+    literal = _constant_string(node)
+    if literal is not None:
+        return not _urljoin_target_can_override_host(node)
+
+    prefix = _leftmost_constant_prefix(node)
+    if not prefix:
+        return False
+    if prefix.startswith(("http://", "https://", "//")):
+        return False
+    if prefix.startswith(("/", "\\")):
+        return False
+    if ":" in prefix:
+        return False
+    if "/" not in prefix and "\\" not in prefix:
+        return False
+    if "://" in prefix:
+        return False
+    return True
+
+
+def _is_fixed_host_urljoin(node):
+    if not isinstance(node, ast.Call):
+        return False
+    qn = _qualified_name_from_call(node)
+    if qn not in {"urljoin", "urllib.parse.urljoin"}:
+        return False
+    if len(node.args) < 2:
+        return False
+
+    base = _constant_string(node.args[0])
+    if not _has_absolute_host(base):
+        return False
+
+    return _urljoin_target_is_host_constrained(node.args[1])
+
+
 def _tainted_url_is_ssrf_relevant(checker, node):
     if isinstance(node, ast.JoinedStr) and _has_safe_base_url(node):
+        return False
+    if _is_fixed_host_urljoin(node):
         return False
     return checker.is_tainted(node)
 
@@ -127,6 +215,13 @@ class _SSRFFlowChecker(TaintVisitor):
     def __init__(self, file_path, findings, sanitizers=None):
         super().__init__(file_path, findings, sanitizers=sanitizers)
         self.http_names: set[str] = set()
+
+    def is_tainted(self, node):
+        if isinstance(node, ast.JoinedStr) and _has_safe_base_url(node):
+            return False
+        if _is_fixed_host_urljoin(node):
+            return False
+        return super().is_tainted(node)
 
     def visit_Import(self, node):
         for alias in node.names:

@@ -53,3 +53,75 @@ def test_requests_fixed_host_interpolated_path_ok(tmp_path):
     )
     out = _scan_one(tmp_path, "ssrf_fixed_host.py", code)
     assert "SKY-D216" not in _rule_ids(out)
+
+
+def test_requests_fixed_host_urljoin_path_ok(tmp_path):
+    code = (
+        "from urllib.parse import urljoin\n"
+        "import requests\n"
+        "def f(user_id):\n"
+        "    url = urljoin('https://cdn.example.com/', f'avatars/{user_id}.png')\n"
+        "    requests.get(url, timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urljoin_fixed_host.py", code)
+    assert "SKY-D216" not in _rule_ids(out)
+
+
+def test_requests_urljoin_bare_tainted_target_flags(tmp_path):
+    code = (
+        "from urllib.parse import urljoin\n"
+        "import requests\n"
+        "def f(path):\n"
+        "    url = urljoin('https://cdn.example.com/', path)\n"
+        "    requests.get(url, timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urljoin_bare_target.py", code)
+    assert "SKY-D216" in _rule_ids(out)
+
+
+def test_requests_urljoin_slash_prefixed_tainted_target_flags(tmp_path):
+    code = (
+        "from urllib.parse import urljoin\n"
+        "import requests\n"
+        "def f(path):\n"
+        "    url = urljoin('https://cdn.example.com/', '/' + path)\n"
+        "    requests.get(url, timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urljoin_slash_target.py", code)
+    assert "SKY-D216" in _rule_ids(out)
+
+
+def test_requests_urljoin_scheme_prefixed_tainted_target_flags(tmp_path):
+    code = (
+        "from urllib.parse import urljoin\n"
+        "import requests\n"
+        "def f(path):\n"
+        "    url = urljoin('https://cdn.example.com/', 'https:' + path)\n"
+        "    requests.get(url, timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urljoin_scheme_target.py", code)
+    assert "SKY-D216" in _rule_ids(out)
+
+
+def test_requests_urljoin_partial_scheme_tainted_target_flags(tmp_path):
+    code = (
+        "from urllib.parse import urljoin\n"
+        "import requests\n"
+        "def f(path):\n"
+        "    url = urljoin('https://cdn.example.com/', 'http' + path)\n"
+        "    requests.get(url, timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urljoin_partial_scheme_target.py", code)
+    assert "SKY-D216" in _rule_ids(out)
+
+
+def test_requests_urljoin_absolute_tainted_target_flags(tmp_path):
+    code = (
+        "from urllib.parse import urljoin\n"
+        "import requests\n"
+        "def f(host):\n"
+        "    url = urljoin('https://cdn.example.com/', 'https://' + host)\n"
+        "    requests.get(url, timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urljoin_host_override.py", code)
+    assert "SKY-D216" in _rule_ids(out)

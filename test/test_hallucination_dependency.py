@@ -160,6 +160,10 @@ def test_scan_ignores_stdlib_local_declared_private(monkeypatch, tmp_path):
 def test_scan_installed_but_undeclared_emits_dist_hint(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\ndependencies = []\n',
+        encoding="utf-8",
+    )
 
     f = _write_py(
         repo / "a.py",
@@ -195,6 +199,28 @@ def test_scan_installed_but_undeclared_emits_dist_hint(monkeypatch, tmp_path):
     assert "other" in one["message"]
 
 
+def test_scan_without_dependency_manifest_suppresses_undeclared_import(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    f = _write_py(repo / "a.py", "import installedmod\n")
+
+    monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: set())
+    monkeypatch.setattr(dep, "_collect_local_modules", lambda root: set())
+    monkeypatch.setattr(dep, "_collect_declared_deps", lambda root: set())
+    monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
+    monkeypatch.setattr(
+        dep,
+        "_build_installed_module_mapping",
+        lambda: {"installedmod": {"installed-dist"}},
+    )
+
+    finds = dep.scan_python_dependency_hallucinations(repo, [f])
+
+    assert _extract_single(finds, dep.RULE_ID_UNDECLARED) == []
+
+
 def test_scan_pypi_missing_should_emit_hallucination(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -224,6 +250,10 @@ def test_scan_pypi_missing_should_emit_hallucination(monkeypatch, tmp_path):
 def test_scan_cache_is_written_when_modified(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\ndependencies = []\n',
+        encoding="utf-8",
+    )
 
     f = _write_py(repo / "x.py", "import somepkg\n")
 
@@ -253,6 +283,10 @@ def test_scan_cache_is_written_when_modified(monkeypatch, tmp_path):
 def test_scan_does_not_write_cache_when_not_modified(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\ndependencies = []\n',
+        encoding="utf-8",
+    )
 
     f = _write_py(repo / "x.py", "import somepkg\n")
 

@@ -176,7 +176,7 @@ of receiving a score.
 | Dead code frozen | seeded dev | Vulture | Go | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
 | Dead code frozen | seeded dev | Vulture | Java | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
 | Dead code frozen | seeded dev | Ruff | Python | 4 | 0 | 0 | 0 | 16 | 11 | 55.0 |
-| Security frozen | seeded dev | Skylos | Python | 3 | 0 | 8 | 4 | 2 | 7 | 72.06 |
+| Security frozen | seeded dev | Skylos | Python | 3 | 0 | 10 | 1 | 0 | 7 | 94.32 |
 | Security frozen | seeded dev | Skylos | TypeScript | 1 | 0 | 4 | 0 | 1 | 1 | 91.0 |
 | Security frozen | seeded dev | Skylos | Go | 2 | 0 | 5 | 1 | 0 | 1 | 84.17 |
 | Security frozen | seeded dev | Bandit | Python | 3 | 0 | 6 | 3 | 4 | 7 | 64.33 |
@@ -189,10 +189,21 @@ of receiving a score.
 These frozen results already show useful gaps to investigate before any public
 claim: Skylos currently misses Python and TypeScript reachability edges, has
 JavaScript dead-code false positives on route-registry exports, misses a Java
-unused method, has seeded security false positives around sanitized/safe flows,
-misses the seeded Python quality duplicate-branch case, and misses most OWASP
-Java security-flow cases outside weak crypto/hash. Vulture is only comparable on
-the Python dead-code subset.
+unused method, still has seeded security gaps in TypeScript SSRF and Go command
+precision, misses the seeded Python quality duplicate-branch case, and misses
+most OWASP Java security-flow cases outside weak crypto/hash. Vulture is only
+comparable on the Python dead-code subset.
+
+Phase 2 Python security rerun on 2026-04-25 improved frozen `security.dev`
+overall from `TP=17 FP=5 FN=3 TN=9 score=78.15` to
+`TP=19 FP=2 FN=1 TN=9 score=90.78`. Python moved from
+`TP=8 FP=4 FN=2 TN=7 score=72.06` to
+`TP=10 FP=1 FN=0 TN=7 score=94.32`. The remaining Python FP is
+`seed-python-path-ssrf-redirect`'s fixed-host `urljoin` negative label:
+`urljoin("https://cdn.example.com/", f"{user_id}.png")` can still be overridden
+by `https://...` or `//...` user input, so the detector keeps flagging it and
+the label should be reviewed in the next benchmark version instead of being
+suppressed in the analyzer.
 
 ## Benchmark Rules
 

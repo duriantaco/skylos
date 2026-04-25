@@ -1,4 +1,5 @@
 import ast
+import re
 from skylos.rules.base import SkylosRule
 
 DANGEROUS_CALLS = {
@@ -18,6 +19,48 @@ DANGEROUS_CALLS = {
     "yaml.load": ("SKY-D206", "HIGH", "yaml.load without SafeLoader"),
     "hashlib.md5": ("SKY-D207", "MEDIUM", "Weak hash (MD5)"),
     "hashlib.sha1": ("SKY-D208", "MEDIUM", "Weak hash (SHA1)"),
+    "random.random": (
+        "SKY-D250",
+        "MEDIUM",
+        "Weak random source; use secrets or os.urandom for security-sensitive values",
+        {"weak_random": True},
+    ),
+    "random.randint": (
+        "SKY-D250",
+        "MEDIUM",
+        "Weak random source; use secrets or os.urandom for security-sensitive values",
+        {"weak_random": True},
+    ),
+    "random.randrange": (
+        "SKY-D250",
+        "MEDIUM",
+        "Weak random source; use secrets or os.urandom for security-sensitive values",
+        {"weak_random": True},
+    ),
+    "random.choice": (
+        "SKY-D250",
+        "MEDIUM",
+        "Weak random source; use secrets or os.urandom for security-sensitive values",
+        {"weak_random": True},
+    ),
+    "random.choices": (
+        "SKY-D250",
+        "MEDIUM",
+        "Weak random source; use secrets or os.urandom for security-sensitive values",
+        {"weak_random": True},
+    ),
+    "random.randbytes": (
+        "SKY-D250",
+        "MEDIUM",
+        "Weak random source; use secrets or os.urandom for security-sensitive values",
+        {"weak_random": True},
+    ),
+    "random.getrandbits": (
+        "SKY-D250",
+        "MEDIUM",
+        "Weak random source; use secrets or os.urandom for security-sensitive values",
+        {"weak_random": True},
+    ),
     "subprocess.*": (
         "SKY-D209",
         "HIGH",
@@ -139,6 +182,120 @@ def _yaml_load_without_safeloader(node: ast.Call, aliases=None):
     return True
 
 
+_WEAK_RANDOM_SECURITY_KEYWORDS = {
+    "api_key",
+    "apikey",
+    "auth",
+    "cookie",
+    "credential",
+    "csrf",
+    "jwt",
+    "nonce",
+    "otp",
+    "password",
+    "passwd",
+    "pwd",
+    "salt",
+    "secret",
+    "session",
+    "signature",
+    "signing",
+    "token",
+}
+
+
+def _identifier_tokens(name: str | None) -> set[str]:
+    raw = str(name or "").strip()
+    if not raw:
+        return set()
+    snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", raw)
+    return {
+        part.lower()
+        for part in re.split(r"[^A-Za-z0-9]+|_", snake)
+        if part
+    }
+
+
+def _name_looks_security_sensitive(name: str | None) -> bool:
+    tokens = _identifier_tokens(name)
+    if not tokens:
+        return False
+    if "api" in tokens and "key" in tokens:
+        return True
+    return bool(tokens & _WEAK_RANDOM_SECURITY_KEYWORDS)
+
+
+def _target_looks_security_sensitive(target: ast.AST) -> bool:
+    if isinstance(target, ast.Name):
+        return _name_looks_security_sensitive(target.id)
+    if isinstance(target, ast.Attribute):
+        return _name_looks_security_sensitive(target.attr)
+    if isinstance(target, ast.Subscript):
+        if isinstance(target.slice, ast.Constant) and isinstance(target.slice.value, str):
+            return _name_looks_security_sensitive(target.slice.value)
+        return _target_looks_security_sensitive(target.value)
+    return False
+
+
+def _enclosing_function_name(node: ast.AST) -> str | None:
+    current = getattr(node, "parent", None)
+    while current is not None:
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current.name
+        current = getattr(current, "parent", None)
+    return None
+
+
+def _weak_random_has_security_context(
+    node: ast.Call, current_symbol: str | None = None
+) -> bool:
+    if _name_looks_security_sensitive(current_symbol):
+        return True
+
+    function_name = _enclosing_function_name(node)
+    if _name_looks_security_sensitive(function_name):
+        return True
+
+    current: ast.AST = node
+    while True:
+        parent = getattr(current, "parent", None)
+        if parent is None:
+            return False
+
+        if isinstance(parent, ast.Assign):
+            return any(_target_looks_security_sensitive(t) for t in parent.targets)
+
+        if isinstance(parent, ast.AnnAssign):
+            return _target_looks_security_sensitive(parent.target)
+
+        if isinstance(parent, ast.keyword):
+            if _name_looks_security_sensitive(parent.arg):
+                return True
+            current = parent
+            continue
+
+        if isinstance(parent, ast.Return):
+            return _name_looks_security_sensitive(_enclosing_function_name(parent))
+
+        if isinstance(
+            parent,
+            (
+                ast.BinOp,
+                ast.BoolOp,
+                ast.Call,
+                ast.Compare,
+                ast.FormattedValue,
+                ast.IfExp,
+                ast.JoinedStr,
+                ast.UnaryOp,
+            ),
+        ):
+            current = parent
+            continue
+
+        return False
+
+
 class DangerousCallsRule(SkylosRule):
     rule_id = "SKY-D200"
     name = "Dangerous Function Calls"
@@ -240,6 +397,10 @@ class DangerousCallsRule(SkylosRule):
 
             if opts and "kw_equals" in opts:
                 if not _kw_equals(node, opts["kw_equals"]):
+                    continue
+
+            if opts and opts.get("weak_random"):
+                if not _weak_random_has_security_context(node):
                     continue
 
             findings.append(

@@ -37,3 +37,55 @@ def test_open_constant_ok(tmp_path):
     code = "def f():\n    open('README.md', 'r')\n"
     out = _scan_one(tmp_path, "pt_ok.py", code)
     assert "SKY-D215" not in _rule_ids(out)
+
+
+def test_pathlib_read_text_tainted_join_flags(tmp_path):
+    code = (
+        "from pathlib import Path\n"
+        "BASE = Path('/srv/uploads')\n"
+        "def f(name):\n"
+        "    return (BASE / name).read_text(encoding='utf-8')\n"
+    )
+    out = _scan_one(tmp_path, "pt_pathlib_read.py", code)
+    assert "SKY-D215" in _rule_ids(out)
+
+
+def test_pathlib_name_projection_sanitizes_path_join(tmp_path):
+    code = (
+        "from pathlib import Path\n"
+        "BASE = Path('/srv/uploads')\n"
+        "def f(raw):\n"
+        "    name = Path(raw).name\n"
+        "    return (BASE / name).read_text(encoding='utf-8')\n"
+    )
+    out = _scan_one(tmp_path, "pt_pathlib_name_safe.py", code)
+    assert "SKY-D215" not in _rule_ids(out)
+
+
+def test_string_replace_on_tainted_value_is_not_path_sink(tmp_path):
+    code = "def f(raw):\n    return raw.replace('x', 'y')\n"
+    out = _scan_one(tmp_path, "pt_string_replace_safe.py", code)
+    assert "SKY-D215" not in _rule_ids(out)
+
+
+def test_path_like_global_shadowed_by_string_assignment(tmp_path):
+    code = (
+        "from pathlib import Path\n"
+        "p = Path('/srv/uploads')\n"
+        "def f(raw):\n"
+        "    p = raw\n"
+        "    return p.replace('x', 'y')\n"
+    )
+    out = _scan_one(tmp_path, "pt_path_like_shadow_assign.py", code)
+    assert "SKY-D215" not in _rule_ids(out)
+
+
+def test_path_like_global_shadowed_by_parameter(tmp_path):
+    code = (
+        "from pathlib import Path\n"
+        "p = Path('/srv/uploads')\n"
+        "def f(p):\n"
+        "    return p.replace('x', 'y')\n"
+    )
+    out = _scan_one(tmp_path, "pt_path_like_shadow_param.py", code)
+    assert "SKY-D215" not in _rule_ids(out)
