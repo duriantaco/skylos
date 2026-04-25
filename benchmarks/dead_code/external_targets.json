@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "targets": [
+    {
+      "id": "skylos-demo",
+      "path": "/Users/oha/skylos-demo",
+      "description": "Realistic external FastAPI-style demo repo used for whole-repo dead-code benchmarking.",
+      "taxonomy": ["external_demo", "fastapi", "dynamic_dispatch"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Structured subset of the existing skylos-demo benchmark ground truth."
+      },
+      "scan_paths": ["app", "tests"],
+      "scan": {
+        "confidence": 10,
+        "grep_verify": true
+      },
+      "expect": {
+        "unused": [
+          {"kind": "import", "file": "app/logging.py", "symbol": "math"},
+          {"kind": "import", "file": "app/api/routers/notes.py", "symbol": "datetime"},
+          {"kind": "function", "file": "app/config.py", "symbol": "_is_prod"},
+          {"kind": "function", "file": "app/api/deps.py", "symbol": "get_actor_from_headers"},
+          {"kind": "function", "file": "app/db/crud.py", "symbol": "_row_to_dict"},
+          {"kind": "function", "file": "app/services/notes_services.py", "symbol": "_validate_title"},
+          {"kind": "function", "file": "app/utils/ids.py", "symbol": "weak_token"},
+          {"kind": "variable", "file": "app/main.py", "symbol": "APP_DISPLAY_NAME"},
+          {"kind": "variable", "file": "app/db/crud.py", "symbol": "DEFAULT_PAGE_SIZE"},
+          {"kind": "class", "file": "app/core/errors.py", "symbol": "DemoError"},
+          {"kind": "class", "file": "app/db/models.py", "symbol": "Tag"},
+          {"kind": "class", "file": "app/services/payment_services.py", "symbol": "PayPal"}
+        ],
+        "used": [
+          {"kind": "function", "file": "app/main.py", "symbol": "create_app"},
+          {"kind": "variable", "file": "app/main.py", "symbol": "app"},
+          {"kind": "function", "file": "app/api/deps.py", "symbol": "get_db"},
+          {"kind": "function", "file": "app/db/crud.py", "symbol": "create_note"},
+          {"kind": "class", "file": "app/config.py", "symbol": "Settings"},
+          {"kind": "function", "file": "app/logging.py", "symbol": "configure_logging"},
+          {"kind": "variable", "file": "app/api/routers/notes.py", "symbol": "router"},
+          {"kind": "function", "file": "app/services/export_service.py", "symbol": "export_csv"},
+          {"kind": "function", "file": "app/api/handlers.py", "symbol": "handle_create"},
+          {"kind": "class", "file": "app/core/registry.py", "symbol": "EmailHandler"},
+          {"kind": "function", "file": "app/services/tasks.py", "symbol": "send_welcome_email"},
+          {"kind": "function", "file": "app/core/events.py", "symbol": "on_note_created_log"}
+        ]
+      }
+    }
+  ]
+}

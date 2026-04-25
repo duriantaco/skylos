@@ -3,7 +3,7 @@
   "cases": [
     {
       "id": "complexity-hotspot",
-      "path": "../quality_benchmarks/fixtures/complexity_hotspot/app.py",
+      "path": "../quality/fixtures/complexity_hotspot/app.py",
       "description": "Branch-heavy handler should be surfaced under the owning function symbol.",
       "taxonomy": ["complexity", "control_flow"],
       "importance": "critical",
@@ -26,7 +26,7 @@
     },
     {
       "id": "inconsistent-return",
-      "path": "../quality_benchmarks/fixtures/inconsistent_return/module.py",
+      "path": "../quality/fixtures/inconsistent_return/module.py",
       "description": "Mixed return paths should be attached to the owning function.",
       "taxonomy": ["control_flow"],
       "importance": "critical",
@@ -47,7 +47,7 @@
     },
     {
       "id": "empty-error-handler",
-      "path": "../quality_benchmarks/fixtures/empty_error_handler/module.py",
+      "path": "../quality/fixtures/empty_error_handler/module.py",
       "description": "Silent exception swallowing should be attached to parse_payload.",
       "taxonomy": ["exception_handling"],
       "importance": "critical",
@@ -70,7 +70,7 @@
     },
     {
       "id": "clean-module",
-      "path": "../quality_benchmarks/fixtures/clean_module/module.py",
+      "path": "../quality/fixtures/clean_module/module.py",
       "description": "Clean module should stay quiet under agent review.",
       "taxonomy": ["precision_guard"],
       "importance": "critical",

@@ -184,6 +184,22 @@ class TestInputValidationRemoval:
         assert any(f["control_type"] == "validation" for f in findings)
         assert any("Validation/sanitization" in f["message"] for f in findings)
 
+    def test_bare_escape_call_removed(self):
+        diff = _make_diff(
+            ["    data = escape(user_input)"],
+            ["    data = user_input"],
+        )
+        findings = detect_security_regressions(diff, "views.py")
+        assert any(f["control_type"] == "validation" for f in findings)
+
+    def test_regex_escape_removed_is_not_validation_regression(self):
+        diff = _make_diff(
+            ["    pattern = re.escape(simple_name)"],
+            ["    pattern = simple_name"],
+        )
+        findings = detect_security_regressions(diff, "grep_verify.py")
+        assert not findings
+
     def test_bleach_clean_call_removed(self):
         diff = _make_diff(
             ["    clean = bleach.clean(html_input)"],

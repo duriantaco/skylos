@@ -1,8 +1,8 @@
 ## Benchmark: Skylos vs Vulture (Dead-Code Detection)
 
-> This document covers the dead-code benchmark only. For the fast agent-review benchmark and Codex head-to-head comparisons, see [`agent_review_benchmarks/README.md`](./agent_review_benchmarks/README.md).
+> This document covers the dead-code benchmark only. For the fast agent-review benchmark and Codex head-to-head comparisons, see [`benchmarks/agent_review/README.md`](./benchmarks/agent_review/README.md).
 
-This benchmark compares **Skylos** against **Vulture** on a small but *realistic* FastAPI-style Python repo. The repo is intentionally seeded with a known set of unused code so we can measure detection quality against a “ground truth”.
+This benchmark compares **Skylos** against **Vulture** on labeled dead-code fixtures and an optional realistic FastAPI-style external repo. The fixtures are intentionally seeded with known unused and used symbols so we can measure detection quality against ground truth.
 
 ## What are we measuring?
 
@@ -49,39 +49,35 @@ High recall = misses less dead code.
 
 ---
 
-## Benchmark tables (Skylos vs Vulture)
+## Current Benchmark Tables
 
-### Confidence = 20
-
-| Metric | Skylos | Vulture |
-|--------|--------|---------|
-| True Positives (correctly found) | 29 | 24 |
-| False Positives (flagged but used) | 1 | 2 |
-| False Negatives (missed) | 0 | 5 |
-| Precision | 76.3% | 55.8% |
-| Recall | 100.0% | 82.8% |
-
-### Confidence = 60
+Internal deterministic suite:
 
 | Metric | Skylos | Vulture |
 |--------|--------|---------|
-| True Positives (correctly found) | 23 | 24 |
-| False Positives (flagged but used) | 1 | 2 |
-| False Negatives (missed) | 6 | 5 |
-| Precision | 71.9% | 55.8% |
-| Recall | 79.3% | 82.8% |
+| True Positives (correctly found) | 13 | 13 |
+| False Positives (flagged but used) | 0 | 6 |
+| False Negatives (missed) | 0 | 0 |
+| True Negatives (kept quiet) | 20 | 14 |
+| Precision | 100.0% | 68.42% |
+| Recall | 100.0% | 100.0% |
 
-### Confidence = 80
+External `/Users/oha/skylos-demo` target:
 
-> Observed behavior: **Skylos at 80 == Skylos at 60** for this repo, because no findings fall in the 60–79 confidence band.
+| Metric | Skylos |
+|--------|--------|
+| True Positives (correctly found) | 12 |
+| False Positives (flagged but used) | 0 |
+| False Negatives (missed) | 0 |
+| True Negatives (kept quiet) | 12 |
+| Precision | 100.0% |
+| Recall | 100.0% |
 
-| Metric | Skylos | Vulture |
-|--------|--------|---------|
-| True Positives (correctly found) | 23 | 5 |
-| False Positives (flagged but used) | 1 | 0 |
-| False Negatives (missed) | 6 | 24 |
-| Precision | 71.9% | 62.5% |
-| Recall | 79.3% | 17.2% |
+Run the same labeled internal suite against Vulture with:
+
+```bash
+python scripts/dead_code_benchmark.py --scanner vulture
+```
 
 ---
 
