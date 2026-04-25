@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"skylos/engines/go/internal/output"
@@ -150,7 +151,13 @@ func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 	}
 
 	if funcs, ok := cmdSinks[pkg]; ok && contains(funcs, funcName) {
-		if a.hasVariableArgs(call) {
+		unsafeCommand := false
+		if pkg == "os/exec" && (funcName == "Command" || funcName == "CommandContext") {
+			unsafeCommand = a.isUnsafeExecCommand(call, funcName)
+		} else {
+			unsafeCommand = a.hasVariableArgs(call)
+		}
+		if unsafeCommand {
 			a.addFinding(call, path, "SKY-G212", "CRITICAL", "Command Injection",
 				"Command executed with variable arguments. Validate and sanitize all inputs.")
 		}
@@ -370,6 +377,137 @@ func (a *Analyzer) hasVariableArgs(call *ast.CallExpr) bool {
 		}
 	}
 	return false
+}
+
+func stringLiteralValue(expr ast.Expr) (string, bool) {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", false
+	}
+	value, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return "", false
+	}
+	return value, true
+}
+
+func shellBaseName(name string) string {
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	parts := strings.Split(normalized, "/")
+	base := strings.ToLower(parts[len(parts)-1])
+	return strings.TrimSuffix(base, ".exe")
+}
+
+func isShellCommandName(name string) bool {
+	base := shellBaseName(name)
+	switch base {
+	case "sh", "bash", "dash", "zsh", "ksh", "cmd", "powershell", "pwsh":
+		return true
+	default:
+		return false
+	}
+}
+
+func posixShellOptionTakesOperand(value string) bool {
+	lower := strings.ToLower(value)
+	switch lower {
+	case "-o", "-O", "--init-file", "--rcfile":
+		return true
+	default:
+		return false
+	}
+}
+
+func shellCommandArgIndex(shellName string, args []ast.Expr) (int, bool) {
+	base := shellBaseName(shellName)
+	switch base {
+	case "sh", "bash", "dash", "zsh", "ksh":
+		for i := 1; i < len(args); i++ {
+			value, ok := stringLiteralValue(args[i])
+			if !ok {
+				return 0, false
+			}
+			if value == "--" {
+				return 0, false
+			}
+			if posixShellOptionTakesOperand(value) {
+				if i+1 >= len(args) {
+					return 0, false
+				}
+				i++
+				continue
+			}
+			if strings.HasPrefix(value, "-") && !strings.HasPrefix(value, "--") && strings.Contains(value[1:], "c") {
+				if i+1 < len(args) {
+					return i + 1, true
+				}
+				return 0, false
+			}
+			if !strings.HasPrefix(value, "-") {
+				return 0, false
+			}
+		}
+	case "cmd":
+		for i := 1; i < len(args); i++ {
+			value, ok := stringLiteralValue(args[i])
+			if !ok {
+				return 0, false
+			}
+			if strings.EqualFold(value, "/c") || strings.EqualFold(value, "/k") {
+				if i+1 < len(args) {
+					return i + 1, true
+				}
+				return 0, false
+			}
+			if !strings.HasPrefix(value, "/") {
+				return 0, false
+			}
+		}
+	case "powershell", "pwsh":
+		for i := 1; i < len(args); i++ {
+			value, ok := stringLiteralValue(args[i])
+			if !ok {
+				continue
+			}
+			normalized := strings.ToLower(value)
+			switch normalized {
+			case "-file", "/file", "-f", "/f":
+				return 0, false
+			case "-command", "-c", "/command", "/c", "-encodedcommand", "-enc", "/encodedcommand", "/enc":
+				if i+1 < len(args) {
+					return i + 1, true
+				}
+				return 0, false
+			}
+		}
+	}
+	return 0, false
+}
+
+func (a *Analyzer) isUnsafeExecCommand(call *ast.CallExpr, funcName string) bool {
+	args := call.Args
+	if funcName == "CommandContext" {
+		if len(args) < 2 {
+			return false
+		}
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return false
+	}
+
+	commandName, ok := stringLiteralValue(args[0])
+	if !ok {
+		return a.isVariable(args[0])
+	}
+	if !isShellCommandName(commandName) {
+		return false
+	}
+	commandIndex, ok := shellCommandArgIndex(commandName, args)
+	if !ok {
+		return false
+	}
+	return a.isVariable(args[commandIndex])
 }
 
 func (a *Analyzer) addFinding(node ast.Node, path, ruleID, severity, message, detail string) {

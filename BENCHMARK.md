@@ -177,8 +177,8 @@ of receiving a score.
 | Dead code frozen | seeded dev | Vulture | Java | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
 | Dead code frozen | seeded dev | Ruff | Python | 4 | 0 | 0 | 0 | 16 | 11 | 55.0 |
 | Security frozen | seeded dev | Skylos | Python | 3 | 0 | 10 | 1 | 0 | 7 | 94.32 |
-| Security frozen | seeded dev | Skylos | TypeScript | 1 | 0 | 4 | 0 | 1 | 1 | 91.0 |
-| Security frozen | seeded dev | Skylos | Go | 2 | 0 | 5 | 1 | 0 | 1 | 84.17 |
+| Security frozen | seeded dev | Skylos | TypeScript | 1 | 0 | 5 | 0 | 0 | 1 | 100.0 |
+| Security frozen | seeded dev | Skylos | Go | 2 | 0 | 5 | 0 | 0 | 2 | 100.0 |
 | Security frozen | seeded dev | Bandit | Python | 3 | 0 | 6 | 3 | 4 | 7 | 64.33 |
 | Security frozen | seeded dev | Bandit | TypeScript | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
 | Security frozen | seeded dev | Bandit | Go | 0 | 2 | 0 | 0 | 0 | 0 | N/A |
@@ -189,10 +189,10 @@ of receiving a score.
 These frozen results already show useful gaps to investigate before any public
 claim: Skylos currently misses Python and TypeScript reachability edges, has
 JavaScript dead-code false positives on route-registry exports, misses a Java
-unused method, still has seeded security gaps in TypeScript SSRF and Go command
-precision, misses the seeded Python quality duplicate-branch case, and misses
-most OWASP Java security-flow cases outside weak crypto/hash. Vulture is only
-comparable on the Python dead-code subset.
+unused method, misses the seeded Python quality duplicate-branch case, and
+misses most OWASP Java security-flow cases outside weak crypto/hash. The seeded
+security dev suite is now at full recall with one Python `urljoin` label-review
+false positive. Vulture is only comparable on the Python dead-code subset.
 
 Phase 2 Python security rerun on 2026-04-25 improved frozen `security.dev`
 overall from `TP=17 FP=5 FN=3 TN=9 score=78.15` to
@@ -204,6 +204,13 @@ overall from `TP=17 FP=5 FN=3 TN=9 score=78.15` to
 by `https://...` or `//...` user input, so the detector keeps flagging it and
 the label should be reviewed in the next benchmark version instead of being
 suppressed in the analyzer.
+
+Phase 2b TypeScript/Go security rerun on 2026-04-25 improved frozen
+`security.dev` overall from `TP=19 FP=2 FN=1 TN=9 score=90.78` to
+`TP=20 FP=1 FN=0 TN=10 score=96.52`. TypeScript moved from
+`TP=4 FP=0 FN=1 TN=1 score=91.0` to `TP=5 FP=0 FN=0 TN=1 score=100.0`.
+Go moved from `TP=5 FP=1 FN=0 TN=1 score=84.17` to
+`TP=5 FP=0 FN=0 TN=2 score=100.0`.
 
 ## Benchmark Rules
 
