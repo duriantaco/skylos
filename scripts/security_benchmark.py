@@ -29,13 +29,23 @@ def main() -> int:
         help="Run only the specified benchmark case id. Repeat for multiple ids.",
     )
     parser.add_argument(
+        "--scanner",
+        choices=("skylos", "bandit"),
+        default="skylos",
+        help="Security scanner to score against the same benchmark labels.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Print machine-readable JSON instead of the text summary.",
     )
     args = parser.parse_args()
 
-    summary = run_manifest(args.manifest, selected_cases=set(args.case))
+    summary = run_manifest(
+        args.manifest,
+        selected_cases=set(args.case),
+        scanner=args.scanner,
+    )
     if args.json:
         print(json.dumps(summary, indent=2))
     else:

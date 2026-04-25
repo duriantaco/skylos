@@ -159,10 +159,15 @@ def test_rule_sky_d226_markup_with_local_const_is_not_flagged():
     assert _has_rule(findings, "SKY-D226") is False
 
 
-def test_rule_sky_d226_markup_interpolated_string_flags_even_if_local():
+def test_rule_sky_d226_markup_interpolated_string_with_local_const_not_flagged():
     findings = _scan_src(
         "def f():\n    clean = 'ok'\n    return Markup(f\"<b>{clean}</b>\")\n"
     )
+    assert _has_rule(findings, "SKY-D226") is False
+
+
+def test_rule_sky_d226_markup_interpolated_string_with_taint_flags():
+    findings = _scan_src("def f(user):\n    return Markup(f\"<b>{user}</b>\")\n")
     assert _has_rule(findings, "SKY-D226") is True
 
 

@@ -242,6 +242,158 @@ def test_vulture_scanner_scores_against_manifest(tmp_path, monkeypatch):
     }
 
 
+def test_strict_labels_count_unlabeled_findings_as_false_positives(tmp_path, monkeypatch):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    (case_dir / "app.py").write_text("def extra():\n    return 1\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "strict-label-case",
+                "path": "case",
+                "description": "Synthetic strict-label benchmark case.",
+                "taxonomy": ["basic_detection"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "Test-only fixture.",
+                },
+                "expect": {
+                    "unused": [],
+                    "used": [
+                        {"kind": "function", "file": "app.py", "symbol": "safe"}
+                    ],
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(
+        benchmark,
+        "_scan_case",
+        lambda case_path, case: {
+            "unused_functions": [
+                {"file": str(case_path / "app.py"), "simple_name": "extra"}
+            ]
+        },
+    )
+
+    summary = run_manifest(manifest_path, strict_labels=True)
+
+    assert summary["failure_count"] == 1
+    assert summary["counts"]["false_positives"] == 1
+    assert summary["cases"][0]["failures"][0]["failure_type"] == "unlabeled"
+
+
+def test_ruff_scanner_scores_import_findings(tmp_path, monkeypatch):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    (case_dir / "app.py").write_text("import json\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "ruff-comparison-case",
+                "path": "case",
+                "description": "Synthetic ruff scanner benchmark case.",
+                "taxonomy": ["basic_detection"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "Test-only fixture.",
+                },
+                "expect": {
+                    "unused": [
+                        {"kind": "import", "file": "app.py", "symbol": "json"}
+                    ],
+                    "used": [],
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(benchmark.shutil, "which", lambda name: "/usr/bin/ruff")
+
+    def fake_run(cmd, **kwargs):
+        assert cmd[:2] == ["/usr/bin/ruff", "check"]
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout=json.dumps(
+                [
+                    {
+                        "code": "F401",
+                        "filename": "app.py",
+                        "location": {"row": 1, "column": 8},
+                        "message": "`json` imported but unused",
+                    }
+                ]
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(benchmark.subprocess, "run", fake_run)
+
+    summary = run_manifest(manifest_path, scanner="ruff")
+
+    assert summary["scanner"] == "ruff"
+    assert summary["failure_count"] == 0, format_summary(summary)
+    assert summary["counts"]["true_positives"] == 1
+
+
+def test_python_only_scanners_skip_non_python_cases(tmp_path, monkeypatch):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    (case_dir / "main.go").write_text("package main\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "go-case",
+                "path": "case",
+                "description": "Synthetic Go benchmark case.",
+                "languages": ["go"],
+                "taxonomy": ["go"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "Test-only fixture.",
+                },
+                "expect": {
+                    "unused": [
+                        {"kind": "function", "file": "main.go", "symbol": "stale"}
+                    ],
+                    "used": [],
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    def fail_scan(*args, **kwargs):
+        raise AssertionError("scanner should not run for unsupported languages")
+
+    monkeypatch.setattr(benchmark, "_scan_vulture_case", fail_scan)
+
+    summary = run_manifest(manifest_path, scanner="vulture")
+
+    assert summary["case_count"] == 0
+    assert summary["skipped_case_count"] == 1
+    assert summary["skipped_cases"][0]["id"] == "go-case"
+
+
 def test_same_external_import_in_another_file_does_not_rescue_unused_local_import(tmp_path):
     (tmp_path / "unused_import.py").write_text(
         "from datetime import datetime\n", encoding="utf-8"

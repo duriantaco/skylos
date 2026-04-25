@@ -1,266 +1,356 @@
-## Benchmark: Skylos vs Vulture (Dead-Code Detection)
+# Skylos Benchmarks
 
-> This document covers the dead-code benchmark only. For the fast agent-review benchmark and Codex head-to-head comparisons, see [`benchmarks/agent_review/README.md`](./benchmarks/agent_review/README.md).
+This document separates two things that must not be mixed:
 
-This benchmark compares **Skylos** against **Vulture** on labeled dead-code fixtures and an optional realistic FastAPI-style external repo. The fixtures are intentionally seeded with known unused and used symbols so we can measure detection quality against ground truth.
+- **Regression benchmarks:** checked into this repo, run in CI/local testing, and
+  used to prevent known bugs from returning.
+- **Independent benchmarks:** frozen before Skylos runs, built from external
+  corpora, and used for credible tool-comparison claims.
 
-## What are we measuring?
+The current `benchmarks/` directory is a regression benchmark suite. It is useful
+and intentionally strict, but it is not an independent proof that Skylos is
+state of the art.
 
-We’re measuring **dead-code detection quality** at different **confidence thresholds** (operating points).
+## Current Regression Suites
 
-- Lower threshold (e.g. 20) = **aggressive mode**
-  - reports more “unused” findings
-  - tends to maximize **recall**
-- Higher threshold (e.g. 60/80) = **conservative mode**
-  - reports fewer findings (filters out lower-confidence ones)
-  - tends to reduce noise, but can lower **recall**
+### Dead Code
 
-If confidence=60 and confidence=80 produce the same results, that means there are **no findings with confidence scores in the 60–79 range**, so raising the cutoff doesn’t filter anything additional.
-
-
-### True Positives (TP)
-Items in `EXPECTED_UNUSED` that the tool flags as unused.
-
-> “Correctly found dead code.”
-
-### False Negatives (FN)
-Items in `EXPECTED_UNUSED` that the tool **misses**.
-
-> “Dead code that the tool failed to detect.”
-
-### False Positives (FP)
-Items in `ACTUALLY_USED` that the tool flags as unused.
-
-> “Noise: things that are actually used but the tool says are dead.”
-
-### Precision
-How often a tool’s reported dead-code findings are correct.
-
-- `precision = TP / (TP + FP)`
-
-High precision = fewer false alarms.
-
-### Recall
-How much of the known dead code the tool successfully finds.
-
-- `recall = TP / (TP + FN)`
-
-High recall = misses less dead code.
-
----
-
-## Current Benchmark Tables
-
-Internal deterministic suite:
-
-| Metric | Skylos | Vulture |
-|--------|--------|---------|
-| True Positives (correctly found) | 13 | 13 |
-| False Positives (flagged but used) | 0 | 6 |
-| False Negatives (missed) | 0 | 0 |
-| True Negatives (kept quiet) | 20 | 14 |
-| Precision | 100.0% | 68.42% |
-| Recall | 100.0% | 100.0% |
-
-External `/Users/oha/skylos-demo` target:
-
-| Metric | Skylos |
-|--------|--------|
-| True Positives (correctly found) | 12 |
-| False Positives (flagged but used) | 0 |
-| False Negatives (missed) | 0 |
-| True Negatives (kept quiet) | 12 |
-| Precision | 100.0% |
-| Recall | 100.0% |
-
-Run the same labeled internal suite against Vulture with:
+Run:
 
 ```bash
-python scripts/dead_code_benchmark.py --scanner vulture
+python scripts/dead_code_benchmark.py --strict-labels
+python scripts/dead_code_compare_scanners.py
 ```
 
----
+Latest local result:
 
-## What we are doing
+| Scanner | Cases | Skipped | TP | FP | FN | TN | Precision | Recall | F1 | Score |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Skylos | 16 | 0 | 41 | 0 | 0 | 59 | 1.0 | 1.0 | 1.0 | 100.0 |
+| Vulture | 13 | 3 | 34 | 25 | 0 | 25 | 0.5763 | 1.0 | 0.7312 | 77.29 |
+| Ruff | 13 | 3 | 2 | 0 | 32 | 50 | 1.0 | 0.0588 | 0.1111 | 62.35 |
 
-1. **Define ground truth**
-   - `EXPECTED_UNUSED`: a curated list of symbols that are *truly unused* in the repo.
-     - Includes unused imports, helper functions, constants, and unused classes/schemas/models.
-   - `ACTUALLY_USED`: a curated list of symbols that are *definitely used* (should not be flagged).
+Vulture and Ruff are Python-only baselines here, so non-Python cases are
+reported as skipped instead of counted as misses.
 
-2. **Run both tools**
-   - Run Skylos with JSON output (and a confidence threshold).
-   - Run Vulture with a min-confidence threshold.
+The dead-code suite covers Python framework liveness, package entrypoints,
+plugin loading, SQLAlchemy models, and cross-language Go, Java, TypeScript, and
+JavaScript reachability cases.
 
-3. **Normalize outputs**
-   - Convert paths to consistent relative paths (e.g. `app/...`).
-   - Normalize symbol names where tools disagree on representation (e.g. alias imports).
-     - Example: `from x import format_money as fmt_money` may be reported as either `fmt_money` or `format_money` depending on tool. We canonicalize them so comparison is fair.
+### External Demo Target
 
-4. **Compute correctness**
-   - Convert each tool’s output into a set of `(file, symbol)` pairs.
-   - Compare those sets to ground truth sets.
+Run:
 
-5. **Print summary + detailed tables**
-   - A summary table of TP/FP/FN + precision/recall.
-   - A per-ground-truth checklist of what each tool found/missed.
-   - Any false positives (things marked used but flagged).
-   - Any “other” findings not in either list.
+```bash
+python scripts/dead_code_benchmark.py --target /Users/oha/skylos-demo
+```
 
----
+Latest local result:
 
-## What is being tested (and why we think it's realistic)
+| Target | TP | FP | FN | TN | Precision | Recall | Unlabeled |
+|:---|---:|---:|---:|---:|---:|---:|---:|
+| `/Users/oha/skylos-demo` | 12 | 0 | 0 | 12 | 1.0 | 1.0 | 92 |
 
-This repo is structured like a real service:
+The demo target is useful as a realistic smoke test, but the `92` unlabeled
+findings mean it is not a strict independent benchmark yet. Those findings need
+manual triage before being counted as ground truth.
 
-- FastAPI app entrypoint + router registration
-- Layered architecture: routers → services → db/crud/models → schemas
-- Typical “real repo” habits:
-  - helper functions that are left around but never called
-  - unused imports after refactors
-  - unused schemas/models from feature churn
-  - integration code (webhooks, slack/github clients) with a mix of used + unused helpers
+### Security
 
-We are explicitly testing:
+Run:
 
-### 1) Basic dead-code detection
-- Unused imports
-- Unused private helpers (`_normalize_query`, `_row_to_dict`, etc.)
-- Unused constants (`DEFAULT_PAGE_SIZE`, etc.)
+```bash
+python scripts/security_benchmark.py
+python scripts/security_compare_scanners.py
+python scripts/security_benchmark.py --scanner bandit
+```
 
-Why it matters: this is the bread-and-butter of dead-code tools.
+Latest local result:
 
-### 2) Cross-file dependency usage
-Symbols that are defined in one layer but used in another:
-- routers call service functions
-- services call CRUD functions
-- CRUD uses models / sessions
+| Scanner | Cases | Skipped | TP | FP | FN | TN | Precision | Recall | F1 | Score |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Skylos | 20 | 0 | 11 | 0 | 0 | 10 | 1.0 | 1.0 | 1.0 | 100.0 |
+| Bandit | 14 | 6 | 1 | 1 | 7 | 6 | 0.5 | 0.125 | 0.2 | 47.14 |
 
-Why it matters: real dead-code analysis is mostly about cross-file reference tracking.
+Bandit is a Python security baseline, so Go, Java, and TypeScript cases are
+skipped for Bandit.
 
-### 3) Framework “implicit usage” (FastAPI wiring)
-FastAPI endpoints can be “used” even if nothing directly calls them:
-- `@router.get(...)` handlers are invoked by the framework at runtime
-- router objects become active when included via `include_router(...)`
+The security suite covers SQL injection, SSRF, command injection, YAML loader
+precision, path traversal, XSS, open redirect, JWT verification bypass, CORS,
+Go Zip Slip, Java path traversal, and TypeScript eval.
 
-Why it matters: many dead-code tools struggle here and produce false positives (noise).
+### Quality
 
-### 4) Name-collision / heuristic traps
-A deliberate example where method names collide (e.g. `process` exists on multiple classes):
-- One class method is used
-- Another class method with the same name is not used
+Run:
 
-Why it matters: naive approaches may overgeneralize “method name is used somewhere ⇒ all methods with that name are used”.
+```bash
+python scripts/quality_benchmark.py
+```
 
-### 5) Alias-import reporting differences
-Imports like `import x as y` can be represented differently by different tools.
-We normalize this so we are measuring detection quality, not string formatting.
+Latest local result:
 
----
+| Cases | Failures | Recall | Absence Guard | Latency | Score |
+|---:|---:|---:|---:|---:|---:|
+| 6 | 0 | 1.0 | 1.0 | 1.0 | 100.0 |
 
-## Why we think this is a good test
+### Agent Review
 
-This benchmark is “good” because it is:
+Run:
 
-### Ground-truthed
-We don’t just eyeball outputs; we compare against a known list of unused and used items.
+```bash
+python scripts/agent_review_benchmark.py
+```
 
-### Mixed difficulty
-It contains:
-- easy cases (unused import)
-- medium cases (unused helper in a services layer)
-- hard/realistic cases (framework wiring, alias imports, name collisions)
+Latest local result:
 
-### Fair comparison
-We normalize tool outputs to avoid penalizing one tool for naming conventions (e.g. alias reporting).
+| Cases | Failures | Recall | Absence Guard | Latency | Score |
+|---:|---:|---:|---:|---:|---:|
+| 25 | 0 | 1.0 | 1.0 | 1.0 | 100.0 |
 
-### Actionable
-The outputs directly map to:
-- what the tool should catch
-- what it missed
-- what it incorrectly flagged
+## Why Skylos Scores Highly Here
 
----
+Skylos scores highly on the checked-in regression suites because the suites are
+small, labeled, and the analyzer has already been improved against several of
+their failures. That is exactly what a regression suite is for.
 
-## When this benchmark would NOT be “good” (and what we’d change)
+It does **not** mean:
 
-To keep this benchmark credible, we must ensure:
+- Skylos is universally better than every competitor.
+- The current benchmark is independent.
+- The current benchmark covers the full industry problem space.
+- A `100.0` score here should be used as a marketing claim without caveats.
 
-### A) Ground truth stays correct
-If `EXPECTED_UNUSED` contains items that are actually used internally (e.g. dataclasses instantiated within their own module), then we inflate false negatives and distort recall.
-**Fix:** only include truly unused items.
+## Golden Benchmark Status
 
-### B) ACTUALLY_USED is truly used
-If `ACTUALLY_USED` includes things that are not actually referenced anywhere (e.g. a helper that isn’t imported/called), then we inflate false positives and distort precision.
-**Fix:** only list items with a real call-site/import path.
+The current independent corpus is frozen as `golden-v0.2`.
 
-### C) We don’t count non-app files unintentionally
-If the tool scans `benchmark.py` itself, “Other Findings” will include benchmark helpers and dilute the demo.
-**Fix:** run tools on `app/` only.
+This is a real locked baseline, not a mutable draft. It is still a small first
+version, so broad industry claims need the remaining requirements below:
 
-### D) We should evolve the test as Skylos improves
-Once Skylos handles these patterns well, we can add additional realistic scenarios:
-- dynamically imported plugins (entrypoints / registries)
-- pydantic validators and model config usage
-- FastAPI dependencies (`Depends(...)`) used via injection
-- conditional imports / typing-only imports
+| Requirement | Current status |
+|:---|:---|
+| External corpus provenance with repo, commit, license, and fixture origin | Partial |
+| Labels frozen before Skylos or competitor runs | Done for `golden-v0.2` |
+| Independent label review, not derived from Skylos output | Missing |
+| Dev/public/holdout splits with no analyzer tuning on holdout | Missing |
+| Per-language and per-category minimum case counts | Missing |
+| Competitor versions and configs locked in a benchmark lockfile | Done for current runnable tools |
+| Raw tool outputs retained and normalized by adapters | Done for current runnable tools |
+| TP/FP/FN/TN, TPR/FPR, precision/recall/F1 reported per language | Done |
+| Unsupported scanner/language pairs reported separately | Done |
+| Before/after Skylos runs recorded before analyzer fixes | Partial |
+| Statistical confidence intervals or rank stability for large suites | Missing |
+| Reproducible runner environment, ideally Docker-backed | Missing |
 
----
+Until those boxes are closed, the checked-in numbers should be read as
+regression evidence only.
 
-## Summary
+Implementation lives in a sibling local corpus at `../skylos-benchmarks`. That
+corpus is intentionally outside this analyzer repo. The current manifest set is
+frozen as `golden-v0.2`; each manifest has `label_state: frozen`, and exact
+manifest, harness, and result hashes are recorded in
+`../skylos-benchmarks/benchmark.lock.json`.
 
-This benchmark compares Skylos vs Vulture by:
-- running both tools
-- normalizing their outputs
-- measuring TP/FP/FN against curated ground truth
-- reporting precision/recall plus detailed per-item results
+The first external corpus has also been materialized there:
 
+- OWASP Benchmark Java cloned at
+  `c13134045a3964c4159889afdf065f09eb70b925`
+- `expectedresults-1.2.csv` imported into
+  `manifests/security.owasp-java.dev.json`
+- 240 OWASP Java cases currently validate as a frozen manifest
 
-## Expected Skylos Findings (Demo)
+Current frozen `golden-v0.2` results from `../skylos-benchmarks` are split by suite,
+tool, and language. Unsupported scanner/language pairs are marked `N/A` instead
+of receiving a score.
 
-This repo intentionally contains unused imports / functions / variables / classes so Skylos has something to detect.
+| Suite | Corpus | Tool | Language | Cases Run | Skipped | TP | FP | FN | TN | Score |
+|:---|:---|:---|:---|---:|---:|---:|---:|---:|---:|---:|
+| Dead code frozen | seeded dev | Skylos | Python | 4 | 0 | 14 | 1 | 2 | 11 | 90.38 |
+| Dead code frozen | seeded dev | Skylos | TypeScript | 2 | 0 | 5 | 0 | 1 | 3 | 92.5 |
+| Dead code frozen | seeded dev | Skylos | JavaScript | 1 | 0 | 3 | 2 | 0 | 1 | 72.67 |
+| Dead code frozen | seeded dev | Skylos | Go | 1 | 0 | 3 | 0 | 0 | 1 | 100.0 |
+| Dead code frozen | seeded dev | Skylos | Java | 1 | 0 | 1 | 0 | 1 | 1 | 77.5 |
+| Dead code frozen | seeded dev | Vulture | Python | 4 | 0 | 14 | 2 | 2 | 10 | 86.67 |
+| Dead code frozen | seeded dev | Vulture | TypeScript | 0 | 2 | 0 | 0 | 0 | 0 | N/A |
+| Dead code frozen | seeded dev | Vulture | JavaScript | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
+| Dead code frozen | seeded dev | Vulture | Go | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
+| Dead code frozen | seeded dev | Vulture | Java | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
+| Dead code frozen | seeded dev | Ruff | Python | 4 | 0 | 0 | 0 | 16 | 11 | 55.0 |
+| Security frozen | seeded dev | Skylos | Python | 3 | 0 | 8 | 4 | 2 | 7 | 72.06 |
+| Security frozen | seeded dev | Skylos | TypeScript | 1 | 0 | 4 | 0 | 1 | 1 | 91.0 |
+| Security frozen | seeded dev | Skylos | Go | 2 | 0 | 5 | 1 | 0 | 1 | 84.17 |
+| Security frozen | seeded dev | Bandit | Python | 3 | 0 | 6 | 3 | 4 | 7 | 64.33 |
+| Security frozen | seeded dev | Bandit | TypeScript | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
+| Security frozen | seeded dev | Bandit | Go | 0 | 2 | 0 | 0 | 0 | 0 | N/A |
+| Security frozen | OWASP Java dev | Skylos | Java | 240 | 0 | 17 | 0 | 103 | 120 | 61.38 |
+| Quality frozen | seeded dev | Skylos | Python | 1 | 0 | 0 | 0 | 1 | 1 | 55.0 |
+| Agent review frozen | seeded dev | Skylos | Python | 1 | 0 | 1 | 0 | 0 | 1 | 100.0 |
 
-### Unused Imports
-- `app/logging.py`: `import math`
-- `app/api/routers/notes.py`: `from datetime import datetime`
-- `app/api/deps.py`: `from app.config import get_settings`
-- `app/api/routers/reports.py`: `from app.utils.formatters import format_money as fmt_money`
-- `app/integrations/bootstrap.py", "flask"`
-- `app/integrations/bootstrap.py", "sys"`
-- `app/integrations/slack.py", "Tuple"`
+These frozen results already show useful gaps to investigate before any public
+claim: Skylos currently misses Python and TypeScript reachability edges, has
+JavaScript dead-code false positives on route-registry exports, misses a Java
+unused method, has seeded security false positives around sanitized/safe flows,
+misses the seeded Python quality duplicate-branch case, and misses most OWASP
+Java security-flow cases outside weak crypto/hash. Vulture is only comparable on
+the Python dead-code subset.
 
-### Unused Functions
-- `app/config.py`: `_is_prod()`
-- `app/api/deps.py`: `get_actor_from_headers()`
-- `app/api/routers/notes.py`: `_normalize_query()`
-- `app/db/session.py`: `_drop_all()`
-- `app/db/crud.py`: `_row_to_dict()`
-- `app/services/notes_services.py`: `_validate_title()`
-- `app/utils/ids.py`: `slugify()`
-- `app/utils/formatters.py`: `format_money()`
+## Benchmark Rules
 
-# Method-name collision / trap case (intentionally dead)
-- `app/services/payment_services.py`: `process`
+Checked-in regression benchmarks follow these rules:
 
-# Integrations (wired in; these remain unused)
-- `app/integrations/http_client.py`: `request_text()`
-- `app/integrations/webhook_signing.py`: `verify_hmac_sha256_prefixed()`
-- `app/integrations/slack.py`: `build_finding_blocks()`
-- `app/integrations/github.py`: `find_issue_by_title()`
-- `app/integrations/metrics.py`: `timed_request()`
+- Labels are explicit in manifests.
+- Strict dead-code mode counts unlabeled findings as false positives.
+- Positive and negative cases are both required for high-risk rules.
+- Unsupported scanner/language pairs are skipped, not counted as failures.
+- Competitor commands should use documented, reasonable configs.
 
-### Unused Variables / Constants
-- `app/main.py`: `APP_DISPLAY_NAME`
-- `app/db/crud.py`: `DEFAULT_PAGE_SIZE`
-- `app/utils/ids.py`: `DEFAULT_REQUEST_ID`
+Independent benchmarks add stricter rules:
 
-# Integrations (wired in; these remain unused)
-- `app/integrations/http_client.py`: `DEFAULT_HEADERS`
-- `app/integrations/metrics.py`: `_queue_depth`
+- Labels freeze before Skylos runs.
+- Corpora come from external sources or real OSS commits, not Skylos output.
+- Development, public regression, and holdout splits stay separate.
+- Any label change after a run is treated as a benchmark bug and version bump.
+- Before/after Skylos results are both recorded before analyzer fixes land.
 
-### Unused Classes / Models / Schemas
-- `app/core/errors.py`: `class DemoError(Exception)`
-- `app/db/models.py`: `class Tag(Base)`
-- `app/schemas/notes.py`: `class NoteInternal(BaseModel)`
+## Independent Benchmark Design
 
-The entire codebase can be found in: https://github.com/duriantaco/skylos-demo
+The independent benchmark should live outside this analyzer repo or in a
+separate benchmark repo once it is ready. The analyzer repo can keep fixtures
+that protect known behavior, but the credible comparison corpus should not be
+tuned while Skylos implementation work is happening.
+
+Recommended layout:
+
+```text
+skylos-benchmarks/
+  benchmark.lock.json
+  manifests/
+    dead_code.dev.json
+    dead_code.holdout.json
+    security.dev.json
+    security.holdout.json
+    quality.dev.json
+    quality.holdout.json
+    agent_review.dev.json
+    agent_review.holdout.json
+  corpora/
+  labels/
+  runners/
+  scorers/
+  tool_configs/
+  results/
+```
+
+### Dead-Code Independence
+
+Use three layers:
+
+- semantic microcases from documented tool/language behavior
+- seeded dead-code injections in real OSS repos, with the injection patch saved
+  separately from the expected labels
+- real cleanup PRs where removed symbols can be validated by commit history,
+  package exports, references, tests, or maintainer intent
+
+The minimum useful matrix is Python, TypeScript/JavaScript, Go, and Java across:
+
+- unused files
+- unused exports/functions/classes/methods
+- unused imports and dependencies
+- framework-owned entrypoints that must stay quiet
+- dynamic/plugin entrypoints that must stay quiet
+- dead-code clusters and mutually recursive unused components
+- generated/build/test/config code that should be excluded or separately scoped
+
+Competitors should include Vulture, Ruff/Pyflakes, ESLint/TypeScript
+`noUnusedLocals`, staticcheck-style Go checks, and Java unused-code tools where
+available. JS/TS comparisons should include Knip-style project graph checks, not
+only single-file lint rules.
+
+### Security Independence
+
+Use external corpora and scoring patterns from:
+
+- OWASP Benchmark expected-results style cases
+- NIST Juliet/SARD flawed and non-flawed cases
+- NIST SATE-style real/injected vulnerability programs
+- Semgrep and CodeQL rule tests where licensing allows
+- gosec, SpotBugs/FindSecBugs, PMD, Bandit, and Semgrep competitor outputs
+
+Every CWE/category should include vulnerable and safe cases.
+
+The minimum useful matrix is Python, TypeScript/JavaScript, Go, and Java across:
+
+- SQL/code/command injection
+- path traversal and archive extraction
+- SSRF and open redirect
+- XSS/template injection
+- unsafe deserialization
+- weak crypto/randomness/token verification
+- CORS and auth/session misconfiguration
+- safe sanitizer variants and constant-only variants
+
+### Quality Independence
+
+Split quality into two tracks:
+
+- static smell detection: complexity, long functions, resource leaks,
+  inconsistent returns, broad exceptions, duplicate branches, async blocking
+- real bug/fix corpora: Defects4J, BugsInPy/PyBugHive, QuixBugs, Bears, or
+  similar reproducible datasets
+
+### Agent-Review Independence
+
+Follow SWE-bench-style evaluation:
+
+- real issue or bug/fix task
+- hidden fail-to-pass and pass-to-pass tests for patch tasks
+- clean negative tasks for precision
+- Docker or otherwise reproducible environments
+- record model, prompt hash, retry budget, token cost, runtime, and pass@1
+
+## Research References
+
+These are the external benchmark patterns the golden suite should follow:
+
+- [OWASP Benchmark](https://owasp.org/www-project-benchmark/): executable
+  vulnerable and non-vulnerable test cases with expected-results files and
+  scorecard tooling.
+- [NIST SAMATE/SARD](https://www.nist.gov/itl/ssd/software-quality-group/samate):
+  documented weakness corpora and SATE tool-evaluation programs.
+- [NIST Juliet](https://www.nist.gov/publications/juliet-11-cc-and-java-test-suite):
+  large synthetic C/C++ and Java flaw corpus with known bad and good variants.
+- [Semgrep rule tests](https://semgrep.dev/docs/writing-rules/testing-rules):
+  positive and negative annotations for false-negative and false-positive
+  protection.
+- [CodeQL query metadata](https://codeql.github.com/docs/writing-codeql-queries/metadata-for-codeql-queries/):
+  precision/severity metadata and path-problem reporting conventions.
+- [SWE-bench](https://www.swebench.com/SWE-bench/): real GitHub issue
+  evaluation with reproducible environments and pass/fail tests.
+- [Defects4J](https://github.com/rjust/defects4j),
+  [BugsInPy](https://github.com/soarsmu/BugsInPy), and
+  [PyBugHive](https://pybughive.github.io/): real bug/fix corpora for quality
+  and agent-review tracks.
+
+## Validation Commands
+
+Current local validation for this benchmark milestone:
+
+```bash
+python scripts/dead_code_benchmark.py --strict-labels
+python scripts/dead_code_compare_scanners.py
+python scripts/dead_code_benchmark.py --target /Users/oha/skylos-demo
+python scripts/security_benchmark.py
+python scripts/security_compare_scanners.py
+python scripts/security_benchmark.py --scanner bandit
+python scripts/quality_benchmark.py
+python scripts/agent_review_benchmark.py
+python -m pytest -q
+/opt/homebrew/bin/ruff check skylos/dead_code_benchmark.py skylos/security_benchmark.py skylos/analyzer.py skylos/penalties.py skylos/rules/danger/danger_web/xss_flow.py scripts/dead_code_benchmark.py scripts/dead_code_compare_scanners.py scripts/security_benchmark.py scripts/security_compare_scanners.py test/test_dead_code_benchmark.py test/test_security_benchmark.py test/test_xss_flow.py
+git diff --check
+```
+
+Latest full test run:
+
+```text
+3324 passed, 4 skipped, 3 warnings
+```

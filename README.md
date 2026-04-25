@@ -71,19 +71,35 @@ The core use case is straightforward: run it locally, add it to CI, and gate pul
 6. **Monorepo-aware TS resolution and reachability:** Skylos uses declared workspaces and importer-local direct `tsconfig` project references during TypeScript package resolution, and it keeps workspace package entrypoints alive during dead-file and unnecessary-export analysis.
 7. **AI defense now reaches TS repos too:** `skylos discover` and `skylos defend` can now pick up direct TypeScript LLM integrations in Node / Next-style codepaths as a beta surface.
 
-### Why Skylos over Vulture for Python dead code detection?
+### Benchmark Status
 
-| | Skylos | Vulture |
+Skylos currently passes the checked-in regression benchmark suites, but those
+suites are not independent proof of state-of-the-art performance. Independent
+benchmarking needs frozen labels, external corpora, holdout splits, and
+before/after runs before analyzer fixes.
+
+Current status: the in-repo suite is a regression gate, not a golden benchmark.
+`BENCHMARK.md` now tracks the missing golden-benchmark requirements explicitly.
+The independent corpus lives in a separate sibling workspace
+(`../skylos-benchmarks`) so frozen labels and external corpora can evolve
+outside the analyzer implementation repo. The current independent manifest set
+is frozen as `golden-v0.2`, with exact manifest, harness, and result hashes in
+`../skylos-benchmarks/benchmark.lock.json`. Benchmark output is reported by
+`suite -> language -> tool -> score`; unsupported scanner/language pairs are
+shown as not applicable instead of being scored.
+
+| Suite | Skylos Result | Baseline Comparison |
 |:---|:---|:---|
-| **Recall** | **98.1%** (51/52) | 84.6% (44/52) |
-| **False Positives** | **220** | 644 |
-| **Framework-aware** (FastAPI, Django, pytest) | Yes | No |
-| **Security scanning** (secrets, SQLi, SSRF) | Yes | No |
-| **AI-powered analysis** | Yes | No |
-| **CI/CD quality gates** | Yes | No |
-| **TypeScript + Go support** | Yes | No |
+| **Dead code regression** | 16 cases, TP=41 FP=0 FN=0 TN=59 | Vulture: score 77.29; Ruff: score 62.35 |
+| **Security regression** | 20 cases, TP=11 FP=0 FN=0 TN=10 | Bandit: score 47.14 on Python-applicable cases |
+| **Quality regression** | 6 cases, score 100.0 | Regression gate only |
+| **Agent review** | 25 cases, score 100.0 | Regression gate only |
 
-> Benchmarked on 9 popular Python repos (350k+ combined stars) + TypeScript ([consola](https://github.com/unjs/consola)). Every finding manually verified. [Full case study →](#skylos-vs-vulture-benchmark)
+Current external frozen result: on OWASP Benchmark Java, Skylos scores `61.38`
+with `TP=17 FP=0 FN=103 TN=120`, so Java security-flow coverage is the main
+known external gap.
+
+[Benchmark methodology and caveats →](./BENCHMARK.md)
 
 ### 🚀 **New to Skylos? Start with CI/CD Integration**
 
@@ -113,7 +129,7 @@ git add .github/workflows/skylos.yml && git push
 - [Technical Debt Hotspots](#technical-debt-hotspots)
 - [Key Capabilities](#key-capabilities)
 - [Installation](#installation)
-- [Skylos vs Vulture](#skylos-vs-vulture-benchmark)
+- [Benchmarks and Evaluation](#benchmarks-and-evaluation)
 - [Projects Using Skylos](#projects-using-skylos)
 - [How It Works](#how-it-works)
 - [Advanced Workflows](#advanced-workflows)
@@ -570,88 +586,51 @@ After installation, we recommend:
 
 ---
 
-## Skylos vs. Vulture Benchmark
+## Benchmarks and Evaluation
 
-We benchmarked Skylos against Vulture on **9 of the most popular Python repositories on GitHub** — 350k+ combined stars, covering HTTP clients, web frameworks, CLI tools, data validation, terminal UIs, and progress bars. Every single finding was **manually verified** against the source code. No automated labelling, no cherry-picking.
+Skylos has checked-in regression benchmarks for dead code, security, quality,
+and agent review. These are designed to keep known behavior from regressing.
+They are not independent proof that Skylos is universally state of the art.
 
-### Why These 9 Repos?
+Current local regression results:
 
-We deliberately chose projects that stress-test dead code detection in different ways:
+| Suite | Cases | Skylos Result | Baseline Comparison |
+|:---|---:|:---|:---|
+| Dead code | 16 | TP=41 FP=0 FN=0 TN=59, score 100.0 | Vulture score 77.29; Ruff score 62.35 |
+| Security | 20 | TP=11 FP=0 FN=0 TN=10, score 100.0 | Bandit score 47.14 on Python-applicable cases |
+| Quality | 6 | score 100.0 | Regression gate only |
+| Agent review | 25 | score 100.0 | Regression gate only |
 
-| Repository | Stars | What It Tests |
-|:---|---:|:---|
-| [psf/requests](https://github.com/psf/requests) | 53k | `__init__.py` re-exports, Sphinx conf, pytest classes |
-| [pallets/click](https://github.com/pallets/click) | 17k | IO protocol methods (`io.RawIOBase` subclasses), nonlocal closures |
-| [encode/starlette](https://github.com/encode/starlette) | 10k | ASGI interface params, polymorphic dispatch, public API methods |
-| [Textualize/rich](https://github.com/Textualize/rich) | 51k | `__rich_console__` protocol, sentinel vars via `f_locals`, metaclasses |
-| [encode/httpx](https://github.com/encode/httpx) | 14k | Transport/auth protocol methods, zero dead code (pure FP test) |
-| [pallets/flask](https://github.com/pallets/flask) | 69k | Jinja2 template globals, Werkzeug protocol methods, extension hooks |
-| [pydantic/pydantic](https://github.com/pydantic/pydantic) | 23k | Mypy plugin hooks, hypothesis `@resolves`, `__getattr__` config |
-| [fastapi/fastapi](https://github.com/fastapi/fastapi) | 82k | 100+ OpenAPI spec model fields, Starlette base class overrides |
-| [tqdm/tqdm](https://github.com/tqdm/tqdm) | 30k | Keras/Dask callbacks, Rich column rendering, pandas monkey-patching |
+The external `/Users/oha/skylos-demo` dead-code target currently scores
+`TP=12 FP=0 FN=0 TN=12`, but still has `92` unlabeled findings. That target is
+therefore a realistic smoke test, not strict ground truth.
 
-No repo was excluded for having unfavorable results. We include repos where Vulture beats Skylos (click, starlette, tqdm).
+The separate frozen corpus at `../skylos-benchmarks` reports scores as
+`suite -> language -> tool -> score`. Its current external OWASP Java security
+slice scores Skylos at `61.38` with `TP=17 FP=0 FN=103 TN=120`, which points to
+Java security-flow recall as the next benchmark-driven gap.
 
-### Results
+For credible independent claims, Skylos needs a separate benchmark corpus with
+frozen labels, external sources, holdout splits, competitor configs, and
+before/after runs captured before analyzer fixes. The intended methodology is:
 
-| Repository | Dead Items | Skylos TP | Skylos FP | Vulture TP | Vulture FP |
-|:---|---:|---:|---:|---:|---:|
-| psf/requests | 6 | 6 | 35 | 6 | 58 |
-| pallets/click | 7 | 7 | 8 | 6 | 6 |
-| encode/starlette | 1 | 1 | 4 | 1 | 2 |
-| Textualize/rich | 13 | 13 | 14 | 10 | 8 |
-| encode/httpx | 0 | 0 | 6 | 0 | 59 |
-| pallets/flask | 7 | 7 | 12 | 6 | 260 |
-| pydantic/pydantic | 11 | 11 | 93 | 10 | 112 |
-| fastapi/fastapi | 6 | 6 | 30 | 4 | 102 |
-| tqdm/tqdm | 1 | 0 | 18 | 1 | 37 |
-| **Total** | **52** | **51** | **220** | **44** | **644** |
+- keep the in-repo benchmarks as regression gates
+- build independent dead-code cases from real OSS cleanup PRs, seeded real-repo
+  injections, documented language/tool semantics, and JS/TS project graph cases
+  comparable to Knip-style checks
+- build independent security cases from OWASP Benchmark, NIST Juliet/SARD,
+  SATE-style real/injected programs, and Semgrep/CodeQL/gosec-style rule tests
+- split quality into deterministic static smells and real bug/fix corpora such
+  as Defects4J, BugsInPy/PyBugHive, QuixBugs, or Bears
+- evaluate agent review with SWE-bench-style real issues, hidden tests, clean
+  negative tasks, and cost/runtime tracking
+- report TP/FP/FN/TN, precision, recall, F1, false-positive rate, skipped
+  scanner/language pairs, raw tool output, tool versions, and locked configs
 
-| Metric | Skylos | Vulture |
-|:---|:---|:---|
-| **Recall** | **98.1%** (51/52) | 84.6% (44/52) |
-| **False Positives** | **220** | 644 |
-| **Dead items found** | **51** | 44 |
-
-Skylos finds **7 more dead items** than Vulture with **3x fewer false positives**.
-
-### Why Skylos Produces Fewer False Positives
-
-Vulture uses flat name matching — if the bare name `X` appears anywhere as a string or identifier, all definitions named `X` are considered used. This works well for simple cases but drowns in noise on framework-heavy codebases:
-
-- **Flask** (260 Vulture FP): Vulture flags every Jinja2 template global, Werkzeug protocol method, and Flask extension hook. Skylos recognizes Flask/Werkzeug patterns.
-- **Pydantic** (112 Vulture FP): Vulture flags all config class annotations, `TYPE_CHECKING` imports, and mypy plugin hooks. Skylos understands Pydantic model fields and `__getattr__` dynamic access.
-- **FastAPI** (102 Vulture FP): Vulture flags 100+ OpenAPI spec model fields (Pydantic `BaseModel` attributes like `maxLength`, `exclusiveMinimum`). Skylos recognizes these as schema definitions.
-- **httpx** (59 Vulture FP): Vulture flags every transport and auth protocol method. Skylos suppresses interface implementations.
-
-### Where Skylos Still Loses (Honestly)
-
-- **click** (8 vs 6 FP): IO protocol methods (`readable`, `readinto`) on `io.RawIOBase` subclasses — called by Python's IO stack, not by direct call sites.
-- **starlette** (4 vs 2 FP): Instance method calls across files (`obj.method()`) not resolved back to class definitions.
-- **tqdm** (18 vs 37 FP, 0 vs 1 TP): Skylos misses 1 dead function in `__init__.py` because it suppresses `__init__.py` definitions as potential re-exports.
-
-> *Reproduce any benchmark: `cd real_life_examples/{repo} && python3 ../benchmark_{repo}.py`*
->
-> *Full methodology and per-repo breakdowns in the [skylos-demo](https://github.com/duriantaco/skylos-demo) repository.*
-
-### Skylos vs. Knip (TypeScript)
-
-We also benchmarked Skylos against [Knip](https://knip.dev) on a real-world TypeScript library:
-
-| | [unjs/consola](https://github.com/unjs/consola) (7k stars, 21 files, ~2,050 LOC) |
-|:---|:---|
-| **Dead items** | 4 (entire orphaned `src/utils/format.ts` module) |
-
-| Metric | Skylos | Knip |
-|:---|:---|:---|
-| **Recall** | **100%** (4/4) | **100%** (4/4) |
-| **Precision** | **36.4%** | 7.5% |
-| **F1 Score** | **53.3%** | 14.0% |
-| **Speed** | **6.83s** | 11.08s |
-
-Both tools find all dead code. Skylos has **~5x better precision** — Knip incorrectly flags package entry points as dead files (its `package.json` exports point to `dist/` not `src/`) and reports public API re-exports as unused.
-
-> *Reproduce: `cd real_life_examples/consola && python3 ../benchmark_consola.py`*
+See [BENCHMARK.md](./BENCHMARK.md) for commands, current numbers, caveats, and
+the independent benchmark plan. The checked-in benchmark numbers remain
+regression results; draft independent smoke results must not be used as public
+performance claims until the labels are frozen and reviewed.
 
 ---
 

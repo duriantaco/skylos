@@ -45,9 +45,14 @@ def main() -> int:
     )
     parser.add_argument(
         "--scanner",
-        choices=("skylos", "vulture"),
+        choices=("skylos", "vulture", "ruff"),
         default="skylos",
         help="Dead-code scanner to score against the same benchmark labels.",
+    )
+    parser.add_argument(
+        "--strict-labels",
+        action="store_true",
+        help="Treat any scanner finding outside explicit unused/used labels as a false positive.",
     )
     parser.add_argument(
         "--json",
@@ -61,12 +66,14 @@ def main() -> int:
             args.external_targets,
             selected_targets=set(args.target),
             scanner=args.scanner,
+            strict_labels=args.strict_labels,
         )
     else:
         summary = run_manifest(
             args.manifest,
             selected_cases=set(args.case),
             scanner=args.scanner,
+            strict_labels=args.strict_labels,
         )
 
     if args.json:

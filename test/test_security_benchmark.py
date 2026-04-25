@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import skylos.security_benchmark as benchmark
@@ -147,3 +148,108 @@ def test_format_summary_includes_security_metrics():
     assert "Security benchmark counts: TP=1 FP=0 FN=0 TN=1" in rendered
     assert "Security benchmark metrics: precision=1.0 recall=1.0 f1=1.0" in rendered
     assert "sql_injection: cases=1 score=100.0 failures=0 TP=1 FP=0 FN=0 TN=1" in rendered
+
+
+def test_bandit_scanner_maps_rule_ids_to_security_labels(tmp_path, monkeypatch):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    (case_dir / "app.py").write_text(
+        "def run(cursor, query):\n    cursor.execute(query)\n",
+        encoding="utf-8",
+    )
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "bandit-comparison-case",
+                "path": "case",
+                "description": "Synthetic bandit scanner benchmark case.",
+                "taxonomy": ["sql_injection"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "Test-only fixture.",
+                },
+                "expect": {
+                    "present": {"danger": ["SKY-D211"]},
+                    "absent": {},
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(benchmark.shutil, "which", lambda name: "/usr/bin/bandit")
+
+    def fake_run(cmd, **kwargs):
+        assert cmd[:2] == ["/usr/bin/bandit", "-r"]
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout=json.dumps(
+                {
+                    "results": [
+                        {
+                            "test_id": "B608",
+                            "issue_text": "Possible SQL injection vector.",
+                            "filename": "app.py",
+                            "line_number": 2,
+                            "issue_severity": "MEDIUM",
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(benchmark.subprocess, "run", fake_run)
+
+    summary = run_manifest(manifest_path, scanner="bandit")
+
+    assert summary["scanner"] == "bandit"
+    assert summary["failure_count"] == 0, format_summary(summary)
+    assert summary["counts"]["true_positives"] == 1
+
+
+def test_python_only_security_scanners_skip_non_python_cases(tmp_path, monkeypatch):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    (case_dir / "main.go").write_text("package main\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "go-security-case",
+                "path": "case",
+                "description": "Synthetic Go security benchmark case.",
+                "languages": ["go"],
+                "taxonomy": ["go"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "Test-only fixture.",
+                },
+                "expect": {
+                    "present": {"danger": ["SKY-D215"]},
+                    "absent": {},
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    def fail_scan(*args, **kwargs):
+        raise AssertionError("scanner should not run for unsupported languages")
+
+    monkeypatch.setattr(benchmark, "_scan_bandit_case", fail_scan)
+
+    summary = run_manifest(manifest_path, scanner="bandit")
+
+    assert summary["case_count"] == 0
+    assert summary["skipped_case_count"] == 1
+    assert summary["skipped_cases"][0]["id"] == "go-security-case"
