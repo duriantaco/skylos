@@ -398,10 +398,10 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_only(tmp_path):
 
 def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path):
     repo = tmp_path / "repo"
-    (repo / "agent_review_benchmarks" / "fixtures").mkdir(parents=True)
+    (repo / "benchmarks/agent_review" / "fixtures").mkdir(parents=True)
     bench_file = (
         repo
-        / "agent_review_benchmarks"
+        / "benchmarks/agent_review"
         / "fixtures"
         / "demo"
         / "app.py"
@@ -411,15 +411,15 @@ def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path
 
     console = Mock()
     staged = Mock(
-        stdout="agent_review_benchmarks/fixtures/demo/app.py\n",
+        stdout="benchmarks/agent_review/fixtures/demo/app.py\n",
         returncode=0,
     )
     cached_diff = Mock(
         stdout=(
-            "diff --git a/agent_review_benchmarks/fixtures/demo/app.py "
-            "b/agent_review_benchmarks/fixtures/demo/app.py\n"
-            "--- a/agent_review_benchmarks/fixtures/demo/app.py\n"
-            "+++ b/agent_review_benchmarks/fixtures/demo/app.py\n"
+            "diff --git a/benchmarks/agent_review/fixtures/demo/app.py "
+            "b/benchmarks/agent_review/fixtures/demo/app.py\n"
+            "--- a/benchmarks/agent_review/fixtures/demo/app.py\n"
+            "+++ b/benchmarks/agent_review/fixtures/demo/app.py\n"
             "@@ -1 +1 @@\n"
         ),
         returncode=0,
@@ -436,7 +436,7 @@ def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path
             return staged
         if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
             return cached_diff
-        if cmd == ["git", "show", ":agent_review_benchmarks/fixtures/demo/app.py"]:
+        if cmd == ["git", "show", ":benchmarks/agent_review/fixtures/demo/app.py"]:
             return staged_blob
         raise AssertionError(f"Unexpected command: {cmd}")
 

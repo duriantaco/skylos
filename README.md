@@ -1030,7 +1030,7 @@ If you need to validate the container locally before a release:
 docker build -t skylos:local .
 docker run --rm skylos:local --version
 docker run --rm \
-  -v "$PWD/quality_benchmarks/fixtures/argument_overload:/work" \
+  -v "$PWD/benchmarks/quality/fixtures/argument_overload:/work" \
   -w /work \
   skylos:local \
   . --json --no-provenance

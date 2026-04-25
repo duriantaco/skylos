@@ -17,7 +17,7 @@ from skylos.llm.schemas import AnalysisResult
 
 
 MANIFEST_PATH = (
-    Path(__file__).resolve().parent.parent / "agent_review_benchmarks" / "manifest.json"
+    Path(__file__).resolve().parent.parent / "benchmarks/agent_review" / "manifest.json"
 )
 
 
