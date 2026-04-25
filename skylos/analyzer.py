@@ -560,6 +560,46 @@ class Skylos:
                     why_reduced.append("survived_propagation_via_attr_heuristic")
                 defn.confidence = min(defn.confidence, 40)
 
+    def _class_declares_attr(self, defn, attr_name: str) -> bool:
+        node = getattr(defn, "node", None)
+        if not isinstance(node, ast.ClassDef):
+            return False
+
+        for item in node.body:
+            targets = []
+            if isinstance(item, ast.Assign):
+                targets.extend(item.targets)
+            elif isinstance(item, ast.AnnAssign):
+                targets.append(item.target)
+            else:
+                continue
+
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id == attr_name:
+                    return True
+        return False
+
+    def _suppress_standalone_orm_models(self) -> None:
+        concrete_by_file = defaultdict(list)
+        for defn in self.defs.values():
+            if defn.type != "class":
+                continue
+            if not self._class_declares_attr(defn, "__tablename__"):
+                continue
+            concrete_by_file[str(Path(defn.filename).resolve())].append(defn)
+
+        for model_defs in concrete_by_file.values():
+            has_live_model = any(
+                defn.references > 0 or defn.is_exported for defn in model_defs
+            )
+            if has_live_model:
+                continue
+
+            for defn in model_defs:
+                if defn.references == 0 and not defn.is_exported:
+                    defn.confidence = 0
+                    defn.skip_reason = "standalone ORM model module"
+
     def _grep_verify(self):
         """Post-pass: use grep strategies to rescue false-positive dead code."""
         from skylos.grep_cache import GrepCache
@@ -641,16 +681,6 @@ class Skylos:
             cands = simple_to_keys.get(simple, [])
             if len(cands) == 1:
                 return cands[0]
-
-            import_cands = [
-                k for k in import_by_simple.get(simple, []) if k != import_def_key
-            ]
-            if len(import_cands) == 1:
-                return import_cands[0]
-            if import_cands and target_fqn:
-                for ik in import_cands:
-                    if target_fqn in ik or ik.endswith(f":{target_fqn}"):
-                        return ik
 
             return None
 
@@ -2120,6 +2150,7 @@ class Skylos:
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: transitive dead code"))
         self._propagate_transitive_dead()
+        self._suppress_standalone_orm_models()
 
         if grep_verify:
             if progress_callback:

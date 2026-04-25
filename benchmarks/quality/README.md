@@ -31,8 +31,8 @@ Starter benchmark policy:
 
 How to add a case:
 
-1. Add a fixture directory under `quality_benchmarks/fixtures/`.
-2. Add a manifest entry in `quality_benchmarks/manifest.json`.
+1. Add a fixture directory under `benchmarks/quality/fixtures/`.
+2. Add a manifest entry in `benchmarks/quality/manifest.json`.
 3. Pick one or more taxonomy labels from the allowed set in `skylos/quality_benchmark.py`.
 4. Add explicit `present` and/or `absent` expectations plus a `max_seconds` budget.
 5. Update `test/test_quality_benchmark.py` if the runner contract changes.

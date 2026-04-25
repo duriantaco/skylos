@@ -12,7 +12,7 @@ from skylos.quality_benchmark import (
 
 
 MANIFEST_PATH = (
-    Path(__file__).resolve().parent.parent / "quality_benchmarks" / "manifest.json"
+    Path(__file__).resolve().parent.parent / "benchmarks/quality" / "manifest.json"
 )
 
 

@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "basic-unused-symbols",
+      "path": "fixtures/basic_unused_symbols",
+      "description": "Basic unused functions, classes, imports, and module variables should be found while referenced symbols stay alive.",
+      "taxonomy": ["basic_detection"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic fixture for core dead-code recall and precision."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "import", "file": "app.py", "symbol": "json"},
+          {"kind": "function", "file": "app.py", "symbol": "unused_helper"},
+          {"kind": "class", "file": "app.py", "symbol": "UnusedWorker"},
+          {"kind": "variable", "file": "app.py", "symbol": "UNUSED_SETTING"}
+        ],
+        "used": [
+          {"kind": "function", "file": "app.py", "symbol": "used_helper"},
+          {"kind": "class", "file": "app.py", "symbol": "UsedWorker"},
+          {"kind": "variable", "file": "app.py", "symbol": "USED_SETTING"}
+        ]
+      }
+    },
+    {
+      "id": "fastapi-route-used",
+      "path": "fixtures/fastapi_route_used",
+      "description": "FastAPI route handlers and dependency providers are framework entrypoints, not dead code.",
+      "taxonomy": ["framework_precision", "fastapi"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/fastapi/fastapi",
+        "license": "MIT",
+        "notes": "Distilled from FastAPI decorator and Depends patterns."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "app.py", "symbol": "unused_helper"}
+        ],
+        "used": [
+          {"kind": "function", "file": "app.py", "symbol": "get_current_user"},
+          {"kind": "function", "file": "app.py", "symbol": "read_profile"}
+        ]
+      }
+    },
+    {
+      "id": "dynamic-registry-used",
+      "path": "fixtures/dynamic_registry_used",
+      "description": "Handlers registered through an explicit local registry should stay alive while unregistered handlers are reported.",
+      "taxonomy": ["dynamic_dispatch", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Local deterministic fixture for decorator-based registry liveness."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "app.py", "symbol": "unused_handler"}
+        ],
+        "used": [
+          {"kind": "function", "file": "app.py", "symbol": "handle_create"},
+          {"kind": "function", "file": "app.py", "symbol": "handle_update"}
+        ]
+      }
+    },
+    {
+      "id": "sqlalchemy-mixed-models",
+      "path": "fixtures/sqlalchemy_mixed_models",
+      "description": "A realistic model module should report only the unreferenced SQLAlchemy model while keeping used models and ORM columns quiet.",
+      "taxonomy": ["sqlalchemy", "multi_file", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/sqlalchemy/sqlalchemy",
+        "license": "MIT",
+        "notes": "Distilled from declarative model modules where some tables are repository-owned and some models are stale."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "class", "file": "models.py", "symbol": "Tag"}
+        ],
+        "used": [
+          {"kind": "class", "file": "models.py", "symbol": "Base"},
+          {"kind": "class", "file": "models.py", "symbol": "Note"},
+          {"kind": "class", "file": "models.py", "symbol": "AuditLog"},
+          {"kind": "variable", "file": "models.py", "symbol": "id"},
+          {"kind": "variable", "file": "models.py", "symbol": "title"},
+          {"kind": "function", "file": "repository.py", "symbol": "create_note"}
+        ]
+      }
+    },
+    {
+      "id": "flask-cli-blueprint",
+      "path": "fixtures/flask_cli_blueprint",
+      "description": "Flask blueprint routes and app CLI commands are entrypoints, while nearby unregistered helpers remain dead code.",
+      "taxonomy": ["framework_precision", "flask", "cli_entrypoint", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/flask",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from production Flask apps with blueprints and application CLI commands."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "app.py", "symbol": "unused_view_helper"},
+          {"kind": "class", "file": "app.py", "symbol": "UnusedFormatter"}
+        ],
+        "used": [
+          {"kind": "function", "file": "app.py", "symbol": "show_order"},
+          {"kind": "function", "file": "app.py", "symbol": "reindex_orders"},
+          {"kind": "variable", "file": "app.py", "symbol": "orders"}
+        ]
+      }
+    },
+    {
+      "id": "package-service-layers",
+      "path": "fixtures/package_service_layers",
+      "description": "A small service/repository package should resolve cross-file references and still find stale local strategy code.",
+      "taxonomy": ["multi_file", "service_layer", "basic_detection"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/psf/requests",
+        "license": "Apache-2.0",
+        "notes": "Local industry-style fixture shaped like service/repository layers common in Python web services."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "import", "file": "service.py", "symbol": "json"},
+          {"kind": "function", "file": "service.py", "symbol": "_unused_reconcile"},
+          {"kind": "class", "file": "service.py", "symbol": "UnusedStrategy"},
+          {"kind": "variable", "file": "service.py", "symbol": "UNUSED_STATUS"}
+        ],
+        "used": [
+          {"kind": "function", "file": "app.py", "symbol": "run_checkout"},
+          {"kind": "function", "file": "service.py", "symbol": "create_invoice"},
+          {"kind": "class", "file": "repository.py", "symbol": "InvoiceRepository"},
+          {"kind": "variable", "file": "service.py", "symbol": "ACTIVE_STATUS"}
+        ]
+      }
+    }
+  ]
+}

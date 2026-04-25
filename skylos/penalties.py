@@ -208,6 +208,26 @@ def _class_base_names(simple_name, framework) -> set[str]:
     return base_names
 
 
+def _class_declares_attr(def_obj, attr_name: str) -> bool:
+    node = getattr(def_obj, "node", None)
+    if not isinstance(node, ast.ClassDef):
+        return False
+
+    for item in node.body:
+        targets = []
+        if isinstance(item, ast.Assign):
+            targets.extend(item.targets)
+        elif isinstance(item, ast.AnnAssign):
+            targets.append(item.target)
+        else:
+            continue
+
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == attr_name:
+                return True
+    return False
+
+
 def _check_inline_ignore(def_obj, visitor):
     if getattr(visitor, "ignore_lines", None) and def_obj.line in visitor.ignore_lines:
         return _suppress(def_obj, "inline ignore comment")
@@ -371,7 +391,8 @@ def _check_django_drf_structural(def_obj, framework):
         if "sqlalchemy" in detected and simple_name in getattr(
             framework, "orm_model_classes", set()
         ):
-            return _suppress(def_obj, "ORM model class")
+            if not _class_declares_attr(def_obj, "__tablename__"):
+                return _suppress(def_obj, "ORM declarative base class")
 
         if "celery" in detected and class_bases.intersection(CELERY_TASK_BASES):
             return _suppress(def_obj, "Celery task class")
