@@ -234,6 +234,142 @@ def _extract_var_name(node, source_bytes: bytes) -> str | None:
     return None
 
 
+def _string_literal_value(node, source_bytes: bytes) -> str:
+    text = _get_text(source_bytes, node).strip()
+    if len(text) >= 2 and text[0] in ("'", '"') and text[-1] == text[0]:
+        return text[1:-1]
+    return text
+
+
+def _template_prefix(node, source_bytes: bytes) -> str:
+    text = _get_text(source_bytes, node)
+    if text.startswith("`"):
+        text = text[1:]
+    marker = text.find("${")
+    if marker >= 0:
+        return text[:marker]
+    if text.endswith("`"):
+        text = text[:-1]
+    return text
+
+
+_TS_EXPRESSION_WRAPPERS = {
+    "as_expression",
+    "non_null_expression",
+    "parenthesized_expression",
+    "satisfies_expression",
+    "type_assertion",
+}
+
+_TS_TYPE_NODE_TYPES = {
+    "array_type",
+    "generic_type",
+    "literal_type",
+    "object_type",
+    "predefined_type",
+    "type_arguments",
+    "type_annotation",
+    "type_identifier",
+    "union_type",
+}
+
+
+def _unwrap_ts_expression(node):
+    if node.type not in _TS_EXPRESSION_WRAPPERS:
+        return node
+    for child in node.children:
+        if child.type in {
+            "(",
+            ")",
+            "<",
+            ">",
+            "!",
+            "as",
+            "satisfies",
+        }:
+            continue
+        if child.type in _TS_TYPE_NODE_TYPES or child.type.endswith("_type"):
+            continue
+        return child
+    return node
+
+
+def _has_dynamic_url_part(node) -> bool:
+    unwrapped = _unwrap_ts_expression(node)
+    if unwrapped is not node:
+        return _has_dynamic_url_part(unwrapped)
+
+    if node.type in {
+        "identifier",
+        "member_expression",
+        "subscript_expression",
+        "call_expression",
+        "await_expression",
+    }:
+        return True
+    if node.type == "template_string":
+        return any(child.type == "template_substitution" for child in node.children)
+    if node.type == "binary_expression":
+        return any(
+            child.type != "+"
+            and _has_dynamic_url_part(child)
+            for child in node.children
+        )
+    if node.type == "parenthesized_expression":
+        return any(_has_dynamic_url_part(child) for child in node.children)
+    return False
+
+
+def _static_prefix_until_dynamic(node, source_bytes: bytes) -> tuple[str, bool]:
+    unwrapped = _unwrap_ts_expression(node)
+    if unwrapped is not node:
+        return _static_prefix_until_dynamic(unwrapped, source_bytes)
+
+    if node.type == "string":
+        return _string_literal_value(node, source_bytes), False
+    if node.type == "template_string":
+        return _template_prefix(node, source_bytes), _has_dynamic_url_part(node)
+    if node.type in {"binary_expression", "parenthesized_expression"}:
+        prefix = ""
+        for child in node.children:
+            if child.type in {"(", ")", "+"}:
+                continue
+            child_prefix, child_dynamic = _static_prefix_until_dynamic(
+                child, source_bytes
+            )
+            prefix += child_prefix
+            if child_dynamic:
+                return prefix, True
+        return prefix, False
+    return "", _has_dynamic_url_part(node)
+
+
+def _prefix_has_fixed_http_host(prefix: str) -> bool:
+    match = re.match(r"^https?://([^/?#]+)([/?#].*)", prefix, re.IGNORECASE)
+    return bool(match and match.group(1))
+
+
+def _url_arg_is_ssrf_relevant(node, source_bytes: bytes) -> bool:
+    if node.type == "string":
+        return False
+    if node.type == "template_string" and not _has_dynamic_url_part(node):
+        return False
+
+    prefix, saw_dynamic = _static_prefix_until_dynamic(node, source_bytes)
+    if not saw_dynamic:
+        return False
+
+    if prefix:
+        lower_prefix = prefix.lower()
+        if _prefix_has_fixed_http_host(prefix):
+            return False
+        if lower_prefix.startswith(("http://", "https://", "//")):
+            return True
+        return False
+
+    return True
+
+
 _SECRET_PREFIXES = (
     "sk-",
     "sk_live_",
@@ -369,7 +505,7 @@ def scan_danger(
     # --- fetch SSRF (SKY-D216) ---
     for node in complex_captures.get("fetch_args", []):
         first_arg = _first_real_arg(node)
-        if first_arg and first_arg.type == "identifier":
+        if first_arg and _url_arg_is_ssrf_relevant(first_arg, source_bytes):
             findings.append(
                 {
                     "rule_id": "SKY-D216",
@@ -384,7 +520,7 @@ def scan_danger(
     # --- axios SSRF (SKY-D216) ---
     for node in complex_captures.get("axios_args", []):
         first_arg = _first_real_arg(node)
-        if first_arg and first_arg.type == "identifier":
+        if first_arg and _url_arg_is_ssrf_relevant(first_arg, source_bytes):
             findings.append(
                 {
                     "rule_id": "SKY-D216",
