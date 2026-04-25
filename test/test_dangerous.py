@@ -85,6 +85,50 @@ def test_requests_verify_false(tmp_path):
     assert "SKY-D210" in _rule_ids(out)
 
 
+def test_random_random_flags_weak_security_random(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_random.py",
+        "import random\n"
+        "def weak_token():\n"
+        "    return str(random.random())\n",
+    )
+    assert "SKY-D250" in _rule_ids(out)
+
+
+def test_secrets_token_urlsafe_is_not_weak_random(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_secrets.py",
+        "import secrets\n"
+        "def strong_token():\n"
+        "    return secrets.token_urlsafe(16)\n",
+    )
+    assert "SKY-D250" not in _rule_ids(out)
+
+
+def test_random_choice_for_non_security_value_is_not_weak_random(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_random_color.py",
+        "import random\n"
+        "def pick_color():\n"
+        "    return random.choice(['red', 'blue'])\n",
+    )
+    assert "SKY-D250" not in _rule_ids(out)
+
+
+def test_random_in_author_named_function_is_not_weak_random(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_random_author.py",
+        "import random\n"
+        "def build_author_slug():\n"
+        "    return str(random.random())\n",
+    )
+    assert "SKY-D250" not in _rule_ids(out)
+
+
 def test_subprocess_alias_shell_true_flags(tmp_path):
     out = _scan_one(
         tmp_path,

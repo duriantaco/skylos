@@ -84,6 +84,8 @@ FROM_RE = re.compile(r"^\s*from\s+([A-Za-z_][\w\.]*)\s+import\b", re.MULTILINE)
 
 REQ_LINE_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)")
 
+DEPENDENCY_MANIFEST_FILENAMES = ("requirements.txt", "pyproject.toml", "setup.py")
+
 
 def _normalize_name(name):
     if name is None:
@@ -539,6 +541,31 @@ def _parse_setup_py(path):
     return deps, project_name
 
 
+def _has_dependency_manifest_context(repo_root):
+    current = repo_root
+
+    for _ in range(5):
+        try:
+            for filename in DEPENDENCY_MANIFEST_FILENAMES:
+                if (current / filename).exists():
+                    return True
+
+            req_dir = current / "requirements"
+            if req_dir.exists() and req_dir.is_dir():
+                for req_file in req_dir.glob("*.txt"):
+                    if req_file.exists():
+                        return True
+        except Exception:
+            return False
+
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+
+    return False
+
+
 def _collect_declared_deps(repo_root):
     deps = set()
     project_name = None
@@ -699,6 +726,9 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
     stdlib = _get_stdlib_modules()
     local_modules = _collect_local_modules(repo_root)
     declared_deps = _collect_declared_deps(repo_root)
+    dependency_manifest_context = bool(
+        declared_deps
+    ) or _has_dependency_manifest_context(repo_root)
     private_allow = _load_private_allowlist()
 
     installed_mapping = _build_installed_module_mapping()
@@ -734,6 +764,9 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                 if known_dists & declared_deps:
                     continue
 
+                if not dependency_manifest_context:
+                    continue
+
                 line = _find_import_line(src, mod)
                 dist_hint = ", ".join(sorted(known_dists))
                 findings.append(
@@ -767,6 +800,9 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                 mapped_normalized = _normalize_name(mapped_dist)
 
                 if mapped_normalized in declared_deps:
+                    continue
+
+                if not dependency_manifest_context:
                     continue
 
                 line = _find_import_line(src, mod)
@@ -816,7 +852,7 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                         "symbol": mod,
                     }
                 )
-            elif pypi_status == "exists":
+            elif pypi_status == "exists" and dependency_manifest_context:
                 findings.append(
                     {
                         "rule_id": RULE_ID_UNDECLARED,
@@ -831,7 +867,7 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                         "symbol": mod,
                     }
                 )
-            else:
+            elif dependency_manifest_context:
                 findings.append(
                     {
                         "rule_id": RULE_ID_UNDECLARED,

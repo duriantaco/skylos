@@ -22,6 +22,7 @@ from .calls import (
     _matches_rule,
     _kw_equals,
     _qualified_name_from_call as qualified_name_from_call,
+    _weak_random_has_security_context,
     _yaml_load_without_safeloader,
 )
 
@@ -36,6 +37,12 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self._symbol_stack = ["<module>"]
         self.aliases = {}
         self.assigned_calls_stack = [{}]
+        self._parents_annotated = False
+
+    def _annotate_parents(self, node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            child.parent = node
+            self._annotate_parents(child)
 
     def _current_symbol(self):
         if self._symbol_stack:
@@ -72,6 +79,12 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.generic_visit(node)
         self.assigned_calls_stack.pop()
         self._symbol_stack.pop()
+
+    def visit_Module(self, node):
+        if not self._parents_annotated:
+            self._annotate_parents(node)
+            self._parents_annotated = True
+        self.generic_visit(node)
 
     def visit_Import(self, node):
         for alias in node.names:
@@ -123,6 +136,12 @@ class _DangerousCallsChecker(ast.NodeVisitor):
                     and not _kw_equals(node, opts["kw_equals"])
                 ):
                     continue
+
+                if opts and opts.get("weak_random"):
+                    if not _weak_random_has_security_context(
+                        node, self._current_symbol()
+                    ):
+                        continue
 
                 self.findings.append(
                     {
