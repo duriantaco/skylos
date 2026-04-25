@@ -1040,7 +1040,7 @@ def multi_strategy_search(
                 results["qualified_references"] = usages[:max_per_strategy]
 
     if kind in ("method", "function"):
-        call_pattern = rf"\.{simple_name}\s*\("
+        call_pattern = rf"\.{re.escape(simple_name)}[[:space:]]*\("
         call_refs = _run_grep(
             call_pattern,
             project_root,
@@ -1070,11 +1070,12 @@ def multi_strategy_search(
     if _should_early_exit():
         return _deduplicate_grep_results(results)
 
+    quote_chars = "\"'"
     dispatch_patterns = [
-        rf'(?:getattr|setattr|hasattr|delattr)\s*\([^,]+,\s*["\x27]{re.escape(simple_name)}["\x27]',
-        rf'\[["\x27]{re.escape(simple_name)}["\x27]\]',
-        rf'\.\w+\(\s*["\x27]{re.escape(simple_name)}["\x27]',
-        rf'["\x27]{re.escape(simple_name)}["\x27]\s*:\s*\w+\(',
+        rf"(getattr|setattr|hasattr|delattr)[[:space:]]*\([^,]+,[[:space:]]*[{quote_chars}]{re.escape(simple_name)}[{quote_chars}]",
+        rf"\[[{quote_chars}]{re.escape(simple_name)}[{quote_chars}]\]",
+        rf"\.[[:alnum:]_]+[[:space:]]*\([[:space:]]*[{quote_chars}]{re.escape(simple_name)}[{quote_chars}]",
+        rf"[{quote_chars}]{re.escape(simple_name)}[{quote_chars}][[:space:]]*:[[:space:]]*[[:alnum:]_]+[[:space:]]*\(",
     ]
     for dp in dispatch_patterns:
         dp_refs = _run_grep(

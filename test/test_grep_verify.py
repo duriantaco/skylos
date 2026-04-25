@@ -209,6 +209,29 @@ class TestGrepVerifyFindings:
         assert "plugin.Handler.process" in verdicts
         assert verdicts["plugin.Handler.process"].alive
 
+    def test_getattr_dispatch_single_quotes_rescues(self, tmp_path):
+        (tmp_path / "plugin.py").write_text(
+            "class Handler:\n    def process(self):\n        pass\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "handler = Handler()\ngetattr(handler, 'process')()\n"
+        )
+
+        findings = [
+            {
+                "name": "Handler.process",
+                "full_name": "plugin.Handler.process",
+                "simple_name": "process",
+                "type": "method",
+                "file": str(tmp_path / "plugin.py"),
+                "line": 2,
+                "confidence": 80,
+            }
+        ]
+        verdicts = grep_verify_findings(findings, str(tmp_path))
+        assert "plugin.Handler.process" in verdicts
+        assert verdicts["plugin.Handler.process"].alive
+
     def test_time_budget_respected(self, tmp_path):
         """Processing stops when time budget exceeded."""
         (tmp_path / "mod.py").write_text("def a():\n    pass\ndef b():\n    pass\n")

@@ -55,7 +55,8 @@ _VALIDATION_DECORATORS = {
 }
 
 _VALIDATION_CALLS_RE = re.compile(
-    r"(?:validate|sanitize|escape|html\.escape|bleach\.clean|markupsafe\.escape)\("
+    r"(?:validate|sanitize|html\.escape|bleach\.clean|markupsafe\.escape|"
+    r"(?<![.\w])escape)\("
 )
 
 _SECURITY_HEADERS = {
