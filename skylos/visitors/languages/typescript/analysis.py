@@ -934,18 +934,27 @@ def _iter_entry_discoveries(
                 )
             )
 
-    if not project_root or workspace_inventory is None:
+    if not project_root and workspace_inventory is None:
         return discoveries
 
     package_roots = set(_workspace_package_roots(workspace_inventory))
-    package_roots.update(
-        _discover_referenced_package_roots(
-            list(ts_files),
-            project_root,
-            workspace_inventory,
-            exclude_folders=exclude_folders,
+    if workspace_inventory is None or not workspace_inventory.is_monorepo:
+        package_roots.update(
+            _discover_package_roots_from_files(
+                list(ts_files),
+                project_root,
+                exclude_folders=exclude_folders,
+            )
         )
-    )
+    if project_root and workspace_inventory is not None:
+        package_roots.update(
+            _discover_referenced_package_roots(
+                list(ts_files),
+                project_root,
+                workspace_inventory,
+                exclude_folders=exclude_folders,
+            )
+        )
 
     custom_config_tools: dict[str, tuple[str, str]] = {}
     for package_root in package_roots:
@@ -1083,6 +1092,32 @@ def _workspace_package_roots(workspace_inventory) -> list[Path]:
             ):
                 package_roots.add(workspace.root.resolve())
     return sorted(package_roots, key=lambda path: len(str(path)), reverse=True)
+
+
+def _discover_package_roots_from_files(
+    files, project_root: str | None = None, exclude_folders=None
+) -> set[Path]:
+    exclude_root = _resolve_exclude_root(files, project_root)
+    package_roots: set[Path] = set()
+
+    for file_path in files:
+        path = Path(str(file_path)).resolve()
+        if _is_excluded_path(str(path), exclude_folders, exclude_root):
+            continue
+        if path.suffix.lower() not in _TS_JS_EXTENSIONS:
+            continue
+
+        current = path.parent
+        while True:
+            if (current / "package.json").is_file():
+                package_roots.add(current)
+                break
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+
+    return package_roots
 
 
 def _find_owning_package_root(

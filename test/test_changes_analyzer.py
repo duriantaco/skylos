@@ -468,6 +468,8 @@ class Impl(Base):
 
     def extra_unused(self):
         return "I am dead code"
+
+IMPL = Impl()
 """
         result = self._analyze(code, thr=20)
         names = [f["simple_name"] for f in result["unused_functions"]]

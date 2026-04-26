@@ -728,6 +728,7 @@ class TestClass:
                         used_attr_names,
                         used_attr_context,
                         source_lines,
+                        *_extra,
                     ) = proc_file(f.name, "test_module")
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
@@ -774,6 +775,7 @@ class TestClass:
                     used_attr_names,
                     used_attr_context,
                     source_lines,
+                    *_extra,
                 ) = proc_file(f.name, "test_module")
 
                 assert defs == []
@@ -842,6 +844,7 @@ class TestClass:
                         used_attr_names,
                         used_attr_context,
                         source_lines,
+                        *_extra,
                     ) = proc_file((f.name, "test_module"))
 
                     mock_visitor_class.assert_called_once_with("test_module", f.name)
@@ -1209,6 +1212,9 @@ class Helper:
 
     def _helper(self):
         return 1
+
+
+HELPER = Helper()
 """
         )
 
@@ -1219,6 +1225,396 @@ class Helper:
 
         assert "Helper.run" in unreachable
         assert "Helper._helper" in unreachable
+
+    def test_analyze_keeps_method_refs_receiver_specific(self, tmp_path):
+        src = tmp_path / "plugins.py"
+        src.write_text(
+            """
+class LivePlugin:
+    def process(self, event):
+        return event["id"]
+
+    def cleanup(self):
+        return "unused"
+
+
+class RemovedPlugin:
+    def process(self, event):
+        return event["legacy"]
+
+
+LIVE_PLUGIN = LivePlugin()
+BOOTSTRAP_RESULT = LIVE_PLUGIN.process({"id": "boot"})
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+        unreachable_classes = {item["name"] for item in result["unused_classes"]}
+
+        assert "LivePlugin.process" not in unreachable
+        assert "LivePlugin.cleanup" in unreachable
+        assert "RemovedPlugin" in unreachable_classes
+        assert "RemovedPlugin.process" not in unreachable
+
+    def test_analyze_protocol_methods_only_live_for_reachable_implementers(
+        self, tmp_path
+    ):
+        src = tmp_path / "service.py"
+        src.write_text(
+            """
+from typing import Protocol
+
+
+class Handler(Protocol):
+    def handle(self, payload: str) -> str:
+        ...
+
+
+class EmailHandler:
+    def handle(self, payload: str) -> str:
+        return payload.upper()
+
+
+def dispatch(handler: Handler) -> str:
+    return handler.handle("welcome")
+
+
+LIVE_RESULT = dispatch(EmailHandler())
+
+
+class LegacyHandler:
+    def handle(self, payload: str) -> str:
+        return payload.lower()
+
+
+def unused_factory():
+    return LegacyHandler()
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+        unreachable_classes = {item["name"] for item in result["unused_classes"]}
+
+        assert "EmailHandler.handle" not in unreachable
+        assert "LegacyHandler" in unreachable_classes
+        assert "LegacyHandler.handle" not in unreachable
+
+    def test_analyze_bound_dispatch_receiver_refs_stay_callsite_specific(
+        self, tmp_path
+    ):
+        src = tmp_path / "service.py"
+        src.write_text(
+            """
+from typing import Protocol
+
+
+class Handler(Protocol):
+    def handle(self, payload: str) -> str:
+        ...
+
+
+class EmailHandler:
+    def handle(self, payload: str) -> str:
+        return payload.upper()
+
+
+class LegacyHandler:
+    def handle(self, payload: str) -> str:
+        return payload.lower()
+
+
+class Processor:
+    def dispatch(self, handler: Handler) -> str:
+        return handler.handle("welcome")
+
+
+PROCESSOR = Processor()
+LIVE_RESULT = PROCESSOR.dispatch(EmailHandler())
+email = EmailHandler()
+LIVE_RESULT_2 = PROCESSOR.dispatch(email)
+LIVE_RESULT_3 = PROCESSOR.dispatch(handler=EmailHandler())
+LEGACY_REGISTRY = {"legacy": LegacyHandler}
+
+
+def stale_path():
+    return PROCESSOR.dispatch(LegacyHandler())
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+        unreachable_classes = {item["name"] for item in result["unused_classes"]}
+
+        assert "EmailHandler.handle" not in unreachable
+        assert "LegacyHandler" not in unreachable_classes
+        assert "LegacyHandler.handle" in unreachable
+        assert "stale_path" in unreachable
+
+    def test_analyze_explicit_protocol_implementer_method_can_be_dead(
+        self, tmp_path
+    ):
+        src = tmp_path / "service.py"
+        src.write_text(
+            """
+from typing import Protocol
+
+
+class Handler(Protocol):
+    def handle(self, payload: str) -> str:
+        ...
+
+
+class LegacyHandler(Handler):
+    def handle(self, payload: str) -> str:
+        return payload.lower()
+
+
+LEGACY_REGISTRY = {"legacy": LegacyHandler}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+        unreachable_classes = {item["name"] for item in result["unused_classes"]}
+
+        assert "LegacyHandler" not in unreachable_classes
+        assert "LegacyHandler.handle" in unreachable
+
+    def test_analyze_dead_class_suppresses_owned_method_duplicates(self, tmp_path):
+        src = tmp_path / "service.py"
+        src.write_text(
+            """
+class Dead:
+    def a(self):
+        return 1
+
+    def b(self):
+        return 2
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+        unreachable_classes = {item["name"] for item in result["unused_classes"]}
+
+        assert "Dead" in unreachable_classes
+        assert "Dead.a" not in unreachable
+        assert "Dead.b" not in unreachable
+
+    def test_analyze_js_package_route_attachment_export_is_live(self, tmp_path):
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (tmp_path / "package.json").write_text(
+            '{"name":"app","type":"module","main":"src/app.js"}',
+            encoding="utf-8",
+        )
+        (src_dir / "app.js").write_text(
+            """
+const routes = new Map();
+
+function register(path, handler) {
+  routes.set(path, handler);
+}
+
+export function healthHandler(req, res) {
+  res.end("ok");
+}
+
+register("/health", healthHandler);
+
+export function attachRoutes(server) {
+  for (const [path, handler] of routes) {
+    server.get(path, handler);
+  }
+}
+
+export function orphanHandler(req, res) {
+  res.end("orphan");
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(src_dir), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+        unused_files = {Path(item["file"]).name for item in result["unused_files"]}
+
+        assert "attachRoutes" not in unreachable
+        assert "orphanHandler" in unreachable
+        assert "app.js" not in unused_files
+
+    def test_analyze_js_route_attachment_uses_route_shape_not_name_tokens(
+        self, tmp_path
+    ):
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (tmp_path / "package.json").write_text(
+            '{"name":"app","type":"module","main":"src/app.js"}',
+            encoding="utf-8",
+        )
+        (src_dir / "app.js").write_text(
+            """
+export function healthHandler(req, res) {
+  res.end("ok");
+}
+
+export function configure(api) {
+  api.get("/health", healthHandler);
+}
+
+export const attachRoutes = (server) => {
+  server.post("/orders", healthHandler);
+};
+
+export function applyConfig(config) {
+  const key = "theme";
+  return config.get(key, defaultHandler);
+}
+
+function defaultHandler() {
+  return "light";
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(src_dir), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+
+        assert "configure" not in unreachable
+        assert "attachRoutes" not in unreachable
+        assert "applyConfig" in unreachable
+
+    def test_analyze_java_public_static_helper_not_auto_exported(self, tmp_path):
+        (tmp_path / "App.java").write_text(
+            """
+public class App {
+    public static void main(String[] args) {
+        LiveJob job = new LiveJob();
+        System.out.println(job.run());
+    }
+
+    public static String staleFormat(String value) {
+        return value.trim().toLowerCase();
+    }
+}
+
+class LiveJob {
+    String run() {
+        return "ok";
+    }
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+
+        assert "App.staleFormat" in unreachable
+
+    def test_analyze_java_library_public_method_stays_exported(self, tmp_path):
+        (tmp_path / "Api.java").write_text(
+            """
+public class Api {
+    public static void main(String[] args) {
+        System.out.println("demo");
+    }
+
+    public String main() {
+        return "not an entrypoint";
+    }
+
+    public String publicEndpoint(String value) {
+        return value.trim();
+    }
+
+    private String privateHelper(String value) {
+        return value.toLowerCase();
+    }
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+
+        assert "Api.publicEndpoint" not in unreachable
+        assert "Api.privateHelper" in unreachable
+
+    def test_analyze_typescript_transitive_dead_uses_file_scoped_callers(
+        self, tmp_path
+    ):
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (tmp_path / "package.json").write_text(
+            '{"name":"app","type":"module","main":"src/live.ts"}',
+            encoding="utf-8",
+        )
+        (src_dir / "live.ts").write_text(
+            """
+function helper() {
+  return 1;
+}
+
+export function foo() {
+  return helper();
+}
+
+foo();
+""",
+            encoding="utf-8",
+        )
+        (src_dir / "dead.ts").write_text(
+            """
+function helper() {
+  return 2;
+}
+
+function foo() {
+  return helper();
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unused_by_file = {
+            (Path(item["file"]).name, item["name"])
+            for item in result["unused_functions"]
+        }
+
+        assert ("live.ts", "helper") not in unused_by_file
+        assert ("dead.ts", "helper") in unused_by_file
+        assert ("dead.ts", "foo") in unused_by_file
 
     def test_analyze_single_file_skips_project_unused_dependency_rule(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text(

@@ -340,6 +340,8 @@ class Visitor(ast.NodeVisitor):
         self.abc_implementers = {}
         self.protocol_implementers = {}
         self.protocol_method_names = {}
+        self.param_method_refs = defaultdict(list)
+        self.call_arg_types = defaultdict(list)
 
         self.call_graph = defaultdict(set)
         self.reverse_call_graph = defaultdict(set)
@@ -1513,6 +1515,22 @@ class Visitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         self.generic_visit(node)
+        callee = self._resolve_callee_fqname(node.func)
+        if callee:
+            for index, arg in enumerate(node.args):
+                arg_type = self._get_expr_type(arg)
+                if arg_type:
+                    self.call_arg_types[callee].append(
+                        (self._current_function_qname or "", index, arg_type)
+                    )
+            for keyword in node.keywords:
+                if not keyword.arg:
+                    continue
+                arg_type = self._get_expr_type(keyword.value)
+                if arg_type:
+                    self.call_arg_types[callee].append(
+                        (self._current_function_qname or "", keyword.arg, arg_type)
+                    )
 
         if isinstance(node.func, ast.Name) and node.func.id == "NewType":
             if (
@@ -1732,12 +1750,19 @@ class Visitor(ast.NodeVisitor):
                 return self._get_attr_chain(call_node.func)
         return None
 
+    def _get_expr_type(self, expr: ast.expr) -> Optional[str]:
+        if isinstance(expr, ast.Call):
+            return self._get_call_type(expr)
+        if isinstance(expr, ast.Name):
+            if self.current_function_scope and self.local_type_maps:
+                local_type = self.local_type_maps[-1].get(expr.id)
+                if local_type:
+                    return local_type
+            return self.inferred_types.get(self.qual(expr.id))
+        return None
+
     def _try_infer_types_from_call(self, node: ast.Assign) -> None:
         if not isinstance(node.value, ast.Call):
-            return
-        if not self.current_function_scope:
-            return
-        if not self.local_type_maps:
             return
 
         call_node = node.value
@@ -1763,14 +1788,21 @@ class Visitor(ast.NodeVisitor):
                 parts.append(cur.attr)
                 cur = cur.value
             if isinstance(cur, ast.Name):
-                head = self.alias.get(cur.id, self.qual(cur.id))
+                qualified_head = self.qual(cur.id)
+                head = self.alias.get(cur.id, qualified_head)
+                if self.current_function_scope and self.local_type_maps:
+                    head = self.local_type_maps[-1].get(cur.id, head)
+                head = self.inferred_types.get(qualified_head, head)
                 if head:
                     return ".".join([head] + list(reversed(parts)))
         return None
 
     def _mark_target_type(self, target: ast.expr, fqname: str) -> None:
         if isinstance(target, ast.Name):
-            self.local_type_maps[-1][target.id] = fqname
+            if self.current_function_scope and self.local_type_maps:
+                self.local_type_maps[-1][target.id] = fqname
+            else:
+                self.inferred_types[self.qual(target.id)] = fqname
         elif isinstance(target, (ast.Tuple, ast.List)):
             for elt in target.elts:
                 self._mark_target_type(elt, fqname)
@@ -1957,6 +1989,27 @@ class Visitor(ast.NodeVisitor):
                 if param_qname in self.inferred_types:
                     type_name = self.inferred_types[param_qname]
                     self.add_ref(f"{type_name}.{node.attr}")
+                    if self._current_function_qname:
+                        for index, (_param_name, full_name) in enumerate(
+                            self.current_function_params
+                        ):
+                            if full_name == param_qname:
+                                call_arg_index = index
+                                if (
+                                    self.current_function_params
+                                    and self.current_function_params[0][0]
+                                    in {"self", "cls"}
+                                ):
+                                    call_arg_index -= 1
+                                if call_arg_index < 0:
+                                    break
+                                self.param_method_refs[
+                                    self._current_function_qname
+                                ].append((call_arg_index, type_name, node.attr))
+                                self.param_method_refs[
+                                    self._current_function_qname
+                                ].append((_param_name, type_name, node.attr))
+                                break
 
             if self.cls and base in {"self", "cls"}:
                 owner = f"{self.mod}.{self.cls}" if self.mod else self.cls

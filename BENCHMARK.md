@@ -26,12 +26,13 @@ Latest local result:
 
 | Scanner | Cases | Skipped | TP | FP | FN | TN | Precision | Recall | F1 | Score |
 |:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Skylos | 16 | 0 | 41 | 0 | 0 | 59 | 1.0 | 1.0 | 1.0 | 100.0 |
-| Vulture | 13 | 3 | 34 | 25 | 0 | 25 | 0.5763 | 1.0 | 0.7312 | 77.29 |
-| Ruff | 13 | 3 | 2 | 0 | 32 | 50 | 1.0 | 0.0588 | 0.1111 | 62.35 |
+| Skylos | 16 | 0 | 36 | 0 | 0 | 59 | 1.0 | 1.0 | 1.0 | 100.0 |
+| Vulture | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| Ruff | 13 | 3 | 2 | 0 | 28 | 50 | 1.0 | 0.0667 | 0.125 | 62.67 |
 
 Vulture and Ruff are Python-only baselines here, so non-Python cases are
-reported as skipped instead of counted as misses.
+reported as skipped instead of counted as misses. Vulture is not installed in
+the current local environment, so it was skipped in the latest rerun.
 
 The dead-code suite covers Python framework liveness, package entrypoints,
 plugin loading, SQLAlchemy models, and cross-language Go, Java, TypeScript, and
@@ -165,11 +166,11 @@ of receiving a score.
 
 | Suite | Corpus | Tool | Language | Cases Run | Skipped | TP | FP | FN | TN | Score |
 |:---|:---|:---|:---|---:|---:|---:|---:|---:|---:|---:|
-| Dead code frozen | seeded dev | Skylos | Python | 4 | 0 | 14 | 1 | 2 | 11 | 90.38 |
-| Dead code frozen | seeded dev | Skylos | TypeScript | 2 | 0 | 5 | 0 | 1 | 3 | 92.5 |
-| Dead code frozen | seeded dev | Skylos | JavaScript | 1 | 0 | 3 | 2 | 0 | 1 | 72.67 |
+| Dead code frozen | seeded dev | Skylos | Python | 4 | 0 | 15 | 1 | 1 | 11 | 93.33 |
+| Dead code frozen | seeded dev | Skylos | TypeScript | 2 | 0 | 6 | 0 | 0 | 3 | 100.0 |
+| Dead code frozen | seeded dev | Skylos | JavaScript | 1 | 0 | 3 | 0 | 0 | 2 | 100.0 |
 | Dead code frozen | seeded dev | Skylos | Go | 1 | 0 | 3 | 0 | 0 | 1 | 100.0 |
-| Dead code frozen | seeded dev | Skylos | Java | 1 | 0 | 1 | 0 | 1 | 1 | 77.5 |
+| Dead code frozen | seeded dev | Skylos | Java | 1 | 0 | 2 | 0 | 0 | 1 | 100.0 |
 | Dead code frozen | seeded dev | Vulture | Python | 4 | 0 | 14 | 2 | 2 | 10 | 86.67 |
 | Dead code frozen | seeded dev | Vulture | TypeScript | 0 | 2 | 0 | 0 | 0 | 0 | N/A |
 | Dead code frozen | seeded dev | Vulture | JavaScript | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
@@ -187,14 +188,15 @@ of receiving a score.
 | Agent review frozen | seeded dev | Skylos | Python | 1 | 0 | 1 | 0 | 0 | 1 | 100.0 |
 
 These frozen results already show useful gaps to investigate before any public
-claim: Skylos currently misses Python and TypeScript reachability edges, has
-JavaScript dead-code false positives on route-registry exports, misses a Java
-unused method, misses the seeded Python quality duplicate-branch case, and has
-remaining OWASP Java gaps around request-wrapper interprocedural modeling, LDAP
-injection, XPath injection, and property-driven weak-hash resolution. The seeded
-security dev suite is now at full recall with one Python `urljoin` label-review
-false positive. Vulture is
-only comparable on the Python dead-code subset.
+claim: the seeded Python quality duplicate-branch case is still missed, and
+OWASP Java still has request-wrapper interprocedural, LDAP injection, XPath
+injection, and property-driven weak-hash gaps. Frozen dead-code dev is now at
+full JavaScript, TypeScript, Go, and Java score; the remaining Python
+dead-code residuals are benchmark-label review items around duplicate
+dead-class method reporting and an unlabeled genuinely unreachable helper. The
+seeded security dev suite is now at full recall with one Python `urljoin`
+label-review false positive. Vulture is only comparable on the Python
+dead-code subset.
 
 Phase 2 Python security rerun on 2026-04-25 improved frozen `security.dev`
 overall from `TP=17 FP=5 FN=3 TN=9 score=78.15` to
@@ -225,6 +227,19 @@ writes. The previous `TP=109` exploratory result used an FP-prone unknown
 wrapper accessor shortcut and was rejected. Remaining Java misses are
 request-wrapper interprocedural flows, LDAP injection, XPath injection, and
 weak-hash algorithms loaded through project properties.
+
+Phase 4 dead-code rerun on 2026-04-26 improved frozen `dead_code.dev` overall
+from `TP=26 FP=3 FN=4 TN=17 score=87.38` to
+`TP=29 FP=1 FN=1 TN=18 score=96.28`. TypeScript moved from
+`TP=5 FP=0 FN=1 TN=3 score=92.5` to `TP=6 FP=0 FN=0 TN=3 score=100.0`;
+JavaScript moved from `TP=3 FP=2 FN=0 TN=1 score=72.67` to
+`TP=3 FP=0 FN=0 TN=2 score=100.0`; Java moved from
+`TP=1 FP=0 FN=1 TN=1 score=77.5` to `TP=2 FP=0 FN=0 TN=1 score=100.0`;
+Python moved from `TP=14 FP=1 FN=2 TN=11 score=90.38` to
+`TP=15 FP=1 FN=1 TN=11 score=93.33`. The patch keeps duplicate dead-class
+methods out of the reported finding set, so the frozen
+`dc-py-plugin-removed-method` label should be reviewed rather than forcing
+duplicate method output back into the analyzer.
 
 ## Benchmark Rules
 

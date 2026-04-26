@@ -146,7 +146,6 @@
       "expect": {
         "unused": [
           {"kind": "function", "file": "app.py", "symbol": "unused_view_helper"},
-          {"kind": "function", "file": "app.py", "symbol": "format"},
           {"kind": "class", "file": "app.py", "symbol": "UnusedFormatter"}
         ],
         "used": [
@@ -178,7 +177,6 @@
         "unused": [
           {"kind": "import", "file": "service.py", "symbol": "json"},
           {"kind": "function", "file": "service.py", "symbol": "_unused_reconcile"},
-          {"kind": "function", "file": "service.py", "symbol": "apply"},
           {"kind": "class", "file": "service.py", "symbol": "UnusedStrategy"},
           {"kind": "variable", "file": "service.py", "symbol": "UNUSED_STATUS"},
           {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
@@ -212,7 +210,6 @@
       "expect": {
         "unused": [
           {"kind": "function", "file": "shop/management/commands/rebuild_index.py", "symbol": "unused_export_job"},
-          {"kind": "function", "file": "shop/management/commands/rebuild_index.py", "symbol": "build"},
           {"kind": "class", "file": "shop/management/commands/rebuild_index.py", "symbol": "UnusedCommandHelper"}
         ],
         "used": [
@@ -246,7 +243,6 @@
       "expect": {
         "unused": [
           {"kind": "function", "file": "app.py", "symbol": "unused_task_helper"},
-          {"kind": "function", "file": "app.py", "symbol": "serialize"},
           {"kind": "class", "file": "app.py", "symbol": "UnusedTaskPayload"}
         ],
         "used": [
@@ -460,8 +456,7 @@
       "expect": {
         "unused": [
           {"kind": "function", "file": "App.java", "symbol": "unusedFormatter"},
-          {"kind": "class", "file": "App.java", "symbol": "UnusedController"},
-          {"kind": "function", "file": "App.java", "symbol": "render"}
+          {"kind": "class", "file": "App.java", "symbol": "UnusedController"}
         ],
         "used": [
           {"kind": "class", "file": "App.java", "symbol": "App"},

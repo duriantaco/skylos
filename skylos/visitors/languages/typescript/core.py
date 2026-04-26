@@ -36,6 +36,19 @@ _LIFECYCLE_METHODS: set[str] = {
     "ngAfterViewInit",
 }
 
+_ROUTE_ATTACHMENT_METHODS: set[str] = {
+    "all",
+    "delete",
+    "get",
+    "head",
+    "options",
+    "patch",
+    "post",
+    "put",
+    "route",
+    "use",
+}
+
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 _PARSER_CACHE: dict[int, Parser] = {}
 _JSX_EXTENSIONS = {".tsx", ".jsx", ".js"}
@@ -311,7 +324,105 @@ class TypeScriptCore:
 
         d = Definition(name, type_name, self.file_path, line)
         d.is_exported = is_exported
+        if (
+            type_name == "function"
+            and d.is_exported
+            and self._is_route_attachment_function(node)
+        ):
+            d.references = max(d.references, 1)
+            d.framework_signals.append("route attachment export")
         self.defs.append(d)
+
+    def _is_route_attachment_function(self, name_node) -> bool:
+        parameters, body = self._function_signature_and_body(name_node)
+        if parameters is None or body is None:
+            return False
+
+        param_names = self._collect_parameter_names(parameters)
+        if not param_names:
+            return False
+
+        for call_node in self._iter_nodes(body):
+            if call_node.type != "call_expression":
+                continue
+            function_node = call_node.child_by_field_name("function")
+            if function_node is None or function_node.type != "member_expression":
+                continue
+            object_node = function_node.child_by_field_name("object")
+            property_node = function_node.child_by_field_name("property")
+            if object_node is None or property_node is None:
+                continue
+            if self._get_text(object_node) not in param_names:
+                continue
+            if self._looks_like_route_registration_call(call_node, property_node):
+                return True
+
+        return False
+
+    def _function_signature_and_body(self, name_node):
+        declaration = name_node.parent
+        while declaration:
+            if declaration.type == "function_declaration":
+                return (
+                    declaration.child_by_field_name("parameters"),
+                    declaration.child_by_field_name("body"),
+                )
+            if declaration.type == "variable_declarator":
+                value_node = declaration.child_by_field_name("value")
+                if value_node and value_node.type == "arrow_function":
+                    parameters = value_node.child_by_field_name("parameters")
+                    body = value_node.child_by_field_name("body")
+                    if parameters is None:
+                        for child in value_node.named_children:
+                            if child is body:
+                                break
+                            if child.type in {
+                                "identifier",
+                                "required_parameter",
+                                "formal_parameters",
+                            }:
+                                parameters = child
+                                break
+                    return parameters, body
+                return None, None
+            if declaration.type in {"program", "class_declaration", "method_definition"}:
+                return None, None
+            declaration = declaration.parent
+        return None, None
+
+    def _looks_like_route_registration_call(self, call_node, property_node) -> bool:
+        method_name = self._get_text(property_node)
+        if method_name not in _ROUTE_ATTACHMENT_METHODS:
+            return False
+
+        arguments = call_node.child_by_field_name("arguments")
+        if arguments is None:
+            return False
+        args = list(arguments.named_children)
+        if not args:
+            return False
+
+        first_arg = args[0]
+        if first_arg.type == "string":
+            route = self._string_literal_value(first_arg) or ""
+            return route.startswith("/")
+
+        first_name = self._get_text(first_arg).lower()
+        if first_name in {"path", "route", "routepath", "url", "pattern"}:
+            return len(args) >= 2
+
+        return False
+
+    def _collect_parameter_names(self, parameters_node) -> set[str]:
+        names: set[str] = set()
+        stack = [parameters_node]
+        while stack:
+            node = stack.pop()
+            if node.type == "identifier":
+                names.add(self._get_text(node))
+                continue
+            stack.extend(node.named_children)
+        return names
 
     def _is_top_level(self, node) -> bool:
         current = node.parent
