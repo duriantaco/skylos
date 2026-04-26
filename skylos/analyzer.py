@@ -493,13 +493,56 @@ class Skylos:
 
     def _propagate_transitive_dead(self):
         dead_set = set()
-        for name, defn in self.defs.items():
+        dead_classes = set()
+        defs_by_name_file = defaultdict(list)
+        class_key_by_name_file = {}
+        for key, defn in self.defs.items():
+            filename = str(Path(defn.filename).resolve())
+            defs_by_name_file[(defn.name, filename)].append(key)
+            if defn.type in ("class", "type"):
+                class_key_by_name_file[(defn.name, filename)] = key
+
+        defs_by_name = defaultdict(list)
+        for key, defn in self.defs.items():
+            defs_by_name[defn.name].append(key)
+
+        def key_for_caller(caller: str, callee_defn) -> str | None:
+            if caller in self.defs:
+                return caller
+            filename = str(Path(callee_defn.filename).resolve())
+            same_file = defs_by_name_file.get((caller, filename), [])
+            if len(same_file) == 1:
+                return same_file[0]
+            candidates = defs_by_name.get(caller, [])
+            if len(candidates) == 1:
+                return candidates[0]
+            return None
+
+        for key, defn in self.defs.items():
             if (
                 defn.type in ("function", "method")
                 and defn.references == 0
                 and not defn.is_exported
             ):
-                dead_set.add(name)
+                dead_set.add(key)
+            elif (
+                defn.type in ("class", "type")
+                and defn.references == 0
+                and not defn.is_exported
+            ):
+                dead_set.add(key)
+                dead_classes.add(key)
+
+        def is_dead_caller(caller: str, callee_defn) -> bool:
+            caller_key = key_for_caller(caller, callee_defn)
+            if caller_key in dead_set:
+                return True
+            if "." not in caller:
+                return False
+            filename = str(Path(callee_defn.filename).resolve())
+            owner = caller.rsplit(".", 1)[0]
+            owner_key = class_key_by_name_file.get((owner, filename))
+            return owner_key in dead_classes
 
         changed = True
         iterations = 0
@@ -509,11 +552,11 @@ class Skylos:
             changed = False
             iterations += 1
 
-            for name, defn in self.defs.items():
-                if name in dead_set:
+            for key, defn in self.defs.items():
+                if key in dead_set:
                     continue
 
-                if defn.type not in ("function", "method"):
+                if defn.type not in ("function", "method", "class", "type"):
                     continue
                 if defn.references == 0:
                     continue
@@ -525,24 +568,28 @@ class Skylos:
 
                 all_callers_dead = True
                 for caller in defn.called_by:
-                    if caller not in dead_set:
+                    if not is_dead_caller(caller, defn):
                         all_callers_dead = False
                         break
 
                 if all_callers_dead:
-                    dead_callers = len([c for c in defn.called_by if c in dead_set])
+                    dead_callers = len(
+                        [c for c in defn.called_by if is_dead_caller(c, defn)]
+                    )
                     if defn.references <= dead_callers:
-                        dead_set.add(name)
+                        dead_set.add(key)
                         defn.references = 0
+                        if defn.type in ("class", "type"):
+                            dead_classes.add(key)
                         changed = True
 
         logger.info(
             f"Transitive dead code propagation: {iterations} iterations, "
-            f"{len(dead_set)} total dead functions"
+            f"{len(dead_set)} total dead definitions"
         )
 
-        for name, defn in self.defs.items():
-            if name in dead_set:
+        for key, defn in self.defs.items():
+            if key in dead_set:
                 continue
             if defn.type not in ("function", "method"):
                 continue
@@ -555,7 +602,7 @@ class Skylos:
             if attr_count <= 0:
                 continue
 
-            dead_callers = len([c for c in defn.called_by if c in dead_set])
+            dead_callers = len([c for c in defn.called_by if is_dead_caller(c, defn)])
 
             effective_refs = defn.references - attr_count
             if effective_refs <= dead_callers and dead_callers > 0:
@@ -816,12 +863,12 @@ class Skylos:
                     (str(ref_file), ref_simple), []
                 )
 
-                if same_file_methods:
+                if same_file_methods and ref_mod in {"self", "cls"}:
                     for m in same_file_methods:
                         m.references += 1
                     continue
 
-                if non_import_defs_fallback:
+                if non_import_defs_fallback and not ref_mod:
                     for d in non_import_defs_fallback:
                         d.references += 1
                     continue
@@ -852,7 +899,9 @@ class Skylos:
             for defn in self.defs.values():
                 if defn.references > 0:
                     continue
-                if defn.type in ("method", "function"):
+                if defn.type == "method":
+                    continue
+                if defn.type == "function":
                     pass
                 elif defn.type == "variable" and "." in defn.name:
                     pass
@@ -908,6 +957,40 @@ class Skylos:
                         defn.heuristic_refs["global_attr"] = defn.heuristic_refs.get(
                             "global_attr", 0.0
                         ) + _heuristic_weights.get("global_attr", 0.1)
+
+    def _mark_call_arg_method_refs(self):
+        param_method_refs = getattr(self, "_param_method_refs", {})
+        call_arg_types = getattr(self, "_call_arg_types", {})
+        if not param_method_refs or not call_arg_types:
+            return
+
+        for callee, arg_types in call_arg_types.items():
+            method_refs = param_method_refs.get(callee)
+            if not method_refs:
+                continue
+
+            typed_call_args = []
+            for arg_ref in arg_types:
+                if len(arg_ref) == 3:
+                    caller, position, type_name = arg_ref
+                elif len(arg_ref) == 2:
+                    position, type_name = arg_ref
+                    caller = ""
+                else:
+                    continue
+                if isinstance(position, (int, str)) and isinstance(type_name, str):
+                    typed_call_args.append((str(caller or ""), position, type_name))
+
+            for position, _param_type, method_name in method_refs:
+                for caller, arg_position, arg_type in typed_call_args:
+                    if arg_position != position:
+                        continue
+                    target = f"{arg_type}.{method_name}"
+                    defn = self.defs.get(target)
+                    if defn is None or defn.type != "method":
+                        continue
+                    defn.references += 1
+                    defn.called_by.add(caller or callee)
 
     def _get_base_classes(self, class_name):
         if class_name not in self.defs:
@@ -1138,6 +1221,22 @@ class Skylos:
     ):
         """Assemble the final result dict from analysis outputs."""
         unused = []
+        dead_class_keys = {
+            key
+            for key, definition in self.defs.items()
+            if definition.type in ("class", "type")
+            and definition.references == 0
+            and not definition.is_exported
+            and definition.confidence > 0
+            and definition.confidence >= thr
+        }
+        class_key_by_name_file = {}
+        for key, definition in self.defs.items():
+            if definition.type in ("class", "type"):
+                class_key_by_name_file[
+                    (definition.name, str(Path(definition.filename).resolve()))
+                ] = key
+
         for definition in self.defs.values():
             if (
                 definition.references == 0
@@ -1145,6 +1244,13 @@ class Skylos:
                 and definition.confidence > 0
                 and definition.confidence >= thr
             ):
+                if definition.type == "method" and "." in definition.name:
+                    owner = definition.name.rsplit(".", 1)[0]
+                    owner_key = class_key_by_name_file.get(
+                        (owner, str(Path(definition.filename).resolve()))
+                    )
+                    if owner_key in dead_class_keys:
+                        continue
                 unused.append(definition.to_dict())
 
         context_map = {}
@@ -1499,6 +1605,8 @@ class Skylos:
         all_instance_attr_types = {}
         all_used_attr_names = set()
         all_used_attr_context = set()
+        all_param_method_refs = defaultdict(list)
+        all_call_arg_types = defaultdict(list)
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -1553,6 +1661,8 @@ class Skylos:
                 file_instance_attr_types = out[16] if len(out) > 16 else {}
                 file_used_attr_names = out[17] if len(out) > 17 else set()
                 file_used_attr_context = out[18] if len(out) > 18 else set()
+                file_param_method_refs = out[20] if len(out) > 20 else {}
+                file_call_arg_types = out[21] if len(out) > 21 else {}
                 (
                     defs,
                     refs,
@@ -1590,6 +1700,10 @@ class Skylos:
                     all_used_attr_names.update(file_used_attr_names)
                 if file_used_attr_context:
                     all_used_attr_context.update(file_used_attr_context)
+                for callee, method_refs in file_param_method_refs.items():
+                    all_param_method_refs[callee].extend(method_refs)
+                for callee, arg_refs in file_call_arg_types.items():
+                    all_call_arg_types[callee].extend(arg_refs)
 
                 for definition in defs:
                     if definition.type == "import":
@@ -2128,10 +2242,13 @@ class Skylos:
         self._global_type_map.update(all_instance_attr_types)
         self._all_used_attr_names = all_used_attr_names
         self._all_used_attr_context = all_used_attr_context
+        self._param_method_refs = all_param_method_refs
+        self._call_arg_types = all_call_arg_types
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
         self._mark_refs(progress_callback=progress_callback)
+        self._mark_call_arg_method_refs()
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: hierarchy refs"))
@@ -2550,6 +2667,8 @@ def proc_file(
             getattr(v, "_used_attr_names", set()),
             getattr(v, "_used_attr_names_with_context", set()),
             source.splitlines(True),
+            getattr(v, "param_method_refs", {}),
+            getattr(v, "call_arg_types", {}),
         )
 
     except Exception as e:

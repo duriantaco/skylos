@@ -176,6 +176,19 @@ class JavaCore:
                     parent = current.parent
                     if parent and parent.type == "interface_body":
                         return True
+                    modifiers = current.child_by_field_name(
+                        "modifiers"
+                    ) or self._find_child_by_type(current, "modifiers")
+                    if modifiers:
+                        mod_text = self._get_text(modifiers)
+                        is_public_api = "public" in mod_text or "protected" in mod_text
+                        is_entrypoint_static_helper = (
+                            "static" in mod_text
+                            and self._containing_class_has_main(current)
+                        )
+                        if is_public_api and not is_entrypoint_static_helper:
+                            return True
+                    return False
                 modifiers = current.child_by_field_name(
                     "modifiers"
                 ) or self._find_child_by_type(current, "modifiers")
@@ -186,6 +199,52 @@ class JavaCore:
                 return False
             current = current.parent
         return False
+
+    def _containing_class_has_main(self, node) -> bool:
+        current = node.parent
+        while current:
+            if current.type in (
+                "class_declaration",
+                "enum_declaration",
+                "record_declaration",
+            ):
+                for child in self._walk_nodes(current):
+                    if child.type != "method_declaration":
+                        continue
+                    if self._is_java_main_entrypoint(child):
+                        return True
+                return False
+            current = current.parent
+        return False
+
+    def _is_java_main_entrypoint(self, method_node) -> bool:
+        name_node = method_node.child_by_field_name("name")
+        if name_node is None or self._get_text(name_node) != "main":
+            return False
+
+        modifiers = method_node.child_by_field_name(
+            "modifiers"
+        ) or self._find_child_by_type(method_node, "modifiers")
+        if modifiers is None:
+            return False
+        mod_text = self._get_text(modifiers)
+        if "public" not in mod_text or "static" not in mod_text:
+            return False
+
+        signature = self._get_text(method_node).split("{", 1)[0]
+        normalized = " ".join(signature.replace("\n", " ").split())
+        if " void main" not in normalized:
+            return False
+        if "String" not in normalized:
+            return False
+        return "[]" in normalized or "..." in normalized
+
+    def _walk_nodes(self, node):
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            yield current
+            stack.extend(reversed(current.children))
 
     def _find_child_by_type(self, node, type_name: str):
         for child in node.children:

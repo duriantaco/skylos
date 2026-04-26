@@ -515,9 +515,12 @@ class Helper:
 
     def _helper(self):
         return 1
+
+
+HELPER = Helper()
 """,
-            encoding="utf-8",
-        )
+                encoding="utf-8",
+            )
 
         result_rust, result_py = _run_dead_code_parity_scans_in_subprocess(tmp_path)
 

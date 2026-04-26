@@ -436,6 +436,29 @@ class TestTypeScriptDeadFiles:
 
         assert dead_files == []
 
+    def test_package_json_entrypoint_keeps_single_package_live_without_inventory(
+        self, tmp_path
+    ):
+        app_file = tmp_path / "src" / "app.js"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"app","type":"module","main":"src/app.js"}',
+            encoding="utf-8",
+        )
+        app_file.parent.mkdir(parents=True, exist_ok=True)
+        app_file.write_text("export const app = true;\n", encoding="utf-8")
+
+        dead_files = find_dead_ts_files(
+            [app_file],
+            [],
+            {},
+            {},
+            project_root=str(app_file.parent),
+            workspace_inventory=None,
+        )
+
+        assert dead_files == []
+
     def test_package_json_subpath_export_keeps_exported_file_live(self, tmp_path):
         helper_file = tmp_path / "packages" / "ui" / "src" / "helpers.ts"
 

@@ -639,6 +639,9 @@ def _check_abstract_overrides(def_obj, analyzer, framework):
 
     if simple_name in PROTOCOL_METHOD_TO_BASES:
         candidate_bases = PROTOCOL_METHOD_TO_BASES[simple_name]
+        protocol_classes = set(getattr(analyzer, "_global_protocol_classes", set()))
+        protocol_classes.update(getattr(framework, "protocol_classes", set()))
+        candidate_bases = candidate_bases - protocol_classes
         if has_base_class(def_obj, candidate_bases, framework):
             return _suppress(def_obj, "protocol/ABC override", code="protocol_override")
 
@@ -661,8 +664,12 @@ def _check_abstract_overrides(def_obj, analyzer, framework):
                     break
         if class_def and getattr(class_def, "base_classes", None):
             has_external_base = False
+            protocol_classes = set(getattr(analyzer, "_global_protocol_classes", set()))
+            protocol_classes.update(getattr(framework, "protocol_classes", set()))
             for base_name in class_def.base_classes:
                 base_simple = base_name.split(".")[-1]
+                if base_simple in protocol_classes:
+                    continue
                 for dname, dobj in all_defs.items():
                     if (
                         dobj.type == "method"
@@ -761,44 +768,6 @@ def _check_protocol_abc(def_obj, analyzer, framework):
                             return _suppress(
                                 def_obj,
                                 f"Implements abstract method from {parent_abc}",
-                            )
-
-    if def_obj.type == "method" and "." in def_obj.name:
-        parts = def_obj.name.split(".")
-        protocol_implementers = {
-            **getattr(analyzer, "_global_protocol_implementers", {}),
-            **getattr(framework, "protocol_implementers", {}),
-        }
-        for part in parts[:-1]:
-            if part in protocol_implementers:
-                return _suppress(def_obj, "Protocol implementer method")
-
-    if def_obj.type == "method" and "." in def_obj.name:
-        parts = def_obj.name.split(".")
-        method_name = parts[-1]
-
-        if len(parts) >= 2:
-            class_name = parts[-2]
-        else:
-            class_name = None
-
-        if class_name:
-            protocol_method_names = getattr(
-                analyzer, "_global_protocol_method_names", {}
-            )
-            if protocol_method_names:
-                class_methods = set()
-                for d in analyzer.defs.values():
-                    if d.type == "method" and "." in d.name:
-                        d_parts = d.name.split(".")
-                        if len(d_parts) >= 2 and d_parts[-2] == class_name:
-                            class_methods.add(d_parts[-1])
-                for protocol_class, protocol_methods in protocol_method_names.items():
-                    if protocol_methods and protocol_methods.issubset(class_methods):
-                        if method_name in protocol_methods:
-                            return _suppress(
-                                def_obj,
-                                f"Structural Protocol implementation ({protocol_class})",
                             )
 
     if def_obj.type == "method" and "." in def_obj.name:
