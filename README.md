@@ -12,6 +12,7 @@
 [![Downloads/month](https://img.shields.io/pypi/dm/skylos)](https://pypistats.org/packages/skylos)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
 [![GitHub stars](https://img.shields.io/github/stars/duriantaco/skylos)](https://github.com/duriantaco/skylos/stargazers)
+[![Astronomer Trust](https://img.shields.io/badge/Astronomer%20Trust-A-brightgreen?style=flat&logo=github&logoColor=white)](#star-authenticity-audit)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
 
 [Website](https://skylos.dev) |
@@ -19,10 +20,28 @@
 [Quick Start](https://docs.skylos.dev/quick-start) |
 [GitHub Action](./action.yml) |
 [VS Code Extension](./editors/vscode/README.md) |
+[Real-World Results](./REAL_WORLD_RESULTS.md) |
 [Benchmarks](./BENCHMARK.md) |
 [Contributing](./CONTRIBUTING.md)
 
 **English** | [Chinese README](./README_CN.md)
+
+> **Real-world validation:** Skylos-assisted dead-code cleanup PRs have been
+> merged in [Black](https://github.com/psf/black/pull/5041),
+> [NetworkX](https://github.com/networkx/networkx/pull/8572),
+> [Optuna](https://github.com/optuna/optuna/pull/6547),
+> [mitmproxy](https://github.com/mitmproxy/mitmproxy/pull/8136),
+> [pypdf](https://github.com/py-pdf/pypdf/pull/3685),
+> [beets](https://github.com/beetbox/beets/pull/6473), and
+> [Flagsmith](https://github.com/Flagsmith/flagsmith/pull/6953).
+> These are accepted cleanup PRs, not project endorsements. See
+> [Real-World Results](./REAL_WORLD_RESULTS.md).
+
+<a id="star-authenticity-audit"></a>
+
+> **Star authenticity audit:** A local Astronomer scan on April 26, 2026
+> computed 420 stargazers and returned **overall trust: A**. StarGuard also
+> reported **low fake-star risk**.
 
 ## What Is Skylos?
 
@@ -41,6 +60,9 @@ dead code detection, diff-aware regression checks, and PR-native feedback.
 pip install skylos
 skylos .
 ```
+
+If Skylos catches something useful in your repo, star it so more maintainers can
+find it.
 
 Add security, secrets, quality, and dependency checks:
 
@@ -182,6 +204,7 @@ For methodology, commands, competitor rows, and caveats, see
 | Agent scan, verification, remediation, and model setup | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI defense checks and LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
 | MCP server setup | [MCP Server](https://docs.skylos.dev/mcp-server) |
+| Real-world merged cleanup PRs | [Real-World Results](./REAL_WORLD_RESULTS.md) |
 | Baselines, filtering, suppressions, and whitelists | [Configuration](https://docs.skylos.dev/configuration) |
 | Smart tracing | [Smart Tracing](https://docs.skylos.dev/smart-tracing) |
 | Rule families and language support | [Rules Reference](https://docs.skylos.dev/rules-reference) |
