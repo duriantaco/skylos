@@ -1,0 +1,44 @@
+# Skylos Tokenless GitHub CI
+#
+# This example uses GitHub OIDC instead of a long-lived SKYLOS_TOKEN secret.
+# Requirements:
+#   - Skylos CLI 4.7.0 or newer
+#   - A Skylos Cloud project linked to this GitHub repository
+#   - permissions.id-token: write
+#
+# Start with --force while you baseline findings so uploads always reach
+# Skylos Cloud. Remove --force when you want CI failures to block merges.
+
+name: Skylos Tokenless CI
+
+"on":
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  skylos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Skylos
+        run: python -m pip install "skylos>=4.7.0"
+
+      - name: Pull Skylos Cloud policy
+        run: skylos sync pull
+
+      - name: Scan and upload
+        run: skylos . --danger --quality --secrets --upload --force --sha "${{ github.sha }}"
