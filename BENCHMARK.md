@@ -182,17 +182,19 @@ of receiving a score.
 | Security frozen | seeded dev | Bandit | Python | 3 | 0 | 6 | 3 | 4 | 7 | 64.33 |
 | Security frozen | seeded dev | Bandit | TypeScript | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
 | Security frozen | seeded dev | Bandit | Go | 0 | 2 | 0 | 0 | 0 | 0 | N/A |
-| Security frozen | OWASP Java dev | Skylos | Java | 240 | 0 | 17 | 0 | 103 | 120 | 61.38 |
+| Security frozen | OWASP Java dev | Skylos | Java | 240 | 0 | 105 | 0 | 15 | 120 | 94.37 |
 | Quality frozen | seeded dev | Skylos | Python | 1 | 0 | 0 | 0 | 1 | 1 | 55.0 |
 | Agent review frozen | seeded dev | Skylos | Python | 1 | 0 | 1 | 0 | 0 | 1 | 100.0 |
 
 These frozen results already show useful gaps to investigate before any public
 claim: Skylos currently misses Python and TypeScript reachability edges, has
 JavaScript dead-code false positives on route-registry exports, misses a Java
-unused method, misses the seeded Python quality duplicate-branch case, and
-misses most OWASP Java security-flow cases outside weak crypto/hash. The seeded
+unused method, misses the seeded Python quality duplicate-branch case, and has
+remaining OWASP Java gaps around request-wrapper interprocedural modeling, LDAP
+injection, XPath injection, and property-driven weak-hash resolution. The seeded
 security dev suite is now at full recall with one Python `urljoin` label-review
-false positive. Vulture is only comparable on the Python dead-code subset.
+false positive. Vulture is
+only comparable on the Python dead-code subset.
 
 Phase 2 Python security rerun on 2026-04-25 improved frozen `security.dev`
 overall from `TP=17 FP=5 FN=3 TN=9 score=78.15` to
@@ -211,6 +213,18 @@ Phase 2b TypeScript/Go security rerun on 2026-04-25 improved frozen
 `TP=4 FP=0 FN=1 TN=1 score=91.0` to `TP=5 FP=0 FN=0 TN=1 score=100.0`.
 Go moved from `TP=5 FP=1 FN=0 TN=1 score=84.17` to
 `TP=5 FP=0 FN=0 TN=2 score=100.0`.
+
+Phase 3 Java security rerun on 2026-04-25 improved frozen
+`security.owasp-java.dev` from `TP=17 FP=0 FN=103 TN=120 score=61.38` to
+`TP=105 FP=0 FN=15 TN=120 score=94.37`. The patch keeps the OWASP Java false
+positive count at zero while moving Java servlet security flow to a structured
+tree-sitter analyzer with the older regex-heavy scanner retained only as a
+failure fallback. Coverage includes cookies, weak randomness, command
+execution, SQL, LDAP, XPath, XSS, path traversal, and trust-boundary session
+writes. The previous `TP=109` exploratory result used an FP-prone unknown
+wrapper accessor shortcut and was rejected. Remaining Java misses are
+request-wrapper interprocedural flows, LDAP injection, XPath injection, and
+weak-hash algorithms loaded through project properties.
 
 ## Benchmark Rules
 
@@ -372,3 +386,10 @@ Latest full test run:
 ```text
 3324 passed, 4 skipped, 3 warnings
 ```
+## Latest Frozen OWASP Java Security Result
+
+Run: `security.owasp-java.dev` with Skylos Java structured flow analyzer as the primary path and legacy request/servlet scanner as failure fallback only. Unknown external request-wrapper accessors are not treated as tainted without a real same-project summary.
+
+| Tool | TP | FP | FN | TN | Score |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Skylos | 105 | 0 | 15 | 120 | 94.37 |
