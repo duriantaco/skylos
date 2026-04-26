@@ -1,22 +1,5 @@
 ## Changelog
 
-## [4.7.0](https://github.com/duriantaco/skylos/compare/v4.6.0...v4.7.0) (2026-04-26)
-
-
-### Features
-
-* **cloud:** support GitHub OIDC for tokenless CI sync workflows
-
-
-### Bug Fixes
-
-* **login:** reject unverified browser login callbacks before saving credentials
-
-
-### Documentation
-
-* **security:** document disclosure process and supported security contact
-
 ## [4.6.0](https://github.com/duriantaco/skylos/compare/v4.5.0...v4.6.0) (2026-04-26)
 
 
