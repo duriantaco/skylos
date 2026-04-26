@@ -53,6 +53,7 @@ from skylos.rules.quality.logic import (
     MutableDefaultRule,
     BareExceptRule,
     DangerousComparisonRule,
+    DuplicateBranchRule,
     TryBlockPatternsRule,
     UnusedExceptVarRule,
     ReturnConsistencyRule,
@@ -164,13 +165,21 @@ def _resolve_analysis_root(path_like: Path) -> Path:
     if not current.is_dir():
         current = current.parent
 
+    start = current
+    home = Path.home().resolve()
     probe = current
     for _ in range(20):
         if (probe / "pyproject.toml").exists():
+            if probe == home and start != home:
+                break
             return probe
         if (probe / "setup.py").exists():
+            if probe == home and start != home:
+                break
             return probe
         if (probe / ".git").exists():
+            if probe == home and start != home:
+                break
             return probe
         if probe.parent == probe:
             break
@@ -179,7 +188,9 @@ def _resolve_analysis_root(path_like: Path) -> Path:
     try:
         git_root = find_git_root(current)
         if git_root:
-            return Path(git_root).resolve()
+            resolved_git_root = Path(git_root).resolve()
+            if not (resolved_git_root == home and current != home):
+                return resolved_git_root
     except Exception:
         pass
 
@@ -2467,6 +2478,8 @@ def proc_file(
                 q_rules.append(BareExceptRule())
             if "SKY-L003" not in cfg["ignore"]:
                 q_rules.append(DangerousComparisonRule())
+            if "SKY-Q305" not in cfg["ignore"]:
+                q_rules.append(DuplicateBranchRule())
             if "SKY-L004" not in cfg["ignore"]:
                 q_rules.append(TryBlockPatternsRule(max_lines=15))
             if "SKY-L005" not in cfg["ignore"]:

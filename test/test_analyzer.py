@@ -10,7 +10,7 @@ from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.penalties import apply_penalties
 
-from skylos.analyzer import Skylos, proc_file, analyze
+from skylos.analyzer import Skylos, proc_file, analyze, _resolve_analysis_root
 
 
 @pytest.fixture
@@ -1785,6 +1785,18 @@ def test_changed_files_scans_dotenv_for_secrets(tmp_path):
 
 
 class TestRepoPhantomReferences:
+    def test_resolve_analysis_root_ignores_home_git_root_without_project_marker(
+        self, tmp_path, monkeypatch
+    ):
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        case_root = tmp_path / "benchmarks" / "case"
+        case_root.mkdir(parents=True)
+
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+        assert _resolve_analysis_root(case_root) == case_root
+
     def test_analyze_flags_imported_local_module_member_call(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
         pkg = tmp_path / "app"

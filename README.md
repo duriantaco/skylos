@@ -492,7 +492,7 @@ Languages are auto-detected by file extension. Mixed-language repos work out of 
 | Nesting depth | SKY-Q302 | Too many nested levels |
 | Function length | SKY-C304 | Function exceeds line limit |
 | Too many params | SKY-C303 | Function has too many parameters |
-| Duplicate condition | SKY-Q305 | Identical condition in if-else-if chain |
+| Duplicate branch | SKY-Q305 | Duplicate branch condition or body |
 | Await in loop | SKY-Q402 | `await` inside for/while loop |
 | Unreachable code | SKY-UC002 | Code after return/throw/break/continue |
 

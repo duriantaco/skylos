@@ -164,6 +164,235 @@ def _walk_scope(nodes):
             stack.append(child)
 
 
+def _is_empty_branch_body(body: list[ast.stmt]) -> bool:
+    if not body:
+        return True
+
+    for stmt in body:
+        if isinstance(stmt, ast.Pass):
+            continue
+        if isinstance(stmt, ast.Expr):
+            value = stmt.value
+            if isinstance(value, ast.Constant) and value.value is ...:
+                continue
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                continue
+        return False
+    return True
+
+
+def _substantive_branch_statement_count(body: list[ast.stmt]) -> int:
+    count = 0
+    for stmt in body:
+        if isinstance(stmt, ast.Pass):
+            continue
+        if isinstance(stmt, ast.Expr):
+            value = stmt.value
+            if isinstance(value, ast.Constant) and value.value is ...:
+                continue
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                continue
+        count += 1
+    return count
+
+
+def _semantic_ast_key(node: ast.AST | list[ast.AST]) -> str:
+    if isinstance(node, list):
+        return "[" + ",".join(_semantic_ast_key(child) for child in node) + "]"
+    return ast.dump(node, annotate_fields=True, include_attributes=False)
+
+
+def _iter_function_scope_nodes(node: ast.FunctionDef | ast.AsyncFunctionDef):
+    stack = list(reversed(node.body))
+
+    while stack:
+        current = stack.pop()
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+
+        yield current
+
+        children = list(ast.iter_child_nodes(current))
+        stack.extend(reversed(children))
+
+
+def _build_parent_map(node: ast.AST) -> dict[int, ast.AST]:
+    parent_map = {}
+    for parent in ast.walk(node):
+        for child in ast.iter_child_nodes(parent):
+            parent_map[id(child)] = parent
+    return parent_map
+
+
+def _is_elif_node(node: ast.If, parent_map: dict[int, ast.AST]) -> bool:
+    parent = parent_map.get(id(node))
+    return (
+        isinstance(parent, ast.If)
+        and len(parent.orelse) == 1
+        and parent.orelse[0] is node
+    )
+
+
+def _branch_body_line(body: list[ast.stmt], fallback_line: int) -> int:
+    for stmt in body:
+        line = getattr(stmt, "lineno", None)
+        if line is not None:
+            return line
+    return fallback_line
+
+
+def _collect_if_chain(
+    node: ast.If,
+) -> list[tuple[ast.AST | None, list[ast.stmt], int]]:
+    branches = []
+    current = node
+
+    while isinstance(current, ast.If):
+        branches.append((current.test, current.body, current.lineno))
+        if len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
+            current = current.orelse[0]
+        else:
+            if current.orelse:
+                branches.append(
+                    (
+                        None,
+                        current.orelse,
+                        _branch_body_line(current.orelse, current.lineno),
+                    )
+                )
+            break
+
+    return branches
+
+
+class DuplicateBranchRule(SkylosRule):
+    rule_id = "SKY-Q305"
+    name = "Duplicate Branch Logic"
+
+    def visit_node(self, node, context):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+
+        filename = context.get("filename", "")
+        parent_map = _build_parent_map(node)
+        findings = []
+        reported = set()
+
+        for child in _iter_function_scope_nodes(node):
+            if not isinstance(child, ast.If):
+                continue
+            if _is_elif_node(child, parent_map):
+                continue
+
+            branches = _collect_if_chain(child)
+            if len(branches) < 2:
+                continue
+
+            findings.extend(
+                self._duplicate_condition_findings(
+                    node, branches, filename, reported
+                )
+            )
+            findings.extend(
+                self._duplicate_body_findings(node, branches, filename, reported)
+            )
+
+        return findings if findings else None
+
+    def _duplicate_condition_findings(
+        self,
+        func_node,
+        branches: list[tuple[ast.AST | None, list[ast.stmt], int]],
+        filename: str,
+        reported: set[tuple[str, int, str]],
+    ) -> list[dict]:
+        seen = {}
+        findings = []
+
+        for condition, _body, line in branches:
+            if condition is None:
+                continue
+            key = _semantic_ast_key(condition)
+            if key not in seen:
+                seen[key] = line
+                continue
+
+            report_key = ("condition", line, key)
+            if report_key in reported:
+                continue
+            reported.add(report_key)
+            findings.append(
+                self._make_finding(
+                    func_node,
+                    filename,
+                    line,
+                    "duplicate_condition",
+                    f"Function '{func_node.name}' repeats an if/elif condition first seen at line {seen[key]}.",
+                )
+            )
+
+        return findings
+
+    def _duplicate_body_findings(
+        self,
+        func_node,
+        branches: list[tuple[ast.AST | None, list[ast.stmt], int]],
+        filename: str,
+        reported: set[tuple[str, int, str]],
+    ) -> list[dict]:
+        seen = {}
+        findings = []
+
+        for _condition, body, line in branches:
+            if _is_empty_branch_body(body):
+                continue
+            if _substantive_branch_statement_count(body) < 2:
+                continue
+            if any(
+                kind == "condition" and seen_line == line
+                for kind, seen_line, _ in reported
+            ):
+                continue
+
+            key = _semantic_ast_key(body)
+            if key not in seen:
+                seen[key] = line
+                continue
+
+            report_key = ("body", line, key)
+            if report_key in reported:
+                continue
+            reported.add(report_key)
+            findings.append(
+                self._make_finding(
+                    func_node,
+                    filename,
+                    line,
+                    "duplicate_body",
+                    f"Function '{func_node.name}' has duplicate branch bodies first seen at line {seen[key]}.",
+                )
+            )
+
+        return findings
+
+    def _make_finding(self, func_node, filename, line, value, message):
+        return {
+            "rule_id": self.rule_id,
+            "kind": "quality",
+            "severity": "MEDIUM",
+            "type": "function",
+            "name": func_node.name,
+            "simple_name": func_node.name,
+            "value": value,
+            "threshold": 0,
+            "message": message,
+            "file": filename,
+            "basename": Path(filename).name,
+            "line": line,
+            "col": func_node.col_offset,
+        }
+
+
 def _is_function_level_try(node: ast.Try, parent_body: list[ast.stmt]) -> bool:
     if len(parent_body) == 1 and parent_body[0] is node:
         return True
@@ -2370,6 +2599,14 @@ class DuplicateStringLiteralRule(SkylosRule):
                     return True
         return False
 
+    def _is_structural_key_literal(self, node, parent_map):
+        parent = parent_map.get(id(node))
+        if isinstance(parent, ast.Subscript) and parent.slice is node:
+            return True
+        if isinstance(parent, ast.Dict) and node in parent.keys:
+            return True
+        return False
+
     def visit_node(self, node, context):
         if not isinstance(node, ast.Module):
             return None
@@ -2391,6 +2628,8 @@ class DuplicateStringLiteralRule(SkylosRule):
                 if len(child.value) < 5:
                     continue
                 if self._is_docstring(child, parent_map):
+                    continue
+                if self._is_structural_key_literal(child, parent_map):
                     continue
                 key = child.value
                 if key not in string_occurrences:

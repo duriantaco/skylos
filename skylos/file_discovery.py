@@ -142,7 +142,7 @@ def list_git_visible_files(path: str | Path) -> list[Path] | None:
         rel_path = line.strip()
         if not rel_path:
             continue
-        files.append((root / rel_path).resolve())
+        files.append(root / rel_path)
 
     files.sort()
     return files
@@ -176,18 +176,18 @@ def discover_source_files(
             files = []
             seen = set()
             for file_path in [*git_files, *forced_includes]:
+                if file_path.suffix.lower() not in ext_set:
+                    continue
                 resolved = file_path.resolve()
                 if resolved in seen:
                     continue
                 seen.add(resolved)
-                if file_path.suffix.lower() not in ext_set:
-                    continue
                 if should_include_path(file_path, target, include_folders):
-                    files.append(file_path)
+                    files.append(resolved)
                     continue
                 if should_exclude_path(file_path, target, exclude_folders):
                     continue
-                files.append(file_path)
+                files.append(resolved)
             files.sort()
             return files
 

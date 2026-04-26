@@ -184,19 +184,19 @@ of receiving a score.
 | Security frozen | seeded dev | Bandit | TypeScript | 0 | 1 | 0 | 0 | 0 | 0 | N/A |
 | Security frozen | seeded dev | Bandit | Go | 0 | 2 | 0 | 0 | 0 | 0 | N/A |
 | Security frozen | OWASP Java dev | Skylos | Java | 240 | 0 | 105 | 0 | 15 | 120 | 94.37 |
-| Quality frozen | seeded dev | Skylos | Python | 1 | 0 | 0 | 0 | 1 | 1 | 55.0 |
+| Quality frozen | seeded dev | Skylos | Python | 1 | 0 | 1 | 0 | 0 | 1 | 100.0 |
 | Agent review frozen | seeded dev | Skylos | Python | 1 | 0 | 1 | 0 | 0 | 1 | 100.0 |
 
 These frozen results already show useful gaps to investigate before any public
-claim: the seeded Python quality duplicate-branch case is still missed, and
-OWASP Java still has request-wrapper interprocedural, LDAP injection, XPath
-injection, and property-driven weak-hash gaps. Frozen dead-code dev is now at
-full JavaScript, TypeScript, Go, and Java score; the remaining Python
+claim: OWASP Java still has request-wrapper interprocedural, LDAP injection,
+XPath injection, and property-driven weak-hash gaps. Frozen dead-code dev is
+now at full JavaScript, TypeScript, Go, and Java score; the remaining Python
 dead-code residuals are benchmark-label review items around duplicate
 dead-class method reporting and an unlabeled genuinely unreachable helper. The
 seeded security dev suite is now at full recall with one Python `urljoin`
-label-review false positive. Vulture is only comparable on the Python
-dead-code subset.
+label-review false positive. Frozen quality dev now passes the seeded Python
+duplicate-branch case without unlabeled false positives. Vulture is only
+comparable on the Python dead-code subset.
 
 Phase 2 Python security rerun on 2026-04-25 improved frozen `security.dev`
 overall from `TP=17 FP=5 FN=3 TN=9 score=78.15` to
@@ -240,6 +240,16 @@ Python moved from `TP=14 FP=1 FN=2 TN=11 score=90.38` to
 methods out of the reported finding set, so the frozen
 `dc-py-plugin-removed-method` label should be reviewed rather than forcing
 duplicate method output back into the analyzer.
+
+Phase 5 quality rerun on 2026-04-26 improved frozen `quality.dev` from
+`TP=0 FP=0 FN=1 TN=1 score=55.0` to
+`TP=1 FP=0 FN=0 TN=1 score=100.0`. The patch adds Python duplicate
+if/elif branch detection and fixes two precision/performance issues exposed by
+the frozen fixture: long `elif` chains no longer count as deep nesting, repeated
+dictionary key lookups no longer count as duplicate magic strings, and
+git-backed file discovery filters by extension before resolving every visible
+repository path. Root resolution also avoids accidentally treating a
+home-directory Git checkout as the project root for nested benchmark fixtures.
 
 ## Benchmark Rules
 

@@ -3,6 +3,7 @@ from skylos.rules.quality.logic import (
     MutableDefaultRule,
     BareExceptRule,
     DangerousComparisonRule,
+    DuplicateBranchRule,
     BroadExceptionRule,
 )
 
@@ -170,6 +171,100 @@ if x is None:
         rule = DangerousComparisonRule()
         findings = check_code(rule, code)
         assert len(findings) == 0
+
+
+class TestDuplicateBranchRule:
+    def test_duplicate_elif_condition(self):
+        code = """
+def reconcile_account(event):
+    if event["kind"] == "credit":
+        return event["amount"]
+    elif event["kind"] == "debit":
+        return -event["amount"]
+    elif event["kind"] == "fee":
+        return -event["amount"]
+    elif event["kind"] == "fee":
+        return -event["amount"]
+    return 0
+"""
+        rule = DuplicateBranchRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-Q305"
+        assert findings[0]["name"] == "reconcile_account"
+        assert findings[0]["value"] == "duplicate_condition"
+
+    def test_duplicate_branch_body(self):
+        code = """
+def resolve_status(order):
+    if order.is_cancelled:
+        status = "closed"
+        return status
+    elif order.is_refunded:
+        status = "closed"
+        return status
+    return "open"
+"""
+        rule = DuplicateBranchRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-Q305"
+        assert findings[0]["value"] == "duplicate_body"
+
+    def test_duplicate_if_else_body(self):
+        code = """
+def render_status(enabled):
+    if enabled:
+        label = "active"
+        return label.upper()
+    else:
+        label = "active"
+        return label.upper()
+"""
+        rule = DuplicateBranchRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-Q305"
+        assert findings[0]["name"] == "render_status"
+        assert findings[0]["value"] == "duplicate_body"
+
+    def test_separate_functions_do_not_match_each_other(self):
+        code = """
+def first(flag):
+    if flag:
+        return "same"
+    return "different"
+
+def second(flag):
+    if flag:
+        return "same"
+    return "different"
+"""
+        rule = DuplicateBranchRule()
+        findings = check_code(rule, code)
+        assert findings == []
+
+    def test_nested_function_is_separate_scope(self):
+        code = """
+def outer(flag):
+    if flag:
+        return "outer"
+
+    def inner(value):
+        if value == 1:
+            result = "same"
+            return result
+        elif value == 2:
+            result = "same"
+            return result
+        return "other"
+
+    return inner(1)
+"""
+        rule = DuplicateBranchRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+        assert findings[0]["name"] == "inner"
 
 
 class TestBroadExceptionRule:

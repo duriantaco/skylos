@@ -467,6 +467,19 @@ def f():
         findings = check_code(rule, code)
         assert not any(f["rule_id"] == "SKY-L027" for f in findings)
 
+    def test_repeated_dict_key_access_ok(self):
+        code = """
+def f(event):
+    total = event["amount"]
+    total += event["amount"]
+    total += event["amount"]
+    total += event["amount"]
+    return total
+"""
+        rule = DuplicateStringLiteralRule()
+        findings = check_code(rule, code)
+        assert not any(f["rule_id"] == "SKY-L027" for f in findings)
+
 
 # --- SKY-L028: Too Many Returns ---
 

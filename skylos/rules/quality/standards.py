@@ -80,6 +80,7 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     # Complexity / structure
     "SKY-Q301": [{"id": "CWE-1121", "name": "Excessive McCabe Cyclomatic Complexity"}],
     "SKY-Q302": [{"id": "CWE-1124", "name": "Excessively Deep Nesting"}],
+    "SKY-Q305": [{"id": "CWE-670", "name": "Always-Incorrect Control Flow Implementation"}],
     "SKY-Q306": [{"id": "CWE-1121", "name": "Excessive McCabe Cyclomatic Complexity"}],
     "SKY-L021": [
         {"id": "CWE-693", "name": "Protection Mechanism Failure"},
@@ -113,6 +114,7 @@ STANDARD_REFS: dict[str, list[str]] = {
     "SKY-Q301": ["ISO/IEC 5055:2021 §6.3.4", "McCabe Cyclomatic Complexity"],
     "SKY-Q306": ["SonarQube S3776", "Cognitive Complexity"],
     "SKY-Q302": ["ISO/IEC 5055:2021 §6.3.5"],
+    "SKY-Q305": ["Control-flow correctness: duplicate branch condition/body"],
     "SKY-Q501": ["CK Metrics: WMC (Weighted Methods per Class)"],
     "SKY-Q701": ["CK Metrics: CBO (Coupling Between Objects)", "ISO/IEC 9126"],
     "SKY-Q702": ["CK Metrics: LCOM (Lack of Cohesion of Methods)", "ISO/IEC 9126"],
