@@ -215,13 +215,13 @@ def browser_login(console=None, base_url=None):
     if verified is None:
         if console:
             console.print(
-                "[warn]Could not verify login with server — using callback credentials.[/warn]"
+                "[red]Could not verify login with server. No credentials were saved.[/red]"
             )
         else:
             print(
-                "Warning: Could not verify login with server — using callback credentials."
+                "Could not verify login with server. No credentials were saved."
             )
-        return result
+        return None
     return verified
 
 

@@ -194,10 +194,26 @@ def get_api_url():
     # return os.environ.get("SKYLOS_API_URL", LOCAL_API_URL)
 
 
+def _try_ci_oidc_token():
+    try:
+        from skylos.api import _try_github_oidc_token
+    except Exception:
+        return None
+
+    try:
+        return _try_github_oidc_token()
+    except Exception:
+        return None
+
+
 def get_token():
     env_token = os.environ.get("SKYLOS_TOKEN", "").strip()
     if env_token:
         return env_token
+
+    oidc_token = _try_ci_oidc_token()
+    if oidc_token:
+        return oidc_token
 
     repo_root = _find_repo_root()
     linked_pid = _linked_project_id(repo_root)
@@ -266,13 +282,22 @@ class AuthError(Exception):
     pass
 
 
+def _auth_headers(token):
+    if token and str(token).startswith("oidc:"):
+        return {
+            "Authorization": f"Bearer {token[5:]}",
+            "X-Skylos-Auth": "oidc",
+        }
+    return {"Authorization": f"Bearer {token}"}
+
+
 def api_get(endpoint, token):
     url = f"{get_api_url()}{endpoint}"
 
     try:
         resp = requests.get(
             url,
-            headers={"Authorization": f"Bearer {token}"},
+            headers=_auth_headers(token),
             timeout=30,
         )
     except requests.exceptions.ConnectionError:
@@ -830,6 +855,7 @@ permissions:
   contents: read
   pull-requests: write
   checks: write
+  id-token: write
 
 jobs:
   skylos:
@@ -847,18 +873,10 @@ jobs:
         run: pip install skylos
 
       - name: Pull Skylos Cloud Policy
-        env:
-          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}
         run: |
-          if [ -n "$SKYLOS_TOKEN" ]; then
-            skylos sync pull
-          else
-            echo "SKYLOS_TOKEN not set; skipping Skylos Cloud policy sync."
-          fi
+          skylos sync pull || echo "No Skylos Cloud policy available through GitHub OIDC; continuing with local config."
       
       - name: Run Skylos Scan
-        env:
-          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}
         run: |
           skylos . --danger --upload --sha ${{ github.event.pull_request.head.sha }}
 """
@@ -882,10 +900,9 @@ jobs:
                 step_num = "2"
             else:
                 step_num = "1"
-            print(f"{step_num}. Add SKYLOS_TOKEN to GitHub:")
-            print("   Settings -> Secrets -> Actions -> New secret")
-            print("   Name: SKYLOS_TOKEN")
-            print(f"   Value: {mask_token(token)}\n")
+            print(f"{step_num}. Bind this GitHub repo to the Skylos Cloud project.")
+            print("   The workflow uses GitHub OIDC by default; no SKYLOS_TOKEN secret is required.")
+            print("   Keep SKYLOS_TOKEN only as a legacy fallback for non-GitHub CI.\n")
 
         final_step = (
             "3"
@@ -955,6 +972,11 @@ on:
 jobs:
   skylos:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -968,28 +990,20 @@ jobs:
         run: pip install skylos
 
       - name: Pull Skylos Cloud Policy
-        env:
-          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}
         run: |
-          if [ -n "$SKYLOS_TOKEN" ]; then
-            skylos sync pull
-          else
-            echo "SKYLOS_TOKEN not set; skipping Skylos Cloud policy sync."
-          fi
+          skylos sync pull || echo "No Skylos Cloud policy available through GitHub OIDC; continuing with local config."
       
       - name: Run Skylos Scan
-        env:
-          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}
         run: skylos . --danger --gate
 """
         workflow_path.write_text(workflow_content)
         print("  ✓ Created workflow\n")
 
     print("=" * 60)
-    print("\n FINAL STEP: Add token to GitHub\n")
-    print("1. Repo -> Settings -> Secrets -> Actions")
-    print("2. Add: SKYLOS_TOKEN")
-    print(f"3. Value: {mask_token(token)}\n")
+    print("\n FINAL STEP: Bind GitHub repo to Skylos Cloud\n")
+    print("1. Confirm this repo is linked to the Skylos Cloud project")
+    print("2. Commit the generated workflow")
+    print("3. GitHub OIDC will authenticate workflow runs without a SKYLOS_TOKEN secret\n")
     print("=" * 60 + "\n")
     print("✅ Upgrade complete!")
 

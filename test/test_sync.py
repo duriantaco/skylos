@@ -61,6 +61,33 @@ def test_get_token_env_wins(isolated_creds, monkeypatch):
     assert syncmod.get_token() == "ENV_TOKEN"
 
 
+def test_get_token_prefers_github_oidc_before_saved_token(isolated_creds, monkeypatch):
+    _, creds_file = isolated_creds
+    creds_file.parent.mkdir(parents=True, exist_ok=True)
+    creds_file.write_text(json.dumps({"token": "FILE_TOKEN"}))
+    monkeypatch.setattr(syncmod, "_try_ci_oidc_token", lambda: "oidc:JWT")
+
+    assert syncmod.get_token() == "oidc:JWT"
+
+
+def test_api_get_sends_oidc_auth_headers(monkeypatch):
+    captured = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["timeout"] = timeout
+        return FakeResponse(payload={"ok": True})
+
+    monkeypatch.setattr(syncmod.requests, "get", fake_get)
+
+    assert syncmod.api_get("/api/sync/whoami", "oidc:JWT") == {"ok": True}
+    assert captured["headers"] == {
+        "Authorization": "Bearer JWT",
+        "X-Skylos-Auth": "oidc",
+    }
+
+
 def test_get_token_from_global_creds_file(isolated_creds):
     _, creds_file = isolated_creds
     creds_file.parent.mkdir(parents=True, exist_ok=True)
@@ -664,7 +691,8 @@ def test_cmd_setup_writes_workflow_that_syncs_cloud_policy(
     )
     assert "Pull Skylos Cloud Policy" in workflow
     assert "skylos sync pull" in workflow
-    assert "SKYLOS_TOKEN" in workflow
+    assert "id-token: write" in workflow
+    assert "SKYLOS_TOKEN" not in workflow
 
 
 def test_cmd_upgrade_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, capsys):
@@ -689,3 +717,5 @@ def test_cmd_upgrade_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, c
     )
     assert "Pull Skylos Cloud Policy" in workflow
     assert "skylos sync pull" in workflow
+    assert "id-token: write" in workflow
+    assert "SKYLOS_TOKEN" not in workflow

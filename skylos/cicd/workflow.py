@@ -41,12 +41,8 @@ def generate_workflow(
     pr_base_ref = "origin/${{ github.base_ref || 'main' }}"
 
     upload_flag = ""
-    upload_env_block = ""
     if use_upload:
         upload_flag = " --upload"
-        upload_env_block = (
-            "\n        env:\n          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}"
-        )
     analysis_run = "\n".join(
         [
             '          if [ "${{ github.event_name }}" = "pull_request" ]; then',
@@ -85,37 +81,25 @@ def generate_workflow(
 
     defend_step = ""
     if use_defend:
-        defend_env = ""
-        if use_upload:
-            defend_env = (
-                "\n        env:\n          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}"
-            )
         defend_parts = [
             "",
             "      - name: AI Defense Check",
             f"        run: skylos defend . --fail-on critical --min-score 70 --json -o defense-results.json{' --upload' if use_upload else ''}",
         ]
-        if defend_env:
-            defend_parts.append(defend_env)
         defend_step = "\n".join(defend_parts)
 
     permissions_block = """permissions:
   contents: read
   pull-requests: write
-  checks: write"""
+  checks: write
+  id-token: write"""
     if use_claude_security:
         permissions_block += "\n  security-events: write"
 
     sync_step = """
       - name: Pull Skylos Cloud Policy
-        env:
-          SKYLOS_TOKEN: ${{ secrets.SKYLOS_TOKEN }}
         run: |
-          if [ -n "$SKYLOS_TOKEN" ]; then
-            skylos sync pull
-          else
-            echo "SKYLOS_TOKEN not set; skipping Skylos Cloud policy sync."
-          fi
+          skylos sync pull || echo "No Skylos Cloud policy available through GitHub OIDC; continuing with local config."
 """
 
     workflow = f"""name: Skylos Analysis
@@ -144,7 +128,7 @@ jobs:
 
       - name: Run Skylos Analysis
         run: |
-{analysis_run}{upload_env_block}
+{analysis_run}
 {llm_step}{defend_step}
       - name: Quality Gate
         if: always()
@@ -229,8 +213,6 @@ def _build_claude_security_jobs(python_version: str) -> str:
 
       - name: Ingest Claude Security Findings
         run: skylos ingest claude-security --input claude-security-results.json --cross-reference skylos-results.json
-        env:
-          SKYLOS_TOKEN: ${{{{ secrets.SKYLOS_TOKEN }}}}
 """
 
 

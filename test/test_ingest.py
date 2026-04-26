@@ -300,7 +300,7 @@ class TestWorkflowClaudeSecurity:
         assert "upload-claude-findings:" in yaml
         assert "anthropics/claude-code-action@main" in yaml
         assert "skylos ingest claude-security" in yaml
-        assert "SKYLOS_TOKEN" in yaml
+        assert "SKYLOS_TOKEN" not in yaml
         assert "ANTHROPIC_API_KEY" in yaml
 
     def test_parallel_jobs(self):
