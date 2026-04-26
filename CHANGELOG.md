@@ -1,5 +1,17 @@
 ## Changelog
 
+## [4.7.0](https://github.com/duriantaco/skylos/compare/v4.6.0...v4.7.0) (2026-04-26)
+
+
+### Features
+
+* **cloud:** support tokenless CI auth ([60b3273](https://github.com/duriantaco/skylos/commit/60b3273c0f671242cdd7a1ab9256686845ba35cb))
+
+
+### Bug Fixes
+
+* **release:** restore release-please metadata flow ([f4e233c](https://github.com/duriantaco/skylos/commit/f4e233c5139685f60c468401fcbb2f099521bd4e))
+
 ## [4.6.0](https://github.com/duriantaco/skylos/compare/v4.5.0...v4.6.0) (2026-04-26)
 
 
