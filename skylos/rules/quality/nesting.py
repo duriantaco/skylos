@@ -18,7 +18,9 @@ def _max_depth(nodes, depth=0, is_function_body=False):
             branches = []
             if isinstance(node, ast.If):
                 branches.append(node.body)
-                if node.orelse:
+                if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
+                    max_depth = max(max_depth, _max_depth(node.orelse, depth))
+                elif node.orelse:
                     branches.append(node.orelse)
             elif isinstance(node, (ast.For, ast.While)):
                 branches.append(node.body)

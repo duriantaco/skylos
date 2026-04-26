@@ -87,6 +87,23 @@ def outer():
         findings = check_code(rule, code)
         assert len(findings) == 0
 
+    def test_elif_chain_is_not_nested(self):
+        code = """
+def classify(value):
+    if value == "a":
+        return 1
+    elif value == "b":
+        return 2
+    elif value == "c":
+        return 3
+    elif value == "d":
+        return 4
+    return 0
+"""
+        rule = NestingRule(threshold=1)
+        findings = check_code(rule, code)
+        assert findings == []
+
     def test_try_except_finally(self):
         code = """
 def complex_try():

@@ -86,7 +86,7 @@ const RULES: Record<string, RuleMeta> = {
   "SKY-P402": { name: "Memory risk: read_csv", severity: "LOW", category: "quality", description: "pandas.read_csv() without chunksize loads entire file.", fix: "Use chunksize parameter for large files.", language: "python" },
   "SKY-P403": { name: "Nested loop (O(N^2))", severity: "LOW", category: "quality", description: "Nested loop detected; potential O(N^2) performance issue.", fix: "Consider using sets, dicts, or itertools for better performance." },
 
-  "SKY-Q305": { name: "Duplicate condition", severity: "MEDIUM", category: "quality", description: "Identical condition in if-else-if chain.", fix: "Remove or correct the duplicate condition.", language: "typescript" },
+  "SKY-Q305": { name: "Duplicate branch", severity: "MEDIUM", category: "quality", description: "Duplicate branch condition or body.", fix: "Remove or correct the duplicate branch logic." },
   "SKY-Q402": { name: "Await in loop", severity: "MEDIUM", category: "quality", description: "await expression inside a loop causes sequential execution.", fix: "Use Promise.all() for parallel execution.", language: "typescript" },
   "SKY-UC001": { name: "Unreachable code", severity: "MEDIUM", category: "quality", description: "Code after return/raise/break/continue is unreachable.", fix: "Remove unreachable code." },
   "SKY-UC002": { name: "Unreachable code (TS)", severity: "MEDIUM", category: "quality", description: "Code after return/throw/break/continue is unreachable.", fix: "Remove unreachable code.", language: "typescript" },
