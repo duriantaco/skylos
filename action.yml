@@ -24,7 +24,7 @@ inputs:
     required: false
     default: "60"
   token:
-    description: "Skylos API token for uploading results to skylos.dev dashboard"
+    description: "Optional legacy Skylos API token for uploads. Prefer GitHub OIDC with id-token: write when running in GitHub Actions."
     required: false
   python-version:
     description: "Python version to use"

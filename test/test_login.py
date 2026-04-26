@@ -64,6 +64,36 @@ def test_verify_login_result_rejects_missing_project_id(monkeypatch):
     assert loginmod._verify_login_result("TOK", base_url="https://skylos.dev") is None
 
 
+def test_browser_login_rejects_unverified_callback(monkeypatch):
+    class FakeServer:
+        timeout = 5
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def handle_request(self):
+            loginmod._CallbackHandler.result = loginmod.LoginResult(
+                token="TOK",
+                project_id="callback_project",
+                project_name="Callback Project",
+                org_name="Callback Org",
+                plan="pro",
+            )
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(loginmod, "_find_free_port", lambda: 8123)
+    monkeypatch.setattr(loginmod, "_get_repo_name", lambda: "repo")
+    monkeypatch.setattr(loginmod, "_get_repo_url", lambda: "")
+    monkeypatch.setattr(loginmod, "_get_repo_subpath", lambda: "")
+    monkeypatch.setattr(loginmod.webbrowser, "open", lambda _url: True)
+    monkeypatch.setattr(loginmod.http.server, "HTTPServer", FakeServer)
+    monkeypatch.setattr(loginmod, "_verify_login_result", lambda *args, **kwargs: None)
+
+    assert loginmod.browser_login(base_url="https://skylos.dev") is None
+
+
 def test_run_login_existing_cancel_keeps_current(monkeypatch):
     existing = loginmod.LoginResult(
         token="TOK",
