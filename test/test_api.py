@@ -386,6 +386,8 @@ class TestSkylosApi(unittest.TestCase):
 
     @patch("skylos.api.SarifExporter")
     @patch("skylos.api.get_project_token")
+    @patch("skylos.api._cli_version", return_value="4.7.0")
+    @patch("skylos.api._new_upload_client_session_id", return_value="cli-session-1")
     @patch(
         "skylos.api.get_git_info",
         return_value=(
@@ -398,7 +400,14 @@ class TestSkylosApi(unittest.TestCase):
     @patch("skylos.api.get_git_root", return_value=None)
     @patch("requests.post")
     def test_upload_report_includes_ci_metadata(
-        self, mock_post, _, _mock_git_info, mock_token, mock_exporter
+        self,
+        mock_post,
+        _,
+        _mock_git_info,
+        _mock_session,
+        _mock_version,
+        mock_token,
+        mock_exporter,
     ):
         mock_token.return_value = "token"
         resp = MagicMock()
@@ -418,6 +427,8 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(payload["actor"], "jenkins-bot")
         self.assertEqual(payload["ci"]["provider"], "jenkins")
         self.assertEqual(payload["ci"]["pr_number"], 99)
+        self.assertEqual(payload["upload_client_session_id"], "cli-session-1")
+        self.assertEqual(payload["cli_version"], "4.7.0")
 
     @patch("skylos.provenance.analyze_provenance")
     @patch("skylos.api._load_repo_link", return_value={"project_id": "proj-1"})

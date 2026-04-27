@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import json
 from typing import Any
+from uuid import uuid4
 
 from skylos.constants import (
     NETWORK_TIMEOUT_SHORT,
@@ -444,6 +445,22 @@ def _legacy_inline_upload_limit_bytes() -> int:
 
 def _json_size_bytes(payload: Any) -> int:
     return len(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+
+
+def _cli_version() -> str | None:
+    try:
+        from skylos import __version__
+
+        return str(__version__)
+    except Exception:
+        return None
+
+
+def _new_upload_client_session_id() -> str:
+    override = os.getenv("SKYLOS_UPLOAD_SESSION_ID", "").strip()
+    if override:
+        return override
+    return f"cli-{uuid4()}"
 
 
 def _sha256_file(path: Path) -> str:
@@ -1084,6 +1101,8 @@ def _build_report_metadata(
     project_id=None,
     scan_bundle_id=None,
     project_root=None,
+    upload_client_session_id=None,
+    cli_version=None,
 ) -> dict[str, Any]:
     metadata = {
         "commit_hash": commit_hash,
@@ -1094,6 +1113,9 @@ def _build_report_metadata(
         "analysis_mode": analysis_mode,
         "ai_code": ai_code if ai_code and ai_code.get("detected") else None,
         "provenance": provenance_data,
+        "upload_client_session_id": upload_client_session_id
+        or _new_upload_client_session_id(),
+        "cli_version": cli_version or _cli_version(),
     }
     if grade_data:
         metadata["grade"] = grade_data
@@ -1756,6 +1778,9 @@ def upload_defense_report(defense_json_str, quiet=False, scan_bundle_id=None) ->
         "commit_hash": commit,
         "branch": branch,
         "actor": actor,
+        "ci": ci,
+        "upload_client_session_id": _new_upload_client_session_id(),
+        "cli_version": _cli_version(),
         "tool": "skylos-defend",
         "summary": {},
         "findings": [],
