@@ -170,6 +170,8 @@ def analyze_architecture(
     dependency_graph: dict[str, set[str]],
     module_files: dict[str, str],
     module_trees: dict[str, ast.AST] | None = None,
+    module_abstractness: dict[str, dict[str, Any]] | None = None,
+    module_loc: dict[str, int] | None = None,
 ) -> ArchitectureResult:
     result = ArchitectureResult()
 
@@ -196,7 +198,16 @@ def analyze_architecture(
         else:
             metrics.instability = 0.0
 
-        if module_trees and module_name in module_trees:
+        if module_abstractness and module_name in module_abstractness:
+            abs_data = module_abstractness[module_name]
+            metrics.abstractness = abs_data["abstractness"]
+            metrics.total_classes = abs_data["total_classes"]
+            metrics.abstract_classes = abs_data["abstract_classes"]
+            metrics.total_functions = abs_data["total_functions"]
+            metrics.abstract_methods = abs_data["abstract_methods"]
+            metrics.type_vars = abs_data["type_vars"]
+            metrics.protocols = abs_data["protocols"]
+        elif module_trees and module_name in module_trees:
             tree = module_trees[module_name]
             if tree is not None:
                 abs_data = _compute_abstractness(tree)
@@ -211,7 +222,9 @@ def analyze_architecture(
         metrics.distance = abs(metrics.abstractness + metrics.instability - 1.0)
         metrics.zone = _classify_zone(metrics.abstractness, metrics.instability)
 
-        if file_path:
+        if module_loc and module_name in module_loc:
+            metrics.loc = module_loc[module_name]
+        elif file_path:
             try:
                 text = Path(file_path).read_text(errors="replace")
                 metrics.loc = sum(
@@ -466,11 +479,15 @@ def get_architecture_findings(
     dependency_graph: dict[str, set[str]],
     module_files: dict[str, str],
     module_trees: dict[str, ast.AST] | None = None,
+    module_abstractness: dict[str, dict[str, Any]] | None = None,
+    module_loc: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     result = analyze_architecture(
         dependency_graph=dependency_graph,
         module_files=module_files,
         module_trees=module_trees,
+        module_abstractness=module_abstractness,
+        module_loc=module_loc,
     )
 
     summary = {

@@ -23,7 +23,30 @@ class DummyVisitor:
         self.detected_frameworks: set[str] = set()
 
 
-def scan_php_file(file_path: str, config: dict | None = None) -> tuple:
+def _empty_result(config: dict) -> tuple:
+    return (
+        [],
+        [],
+        set(),
+        set(),
+        DummyVisitor(),
+        DummyVisitor(),
+        [],
+        [],
+        [],
+        None,
+        None,
+        config,
+        [],
+    )
+
+
+def scan_php_file(
+    file_path: str,
+    config: dict | None = None,
+    *,
+    enable_danger_rules: bool = True,
+) -> tuple:
     if config is None:
         config = {}
 
@@ -33,21 +56,7 @@ def scan_php_file(file_path: str, config: dict | None = None) -> tuple:
             raise ValueError("unsupported PHP path")
         source = path.read_bytes()
     except Exception:
-        return (
-            [],
-            [],
-            set(),
-            set(),
-            DummyVisitor(),
-            DummyVisitor(),
-            [],
-            [],
-            [],
-            None,
-            None,
-            config,
-            [],
-        )
+        return _empty_result(config)
 
     core = PhpCore(str(path), source)
     core.scan()
@@ -56,7 +65,9 @@ def scan_php_file(file_path: str, config: dict | None = None) -> tuple:
         is_test_file=core.is_test_file,
         test_decorated_lines=core.test_decorated_lines,
     )
-    findings = scan_danger(core.root_node, str(path), source)
+    findings = (
+        scan_danger(core.root_node, str(path), source) if enable_danger_rules else []
+    )
 
     return (
         core.defs,

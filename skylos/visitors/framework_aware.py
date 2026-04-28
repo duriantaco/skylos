@@ -397,20 +397,20 @@ class FrameworkAwareVisitor:
     def _check_framework_imports_in_file(self, filename: str | Path) -> None:
         try:
             content = Path(filename).read_text(encoding="utf-8")
-
-            for framework in FRAMEWORK_IMPORTS:
-                import_statement = f"import {framework}"
-                from_statement = f"from {framework}"
-
-                has_import = import_statement in content
-                has_from_import = from_statement in content
-
-                if has_import or has_from_import:
-                    self.is_framework_file = True
-                    self.detected_frameworks.add(framework)
-                    break
-
-        except Exception:
+            tree = ast.parse(content)
+            for node in ast.iter_child_nodes(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        framework = alias.name.split(".", 1)[0].lower()
+                        if framework in FRAMEWORK_IMPORTS:
+                            self.is_framework_file = True
+                            self.detected_frameworks.add(framework)
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    framework = node.module.split(".", 1)[0].lower()
+                    if framework in FRAMEWORK_IMPORTS:
+                        self.is_framework_file = True
+                        self.detected_frameworks.add(framework)
+        except (OSError, SyntaxError, UnicodeDecodeError):
             pass
 
     def _normalize_decorator(self, dec: ast.AST) -> str:

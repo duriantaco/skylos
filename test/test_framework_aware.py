@@ -392,6 +392,18 @@ class Plugin:
         assert v.is_framework_file is True
         assert "flask" in v.detected_frameworks
 
+    @patch("skylos.visitors.framework_aware.Path")
+    def test_file_content_framework_detection_ignores_strings(self, mock_path):
+        mock_file = Mock()
+        mock_file.read_text.return_value = (
+            'pattern = r"(?:from django|import django|from flask|import fastapi)"'
+        )
+        mock_path.return_value = mock_file
+        v = FrameworkAwareVisitor(filename="test.py")
+        v.finalize()
+        assert v.is_framework_file is False
+        assert v.detected_frameworks == set()
+
     def test_normalize_decorator_name(self):
         v = FrameworkAwareVisitor()
         node = ast.parse("@decorator\ndef func(): pass").body[0].decorator_list[0]

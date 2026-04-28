@@ -5,7 +5,9 @@ Rules already covered in test_logic.py: L001, L002, L003.
 """
 
 import ast
+from difflib import SequenceMatcher
 
+from skylos.rules.quality import clones as clones_mod
 from skylos.rules.quality.logic import (
     TryBlockPatternsRule,
     UnusedExceptVarRule,
@@ -37,6 +39,15 @@ def check_code(rule, code, filename="test.py"):
         if res:
             findings.extend(res)
     return findings
+
+
+def test_clone_similarity_threshold_keeps_possible_matches(monkeypatch):
+    monkeypatch.setattr(clones_mod, "_fast_similarity", None)
+    a = "a" * 89
+    b = ("a" * 89) + ("b" * 11)
+
+    assert SequenceMatcher(a=a, b=b).ratio() >= 0.9
+    assert clones_mod._similarity(a, b, threshold=0.9) >= 0.9
 
 
 # --- SKY-L004: Try Block Patterns ---

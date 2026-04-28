@@ -209,6 +209,22 @@ class TestInputValidationRemoval:
         validation_findings = [f for f in findings if f["control_type"] == "validation"]
         assert len(validation_findings) >= 1
 
+    def test_read_text_removed_is_not_sanitization_regression(self):
+        diff = _make_diff(
+            ["    source = path.read_text(encoding='utf-8')"],
+            ["    source = path.read_bytes()"],
+        )
+        findings = detect_security_regressions(diff, "analyzer.py")
+        assert findings == []
+
+    def test_text_column_removed_is_not_sanitization_regression(self):
+        diff = _make_diff(
+            ['    TextColumn("[brand]Skylos[/brand] {task.description}")'],
+            ["    SpinnerColumn(style='brand')"],
+        )
+        findings = detect_security_regressions(diff, "cli.py")
+        assert findings == []
+
     def test_django_serializer_validator_removed(self):
         diff = _make_diff(
             ["    email = serializers.EmailField(validators=[validate_email])"],

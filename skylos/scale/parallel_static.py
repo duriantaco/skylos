@@ -1,10 +1,30 @@
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
-def _worker(file_path, mod, extra_visitors, full_scan=True):
+def _worker(
+    file_path,
+    mod,
+    extra_visitors,
+    full_scan=True,
+    collect_clone_fragments=False,
+    clone_cfg=None,
+    collect_architecture_metrics=False,
+    enable_quality_rules=True,
+    enable_danger_rules=True,
+):
     from skylos.analyzer import proc_file
 
-    out = proc_file(file_path, mod, extra_visitors=extra_visitors, full_scan=full_scan)
+    out = proc_file(
+        file_path,
+        mod,
+        extra_visitors=extra_visitors,
+        full_scan=full_scan,
+        collect_clone_fragments=collect_clone_fragments,
+        clone_cfg=clone_cfg,
+        collect_architecture_metrics=collect_architecture_metrics,
+        enable_quality_rules=enable_quality_rules,
+        enable_danger_rules=enable_danger_rules,
+    )
     return str(file_path), out
 
 
@@ -16,11 +36,19 @@ def run_proc_file_parallel(
     progress_callback=None,
     custom_rules_data=None,
     changed_files=None,
+    collect_clone_fragments=False,
+    clone_cfg=None,
+    collect_architecture_metrics=False,
+    enable_quality_rules=True,
+    enable_danger_rules=True,
 ):
     import os
 
     if os.getenv("PYTEST_CURRENT_TEST"):
         jobs = 1
+
+    if jobs <= 0:
+        jobs = max(1, (os.cpu_count() or 4) - 1)
 
     if jobs <= 1:
         outs = []
@@ -33,14 +61,19 @@ def run_proc_file_parallel(
 
             full_scan = changed_files is None or str(f) in changed_files
             out = proc_file(
-                f, modmap[f], extra_visitors=extra_visitors, full_scan=full_scan
+                f,
+                modmap[f],
+                extra_visitors=extra_visitors,
+                full_scan=full_scan,
+                collect_clone_fragments=collect_clone_fragments,
+                clone_cfg=clone_cfg,
+                collect_architecture_metrics=collect_architecture_metrics,
+                enable_quality_rules=enable_quality_rules,
+                enable_danger_rules=enable_danger_rules,
             )
             outs.append(out)
 
         return outs
-
-    if jobs <= 0:
-        jobs = max(1, (os.cpu_count() or 4) - 1)
 
     pending = []
     for f in files:
@@ -52,7 +85,18 @@ def run_proc_file_parallel(
         fut_to_file = {}
         for f, mod in pending:
             full_scan = changed_files is None or str(f) in changed_files
-            fut = ex.submit(_worker, f, mod, extra_visitors, full_scan)
+            fut = ex.submit(
+                _worker,
+                f,
+                mod,
+                extra_visitors,
+                full_scan,
+                collect_clone_fragments,
+                clone_cfg,
+                collect_architecture_metrics,
+                enable_quality_rules,
+                enable_danger_rules,
+            )
             fut_to_file[fut] = f
 
         total = len(pending)
