@@ -1,5 +1,23 @@
 ## Changelog
 
+## [4.8.0](https://github.com/duriantaco/skylos/compare/v4.7.0...v4.8.0) (2026-04-28)
+
+
+### Features
+
+* **cli:** add upload session metadata ([0758f77](https://github.com/duriantaco/skylos/commit/0758f77bca606f5f4e046ccc481e638779738d19))
+
+
+### Performance Improvements
+
+* **analyzer:** reduce scan runtime without changing findings ([#264](https://github.com/duriantaco/skylos/issues/264)) ([9cff0c4](https://github.com/duriantaco/skylos/commit/9cff0c4b38870bb99c093a95f9fb0b710ddfd6be))
+
+
+### Documentation
+
+* **ci:** add tokenless CI workflow example ([723ec78](https://github.com/duriantaco/skylos/commit/723ec78274b92bf6c996c3863375ecc00174ecf9))
+* **readme:** add validation results and trust badge ([f359184](https://github.com/duriantaco/skylos/commit/f35918427a5a2e2cde1e5e4edccc4f1fb1b11cd2))
+
 ## [4.7.0](https://github.com/duriantaco/skylos/compare/v4.6.0...v4.7.0) (2026-04-26)
 
 
