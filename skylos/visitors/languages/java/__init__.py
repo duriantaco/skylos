@@ -19,7 +19,13 @@ class DummyVisitor:
         self.detected_frameworks: set[str] = set()
 
 
-def scan_java_file(file_path: str, config: dict | None = None) -> tuple:
+def scan_java_file(
+    file_path: str,
+    config: dict | None = None,
+    *,
+    enable_quality_rules: bool = True,
+    enable_danger_rules: bool = True,
+) -> tuple:
     if config is None:
         config = {}
 
@@ -50,9 +56,21 @@ def scan_java_file(file_path: str, config: dict | None = None) -> tuple:
     core = JavaCore(file_path, source)
     core.scan()
 
-    d_findings: list[dict] = scan_danger(core.root_node, file_path, lang=core.lang)
-    q_findings: list[dict] = scan_quality(
-        core.root_node, source, file_path, threshold=complexity_limit, lang=core.lang
+    d_findings: list[dict] = (
+        scan_danger(core.root_node, file_path, lang=core.lang)
+        if enable_danger_rules
+        else []
+    )
+    q_findings: list[dict] = (
+        scan_quality(
+            core.root_node,
+            source,
+            file_path,
+            threshold=complexity_limit,
+            lang=core.lang,
+        )
+        if enable_quality_rules
+        else []
     )
 
     return (

@@ -88,7 +88,7 @@ _AUDIT_DECORATORS = {
 
 _SANITIZATION_CALLS_RE = re.compile(
     r"(?:html\.escape\(|bleach\.clean\(|markupsafe\.escape\(|DOMPurify\.sanitize\(|"
-    r"escape_string\(|parameterized\(|text\()"
+    r"escape_string\(|parameterized\(|(?<![.\w])text\()"
 )
 
 _PERMISSION_CALLS_RE = re.compile(

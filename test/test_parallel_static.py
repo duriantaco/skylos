@@ -20,8 +20,8 @@ class DummyExecutor:
     def __exit__(self, exc_type, exc, tb):
         return False
 
-    def submit(self, fn, f, mod, extra_visitors, full_scan=True):
-        file_str, out = fn(f, mod, extra_visitors, full_scan)
+    def submit(self, fn, *args, **kwargs):
+        file_str, out = fn(*args, **kwargs)
         fut = DummyFuture((file_str, out))
         self.futures.append(fut)
         return fut
@@ -40,7 +40,7 @@ def test_parallel_path_preserves_order(monkeypatch, tmp_path):
 
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
-    def fake_proc_file(file_path, mod, extra_visitors=None, full_scan=True):
+    def fake_proc_file(file_path, mod, extra_visitors=None, full_scan=True, **kwargs):
         return ("ok", str(file_path), mod)
 
     import skylos.analyzer

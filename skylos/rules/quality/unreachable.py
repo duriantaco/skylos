@@ -1,7 +1,22 @@
 import ast
-from pathlib import Path
 from skylos.rules.base import SkylosRule
 from skylos.control_flow import evaluate_static_condition
+
+
+_BODY_NODE_TYPES = (
+    ast.Module,
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.ClassDef,
+    ast.If,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.With,
+    ast.AsyncWith,
+    ast.Try,
+    getattr(ast, "TryStar", ast.Try),
+)
 
 
 class UnreachableCodeRule(SkylosRule):
@@ -9,11 +24,14 @@ class UnreachableCodeRule(SkylosRule):
     name = "Unreachable Code"
 
     def visit_node(self, node, context):
+        if not isinstance(node, _BODY_NODE_TYPES):
+            return None
+
         findings = []
 
         filename = context.get("filename", "")
         if filename:
-            basename = Path(filename).name
+            basename = str(filename).replace("\\", "/").rsplit("/", 1)[-1]
         else:
             basename = ""
 

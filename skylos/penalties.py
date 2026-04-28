@@ -910,16 +910,23 @@ def _check_data_model_fields(def_obj, analyzer, framework):
 
     if def_obj.type == "variable" and "." in def_obj.name:
         _, attr = def_obj.name.rsplit(".", 1)
-        for other in analyzer.defs.values():
-            if other is def_obj:
-                continue
-            if other.type != "variable":
-                continue
-            if "." not in other.name:
-                continue
-            if other.simple_name != attr:
-                continue
-            return _suppress(def_obj)
+        dotted_variable_counts = getattr(
+            analyzer, "_dotted_variable_simple_name_counts", None
+        )
+        if dotted_variable_counts is not None:
+            if dotted_variable_counts.get(attr, 0) > 1:
+                return _suppress(def_obj)
+        else:
+            for other in analyzer.defs.values():
+                if other is def_obj:
+                    continue
+                if other.type != "variable":
+                    continue
+                if "." not in other.name:
+                    continue
+                if other.simple_name != attr:
+                    continue
+                return _suppress(def_obj)
 
     return None
 

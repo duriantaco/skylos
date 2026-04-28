@@ -6,7 +6,7 @@ import logging
 import os
 import traceback
 from pathlib import Path
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 try:
     from skylos_fast import discover_files as _fast_discover
@@ -123,6 +123,79 @@ _TS_JS_SOURCE_EXTS = (
     ".cjs",
 )
 _PHP_SOURCE_EXTS = (".php",)
+
+_TRY_NODE_TYPES = (ast.Try, getattr(ast, "TryStar", ast.Try))
+
+_LINTER_RULE_NODE_TYPES = {
+    ComplexityRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    CognitiveComplexityRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    NestingRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    AsyncBlockingRule: (
+        ast.Import,
+        ast.ImportFrom,
+        ast.AsyncFunctionDef,
+        ast.FunctionDef,
+        ast.Lambda,
+        ast.Call,
+    ),
+    ArgCountRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    FunctionLengthRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    MutableDefaultRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    BareExceptRule: (ast.ExceptHandler,),
+    DangerousComparisonRule: (ast.Compare,),
+    DuplicateBranchRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    TryBlockPatternsRule: (ast.Try,),
+    UnusedExceptVarRule: (ast.ExceptHandler,),
+    ReturnConsistencyRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    EmptyErrorHandlerRule: (ast.ExceptHandler, ast.With),
+    MissingResourceCleanupRule: (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef),
+    DebugLeftoverRule: (ast.Call,),
+    SecurityTodoRule: (ast.Module,),
+    DisabledSecurityRule: (ast.Call, ast.FunctionDef, ast.AsyncFunctionDef, ast.Assign),
+    PhantomCallRule: (ast.Module, ast.Call),
+    InsecureRandomRule: (ast.Assign,),
+    HardcodedCredentialRule: (ast.Assign, ast.FunctionDef, ast.AsyncFunctionDef),
+    ErrorDisclosureRule: (ast.ExceptHandler,),
+    BroadFilePermissionsRule: (ast.Call,),
+    UndefinedConfigRule: (ast.Module, ast.Call),
+    StaleMockRule: (ast.Module, ast.Call),
+    PhantomDecoratorRule: (
+        ast.Module,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+    ),
+    UnfinishedGenerationRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    DuplicateStringLiteralRule: (ast.Module,),
+    TooManyReturnsRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    BooleanTrapRule: (ast.FunctionDef, ast.AsyncFunctionDef),
+    BroadExceptionRule: (ast.ExceptHandler,),
+    GodClassRule: (ast.ClassDef,),
+    CBORule: (ast.ClassDef,),
+    LCOMRule: (ast.ClassDef,),
+    UnreachableCodeRule: (
+        ast.Module,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+        ast.If,
+        ast.For,
+        ast.AsyncFor,
+        ast.While,
+        ast.With,
+        ast.AsyncWith,
+        *_TRY_NODE_TYPES,
+    ),
+    PerformanceRule: (ast.Call, ast.For),
+    DangerousCallsRule: (ast.Module, ast.Import, ast.ImportFrom, ast.Assign, ast.Call),
+}
+
+
+def _set_linter_node_types(rules):
+    for rule in rules:
+        node_types = _LINTER_RULE_NODE_TYPES.get(type(rule))
+        if node_types:
+            rule.node_types = node_types
 
 
 def _is_secret_config_candidate(path: Path) -> bool:
@@ -688,7 +761,13 @@ class Skylos:
         grep_cache = GrepCache()
         grep_cache.load(grep_root)
         try:
-            verdicts = grep_verify_findings(candidates, project_root, cache=grep_cache)
+            grep_budget = float(os.getenv("SKYLOS_GREP_BUDGET", "30"))
+            verdicts = grep_verify_findings(
+                candidates,
+                project_root,
+                cache=grep_cache,
+                time_budget=grep_budget,
+            )
         finally:
             grep_cache.save(grep_root)
 
@@ -1218,6 +1297,7 @@ class Skylos:
         enable_secrets,
         enable_danger,
         enable_quality,
+        enable_sca,
         all_secrets,
         all_dangers,
         all_quality,
@@ -1229,6 +1309,8 @@ class Skylos:
         path,
         unused_ts_exports=None,
         workspace_inventory=None,
+        architecture_abstractness=None,
+        architecture_loc=None,
     ):
         """Assemble the final result dict from analysis outputs."""
         unused = []
@@ -1358,7 +1440,7 @@ class Skylos:
             result["danger"] = all_dangers
             result["analysis_summary"]["danger_count"] = len(all_dangers)
 
-        if all_sca:
+        if enable_sca:
             result["dependency_vulnerabilities"] = all_sca
             result["analysis_summary"]["sca_count"] = len(all_sca)
 
@@ -1436,22 +1518,25 @@ class Skylos:
                         mod_files = dict(circular_rule._analyzer.modules)
 
                         mod_trees = {}
-                        for file in files:
-                            if not str(file).endswith(".py"):
-                                continue
-                            mod = modmap.get(file, "")
-                            try:
-                                src = Path(file).read_text(
-                                    encoding="utf-8", errors="ignore"
-                                )
-                                mod_trees[mod] = ast.parse(src)
-                            except (OSError, SyntaxError):
-                                pass
+                        if not architecture_abstractness:
+                            for file in files:
+                                if not str(file).endswith(".py"):
+                                    continue
+                                mod = modmap.get(file, "")
+                                try:
+                                    src = Path(file).read_text(
+                                        encoding="utf-8", errors="ignore"
+                                    )
+                                    mod_trees[mod] = ast.parse(src)
+                                except (OSError, SyntaxError):
+                                    pass
 
                         arch_findings, arch_summary = get_architecture_findings(
                             dependency_graph=dep_graph,
                             module_files=mod_files,
                             module_trees=mod_trees,
+                            module_abstractness=architecture_abstractness,
+                            module_loc=architecture_loc,
                         )
                         ignored_rules = set(project_cfg.get("ignore", []))
                         if arch_findings:
@@ -1505,6 +1590,7 @@ class Skylos:
         custom_rules_data=None,
         changed_files=None,
         grep_verify=True,
+        enable_sca=False,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -1607,6 +1693,9 @@ class Skylos:
         all_suppressed = []
         empty_files = []
         file_contexts = []
+        all_clone_fragments = []
+        architecture_abstractness = {}
+        architecture_loc = {}
 
         per_file_ignore_lines = {}
         pattern_trackers = {}
@@ -1633,6 +1722,18 @@ class Skylos:
                     f"[DBG] Did NOT inject SKYLOS_CUSTOM_RULES "
                     f"(custom_rules_data={bool(custom_rules_data)}, env_already_set={bool(os.getenv('SKYLOS_CUSTOM_RULES'))})"
                 )
+        clone_cfg = None
+        if enable_quality:
+            clone_cfg = CloneConfig(
+                grouping_mode=GroupingMode.CONNECTED,
+                grouping_threshold=0.80,
+                k_core_k=2,
+                similarity_threshold=0.90,
+                ignore_identifiers=True,
+                ignore_literals=True,
+                skip_docstrings=True,
+            )
+
         try:
             outs = run_proc_file_parallel(
                 files,
@@ -1642,6 +1743,11 @@ class Skylos:
                 progress_callback=progress_callback,
                 custom_rules_data=custom_rules_data,
                 changed_files=changed_files,
+                collect_clone_fragments=enable_quality,
+                clone_cfg=clone_cfg,
+                collect_architecture_metrics=enable_quality,
+                enable_quality_rules=enable_quality,
+                enable_danger_rules=enable_danger,
             )
 
             if os.getenv("SKYLOS_DEBUG"):
@@ -1674,6 +1780,8 @@ class Skylos:
                 file_used_attr_context = out[18] if len(out) > 18 else set()
                 file_param_method_refs = out[20] if len(out) > 20 else {}
                 file_call_arg_types = out[21] if len(out) > 21 else {}
+                file_clone_fragments = out[22] if len(out) > 22 else []
+                file_architecture_metrics = out[23] if len(out) > 23 else None
                 (
                     defs,
                     refs,
@@ -1711,6 +1819,15 @@ class Skylos:
                     all_used_attr_names.update(file_used_attr_names)
                 if file_used_attr_context:
                     all_used_attr_context.update(file_used_attr_context)
+                if file_clone_fragments:
+                    all_clone_fragments.extend(file_clone_fragments)
+                if file_architecture_metrics:
+                    abstractness = file_architecture_metrics.get("abstractness")
+                    loc = file_architecture_metrics.get("loc")
+                    if abstractness is not None:
+                        architecture_abstractness[mod] = abstractness
+                    if loc is not None:
+                        architecture_loc[mod] = loc
                 for callee, method_refs in file_param_method_refs.items():
                     all_param_method_refs[callee].extend(method_refs)
                 for callee, arg_refs in file_call_arg_types.items():
@@ -1829,31 +1946,11 @@ class Skylos:
                 os.environ.pop("SKYLOS_CUSTOM_RULES", None)
 
         if enable_quality:
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: clone detection"))
             RULE_ID = "SKY-C401"
 
-            cfg_by_file = {str(file): cfg for (_, _, _, file, _, cfg) in file_contexts}
-
-            clone_cfg = CloneConfig(
-                grouping_mode=GroupingMode.CONNECTED,
-                grouping_threshold=0.80,
-                k_core_k=2,
-                similarity_threshold=0.90,
-                ignore_identifiers=True,
-                ignore_literals=True,
-                skip_docstrings=True,
-            )
-
-            py_files = [Path(f) for f in files if str(f).endswith(".py")]
-
-            frags = []
-            for f in py_files:
-                fcfg = cfg_by_file.get(str(f))
-                if fcfg and RULE_ID in fcfg.get("ignore", []):
-                    continue
-
-                src = f.read_text(encoding="utf-8", errors="ignore")
-                file_frags = extract_fragments(f, src, clone_cfg)
-                frags.extend(file_frags)
+            frags = all_clone_fragments
 
             pairs = detect_pairs(frags, clone_cfg)
             groups = group_pairs(pairs, clone_cfg)
@@ -2076,6 +2173,12 @@ class Skylos:
                     self._duck_typed_implementers.add(class_name)
                     break
 
+        self._dotted_variable_simple_name_counts = Counter(
+            definition.simple_name
+            for definition in self.defs.values()
+            if definition.type == "variable" and "." in definition.name
+        )
+
         for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
             for definition in defs:
                 apply_penalties(self, definition, test_flags, framework_flags, cfg)
@@ -2111,42 +2214,52 @@ class Skylos:
 
             # --- SKY-D260: Prompt injection scanner (multi-file) ---
             if "SKY-D260" not in project_ignore:
+                if progress_callback:
+                    progress_callback(0, 1, Path("PHASE: prompt injection scan"))
                 try:
                     from skylos.injection_scanner import (
-                        scan_file as _injection_scan_file,
                         SCANNABLE_EXTENSIONS,
+                        scan_file as _injection_scan_file,
                     )
 
-                    _inj_root = Path(
-                        path[0] if isinstance(path, (list, tuple)) else path
-                    ).resolve()
-
-                    for f in files:
-                        if str(f).endswith(".py"):
-                            inj_hits = _injection_scan_file(f)
-                            if inj_hits:
-                                all_dangers.extend(inj_hits)
-
-                    if _inj_root.is_dir():
-                        _non_py_exts = SCANNABLE_EXTENSIONS - {".py"}
-                        for dirpath, dirnames, filenames in os.walk(_inj_root):
-                            dirnames[:] = [
-                                d
-                                for d in dirnames
-                                if not d.startswith(".")
-                                and d not in (exclude_folders or [])
-                            ]
-                            for fname in filenames:
-                                fpath = Path(dirpath) / fname
-                                if fpath.suffix.lower() in _non_py_exts:
-                                    inj_hits = _injection_scan_file(fpath)
-                                    if inj_hits:
-                                        all_dangers.extend(inj_hits)
+                    injection_candidates = list(files)
+                    if changed_files is not None:
+                        injection_candidates = [Path(f) for f in changed_files]
+                    else:
+                        seen_injection_files = {
+                            str(Path(f).resolve()) for f in injection_candidates
+                        }
+                        injection_root = Path(
+                            path[0] if isinstance(path, (list, tuple)) else path
+                        ).resolve()
+                        if injection_root.is_dir():
+                            for dirpath, dirnames, filenames in os.walk(injection_root):
+                                dirnames[:] = [
+                                    d
+                                    for d in dirnames
+                                    if not d.startswith(".")
+                                    and d not in (exclude_folders or [])
+                                ]
+                                for fname in filenames:
+                                    fpath = Path(dirpath) / fname
+                                    if fpath.suffix.lower() not in SCANNABLE_EXTENSIONS:
+                                        continue
+                                    fkey = str(fpath.resolve())
+                                    if fkey in seen_injection_files:
+                                        continue
+                                    seen_injection_files.add(fkey)
+                                    injection_candidates.append(fpath)
+                    for f in injection_candidates:
+                        inj_hits = _injection_scan_file(f)
+                        if inj_hits:
+                            all_dangers.extend(inj_hits)
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
 
         if enable_quality:
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: dependency quality scan"))
             try:
                 from skylos.rules.quality.unused_deps import scan_unused_dependencies
 
@@ -2216,7 +2329,9 @@ class Skylos:
                     logger.error(traceback.format_exc())
 
         all_sca = []
-        if enable_danger:
+        if enable_sca:
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: dependency vulnerability scan"))
             try:
                 from skylos.rules.sca.vulnerability_scanner import scan_dependencies
 
@@ -2307,6 +2422,7 @@ class Skylos:
             enable_secrets,
             enable_danger,
             enable_quality,
+            enable_sca,
             all_secrets,
             all_dangers,
             all_quality,
@@ -2318,6 +2434,8 @@ class Skylos:
             path,
             unused_ts_exports=unused_ts_exports,
             workspace_inventory=workspace_inventory,
+            architecture_abstractness=architecture_abstractness,
+            architecture_loc=architecture_loc,
         )
 
         return json.dumps(result, indent=2)
@@ -2342,7 +2460,15 @@ def _is_truly_empty_or_docstring_only(tree):
 
 
 def proc_file(
-    file_or_args, mod=None, extra_visitors=None, full_scan=True
+    file_or_args,
+    mod=None,
+    extra_visitors=None,
+    full_scan=True,
+    collect_clone_fragments=False,
+    clone_cfg=None,
+    collect_architecture_metrics=False,
+    enable_quality_rules=True,
+    enable_danger_rules=True,
 ) -> dict | None:
     if mod is None and isinstance(file_or_args, tuple):
         file, mod = file_or_args
@@ -2352,7 +2478,12 @@ def proc_file(
     cfg = load_config(file)
 
     if str(file).endswith(_TS_JS_SOURCE_EXTS):
-        out = scan_typescript_file(file, cfg)
+        out = scan_typescript_file(
+            file,
+            cfg,
+            enable_quality_rules=enable_quality_rules,
+            enable_danger_rules=enable_danger_rules,
+        )
         if isinstance(out, tuple) and len(out) < 13:
             return (*out, *([None] * (13 - len(out))))
         return out[:13]
@@ -2364,13 +2495,22 @@ def proc_file(
         return out[:13]
 
     if str(file).endswith(".java"):
-        out = scan_java_file(file, cfg)
+        out = scan_java_file(
+            file,
+            cfg,
+            enable_quality_rules=enable_quality_rules,
+            enable_danger_rules=enable_danger_rules,
+        )
         if isinstance(out, tuple) and len(out) < 13:
             return (*out, *([None] * (13 - len(out))))
         return out[:13]
 
     if str(file).endswith(".php"):
-        out = scan_php_file(file, cfg)
+        out = scan_php_file(
+            file,
+            cfg,
+            enable_danger_rules=enable_danger_rules,
+        )
         if isinstance(out, tuple) and len(out) < 13:
             return (*out, *([None] * (13 - len(out))))
         return out[:13]
@@ -2457,7 +2597,7 @@ def proc_file(
         quality_findings = []
         danger_findings = []
 
-        if full_scan:
+        if full_scan and enable_quality_rules:
             q_rules = []
             if "SKY-Q301" not in cfg["ignore"]:
                 q_rules.append(ComplexityRule(threshold=cfg["complexity"]))
@@ -2577,6 +2717,7 @@ def proc_file(
             except Exception:
                 pass
 
+            _set_linter_node_types(q_rules)
             linter_q = LinterVisitor(q_rules, str(file))
             linter_q.visit(tree)
             quality_findings = linter_q.findings
@@ -2593,7 +2734,9 @@ def proc_file(
                 if custom_hits:
                     logger.info(f"[DBG] {file}: first_custom_hit={custom_hits[0]}")
 
+        if full_scan and enable_danger_rules:
             d_rules = [DangerousCallsRule()]
+            _set_linter_node_types(d_rules)
             linter_d = LinterVisitor(d_rules, str(file))
             linter_d.visit(tree)
             danger_findings = linter_d.findings
@@ -2602,7 +2745,7 @@ def proc_file(
 
             taint_findings = []
             try:
-                scan_file_with_tree(tree, Path(file), taint_findings)
+                scan_file_with_tree(tree, Path(file), taint_findings, source=source)
             except Exception:
                 logger.debug("Taint analysis failed for %s", file, exc_info=True)
             if taint_findings:
@@ -2659,6 +2802,48 @@ def proc_file(
         fv.protocol_method_names = getattr(v, "protocol_method_names", {})
         fv.version_conditional_lines = getattr(v, "version_conditional_lines", set())
 
+        architecture_metrics = None
+        if collect_architecture_metrics:
+            try:
+                architecture_tree = None
+                if masked:
+                    architecture_tree = ast.parse(source)
+                else:
+                    architecture_tree = tree
+
+                from skylos.architecture import _compute_abstractness
+
+                architecture_metrics = {
+                    "abstractness": _compute_abstractness(architecture_tree),
+                    "loc": sum(
+                        1
+                        for line in source.splitlines()
+                        if line.strip() and not line.strip().startswith("#")
+                    ),
+                }
+            except Exception:
+                logger.debug(
+                    "Architecture metric extraction failed for %s",
+                    file,
+                    exc_info=True,
+                )
+
+        clone_fragments = []
+        if (
+            collect_clone_fragments
+            and clone_cfg is not None
+            and "SKY-C401" not in cfg.get("ignore", [])
+        ):
+            try:
+                clone_tree = None if masked else tree
+                clone_fragments = extract_fragments(
+                    Path(file), source, clone_cfg, tree=clone_tree
+                )
+            except Exception:
+                logger.debug(
+                    "Clone fragment extraction failed for %s", file, exc_info=True
+                )
+
         return (
             v.defs,
             v.refs,
@@ -2682,6 +2867,8 @@ def proc_file(
             source.splitlines(True),
             getattr(v, "param_method_refs", {}),
             getattr(v, "call_arg_types", {}),
+            clone_fragments,
+            architecture_metrics,
         )
 
     except Exception as e:
@@ -2712,6 +2899,10 @@ def proc_file(
             set(),
             set(),
             [],
+            {},
+            {},
+            [],
+            None,
         )
 
 
@@ -2727,6 +2918,7 @@ def analyze(
     custom_rules_data=None,
     changed_files=None,
     grep_verify=True,
+    enable_sca=False,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -2740,6 +2932,7 @@ def analyze(
         custom_rules_data,
         changed_files,
         grep_verify=grep_verify,
+        enable_sca=enable_sca,
     )
 
 

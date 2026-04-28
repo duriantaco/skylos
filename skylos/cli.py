@@ -4570,33 +4570,47 @@ def main() -> None:
     changed_files = pre_analysis.changed_files
 
     try:
-        with Progress(
-            SpinnerColumn(style="brand"),
-            TextColumn("[brand]Skylos[/brand] {task.description}"),
-            transient=True,
-            console=console,
-        ) as progress:
-            task = progress.add_task("analyzing..", total=None)
+        scan_path = args.path if len(args.path) > 1 else args.path[0]
 
-            def update_progress(current, total, file):
-                progress.update(task, description=f"[{current}/{total}] {file.name}")
-
-            result_json = run_analyze(
-                args.path if len(args.path) > 1 else args.path[0],
+        def run_main_analysis(progress_callback=None):
+            return run_analyze(
+                scan_path,
                 conf=args.confidence,
                 enable_secrets=bool(args.secrets),
                 enable_danger=bool(args.danger),
                 enable_quality=bool(args.quality),
                 exclude_folders=list(final_exclude_folders),
-                progress_callback=update_progress,
+                progress_callback=progress_callback,
                 custom_rules_data=custom_rules_data,
                 changed_files=changed_files,
                 grep_verify=not getattr(args, "no_grep_verify", False),
+                enable_sca=bool(args.sca),
             )
+
+        if args.json:
+            result_json = run_main_analysis()
+        else:
+            with Progress(
+                SpinnerColumn(style="brand"),
+                TextColumn("[brand]Skylos[/brand] {task.description}"),
+                transient=True,
+                console=console,
+            ) as progress:
+                task = progress.add_task("analyzing..", total=None)
+
+                def update_progress(current, total, file):
+                    progress.update(
+                        task, description=f"[{current}/{total}] {file.name}"
+                    )
+
+                result_json = run_main_analysis(update_progress)
 
         result = json.loads(result_json)
 
-        if getattr(args, "sca", False) and "dependency_vulnerabilities" not in result:
+        if (
+            getattr(args, "sca", False)
+            and "dependency_vulnerabilities" not in result
+        ):
             try:
                 from skylos.rules.sca.vulnerability_scanner import scan_dependencies
 
@@ -4954,14 +4968,25 @@ def main() -> None:
     config = load_config(project_root)
 
     if args.gate:
-        if not args.json:
+        should_upload_gate = bool(getattr(args, "upload", False)) and not bool(
+            getattr(args, "no_upload", False)
+        )
+
+        if should_upload_gate and not args.json:
             _print_upload_destination(console, project_root)
             _print_main_upload_manifest(console, args, result)
 
-        _attach_upload_project_context(result, project_root)
-        upload_resp = upload_report(result, is_forced=args.force, strict=args.strict)
-        if not upload_resp.get("success"):
-            _render_upload_failure(console, upload_resp)
+        if should_upload_gate:
+            _attach_upload_project_context(result, project_root)
+            upload_resp = upload_report(
+                result,
+                is_forced=args.force,
+                strict=args.strict,
+            )
+            if not upload_resp.get("success"):
+                _render_upload_failure(console, upload_resp)
+                if getattr(args, "_explicit_upload_requested", False):
+                    raise SystemExit(1)
 
         exit_code = run_gate_interaction(
             result=result,

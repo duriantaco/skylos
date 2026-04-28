@@ -159,26 +159,138 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def scan_file_with_tree(tree, file_path, findings):
+_SQL_TOKENS = (
+    ".execute",
+    ".executemany",
+    ".executescript",
+    "execute(",
+    "executemany(",
+    "executescript(",
+    ".text(",
+    " text(",
+    "read_sql",
+    ".raw(",
+    "objects.raw",
+)
+_SQL_RAW_TOKENS = (
+    ".text(",
+    " text(",
+    "read_sql",
+    ".raw(",
+    "objects.raw",
+)
+_CMD_TOKENS = (
+    "os.system",
+    "subprocess",
+    "popen",
+    "exec_command",
+    "shell=true",
+    "shell = true",
+)
+_SSRF_TOKENS = (
+    "requests",
+    "httpx",
+    "aiohttp",
+    "urllib",
+    "urllib3",
+    "urlopen",
+    "urljoin",
+    "grequests",
+    ".get(",
+    ".post(",
+    ".put(",
+    ".patch(",
+    ".delete(",
+    ".request(",
+)
+_PATH_TOKENS = (
+    "open(",
+    "os.open",
+    "os.unlink",
+    "os.remove",
+    "os.mkdir",
+    "os.rmdir",
+    "os.makedirs",
+    "shutil.",
+    "path(",
+    "pathlib",
+    "read_text",
+    "read_bytes",
+    "write_text",
+    "write_bytes",
+    "send_file",
+    "send_from_directory",
+)
+_XSS_TOKENS = (
+    "markup",
+    "mark_safe",
+    "render_template_string",
+    "|safe",
+    "autoescape false",
+    "<",
+)
+_REDIRECT_TOKENS = ("redirect", "httpresponseredirect")
+_CORS_TOKENS = (
+    "cors",
+    "access-control-allow-origin",
+    "access_control_allow_origin",
+    "cors_allow_all_origins",
+    "origins",
+)
+_JWT_TOKENS = ("jwt", "verify_signature", "algorithms")
+_MCP_TOKENS = ("mcp", "fastmcp")
+
+
+def _has_any(source: str, tokens: tuple[str, ...]) -> bool:
+    return any(token in source for token in tokens)
+
+
+def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None):
     """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
-    scan_sql(tree, file_path, findings)
-    scan_cmd(tree, file_path, findings)
-    scan_sql_raw(tree, file_path, findings)
-    scan_ssrf(tree, file_path, findings)
-    scan_path(tree, file_path, findings)
-    scan_xss(tree, file_path, findings)
-    scan_redirect(tree, file_path, findings)
-    scan_cors(tree, file_path, findings)
-    scan_jwt(tree, file_path, findings)
-    scan_access(tree, file_path, findings)
-    scan_mcp(tree, file_path, findings)
+    if source is None:
+        scan_sql(tree, file_path, findings)
+        scan_cmd(tree, file_path, findings)
+        scan_sql_raw(tree, file_path, findings)
+        scan_ssrf(tree, file_path, findings)
+        scan_path(tree, file_path, findings)
+        scan_xss(tree, file_path, findings)
+        scan_redirect(tree, file_path, findings)
+        scan_cors(tree, file_path, findings)
+        scan_jwt(tree, file_path, findings)
+        scan_access(tree, file_path, findings)
+        scan_mcp(tree, file_path, findings)
+        return
+
+    source_lower = source.lower()
+    if _has_any(source_lower, _SQL_TOKENS):
+        scan_sql(tree, file_path, findings)
+    if _has_any(source_lower, _CMD_TOKENS):
+        scan_cmd(tree, file_path, findings)
+    if _has_any(source_lower, _SQL_RAW_TOKENS):
+        scan_sql_raw(tree, file_path, findings)
+    if _has_any(source_lower, _SSRF_TOKENS):
+        scan_ssrf(tree, file_path, findings)
+    if _has_any(source_lower, _PATH_TOKENS):
+        scan_path(tree, file_path, findings)
+    if _has_any(source_lower, _XSS_TOKENS):
+        scan_xss(tree, file_path, findings)
+    if _has_any(source_lower, _REDIRECT_TOKENS):
+        scan_redirect(tree, file_path, findings)
+    if _has_any(source_lower, _CORS_TOKENS):
+        scan_cors(tree, file_path, findings)
+    if "jwt" in source_lower and _has_any(source_lower, _JWT_TOKENS):
+        scan_jwt(tree, file_path, findings)
+    if "fields" in source_lower and "__all__" in source_lower:
+        scan_access(tree, file_path, findings)
+    if _has_any(source_lower, _MCP_TOKENS):
+        scan_mcp(tree, file_path, findings)
 
 
 def _scan_file(file_path: Path, findings):
     src = file_path.read_text(encoding="utf-8", errors="ignore")
     tree = ast.parse(src)
 
-    scan_file_with_tree(tree, file_path, findings)
+    scan_file_with_tree(tree, file_path, findings, source=src)
 
     checker = _DangerousCallsChecker(file_path, findings)
     checker.visit(tree)

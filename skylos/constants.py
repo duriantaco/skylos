@@ -1,4 +1,5 @@
 import re
+from functools import lru_cache
 from pathlib import Path
 
 PENALTIES = {
@@ -134,11 +135,62 @@ def is_framework_path(p) -> bool:
     return bool(FRAMEWORK_FILE_RE.search(str(p)))
 
 
+def _non_library_dir_kind_from_parts(
+    parts, path_text: str, dir_kinds: dict[str, str]
+) -> str | None:
+    for part in parts:
+        lowered = part.lower()
+        kind = dir_kinds.get(lowered)
+        if kind:
+            return kind
+        if lowered.endswith("_benchmark") or lowered.endswith("_benchmarks"):
+            return "benchmark"
+        if lowered.endswith("_example") or lowered.endswith("_examples"):
+            return "example"
+
+    basename = path_text.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if (
+        basename == "conftest.py"
+        or basename.startswith("test_")
+        or basename.endswith("_test.py")
+        or ".test." in basename
+        or ".spec." in basename
+        or basename.endswith("_test.go")
+    ):
+        return "test"
+
+    return None
+
+
+@lru_cache(maxsize=65536)
+def _cached_non_library_dir_kind(
+    path_text: str, project_root_text: str
+) -> str | None:
+    parts = None
+    if project_root_text:
+        try:
+            rel = Path(path_text).resolve().relative_to(
+                Path(project_root_text).resolve()
+            )
+            parts = rel.parts
+        except (TypeError, ValueError, OSError):
+            parts = None
+
+    if parts is None:
+        parts = path_text.replace("\\", "/").split("/")
+
+    return _non_library_dir_kind_from_parts(parts, path_text, NON_LIBRARY_DIR_KINDS)
+
+
 def get_non_library_dir_kind(p, project_root=None, extra_dirs=None) -> str | None:
+    if not extra_dirs:
+        return _cached_non_library_dir_kind(
+            str(p), "" if project_root is None else str(project_root)
+        )
+
     merged = dict(NON_LIBRARY_DIR_KINDS)
-    if extra_dirs:
-        for folder, role in extra_dirs.items():
-            merged[folder.lower()] = role
+    for folder, role in extra_dirs.items():
+        merged[folder.lower()] = role
 
     parts = None
     if project_root is not None:
@@ -151,28 +203,7 @@ def get_non_library_dir_kind(p, project_root=None, extra_dirs=None) -> str | Non
     if parts is None:
         parts = str(p).replace("\\", "/").split("/")
 
-    for part in parts:
-        lowered = part.lower()
-        kind = merged.get(lowered)
-        if kind:
-            return kind
-        if lowered.endswith("_benchmark") or lowered.endswith("_benchmarks"):
-            return "benchmark"
-        if lowered.endswith("_example") or lowered.endswith("_examples"):
-            return "example"
-
-    basename = str(p).replace("\\", "/").rsplit("/", 1)[-1].lower()
-    if (
-        basename == "conftest.py"
-        or basename.startswith("test_")
-        or basename.endswith("_test.py")
-        or ".test." in basename
-        or ".spec." in basename
-        or basename.endswith("_test.go")
-    ):
-        return "test"
-
-    return None
+    return _non_library_dir_kind_from_parts(parts, str(p), merged)
 
 
 def parse_exclude_folders(

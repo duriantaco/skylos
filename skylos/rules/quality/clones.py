@@ -157,10 +157,24 @@ def _count_nodes(node: ast.AST) -> int:
     return sum(1 for _ in ast.walk(node))
 
 
-def _similarity(a: str, b: str) -> float:
+def _similarity(a: str, b: str, threshold: float | None = None) -> float:
+    if a == b:
+        return 1.0
+
     if _fast_similarity is not None:
         return _fast_similarity(a, b)
-    return SequenceMatcher(a=a, b=b).ratio()
+
+    if threshold is not None:
+        total_len = len(a) + len(b)
+        if total_len == 0:
+            return 1.0
+        if (2 * min(len(a), len(b)) / total_len) < threshold:
+            return 0.0
+
+    matcher = SequenceMatcher(a=a, b=b)
+    if threshold is not None and matcher.quick_ratio() < threshold:
+        return 0.0
+    return matcher.ratio()
 
 
 _SKIP_PREFIXES = ("test_", "conftest")
@@ -189,18 +203,22 @@ _BOILERPLATE_METHODS = {
 }
 
 
-def extract_fragments(py_path: Path, source: str, cfg: CloneConfig) -> List[Fragment]:
+def extract_fragments(
+    py_path: Path, source: str, cfg: CloneConfig, *, tree: ast.AST | None = None
+) -> List[Fragment]:
     basename = py_path.name
     if any(basename.startswith(p) for p in _SKIP_PREFIXES):
         return []
 
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return []
+    if tree is None:
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return []
 
     fragments: List[Fragment] = []
     class_stack: List[str] = []
+    src_lines = source.splitlines()
 
     def mk_fragment(n: ast.AST, kind: str, name: str, body: Optional[List[ast.stmt]]):
         start = getattr(n, "lineno", None)
@@ -220,7 +238,6 @@ def extract_fragments(py_path: Path, source: str, cfg: CloneConfig) -> List[Frag
         if node_count < cfg.min_nodes:
             return
 
-        src_lines = source.splitlines()
         frag_src = "\n".join(src_lines[start - 1 : end])
         text_norm = _normalize_text(frag_src)
 
@@ -286,17 +303,17 @@ def classify_clone(
     enabled = set(cfg.enabled_clone_types)
 
     if CloneType.TYPE1 in enabled:
-        sim1 = _similarity(f1.text_norm, f2.text_norm)
+        sim1 = _similarity(f1.text_norm, f2.text_norm, cfg.type1_threshold)
         if sim1 >= cfg.type1_threshold:
             return (CloneType.TYPE1, sim1)
 
     if CloneType.TYPE2 in enabled:
-        sim2 = _similarity(f1.ast_norm_type2, f2.ast_norm_type2)
+        sim2 = _similarity(f1.ast_norm_type2, f2.ast_norm_type2, cfg.type2_threshold)
         if sim2 >= cfg.type2_threshold:
             return (CloneType.TYPE2, sim2)
 
     if CloneType.TYPE3 in enabled:
-        sim3 = _similarity(f1.ast_norm_type3, f2.ast_norm_type3)
+        sim3 = _similarity(f1.ast_norm_type3, f2.ast_norm_type3, cfg.type3_threshold)
         if sim3 >= cfg.type3_threshold:
             return (CloneType.TYPE3, sim3)
 

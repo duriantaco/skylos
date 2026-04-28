@@ -4,6 +4,7 @@ import concurrent.futures
 import io
 import logging
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -105,6 +106,7 @@ _GREP_EXCLUDE_DIRS = (
 )
 
 
+
 def detect_language(file_path: str) -> str:
     ext = Path(file_path).suffix.lower()
     if ext in _PYTHON_EXTS:
@@ -182,21 +184,44 @@ def _run_grep(
             "*.txt",
         ]
 
-    grep_flags = ["-rn"]
-    if fixed_string:
-        grep_flags.append("-F")
-    elif use_regex:
-        grep_flags.append("-E")
-
-    includes = []
-    for g in include_globs:
-        includes.extend(["--include", g])
-    excludes = []
-    for d in _GREP_EXCLUDE_DIRS:
-        excludes.extend(["--exclude-dir", d])
-
     try:
-        cmd = ["grep", *grep_flags, *includes, *excludes, pattern, project_root]
+        rg = shutil.which("rg")
+        if rg:
+            cmd = [
+                rg,
+                "-n",
+                "--no-heading",
+                "--color",
+                "never",
+                "--hidden",
+                "--no-ignore",
+            ]
+            if fixed_string:
+                cmd.append("-F")
+            for g in include_globs:
+                cmd.extend(["-g", g])
+            for d in _GREP_EXCLUDE_DIRS:
+                if any(ch in d for ch in "*?["):
+                    cmd.extend(["-g", f"!**/{d}/**"])
+                else:
+                    cmd.extend(["-g", f"!**/{d}/**"])
+            cmd.extend(["--", pattern, project_root])
+        else:
+            grep_flags = ["-rn"]
+            if fixed_string:
+                grep_flags.append("-F")
+            elif use_regex:
+                grep_flags.append("-E")
+
+            includes = []
+            for g in include_globs:
+                includes.extend(["--include", g])
+            excludes = []
+            for d in _GREP_EXCLUDE_DIRS:
+                excludes.extend(["--exclude-dir", d])
+
+            cmd = ["grep", *grep_flags, *includes, *excludes, pattern, project_root]
+
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         lines = result.stdout.strip().splitlines()
         filtered = []
@@ -1526,26 +1551,82 @@ def grep_verify_findings(
     start_time = time.monotonic()
     search_fn = _build_grep_search_fn(
         project_root,
-        parallel=parallel,
+        parallel=False,
         max_workers=max_workers,
         cache=cache,
     )
 
-    for finding in findings:
-        if time.monotonic() - start_time > time_budget:
-            break
-
+    def process_finding(finding: dict) -> tuple[str, GrepVerdict | None]:
         full_name = _finding_full_name(finding)
         if not full_name:
-            continue
+            return "", None
 
         deterministic_verdict = _deterministic_suppression_verdict(finding)
         if deterministic_verdict:
-            verdicts[full_name] = deterministic_verdict
-            continue
+            return full_name, deterministic_verdict
 
         search_results = search_fn(finding)
-        verdict = _apply_deterministic_rules(search_results, finding)
+        return full_name, _apply_deterministic_rules(search_results, finding)
+
+    verified_names = set(verdicts)
+    remaining_findings = [
+        finding
+        for finding in findings
+        if _finding_full_name(finding)
+        and _finding_full_name(finding) not in verified_names
+    ]
+
+    if parallel:
+        max_workers = max(1, int(max_workers or _DEFAULT_GREP_WORKERS))
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+        pending: set[concurrent.futures.Future] = set()
+        findings_iter = iter(remaining_findings)
+
+        def submit_next() -> bool:
+            if time.monotonic() - start_time > time_budget:
+                return False
+            for finding in findings_iter:
+                if not _finding_full_name(finding):
+                    continue
+                pending.add(executor.submit(process_finding, finding))
+                return True
+            return False
+
+        try:
+            for _ in range(max_workers):
+                if not submit_next():
+                    break
+
+            while pending and time.monotonic() - start_time <= time_budget:
+                remaining = max(0.0, time_budget - (time.monotonic() - start_time))
+                done, pending = concurrent.futures.wait(
+                    pending,
+                    timeout=remaining,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+                if not done:
+                    break
+                for future in done:
+                    try:
+                        full_name, verdict = future.result()
+                    except Exception as e:
+                        logger.debug("grep verification failed: %s", e)
+                        continue
+                    if full_name and verdict:
+                        verdicts[full_name] = verdict
+                    submit_next()
+        finally:
+            for future in pending:
+                future.cancel()
+            executor.shutdown(wait=True, cancel_futures=True)
+
+        return verdicts
+
+    for finding in remaining_findings:
+        if time.monotonic() - start_time > time_budget:
+            break
+
+        full_name, verdict = process_finding(finding)
         if verdict:
             verdicts[full_name] = verdict
 

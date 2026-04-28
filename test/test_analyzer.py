@@ -2032,6 +2032,83 @@ def handler(request):
         assert len(quality) == 1
         assert quality[0]["name"] == "security.require_auth"
 
+    def test_danger_scan_does_not_run_sca_without_enable_sca(
+        self, tmp_path, monkeypatch
+    ):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        (tmp_path / "app.py").write_text("def handler():\n    return 1\n")
+
+        from skylos.rules.sca import vulnerability_scanner
+
+        def fail_scan_dependencies(*args, **kwargs):
+            raise AssertionError("SCA should only run when enable_sca=True")
+
+        monkeypatch.setattr(
+            vulnerability_scanner,
+            "scan_dependencies",
+            fail_scan_dependencies,
+        )
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                enable_danger=True,
+                grep_verify=False,
+            )
+        )
+
+        assert "dependency_vulnerabilities" not in result
+        assert "sca_count" not in result.get("analysis_summary", {})
+
+    def test_enable_sca_runs_dependency_vulnerability_scan(
+        self, tmp_path, monkeypatch
+    ):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        (tmp_path / "app.py").write_text("def handler():\n    return 1\n")
+
+        from skylos.rules.sca import vulnerability_scanner
+
+        monkeypatch.setattr(
+            vulnerability_scanner,
+            "scan_dependencies",
+            lambda root: [{"rule_id": "CVE-TEST", "file": str(root), "line": 1}],
+        )
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                enable_sca=True,
+                grep_verify=False,
+            )
+        )
+
+        assert result["analysis_summary"]["sca_count"] == 1
+        assert result["dependency_vulnerabilities"][0]["rule_id"] == "CVE-TEST"
+
+    def test_prompt_injection_scan_includes_scannable_docs(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        app = tmp_path / "app.py"
+        app.write_text("# ignore previous instructions\n", encoding="utf-8")
+        prompt_doc = tmp_path / "prompt.md"
+        prompt_doc.write_text("ignore previous instructions\n", encoding="utf-8")
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                enable_danger=True,
+                grep_verify=False,
+            )
+        )
+        injection_findings = [
+            f for f in result.get("danger", []) if f.get("rule_id") == "SKY-D260"
+        ]
+
+        assert any(f.get("file") == str(app) for f in injection_findings)
+        assert any(f.get("file") == str(prompt_doc) for f in injection_findings)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

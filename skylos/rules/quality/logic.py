@@ -1,5 +1,6 @@
 import ast
 import re
+from functools import lru_cache
 from pathlib import Path
 from skylos.rules.base import SkylosRule
 
@@ -268,6 +269,7 @@ def _collect_if_chain(
 class DuplicateBranchRule(SkylosRule):
     rule_id = "SKY-Q305"
     name = "Duplicate Branch Logic"
+    node_types = (ast.FunctionDef, ast.AsyncFunctionDef)
 
     def visit_node(self, node, context):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1024,18 +1026,26 @@ _CLI_FILENAMES = {"cli.py", "__main__.py", "manage.py"}
 _SKIP_DIRS = {"scripts", "bin", "tools"}
 
 
+@lru_cache(maxsize=4096)
+def _basename(filename):
+    return str(filename).replace("\\", "/").rsplit("/", 1)[-1]
+
+
+@lru_cache(maxsize=4096)
 def _is_test_file(filename):
-    base = Path(filename).name
+    base = _basename(filename)
     if base.startswith("test_") or base.endswith("_test.py") or base == "conftest.py":
         return True
     return False
 
 
+@lru_cache(maxsize=4096)
 def _is_cli_or_script(filename):
-    p = Path(filename)
-    if p.name in _CLI_FILENAMES:
+    filename = str(filename).replace("\\", "/")
+    base = filename.rsplit("/", 1)[-1]
+    if base in _CLI_FILENAMES:
         return True
-    for part in p.parts:
+    for part in filename.split("/"):
         if part in _SKIP_DIRS:
             return True
     return False
@@ -1209,12 +1219,18 @@ class DisabledSecurityRule(SkylosRule):
     name = "Disabled Security Control"
 
     def visit_node(self, node, context):
-        findings = []
+        if not isinstance(
+            node, (ast.Call, ast.FunctionDef, ast.AsyncFunctionDef, ast.Assign)
+        ):
+            return None
+
         filename = context.get("filename", "")
-        basename = Path(filename).name
 
         if _is_test_file(filename):
             return None
+
+        findings = []
+        basename = _basename(filename)
 
         if isinstance(node, ast.Call):
             for kw in node.keywords:
@@ -1824,10 +1840,14 @@ _WELL_KNOWN_ENV_VARS = {
 class StaleMockRule(SkylosRule):
     rule_id = "SKY-L024"
     name = "Stale Mock"
+    node_types = (ast.Module, ast.Call)
+
+    _parse_cache: dict = {}
 
     def __init__(self):
         self._current_file = None
         self._is_test = False
+        self._project_root_cache = None
 
     def visit_node(self, node, context):
         filename = context.get("filename", "")
@@ -1838,6 +1858,7 @@ class StaleMockRule(SkylosRule):
             self._is_test = basename.startswith("test_") or basename.startswith(
                 "conftest"
             )
+            self._project_root_cache = None
             return None
 
         if not self._is_test:
@@ -1859,7 +1880,9 @@ class StaleMockRule(SkylosRule):
         attr_name = parts[-1]
         module_parts = parts[:-1]
 
-        project_root = self._find_project_root(filename)
+        if self._project_root_cache is None:
+            self._project_root_cache = self._find_project_root(filename) or False
+        project_root = self._project_root_cache
         if not project_root:
             return None
 
@@ -1868,30 +1891,39 @@ class StaleMockRule(SkylosRule):
             return None
 
         try:
-            source = module_file.read_text(errors="replace")
-            tree = ast.parse(source)
-        except (OSError, SyntaxError):
+            stat = module_file.stat()
+            cache_key = (str(module_file), stat.st_mtime_ns, stat.st_size)
+        except OSError:
             return None
 
-        defined_names = set()
-        for child in ast.walk(tree):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                defined_names.add(child.name)
-            elif isinstance(child, ast.ClassDef):
-                defined_names.add(child.name)
-            elif isinstance(child, ast.Assign):
-                for t in child.targets:
-                    if isinstance(t, ast.Name):
-                        defined_names.add(t.id)
-            elif isinstance(child, ast.ImportFrom):
-                if child.names:
+        defined_names = StaleMockRule._parse_cache.get(cache_key)
+        if defined_names is None:
+            try:
+                source = module_file.read_text(errors="replace")
+                tree = ast.parse(source)
+            except (OSError, SyntaxError):
+                StaleMockRule._parse_cache[cache_key] = set()
+                return None
+            defined_names = set()
+            for child in ast.walk(tree):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    defined_names.add(child.name)
+                elif isinstance(child, ast.ClassDef):
+                    defined_names.add(child.name)
+                elif isinstance(child, ast.Assign):
+                    for t in child.targets:
+                        if isinstance(t, ast.Name):
+                            defined_names.add(t.id)
+                elif isinstance(child, ast.ImportFrom):
+                    if child.names:
+                        for alias in child.names:
+                            name = alias.asname if alias.asname else alias.name
+                            defined_names.add(name)
+                elif isinstance(child, ast.Import):
                     for alias in child.names:
                         name = alias.asname if alias.asname else alias.name
-                        defined_names.add(name)
-            elif isinstance(child, ast.Import):
-                for alias in child.names:
-                    name = alias.asname if alias.asname else alias.name
-                    defined_names.add(name.split(".")[0])
+                        defined_names.add(name.split(".")[0])
+            StaleMockRule._parse_cache[cache_key] = defined_names
 
         if attr_name in defined_names:
             return None
@@ -2189,12 +2221,15 @@ class HardcodedCredentialRule(SkylosRule):
     name = "Hardcoded Credential"
 
     def visit_node(self, node, context):
+        if not isinstance(node, (ast.Assign, ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+
         filename = context.get("filename", "")
         if _is_test_file(filename):
             return None
 
         findings = []
-        basename = Path(filename).name
+        basename = _basename(filename)
 
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
