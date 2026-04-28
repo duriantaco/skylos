@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/duriantaco-skylos-badge.png)](https://mseep.ai/app/duriantaco-skylos)
+
 <div align="center">
     <img src="assets/DOG_1.png" alt="Skylos open-source Python SAST, dead code detection, AI code security, and CI/CD PR gate" width="260">
     <h1>Skylos: Open-Source Python SAST, Dead Code Detection, and AI Code Security</h1>
