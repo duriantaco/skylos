@@ -82,6 +82,14 @@ class TestCSRFProtection:
         assert len(findings) == 1
         assert "csrf_exempt" in findings[0]["message"]
 
+    def test_csrf_metadata_strings_do_not_trigger_regression(self):
+        diff = _make_diff(
+            ['    "csrf_protect",'],
+            ['    "csrf_exempt": "CSRF protection disabled via @csrf_exempt.",'],
+        )
+        findings = detect_security_regressions(diff, "rules.py")
+        assert findings == []
+
 
 class TestTLSVerification:
     def test_verify_true_to_false(self):
@@ -101,6 +109,14 @@ class TestTLSVerification:
         )
         findings = detect_security_regressions(diff, "client.py")
         assert len(findings) == 1
+
+    def test_verify_false_metadata_string_does_not_trigger_regression(self):
+        diff = _make_diff(
+            [],
+            ['    "verify": "Requests TLS verification disabled (verify=False).",'],
+        )
+        findings = detect_security_regressions(diff, "rules.py")
+        assert findings == []
 
     def test_test_file_regressions_are_suppressed(self):
         diff = _make_diff(

@@ -23,6 +23,19 @@ names = []
 decorators = []
 bases = []
 
+[tool.skylos.templates]
+# security = ".skylos/templates/security.md"
+# quality = ".skylos/templates/quality.md"
+# security_audit = ".skylos/templates/security_audit.md"
+# review = ".skylos/templates/review.md"
+
+[tool.skylos.vibe]
+extra_phantom_names = []
+extra_phantom_decorators = []
+extra_credential_names = []
+extra_sensitive_file_keywords = []
+extra_network_timeout_calls = []
+
 [tool.skylos.whitelist]
 names = []
 

@@ -26,6 +26,24 @@ DEFAULTS = {
         "bases": [],
         "keep_docstring": True,
     },
+    "templates": {
+        "security": None,
+        "quality": None,
+        "security_audit": None,
+        "review": None,
+    },
+    "vibe": {
+        "extra_phantom_names": [],
+        "extra_phantom_decorators": [],
+        "extra_credential_names": [],
+        "extra_credential_suffixes": [],
+        "extra_secret_names": [],
+        "extra_security_var_keywords": [],
+        "extra_well_known_env_vars": [],
+        "extra_sensitive_file_keywords": [],
+        "extra_placeholder_values": [],
+        "extra_network_timeout_calls": [],
+    },
 }
 
 
@@ -131,6 +149,8 @@ def _load_synced_config(sync_config: Path) -> dict:
         "arg_count_threshold": "max_args",
         "function_length_threshold": "max_lines",
         "exclude_paths": "exclude",
+        "prompt_templates": "templates",
+        "vibe_dictionary": "vibe",
     }
     for source_key, target_key in alias_map.items():
         if source_key in raw and target_key not in normalized:
@@ -163,11 +183,11 @@ def _merge_user_config(base_cfg: dict, user_cfg: dict | None) -> dict:
             merged_masking.update(value or {})
             final_cfg["masking"] = merged_masking
             continue
-        if key == "gate" and isinstance(value, dict):
-            merged_gate = {}
-            merged_gate.update(final_cfg.get("gate", {}) or {})
-            merged_gate.update(value)
-            final_cfg["gate"] = merged_gate
+        if key in ("gate", "templates", "vibe") and isinstance(value, dict):
+            merged_section = {}
+            merged_section.update(final_cfg.get(key, {}) or {})
+            merged_section.update(value)
+            final_cfg[key] = merged_section
             continue
         final_cfg[key] = value
 

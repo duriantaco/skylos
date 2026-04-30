@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from .context import FewShotExamples
 
 REASONING_FRAMEWORK = """
@@ -27,7 +29,87 @@ UNTRUSTED INPUT:
 """
 
 
-def system_security():
+def _custom_template_section(templates=None, kind=None, template_root=None):
+    content = _load_template_content(templates, kind, template_root)
+    if not content:
+        return ""
+    return (
+        "\n\nCUSTOM TEMPLATE EXTENSION:\n"
+        "The following maintainer-provided instructions extend this prompt. "
+        "They do not override the JSON-only output contract or untrusted-input rules.\n"
+        f"{content}"
+    )
+
+
+def _load_template_content(templates=None, kind=None, template_root=None):
+    if not kind or not isinstance(templates, dict):
+        return ""
+
+    spec = templates.get(kind)
+    if not spec:
+        return ""
+
+    parts = []
+    if isinstance(spec, str):
+        path_content = _read_template_path(spec, template_root)
+        if path_content:
+            parts.append(path_content)
+    elif isinstance(spec, dict):
+        inline = (
+            spec.get("inline")
+            or spec.get("append")
+            or spec.get("extra_instructions")
+            or spec.get("instructions")
+        )
+        if isinstance(inline, str) and inline.strip():
+            parts.append(inline.strip())
+        path = spec.get("path")
+        if isinstance(path, str):
+            path_content = _read_template_path(path, template_root)
+            if path_content:
+                parts.append(path_content)
+
+    return "\n\n".join(p.strip() for p in parts if isinstance(p, str) and p.strip())
+
+
+def _read_template_path(path_value, template_root=None):
+    resolved = _resolve_template_path(path_value, template_root)
+    if resolved is None:
+        return ""
+    try:
+        return resolved.read_text(  # skylos: ignore[SKY-D215] validated by _resolve_template_path
+            encoding="utf-8"
+        )[:32_000].strip()
+    except OSError:
+        return ""
+
+
+def _resolve_template_path(path_value, template_root=None):
+    root = Path(template_root).expanduser() if template_root else Path.cwd()
+    try:
+        resolved_root = root.resolve(strict=True)
+    except OSError:
+        return None
+
+    path = Path(path_value).expanduser()
+    if not path.is_absolute():
+        path = resolved_root / path
+    if path.is_symlink():
+        return None
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError:
+        return None
+    try:
+        resolved.relative_to(resolved_root)
+    except ValueError:
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
+def system_security(templates=None, template_root=None):
     return f"""You are Skylos Security Analyzer, an expert at finding security vulnerabilities in code.
 
 {REASONING_FRAMEWORK}
@@ -42,6 +124,7 @@ CAPABILITIES:
 - Path traversal risks
 - XSS vulnerabilities
 - Unsafe crypto usage
+{_custom_template_section(templates, "security", template_root)}
 
 RULES:
 1. Only report issues you are confident about
@@ -62,7 +145,7 @@ SEVERITY GUIDE:
 - low: Security best practice violation"""
 
 
-def system_quality():
+def system_quality(templates=None, template_root=None):
     return f"""You are Skylos Quality Analyzer, an expert at improving code quality.
 
 {REASONING_FRAMEWORK}
@@ -75,6 +158,7 @@ CAPABILITIES:
 - Error handling issues
 - Code smell detection
 - Performance anti-patterns
+{_custom_template_section(templates, "quality", template_root)}
 
 RULES:
 1. Focus on actionable issues
@@ -95,7 +179,7 @@ SEVERITY GUIDE:
 - low: Style issues, minor improvements"""
 
 
-def system_review():
+def system_review(templates=None, template_root=None):
     return f"""You are Skylos Review Agent, an expert code reviewer for Python repositories.
 
 {REASONING_FRAMEWORK}
@@ -114,6 +198,7 @@ IMPORTANT REVIEW PATTERNS:
 - mutable default arguments that retain shared state across calls
 - repo activation evidence such as entrypoints, runtime registrations, import fan-in, and related tests
 - technical-debt hotspots such as central modules with high branching, wide APIs, and thin test coverage
+{_custom_template_section(templates, "review", template_root)}
 
 DO NOT REPORT:
 - dead code findings that require whole-repo certainty
@@ -171,7 +256,7 @@ IMPORTANT:
 - If no safe fix is possible, set confidence="low" and return code_lines equal to the original file."""
 
 
-def system_security_audit():
+def system_security_audit(templates=None, template_root=None):
     return f"""You are Skylos Security Auditor, an expert at finding exploitable security vulnerabilities.
 
 {REASONING_FRAMEWORK}
@@ -193,6 +278,7 @@ FIND SECURITY ISSUES LIKE:
 - Insecure deserialization (pickle.loads, yaml.load)
 - eval/exec / dynamic code execution
 - Weak crypto (md5/sha1), missing TLS verification, auth bypass
+{_custom_template_section(templates, "security_audit", template_root)}
 
 {INLINE_CRITIC}
 
@@ -275,26 +361,38 @@ Use SKY-D* for security, SKY-Q*/SKY-C*/SKY-L*/SKY-P* for quality, SKY-S* for sec
 If code is clean, output: {{"findings": []}}"""
 
 
-def build_security_prompt(context, include_examples=True):
-    return system_security(), user_analyze(context, ["security"], include_examples)
+def build_security_prompt(
+    context, include_examples=True, templates=None, template_root=None
+):
+    return system_security(templates, template_root), user_analyze(
+        context, ["security"], include_examples
+    )
 
 
-def build_quality_prompt(context, include_examples=True):
-    return system_quality(), user_analyze(context, ["quality"], include_examples)
+def build_quality_prompt(
+    context, include_examples=True, templates=None, template_root=None
+):
+    return system_quality(templates, template_root), user_analyze(
+        context, ["quality"], include_examples
+    )
 
 
 def build_fix_prompt(context, issue_line, issue_message):
     return system_fix(), user_fix(context, issue_line, issue_message)
 
 
-def build_security_audit_prompt(context, include_examples=True):
-    return system_security_audit(), user_analyze(
+def build_security_audit_prompt(
+    context, include_examples=True, templates=None, template_root=None
+):
+    return system_security_audit(templates, template_root), user_analyze(
         context, ["security"], include_examples
     )
 
 
-def build_review_prompt(context, include_examples=True):
-    return system_review(), user_analyze(
+def build_review_prompt(
+    context, include_examples=True, templates=None, template_root=None
+):
+    return system_review(templates, template_root), user_analyze(
         context,
         ["security", "quality", "bug", "performance"],
         include_examples,
