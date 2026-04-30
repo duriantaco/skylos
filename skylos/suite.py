@@ -16,7 +16,7 @@ _DEAD_CODE_CATEGORIES = (
     "unused_parameters",
 )
 
-_DEFENSE_NOTE = "AI defense currently scans Python direct SDK integrations only."
+_DEFENSE_NOTE = "AI defense currently scans Python and TypeScript direct SDK integrations."
 
 
 def _empty_defense_payload(project_path: str) -> dict[str, Any]:
@@ -188,7 +188,7 @@ def run_suite(
     from skylos.defend.engine import run_defense_checks
     from skylos.defend.policy import compute_owasp_coverage, load_policy
     from skylos.defend.report import format_defense_json
-    from skylos.discover.detector import _collect_python_files, detect_integrations
+    from skylos.discover.detector import _collect_ai_files, detect_integrations
 
     analyzer_logger = logging.getLogger("Skylos")
     original_level = analyzer_logger.level
@@ -305,7 +305,7 @@ def run_suite(
         disable=output_json,
     ) as progress:
         progress.add_task("Scanning AI defenses...", total=None)
-        files = _collect_python_files(target_path, exclude)
+        files = _collect_ai_files(target_path, exclude)
         integrations, graph = detect_integrations(target_path, exclude_folders=exclude)
 
     if integrations:

@@ -101,7 +101,7 @@ def test_suite_json_outputs_combined_sections(tmp_path, capsys):
     assert payload["provenance"]["enabled"] is False
     assert (
         payload["defense"]["note"]
-        == "AI defense currently scans Python direct SDK integrations only."
+        == "AI defense currently scans Python and TypeScript direct SDK integrations."
     )
 
 

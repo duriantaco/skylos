@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import subprocess
 
 
 def _cicd_load_results(args, *, console_factory):
@@ -34,6 +35,22 @@ def _cicd_load_results(args, *, console_factory):
     except Exception as e:
         console_factory().print(f"[bold red]Analysis failed: {e}[/bold red]")
         return None, 1
+
+
+def _default_workflow_output() -> str:
+    try:
+        root = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except (subprocess.SubprocessError, OSError):
+        root = ""
+    base = Path(root) if root else Path.cwd()
+    return str(base / ".github" / "workflows" / "skylos.yml")
 
 
 def run_cicd_command(
@@ -85,7 +102,15 @@ def run_cicd_command(
         help="Include AI Defense check step (skylos defend)",
     )
     p_ci_init.add_argument(
-        "--output", "-o", default=".github/workflows/skylos.yml", help="Output path"
+        "--scan-path",
+        default=".",
+        help="Project path to scan inside the repository, e.g. apps/api",
+    )
+    p_ci_init.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="Output path (default: repo-root .github/workflows/skylos.yml)",
     )
 
     p_ci_gate = cicd_sub.add_parser("gate", help="Check quality gate (CI exit code)")
@@ -149,8 +174,9 @@ def run_cicd_command(
             use_claude_security=cicd_args.claude_security,
             use_upload=cicd_args.upload,
             use_defend=cicd_args.defend,
+            scan_path=cicd_args.scan_path,
         )
-        write_workflow(yaml_content, cicd_args.output)
+        write_workflow(yaml_content, cicd_args.output or _default_workflow_output())
         return 0
 
     if cicd_args.cicd_cmd == "gate":

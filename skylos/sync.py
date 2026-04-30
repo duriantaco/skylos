@@ -870,15 +870,18 @@ jobs:
           python-version: '3.11'
       
       - name: Install Skylos
-        run: pip install skylos
+        run: python -m pip install skylos
 
       - name: Pull Skylos Cloud Policy
         run: |
           skylos sync pull || echo "No Skylos Cloud policy available through GitHub OIDC; continuing with local config."
       
-      - name: Run Skylos Scan
+      - name: Run Skylos Scan & Upload
         run: |
-          skylos . --danger --upload --sha ${{ github.event.pull_request.head.sha }}
+          skylos . --danger --secrets --quality --upload
+        env:
+          SKYLOS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          SKYLOS_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
 """
         workflow_path.write_text(workflow_content)
         print("  ✓ Created GitHub Actions (.github/workflows/skylos.yml)")
@@ -987,14 +990,17 @@ jobs:
           python-version: '3.11'
       
       - name: Install Skylos
-        run: pip install skylos
+        run: python -m pip install skylos
 
       - name: Pull Skylos Cloud Policy
         run: |
           skylos sync pull || echo "No Skylos Cloud policy available through GitHub OIDC; continuing with local config."
       
-      - name: Run Skylos Scan
-        run: skylos . --danger --gate
+      - name: Run Skylos Scan & Upload
+        run: skylos . --danger --secrets --quality --upload
+        env:
+          SKYLOS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          SKYLOS_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
 """
         workflow_path.write_text(workflow_content)
         print("  ✓ Created workflow\n")
