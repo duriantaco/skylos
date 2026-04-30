@@ -546,6 +546,71 @@ class TestSkylosApi(unittest.TestCase):
         mock_detect_provenance.assert_not_called()
         self.assertIsNone(prepared.metadata["provenance"])
 
+    @patch("skylos.provenance.analyze_provenance")
+    @patch("skylos.api._load_repo_link", return_value={})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("skylos.api.SarifExporter")
+    @patch("skylos.api._get_blame_map", return_value={})
+    @patch("skylos.api._normalize_result_sections", return_value=[])
+    @patch("skylos.api.get_git_root", return_value="/repo")
+    @patch("skylos.api.get_git_info", return_value=("abc123", "main", "actor", {}))
+    def test_prepare_report_upload_carries_workspace_metadata(
+        self,
+        _mock_git_info,
+        _mock_root,
+        _mock_normalize,
+        _mock_blame,
+        mock_exporter,
+        _mock_ai,
+        _mock_link,
+        mock_analyze_provenance,
+    ):
+        prov_report = MagicMock()
+        prov_report.agent_files = []
+        mock_analyze_provenance.return_value = prov_report
+        mock_exporter.return_value.generate.return_value = {
+            "version": "2.1.0",
+            "runs": [],
+        }
+
+        prepared = api._prepare_report_upload(
+            {
+                "danger": [],
+                "workspaces": {
+                    "is_monorepo": True,
+                    "root_package": {
+                        "name": "@repo/root",
+                        "relative_path": ".",
+                        "discovered_from": ["root-package"],
+                        "is_root": True,
+                        "is_internal_dependency": False,
+                        "has_package_json": True,
+                    },
+                    "packages": [
+                        {
+                            "name": "@repo/ui",
+                            "relative_path": "packages/ui",
+                            "discovered_from": ["lerna.json:packages"],
+                            "is_root": False,
+                            "is_internal_dependency": True,
+                            "has_package_json": True,
+                        }
+                    ],
+                    "diagnostics": [],
+                    "declared_patterns": ["packages/*"],
+                    "tsconfig_references": [],
+                    "package_count": 1,
+                    "total_packages": 2,
+                    "diagnostic_count": 0,
+                },
+            },
+            analysis_mode="static",
+        )
+
+        assert prepared.metadata["workspaces"]["is_monorepo"] is True
+        assert prepared.metadata["workspaces"]["packages"][0]["name"] == "@repo/ui"
+        assert prepared.core_payload["workspaces"]["total_packages"] == 2
+
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
     @patch("skylos.api.get_git_root", return_value=None)

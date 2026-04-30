@@ -25,6 +25,7 @@ SECURITY_TAXONOMY: dict[str, str] = {
     "go": "Go security flow and sanitizer patterns.",
     "java": "Java security flow and sanitizer patterns.",
     "javascript": "JavaScript security flow and sanitizer patterns.",
+    "rust": "Rust security flow and sanitizer patterns.",
     "typescript": "TypeScript security flow and sanitizer patterns.",
     "precision_guard": "Clean patterns that should stay free of noisy security findings.",
 }
@@ -44,7 +45,7 @@ DEFAULT_SCAN = {
 }
 
 SUPPORTED_SCANNERS = {"skylos", "bandit"}
-SUPPORTED_LANGUAGES = {"python", "go", "java", "javascript", "typescript"}
+SUPPORTED_LANGUAGES = {"python", "go", "java", "javascript", "typescript", "rust"}
 SCANNER_LANGUAGE_SUPPORT = {
     "skylos": SUPPORTED_LANGUAGES,
     "bandit": {"python"},

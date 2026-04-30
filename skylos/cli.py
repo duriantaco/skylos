@@ -2277,7 +2277,7 @@ def _rules_validate(console, path_str):
 
 def _build_main_parser():
     parser = argparse.ArgumentParser(
-        description="Find dead code, secrets, and risky flows in Python, JS/TS, Go, Java, and PHP",
+        description="Find dead code, secrets, and risky flows in Python, JS/TS, Go, Java, PHP, and Rust",
         epilog="""
 Run 'skylos commands' for a full list of all available commands.
 Run 'skylos tour' for a guided walkthrough of capabilities.
@@ -3332,6 +3332,7 @@ def main() -> None:
                     ".cjs",
                     ".java",
                     ".php",
+                    ".rs",
                 }
                 config_exts = {
                     ".yaml",

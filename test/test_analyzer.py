@@ -205,6 +205,7 @@ class TestSkylos:
                 ".cjs",
                 ".java",
                 ".php",
+                ".rs",
             },
             exclude_folders=None,
         )
@@ -529,6 +530,29 @@ class TestAnalyze:
         }
         mock_log_info.assert_any_call("Analyzing 2 files...")
 
+    @patch("skylos.analyzer.logger.info")
+    def test_analyze_mixed_languages_includes_rust_in_summary(self, mock_log_info):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "main.py").write_text(
+                "def hello():\n    return 1\n", encoding="utf-8"
+            )
+            (root / "lib.rs").write_text(
+                "pub fn run() { helper(); }\nfn helper() {}\n",
+                encoding="utf-8",
+            )
+
+            result_json = analyze(str(root), conf=0)
+
+        result = json.loads(result_json)
+
+        assert result["analysis_summary"]["total_files"] == 2
+        assert result["analysis_summary"]["languages"] == {
+            "Python": 1,
+            "Rust": 1,
+        }
+        mock_log_info.assert_any_call("Analyzing 2 files...")
+
     @patch("skylos.analyzer.scan_typescript_file")
     def test_proc_file_dispatches_js_to_typescript_scanner(self, mock_scan):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
@@ -591,6 +615,22 @@ class TestAnalyze:
     def test_proc_file_dispatches_php_to_php_scanner(self, mock_scan):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".php", delete=False) as f:
             f.write("<?php function run() { return 1; }\n")
+            f.flush()
+
+            mock_scan.return_value = tuple(range(13))
+
+            try:
+                result = proc_file(f.name, "test_module")
+            finally:
+                Path(f.name).unlink()
+
+        mock_scan.assert_called_once()
+        assert result == tuple(range(13))
+
+    @patch("skylos.analyzer.scan_rust_file")
+    def test_proc_file_dispatches_rust_to_rust_scanner(self, mock_scan):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".rs", delete=False) as f:
+            f.write("pub fn run() { }\n")
             f.flush()
 
             mock_scan.return_value = tuple(range(13))

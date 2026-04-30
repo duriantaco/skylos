@@ -31,6 +31,7 @@ from skylos.visitors.languages.typescript.analysis import (
 )
 from skylos.visitors.languages.go import scan_go_file, clear_go_cache
 from skylos.visitors.languages.java import scan_java_file
+from skylos.visitors.languages.rust import scan_rust_file
 
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 
@@ -123,6 +124,7 @@ _TS_JS_SOURCE_EXTS = (
     ".cjs",
 )
 _PHP_SOURCE_EXTS = (".php",)
+_RUST_SOURCE_EXTS = (".rs",)
 
 _TRY_NODE_TYPES = (ast.Try, getattr(ast, "TryStar", ast.Try))
 
@@ -319,6 +321,7 @@ class Skylos:
         ".cjs": "JavaScript",
         ".java": "Java",
         ".php": "PHP",
+        ".rs": "Rust",
     }
 
     def _count_languages(self, files) -> dict[str, int]:
@@ -339,7 +342,14 @@ class Skylos:
             return [p], p.parent
 
         root = p
-        exts = {".py", ".go", *(_TS_JS_SOURCE_EXTS), ".java", *(_PHP_SOURCE_EXTS)}
+        exts = {
+            ".py",
+            ".go",
+            *(_TS_JS_SOURCE_EXTS),
+            ".java",
+            *(_PHP_SOURCE_EXTS),
+            *(_RUST_SOURCE_EXTS),
+        }
         ext_list = [
             "py",
             "go",
@@ -353,6 +363,7 @@ class Skylos:
             "cjs",
             "java",
             "php",
+            "rs",
         ]
 
         # use rust file discovery when avail
@@ -2507,6 +2518,16 @@ def proc_file(
 
     if str(file).endswith(".php"):
         out = scan_php_file(
+            file,
+            cfg,
+            enable_danger_rules=enable_danger_rules,
+        )
+        if isinstance(out, tuple) and len(out) < 13:
+            return (*out, *([None] * (13 - len(out))))
+        return out[:13]
+
+    if str(file).endswith(".rs"):
+        out = scan_rust_file(
             file,
             cfg,
             enable_danger_rules=enable_danger_rules,

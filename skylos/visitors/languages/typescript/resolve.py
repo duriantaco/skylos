@@ -29,6 +29,13 @@ _SOURCE_FILE_SUFFIXES = (
     "/index.cjs",
 )
 
+_DECLARED_WORKSPACE_SOURCES = {
+    "package.json:workspaces",
+    "pnpm-workspace.yaml",
+    "lerna.json:packages",
+    "rush.json:projects",
+}
+
 
 def _find_nearest_tsconfig(start_path: str, stop_dir: str | None = None) -> str | None:
     current = os.path.dirname(os.path.realpath(start_path))
@@ -208,8 +215,7 @@ def _build_package_map(project_root: str) -> dict[str, str]:
         package_roots.append(inventory.root_package.root)
     for workspace in inventory.packages:
         if workspace.has_package_json and (
-            "package.json:workspaces" in workspace.discovered_from
-            or "pnpm-workspace.yaml" in workspace.discovered_from
+            workspace.discovered_from & _DECLARED_WORKSPACE_SOURCES
         ):
             package_roots.append(workspace.root)
 
@@ -299,7 +305,10 @@ def _resolve_path_target(base_dir: str, target: str) -> str | None:
     seen: set[str] = set()
     for candidate_target in _candidate_package_targets(target):
         resolved_base = os.path.normpath(os.path.join(base_dir, candidate_target))
-        for candidate in [resolved_base, *[resolved_base + suffix for suffix in _SOURCE_FILE_SUFFIXES]]:
+        for candidate in [
+            resolved_base,
+            *[resolved_base + suffix for suffix in _SOURCE_FILE_SUFFIXES],
+        ]:
             if candidate in seen:
                 continue
             seen.add(candidate)

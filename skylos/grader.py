@@ -61,6 +61,7 @@ _COMMENT_PREFIXES: dict[str, str] = {
     ".js": "//",
     ".jsx": "//",
     ".php": "//",
+    ".rs": "//",
 }
 
 

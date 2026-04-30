@@ -924,6 +924,7 @@ def _prepare_report_upload(
 
     definitions = result_json.get("definitions")
     grade_data = result_json.get("grade") if isinstance(result_json, dict) else None
+    workspace_data = _extract_workspace_upload_metadata(result_json)
     link = _load_repo_link(git_root)
     project_id = link.get("project_id")
 
@@ -940,6 +941,7 @@ def _prepare_report_upload(
         project_id=project_id,
         scan_bundle_id=scan_bundle_id,
         project_root=project_root,
+        workspace_data=workspace_data,
     )
     core_payload.update(metadata)
     legacy_payload = _build_legacy_payload(core_payload, definitions)
@@ -1069,7 +1071,10 @@ def _infer_upload_project_root(payload, git_root) -> str | None:
         candidates.append(payload.get("project"))
 
     try:
-        from skylos.project_context import normalize_repo_subpath, repo_subpath_for_project
+        from skylos.project_context import (
+            normalize_repo_subpath,
+            repo_subpath_for_project,
+        )
     except Exception:
         return None
 
@@ -1087,6 +1092,77 @@ def _infer_upload_project_root(payload, git_root) -> str | None:
     return None
 
 
+def _extract_workspace_upload_metadata(payload) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    workspace_data = payload.get("workspaces")
+    if not isinstance(workspace_data, dict):
+        return None
+    has_workspace_report = bool(
+        workspace_data.get("root_package")
+        or workspace_data.get("packages")
+        or workspace_data.get("diagnostics")
+    )
+    if not has_workspace_report:
+        return None
+
+    def compact_package(pkg) -> dict[str, Any] | None:
+        if not isinstance(pkg, dict):
+            return None
+        out = {
+            "name": pkg.get("name"),
+            "relative_path": pkg.get("relative_path"),
+            "is_root": bool(pkg.get("is_root")),
+            "is_internal_dependency": bool(pkg.get("is_internal_dependency")),
+            "has_package_json": bool(pkg.get("has_package_json", True)),
+        }
+        sources = pkg.get("discovered_from")
+        if isinstance(sources, list):
+            out["discovered_from"] = [str(item) for item in sources]
+        return out
+
+    root_package = compact_package(workspace_data.get("root_package"))
+    packages = [
+        pkg
+        for pkg in (
+            compact_package(item) for item in workspace_data.get("packages", [])
+        )
+        if pkg is not None
+    ]
+    diagnostics = []
+    for diag in workspace_data.get("diagnostics", []):
+        if not isinstance(diag, dict):
+            continue
+        diagnostics.append(
+            {
+                "kind": diag.get("kind"),
+                "relative_path": diag.get("relative_path"),
+                "message": diag.get("message"),
+            }
+        )
+
+    return {
+        "is_monorepo": bool(workspace_data.get("is_monorepo")),
+        "package_count": int(workspace_data.get("package_count") or len(packages)),
+        "total_packages": int(
+            workspace_data.get("total_packages")
+            or len(packages) + (1 if root_package else 0)
+        ),
+        "diagnostic_count": int(
+            workspace_data.get("diagnostic_count") or len(diagnostics)
+        ),
+        "root_package": root_package,
+        "packages": packages,
+        "diagnostics": diagnostics[:20],
+        "declared_patterns": [
+            str(item) for item in workspace_data.get("declared_patterns", [])
+        ],
+        "tsconfig_references": [
+            str(item) for item in workspace_data.get("tsconfig_references", [])
+        ],
+    }
+
+
 def _build_report_metadata(
     *,
     commit_hash,
@@ -1101,6 +1177,7 @@ def _build_report_metadata(
     project_id=None,
     scan_bundle_id=None,
     project_root=None,
+    workspace_data=None,
     upload_client_session_id=None,
     cli_version=None,
 ) -> dict[str, Any]:
@@ -1125,6 +1202,8 @@ def _build_report_metadata(
         metadata["scan_bundle_id"] = str(scan_bundle_id)
     if project_root is not None:
         metadata["project_root"] = str(project_root)
+    if workspace_data:
+        metadata["workspaces"] = workspace_data
     return metadata
 
 

@@ -34,7 +34,7 @@ from skylos.agent_payload import (
 
 STATE_DIR = ".skylos"
 STATE_FILE = "agent_state.json"
-SUPPORTED_EXTENSIONS = {".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".php"}
+SUPPORTED_EXTENSIONS = {".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".php", ".rs"}
 
 
 def run_analyze(*args, **kwargs):

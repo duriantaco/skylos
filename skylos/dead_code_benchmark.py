@@ -21,6 +21,7 @@ DEAD_CODE_TAXONOMY: dict[str, str] = {
     "go": "Go dead-code and entrypoint liveness patterns.",
     "java": "Java dead-code and entrypoint liveness patterns.",
     "javascript": "JavaScript dead-code and module liveness patterns.",
+    "rust": "Rust dead-code and entrypoint liveness patterns.",
     "typescript": "TypeScript dead-code and module liveness patterns.",
     "fastapi": "FastAPI route and dependency injection liveness patterns.",
     "flask": "Flask route and registration liveness patterns.",
@@ -64,7 +65,7 @@ DEFAULT_SCAN = {
 }
 
 SUPPORTED_SCANNERS = {"skylos", "vulture", "ruff"}
-SUPPORTED_LANGUAGES = {"python", "go", "java", "javascript", "typescript"}
+SUPPORTED_LANGUAGES = {"python", "go", "java", "javascript", "typescript", "rust"}
 SCANNER_LANGUAGE_SUPPORT = {
     "skylos": SUPPORTED_LANGUAGES,
     "vulture": {"python"},

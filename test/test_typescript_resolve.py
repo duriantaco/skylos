@@ -333,6 +333,43 @@ def test_pnpm_workspace_package_resolution_uses_declared_packages_only(tmp_path)
     assert resolver.resolve("@repo/ui", str(importer)) == str(target)
 
 
+def test_lerna_workspace_package_resolution_uses_declared_packages(tmp_path):
+    importer = tmp_path / "src" / "main.ts"
+    target = tmp_path / "packages" / "ui" / "src" / "index.ts"
+
+    _write(tmp_path / "lerna.json", json.dumps({"packages": ["packages/*"]}))
+    _write(
+        tmp_path / "packages" / "ui" / "package.json",
+        json.dumps({"name": "@repo/ui", "exports": "./src/index.ts"}),
+    )
+    _write(importer, "import { Button } from '@repo/ui';\n")
+    _write(target, "export const Button = 1;\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@repo/ui", str(importer)) == str(target)
+
+
+def test_rush_workspace_package_resolution_uses_declared_projects(tmp_path):
+    importer = tmp_path / "src" / "main.ts"
+    target = tmp_path / "tools" / "cli" / "src" / "index.ts"
+
+    _write(
+        tmp_path / "rush.json",
+        json.dumps({"projects": [{"projectFolder": "tools/cli"}]}),
+    )
+    _write(
+        tmp_path / "tools" / "cli" / "package.json",
+        json.dumps({"name": "@repo/cli", "exports": "./src/index.ts"}),
+    )
+    _write(importer, "import { run } from '@repo/cli';\n")
+    _write(target, "export const run = 1;\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@repo/cli", str(importer)) == str(target)
+
+
 def test_undeclared_nested_package_does_not_participate_in_resolution(tmp_path):
     importer = tmp_path / "src" / "main.ts"
 

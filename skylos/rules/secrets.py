@@ -42,6 +42,7 @@ ALLOWED_FILE_SUFFIXES = (
     ".jsx",
     ".go",
     ".php",
+    ".rs",
 )
 
 PROVIDER_PATTERNS = [

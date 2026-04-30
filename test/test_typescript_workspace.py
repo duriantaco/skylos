@@ -123,3 +123,32 @@ def test_discover_workspace_inventory_includes_explicit_tsconfig_file_references
     packages = {pkg.name: pkg for pkg in inventory.packages}
     assert packages["@repo/ui"].discovered_from == {"tsconfig.json:references"}
     assert inventory.tsconfig_references == ["packages/ui/tsconfig.lib.json"]
+
+
+def test_discover_workspace_inventory_supports_lerna_and_rush(tmp_path):
+    (tmp_path / "packages" / "ui").mkdir(parents=True)
+    (tmp_path / "tools" / "cli").mkdir(parents=True)
+
+    (tmp_path / "lerna.json").write_text(
+        json.dumps({"packages": ["packages/*"]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "rush.json").write_text(
+        json.dumps({"projects": [{"projectFolder": "tools/cli"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "packages" / "ui" / "package.json").write_text(
+        json.dumps({"name": "@repo/ui"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "tools" / "cli" / "package.json").write_text(
+        json.dumps({"name": "@repo/cli"}),
+        encoding="utf-8",
+    )
+
+    inventory = discover_workspace_inventory(tmp_path)
+
+    packages = {pkg.name: pkg for pkg in inventory.packages}
+    assert packages["@repo/ui"].discovered_from == {"lerna.json:packages"}
+    assert packages["@repo/cli"].discovered_from == {"rush.json:projects"}
+    assert "packages/*" in inventory.declared_patterns

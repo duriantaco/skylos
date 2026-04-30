@@ -148,6 +148,36 @@ def _parse_pnpm_workspace_yaml(content: str) -> list[str]:
     return patterns
 
 
+def _extract_lerna_patterns(root: Path) -> list[str]:
+    data = _read_json_file(root / "lerna.json")
+    packages = data.get("packages")
+    if isinstance(packages, list):
+        return [item for item in packages if isinstance(item, str)]
+    return []
+
+
+def _extract_rush_project_roots(root: Path) -> list[Path]:
+    data = _read_json_file(root / "rush.json")
+    projects = data.get("projects")
+    if not isinstance(projects, list):
+        return []
+
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for project in projects:
+        if not isinstance(project, dict):
+            continue
+        folder = project.get("projectFolder")
+        if not isinstance(folder, str) or not folder.strip():
+            continue
+        candidate = (root / folder).resolve()
+        if candidate in seen or _should_skip_dir(candidate, root):
+            continue
+        seen.add(candidate)
+        roots.append(candidate)
+    return roots
+
+
 def _strip_json_comments(text: str) -> str:
     out: list[str] = []
     in_string = False
@@ -436,6 +466,11 @@ def discover_workspace_inventory(project_root: Path) -> WorkspaceInventory:
         except OSError:
             pass
 
+    lerna_patterns = _extract_lerna_patterns(root)
+    if lerna_patterns:
+        patterns.extend(lerna_patterns)
+        pattern_sources.append((lerna_patterns, "lerna.json:packages"))
+
     workspace_sources: dict[Path, set[str]] = {}
     for source_patterns, source_label in pattern_sources:
         for pkg_root, sources in _expand_workspace_patterns(
@@ -447,6 +482,9 @@ def discover_workspace_inventory(project_root: Path) -> WorkspaceInventory:
     )
     for ref_path in tsconfig_reference_roots:
         workspace_sources.setdefault(ref_path, set()).add("tsconfig.json:references")
+
+    for rush_root in _extract_rush_project_roots(root):
+        workspace_sources.setdefault(rush_root, set()).add("rush.json:projects")
 
     packages: list[WorkspaceInfo] = []
     package_data_by_root: dict[Path, dict] = {}
