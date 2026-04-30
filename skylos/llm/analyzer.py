@@ -49,8 +49,6 @@ class AnalyzerConfig:
         full_file_review=False,
         repo_context_map=None,
         force_full_file_paths=None,
-        prompt_templates=None,
-        prompt_template_root=None,
     ):
         self.model = model
         self.api_key = api_key
@@ -82,8 +80,6 @@ class AnalyzerConfig:
         self.force_full_file_paths = {
             _norm_path(path) for path in (force_full_file_paths or set())
         }
-        self.prompt_templates = prompt_templates or {}
-        self.prompt_template_root = prompt_template_root
 
 
 class SkylosLLM:
@@ -108,8 +104,6 @@ class SkylosLLM:
         self.agent_config.temperature = self.config.temperature
         self.agent_config.max_tokens = self.config.max_tokens
         self.agent_config.stream = self.config.stream
-        self.agent_config.prompt_templates = self.config.prompt_templates
-        self.agent_config.prompt_template_root = self.config.prompt_template_root
 
         self._agents = {}
 
@@ -318,10 +312,7 @@ class SkylosLLM:
         return {str(t).lower().strip() for t in (issue_types or []) if str(t).strip()}
 
     def _should_use_whole_file_review(self, file_norm, issue_types=None):
-        if (
-            self.config.full_file_review
-            or file_norm in self.config.force_full_file_paths
-        ):
+        if self.config.full_file_review or file_norm in self.config.force_full_file_paths:
             return True
         return SECURITY_AUDIT_ISSUE in self._normalized_issue_types(issue_types)
 
@@ -839,15 +830,6 @@ class SkylosLLM:
 
 
 def analyze(path, model="gpt-4.1", issue_types=None, **kwargs):
-    if "prompt_templates" not in kwargs:
-        cfg = load_config(path)
-        templates = cfg.get("templates") if isinstance(cfg, dict) else None
-        if templates:
-            kwargs["prompt_templates"] = templates
-            path_obj = Path(path)
-            kwargs["prompt_template_root"] = (
-                path_obj if path_obj.is_dir() else path_obj.parent
-            )
     config = AnalyzerConfig(model=model, **kwargs)
     analyzer = SkylosLLM(config)
 

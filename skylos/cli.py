@@ -5,8 +5,7 @@ import sys
 import re
 import logging
 import os
-import secrets as secrets_lib
-import shutil
+import secrets
 import tempfile
 from types import SimpleNamespace
 from skylos.constants import (
@@ -3793,7 +3792,7 @@ def main() -> None:
             if cmd == "serve":
                 from skylos.agent_service import create_agent_service
 
-                token = agent_args.token or secrets_lib.token_urlsafe(24)
+                token = agent_args.token or secrets.token_urlsafe(24)
                 server = create_agent_service(
                     agent_args.path,
                     host=agent_args.host,
@@ -3861,11 +3860,12 @@ def main() -> None:
                 )
                 sys.exit(1)
 
-        agent_project_cfg = load_config(getattr(agent_args, "path", Path.cwd()))
         agent_exclude_folders = list(
             parse_exclude_folders(
                 use_defaults=True,
-                config_exclude_folders=agent_project_cfg.get("exclude"),
+                config_exclude_folders=load_config(
+                    getattr(agent_args, "path", Path.cwd())
+                ).get("exclude"),
             )
         )
 
@@ -3926,8 +3926,6 @@ def main() -> None:
                     provider=provider,
                     base_url=base_url,
                     quiet=getattr(agent_args, "quiet", False),
-                    prompt_templates=agent_project_cfg.get("templates"),
-                    prompt_template_root=path if path.is_dir() else path.parent,
                 )
                 analyzer = SkylosLLM(config)
                 taskflow = run_security_taskflow(
@@ -4005,7 +4003,7 @@ def main() -> None:
                 elif source == "static+llm":
                     both += 1
 
-            console.print("\n[brand]Results:[/brand]")
+            console.print(f"\n[brand]Results:[/brand]")
             console.print(f"  Total findings: {len(merged_findings)}")
             console.print(f"  [green]HIGH confidence (both agree):[/green] {both}")
             console.print(f"  [yellow]MEDIUM (static only):[/yellow] {static_only}")
@@ -4271,7 +4269,7 @@ def main() -> None:
                                 console.print(f"  [yellow]! {err}[/yellow]")
 
                         summary = generate_fix_summary(patches)
-                        console.print("\n[brand]Fix Plan:[/brand]")
+                        console.print(f"\n[brand]Fix Plan:[/brand]")
                         console.print(f"  Patches: {summary['total_patches']}")
                         console.print(f"  Files affected: {summary['files_affected']}")
                         console.print(
@@ -5038,7 +5036,7 @@ def main() -> None:
                         proceed = True
 
                     if proceed:
-                        console.print("[warn]Applying changes…[/warn]")
+                        console.print(f"[warn]Applying changes…[/warn]")
                         for func in selected_functions:
                             ok = action_func_fn(
                                 func["file"], func["name"], func["line"]
@@ -5062,11 +5060,11 @@ def main() -> None:
                                 console.print(
                                     f"[bad] x Failed to {action_verb} import:[/bad] {imp['name']}"
                                 )
-                        console.print("[good]Cleanup complete![/good]")
+                        console.print(f"[good]Cleanup complete![/good]")
                     else:
-                        console.print("[warn]Operation cancelled.[/warn]")
+                        console.print(f"[warn]Operation cancelled.[/warn]")
                 else:
-                    console.print("[warn]Dry run — no files modified.[/warn]")
+                    console.print(f"[warn]Dry run — no files modified.[/warn]")
             else:
                 console.print("[muted]No items selected.[/muted]")
 
@@ -5299,7 +5297,7 @@ def main() -> None:
                 process.wait()
 
             if process.returncode == 0:
-                console.print("[bold green]✓ Deployment Successful[/bold green]")
+                console.print(f"[bold green]✓ Deployment Successful[/bold green]")
                 sys.exit(0)
             else:
                 console.print(

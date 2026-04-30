@@ -185,38 +185,6 @@ def test_security_agent_include_examples_true_for_small_context(monkeypatch):
     )
 
 
-def test_security_agent_forwards_prompt_template_config(monkeypatch):
-    fake_builder = DummyContextBuilder(context_text="CTX")
-    fake_adapter = FakeAdapter(complete_text='{"findings": []}')
-
-    monkeypatch.setattr(agents, "ContextBuilder", lambda: fake_builder)
-    monkeypatch.setattr(agents, "create_llm_adapter", lambda config: fake_adapter)
-
-    called = {}
-
-    def fake_build_security_prompt(
-        context, include_examples=True, templates=None, template_root=None
-    ):
-        called["templates"] = templates
-        called["template_root"] = template_root
-        return ("SYS", "USER")
-
-    monkeypatch.setattr(agents, "build_security_prompt", fake_build_security_prompt)
-    monkeypatch.setattr(agents, "parse_llm_response", lambda text, fp: [])
-
-    cfg = agents.AgentConfig(
-        api_key="x",
-        stream=False,
-        prompt_templates={"security": ".skylos/templates/security.md"},
-        prompt_template_root="/repo",
-    )
-    a = agents.SecurityAgent(cfg)
-    a.analyze("source", "file.py")
-
-    assert called["templates"] == {"security": ".skylos/templates/security.md"}
-    assert called["template_root"] == "/repo"
-
-
 def test_security_agent_include_examples_false_for_large_context(monkeypatch):
     ctx = "x" * 20001
     fake_builder = DummyContextBuilder(context_text=ctx)
