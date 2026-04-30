@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import subprocess
 import pytest
 import skylos.sync as syncmod
 import builtins
@@ -624,8 +625,103 @@ def test_cmd_setup_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, cap
 
     hook = (tmp_path / ".git" / "hooks" / "pre-push").read_text(encoding="utf-8")
     assert "skylos ." not in hook
+    assert "direct pushes to $remote_ref are not allowed" in hook
+    assert "refs/heads/main|refs/heads/master" in hook
     assert "Rust/Python parity check" in hook
     assert "test/test_fast_parity.py" in hook
+
+
+def _run_generated_pre_push_hook(
+    tmp_path: Path, stdin: str
+) -> subprocess.CompletedProcess:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    python_stub = bin_dir / "python3"
+    python_stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    python_stub.chmod(0o755)
+
+    hook = tmp_path / "pre-push"
+    hook.write_text(syncmod._build_pre_push_hook(), encoding="utf-8")
+    hook.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    return subprocess.run(
+        [str(hook)],
+        input=stdin,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=env,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("stdin", "blocked_ref"),
+    [
+        pytest.param(
+            "refs/heads/main "
+            + "1" * 40
+            + " refs/heads/main "
+            + "2" * 40
+            + "\n",
+            "refs/heads/main",
+            id="local-main-to-remote-main",
+        ),
+        pytest.param(
+            "refs/heads/topic "
+            + "1" * 40
+            + " refs/heads/main "
+            + "2" * 40
+            + "\n",
+            "refs/heads/main",
+            id="topic-to-remote-main",
+        ),
+        pytest.param(
+            "(delete) " + "0" * 40 + " refs/heads/main " + "2" * 40 + "\n",
+            "refs/heads/main",
+            id="delete-main",
+        ),
+        pytest.param(
+            "refs/heads/master "
+            + "1" * 40
+            + " refs/heads/master "
+            + "2" * 40
+            + "\n",
+            "refs/heads/master",
+            id="master",
+        ),
+    ],
+)
+def test_pre_push_hook_blocks_protected_branch_updates(
+    tmp_path, stdin, blocked_ref
+):
+    result = _run_generated_pre_push_hook(tmp_path, stdin)
+
+    assert result.returncode == 1
+    assert f"direct pushes to {blocked_ref} are not allowed" in result.stdout
+    assert "open a pull request" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "stdin",
+    [
+        "",
+        "refs/heads/topic " + "1" * 40 + " refs/heads/topic " + "2" * 40 + "\n",
+        "refs/tags/v1.0.0 " + "1" * 40 + " refs/tags/v1.0.0 " + "0" * 40 + "\n",
+        "refs/heads/main-fix "
+        + "1" * 40
+        + " refs/heads/main-fix "
+        + "2" * 40
+        + "\n",
+    ],
+)
+def test_pre_push_hook_allows_non_protected_refs(tmp_path, stdin):
+    result = _run_generated_pre_push_hook(tmp_path, stdin)
+
+    assert result.returncode == 0
+    assert "direct pushes" not in result.stdout
 
 
 def test_cmd_setup_accepts_project_project_id(monkeypatch, tmp_path, capsys):
@@ -714,6 +810,8 @@ def test_cmd_upgrade_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, c
 
     hook = (tmp_path / ".git" / "hooks" / "pre-push").read_text(encoding="utf-8")
     assert "skylos ." not in hook
+    assert "direct pushes to $remote_ref are not allowed" in hook
+    assert "refs/heads/main|refs/heads/master" in hook
     assert "Rust/Python parity check" in hook
     assert "test/test_fast_parity.py" in hook
     workflow = (tmp_path / ".github" / "workflows" / "skylos.yml").read_text(

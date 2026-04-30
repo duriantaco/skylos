@@ -679,7 +679,21 @@ def _write_sync_suppressions(skylos_dir: Path, supp_data):
 
 def _build_pre_push_hook() -> str:
     return """#!/bin/bash
-# Fast local parity guard only. Full Skylos scans should run manually or in CI.
+# Fast local push guard only. Full Skylos scans should run manually or in CI.
+
+# Git supplies pending remote updates on stdin. Check the remote ref so
+# `git push origin HEAD:main`, force-pushes, and deletes are all blocked.
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        refs/heads/main|refs/heads/master)
+            echo ""
+            echo "BLOCKED: direct pushes to $remote_ref are not allowed."
+            echo "Create a branch and open a pull request instead."
+            exit 1
+            ;;
+    esac
+done
+
 if python3 -c "import skylos_fast" 2>/dev/null; then
     echo "Running Rust/Python parity check..."
     python3 -m pytest test/test_fast_parity.py -k "synthetic or exact_match or same_cycles_found or python_files_match" -q --no-header --tb=line 2>&1
