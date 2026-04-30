@@ -65,11 +65,13 @@ def test_workflow_no_llm_by_default():
     content = generate_workflow()
     assert "SKYLOS_API_KEY" not in content
     assert "agent review" not in content
+    assert "agent scan" not in content
 
 
 def test_workflow_with_llm():
     content = generate_workflow(use_llm=True, model="claude-sonnet-4-5-20250929")
-    assert "agent review" in content
+    assert "agent scan" in content
+    assert "--changed" in content
     assert "claude-sonnet-4-5-20250929" in content
     assert "SKYLOS_API_KEY" in content
 
@@ -115,8 +117,11 @@ def test_workflow_with_upload():
     analysis_step = next(s for s in steps if s.get("name") == "Run Skylos Analysis")
     assert "skylos sync pull" in sync_step["run"]
     assert "--upload" in analysis_step["run"]
+    assert analysis_step["env"] == {
+        "SKYLOS_COMMIT": "${{ github.event.pull_request.head.sha || github.sha }}",
+        "SKYLOS_BRANCH": "${{ github.event.pull_request.head.ref || github.ref_name }}",
+    }
     assert "env" not in sync_step
-    assert "env" not in analysis_step
 
 
 def test_workflow_upload_with_llm():
@@ -125,6 +130,22 @@ def test_workflow_upload_with_llm():
     steps = parsed["jobs"]["skylos"]["steps"]
     analysis_step = next(s for s in steps if s.get("name") == "Run Skylos Analysis")
     assert "--upload" in analysis_step["run"]
-    assert "env" not in analysis_step
+    assert "SKYLOS_COMMIT" in analysis_step["env"]
     llm_step = next(s for s in steps if s.get("name") == "Skylos Agent Review (LLM)")
     assert "SKYLOS_API_KEY" in llm_step["env"]
+
+
+def test_workflow_scan_path_is_monorepo_aware():
+    content = generate_workflow(scan_path="apps/api", use_upload=True, use_defend=True)
+    assert "skylos apps/api" in content
+    assert "skylos defend apps/api" in content
+
+
+def test_workflow_prefixes_leading_dash_scan_path():
+    content = generate_workflow(scan_path="-service")
+    assert "skylos ./-service" in content
+
+
+def test_workflow_pins_installed_skylos_version():
+    content = generate_workflow(skylos_version="4.9.0")
+    assert "python -m pip install skylos==4.9.0" in content

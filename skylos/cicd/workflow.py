@@ -1,5 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
+import re
+import shlex
 from typing import Optional
 
 from rich.console import Console
@@ -14,6 +16,36 @@ ANALYSIS_FLAG_MAP: dict[str, str] = {
 }
 
 
+def _installed_skylos_version() -> str | None:
+    try:
+        from skylos import __version__
+
+        version = str(__version__).strip()
+    except Exception:
+        return None
+    return version or None
+
+
+def _skylos_install_command(version: str | None = None) -> str:
+    resolved = version if version is not None else _installed_skylos_version()
+    if resolved and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.!+~-]*", resolved):
+        return f"python -m pip install {shlex.quote(f'skylos=={resolved}')}"
+    return "python -m pip install skylos"
+
+
+def _shell_path(path: str | Path | None) -> str:
+    raw = str(path or ".").strip() or "."
+    if raw.startswith("-"):
+        raw = f"./{raw}"
+    return shlex.quote(raw)
+
+
+def _upload_env_block() -> str:
+    return """        env:
+          SKYLOS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          SKYLOS_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}"""
+
+
 def generate_workflow(
     *,
     triggers: Optional[list[str]] = None,
@@ -25,11 +57,15 @@ def generate_workflow(
     use_claude_security: bool = False,
     use_upload: bool = False,
     use_defend: bool = False,
+    scan_path: str = ".",
+    skylos_version: str | None = None,
 ) -> str:
     triggers = triggers or ["pull_request", "push"]
     analysis_types = analysis_types or ["dead-code", "security", "quality", "secrets"]
 
     trigger_block = _build_trigger_block(triggers)
+    install_command = _skylos_install_command(skylos_version)
+    scan_target = _shell_path(scan_path)
     analysis_flags = " ".join(
         ANALYSIS_FLAG_MAP[t]
         for t in analysis_types
@@ -47,17 +83,17 @@ def generate_workflow(
         [
             '          if [ "${{ github.event_name }}" = "pull_request" ]; then',
             (
-                f"            skylos .{analysis_flags}{baseline_flag}{upload_flag} "
+                f"            skylos {scan_target}{analysis_flags}{baseline_flag}{upload_flag} "
                 f"--diff-base {pr_base_ref} --diff {pr_base_ref} "
                 "--json -o skylos-results.json"
             ),
             "          else",
-            f"            skylos .{analysis_flags}{baseline_flag}{upload_flag} --json -o skylos-results.json",
+            f"            skylos {scan_target}{analysis_flags}{baseline_flag}{upload_flag} --json -o skylos-results.json",
             "          fi",
         ]
     )
+    analysis_upload_env = f"\n{_upload_env_block()}" if use_upload else ""
 
-    llm_env = ""
     llm_step = ""
     if use_llm:
         model_str = model or "gpt-4.1"
@@ -71,21 +107,24 @@ def generate_workflow(
                 "",
                 "      - name: Skylos Agent Review (LLM)",
                 "        if: github.event_name == 'pull_request'",
-                f"        run: skylos agent review . --model {model_str} --format json -o skylos-llm-results.json",
+                (
+                    f"        run: skylos agent scan {scan_target} "
+                    f"--model {shlex.quote(model_str)} --changed --format json "
+                    "-o skylos-llm-results.json"
+                ),
                 "        env:",
                 "          SKYLOS_API_KEY: ${{ secrets.SKYLOS_API_KEY }}" + api_key_env,
             ]
         )
-        llm_env = """
-          SKYLOS_API_KEY: ${{ secrets.SKYLOS_API_KEY }}"""
-
     defend_step = ""
     if use_defend:
         defend_parts = [
             "",
             "      - name: AI Defense Check",
-            f"        run: skylos defend . --fail-on critical --min-score 70 --json -o defense-results.json{' --upload' if use_upload else ''}",
+            f"        run: skylos defend {scan_target} --fail-on critical --min-score 70 --json -o defense-results.json{' --upload' if use_upload else ''}",
         ]
+        if use_upload:
+            defend_parts.append(_upload_env_block())
         defend_step = "\n".join(defend_parts)
 
     permissions_block = """permissions:
@@ -110,6 +149,7 @@ def generate_workflow(
 
 jobs:
   skylos:
+    name: Skylos Quality Gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -123,12 +163,12 @@ jobs:
           python-version: '{python_version}'
 
       - name: Install Skylos
-        run: pip install skylos
+        run: {install_command}
 {sync_step}
 
       - name: Run Skylos Analysis
         run: |
-{analysis_run}
+{analysis_run}{analysis_upload_env}
 {llm_step}{defend_step}
       - name: Quality Gate
         if: always()
@@ -159,12 +199,12 @@ jobs:
     }"""
 
     if use_claude_security:
-        workflow += _build_claude_security_jobs(python_version)
+        workflow += _build_claude_security_jobs(python_version, install_command)
 
     return workflow
 
 
-def _build_claude_security_jobs(python_version: str) -> str:
+def _build_claude_security_jobs(python_version: str, install_command: str) -> str:
     return f"""
   claude-security:
     runs-on: ubuntu-latest
@@ -181,12 +221,14 @@ def _build_claude_security_jobs(python_version: str) -> str:
           direct_prompt: "/review --output-file claude-security-results.json"
 
       - name: Upload Claude Security Results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: claude-security-results
           path: claude-security-results.json
 
   upload-claude-findings:
+    if: always()
     runs-on: ubuntu-latest
     needs: [skylos, claude-security]
     steps:
@@ -199,7 +241,7 @@ def _build_claude_security_jobs(python_version: str) -> str:
           python-version: '{python_version}'
 
       - name: Install Skylos
-        run: pip install skylos
+        run: {install_command}
 
       - name: Download Claude Security Results
         uses: actions/download-artifact@v4

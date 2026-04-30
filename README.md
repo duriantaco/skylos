@@ -240,6 +240,16 @@ For methodology, commands, competitor rows, and caveats, see
 | Docker image | [Installation](https://docs.skylos.dev/installation) | run Skylos without a local Python install |
 | Skylos Cloud | [Cloud workflow](https://docs.skylos.dev/cloud-workflow) | optional upload and dashboard workflows |
 
+Generate a GitHub Actions workflow from the CLI:
+
+```bash
+skylos cicd init --upload
+skylos cicd init --upload --scan-path apps/api
+```
+
+The generated upload workflow uses GitHub OIDC, sends PR head commit/branch
+metadata, and supports monorepo subprojects through `--scan-path`.
+
 ## Documentation Map
 
 | Need | Read This |
