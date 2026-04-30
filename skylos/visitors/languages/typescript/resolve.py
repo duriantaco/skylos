@@ -437,13 +437,10 @@ def _resolve_from_pkg_dir(pkg_dir: str, subpath: str | None = None) -> str | Non
         return resolved_via_exports
 
     if subpath:
-        for suffix in _SOURCE_FILE_SUFFIXES:
-            candidate = os.path.join(pkg_dir, "src", subpath + suffix)
-            if os.path.isfile(candidate):
-                return candidate
-            candidate = os.path.join(pkg_dir, subpath + suffix)
-            if os.path.isfile(candidate):
-                return candidate
+        for target in (f"src/{subpath}", subpath):
+            resolved = _resolve_path_target(pkg_dir, target)
+            if resolved:
+                return resolved
         return None
 
     for entry in (

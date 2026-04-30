@@ -7,6 +7,11 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+try:
+    import yaml
+except ImportError:  # pragma: no cover - pyyaml is a runtime dependency.
+    yaml = None
+
 
 @dataclass
 class WorkspaceInfo:
@@ -127,13 +132,31 @@ def _extract_workspace_patterns(package_data: dict) -> list[str]:
 
 
 def _parse_pnpm_workspace_yaml(content: str) -> list[str]:
+    if yaml is not None:
+        try:
+            data = yaml.safe_load(content)
+            if isinstance(data, dict):
+                packages = data.get("packages")
+                if isinstance(packages, list):
+                    return [item for item in packages if isinstance(item, str)]
+        except yaml.YAMLError:
+            pass
+
     patterns: list[str] = []
     in_packages = False
 
     for line in content.splitlines():
         trimmed = line.strip()
-        if trimmed == "packages:":
-            in_packages = True
+        if trimmed.startswith("packages:"):
+            inline = trimmed[len("packages:") :].strip()
+            if inline.startswith("[") and inline.endswith("]"):
+                for value in inline[1:-1].split(","):
+                    pattern = value.strip().strip("'").strip('"')
+                    if pattern:
+                        patterns.append(pattern)
+                in_packages = False
+            else:
+                in_packages = True
             continue
         if not in_packages:
             continue
@@ -346,9 +369,15 @@ def _collect_dependency_names(package_data: dict) -> set[str]:
 
 
 def _should_skip_dir(path: Path, root: Path) -> bool:
-    if path == root:
+    resolved_path = path.resolve()
+    resolved_root = root.resolve()
+    if resolved_path == resolved_root:
         return False
-    for part in path.parts:
+    try:
+        parts = resolved_path.relative_to(resolved_root).parts
+    except ValueError:
+        parts = path.parts
+    for part in parts:
         if part.startswith("."):
             return True
         if part in {"node_modules", "build", "dist"}:

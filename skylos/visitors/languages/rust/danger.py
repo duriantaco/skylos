@@ -110,6 +110,11 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
         expr_text = node_text(node)
         return any(source_hint in expr_text for source_hint in _TAINT_SOURCE_HINTS)
 
+    def is_tainted_or_source(node, tainted_vars: set[str]) -> bool:
+        if node is None or is_sanitized_expr(node):
+            return False
+        return is_tainted_expr(node, tainted_vars) or is_taint_source_expr(node)
+
     def add_finding(rule_id: str, message: str, node) -> None:
         findings.append(
             {
@@ -201,7 +206,7 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
             if (
                 first_arg is not None
                 and not is_string_literal(first_arg)
-                and is_tainted_expr(first_arg, tainted_vars)
+                and is_tainted_or_source(first_arg, tainted_vars)
             ):
                 add_finding(
                     "SKY-D212",
@@ -219,7 +224,7 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
             return
 
         if name_tail in _FILE_SINKS and first_arg is not None:
-            if is_tainted_expr(first_arg, tainted_vars):
+            if is_tainted_or_source(first_arg, tainted_vars):
                 add_finding(
                     "SKY-D215",
                     "Tainted path-like input reaches a filesystem sink without canonicalization.",
@@ -228,7 +233,7 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
                 return
 
         if name_tail in _PATH_MUTATION_SINKS and first_arg is not None:
-            if is_tainted_expr(first_arg, tainted_vars):
+            if is_tainted_or_source(first_arg, tainted_vars):
                 add_finding(
                     "SKY-D215",
                     "Tainted path-like input is appended to a filesystem path without canonicalization.",

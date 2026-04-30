@@ -139,7 +139,8 @@ class RustCore:
         return f"{namespace}.{name}" if namespace else name
 
     def _is_public(self, node) -> bool:
-        return self._child_by_type(node, "visibility_modifier") is not None
+        visibility = self._child_by_type(node, "visibility_modifier")
+        return visibility is not None and self._get_text(visibility).strip() == "pub"
 
     def _attrs_text(self, attrs: list) -> list[str]:
         return [self._get_text(attr).strip() for attr in attrs]
@@ -268,7 +269,7 @@ class RustCore:
             return
         qualified = self._qualified_symbol(mod_name, namespace)
         line = name_node.start_point[0] + 1
-        d = Definition(qualified, "import", self.file_path, line)
+        d = Definition(qualified, "module", self.file_path, line)
         d.is_exported = self._is_public(node)
         self.defs.append(d)
 
@@ -335,16 +336,16 @@ class RustCore:
         self.defs.append(d)
 
         decl_list = self._child_by_type(node, "declaration_list")
-        if decl_list is not None:
-            self._scan_trait_signatures(decl_list, current_type=qualified)
+        if decl_list is not None and node.type == "trait_item":
+            self._scan_trait_members(decl_list, current_type=qualified)
 
-    def _scan_trait_signatures(self, node, *, current_type: str) -> None:
+    def _scan_trait_members(self, node, *, current_type: str) -> None:
         attrs: list = []
         for child in node.children:
             if child.type == "attribute_item":
                 attrs.append(child)
                 continue
-            if child.type != "function_signature_item":
+            if child.type not in {"function_signature_item", "function_item"}:
                 attrs = []
                 continue
             name_node = self._child_by_type(child, "identifier")
@@ -359,23 +360,31 @@ class RustCore:
             d.is_exported = True
             d.decorators = self._attrs_text(attrs)
             self.defs.append(d)
+            body = self._child_by_type(child, "block")
+            if body is not None:
+                self._scan_block(
+                    body,
+                    namespace="",
+                    current_type=current_type,
+                    current_callable=qualified,
+                    pending_attrs=[],
+                )
             attrs = []
 
     def _scan_impl(self, node, *, namespace: str, attrs: list) -> None:
-        type_nodes = self._children_of_type(node, "type_identifier")
-        if not type_nodes:
+        type_names = self._impl_header_type_names(node)
+        if not type_names:
             return
 
         trait_impl = any(child.type == "for" for child in node.children)
-        owner_node = type_nodes[-1]
-        owner = self._node_name_text(owner_node)
+        owner, _owner_start_byte = type_names[-1]
         if not owner:
             return
 
-        for type_node in type_nodes:
+        for type_name, start_byte in type_names:
             self._add_ref(
-                self._node_name_text(type_node),
-                type_node.start_byte,
+                type_name,
+                start_byte,
                 current_callable=None,
             )
 
@@ -401,6 +410,26 @@ class RustCore:
                 continue
             self._scan_refs_in_node(child, current_callable=None)
             inner_attrs = []
+
+    def _impl_header_type_names(self, node) -> list[tuple[str, int]]:
+        names: list[tuple[str, int]] = []
+
+        def collect(child) -> None:
+            if child.type in {"type_parameters", "type_arguments", "where_clause"}:
+                return
+            if child.type in {"type_identifier", "identifier"}:
+                name = self._node_name_text(child)
+                if name and name not in {"Self"}:
+                    names.append((name, child.start_byte))
+                return
+            for grandchild in child.children:
+                collect(grandchild)
+
+        for child in node.children:
+            if child.type == "declaration_list":
+                break
+            collect(child)
+        return names
 
     def _scan_function(
         self,
@@ -448,6 +477,12 @@ class RustCore:
 
     def _scan_use_imports(self, node) -> None:
         line = node.start_point[0] + 1
+        source = self._get_text(node).strip()
+        source = source.removeprefix("use").strip().rstrip(";")
+        if "*" in source:
+            self.raw_imports.append({"source": source, "names": ["*"], "line": line})
+            return
+
         names: list[str] = []
         for name in self._extract_use_names(node):
             if not name:
@@ -458,8 +493,6 @@ class RustCore:
                 {"name": name, "file": str(self.file_path), "line": line}
             )
             names.append(name)
-        source = self._get_text(node).strip()
-        source = source.removeprefix("use").strip().rstrip(";")
         self.raw_imports.append({"source": source, "names": names, "line": line})
 
     def _extract_use_names(self, node) -> list[str]:

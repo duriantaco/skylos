@@ -100,6 +100,43 @@ def test_analyze_reports_workspace_inventory_without_source_files(tmp_path):
     assert result["workspaces"]["packages"][0]["name"] == "@repo/app"
 
 
+def test_pnpm_inline_yaml_workspace_patterns_are_supported(tmp_path):
+    (tmp_path / "packages" / "ui").mkdir(parents=True)
+
+    (tmp_path / "pnpm-workspace.yaml").write_text(
+        'packages: ["packages/*"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "packages" / "ui" / "package.json").write_text(
+        json.dumps({"name": "@repo/ui"}),
+        encoding="utf-8",
+    )
+
+    inventory = discover_workspace_inventory(tmp_path)
+
+    packages = {pkg.name: pkg for pkg in inventory.packages}
+    assert packages["@repo/ui"].discovered_from == {"pnpm-workspace.yaml"}
+
+
+def test_workspace_discovery_does_not_skip_hidden_parent_of_root(tmp_path):
+    root = tmp_path / ".sandbox" / "repo"
+    (root / "packages" / "ui").mkdir(parents=True)
+
+    (root / "package.json").write_text(
+        json.dumps({"name": "@repo/root", "workspaces": ["packages/*"]}),
+        encoding="utf-8",
+    )
+    (root / "packages" / "ui" / "package.json").write_text(
+        json.dumps({"name": "@repo/ui"}),
+        encoding="utf-8",
+    )
+
+    inventory = discover_workspace_inventory(root)
+
+    packages = {pkg.name: pkg for pkg in inventory.packages}
+    assert "@repo/ui" in packages
+
+
 def test_discover_workspace_inventory_includes_explicit_tsconfig_file_references(
     tmp_path,
 ):

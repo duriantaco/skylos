@@ -138,7 +138,7 @@ mod handlers;
 
     handlers = next(d for d in defs if d.name == "handlers")
 
-    assert handlers.type == "import"
+    assert handlers.type == "module"
     assert handlers.is_exported is False
     assert raw_imports == [
         {
@@ -247,3 +247,109 @@ fn main() {
 
     assert "api.route" in ref_names
     assert {"api", "route"} <= ref_names
+
+
+def test_rust_restricted_visibility_is_not_exported(tmp_path):
+    defs, *_ = _scan_rust(
+        tmp_path,
+        """
+pub(crate) fn crate_only() {}
+pub(super) fn parent_only() {}
+pub(in crate::api) fn scoped_only() {}
+pub fn external() {}
+""",
+    )
+
+    exported = {d.name for d in defs if d.is_exported}
+
+    assert "external" in exported
+    assert "crate_only" not in exported
+    assert "parent_only" not in exported
+    assert "scoped_only" not in exported
+
+
+def test_rust_generic_impl_methods_are_collected(tmp_path):
+    defs, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+struct Boxed<T>(T);
+
+impl<T> Boxed<T> {
+    pub fn new(value: T) -> Self { Self(value) }
+    fn helper(&self) {}
+}
+""",
+    )
+
+    def_names = {d.name for d in defs}
+    ref_names = {r[0] for r in refs}
+    exported = {d.name for d in defs if d.is_exported}
+
+    assert {"Boxed.new", "Boxed.helper"} <= def_names
+    assert "Boxed" in ref_names
+    assert "Boxed.new" in exported
+    assert "Boxed.helper" not in exported
+
+
+def test_rust_generic_trait_impl_methods_are_exported(tmp_path):
+    defs, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+trait Service<T> { fn handle(&self, value: T); }
+struct Boxed<T>(T);
+
+impl<'a, T> Service<T> for Boxed<T> where T: Clone {
+    fn handle(&self, value: T) {
+        self.helper();
+    }
+}
+
+impl<T> Boxed<T> {
+    fn helper(&self) {}
+}
+""",
+    )
+
+    impl_method = next(d for d in defs if d.name == "Boxed.handle")
+    ref_names = {r[0] for r in refs}
+
+    assert impl_method.is_exported is True
+    assert {"Service", "Boxed", "helper"} <= ref_names
+
+
+def test_rust_trait_default_methods_are_collected_and_scanned(tmp_path):
+    defs, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+trait Service {
+    fn defaulted(&self) {
+        helper();
+    }
+    fn required(&self);
+}
+
+fn helper() {}
+""",
+    )
+
+    def_names = {d.name for d in defs}
+    ref_names = {r[0] for r in refs}
+    exported = {d.name for d in defs if d.is_exported}
+
+    assert {"Service.defaulted", "Service.required"} <= def_names
+    assert {"Service.defaulted", "Service.required"} <= exported
+    assert "helper" in ref_names
+
+
+def test_rust_glob_import_is_raw_import_without_import_def(tmp_path):
+    defs, _, _, _, _, _, _, _, _, _, _, _, raw_imports = _scan_rust(
+        tmp_path,
+        """
+use crate::handlers::*;
+""",
+    )
+
+    assert {d.type for d in defs} == set()
+    assert raw_imports == [
+        {"source": "crate::handlers::*", "names": ["*"], "line": 2}
+    ]

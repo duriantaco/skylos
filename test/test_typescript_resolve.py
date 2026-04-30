@@ -111,6 +111,24 @@ def test_types_entry_can_fall_back_to_source_file(tmp_path):
     assert resolver.resolve("@workspace/core", str(importer)) == str(target)
 
 
+def test_package_subpath_js_import_without_exports_falls_back_to_ts_source(tmp_path):
+    ui_dir = tmp_path / "packages" / "ui"
+    app_file = tmp_path / "packages" / "app" / "src" / "index.ts"
+    target = ui_dir / "src" / "foo.ts"
+
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"name": "@workspace/root", "workspaces": ["packages/*"]}),
+    )
+    _write(ui_dir / "package.json", json.dumps({"name": "@workspace/ui"}))
+    _write(target, "export const foo = 1;\n")
+    _write(app_file, "import { foo } from '@workspace/ui/foo.js';\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@workspace/ui/foo.js", str(app_file)) == str(target)
+
+
 def test_package_imports_exact_and_wildcard_resolution(tmp_path):
     importer = tmp_path / "src" / "index.ts"
     _write(

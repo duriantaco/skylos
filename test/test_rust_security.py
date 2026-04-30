@@ -108,6 +108,19 @@ fn run_cmd(cmd: String) {
     assert "SKY-D212" in _rule_ids(findings)
 
 
+def test_direct_env_var_command_source_flags(tmp_path):
+    findings = _scan_rust_findings(
+        tmp_path,
+        """
+use std::process::Command;
+fn run_cmd() {
+    Command::new(std::env::var("CMD").unwrap()).spawn();
+}
+""",
+    )
+    assert "SKY-D212" in _rule_ids(findings)
+
+
 def test_reassigned_command_variable_to_literal_is_safe(tmp_path):
     findings = _scan_rust_findings(
         tmp_path,
@@ -158,6 +171,19 @@ use std::fs;
 fn read_file() {
     let requested_file = std::env::var("DOWNLOAD").unwrap();
     fs::read_to_string(requested_file).unwrap();
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_direct_env_var_path_source_to_filesystem_sink_flags(tmp_path):
+    findings = _scan_rust_findings(
+        tmp_path,
+        """
+use std::fs;
+fn read_file() {
+    fs::read_to_string(std::env::var("DOWNLOAD").unwrap()).unwrap();
 }
 """,
     )
