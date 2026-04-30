@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.9.0](https://github.com/duriantaco/skylos/compare/v4.8.0...v4.9.0) (2026-04-30)
+
+
+### Features
+
+* **analyzer:** add rust scanner and monorepo support ([d2cb1b7](https://github.com/duriantaco/skylos/commit/d2cb1b753e712b988abdb9902d1ce40e39c8f2e0))
+
 ## [4.8.0](https://github.com/duriantaco/skylos/compare/v4.7.0...v4.8.0) (2026-04-28)
 
 
