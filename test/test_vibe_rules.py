@@ -23,9 +23,11 @@ from skylos.rules.quality.logic import (
     HardcodedCredentialRule,
     ErrorDisclosureRule,
     BroadFilePermissionsRule,
+    MissingNetworkTimeoutRule,
 )
 from skylos.rules.quality.phantom_refs import scan_repo_phantom_security_references
 from skylos.rules.quality.unused_deps import scan_unused_dependencies
+from skylos.rules.vibe_dictionary import build_vibe_dictionary
 
 
 def check_code(rule, code, filename="test.py"):
@@ -548,7 +550,9 @@ class TestDebugLeftoverSafeCases:
             pytest.param('print("Hello user")', "cli.py", id="cli"),
             pytest.param('print("test output")', "test_something.py", id="test-file"),
             pytest.param('print("main output")', "__main__.py", id="dunder-main"),
-            pytest.param('print("running script")', "scripts/deploy.py", id="scripts-dir"),
+            pytest.param(
+                'print("running script")', "scripts/deploy.py", id="scripts-dir"
+            ),
         ],
     )
     def test_allowed_prints_are_not_flagged(self, code, filename):
@@ -881,6 +885,17 @@ class TestPhantomCall:
             validate_token(request.headers["Authorization"])
         """
         findings = check_code(PhantomCallRule(), code)
+        assert any(f["rule_id"] == "SKY-L012" for f in findings)
+
+    def test_custom_vibe_dictionary_phantom_name(self):
+        vibe = build_vibe_dictionary(
+            {"extra_phantom_names": ["verify_enterprise_auth"]}
+        )
+        code = """
+        def check_request(request):
+            verify_enterprise_auth(request)
+        """
+        findings = check_code(PhantomCallRule(vibe_dictionary=vibe), code)
         assert any(f["rule_id"] == "SKY-L012" for f in findings)
 
     def test_escape_html_phantom(self):
@@ -1574,6 +1589,58 @@ class TestBroadFilePermissions:
         )
         l020 = [f for f in findings if f["rule_id"] == "SKY-L020"]
         assert len(l020) == 0
+
+
+class TestMissingNetworkTimeout:
+    def test_requests_call_without_timeout_flagged(self):
+        code = """
+        import requests
+        def fetch():
+            return requests.get("https://api.example.com/data")
+        """
+        findings = check_code(MissingNetworkTimeoutRule(), code, filename="app.py")
+        l031 = [f for f in findings if f["rule_id"] == "SKY-L031"]
+        assert l031
+        assert l031[0]["name"] == "requests.get"
+
+    def test_httpx_call_without_timeout_flagged(self):
+        code = """
+        import httpx
+        def send(payload):
+            return httpx.post("https://api.example.com/data", json=payload)
+        """
+        findings = check_code(MissingNetworkTimeoutRule(), code, filename="app.py")
+        assert any(f["rule_id"] == "SKY-L031" for f in findings)
+
+    def test_urlopen_without_timeout_flagged(self):
+        code = """
+        from urllib.request import urlopen
+        def fetch(url):
+            return urlopen(url)
+        """
+        findings = check_code(MissingNetworkTimeoutRule(), code, filename="app.py")
+        assert any(f["rule_id"] == "SKY-L031" for f in findings)
+
+    def test_timeout_keyword_not_flagged(self):
+        code = """
+        import requests
+        def fetch():
+            return requests.get("https://api.example.com/data", timeout=5)
+        """
+        findings = check_code(MissingNetworkTimeoutRule(), code, filename="app.py")
+        l031 = [f for f in findings if f["rule_id"] == "SKY-L031"]
+        assert len(l031) == 0
+
+    def test_test_file_not_flagged(self):
+        code = """
+        import requests
+        requests.get("https://api.example.com/data")
+        """
+        findings = check_code(
+            MissingNetworkTimeoutRule(), code, filename="test_http.py"
+        )
+        l031 = [f for f in findings if f["rule_id"] == "SKY-L031"]
+        assert len(l031) == 0
 
 
 class TestPhantomDecorator:

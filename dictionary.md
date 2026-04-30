@@ -112,6 +112,7 @@ Go rules that DO have equivalents (G211, G212, etc.) are remapped to their unifi
 | L023 | CRITICAL | Phantom decorator — `@require_auth`, `@rate_limit` never defined/imported | Python | CWE-476 |
 | L024 | HIGH | Stale mock — `mock.patch("mod.func")` targets function that no longer exists | Python | — |
 | L026 | MEDIUM | Unfinished generation — function body is only `pass`, `...`, or `raise NotImplementedError` | Python | — |
+| L031 | MEDIUM | Missing network timeout — `requests.*`, `httpx.*`, or `urlopen()` without `timeout=` | Python | CWE-400 |
 
 ## Quality (SKY-Q, SKY-C, SKY-P)
 

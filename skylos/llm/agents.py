@@ -103,6 +103,8 @@ class AgentConfig:
         retry_attempts=3,
         stream=True,
         enable_cache=True,
+        prompt_templates=None,
+        prompt_template_root=None,
     ):
         self.model = model
         self.api_key = api_key
@@ -112,6 +114,8 @@ class AgentConfig:
         self.retry_attempts = retry_attempts
         self.stream = stream
         self.enable_cache = enable_cache
+        self.prompt_templates = prompt_templates or {}
+        self.prompt_template_root = prompt_template_root
         self.provider = None
         self.base_url = None
 
@@ -123,6 +127,14 @@ class AgentConfig:
                 return True
 
         return False
+
+    def prompt_kwargs(self):
+        if not self.prompt_templates:
+            return {}
+        return {
+            "templates": self.prompt_templates,
+            "template_root": self.prompt_template_root,
+        }
 
 
 def create_llm_adapter(config):
@@ -163,7 +175,9 @@ class SecurityAgent:
         include_examples = (
             not self.config.is_rate_limited_model() and len(context) < 10_000
         )
-        system, user = build_security_prompt(context, include_examples=include_examples)
+        system, user = build_security_prompt(
+            context, include_examples=include_examples, **self.config.prompt_kwargs()
+        )
 
         if self.config.stream:
             full = ""
@@ -200,7 +214,9 @@ class QualityAgent:
         include_examples = (
             not self.config.is_rate_limited_model() and len(context) < 10_000
         )
-        system, user = build_quality_prompt(context, include_examples=include_examples)
+        system, user = build_quality_prompt(
+            context, include_examples=include_examples, **self.config.prompt_kwargs()
+        )
 
         if self.config.stream:
             full = ""
@@ -238,7 +254,7 @@ class SecurityAuditAgent:
             not self.config.is_rate_limited_model() and len(context) < 10_000
         )
         system, user = build_security_audit_prompt(
-            context, include_examples=include_examples
+            context, include_examples=include_examples, **self.config.prompt_kwargs()
         )
 
         response = self.get_adapter().complete(
@@ -272,7 +288,9 @@ class ReviewAgent:
         include_examples = (
             not self.config.is_rate_limited_model() and len(context) < 10_000
         )
-        system, user = build_review_prompt(context, include_examples=include_examples)
+        system, user = build_review_prompt(
+            context, include_examples=include_examples, **self.config.prompt_kwargs()
+        )
 
         response = self.get_adapter().complete(
             system,

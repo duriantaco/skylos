@@ -3,6 +3,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 from skylos.rules.base import SkylosRule
+from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
 
 
 MUTABLE_CONSTRUCTORS = {
@@ -1189,34 +1190,18 @@ class SecurityTodoRule(SkylosRule):
         return findings if findings else None
 
 
-_DISABLED_SECURITY_PATTERNS = {
-    "verify": "Requests TLS verification disabled (verify=False).",
-    "check_hostname": "TLS hostname verification disabled (check_hostname=False).",
-}
-
-_DANGEROUS_CALLS = {
-    "_create_unverified_context": "ssl._create_unverified_context() disables certificate verification.",
-    "_create_default_https_context": None,
-}
-
-_DANGEROUS_DECORATORS = {
-    "csrf_exempt": "CSRF protection disabled via @csrf_exempt.",
-    "login_not_required": "Authentication bypassed via @login_not_required.",
-}
-
-_DANGEROUS_ASSIGNMENTS = {
-    "DEBUG": (True, "DEBUG = True left in code. Disable in production."),
-    "ALLOWED_HOSTS": (
-        None,
-        'ALLOWED_HOSTS contains wildcard "*". Restrict in production.',
-    ),
-    "SECRET_KEY": (None, None),
-}
+_DISABLED_SECURITY_PATTERNS = DEFAULT_VIBE_DICTIONARY.disabled_security_patterns
+_DANGEROUS_CALLS = DEFAULT_VIBE_DICTIONARY.dangerous_calls
+_DANGEROUS_DECORATORS = DEFAULT_VIBE_DICTIONARY.dangerous_decorators
+_DANGEROUS_ASSIGNMENTS = DEFAULT_VIBE_DICTIONARY.dangerous_assignments
 
 
 class DisabledSecurityRule(SkylosRule):
     rule_id = "SKY-L011"
     name = "Disabled Security Control"
+
+    def __init__(self, vibe_dictionary=None):
+        self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
 
     def visit_node(self, node, context):
         if not isinstance(
@@ -1231,10 +1216,14 @@ class DisabledSecurityRule(SkylosRule):
 
         findings = []
         basename = _basename(filename)
+        disabled_patterns = self.vibe_dictionary.disabled_security_patterns
+        dangerous_calls = self.vibe_dictionary.dangerous_calls
+        dangerous_decorators = self.vibe_dictionary.dangerous_decorators
+        dangerous_assignments = self.vibe_dictionary.dangerous_assignments
 
         if isinstance(node, ast.Call):
             for kw in node.keywords:
-                if kw.arg in _DISABLED_SECURITY_PATTERNS:
+                if kw.arg in disabled_patterns:
                     if isinstance(kw.value, ast.Constant) and kw.value.value is False:
                         findings.append(
                             {
@@ -1246,7 +1235,7 @@ class DisabledSecurityRule(SkylosRule):
                                 "simple_name": kw.arg,
                                 "value": "disabled",
                                 "threshold": 0,
-                                "message": _DISABLED_SECURITY_PATTERNS[kw.arg],
+                                "message": disabled_patterns[kw.arg],
                                 "file": filename,
                                 "basename": basename,
                                 "line": kw.value.lineno,
@@ -1260,8 +1249,8 @@ class DisabledSecurityRule(SkylosRule):
                 func_name = func.attr
             elif isinstance(func, ast.Name):
                 func_name = func.id
-            if func_name in _DANGEROUS_CALLS:
-                msg = _DANGEROUS_CALLS[func_name]
+            if func_name in dangerous_calls:
+                msg = dangerous_calls[func_name]
                 if msg:
                     findings.append(
                         {
@@ -1288,7 +1277,7 @@ class DisabledSecurityRule(SkylosRule):
                     dec_name = dec.id
                 elif isinstance(dec, ast.Attribute):
                     dec_name = dec.attr
-                if dec_name in _DANGEROUS_DECORATORS:
+                if dec_name in dangerous_decorators:
                     findings.append(
                         {
                             "rule_id": self.rule_id,
@@ -1299,7 +1288,7 @@ class DisabledSecurityRule(SkylosRule):
                             "simple_name": dec_name,
                             "value": "disabled",
                             "threshold": 0,
-                            "message": _DANGEROUS_DECORATORS[dec_name],
+                            "message": dangerous_decorators[dec_name],
                             "file": filename,
                             "basename": basename,
                             "line": dec.lineno,
@@ -1309,8 +1298,8 @@ class DisabledSecurityRule(SkylosRule):
 
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
-            if isinstance(target, ast.Name) and target.id in _DANGEROUS_ASSIGNMENTS:
-                expected_val, msg = _DANGEROUS_ASSIGNMENTS[target.id]
+            if isinstance(target, ast.Name) and target.id in dangerous_assignments:
+                expected_val, msg = dangerous_assignments[target.id]
                 if msg is None:
                     pass
                 elif target.id == "ALLOWED_HOSTS":
@@ -1359,63 +1348,15 @@ class DisabledSecurityRule(SkylosRule):
         return findings if findings else None
 
 
-_PHANTOM_SECURITY_NAMES = {
-    "sanitize_input",
-    "sanitize_html",
-    "sanitize_sql",
-    "sanitize_query",
-    "sanitize_string",
-    "sanitize_data",
-    "sanitize_url",
-    "sanitize_path",
-    "sanitize_output",
-    "sanitize_request",
-    "sanitize_params",
-    "sanitize_user_input",
-    "validate_token",
-    "validate_jwt",
-    "validate_session",
-    "validate_auth",
-    "validate_credentials",
-    "validate_api_key",
-    "escape_html",
-    "escape_sql",
-    "escape_input",
-    "escape_output",
-    "escape_string",
-    "escape_query",
-    "check_permission",
-    "check_permissions",
-    "check_auth",
-    "check_authorization",
-    "check_access",
-    "check_role",
-    "verify_token",
-    "verify_jwt",
-    "verify_signature",
-    "verify_auth",
-    "require_auth",
-    "require_login",
-    "require_permission",
-    "encrypt_password",
-    "hash_password",
-    "secure_random",
-    "clean_input",
-    "clean_html",
-    "clean_data",
-    "filter_xss",
-    "prevent_injection",
-    "prevent_xss",
-    "rate_limit",
-    "throttle_request",
-}
+_PHANTOM_SECURITY_NAMES = DEFAULT_VIBE_DICTIONARY.phantom_security_names
 
 
 class PhantomCallRule(SkylosRule):
     rule_id = "SKY-L012"
     name = "Phantom Function Call"
 
-    def __init__(self):
+    def __init__(self, vibe_dictionary=None):
+        self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
         self._defined_names = None
         self._current_file = None
 
@@ -1462,7 +1403,7 @@ class PhantomCallRule(SkylosRule):
         if not func_name:
             return None
 
-        if func_name not in _PHANTOM_SECURITY_NAMES:
+        if func_name not in self.vibe_dictionary.phantom_security_names:
             return None
 
         if func_name in self._defined_names:
@@ -1495,49 +1436,15 @@ class PhantomCallRule(SkylosRule):
         ]
 
 
-_PHANTOM_SECURITY_DECORATORS = {
-    "requires_auth",
-    "require_auth",
-    "require_login",
-    "login_required",
-    "require_permission",
-    "require_permissions",
-    "require_admin",
-    "require_role",
-    "check_auth",
-    "check_access",
-    "check_permission",
-    "check_permissions",
-    "authenticate",
-    "authorize",
-    "authorized",
-    "validate_jwt",
-    "verify_token",
-    "verify_jwt",
-    "rate_limit",
-    "rate_limiter",
-    "throttle",
-    "throttle_request",
-    "sanitize_input",
-    "csrf_protect",
-    "csrf_required",
-    "cors_protect",
-    "secure",
-    "secured",
-    "permissions_required",
-    "roles_required",
-    "roles_accepted",
-    "auth_required",
-    "token_required",
-    "api_key_required",
-}
+_PHANTOM_SECURITY_DECORATORS = DEFAULT_VIBE_DICTIONARY.phantom_security_decorators
 
 
 class PhantomDecoratorRule(SkylosRule):
     rule_id = "SKY-L023"
     name = "Phantom Decorator"
 
-    def __init__(self):
+    def __init__(self, vibe_dictionary=None):
+        self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
         self._defined_names = None
         self._imported_names = None
         self._current_file = None
@@ -1579,7 +1486,7 @@ class PhantomDecoratorRule(SkylosRule):
             deco_name = self._extract_decorator_name(deco)
             if not deco_name:
                 continue
-            if deco_name not in _PHANTOM_SECURITY_DECORATORS:
+            if deco_name not in self.vibe_dictionary.phantom_security_decorators:
                 continue
             if deco_name in self._defined_names:
                 continue
@@ -1714,7 +1621,8 @@ class UndefinedConfigRule(SkylosRule):
     rule_id = "SKY-L016"
     name = "Undefined Config"
 
-    def __init__(self):
+    def __init__(self, vibe_dictionary=None):
+        self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
         self._env_refs = None
         self._env_sets = None
         self._current_file = None
@@ -1750,7 +1658,7 @@ class UndefinedConfigRule(SkylosRule):
         if not env_var_name:
             return None
 
-        if env_var_name in _WELL_KNOWN_ENV_VARS:
+        if env_var_name in self.vibe_dictionary.well_known_env_vars:
             return None
 
         if env_var_name in self._env_sets:
@@ -1812,29 +1720,7 @@ class UndefinedConfigRule(SkylosRule):
         return None
 
 
-_WELL_KNOWN_ENV_VARS = {
-    "PATH",
-    "HOME",
-    "USER",
-    "SHELL",
-    "LANG",
-    "TERM",
-    "PWD",
-    "EDITOR",
-    "VIRTUAL_ENV",
-    "PYTHONPATH",
-    "PYTHONDONTWRITEBYTECODE",
-    "CI",
-    "DEBUG",
-    "LOG_LEVEL",
-    "TESTING",
-    "DATABASE_URL",
-    "REDIS_URL",
-    "SECRET_KEY",
-    "PORT",
-    "HOST",
-    "BIND",
-}
+_WELL_KNOWN_ENV_VARS = DEFAULT_VIBE_DICTIONARY.well_known_env_vars
 
 
 class StaleMockRule(SkylosRule):
@@ -2016,45 +1902,14 @@ class StaleMockRule(SkylosRule):
         return None
 
 
-_SECURITY_VAR_KEYWORDS = {
-    "token",
-    "secret",
-    "key",
-    "password",
-    "nonce",
-    "session",
-    "otp",
-    "salt",
-    "csrf",
-    "auth",
-    "code",
-    "pin",
-    "api_key",
-    "apikey",
-    "access_token",
-    "refresh_token",
-    "reset_token",
-    "verification",
-    "confirm",
-}
-
-_INSECURE_RANDOM_FUNCS = {
-    "randint",
-    "choice",
-    "choices",
-    "random",
-    "randrange",
-    "sample",
-    "shuffle",
-    "randbytes",
-    "getrandbits",
-    "uniform",
-}
+_SECURITY_VAR_KEYWORDS = DEFAULT_VIBE_DICTIONARY.security_var_keywords
+_INSECURE_RANDOM_FUNCS = DEFAULT_VIBE_DICTIONARY.insecure_random_funcs
 
 
-def _var_name_is_security(name):
+def _var_name_is_security(name, vibe_dictionary=None):
+    vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
     lower = name.lower()
-    for kw in _SECURITY_VAR_KEYWORDS:
+    for kw in vibe_dictionary.security_var_keywords:
         if kw in lower:
             return True
     return False
@@ -2063,6 +1918,9 @@ def _var_name_is_security(name):
 class InsecureRandomRule(SkylosRule):
     rule_id = "SKY-L013"
     name = "Insecure Randomness"
+
+    def __init__(self, vibe_dictionary=None):
+        self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
 
     def visit_node(self, node, context):
         if not isinstance(node, ast.Assign):
@@ -2082,11 +1940,11 @@ class InsecureRandomRule(SkylosRule):
 
         if isinstance(func, ast.Attribute):
             if isinstance(func.value, ast.Name) and func.value.id == "random":
-                if func.attr in _INSECURE_RANDOM_FUNCS:
+                if func.attr in self.vibe_dictionary.insecure_random_funcs:
                     func_name = f"random.{func.attr}"
                     is_random_module = True
         elif isinstance(func, ast.Name):
-            if func.id in _INSECURE_RANDOM_FUNCS:
+            if func.id in self.vibe_dictionary.insecure_random_funcs:
                 func_name = func.id
 
         if not func_name or not is_random_module:
@@ -2103,7 +1961,7 @@ class InsecureRandomRule(SkylosRule):
             ):
                 var_name = target.value.id
 
-            if var_name and _var_name_is_security(var_name):
+            if var_name and _var_name_is_security(var_name, self.vibe_dictionary):
                 basename = Path(filename).name
                 return [
                     {
@@ -2129,68 +1987,22 @@ class InsecureRandomRule(SkylosRule):
         return None
 
 
-_CREDENTIAL_VAR_NAMES = {
-    "password",
-    "passwd",
-    "pwd",
-    "secret",
-    "api_key",
-    "apikey",
-    "auth_token",
-    "access_token",
-    "refresh_token",
-    "db_password",
-    "database_url",
-    "connection_string",
-    "db_url",
-    "dsn",
-    "private_key",
-    "secret_key",
-    "encryption_key",
-    "signing_key",
-    "client_secret",
-    "app_secret",
-}
-
-_CREDENTIAL_VAR_SUFFIXES = {
-    "_password",
-    "_passwd",
-    "_secret",
-    "_token",
-    "_key",
-    "_api_key",
-    "_apikey",
-}
+_CREDENTIAL_VAR_NAMES = DEFAULT_VIBE_DICTIONARY.credential_var_names
+_CREDENTIAL_VAR_SUFFIXES = DEFAULT_VIBE_DICTIONARY.credential_var_suffixes
 
 _CREDENTIAL_DSN_RE = re.compile(
     r"[a-zA-Z][a-zA-Z0-9+.-]*://[^:]+:[^@]+@",
 )
 
-_PLACEHOLDER_VALUES = {
-    "changeme",
-    "your_api_key_here",
-    "replace_me",
-    "todo",
-    "xxx",
-    "yyy",
-    "zzz",
-    "placeholder",
-    "example",
-    "test",
-    "dummy",
-    "fake",
-    "sample",
-    "your_password_here",
-    "insert_key_here",
-    "your_secret_here",
-}
+_PLACEHOLDER_VALUES = DEFAULT_VIBE_DICTIONARY.placeholder_values
 
 
-def _is_credential_var(name):
+def _is_credential_var(name, vibe_dictionary=None):
+    vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
     lower = name.lower()
-    if lower in _CREDENTIAL_VAR_NAMES:
+    if lower in vibe_dictionary.credential_var_names:
         return True
-    for suffix in _CREDENTIAL_VAR_SUFFIXES:
+    for suffix in vibe_dictionary.credential_var_suffixes:
         if lower.endswith(suffix):
             return True
     return False
@@ -2220,6 +2032,9 @@ class HardcodedCredentialRule(SkylosRule):
     rule_id = "SKY-L014"
     name = "Hardcoded Credential"
 
+    def __init__(self, vibe_dictionary=None):
+        self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
+
     def visit_node(self, node, context):
         if not isinstance(node, (ast.Assign, ast.FunctionDef, ast.AsyncFunctionDef)):
             return None
@@ -2239,7 +2054,7 @@ class HardcodedCredentialRule(SkylosRule):
             elif isinstance(target, ast.Attribute):
                 var_name = target.attr
 
-            if var_name and _is_credential_var(var_name):
+            if var_name and _is_credential_var(var_name, self.vibe_dictionary):
                 value = node.value
                 if isinstance(value, ast.Constant) and isinstance(value.value, str):
                     str_val = value.value
@@ -2252,7 +2067,7 @@ class HardcodedCredentialRule(SkylosRule):
                         pass
 
                     severity = "HIGH"
-                    if str_val.lower() in _PLACEHOLDER_VALUES:
+                    if str_val.lower() in self.vibe_dictionary.placeholder_values:
                         severity = "MEDIUM"
 
                     findings.append(
@@ -2306,14 +2121,17 @@ class HardcodedCredentialRule(SkylosRule):
                 else:
                     arg_name = str(arg)
 
-                if _is_credential_var(arg_name):
+                if _is_credential_var(arg_name, self.vibe_dictionary):
                     if isinstance(default, ast.Constant) and isinstance(
                         default.value, str
                     ):
                         str_val = default.value
                         if str_val and str_val.strip():
                             severity = "HIGH"
-                            if str_val.lower() in _PLACEHOLDER_VALUES:
+                            if (
+                                str_val.lower()
+                                in self.vibe_dictionary.placeholder_values
+                            ):
                                 severity = "MEDIUM"
                             findings.append(
                                 {
@@ -2485,27 +2303,14 @@ class ErrorDisclosureRule(SkylosRule):
         }
 
 
-_SENSITIVE_FILE_KEYWORDS = {
-    ".env",
-    ".pem",
-    ".key",
-    ".cert",
-    ".crt",
-    ".p12",
-    ".pfx",
-    "credentials",
-    "secrets",
-    "private",
-    "id_rsa",
-    "id_ed25519",
-    "keyfile",
-    "keystore",
-}
+_SENSITIVE_FILE_KEYWORDS = DEFAULT_VIBE_DICTIONARY.sensitive_file_keywords
+_NETWORK_TIMEOUT_CALLS = DEFAULT_VIBE_DICTIONARY.network_timeout_calls
 
 
-def _is_sensitive_filename(name):
+def _is_sensitive_filename(name, vibe_dictionary=None):
+    vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
     lower = name.lower()
-    for kw in _SENSITIVE_FILE_KEYWORDS:
+    for kw in vibe_dictionary.sensitive_file_keywords:
         if kw in lower:
             return True
     return False
@@ -2514,6 +2319,9 @@ def _is_sensitive_filename(name):
 class BroadFilePermissionsRule(SkylosRule):
     rule_id = "SKY-L020"
     name = "Overly Broad File Permissions"
+
+    def __init__(self, vibe_dictionary=None):
+        self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
 
     def visit_node(self, node, context):
         if not isinstance(node, ast.Call):
@@ -2554,7 +2362,7 @@ class BroadFilePermissionsRule(SkylosRule):
         elif isinstance(path_arg, ast.Name):
             target_name = path_arg.id
 
-        is_sensitive = _is_sensitive_filename(target_name)
+        is_sensitive = _is_sensitive_filename(target_name, self.vibe_dictionary)
 
         if mode_val & 0o777 == 0o777:
             return [
@@ -2610,6 +2418,65 @@ class BroadFilePermissionsRule(SkylosRule):
             "line": node.lineno,
             "col": node.col_offset,
         }
+
+
+def _qualified_call_name(func_node):
+    parts = []
+    node = func_node
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return ".".join(reversed(parts))
+    return None
+
+
+class MissingNetworkTimeoutRule(SkylosRule):
+    rule_id = "SKY-L031"
+    name = "Missing Network Timeout"
+
+    def __init__(self, vibe_dictionary=None):
+        self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
+
+    def visit_node(self, node, context):
+        if not isinstance(node, ast.Call):
+            return None
+
+        filename = context.get("filename", "")
+        if _is_test_file(filename):
+            return None
+
+        call_name = _qualified_call_name(node.func)
+        if call_name not in self.vibe_dictionary.network_timeout_calls:
+            return None
+
+        if any(kw.arg == "timeout" for kw in node.keywords):
+            return None
+
+        basename = Path(filename).name
+        return [
+            {
+                "rule_id": self.rule_id,
+                "kind": "logic",
+                "severity": "MEDIUM",
+                "type": "call",
+                "name": call_name,
+                "simple_name": call_name,
+                "value": "no_timeout",
+                "threshold": 0,
+                "message": (
+                    f"Network call '{call_name}()' has no timeout. "
+                    f"LLM-generated integrations often omit timeouts and can hang worker threads."
+                ),
+                "file": filename,
+                "basename": basename,
+                "line": node.lineno,
+                "col": node.col_offset,
+                "vibe_category": "missing_resilience_control",
+                "ai_likelihood": "medium",
+            }
+        ]
 
 
 class DuplicateStringLiteralRule(SkylosRule):
