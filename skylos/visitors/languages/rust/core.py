@@ -77,6 +77,24 @@ def _is_test_path(file_path: str | Path) -> bool:
     )
 
 
+def _module_namespace_for_path(file_path: str | Path) -> str:
+    path = Path(file_path)
+    parts = path.with_suffix("").parts
+    if "src" not in parts:
+        return ""
+
+    src_index = len(parts) - 1 - list(reversed(parts)).index("src")
+    module_parts = list(parts[src_index + 1 :])
+    if not module_parts:
+        return ""
+
+    if module_parts[0] == "bin":
+        return ""
+    if module_parts[-1] in {"lib", "main", "mod"}:
+        module_parts = module_parts[:-1]
+    return ".".join(part for part in module_parts if part)
+
+
 class RustCore:
     def __init__(self, file_path: str, source_bytes: bytes) -> None:
         self.file_path: str = file_path
@@ -89,6 +107,7 @@ class RustCore:
         self.test_decorated_lines: set[int] = set()
         self.lang: Language | None = RUST_LANG
         self.is_test_file = _is_test_path(file_path)
+        self.root_namespace = _module_namespace_for_path(file_path)
         self._seen_refs: set[tuple[str, int]] = set()
 
         if self.lang:
@@ -143,29 +162,43 @@ class RustCore:
         return False
 
     def _add_ref(
-        self, name: str, start_byte: int, *, current_callable: str | None
+        self,
+        name: str,
+        start_byte: int,
+        *,
+        current_callable: str | None,
+        preserve_qualified: bool = False,
     ) -> None:
         if not name:
             return
-        simple = name.split("::")[-1].split(".")[-1].strip()
-        if not simple or simple in {"self", "Self", "crate", "super"}:
+        normalized = name.replace("::", ".").strip()
+        for prefix in ("crate.", "self.", "super."):
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix) :]
+                break
+        ref_name = (
+            normalized
+            if preserve_qualified and "." in normalized
+            else normalized.split(".")[-1]
+        )
+        if not ref_name or ref_name in {"self", "Self", "crate", "super"}:
             return
-        if current_callable and simple == current_callable.split(".")[-1]:
+        if current_callable and ref_name == current_callable.split(".")[-1]:
             return
-        key = (simple, start_byte)
+        key = (ref_name, start_byte)
         if key in self._seen_refs:
             return
         self._seen_refs.add(key)
-        self.refs.append((simple, self.file_path))
+        self.refs.append((ref_name, self.file_path))
         if current_callable:
-            self.call_pairs.append((current_callable, simple))
+            self.call_pairs.append((current_callable, ref_name))
 
     def scan(self) -> None:
         if not self.root_node:
             return
         self._scan_block(
             self.root_node,
-            namespace="",
+            namespace=self.root_namespace,
             current_type=None,
             current_callable=None,
             pending_attrs=[],
@@ -249,9 +282,45 @@ class RustCore:
                 pending_attrs=[],
             )
         else:
+            candidates = self._external_mod_sources(mod_name)
             self.raw_imports.append(
-                {"source": f"{mod_name}.rs", "names": [mod_name], "line": line}
+                {
+                    "source": candidates[0],
+                    "names": [mod_name],
+                    "line": line,
+                    "candidates": candidates,
+                }
             )
+
+    def _external_mod_sources(self, mod_name: str) -> list[str]:
+        current = Path(self.file_path)
+        stem = current.stem
+        base_dir = (
+            current.parent
+            if stem in {"lib", "main", "mod"}
+            else current.parent / stem
+        )
+        candidate_paths = [
+            base_dir / f"{mod_name}.rs",
+            base_dir / mod_name / "mod.rs",
+        ]
+
+        existing = [path for path in candidate_paths if path.is_file()]
+        ordered = existing or candidate_paths
+
+        sources: list[str] = []
+        seen: set[str] = set()
+        for candidate in ordered:
+            try:
+                rel = candidate.relative_to(current.parent)
+                source = rel.as_posix()
+            except ValueError:
+                source = candidate.as_posix()
+            if source in seen:
+                continue
+            seen.add(source)
+            sources.append(source)
+        return sources
 
     def _scan_type_item(self, node, *, namespace: str, attrs: list) -> None:
         name_node = self._child_by_type(node, "type_identifier")
@@ -478,6 +547,13 @@ class RustCore:
             )
             return
         if callee.type == "scoped_identifier":
+            full_name = self._node_name_text(callee)
+            self._add_ref(
+                full_name,
+                callee.start_byte,
+                current_callable=current_callable,
+                preserve_qualified=True,
+            )
             names = [
                 self._node_name_text(child)
                 for child in callee.children

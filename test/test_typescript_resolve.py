@@ -58,6 +58,59 @@ def test_workspace_package_exports_root_and_subpath_resolution(tmp_path):
     )
 
 
+def test_conditional_exports_prefer_runtime_target_over_types(tmp_path):
+    ui_dir = tmp_path / "packages" / "ui"
+    app_file = tmp_path / "packages" / "app" / "src" / "index.ts"
+
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"name": "@workspace/root", "workspaces": ["packages/*"]}),
+    )
+    _write(
+        ui_dir / "package.json",
+        json.dumps(
+            {
+                "name": "@workspace/ui",
+                "exports": {
+                    ".": {
+                        "types": "./dist/index.d.ts",
+                        "import": "./dist/index.js",
+                        "default": "./dist/index.js",
+                    }
+                },
+            }
+        ),
+    )
+    _write(ui_dir / "src" / "index.ts", "export const Button = 1;")
+    _write(app_file, "import { Button } from '@workspace/ui';\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@workspace/ui", str(app_file)) == str(
+        ui_dir / "src" / "index.ts"
+    )
+
+
+def test_types_entry_can_fall_back_to_source_file(tmp_path):
+    importer = tmp_path / "src" / "main.ts"
+    target = tmp_path / "packages" / "core" / "src" / "index.ts"
+
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"name": "@workspace/root", "workspaces": ["packages/*"]}),
+    )
+    _write(
+        tmp_path / "packages" / "core" / "package.json",
+        json.dumps({"name": "@workspace/core", "types": "./dist/index.d.ts"}),
+    )
+    _write(target, "export const core = 1;\n")
+    _write(importer, "import { core } from '@workspace/core';\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@workspace/core", str(importer)) == str(target)
+
+
 def test_package_imports_exact_and_wildcard_resolution(tmp_path):
     importer = tmp_path / "src" / "index.ts"
     _write(
@@ -327,6 +380,30 @@ def test_pnpm_workspace_package_resolution_uses_declared_packages_only(tmp_path)
     )
     _write(importer, "import { Button } from '@repo/ui';\n")
     _write(target, "export const Button = 1;\n")
+
+    resolver = MonorepoResolver(str(tmp_path))
+
+    assert resolver.resolve("@repo/ui", str(importer)) == str(target)
+
+
+def test_nested_workspace_package_resolution(tmp_path):
+    importer = tmp_path / "apps" / "web" / "src" / "main.ts"
+    target = tmp_path / "packages" / "platform" / "ui" / "src" / "index.ts"
+
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"name": "@repo/root", "workspaces": ["packages/*/*", "apps/*"]}),
+    )
+    _write(
+        tmp_path / "packages" / "platform" / "ui" / "package.json",
+        json.dumps({"name": "@repo/ui", "exports": "./src/index.ts"}),
+    )
+    _write(
+        tmp_path / "apps" / "web" / "package.json",
+        json.dumps({"name": "@repo/web"}),
+    )
+    _write(target, "export const Button = 1;\n")
+    _write(importer, "import { Button } from '@repo/ui';\n")
 
     resolver = MonorepoResolver(str(tmp_path))
 

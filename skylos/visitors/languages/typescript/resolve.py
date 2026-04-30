@@ -266,7 +266,17 @@ def _candidate_package_targets(target: str) -> list[str]:
     base_target = target.replace("dist/", "src/").replace("/prod/", "/")
     candidates = [base_target]
 
-    if base_target.endswith(".js"):
+    if base_target.endswith(".d.ts"):
+        base_no_dts = base_target[: -len(".d.ts")]
+        candidates.extend(
+            [
+                base_no_dts + ".ts",
+                base_no_dts + ".tsx",
+                base_no_dts + ".js",
+                base_no_dts + ".jsx",
+            ]
+        )
+    elif base_target.endswith(".js"):
         candidates.extend(
             [
                 base_target[:-3] + ".ts",
@@ -326,7 +336,16 @@ def _extract_package_target(entry) -> str | None:
             if target:
                 return target
     if isinstance(entry, dict):
-        for key in ("types", "import", "default", "require", "node"):
+        for key in (
+            "import",
+            "default",
+            "require",
+            "node",
+            "browser",
+            "module",
+            "source",
+            "types",
+        ):
             if key in entry:
                 target = _extract_package_target(entry[key])
                 if target:
@@ -454,7 +473,7 @@ def _resolve_from_pkg_dir(pkg_dir: str, subpath: str | None = None) -> str | Non
         try:
             with open(pkg_json) as f:
                 data = json.load(f)
-            for field in ("module", "main"):
+            for field in ("source", "module", "main", "types"):
                 val = data.get(field)
                 if val:
                     for src_val in _candidate_package_targets(val):

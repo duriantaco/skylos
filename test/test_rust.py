@@ -141,7 +141,42 @@ mod handlers;
     assert handlers.type == "import"
     assert handlers.is_exported is False
     assert raw_imports == [
-        {"source": "handlers.rs", "names": ["handlers"], "line": 2}
+        {
+            "source": "handlers.rs",
+            "names": ["handlers"],
+            "line": 2,
+            "candidates": ["handlers.rs", "handlers/mod.rs"],
+        }
+    ]
+
+
+def test_rust_external_mod_declaration_prefers_existing_mod_rs(tmp_path):
+    (tmp_path / "src" / "handlers").mkdir(parents=True)
+    (tmp_path / "src" / "handlers" / "mod.rs").write_text(
+        "pub fn run() {}\n",
+        encoding="utf-8",
+    )
+    file_path = tmp_path / "src" / "lib.rs"
+    file_path.write_text(
+        """
+pub mod handlers;
+""",
+        encoding="utf-8",
+    )
+
+    defs, _, _, _, _, _, _, _, _, _, _, _, raw_imports = scan_rust_file(
+        str(file_path), {}
+    )
+    handlers = next(d for d in defs if d.name == "handlers")
+
+    assert handlers.is_exported is True
+    assert raw_imports == [
+        {
+            "source": "handlers/mod.rs",
+            "names": ["handlers"],
+            "line": 2,
+            "candidates": ["handlers/mod.rs"],
+        }
     ]
 
 
@@ -169,3 +204,46 @@ use crate::http::{Client as HttpClient, Response};
             "line": 3,
         },
     ]
+
+
+def test_rust_src_module_files_use_module_namespace(tmp_path):
+    file_path = tmp_path / "src" / "handlers.rs"
+    file_path.parent.mkdir(parents=True)
+    file_path.write_text(
+        """
+pub fn run() {
+    helper();
+}
+
+fn helper() {}
+""",
+        encoding="utf-8",
+    )
+
+    defs, refs, *_ = scan_rust_file(str(file_path), {})
+
+    def_names = {d.name for d in defs}
+    ref_names = {r[0] for r in refs}
+
+    assert {"handlers.run", "handlers.helper"} <= def_names
+    assert "helper" in ref_names
+
+
+def test_rust_scoped_calls_add_qualified_refs(tmp_path):
+    _, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+mod api {
+    pub fn route() {}
+}
+
+fn main() {
+    api::route();
+}
+""",
+    )
+
+    ref_names = {r[0] for r in refs}
+
+    assert "api.route" in ref_names
+    assert {"api", "route"} <= ref_names
