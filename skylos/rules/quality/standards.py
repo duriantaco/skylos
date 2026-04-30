@@ -77,10 +77,13 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
             "name": "Declaration of Catch for Generic Exception",
         }
     ],
+    "SKY-L031": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
     # Complexity / structure
     "SKY-Q301": [{"id": "CWE-1121", "name": "Excessive McCabe Cyclomatic Complexity"}],
     "SKY-Q302": [{"id": "CWE-1124", "name": "Excessively Deep Nesting"}],
-    "SKY-Q305": [{"id": "CWE-670", "name": "Always-Incorrect Control Flow Implementation"}],
+    "SKY-Q305": [
+        {"id": "CWE-670", "name": "Always-Incorrect Control Flow Implementation"}
+    ],
     "SKY-Q306": [{"id": "CWE-1121", "name": "Excessive McCabe Cyclomatic Complexity"}],
     "SKY-L021": [
         {"id": "CWE-693", "name": "Protection Mechanism Failure"},

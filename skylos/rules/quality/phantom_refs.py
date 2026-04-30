@@ -5,10 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from skylos.rules.quality.logic import (
-    _PHANTOM_SECURITY_DECORATORS,
-    _PHANTOM_SECURITY_NAMES,
-)
+from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
 
 
 @dataclass
@@ -17,7 +14,10 @@ class _ScopeInfo:
     local_imports: dict[str, list[tuple[int, str]]]
 
 
-def scan_repo_phantom_security_references(project_root, py_files, target_files=None):
+def scan_repo_phantom_security_references(
+    project_root, py_files, target_files=None, vibe_dictionary=None
+):
+    vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
     root = Path(project_root).resolve()
     files = [Path(f).resolve() for f in py_files if Path(f).suffix == ".py"]
     target_paths = {
@@ -109,7 +109,7 @@ def scan_repo_phantom_security_references(project_root, py_files, target_files=N
                     continue
 
                 target_module, member_name, expr_text = resolved
-                if member_name not in _PHANTOM_SECURITY_NAMES:
+                if member_name not in vibe_dictionary.phantom_security_names:
                     continue
                 if not _ensure_module_loaded(target_module):
                     continue
@@ -150,7 +150,7 @@ def scan_repo_phantom_security_references(project_root, py_files, target_files=N
                     continue
 
                 target_module, member_name, expr_text = resolved
-                if member_name not in _PHANTOM_SECURITY_DECORATORS:
+                if member_name not in vibe_dictionary.phantom_security_decorators:
                     continue
                 if not _ensure_module_loaded(target_module):
                     continue

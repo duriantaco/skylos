@@ -37,6 +37,29 @@ def test_validate_rules_missing_file_returns_one(tmp_path):
     console.print.assert_called_once()
 
 
+def test_rules_init_creates_valid_starter_pack(tmp_path):
+    console = Mock()
+    dest = tmp_path / ".skylos" / "rules" / "local.yml"
+
+    exit_code = rules_cmd.init_rules(console, str(dest))
+
+    assert exit_code == 0
+    assert dest.exists()
+    assert "CUSTOM-VIBE-001" in dest.read_text(encoding="utf-8")
+    assert rules_cmd.validate_rules(console, str(dest)) == 0
+
+
+def test_rules_init_refuses_to_overwrite_without_force(tmp_path):
+    console = Mock()
+    dest = tmp_path / "local.yml"
+    dest.write_text("rules: []\n", encoding="utf-8")
+
+    exit_code = rules_cmd.init_rules(console, str(dest))
+
+    assert exit_code == 1
+    assert dest.read_text(encoding="utf-8") == "rules: []\n"
+
+
 def test_cli_rules_remove_legacy_wrapper_raises_on_missing_pack(tmp_path):
     console = Mock()
 

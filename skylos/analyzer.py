@@ -76,8 +76,10 @@ from skylos.rules.quality.logic import (
     TooManyReturnsRule,
     BooleanTrapRule,
     BroadExceptionRule,
+    MissingNetworkTimeoutRule,
 )
 from skylos.rules.quality.phantom_refs import scan_repo_phantom_security_references
+from skylos.rules.vibe_dictionary import build_vibe_dictionary
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
 from skylos.rules.quality.async_blocking import AsyncBlockingRule
@@ -172,6 +174,7 @@ _LINTER_RULE_NODE_TYPES = {
     TooManyReturnsRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     BooleanTrapRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     BroadExceptionRule: (ast.ExceptHandler,),
+    MissingNetworkTimeoutRule: (ast.Call,),
     GodClassRule: (ast.ClassDef,),
     CBORule: (ast.ClassDef,),
     LCOMRule: (ast.ClassDef,),
@@ -205,6 +208,7 @@ def _is_secret_config_candidate(path: Path) -> bool:
     if name == ".env" or name.startswith(".env."):
         return True
     return path.suffix.lower() in _SECRET_CONFIG_SUFFIXES
+
 
 _GREP_VERIFY_TYPE_PRIORITY = {
     "method": 0,
@@ -2311,6 +2315,9 @@ class Skylos:
                             project_root,
                             repo_py_files,
                             target_files=_ud_py_files,
+                            vibe_dictionary=build_vibe_dictionary(
+                                project_cfg.get("vibe")
+                            ),
                         )
                         if phantom_findings:
                             phantom_findings = [
@@ -2619,6 +2626,7 @@ def proc_file(
         danger_findings = []
 
         if full_scan and enable_quality_rules:
+            vibe_dictionary = build_vibe_dictionary(cfg.get("vibe"))
             q_rules = []
             if "SKY-Q301" not in cfg["ignore"]:
                 q_rules.append(ComplexityRule(threshold=cfg["complexity"]))
@@ -2656,23 +2664,25 @@ def proc_file(
             if "SKY-L010" not in cfg["ignore"]:
                 q_rules.append(SecurityTodoRule())
             if "SKY-L011" not in cfg["ignore"]:
-                q_rules.append(DisabledSecurityRule())
+                q_rules.append(DisabledSecurityRule(vibe_dictionary=vibe_dictionary))
             if "SKY-L012" not in cfg["ignore"]:
-                q_rules.append(PhantomCallRule())
+                q_rules.append(PhantomCallRule(vibe_dictionary=vibe_dictionary))
             if "SKY-L013" not in cfg["ignore"]:
-                q_rules.append(InsecureRandomRule())
+                q_rules.append(InsecureRandomRule(vibe_dictionary=vibe_dictionary))
             if "SKY-L014" not in cfg["ignore"]:
-                q_rules.append(HardcodedCredentialRule())
+                q_rules.append(HardcodedCredentialRule(vibe_dictionary=vibe_dictionary))
             if "SKY-L017" not in cfg["ignore"]:
                 q_rules.append(ErrorDisclosureRule())
             if "SKY-L020" not in cfg["ignore"]:
-                q_rules.append(BroadFilePermissionsRule())
+                q_rules.append(
+                    BroadFilePermissionsRule(vibe_dictionary=vibe_dictionary)
+                )
             if "SKY-L016" not in cfg["ignore"]:
-                q_rules.append(UndefinedConfigRule())
+                q_rules.append(UndefinedConfigRule(vibe_dictionary=vibe_dictionary))
             if "SKY-L024" not in cfg["ignore"]:
                 q_rules.append(StaleMockRule())
             if "SKY-L023" not in cfg["ignore"]:
-                q_rules.append(PhantomDecoratorRule())
+                q_rules.append(PhantomDecoratorRule(vibe_dictionary=vibe_dictionary))
             if "SKY-L026" not in cfg["ignore"]:
                 q_rules.append(UnfinishedGenerationRule())
             if "SKY-L027" not in cfg["ignore"]:
@@ -2687,6 +2697,10 @@ def proc_file(
                 q_rules.append(BooleanTrapRule())
             if "SKY-L030" not in cfg["ignore"]:
                 q_rules.append(BroadExceptionRule())
+            if "SKY-L031" not in cfg["ignore"]:
+                q_rules.append(
+                    MissingNetworkTimeoutRule(vibe_dictionary=vibe_dictionary)
+                )
             # SKY-D260 (prompt injection) is now handled by injection_scanner..
             if "SKY-Q501" not in cfg["ignore"]:
                 q_rules.append(GodClassRule())

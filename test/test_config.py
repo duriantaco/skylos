@@ -173,6 +173,34 @@ keep_docstring = false
         self.assertEqual(config["masking"]["bases"], [])
         self.assertFalse(config["masking"]["keep_docstring"])
 
+    def test_load_config_merges_template_and_vibe_defaults(self):
+        toml_path = self.root / "pyproject.toml"
+        toml_path.write_text(
+            """
+[tool.skylos.templates]
+security = ".skylos/templates/security.md"
+
+[tool.skylos.vibe]
+extra_phantom_names = ["verify_enterprise_auth"]
+extra_credential_names = ["tenant_signing_secret"]
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root)
+
+        self.assertEqual(
+            config["templates"]["security"], ".skylos/templates/security.md"
+        )
+        self.assertIsNone(config["templates"]["quality"])
+        self.assertEqual(
+            config["vibe"]["extra_phantom_names"], ["verify_enterprise_auth"]
+        )
+        self.assertEqual(
+            config["vibe"]["extra_credential_names"], ["tenant_signing_secret"]
+        )
+        self.assertEqual(config["vibe"]["extra_network_timeout_calls"], [])
+
     def test_load_config_whitelist_list_backcompat(self):
         toml_path = self.root / "pyproject.toml"
         toml_path.write_text(

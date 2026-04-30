@@ -1,6 +1,12 @@
+# Skylos
+**What:** Local-first scanner and PR gate for dead code, security, secrets, quality, and AI-generated-code mistakes across Python, TS/JS, Java, Go, PHP, and Rust.
+**Install:** `pip install skylos`
+**Use:** `skylos .` for dead code, `skylos . -a` for the main security/secrets/quality audit, `skylos cicd init` for CI.
+**Main commands:** `skylos init`, `skylos rules init`, `skylos defend .`, `skylos agent scan .`, `skylos debt .`.
+
 <div align="center">
     <img src="assets/DOG_1.png" alt="Skylos open-source Python SAST, dead code detection, AI code security, and CI/CD PR gate" width="260">
-    <h1>Skylos: Open-Source Python SAST, Dead Code Detection, and AI Code Security</h1>
+    <h1>Open-Source SAST, Dead Code Detection, and AI Code Security</h1>
     <h3>Find unused code, hardcoded secrets, exploitable flows, and AI-generated security regressions before they land in main.</h3>
 </div>
 
@@ -46,8 +52,8 @@
 ## What Is Skylos?
 
 Skylos is an open-source static analysis tool and CI/CD PR gate for Python,
-TypeScript, JavaScript, Java, and Go repositories. It combines dead code
-detection, security scanning, secrets detection, code quality checks, and
+TypeScript, JavaScript, Java, Go, PHP, and Rust repositories. It combines dead
+code detection, security scanning, secrets detection, code quality checks, and
 AI-generated code guardrails in one local-first workflow.
 
 If you use tools like Vulture, Bandit, Semgrep, CodeQL, or GitHub Advanced
@@ -70,6 +76,20 @@ Add security, secrets, quality, and dependency checks:
 skylos . -a
 ```
 
+Create a project config with thresholds, ignores, template hooks, and vibe
+dictionary extensions:
+
+```bash
+skylos init
+```
+
+Create a starter local rule pack:
+
+```bash
+skylos rules init
+skylos rules validate .skylos/rules/local.yml
+```
+
 Generate a GitHub Actions PR gate:
 
 ```bash
@@ -90,6 +110,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
 | Changed-lines review | `skylos . -a --diff origin/main` | Keeps findings focused on active work instead of legacy debt | [Quality gate docs](https://docs.skylos.dev/quality-gate) |
 | Runtime-assisted dead-code check | `skylos . --trace` | Uses runtime traces to reduce dynamic-code false positives | [Smart tracing](https://docs.skylos.dev/smart-tracing) |
+| Local rule pack | `skylos rules init` | Scaffolds YAML rules for project-specific security and quality checks | [Custom rules](https://docs.skylos.dev/custom-rules) |
 | AI-assisted review | `skylos agent scan .` | Static analysis plus optional LLM review and fix suggestions | [AI features](https://docs.skylos.dev/ai-features) |
 | LLM app defense | `skylos defend .` | Finds missing AI app guardrails mapped to OWASP LLM risks | [AI defense](https://docs.skylos.dev/ai-defense) |
 | Technical debt triage | `skylos debt .` | Ranks hotspots and debt trends | [Technical debt](https://docs.skylos.dev/technical-debt) |
@@ -102,7 +123,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Security flaws | SQL injection, XSS, SSRF, path traversal, command injection, unsafe deserialization | catches exploitable flows before code reaches main |
 | Secrets | API keys, tokens, private credentials, high-entropy strings | prevents credentials from leaking through commits and PRs |
 | Quality regressions | complexity, deep nesting, duplicate branches, long functions, inconsistent returns | keeps AI-assisted refactors from adding brittle code |
-| AI code mistakes | phantom security calls, missing decorators, unfinished stubs, disabled controls | catches common hallucinated or incomplete code paths |
+| AI code mistakes | phantom security calls, missing decorators, unfinished stubs, disabled controls, network calls without timeouts | catches common hallucinated or incomplete code paths |
 | LLM app risks | unsafe tool use, prompt injection exposure, missing output validation, missing rate limits | helps teams ship AI features with guardrails |
 
 See the full [Rules Reference](https://docs.skylos.dev/rules-reference).
@@ -117,7 +138,10 @@ See the full [Rules Reference](https://docs.skylos.dev/rules-reference).
 - **Local-first by default:** core static analysis does not require cloud upload
   or LLM calls.
 - **AI-era regression checks:** catches removed validation, auth, logging,
-  CSRF, rate limiting, and other controls during AI-assisted edits.
+  CSRF, rate limiting, missing timeouts, and other controls during
+  AI-assisted edits.
+- **Configurable guardrails:** extend prompt templates and vibe-code
+  dictionaries from project config without editing Skylos source.
 - **One command surface:** dead code, security, secrets, quality, technical
   debt, agent review, and AI defense live behind one CLI.
 
@@ -144,6 +168,29 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 See [Installation](https://docs.skylos.dev/installation) for source installs,
 container usage, and optional dependencies.
 
+## Configure Templates And Vibe Checks
+
+Run `skylos init` to add these sections to `pyproject.toml`:
+
+```toml
+[tool.skylos.templates]
+# security = ".skylos/templates/security.md"
+# quality = ".skylos/templates/quality.md"
+# security_audit = ".skylos/templates/security_audit.md"
+# review = ".skylos/templates/review.md"
+
+[tool.skylos.vibe]
+extra_phantom_names = ["verify_enterprise_auth"]
+extra_phantom_decorators = ["tenant_admin_required"]
+extra_credential_names = ["tenant_signing_secret"]
+extra_network_timeout_calls = ["vendor_sdk.fetch"]
+```
+
+Template files extend Skylos' built-in prompts; they do not replace the
+JSON-only output contract or untrusted-code safety rules. Vibe dictionary
+extensions let teams teach Skylos about local fake-auth helpers, project
+credential names, sensitive files, and network calls that must set timeouts.
+
 ## Language Support
 
 | Language | Dead Code | Security | Quality | Notes |
@@ -152,6 +199,8 @@ container usage, and optional dependencies.
 | TypeScript / JavaScript | Yes | Yes | Yes | Tree-sitter parsing, package graph reachability, framework conventions |
 | Java | Yes | Yes | Yes | Tree-sitter parsing and structured security-flow analysis |
 | Go | Yes | Partial | Partial | dead-code and selected security benchmark coverage |
+| PHP | Yes | Yes | Partial | PHP parser coverage plus taint-style security sinks and sources |
+| Rust | Yes | Yes | Partial | Rust parser coverage plus security sink/source checks |
 
 See [Rules Reference](https://docs.skylos.dev/rules-reference) for rule families
 and scanner scope.
