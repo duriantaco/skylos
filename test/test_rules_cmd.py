@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -34,6 +35,43 @@ def test_validate_rules_missing_file_returns_one(tmp_path):
     exit_code = rules_cmd.validate_rules(console, str(tmp_path / "missing.yml"))
 
     assert exit_code == 1
+    console.print.assert_called_once()
+
+
+def test_rules_init_creates_valid_starter_pack(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    console = Mock()
+    dest = Path(".skylos") / "rules" / "local.yml"
+
+    exit_code = rules_cmd.init_rules(console, str(dest))
+
+    assert exit_code == 0
+    written = tmp_path / dest
+    assert written.exists()
+    assert "CUSTOM-VIBE-001" in written.read_text(encoding="utf-8")
+    assert rules_cmd.validate_rules(console, str(written)) == 0
+
+
+def test_rules_init_refuses_to_overwrite_without_force(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    console = Mock()
+    dest = tmp_path / "local.yml"
+    dest.write_text("rules: []\n", encoding="utf-8")
+
+    exit_code = rules_cmd.init_rules(console, str(dest))
+
+    assert exit_code == 1
+    assert dest.read_text(encoding="utf-8") == "rules: []\n"
+
+
+def test_rules_init_rejects_paths_outside_project(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    console = Mock()
+
+    exit_code = rules_cmd.init_rules(console, "../outside.yml")
+
+    assert exit_code == 1
+    assert not (tmp_path.parent / "outside.yml").exists()
     console.print.assert_called_once()
 
 

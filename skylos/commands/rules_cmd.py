@@ -27,6 +27,18 @@ def run_rules_command(argv, *, console_factory=Console) -> int:
     p_validate = rules_sub.add_parser("validate", help="Validate a YAML rule file")
     p_validate.add_argument("path", help="Path to the YAML rule file")
 
+    p_init = rules_sub.add_parser("init", help="Create a local starter rule pack")
+    p_init.add_argument(
+        "--path",
+        default=".skylos/rules/local.yml",
+        help="Path for the starter rule pack",
+    )
+    p_init.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite the rule pack if it already exists",
+    )
+
     if not argv:
         rules_parser.print_help()
         return 0
@@ -41,9 +53,87 @@ def run_rules_command(argv, *, console_factory=Console) -> int:
         return remove_rules(console, rules_dir, rules_args.name)
     if rules_args.rules_cmd == "validate":
         return validate_rules(console, rules_args.path)
+    if rules_args.rules_cmd == "init":
+        return init_rules(console, rules_args.path, force=rules_args.force)
 
     rules_parser.print_help()
     return 0
+
+
+def _resolve_local_rule_pack_path(path_str):
+    root = Path.cwd().resolve()
+    candidate = Path(path_str).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+
+    try:
+        resolved = candidate.resolve(strict=False)
+        resolved.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise ValueError("Rule pack path must stay inside the current project") from exc
+
+    return resolved
+
+
+def init_rules(console, path_str, *, force=False):
+    try:
+        dest = _resolve_local_rule_pack_path(path_str)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+
+    if dest.exists() and not force:
+        console.print(
+            f"[red]Rule pack already exists: {dest}. Use --force to overwrite.[/red]"
+        )
+        return 1
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(  # skylos: ignore[SKY-D215] validated by _resolve_local_rule_pack_path
+        _starter_rule_pack().strip() + "\n",
+        encoding="utf-8",
+    )
+    console.print(f"[green]Created starter rule pack: {dest}[/green]")
+    console.print(f"[dim]Validate it with: skylos rules validate {dest}[/dim]")
+    return 0
+
+
+def _starter_rule_pack():
+    return """
+rules:
+  - id: CUSTOM-VIBE-001
+    name: Dynamic SQL built from request data
+    severity: HIGH
+    category: security
+    message: Request data flows into a SQL execution sink. Use parameterized queries.
+    pattern:
+      type: taint_flow
+      sources:
+        - request.args
+        - request.form
+        - request.json
+      sinks:
+        - execute
+        - raw
+      sanitizers:
+        - escape_sql
+        - parameterize
+
+  - id: CUSTOM-VIBE-002
+    name: Route missing auth decorator
+    severity: MEDIUM
+    category: security
+    message: Route handler has a route decorator but no auth decorator.
+    pattern:
+      type: function
+      decorators:
+        has_any:
+          - route
+        must_also_have_any:
+          - login_required
+          - require_auth
+          - jwt_required
+"""
 
 
 def install_rules(console, rules_dir, pack_or_url):

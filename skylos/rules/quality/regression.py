@@ -107,12 +107,40 @@ _DECORATOR_RE = re.compile(r"^[-]\s*@(\w+(?:\.\w+)*)")
 _DEPENDS_RE = re.compile(r"Depends\((\w+)\)")
 _VERIFY_TRUE_RE = re.compile(r"verify\s*=\s*True")
 _VERIFY_FALSE_RE = re.compile(r"verify\s*=\s*False")
-_CSRF_EXEMPT_RE = re.compile(r"@csrf_exempt")
+_CSRF_EXEMPT_RE = re.compile(r"^\s*@csrf_exempt\b")
 _HASH_CALL_RE = re.compile(r"(?:hashlib\.)?(\w+)\(")
 
 
 def _is_test_file(file_path: str) -> bool:
     return get_non_library_dir_kind(file_path) == "test"
+
+
+def _looks_like_metadata_string(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith(('"', "'"))
+
+
+def _has_verify_setting(line: str, pattern: re.Pattern[str]) -> bool:
+    if _looks_like_metadata_string(line):
+        return False
+    return bool(pattern.search(line))
+
+
+def _removed_csrf_protection(line: str) -> str | None:
+    if "csrf_protect" in line:
+        stripped = line.strip()
+        if (
+            stripped.startswith("@csrf_protect")
+            or "csrf_protect(" in line
+            or "import csrf_protect" in line
+        ):
+            return "csrf_protect"
+        return None
+
+    for csrf_name in _CSRF_PROTECTIONS - {"csrf_protect"}:
+        if csrf_name in line:
+            return csrf_name
+    return None
 
 
 def detect_security_regressions(
@@ -219,17 +247,16 @@ def detect_security_regressions(
                 )
 
     for line_no, line in removed_lines:
-        for csrf_name in _CSRF_PROTECTIONS:
-            if csrf_name in line:
-                findings.append(
-                    _make_finding(
-                        file_path,
-                        line_no,
-                        f"CSRF protection '{csrf_name}' was removed",
-                        control_type="csrf",
-                    )
+        csrf_name = _removed_csrf_protection(line)
+        if csrf_name:
+            findings.append(
+                _make_finding(
+                    file_path,
+                    line_no,
+                    f"CSRF protection '{csrf_name}' was removed",
+                    control_type="csrf",
                 )
-                break
+            )
 
     for line_no, line in added_lines:
         if _CSRF_EXEMPT_RE.search(line):
@@ -243,10 +270,10 @@ def detect_security_regressions(
             )
 
     has_removed_verify_true = any(
-        _VERIFY_TRUE_RE.search(line) for _, line in removed_lines
+        _has_verify_setting(line, _VERIFY_TRUE_RE) for _, line in removed_lines
     )
     for line_no, line in added_lines:
-        if _VERIFY_FALSE_RE.search(line):
+        if _has_verify_setting(line, _VERIFY_FALSE_RE):
             if has_removed_verify_true:
                 findings.append(
                     _make_finding(
