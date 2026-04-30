@@ -801,6 +801,27 @@ class Skylos:
         if rescued:
             logger.info(f"Grep verify: rescued {rescued} findings from dead code")
 
+    def _apply_dead_code_liveness(self, files):
+        try:
+            from skylos.dead_code_liveness import apply_dead_code_liveness
+
+            report = apply_dead_code_liveness(
+                self.defs,
+                self.refs,
+                getattr(self, "_project_root", Path(".")),
+                files,
+            )
+            self._dead_code_liveness_report = report
+            if report.rescued:
+                logger.info(
+                    "Dead-code liveness rescued %d definitions",
+                    len(report.rescued),
+                )
+        except Exception:
+            self._dead_code_liveness_report = None
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error(traceback.format_exc())
+
     def _mark_refs(self, progress_callback=None):
         total_refs = len(self.refs)
         if progress_callback:
@@ -1424,6 +1445,12 @@ class Skylos:
                 "languages": self._count_languages(files),
             },
         }
+
+        liveness_report = getattr(self, "_dead_code_liveness_report", None)
+        if liveness_report is not None:
+            result["analysis_summary"]["dead_code_liveness"] = (
+                liveness_report.to_dict()
+            )
 
         if workspace_inventory is not None:
             project_root = (
@@ -2393,6 +2420,10 @@ class Skylos:
             progress_callback(0, 1, Path("PHASE: mark refs"))
         self._mark_refs(progress_callback=progress_callback)
         self._mark_call_arg_method_refs()
+
+        if progress_callback:
+            progress_callback(0, 1, Path("PHASE: dead-code liveness"))
+        self._apply_dead_code_liveness(files)
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: hierarchy refs"))
