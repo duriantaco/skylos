@@ -2616,7 +2616,31 @@ def _build_main_scan_context(args):
         logger=logger,
         console=console,
         final_exclude_folders=final_exclude_folders,
+        config=project_cfg,
     )
+
+
+def _formatted_output_gate_exit_code(
+    result: dict,
+    config: dict,
+    args,
+    *,
+    provenance=None,
+) -> int:
+    """Evaluate --gate for output modes that must not print gate UI."""
+    from skylos.gatekeeper import build_summary_markdown, check_gate, write_github_summary
+
+    config = config or {}
+    gate_cfg = config.get("gate") or {}
+    strict = bool(getattr(args, "strict", False) or gate_cfg.get("strict", False))
+    passed, reasons = check_gate(result, config, strict=strict, provenance=provenance)
+
+    if bool(getattr(args, "summary", False)):
+        write_github_summary(build_summary_markdown(result, passed, reasons))
+
+    if passed or bool(getattr(args, "force", False)):
+        return 0
+    return 1
 
 
 def _apply_config_driven_analysis_flags(args, project_cfg, console):
@@ -4563,6 +4587,7 @@ def main() -> None:
     logger = context.logger
     console = context.console
     final_exclude_folders = context.final_exclude_folders
+    config = context.config
 
     if _print_main_scan_banner(args, console, final_exclude_folders):
         return
@@ -4948,6 +4973,16 @@ def main() -> None:
                 if passed is False and not args.force:
                     raise SystemExit(1)
 
+            if args.gate:
+                exit_code = _formatted_output_gate_exit_code(
+                    result,
+                    config,
+                    args,
+                    provenance=prov_report,
+                )
+                if exit_code:
+                    raise SystemExit(exit_code)
+
             return
 
         if args.llm:
@@ -4958,17 +4993,34 @@ def main() -> None:
                     console.print(f"[good]LLM report written to {args.output}[/good]")
             else:
                 print(llm_report)
+
+            if args.gate:
+                exit_code = _formatted_output_gate_exit_code(
+                    result,
+                    config,
+                    args,
+                    provenance=prov_report,
+                )
+                if exit_code:
+                    raise SystemExit(exit_code)
             return
 
         if args.github:
             _emit_github_annotations(result)
+            if args.gate:
+                exit_code = _formatted_output_gate_exit_code(
+                    result,
+                    config,
+                    args,
+                    provenance=prov_report,
+                )
+                if exit_code:
+                    raise SystemExit(exit_code)
             return
 
     except Exception as e:
         logger.error(f"Error during analysis: {e}")
         sys.exit(1)
-
-    config = load_config(project_root)
 
     if args.gate:
         should_upload_gate = bool(getattr(args, "upload", False)) and not bool(
