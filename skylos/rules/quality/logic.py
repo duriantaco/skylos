@@ -2509,6 +2509,34 @@ class DuplicateStringLiteralRule(SkylosRule):
             return True
         return False
 
+    def _is_annotation_literal(self, node, parent_map):
+        current = node
+        type_alias_node = getattr(ast, "TypeAlias", None)
+
+        while True:
+            parent = parent_map.get(id(current))
+            if parent is None:
+                return False
+
+            if isinstance(parent, ast.arg) and parent.annotation is current:
+                return True
+
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if parent.returns is current:
+                    return True
+
+            if isinstance(parent, ast.AnnAssign) and parent.annotation is current:
+                return True
+
+            if (
+                type_alias_node is not None
+                and isinstance(parent, type_alias_node)
+                and parent.value is current
+            ):
+                return True
+
+            current = parent
+
     def visit_node(self, node, context):
         if not isinstance(node, ast.Module):
             return None
@@ -2532,6 +2560,8 @@ class DuplicateStringLiteralRule(SkylosRule):
                 if self._is_docstring(child, parent_map):
                     continue
                 if self._is_structural_key_literal(child, parent_map):
+                    continue
+                if self._is_annotation_literal(child, parent_map):
                     continue
                 key = child.value
                 if key not in string_occurrences:
