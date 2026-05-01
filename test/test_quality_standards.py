@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import ast
-import json
 import textwrap
-
-import pytest
 
 from skylos.rules.quality.standards import (
     CWE_MAP,
@@ -144,6 +141,49 @@ def baz():
     pass
 '''
         assert self._run(code) is None
+
+    def test_skips_quoted_return_annotations(self):
+        code = """
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    class ForwardThing:
+        pass
+
+
+def foo() -> "ForwardThing | None":
+    return None
+"""
+        assert self._run(code, threshold=1) is None
+
+    def test_skips_quoted_argument_and_variable_annotations(self):
+        code = """
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    class ForwardThing:
+        pass
+
+
+def foo(item: "ForwardThing") -> None:
+    selected: "ForwardThing | None" = item
+    return None
+"""
+        assert self._run(code, threshold=1) is None
+
+    def test_skips_nested_quoted_annotations(self):
+        code = """
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    class ForwardThing:
+        pass
+
+
+def foo() -> list["ForwardThing"]:
+    return []
+"""
+        assert self._run(code, threshold=1) is None
 
     def test_below_threshold(self):
         code = """
