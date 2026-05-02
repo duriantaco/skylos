@@ -2329,7 +2329,7 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Strict gate: fail if ANY issue is found",
+        help="Fail if ANY issue is found; with --gate, use strict gate rules",
     )
     parser.add_argument(
         "--tui",
@@ -2741,6 +2741,19 @@ def _format_concise_results(result: dict, *, root_path=None, limit=None) -> str:
     if not lines:
         return ""
     return "\n".join(lines) + "\n"
+
+
+def _strict_scan_exit_code(result: dict, args) -> int:
+    """Evaluate --strict when it is used without --gate."""
+    if not bool(getattr(args, "strict", False)):
+        return 0
+    if bool(getattr(args, "gate", False)) or bool(getattr(args, "force", False)):
+        return 0
+
+    from skylos.gatekeeper import check_gate
+
+    passed, _reasons = check_gate(result, {}, strict=True)
+    return 0 if passed else 1
 
 
 def _apply_config_driven_analysis_flags(args, project_cfg, console):
@@ -5098,6 +5111,10 @@ def main() -> None:
                 if exit_code:
                     raise SystemExit(exit_code)
 
+            strict_exit_code = _strict_scan_exit_code(result, args)
+            if strict_exit_code:
+                raise SystemExit(strict_exit_code)
+
             return
 
         if args.concise:
@@ -5152,6 +5169,10 @@ def main() -> None:
                 )
                 if exit_code:
                     raise SystemExit(exit_code)
+
+            strict_exit_code = _strict_scan_exit_code(result, args)
+            if strict_exit_code:
+                raise SystemExit(strict_exit_code)
             return
 
         if args.github:
@@ -5165,6 +5186,10 @@ def main() -> None:
                 )
                 if exit_code:
                     raise SystemExit(exit_code)
+
+            strict_exit_code = _strict_scan_exit_code(result, args)
+            if strict_exit_code:
+                raise SystemExit(strict_exit_code)
             return
 
     except Exception as e:
@@ -5316,6 +5341,10 @@ def main() -> None:
         quality_enabled=bool(quality_count),
         quality_count=quality_count,
     )
+
+    strict_exit_code = _strict_scan_exit_code(result, args)
+    if strict_exit_code:
+        raise SystemExit(strict_exit_code)
 
     if (not args.json) and _is_tty() and (not args.upload):
         total_findings = 0
