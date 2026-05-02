@@ -108,6 +108,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | First dead-code scan | `skylos .` | Finds unused functions, classes, imports, files, and framework entrypoint mistakes | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
 | Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, and quality checks | [Security docs](https://docs.skylos.dev/security-analysis) |
 | PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
+| IDE/test-script output | `skylos --format concise src/test.py` | Prints only `file:line` findings and exits non-zero when findings exist | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | Changed-lines review | `skylos . -a --diff origin/main` | Keeps findings focused on active work instead of legacy debt | [Quality gate docs](https://docs.skylos.dev/quality-gate) |
 | Runtime-assisted dead-code check | `skylos . --trace` | Uses runtime traces to reduce dynamic-code false positives | [Smart tracing](https://docs.skylos.dev/smart-tracing) |
 | Local rule pack | `skylos rules init` | Scaffolds YAML rules for project-specific security and quality checks | [Custom rules](https://docs.skylos.dev/custom-rules) |
