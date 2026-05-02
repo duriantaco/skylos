@@ -1267,37 +1267,77 @@ def _emit_github_annotations(result, *, max_annotations=50, severity_filter=None
         )
 
 
+_DISPLAY_FILTER_SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+_DISPLAY_FILTER_CATEGORY_MAP = {
+    "unused_functions": "dead_code",
+    "unused_imports": "dead_code",
+    "unused_parameters": "dead_code",
+    "unused_variables": "dead_code",
+    "unused_classes": "dead_code",
+    "unused_fixtures": "dead_code",
+    "danger": "security",
+    "secrets": "secret",
+    "quality": "quality",
+    "circular_dependencies": "quality",
+    "custom_rules": "quality",
+    "dependency_vulnerabilities": "dependency",
+}
+
+
+def _display_filter_min_rank(severity):
+    if severity:
+        return _DISPLAY_FILTER_SEVERITY_RANK.get(str(severity).lower(), 0)
+    return 0
+
+
+def _display_filter_allowed_categories(category):
+    if category:
+        return {c.strip().lower() for c in category.split(",")}
+    return None
+
+
+def _display_filter_matches_file(item, file_filter):
+    if not file_filter:
+        return True
+    return file_filter in (item.get("file") or item.get("file_path") or "")
+
+
+def _display_filter_has_severity(items):
+    for item in items:
+        if "severity" in item:
+            return True
+    return False
+
+
+def _display_filter_passes_severity(item, min_rank):
+    sev = (item.get("severity") or "").lower()
+    return _DISPLAY_FILTER_SEVERITY_RANK.get(sev, 0) >= min_rank
+
+
+def _display_filter_items(items, file_filter, min_rank):
+    kept = items
+    if file_filter:
+        kept = [
+            item for item in kept if _display_filter_matches_file(item, file_filter)
+        ]
+
+    if min_rank > 0 and kept and _display_filter_has_severity(kept):
+        kept = [
+            item for item in kept if _display_filter_passes_severity(item, min_rank)
+        ]
+
+    return kept
+
+
 def _apply_display_filters(result, severity=None, category=None, file_filter=None):
     import copy
 
-    SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
-    if severity:
-        min_rank = SEVERITY_RANK.get(str(severity).lower(), 0)
-    else:
-        min_rank = 0
-
-    allowed_cats = None
-    if category:
-        allowed_cats = {c.strip().lower() for c in category.split(",")}
-
-    CATEGORY_MAP = {
-        "unused_functions": "dead_code",
-        "unused_imports": "dead_code",
-        "unused_parameters": "dead_code",
-        "unused_variables": "dead_code",
-        "unused_classes": "dead_code",
-        "unused_fixtures": "dead_code",
-        "danger": "security",
-        "secrets": "secret",
-        "quality": "quality",
-        "circular_dependencies": "quality",
-        "custom_rules": "quality",
-        "dependency_vulnerabilities": "dependency",
-    }
+    min_rank = _display_filter_min_rank(severity)
+    allowed_cats = _display_filter_allowed_categories(category)
 
     filtered = copy.copy(result)
 
-    for key, cat in CATEGORY_MAP.items():
+    for key, cat in _DISPLAY_FILTER_CATEGORY_MAP.items():
         items = result.get(key, []) or []
         if not items:
             continue
@@ -1306,35 +1346,7 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
             filtered[key] = []
             continue
 
-        kept = items
-        if file_filter:
-            kept = [
-                item
-                for item in kept
-                if file_filter in (item.get("file") or item.get("file_path") or "")
-            ]
-
-        if min_rank > 0:
-
-            def _passes_severity(item):
-                sev = (item.get("severity") or "").lower()
-                return SEVERITY_RANK.get(sev, 0) >= min_rank
-
-            if kept:
-                has_severity = False
-                for item in kept:
-                    if "severity" in item:
-                        has_severity = True
-                        break
-
-                if has_severity:
-                    severity_filtered = []
-                    for item in kept:
-                        if _passes_severity(item):
-                            severity_filtered.append(item)
-                    kept = severity_filtered
-
-        filtered[key] = kept
+        filtered[key] = _display_filter_items(items, file_filter, min_rank)
 
     return filtered
 
