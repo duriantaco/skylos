@@ -883,6 +883,87 @@ def test_main_json_gate_failure_exits_nonzero(monkeypatch):
     mock_print.assert_called_once_with(json.dumps(result))
 
 
+def test_main_concise_outputs_clickable_dead_code_and_exits_nonzero(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [
+            {"name": "unused_function", "file": "src/test.py", "line": 1}
+        ],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [{"name": "UnusedClass", "file": "src/test.py", "line": 5}],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["skylos", "--format", "concise", "--no-provenance", "src/test.py"],
+    )
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress") as progress,
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.render_results") as render_results,
+        patch("skylos.cli.print_badge") as print_badge,
+        patch("builtins.print") as mock_print,
+    ):
+        with pytest.raises(SystemExit) as e:
+            cli.main()
+
+    assert e.value.code == 1
+    mock_print.assert_called_once_with(
+        "src/test.py:1  unused function\nsrc/test.py:5  unused class\n",
+        end="",
+    )
+    progress.assert_not_called()
+    render_results.assert_not_called()
+    print_badge.assert_not_called()
+
+
+def test_main_concise_clean_output_prints_nothing(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["skylos", "--format", "concise", "--no-provenance", "src/test.py"],
+    )
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress") as progress,
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("builtins.print") as mock_print,
+    ):
+        cli.main()
+
+    mock_print.assert_not_called()
+    progress.assert_not_called()
+
+
 def test_main_llm_gate_failure_exits_nonzero(monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1},

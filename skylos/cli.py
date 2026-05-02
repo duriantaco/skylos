@@ -2364,6 +2364,13 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help="Output LLM-optimized report (structured findings with code context for AI agents to fix)",
     )
     parser.add_argument(
+        "--format",
+        choices=("rich", "json", "llm", "github", "concise"),
+        default="rich",
+        help="Output format. Use 'concise' for IDE-friendly file:line findings only.",
+    )
+    parser.set_defaults(concise=False)
+    parser.add_argument(
         "--comment-out",
         action="store_true",
         help="Comment out selected dead code instead of deleting item",
@@ -2541,6 +2548,34 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     return parser
 
 
+def _apply_main_output_format(parser, args):
+    output_format = getattr(args, "format", "rich")
+    flag_by_format = {
+        "json": "json",
+        "llm": "llm",
+        "github": "github",
+    }
+    selected_flags = [
+        name for name in ("json", "llm", "github") if bool(getattr(args, name, False))
+    ]
+
+    if output_format != "rich":
+        matching_flag = flag_by_format.get(output_format)
+        conflicts = [name for name in selected_flags if name != matching_flag]
+        if conflicts:
+            parser.error(
+                f"--format {output_format} cannot be combined with "
+                + ", ".join(f"--{name}" for name in conflicts)
+            )
+
+        if output_format in flag_by_format:
+            setattr(args, flag_by_format[output_format], True)
+        elif output_format == "concise":
+            args.concise = True
+
+    return args
+
+
 def _parse_main_cli_args(parser, argv):
     effective_argv = list(argv)
     addopts = _load_addopts()
@@ -2558,11 +2593,11 @@ def _parse_main_cli_args(parser, argv):
     if cmd_argv:
         args, extra = parser.parse_known_args(main_argv)
         args.command = cmd_argv + (extra or [])
-        return args
+        return _apply_main_output_format(parser, args)
 
     args = parser.parse_args(main_argv)
     args.command = []
-    return args
+    return _apply_main_output_format(parser, args)
 
 
 def _resolve_main_project_root(paths):
@@ -2643,6 +2678,71 @@ def _formatted_output_gate_exit_code(
     return 1
 
 
+def _concise_scan_exit_code(result: dict, config: dict, args, *, provenance=None) -> int:
+    if bool(getattr(args, "gate", False)):
+        return _formatted_output_gate_exit_code(
+            result,
+            config,
+            args,
+            provenance=provenance,
+        )
+
+    if not bool(getattr(args, "force", False)):
+        from skylos.gatekeeper import check_gate
+
+        passed, _reasons = check_gate(result, {}, strict=True)
+        return 0 if passed else 1
+
+    return 0
+
+
+def _concise_line(item: dict, label: str, root_path=None) -> str:
+    file_path = item.get("file") or item.get("file_path") or "?"
+    line = item.get("line") or item.get("line_number") or 1
+    try:
+        line = max(1, int(line))
+    except (TypeError, ValueError):
+        line = 1
+    return f"{_shorten_path(file_path, root_path)}:{line}  {label}"
+
+
+def _format_concise_results(result: dict, *, root_path=None, limit=None) -> str:
+    lines: list[str] = []
+    categories = (
+        ("unused_functions", "unused function"),
+        ("unused_imports", "unused import"),
+        ("unused_classes", "unused class"),
+        ("unused_variables", "unused variable"),
+        ("unused_parameters", "unused parameter"),
+        ("unused_files", "unused file"),
+        ("unused_fixtures", "unused fixture"),
+        ("danger", "security issue"),
+        ("quality", "quality issue"),
+        ("secrets", "secret"),
+        ("custom_rules", "custom rule"),
+        ("dependency_vulnerabilities", "dependency vulnerability"),
+    )
+
+    for category, fallback_label in categories:
+        items = list(result.get(category, []) or [])
+        if limit is not None:
+            items = items[:limit]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            label = (
+                item.get("message")
+                or item.get("msg")
+                or item.get("detail")
+                or fallback_label
+            )
+            lines.append(_concise_line(item, str(label), root_path=root_path))
+
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
 def _apply_config_driven_analysis_flags(args, project_cfg, console):
     security_contracts_configured = bool(project_cfg.get("security_contracts") or [])
     explicit_category_flags = any(
@@ -2661,7 +2761,11 @@ def _apply_config_driven_analysis_flags(args, project_cfg, console):
             args.quality = True
             enabled_from_policy.append("quality")
 
-        if enabled_from_policy and not getattr(args, "json", False):
+        if (
+            enabled_from_policy
+            and not getattr(args, "json", False)
+            and not getattr(args, "concise", False)
+        ):
             console.print(
                 "[brand]Using synced/local Skylos policy:[/brand] enabling "
                 + ", ".join(enabled_from_policy)
@@ -2673,7 +2777,7 @@ def _apply_config_driven_analysis_flags(args, project_cfg, console):
     # always run danger analysis so the contracts cannot be silently skipped.
     if not getattr(args, "danger", False) and security_contracts_configured:
         args.danger = True
-        if not getattr(args, "json", False):
+        if not getattr(args, "json", False) and not getattr(args, "concise", False):
             console.print(
                 "[brand]Security contracts configured:[/brand] enabling danger analysis automatically."
             )
@@ -2684,7 +2788,7 @@ def _print_main_scan_banner(args, console, final_exclude_folders):
         _print_default_excludes(console)
         return True
 
-    if args.json:
+    if args.json or getattr(args, "concise", False):
         return False
 
     banner = (
@@ -2713,9 +2817,10 @@ def _print_main_scan_banner(args, console, final_exclude_folders):
 
 def _run_pre_analysis_steps(args, project_root, console):
     pytest_fixtures_ok = None
+    quiet_output = bool(args.json or getattr(args, "concise", False))
 
     if args.coverage:
-        if not args.json:
+        if not quiet_output:
             console.print("[brand]Running tests with coverage...[/brand]")
 
         cmd = ["coverage", "run", "-m", "pytest", "-q"]
@@ -2735,7 +2840,7 @@ def _run_pre_analysis_steps(args, project_root, console):
         )
 
         if pytest_result.returncode != 0:
-            if not args.json:
+            if not quiet_output:
                 console.print("[warn]pytest failed, trying unittest...[/warn]")
             subprocess.run(
                 ["coverage", "run", "-m", "unittest", "discover"],
@@ -2743,11 +2848,11 @@ def _run_pre_analysis_steps(args, project_root, console):
                 capture_output=True,
             )
 
-        if not args.json:
+        if not quiet_output:
             console.print("[good]Coverage data collected[/good]")
 
     if args.trace:
-        if not args.json:
+        if not quiet_output:
             console.print("[brand]Running tests with call tracing...[/brand]")
 
         trace_script = textwrap.dedent(f"""\
@@ -2787,7 +2892,7 @@ sys.exit(ret)
 
         trace_file = project_root / ".skylos_trace"
 
-        if trace_result.returncode != 0 and not args.json:
+        if trace_result.returncode != 0 and not quiet_output:
             if trace_file.exists() and trace_file.stat().st_size > 0:
                 console.print(
                     "[warn]Tests had failures, but trace data was collected.[/warn]"
@@ -2798,11 +2903,11 @@ sys.exit(ret)
                 )
                 if trace_result.stderr:
                     console.print(trace_result.stderr)
-        elif not args.json:
+        elif not quiet_output:
             console.print("[good]Trace data collected[/good]")
 
     if args.pytest_fixtures and (not args.coverage) and (not args.trace):
-        if not args.json:
+        if not quiet_output:
             console.print(
                 "[brand]Running tests to detect unused pytest fixtures...[/brand]"
             )
@@ -2828,7 +2933,7 @@ sys.exit(ret)
 
         pytest_fixtures_ok = fixture_result.returncode == 0
 
-        if not args.json:
+        if not quiet_output:
             if pytest_fixtures_ok:
                 console.print("[good]Unused fixture report collected[/good]")
             else:
@@ -2837,7 +2942,7 @@ sys.exit(ret)
                 )
 
     custom_rules_data = None
-    if not args.json:
+    if not quiet_output:
         try:
             from skylos.sync import get_custom_rules, get_token
 
@@ -2866,18 +2971,18 @@ sys.exit(ret)
                 changed_files = set()
                 for line in diff_result.stdout.strip().splitlines():
                     changed_files.add(str((project_root / line).resolve()))
-                if not args.json:
+                if not quiet_output:
                     console.print(
                         f"[brand]--diff-base:[/brand] {len(changed_files)} changed files "
                         f"(full scan on changed, defs/refs-only on rest)"
                     )
-            elif not args.json:
+            elif not quiet_output:
                 console.print(
                     f"[warn]git diff failed: {diff_result.stderr.strip()}. "
                     f"Running full analysis.[/warn]"
                 )
         except FileNotFoundError:
-            if not args.json:
+            if not quiet_output:
                 console.print("[warn]git not found. Running full analysis.[/warn]")
 
     return SimpleNamespace(
@@ -4615,8 +4720,16 @@ def main() -> None:
                 enable_sca=bool(args.sca),
             )
 
-        if args.json:
-            result_json = run_main_analysis()
+        if args.json or args.concise:
+            analyzer_logger = logging.getLogger("Skylos")
+            analyzer_logger_level = analyzer_logger.level
+            if args.concise:
+                analyzer_logger.setLevel(logging.WARNING)
+            try:
+                result_json = run_main_analysis()
+            finally:
+                if args.concise:
+                    analyzer_logger.setLevel(analyzer_logger_level)
         else:
             with Progress(
                 SpinnerColumn(style="brand"),
@@ -4728,12 +4841,12 @@ def main() -> None:
                             items, changed_ranges
                         )
                 result_json = json.dumps(result)
-                if not args.json:
+                if not args.json and not args.concise:
                     console.print(
                         f"[brand]--diff:[/brand] filtered to {len(changed_ranges)} changed line ranges "
                         f"from {base_ref}"
                     )
-            elif not args.json:
+            elif not args.json and not args.concise:
                 console.print(
                     f"[warn]--diff: no changed lines found vs {base_ref}[/warn]"
                 )
@@ -4767,7 +4880,7 @@ def main() -> None:
                 except Exception as e:
                     result["unused_fixtures"] = []
                     result["unused_fixtures_counts"] = {}
-                    if args.verbose and not args.json:
+                    if args.verbose and not args.json and not args.concise:
                         console.print(
                             f"[warn]Could not read unused fixture report: {e}[/warn]"
                         )
@@ -4775,7 +4888,7 @@ def main() -> None:
                 result["unused_fixtures"] = []
                 result["unused_fixtures_counts"] = {}
 
-        if args.verify and (not args.json):
+        if args.verify and (not args.json) and (not args.concise):
             try:
                 from skylos.api import verify_report
 
@@ -4792,7 +4905,9 @@ def main() -> None:
 
         prov_report = None
         result["provenance"] = None
-        _skip_provenance = getattr(args, "no_provenance", False)
+        _skip_provenance = getattr(args, "no_provenance", False) or getattr(
+            args, "concise", False
+        )
         if not _skip_provenance:
             try:
                 from skylos.provenance import (
@@ -4845,7 +4960,7 @@ def main() -> None:
 
                 result_json = json.dumps(result)
 
-                if not args.json:
+                if not args.json and not args.concise:
                     ai_count = ai_stats["ai_authored_findings"]
                     ai_pct = ai_stats["ai_authored_pct"]
                     if ai_count > 0:
@@ -4983,6 +5098,40 @@ def main() -> None:
                 if exit_code:
                     raise SystemExit(exit_code)
 
+            return
+
+        if args.concise:
+            display_result = result
+            _cli_severity = getattr(args, "severity", None)
+            _cli_category = getattr(args, "category", None)
+            _cli_file_filter = getattr(args, "file_filter", None)
+            _cli_limit = getattr(args, "limit", None)
+            if _cli_severity or _cli_category or _cli_file_filter:
+                display_result = _apply_display_filters(
+                    result,
+                    severity=_cli_severity,
+                    category=_cli_category,
+                    file_filter=_cli_file_filter,
+                )
+
+            concise_output = _format_concise_results(
+                display_result,
+                root_path=project_root,
+                limit=_cli_limit,
+            )
+            if args.output:
+                pathlib.Path(args.output).write_text(concise_output, encoding="utf-8")
+            elif concise_output:
+                print(concise_output, end="")
+
+            exit_code = _concise_scan_exit_code(
+                result,
+                config,
+                args,
+                provenance=prov_report,
+            )
+            if exit_code:
+                raise SystemExit(exit_code)
             return
 
         if args.llm:
