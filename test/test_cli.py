@@ -532,6 +532,68 @@ def test_comment_out_unused_function_handles_exception_and_returns_false():
     assert logerr.called
 
 
+def test_generate_llm_report_formats_findings_and_defaults_dead_code(tmp_path):
+    src = tmp_path / "app.py"
+    src.write_text(
+        "\n".join(
+            [
+                "def live():",
+                "    value = input()",
+                "    eval(value)",
+                "    return value",
+                "",
+                "def unused():",
+                "    return 2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    result = {
+        "danger": [
+            {
+                "rule_id": "SKY-D201",
+                "severity": "HIGH",
+                "message": "eval used",
+                "file": str(src),
+                "line": 3,
+                "name": "live",
+            }
+        ],
+        "secrets": [],
+        "quality": [
+            {
+                "rule_id": "SKY-Q301",
+                "severity": "MEDIUM",
+                "message": "complex",
+                "file": str(src),
+                "line": 1,
+                "name": "live",
+            }
+        ],
+        "custom_rules": [],
+        "unused_functions": [
+            {"name": "unused", "file": str(src), "line": 6, "why_unused": ["no refs"]}
+        ],
+        "unused_imports": [],
+        "unused_classes": [],
+        "unused_variables": [],
+        "unused_parameters": [],
+        "unused_files": [],
+    }
+
+    report = cli._generate_llm_report(result, tmp_path)
+
+    assert report.startswith("# Skylos Report — 3 findings\n\n")
+    assert "## 1. SKY-D201 | HIGH | Security\n" in report
+    assert "## 2. SKY-Q301 | MEDIUM | Quality\n" in report
+    assert "## 3. SKY-DC001 | MEDIUM | Dead Code\n" in report
+    assert ">>>    3 |     eval(value)" in report
+    assert "Unused function 'unused' is never used (no refs)" in report
+    assert result["unused_functions"][0]["rule_id"] == "SKY-DC001"
+    assert result["unused_functions"][0]["severity"] == "MEDIUM"
+
+
 def test_render_results_unused_table_includes_confidence_column_and_formats():
     console = Mock()
 
