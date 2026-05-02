@@ -1060,104 +1060,127 @@ def print_badge(
     console.print("```")
 
 
-def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
-    sections = []
-    finding_num = 0
+_LLM_REPORT_CATEGORIES = [
+    ("danger", "Security"),
+    ("secrets", "Secrets"),
+    ("quality", "Quality"),
+    ("custom_rules", "Custom Rules"),
+]
+_LLM_REPORT_DEAD_CODE_META = {
+    "unused_functions": ("SKY-DC001", "MEDIUM", "Unused function"),
+    "unused_imports": ("SKY-DC002", "LOW", "Unused import"),
+    "unused_classes": ("SKY-DC003", "MEDIUM", "Unused class"),
+    "unused_variables": ("SKY-DC004", "LOW", "Unused variable"),
+    "unused_parameters": ("SKY-DC005", "LOW", "Unused parameter"),
+    "unused_files": ("SKY-DC006", "LOW", "Empty file"),
+}
+_LLM_REPORT_SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
+
+def _default_dead_code_llm_fields(finding, rule_id, severity, human_label):
+    if not finding.get("message"):
+        name = finding.get("name") or finding.get("simple_name") or ""
+        why = finding.get("why_unused")
+        if why:
+            finding["message"] = (
+                f"{human_label} '{name}' is never used ({', '.join(why)})"
+            )
+        else:
+            finding["message"] = f"{human_label} '{name}' is never used"
+    if not finding.get("rule_id"):
+        finding["rule_id"] = rule_id
+    if not finding.get("severity"):
+        finding["severity"] = severity
+
+
+def _collect_llm_report_findings(result: dict):
     all_findings = []
-    for category, label in [
-        ("danger", "Security"),
-        ("secrets", "Secrets"),
-        ("quality", "Quality"),
-        ("custom_rules", "Custom Rules"),
-    ]:
-        for f in result.get(category, []):
-            all_findings.append((f, label))
+    for category, label in _LLM_REPORT_CATEGORIES:
+        for finding in result.get(category, []):
+            all_findings.append((finding, label))
 
-    _dead_code_meta = {
-        "unused_functions": ("SKY-DC001", "MEDIUM", "Unused function"),
-        "unused_imports": ("SKY-DC002", "LOW", "Unused import"),
-        "unused_classes": ("SKY-DC003", "MEDIUM", "Unused class"),
-        "unused_variables": ("SKY-DC004", "LOW", "Unused variable"),
-        "unused_parameters": ("SKY-DC005", "LOW", "Unused parameter"),
-        "unused_files": ("SKY-DC006", "LOW", "Empty file"),
-    }
-    for category in _dead_code_meta:
-        rule_id, sev, human_label = _dead_code_meta[category]
-        for f in result.get(category, []):
-            if not f.get("message"):
-                name = f.get("name") or f.get("simple_name") or ""
-                why = f.get("why_unused")
-                if why:
-                    f["message"] = (
-                        f"{human_label} '{name}' is never used ({', '.join(why)})"
-                    )
-                else:
-                    f["message"] = f"{human_label} '{name}' is never used"
-            if not f.get("rule_id"):
-                f["rule_id"] = rule_id
-            if not f.get("severity"):
-                f["severity"] = sev
-            all_findings.append((f, "Dead Code"))
+    for category in _LLM_REPORT_DEAD_CODE_META:
+        rule_id, severity, human_label = _LLM_REPORT_DEAD_CODE_META[category]
+        for finding in result.get(category, []):
+            _default_dead_code_llm_fields(finding, rule_id, severity, human_label)
+            all_findings.append((finding, "Dead Code"))
 
+    return all_findings
+
+
+def _llm_report_sort_key(finding_with_label):
+    finding, _label = finding_with_label
+    return _LLM_REPORT_SEVERITY_ORDER.get(finding.get("severity", "LOW"), 4)
+
+
+def _llm_report_code_block(
+    file_path: str, line: int, project_root: pathlib.Path, file_cache: dict
+) -> str:
+    try:
+        abs_path = pathlib.Path(file_path)
+        if not abs_path.is_absolute():
+            abs_path = project_root / file_path
+        cache_key = str(abs_path)
+        if cache_key not in file_cache:
+            if abs_path.is_file():
+                file_cache[cache_key] = abs_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+            else:
+                file_cache[cache_key] = None
+        src_lines = file_cache[cache_key]
+        if src_lines is not None:
+            start = max(0, line - 3)
+            end = min(len(src_lines), line + 4)
+            context_lines = []
+            for i in range(start, end):
+                marker = ">>>" if i == line - 1 else "   "
+                context_lines.append(f"{marker} {i + 1:4d} | {src_lines[i]}")
+            if context_lines:
+                return "\n```\n" + "\n".join(context_lines) + "\n```\n"
+    except Exception:
+        pass
+    return ""
+
+
+def _format_llm_report_section(finding_num, finding, label, code_block):
+    rule_id = finding.get("rule_id", "")
+    severity = finding.get("severity", "INFO")
+    name = finding.get("name") or finding.get("simple_name", "")
+    file_path = finding.get("file", "")
+    line = finding.get("line", 0)
+    message = finding.get("message", "")
+
+    return (
+        f"\n## {finding_num}. {rule_id} | {severity} | {label}\n"
+        f"File: {file_path}:{line}\n"
+        f"Name: {name}\n"
+        f"{code_block}\n"
+        f"Problem: {message}\n"
+        f"\n---\n"
+    )
+
+
+def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
+    all_findings = _collect_llm_report_findings(result)
     if not all_findings:
         return "# Skylos Report\n\nNo findings.\n"
 
-    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-    all_findings.sort(key=lambda x: severity_order.get(x[0].get("severity", "LOW"), 4))
+    all_findings.sort(key=_llm_report_sort_key)
 
-    header = (
+    sections = [
         f"# Skylos Report — {len(all_findings)} findings\n\n"
         f"Fix each finding below. The code context shows the problematic lines.\n\n---\n"
-    )
-    sections.append(header)
+    ]
+    file_cache = {}
 
-    _file_cache = {}
-
-    for finding, label in all_findings:
-        finding_num += 1
-        rule_id = finding.get("rule_id", "")
-        severity = finding.get("severity", "INFO")
-        name = finding.get("name") or finding.get("simple_name", "")
+    for finding_num, (finding, label) in enumerate(all_findings, 1):
         file_path = finding.get("file", "")
         line = finding.get("line", 0)
-        message = finding.get("message", "")
-
-        code_block = ""
-        try:
-            abs_path = pathlib.Path(file_path)
-            if not abs_path.is_absolute():
-                abs_path = project_root / file_path
-            cache_key = str(abs_path)
-            if cache_key not in _file_cache:
-                if abs_path.is_file():
-                    _file_cache[cache_key] = abs_path.read_text(
-                        encoding="utf-8", errors="replace"
-                    ).splitlines()
-                else:
-                    _file_cache[cache_key] = None
-            src_lines = _file_cache[cache_key]
-            if src_lines is not None:
-                start = max(0, line - 3)
-                end = min(len(src_lines), line + 4)
-                context_lines = []
-                for i in range(start, end):
-                    marker = ">>>" if i == line - 1 else "   "
-                    context_lines.append(f"{marker} {i + 1:4d} | {src_lines[i]}")
-                if context_lines:
-                    code_block = "\n```\n" + "\n".join(context_lines) + "\n```\n"
-        except Exception:
-            pass
-
-        section = (
-            f"\n## {finding_num}. {rule_id} | {severity} | {label}\n"
-            f"File: {file_path}:{line}\n"
-            f"Name: {name}\n"
-            f"{code_block}\n"
-            f"Problem: {message}\n"
-            f"\n---\n"
+        code_block = _llm_report_code_block(file_path, line, project_root, file_cache)
+        sections.append(
+            _format_llm_report_section(finding_num, finding, label, code_block)
         )
-        sections.append(section)
 
     return "".join(sections)
 
