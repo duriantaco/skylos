@@ -594,6 +594,9 @@ def test_create_precommit_config_limits_gate_to_pre_commit(tmp_path, monkeypatch
     assert "additional_dependencies:" in content
     assert '- "rich>=14.0.0"' in content
     assert '- "libcst>=1.8.2"' in content
+    assert '- "tree-sitter-php>=0.24.1"' in content
+    assert '- "tree-sitter-rust>=0.24.2"' in content
+    assert '- "tomli>=2.0.1; python_version < \'3.11\'"' in content
     assert 'args: ["agent", "pre-commit", "."]' in content
     assert "--gate" not in content
 

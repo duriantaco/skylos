@@ -88,6 +88,27 @@ def test_gate_interaction_with_summary(clean_results):
         os.unlink(summary_path)
 
 
+def test_gate_interaction_advisory_returns_success(failing_results):
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        summary_path = f.name
+
+    try:
+        os.environ["GITHUB_STEP_SUMMARY"] = summary_path
+        exit_code = run_gate_interaction(
+            result=failing_results,
+            config={},
+            summary=True,
+            advisory=True,
+        )
+        assert exit_code == 0
+        content = open(summary_path).read()
+        assert "ADVISORY - WOULD FAIL" in content
+        assert "Advisory Reasons" in content
+    finally:
+        os.environ.pop("GITHUB_STEP_SUMMARY", None)
+        os.unlink(summary_path)
+
+
 def test_summary_markdown_passed(clean_results):
     md = build_summary_markdown(clean_results, True, [])
     assert "PASSED" in md

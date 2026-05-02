@@ -78,6 +78,15 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
         }
     ],
     "SKY-L031": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
+    "SKY-T101": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
+    "SKY-T102": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
+    "SKY-F101": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
+    "SKY-F102": [{"id": "CWE-862", "name": "Missing Authorization"}],
+    "SKY-R101": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
+    "SKY-R102": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
+    "SKY-R103": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
+    "SKY-R104": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
+    "SKY-R105": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     # Complexity / structure
     "SKY-Q301": [{"id": "CWE-1121", "name": "Excessive McCabe Cyclomatic Complexity"}],
     "SKY-Q302": [{"id": "CWE-1124", "name": "Excessively Deep Nesting"}],
@@ -85,6 +94,7 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
         {"id": "CWE-670", "name": "Always-Incorrect Control Flow Implementation"}
     ],
     "SKY-Q306": [{"id": "CWE-1121", "name": "Excessive McCabe Cyclomatic Complexity"}],
+    "SKY-C401": [{"id": "CWE-1041", "name": "Use of Redundant Code"}],
     "SKY-L021": [
         {"id": "CWE-693", "name": "Protection Mechanism Failure"},
         {"id": "CWE-862", "name": "Missing Authorization"},
@@ -93,6 +103,10 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     "SKY-Q501": [{"id": "CWE-1093", "name": "Excessively Complex Data Representation"}],
     "SKY-Q701": [{"id": "CWE-1047", "name": "Modules with Circular Dependencies"}],
     "SKY-Q702": [{"id": "CWE-1093", "name": "Excessively Complex Data Representation"}],
+    "SKY-Q801": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
+    "SKY-Q802": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
+    "SKY-Q803": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
+    "SKY-Q804": [{"id": "CWE-704", "name": "Incorrect Type Conversion or Cast"}],
     "SKY-C303": [
         {
             "id": "CWE-1064",
@@ -109,8 +123,11 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     "SKY-P401": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
     "SKY-P402": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
     "SKY-P403": [{"id": "CWE-407", "name": "Inefficient Algorithmic Complexity"}],
+    "SKY-Q402": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
+    "SKY-U005": [{"id": "CWE-1104", "name": "Use of Unmaintained Third Party Components"}],
     # Unreachable
     "SKY-UC001": [{"id": "CWE-561", "name": "Dead Code"}],
+    "SKY-UC002": [{"id": "CWE-561", "name": "Dead Code"}],
 }
 
 STANDARD_REFS: dict[str, list[str]] = {
@@ -119,10 +136,20 @@ STANDARD_REFS: dict[str, list[str]] = {
     "SKY-Q302": ["ISO/IEC 5055:2021 §6.3.5"],
     "SKY-Q305": ["Control-flow correctness: duplicate branch condition/body"],
     "SKY-Q501": ["CK Metrics: WMC (Weighted Methods per Class)"],
+    "SKY-C401": ["Clone detection: duplicated implementation fragments"],
     "SKY-Q701": ["CK Metrics: CBO (Coupling Between Objects)", "ISO/IEC 9126"],
     "SKY-Q702": ["CK Metrics: LCOM (Lack of Cohesion of Methods)", "ISO/IEC 9126"],
     "SKY-C303": ["ISO/IEC 5055:2021 §6.3.2"],
     "SKY-C304": ["ISO/IEC 5055:2021 §6.3.3"],
+    "SKY-T101": ["PEP 484", "Typed public API parameters"],
+    "SKY-T102": ["PEP 484", "Typed public API returns"],
+    "SKY-F101": ["FastAPI response model / return typing practice"],
+    "SKY-F102": ["OWASP API1: Broken Object Level Authorization"],
+    "SKY-R101": ["Repository policy: Python type checking"],
+    "SKY-R102": ["Repository policy: Python linting"],
+    "SKY-R103": ["Repository policy: Skylos quality gate"],
+    "SKY-R104": ["Repository policy: pre-commit"],
+    "SKY-R105": ["Repository policy: TypeScript type checking"],
 }
 
 

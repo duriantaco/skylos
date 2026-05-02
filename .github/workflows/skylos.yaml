@@ -1,4 +1,4 @@
-name: Skylos Deadcode Scan
+name: Skylos Advisory Scan
 
 on:
   pull_request:
@@ -9,10 +9,10 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    env:
-      SKYLOS_STRICT: ${{ vars.SKYLOS_STRICT || 'false' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -37,32 +37,45 @@ jobs:
           python -c "import skylos; print('skylos from:', skylos.__file__)"
           python -c "import skylos.visitors.languages; print('languages OK')"
 
+      - name: Resolve diff base
+        id: diff
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "base=origin/${{ github.base_ref || 'main' }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            echo "base=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "base=origin/${{ github.ref_name || 'main' }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run Skylos
         id: scan
         env:
           REPORT: skylos_${{ github.run_number }}_${{ github.sha }}.json
+          DIFF_BASE: ${{ steps.diff.outputs.base }}
+        shell: bash
         run: |
           echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
-          .venv/bin/python -m skylos.cli . --json > "$REPORT"
+          if [ -n "$DIFF_BASE" ]; then
+            .venv/bin/python -m skylos.cli . --quality --danger --secrets --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
+          else
+            .venv/bin/python -m skylos.cli . --quality --danger --secrets --baseline --json -o "$REPORT"
+          fi
 
-      - name: Fail if there are findings
-        continue-on-error: ${{ env.SKYLOS_STRICT != 'true' }}
+      - name: Report findings (advisory)
+        if: always()
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
         run: |
-          .venv/bin/python - << 'PY'
-          import json, sys, os
-          report = os.environ["REPORT"]
-          data = json.load(open(report, "r", encoding="utf-8"))
-          count = 0
-          for value in data.values():
-              if isinstance(value, list):
-                  count += len(value)
-          print(f"Findings: {count}")
-          if count > 0:
-              print(f"::warning title=Skylos findings::{count} potential issues found. See {report}")
-          sys.exit(1 if count > 0 else 0)
-          PY
+          .venv/bin/python -m skylos.cli cicd gate --input "$REPORT" --summary --advisory
+
+      - name: GitHub annotations
+        if: always()
+        env:
+          REPORT: ${{ steps.scan.outputs.REPORT }}
+        run: |
+          .venv/bin/python -m skylos.cli cicd annotate --input "$REPORT"
 
       - name: Upload report artifact
         if: always()

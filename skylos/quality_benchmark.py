@@ -15,8 +15,12 @@ QUALITY_TAXONOMY: dict[str, str] = {
     "complexity": "Branching, nesting, and path explosion hotspots.",
     "control_flow": "Inconsistent returns, unreachable code, and path logic mistakes.",
     "exception_handling": "Swallowed errors, broad suppression, and silent failure.",
+    "framework": "Framework-specific route and handler practices.",
     "maintainability": "Long functions and patterns that become hard to review or change.",
     "precision_guard": "Clean cases that should stay free of noisy quality findings.",
+    "repo_policy": "Repository-level lint, type-check, gate, and hook policy.",
+    "security_practice": "Security-oriented coding practices that support safe defaults.",
+    "typing": "Type annotation coverage and type-check policy.",
 }
 
 IMPORTANCE_WEIGHTS = {

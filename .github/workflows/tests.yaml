@@ -66,7 +66,7 @@ jobs:
       - name: Run fixture scan
         run: |
           docker run --rm \
-            -v "$PWD/quality_benchmarks/fixtures/argument_overload:/work" \
+            -v "$PWD/benchmarks/quality/fixtures/argument_overload:/work" \
             -w /work \
             skylos:test \
             . --json --no-provenance > /tmp/skylos-docker-smoke.json

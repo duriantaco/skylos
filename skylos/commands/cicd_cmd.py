@@ -125,6 +125,11 @@ def run_cicd_command(
         help="Write markdown to $GITHUB_STEP_SUMMARY",
     )
     p_ci_gate.add_argument(
+        "--advisory",
+        action="store_true",
+        help="Report gate failures but return exit code 0 so CI can notify without blocking.",
+    )
+    p_ci_gate.add_argument(
         "--diff-base",
         default=None,
         help="Base ref for provenance detection (default: auto-detect)",
@@ -207,6 +212,7 @@ def run_cicd_command(
             strict=cicd_args.strict,
             summary=cicd_args.summary,
             provenance=prov_report,
+            advisory=cicd_args.advisory,
         )
 
     if cicd_args.cicd_cmd == "annotate":
