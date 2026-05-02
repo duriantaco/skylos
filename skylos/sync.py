@@ -355,11 +355,11 @@ def cmd_connect(token_arg=None):
 
     env_token = os.environ.get("SKYLOS_TOKEN", "").strip()
     if env_token and not token_arg:
-        print(f"⚠️  Warning: SKYLOS_TOKEN environment variable is set!")
+        print("⚠️  Warning: SKYLOS_TOKEN environment variable is set!")
         print(f"   Current value: {mask_token(env_token)}")
-        print(f"   To use a different token, either:")
-        print(f"   1. Run: unset SKYLOS_TOKEN")
-        print(f"   2. Pass token as argument: skylos sync connect <token>")
+        print("   To use a different token, either:")
+        print("   1. Run: unset SKYLOS_TOKEN")
+        print("   2. Pass token as argument: skylos sync connect <token>")
         print()
         response = input("Use existing env var token? (y/n): ").strip().lower()
         if response != "y":
@@ -397,7 +397,7 @@ def cmd_connect(token_arg=None):
     org = context["org"]
     plan = context["plan"]
 
-    print(f"\n✓ Connected!\n")
+    print("\n✓ Connected!\n")
     print(f"  Project:      {project.get('name', 'Unknown')}")
     print(f"  Organization: {org.get('name', 'Unknown')}")
     print(f"  Plan:         {plan.capitalize()}")
@@ -427,7 +427,7 @@ def cmd_status():
         print("Run 'skylos login' or 'skylos sync connect' to connect.\n")
         return
 
-    print(f"\nChecking connection...")
+    print("\nChecking connection...")
 
     try:
         info = api_get("/api/sync/whoami", token)
@@ -442,7 +442,7 @@ def cmd_status():
     org = info.get("organization", {})
     plan = info.get("plan", "free")
 
-    print(f"\n✓ Connected\n")
+    print("\n✓ Connected\n")
     print(f"  Project:      {project.get('name', 'Unknown')}")
     print(f"  Organization: {org.get('name', 'Unknown')}")
     print(f"  Plan:         {plan.capitalize()}")
@@ -613,6 +613,9 @@ PRECOMMIT_HOOK_DEPENDENCIES = [
     "tree-sitter-typescript>=0.23.2",
     "tree-sitter-go>=0.23.0",
     "tree-sitter-java>=0.23.0",
+    "tree-sitter-php>=0.24.1",
+    "tree-sitter-rust>=0.24.2",
+    "tomli>=2.0.1; python_version < '3.11'",
     "pyyaml",
     "networkx",
     "pyperclip",
@@ -726,7 +729,7 @@ def cmd_setup(token_arg=None):
         print("Error: No token provided.")
         return
 
-    print(f"\nConnecting...")
+    print("\nConnecting...")
     try:
         context = _verify_project_context(token)
     except AuthError as e:
@@ -734,7 +737,6 @@ def cmd_setup(token_arg=None):
         return
 
     project = context["project"]
-    org = context["org"]
     plan = context["plan"]
 
     project_id = context["project_id"]
@@ -746,7 +748,7 @@ def cmd_setup(token_arg=None):
 
     _save_repo_link_and_token(repo_root, token, context)
 
-    print(f"✓ Connected!\n")
+    print("✓ Connected!\n")
     print(f"  Project: {project.get('name', 'Unknown')}")
     print(f"  Plan: {plan.capitalize()}\n")
 
@@ -962,7 +964,7 @@ def cmd_upgrade():
         print("Visit: https://skylos.dev/pricing\n")
         return
 
-    print(f"✓ Pro plan detected!\n")
+    print("✓ Pro plan detected!\n")
     print("Installing Pro features...\n")
 
     git_dir = Path(".git")

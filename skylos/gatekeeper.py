@@ -446,15 +446,15 @@ def _build_summary_rows(
     ]
 
 
-def _append_failure_reasons(lines, reasons):
+def _append_failure_reasons(lines, reasons, *, heading="Failure Reasons"):
     if reasons:
         lines.append("")
-        lines.append("### Failure Reasons")
+        lines.append(f"### {heading}")
         for reason in reasons:
             lines.append(f"- {reason}")
 
 
-def build_summary_markdown(results, passed, reasons):
+def build_summary_markdown(results, passed, reasons, *, advisory=False):
     results = results or {}
 
     danger = results.get("danger", []) or []
@@ -465,8 +465,12 @@ def build_summary_markdown(results, passed, reasons):
     high_count = len(high_issues)
     dead_code_count = _count_dead_code_findings(results)
 
-    status = "PASSED" if passed else "FAILED"
-    icon = "✅" if passed else "❌"
+    if advisory and not passed:
+        status = "ADVISORY - WOULD FAIL"
+        icon = "⚠️"
+    else:
+        status = "PASSED" if passed else "FAILED"
+        icon = "✅" if passed else "❌"
 
     lines = [
         "## Skylos Analysis Results",
@@ -484,7 +488,11 @@ def build_summary_markdown(results, passed, reasons):
         "",
         f"**Result: {icon} {status}**",
     ]
-    _append_failure_reasons(lines, reasons)
+    _append_failure_reasons(
+        lines,
+        reasons,
+        heading="Advisory Reasons" if advisory and not passed else "Failure Reasons",
+    )
 
     return "\n".join(lines)
 
@@ -544,6 +552,14 @@ def _handle_failed_gate(console, reasons, *, force, strict):
     return 1
 
 
+def _handle_advisory_gate(console, reasons):
+    console.print("\n[bold yellow]Quality Gate: ADVISORY[/bold yellow]")
+    for reason in reasons or []:
+        console.print(f"   • {reason}")
+    console.print("[yellow]Advisory mode enabled; CI is allowed to pass.[/yellow]")
+    return 0
+
+
 def run_gate_interaction(
     *,
     results=None,
@@ -554,6 +570,7 @@ def run_gate_interaction(
     command_to_run=None,
     summary=False,
     provenance=None,
+    advisory=False,
 ):
     console = Console()
 
@@ -567,10 +584,13 @@ def run_gate_interaction(
     passed, reasons = _resolve_gate_check(results, config, strict, provenance)
 
     if summary:
-        md = build_summary_markdown(results, passed, reasons)
+        md = build_summary_markdown(results, passed, reasons, advisory=advisory)
         write_github_summary(md)
 
     if passed:
         return _handle_passed_gate(console, command_to_run)
+
+    if advisory:
+        return _handle_advisory_gate(console, reasons)
 
     return _handle_failed_gate(console, reasons, force=force, strict=strict)

@@ -24,6 +24,8 @@ def test_workflow_has_all_steps():
     assert "Quality Gate" in step_names
     assert "GitHub Annotations" in step_names
     assert "PR Review Comments" in step_names
+    quality_gate = next(s for s in steps if s.get("name") == "Quality Gate")
+    assert "--advisory" in quality_gate["run"]
 
 
 def test_workflow_triggers():

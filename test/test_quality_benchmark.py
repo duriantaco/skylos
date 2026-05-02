@@ -27,6 +27,9 @@ def test_checked_in_quality_manifest_validates():
         "argument-overload",
         "inconsistent-return",
         "empty-error-handler",
+        "type-annotation-gaps",
+        "framework-route-policy",
+        "repo-policy-missing-typechecker",
         "clean-module",
     }
 

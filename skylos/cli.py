@@ -1500,6 +1500,13 @@ def _quality_detail(quality):
         func = f'"{func}"'
     elif qtype == "dependency":
         detail = str(value)
+    elif raw_kind in {
+        "typing",
+        "framework",
+        "framework_security",
+        "repo_policy",
+    }:
+        detail = quality.get("message") or str(value)
     elif raw_kind == "nesting":
         detail = f"Deep nesting: depth {value}"
     elif raw_kind == "structure":
@@ -1515,7 +1522,7 @@ def _quality_detail(quality):
     if length is not None:
         detail += f", {length} lines"
 
-    return raw_kind.title(), func, detail
+    return raw_kind.replace("_", " ").title(), func, detail
 
 
 def _render_quality(console: Console, limit, items):

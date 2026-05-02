@@ -172,7 +172,7 @@ jobs:
 {llm_step}{defend_step}
       - name: Quality Gate
         if: always()
-        run: skylos cicd gate --input skylos-results.json --summary
+        run: skylos cicd gate --input skylos-results.json --summary --advisory
 
       - name: GitHub Annotations
         if: always()

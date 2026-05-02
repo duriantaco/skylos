@@ -78,6 +78,11 @@ from skylos.rules.quality.logic import (
     BroadExceptionRule,
     MissingNetworkTimeoutRule,
 )
+from skylos.rules.quality.practices import (
+    FrameworkPracticeRule,
+    TypeAnnotationPracticeRule,
+)
+from skylos.rules.quality.policy import analyze_repo_policy
 from skylos.rules.quality.phantom_refs import scan_repo_phantom_security_references
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
 from skylos.rules.quality.performance import PerformanceRule
@@ -192,6 +197,8 @@ _LINTER_RULE_NODE_TYPES = {
         *_TRY_NODE_TYPES,
     ),
     PerformanceRule: (ast.Call, ast.For),
+    TypeAnnotationPracticeRule: (ast.Module,),
+    FrameworkPracticeRule: (ast.Module,),
     DangerousCallsRule: (ast.Module, ast.Import, ast.ImportFrom, ast.Assign, ast.Call),
 }
 
@@ -1706,6 +1713,7 @@ class Skylos:
 
         project_cfg = load_config(project_root)
         project_ignore = set(project_cfg.get("ignore", []))
+        requested_changed_files = changed_files
 
         try:
             from skylos.pyproject_entrypoints import extract_entrypoints
@@ -2373,6 +2381,18 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
+            try:
+                policy_findings = analyze_repo_policy(
+                    root,
+                    project_cfg,
+                    changed_files=requested_changed_files,
+                )
+                if policy_findings:
+                    all_quality.extend(policy_findings)
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error(traceback.format_exc())
+
         all_sca = []
         if enable_sca:
             if progress_callback:
@@ -2739,6 +2759,10 @@ def proc_file(
                 q_rules.append(CBORule())
             if "SKY-Q702" not in cfg["ignore"]:
                 q_rules.append(LCOMRule())
+            if "SKY-T101" not in cfg["ignore"] or "SKY-T102" not in cfg["ignore"]:
+                q_rules.append(TypeAnnotationPracticeRule())
+            if "SKY-F101" not in cfg["ignore"] or "SKY-F102" not in cfg["ignore"]:
+                q_rules.append(FrameworkPracticeRule())
 
             if "SKY-U001" not in cfg["ignore"]:
                 q_rules.append(UnreachableCodeRule())
@@ -2786,7 +2810,9 @@ def proc_file(
             _set_linter_node_types(q_rules)
             linter_q = LinterVisitor(q_rules, str(file))
             linter_q.visit(tree)
-            quality_findings = linter_q.findings
+            quality_findings = [
+                f for f in linter_q.findings if f.get("rule_id") not in cfg["ignore"]
+            ]
 
             if os.getenv("SKYLOS_DEBUG"):
                 custom_hits = [

@@ -113,6 +113,75 @@
       }
     },
     {
+      "id": "type-annotation-gaps",
+      "path": "fixtures/type_annotation_gaps",
+      "description": "Typed modules should flag public functions with untyped parameters and missing return annotations.",
+      "taxonomy": ["typing", "api_design"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/python/cpython",
+        "license": "PSF-2.0",
+        "notes": "Distilled from typed helper module API patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-T101", "SKY-T102", "load_user"]
+        },
+        "absent": {
+          "quality": ["typed_helper"]
+        }
+      }
+    },
+    {
+      "id": "framework-route-policy",
+      "path": "fixtures/framework_route_policy",
+      "description": "Mutating framework routes should have an obvious auth or dependency guard.",
+      "taxonomy": ["framework", "security_practice"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/fastapi/fastapi",
+        "license": "MIT",
+        "notes": "Distilled from FastAPI router conventions."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-F102", "create_user"]
+        },
+        "absent": {
+          "quality": ["create_admin", "list_users"]
+        }
+      }
+    },
+    {
+      "id": "repo-policy-missing-typechecker",
+      "path": "fixtures/repo_policy_missing_typechecker",
+      "description": "Repository policy checks should report Python projects without mypy or pyright configuration.",
+      "taxonomy": ["repo_policy", "typing"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/astral-sh/ruff",
+        "license": "MIT",
+        "notes": "Distilled from common pyproject-based policy configuration."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-R101", "python-type-check-policy"]
+        },
+        "absent": {
+          "quality": ["SKY-R102", "SKY-R103", "SKY-R104"]
+        }
+      }
+    },
+    {
       "id": "clean-module",
       "path": "fixtures/clean_module",
       "description": "A small helper module should remain free of the starter benchmark quality findings.",

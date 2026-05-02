@@ -119,7 +119,7 @@ jobs:
       - name: Smoke test real scan
         run: |
           docker run --rm \
-            -v "$PWD/quality_benchmarks/fixtures/argument_overload:/work" \
+            -v "$PWD/benchmarks/quality/fixtures/argument_overload:/work" \
             -w /work \
             skylos:smoke \
             . --json --no-provenance > /tmp/skylos-smoke.json
