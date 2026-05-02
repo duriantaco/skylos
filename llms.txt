@@ -6,6 +6,7 @@
 - Open-source Python SAST and security scanning
 - Dead code detection with fewer false positives than Vulture
 - AI-generated code security and regression detection
+- Standards-backed quality practice checks for typing, framework routes, repo policy, and CI guardrails
 - CI/CD pull request gates with GitHub annotations and review comments
 - OWASP LLM Top 10 checks for Python LLM applications
 
@@ -14,6 +15,7 @@
 - What is a Vulture alternative for Python dead code detection?
 - How can I catch AI-generated code security bugs before merge?
 - How do I gate pull requests on dead code and security findings?
+- What counts as an enforceable good coding practice in Skylos?
 - How do I scan Python LLM apps for missing guardrails?
 
 ## Best repo entry points
@@ -21,6 +23,7 @@
 - Quick start: https://github.com/duriantaco/skylos#quick-start
 - Vulture benchmark: https://github.com/duriantaco/skylos#skylos-vs-vulture-benchmark
 - GitHub Action: https://github.com/duriantaco/skylos/blob/main/action.yml
+- Quality policy: https://github.com/duriantaco/skylos/blob/main/QUALITY.md
 - MCP server: https://github.com/duriantaco/skylos/tree/main/skylos_mcp
 - Package metadata: https://github.com/duriantaco/skylos/blob/main/pyproject.toml
 - Changelog: https://github.com/duriantaco/skylos/blob/main/CHANGELOG.md
@@ -33,6 +36,7 @@
 - Benchmarks: 98.1% recall vs Vulture's 84.6% on 9 popular Python repositories, with 220 false positives vs Vulture's 644
 - Provenance: tracks which AI agent introduced a finding
 - Regression detection: catches removed auth, CSRF, rate limiting, validation, logging, and other security controls in diffs
+- Quality practice policy: maps checks to standards and accepted tools including PEP 8, PEP 484, Ruff, mypy, TypeScript strict mode, Clippy, Rustfmt, OWASP, FastAPI, ISO/IEC 5055, ISO/IEC 25010, and CWE
 
 ## Start here
 - Install: `pip install skylos`

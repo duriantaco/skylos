@@ -123,7 +123,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Dead code | unused functions, classes, imports, package entrypoints, route handlers | reduces maintenance cost without breaking dynamic frameworks |
 | Security flaws | SQL injection, XSS, SSRF, path traversal, command injection, unsafe deserialization | catches exploitable flows before code reaches main |
 | Secrets | API keys, tokens, private credentials, high-entropy strings | prevents credentials from leaking through commits and PRs |
-| Quality regressions | complexity, deep nesting, duplicate branches, long functions, inconsistent returns | keeps AI-assisted refactors from adding brittle code |
+| Quality regressions | complexity, deep nesting, duplicate branches, long functions, inconsistent returns, type annotation gaps, framework route contracts, repo policy gaps | keeps AI-assisted refactors from adding brittle code |
 | AI code mistakes | phantom security calls, missing decorators, unfinished stubs, disabled controls, network calls without timeouts | catches common hallucinated or incomplete code paths |
 | LLM app risks | unsafe tool use, prompt injection exposure, missing output validation, missing rate limits | helps teams ship AI features with guardrails |
 
@@ -136,6 +136,13 @@ See the full [Rules Reference](https://docs.skylos.dev/rules-reference).
   patterns.
 - **CI/CD-first workflow:** run locally, gate PRs, annotate GitHub diffs, and
   keep legacy findings under control with baselines.
+- **Standards-backed practice checks:** maps quality rules to accepted sources
+  such as PEP 8, PEP 484, Ruff, mypy, TypeScript strict mode, Clippy, Rustfmt,
+  OWASP, FastAPI, ISO/IEC 5055, ISO/IEC 25010, and CWE. See
+  [QUALITY.md](./QUALITY.md).
+- **Advisory quality rollout:** CI can surface Ruff, type-check, TypeScript
+  build, Rust fmt/clippy, and diff-aware Skylos findings without blocking the
+  merge gate while teams burn down existing findings.
 - **Local-first by default:** core static analysis does not require cloud upload
   or LLM calls.
 - **AI-era regression checks:** catches removed validation, auth, logging,
@@ -292,6 +299,12 @@ optional through `skylos[llm]` and agent commands.
 
 Yes. Use `skylos . -a --diff origin/main` locally or configure CI gates to focus
 on new findings.
+
+**What counts as a good coding practice?**
+
+Skylos treats a practice as enforceable when it is backed by a language,
+security, quality, framework, or repo policy source. The checked-in policy and
+source mapping live in [QUALITY.md](./QUALITY.md).
 
 **How should I handle intentional dynamic code?**
 
