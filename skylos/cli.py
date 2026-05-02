@@ -1305,11 +1305,11 @@ def _apply_display_filters(result, severity=None, category=None, file_filter=Non
                         break
 
                 if has_severity:
-                    filtered = []
+                    severity_filtered = []
                     for item in kept:
                         if _passes_severity(item):
-                            filtered.append(item)
-                    kept = filtered
+                            severity_filtered.append(item)
+                    kept = severity_filtered
 
         filtered[key] = kept
 

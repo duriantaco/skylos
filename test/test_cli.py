@@ -451,6 +451,54 @@ def test_shorten_path_non_pathlike_returns_str():
     assert cli._shorten_path(123) == "123"
 
 
+def test_apply_display_filters_severity_filters_without_crashing():
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "quality": [
+            {"severity": "LOW", "file": "src/a.py", "message": "low"},
+            {"severity": "MEDIUM", "file": "src/b.py", "message": "medium"},
+            {"severity": "HIGH", "file": "src/c.py", "message": "high"},
+        ],
+        "danger": [],
+        "secrets": [],
+        "unused_functions": [{"name": "unused", "file": "src/a.py", "line": 1}],
+    }
+
+    filtered = cli._apply_display_filters(result, severity="medium")
+
+    assert filtered["quality"] == [
+        {"severity": "MEDIUM", "file": "src/b.py", "message": "medium"},
+        {"severity": "HIGH", "file": "src/c.py", "message": "high"},
+    ]
+    assert filtered["unused_functions"] == result["unused_functions"]
+    assert filtered["analysis_summary"] == result["analysis_summary"]
+
+
+def test_apply_display_filters_combines_category_file_and_severity():
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "quality": [
+            {"severity": "HIGH", "file": "src/keep.py", "message": "keep"},
+            {"severity": "LOW", "file": "src/keep.py", "message": "drop severity"},
+            {"severity": "HIGH", "file": "src/drop.py", "message": "drop file"},
+        ],
+        "danger": [
+            {"severity": "HIGH", "file": "src/keep.py", "message": "drop category"}
+        ],
+        "secrets": [],
+        "unused_functions": [],
+    }
+
+    filtered = cli._apply_display_filters(
+        result, severity="medium", category="quality", file_filter="keep.py"
+    )
+
+    assert filtered["quality"] == [
+        {"severity": "HIGH", "file": "src/keep.py", "message": "keep"}
+    ]
+    assert filtered["danger"] == []
+
+
 def test_comment_out_unused_import_handles_exception_and_returns_false():
     with (
         patch("pathlib.Path.read_text", return_value="import os\n"),
