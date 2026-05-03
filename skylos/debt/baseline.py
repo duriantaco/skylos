@@ -9,6 +9,7 @@ from skylos.debt.scoring import refresh_hotspot_priority
 BASELINE_DIR = ".skylos"
 BASELINE_FILE = "debt_baseline.json"
 HISTORY_FILE = "debt_history.jsonl"
+HISTORY_HOTSPOT_LIMIT = 5
 
 
 def _baseline_path(project_root: str | Path) -> Path:
@@ -62,6 +63,49 @@ def load_baseline(project_root: str | Path) -> dict | None:
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_history(project_root: str | Path) -> list[dict]:
+    path = _history_path(project_root)
+    if not path.exists():
+        return []
+
+    entries = []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for line_number, line in enumerate(lines, 1):
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path}:{line_number}: invalid JSON") from exc
+        if not isinstance(entry, dict):
+            raise ValueError(f"{path}:{line_number}: expected JSON object")
+        entries.append(entry)
+    return entries
+
+
+def _history_hotspots(snapshot: DebtSnapshot) -> list[dict]:
+    source_hotspots = snapshot.all_hotspots or snapshot.hotspots
+    ordered = sorted(
+        source_hotspots,
+        key=lambda hotspot: (
+            -float(getattr(hotspot, "priority_score", hotspot.score)),
+            -float(hotspot.score),
+            hotspot.file,
+        ),
+    )
+    return [
+        {
+            "file": hotspot.file,
+            "score": hotspot.score,
+            "priority_score": hotspot.priority_score,
+            "signal_count": hotspot.signal_count,
+            "primary_dimension": hotspot.primary_dimension,
+        }
+        for hotspot in ordered[:HISTORY_HOTSPOT_LIMIT]
+    ]
 
 
 def annotate_hotspots(
@@ -132,6 +176,7 @@ def append_history(project_root: str | Path, snapshot: DebtSnapshot) -> Path:
         "project": snapshot.project,
         "score": snapshot.score.to_dict(),
         "summary": _summary_for_project_persistence(snapshot),
+        "hotspots": _history_hotspots(snapshot),
     }
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry) + "\n")

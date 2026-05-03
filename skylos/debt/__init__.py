@@ -3,10 +3,16 @@ from skylos.debt.baseline import (
     annotate_hotspots,
     compare_to_baseline,
     load_baseline,
+    load_history,
     save_baseline,
 )
 from skylos.debt.policy import DebtPolicy, load_policy
-from skylos.debt.report import format_debt_json, format_debt_table
+from skylos.debt.report import (
+    format_debt_history_json,
+    format_debt_history_table,
+    format_debt_json,
+    format_debt_table,
+)
 from skylos.debt.result import (
     DebtAdvisory,
     DebtHotspot,
@@ -56,8 +62,11 @@ __all__ = [
     "DebtSignal",
     "DebtSnapshot",
     "format_debt_json",
+    "format_debt_history_json",
+    "format_debt_history_table",
     "format_debt_table",
     "load_baseline",
+    "load_history",
     "load_policy",
     "run_debt_analysis",
     "save_baseline",

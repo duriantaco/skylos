@@ -136,3 +136,111 @@ def format_debt_table(snapshot: DebtSnapshot, *, top: int | None = None) -> str:
 
 def format_debt_json(snapshot: DebtSnapshot) -> str:
     return json.dumps(snapshot.to_dict(), indent=2)
+
+
+def _history_score_pct(entry: dict) -> int | None:
+    score_pct = (entry.get("score") or {}).get("score_pct")
+    if score_pct is None or isinstance(score_pct, bool):
+        return None
+    try:
+        return int(score_pct)
+    except (TypeError, ValueError):
+        return None
+
+
+def _history_value(score: dict, key: str) -> str:
+    value = score.get(key)
+    return "-" if value is None else str(value)
+
+
+def _history_row(entry: dict, previous_score: int | None) -> tuple[str, int | None]:
+    score = entry.get("score") or {}
+    score_pct = _history_score_pct(entry)
+    score_text = "-" if score_pct is None else f"{score_pct}%"
+    delta_text = (
+        "-"
+        if score_pct is None or previous_score is None
+        else f"{score_pct - previous_score:+d}"
+    )
+    line = (
+        f"{str(entry.get('timestamp') or '-'):<32} "
+        f"{score_text:>6} "
+        f"{delta_text:>6} "
+        f"{_history_value(score, 'risk_rating'):<10} "
+        f"{_history_value(score, 'hotspot_count'):>8} "
+        f"{_history_value(score, 'signal_count'):>8}"
+    )
+    return line, score_pct
+
+
+def _history_hotspots(entry: dict) -> list[dict]:
+    hotspots = entry.get("hotspots") or []
+    if not isinstance(hotspots, list):
+        return []
+    return [hotspot for hotspot in hotspots if isinstance(hotspot, dict)]
+
+
+def _history_hotspot_value(hotspot: dict, key: str) -> str:
+    value = hotspot.get(key)
+    if value is None:
+        return "-"
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    return str(value)
+
+
+def _history_hotspot_line(index: int, hotspot: dict) -> str:
+    return (
+        f"  {index}. {_history_hotspot_value(hotspot, 'file')} | "
+        f"score={_history_hotspot_value(hotspot, 'score')} | "
+        f"signals={_history_hotspot_value(hotspot, 'signal_count')} | "
+        f"{_history_hotspot_value(hotspot, 'primary_dimension')}"
+    )
+
+
+def _latest_hotspot_lines(entry: dict) -> list[str]:
+    hotspots = _history_hotspots(entry)
+    lines = ["", "Latest Top Hotspots:"]
+    if not hotspots:
+        lines.append("  Not recorded in saved history.")
+        return lines
+    lines.extend(
+        _history_hotspot_line(index, hotspot)
+        for index, hotspot in enumerate(hotspots, 1)
+    )
+    return lines
+
+
+def format_debt_history_table(
+    entries: list[dict],
+    *,
+    limit: int | None = None,
+) -> str:
+    if not entries:
+        return "\nSkylos Debt History\nNo debt history found."
+
+    visible = entries[-limit:] if limit else entries
+    lines = [
+        "",
+        "Skylos Debt History",
+        f"Entries: {len(visible)} shown ({len(entries)} total)",
+        "",
+        "Timestamp                         Score  Delta Risk       Hotspots  Signals",
+    ]
+    first_visible_index = len(entries) - len(visible)
+    previous_score = (
+        _history_score_pct(entries[first_visible_index - 1])
+        if first_visible_index > 0
+        else None
+    )
+    for entry in visible:
+        line, score_pct = _history_row(entry, previous_score)
+        lines.append(line)
+        if score_pct is not None:
+            previous_score = score_pct
+    lines.extend(_latest_hotspot_lines(visible[-1]))
+    return "\n".join(lines)
+
+
+def format_debt_history_json(entries: list[dict]) -> str:
+    return json.dumps({"history": entries}, indent=2)
