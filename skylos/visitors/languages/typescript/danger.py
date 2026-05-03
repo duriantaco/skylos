@@ -183,6 +183,53 @@ _ERROR_DISCLOSURE_PROPS = {"stack", "sql", "sqlMessage", "sqlState"}
 
 _RESPONSE_METHODS = {"json", "send", "write", "end"}
 
+_WEBHOOK_PROVIDER_HINTS = (
+    "stripe",
+    "github",
+    "clerk",
+    "svix",
+    "shopify",
+    "supabase",
+    "resend",
+    "twilio",
+    "slack",
+    "discord",
+    "linear",
+    "vercel",
+    "netlify",
+    "paddle",
+    "lemon_squeezy",
+    "lemonsqueezy",
+)
+
+_WEBHOOK_BODY_HINTS = (
+    ".json(",
+    ".text(",
+    ".arraybuffer(",
+    ".formdata(",
+    ".body",
+    "rawbody",
+    "raw_body",
+)
+
+_WEBHOOK_VERIFY_PATTERNS = (
+    re.compile(r"\bconstructEvent\s*\("),
+    re.compile(r"\bconstruct_event\s*\(", re.I),
+    re.compile(r"\bverifySignature\s*\("),
+    re.compile(r"\bverifyWebhook\s*\("),
+    re.compile(r"\bvalidateSignature\s*\("),
+    re.compile(r"\bvalidateWebhook\s*\("),
+    re.compile(r"\bverify_signature\s*\(", re.I),
+    re.compile(r"\bverify_webhook\s*\(", re.I),
+    re.compile(r"\bvalidate_signature\s*\(", re.I),
+    re.compile(r"\bvalidate_webhook\s*\(", re.I),
+    re.compile(r"\bcrypto\.timingSafeEqual\s*\("),
+    re.compile(r"\btimingSafeEqual\s*\("),
+    re.compile(r"\bcreateHmac\s*\("),
+    re.compile(r"\bnew\s+Webhook\s*\([^)]*\).*?\.verify\s*\(", re.S),
+    re.compile(r"\bWebhook\.verify\s*\("),
+)
+
 
 def _shannon_entropy(s: str) -> float:
     if not s:
@@ -777,6 +824,7 @@ def scan_danger(
     _check_nextjs_missing_auth(source_bytes, file_path, findings)
     _check_nextjs_client_secrets(source_bytes, file_path, findings)
     _check_nextjs_server_action_sqli(source_bytes, file_path, findings)
+    _check_unverified_webhook_handler(source_bytes, file_path, findings)
     _check_archive_extraction_path_traversal(root_node, source_bytes, file_path, findings)
 
     return findings
@@ -854,6 +902,92 @@ _ARCHIVE_SCOPE_NODE_TYPES = frozenset(
 )
 
 _ARCHIVE_CONTROL_FLOW_HINTS = ("return", "continue", "throw", "break")
+
+
+def _is_test_file_path(file_path: str) -> bool:
+    normalized = str(file_path).replace(os.sep, "/").lower()
+    base = os.path.basename(normalized)
+    return (
+        get_non_library_dir_kind(file_path) == "test"
+        or "/test/" in normalized
+        or "/tests/" in normalized
+        or ".spec." in base
+        or ".test." in base
+    )
+
+
+def _has_webhook_provider_hint(text: str) -> bool:
+    lower = text.lower()
+    return any(provider in lower for provider in _WEBHOOK_PROVIDER_HINTS)
+
+
+def _has_webhook_body_use(source_text: str) -> bool:
+    lower = source_text.lower()
+    return any(hint in lower for hint in _WEBHOOK_BODY_HINTS)
+
+
+def _has_webhook_signature_verification(source_text: str) -> bool:
+    return any(pattern.search(source_text) for pattern in _WEBHOOK_VERIFY_PATTERNS)
+
+
+def _has_inbound_webhook_post(source_text: str) -> bool:
+    post_patterns = (
+        r"\bexport\s+(?:async\s+)?function\s+POST\b",
+        r"\bexport\s+const\s+POST\b",
+        r"\b(?:app|router|server|fastify|hono)\.post\s*\(",
+        r"\b(?:req|request)\.method\s*(?:={2,3})\s*['\"]POST['\"]",
+        r"\bcase\s+['\"]POST['\"]",
+    )
+    return any(re.search(pattern, source_text) for pattern in post_patterns)
+
+
+def _webhook_finding_line(source_text: str) -> int:
+    for index, line in enumerate(source_text.splitlines(), 1):
+        if (
+            "webhook" in line.lower()
+            or re.search(r"\bPOST\b", line)
+            or ".post(" in line
+        ):
+            return index
+    return 1
+
+
+def _check_unverified_webhook_handler(
+    source_bytes: bytes, file_path: str, findings: list[dict]
+) -> None:
+    if _is_test_file_path(file_path):
+        return
+
+    source_text = source_bytes.decode("utf-8", errors="replace")
+    normalized_path = str(file_path).replace(os.sep, "/")
+    combined = f"{normalized_path}\n{source_text}"
+    combined_lower = combined.lower()
+
+    if "webhook" not in combined_lower and "webhooks" not in combined_lower:
+        return
+    if not _has_webhook_provider_hint(combined):
+        return
+    if not _has_inbound_webhook_post(source_text):
+        return
+    if not _has_webhook_body_use(source_text):
+        return
+    if _has_webhook_signature_verification(source_text):
+        return
+
+    findings.append(
+        {
+            "rule_id": "SKY-D282",
+            "severity": "HIGH",
+            "message": (
+                "Webhook handler processes inbound events without obvious signature "
+                "verification. Verify provider signatures before parsing or trusting "
+                "the event body."
+            ),
+            "file": str(file_path),
+            "line": _webhook_finding_line(source_text),
+            "col": 0,
+        }
+    )
 
 
 def _has_mutating_exported_route_handler(source_text: str) -> bool:
