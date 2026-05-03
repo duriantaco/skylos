@@ -386,3 +386,54 @@ class TestScanHomoglyphs:
             assert len(mixed) >= 1
         finally:
             os.unlink(path)
+
+    def test_cyrillic_in_import_statement(self):
+        path = _write_temp("import p\u0430ypal\n")
+        try:
+            findings = scan_file(path)
+            mixed = [f for f in findings if f["type"] == "mixed_script"]
+            assert len(mixed) >= 1
+            assert mixed[0]["line"] == 1
+        finally:
+            os.unlink(path)
+
+    def test_cyrillic_in_filename(self):
+        tmp_dir = tempfile.mkdtemp()
+        path = Path(tmp_dir) / "p\u0430ypal.py"
+        path.write_text("safe = 1\n")
+        try:
+            findings = scan_file(path)
+            mixed_path = [f for f in findings if f["type"] == "mixed_script_path"]
+            assert len(mixed_path) == 1
+            assert mixed_path[0]["line"] == 1
+            assert "path" in mixed_path[0]["message"]
+        finally:
+            path.unlink()
+            os.rmdir(tmp_dir)
+
+    def test_cyrillic_in_package_directory(self):
+        tmp_dir = tempfile.mkdtemp()
+        package_dir = Path(tmp_dir) / "p\u0430ypal"
+        package_dir.mkdir()
+        path = package_dir / "client.py"
+        path.write_text("safe = 1\n")
+        try:
+            findings = scan_directory(tmp_dir)
+            mixed_path = [f for f in findings if f["type"] == "mixed_script_path"]
+            assert len(mixed_path) == 1
+            assert mixed_path[0]["basename"] == "client.py"
+            assert "client.py" in mixed_path[0]["message"]
+            assert tmp_dir not in mixed_path[0]["message"]
+        finally:
+            path.unlink()
+            package_dir.rmdir()
+            os.rmdir(tmp_dir)
+
+    def test_pure_cyrillic_comment_does_not_trigger_mixed_script(self):
+        path = _write_temp("# \u041f\u0440\u0438\u0432\u0435\u0442\nsafe = 1\n")
+        try:
+            findings = scan_file(path)
+            mixed = [f for f in findings if f["type"].startswith("mixed_script")]
+            assert mixed == []
+        finally:
+            os.unlink(path)
