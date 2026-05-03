@@ -14,6 +14,7 @@ from .danger_cors.cors_flow import scan as scan_cors
 from .danger_jwt.jwt_flow import scan as scan_jwt
 from .danger_access.access_flow import scan as scan_access
 from .danger_mcp.mcp_flow import scan as scan_mcp
+from .danger_webhook.webhook_flow import scan as scan_webhook
 from .danger_hallucination.dependency_hallucination import (
     scan_python_dependency_hallucinations,
 )
@@ -239,6 +240,7 @@ _CORS_TOKENS = (
 )
 _JWT_TOKENS = ("jwt", "verify_signature", "algorithms")
 _MCP_TOKENS = ("mcp", "fastmcp")
+_WEBHOOK_TOKENS = ("webhook", "webhooks")
 
 
 def _has_any(source: str, tokens: tuple[str, ...]) -> bool:
@@ -259,6 +261,7 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_jwt(tree, file_path, findings)
         scan_access(tree, file_path, findings)
         scan_mcp(tree, file_path, findings)
+        scan_webhook(tree, file_path, findings)
         return
 
     source_lower = source.lower()
@@ -284,6 +287,10 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_access(tree, file_path, findings)
     if _has_any(source_lower, _MCP_TOKENS):
         scan_mcp(tree, file_path, findings)
+    if _has_any(source_lower, _WEBHOOK_TOKENS) or _has_any(
+        str(file_path).lower(), _WEBHOOK_TOKENS
+    ):
+        scan_webhook(tree, file_path, findings, source=source)
 
 
 def _scan_file(file_path: Path, findings):
