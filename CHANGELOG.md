@@ -1,5 +1,10 @@
 ## Changelog
 
+## [Unreleased]
+
+### Documentation
+- Document SKY-D282 webhook signature verification coverage.
+
 ## [4.10.0](https://github.com/duriantaco/skylos/compare/v4.9.0...v4.10.0) (2026-05-02)
 
 
