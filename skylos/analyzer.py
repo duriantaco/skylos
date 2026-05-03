@@ -2273,15 +2273,17 @@ class Skylos:
                     )
 
                     injection_candidates = list(files)
+                    injection_root = Path(
+                        path[0] if isinstance(path, (list, tuple)) else path
+                    ).resolve()
+                    if injection_root.is_file():
+                        injection_root = injection_root.parent
                     if changed_files is not None:
                         injection_candidates = [Path(f) for f in changed_files]
                     else:
                         seen_injection_files = {
                             str(Path(f).resolve()) for f in injection_candidates
                         }
-                        injection_root = Path(
-                            path[0] if isinstance(path, (list, tuple)) else path
-                        ).resolve()
                         if injection_root.is_dir():
                             for dirpath, dirnames, filenames in os.walk(injection_root):
                                 dirnames[:] = [
@@ -2300,7 +2302,11 @@ class Skylos:
                                     seen_injection_files.add(fkey)
                                     injection_candidates.append(fpath)
                     for f in injection_candidates:
-                        inj_hits = _injection_scan_file(f)
+                        try:
+                            scan_path = Path(f).resolve().relative_to(injection_root)
+                        except ValueError:
+                            scan_path = None
+                        inj_hits = _injection_scan_file(f, scan_path=scan_path)
                         if inj_hits:
                             all_dangers.extend(inj_hits)
                 except Exception:

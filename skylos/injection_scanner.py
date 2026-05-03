@@ -98,7 +98,7 @@ _PROMPT_KEYS_RE = re.compile(
 )
 
 
-def scan_file(filepath: str | Path) -> list[dict]:
+def scan_file(filepath: str | Path, *, scan_path: str | Path | None = None) -> list[dict]:
     filepath = Path(filepath)
     if not filepath.is_file():
         return []
@@ -116,10 +116,11 @@ def scan_file(filepath: str | Path) -> list[dict]:
     except OSError:
         return []
 
-    if not source.strip():
-        return []
-
     findings: list[dict] = []
+    _add_path_homoglyph_findings(findings, filepath, scan_path or filepath.name)
+
+    if not source.strip():
+        return findings
 
     _, zero_width_hits = strip_zero_width(source)
     for char_hex, line_no in zero_width_hits:
@@ -137,27 +138,7 @@ def scan_file(filepath: str | Path) -> list[dict]:
             )
         )
 
-    homoglyphs = detect_homoglyphs(source)
-    if homoglyphs:
-        seen_lines: set[int] = set()
-        for char, ascii_like, line_no in homoglyphs:
-            if line_no in seen_lines:
-                continue
-            seen_lines.add(line_no)
-            char_hex = f"U+{ord(char):04X}"
-            findings.append(
-                _make_finding(
-                    filepath,
-                    line_no,
-                    "mixed_script",
-                    "MEDIUM",
-                    char_hex,
-                    f"{char}→{ascii_like}",
-                    f"Non-ASCII character '{char}' (U+{ord(char):04X}) visually resembles "
-                    f"ASCII '{ascii_like}'. Mixed-script text can hide instructions "
-                    f"from human reviewers while remaining readable to AI agents.",
-                )
-            )
+    _add_source_homoglyph_findings(findings, filepath, source)
 
     segments = _extract_segments(source, ext, filepath)
 
@@ -244,7 +225,7 @@ def scan_directory(
         if any(p in all_excludes or p.startswith(".") for p in parts[:-1]):
             continue
 
-        findings.extend(scan_file(filepath))
+        findings.extend(scan_file(filepath, scan_path=rel))
 
     return findings
 
@@ -323,6 +304,52 @@ def _extract_segments(
                         segments.append((value, line_no, "env_value"))
 
     return segments
+
+
+def _add_path_homoglyph_findings(
+    findings: list[dict], filepath: Path, scan_path: str | Path
+) -> None:
+    path_text = Path(scan_path).as_posix()
+    for char, ascii_like, _line_no in detect_homoglyphs(path_text):
+        char_hex = f"U+{ord(char):04X}"
+        findings.append(
+            _make_finding(
+                filepath,
+                1,
+                "mixed_script_path",
+                "MEDIUM",
+                char_hex,
+                f"{char}→{ascii_like}",
+                f"Non-ASCII character '{char}' (U+{ord(char):04X}) in path "
+                f"'{path_text}' visually resembles ASCII '{ascii_like}'. "
+                f"Mixed-script paths can hide lookalike modules from human reviewers.",
+            )
+        )
+        return
+
+
+def _add_source_homoglyph_findings(
+    findings: list[dict], filepath: Path, source: str
+) -> None:
+    seen_lines: set[int] = set()
+    for char, ascii_like, line_no in detect_homoglyphs(source):
+        if line_no in seen_lines:
+            continue
+        seen_lines.add(line_no)
+        char_hex = f"U+{ord(char):04X}"
+        findings.append(
+            _make_finding(
+                filepath,
+                line_no,
+                "mixed_script",
+                "MEDIUM",
+                char_hex,
+                f"{char}→{ascii_like}",
+                f"Non-ASCII character '{char}' (U+{ord(char):04X}) visually resembles "
+                f"ASCII '{ascii_like}'. Mixed-script text can hide instructions "
+                f"from human reviewers while remaining readable to AI agents.",
+            )
+        )
 
 
 def _adjust_severity(
