@@ -12,14 +12,23 @@ from skylos.debt.advisor import (
     _user_prompt,
     augment_hotspots_with_advisories,
 )
-from skylos.debt.baseline import compare_to_baseline, save_baseline
+from skylos.debt.baseline import (
+    append_history,
+    compare_to_baseline,
+    load_history,
+    save_baseline,
+)
 from skylos.debt.engine import (
     build_debt_snapshot,
     collect_debt_signals,
     run_debt_analysis,
 )
 from skylos.debt.policy import _parse_policy, load_policy
-from skylos.debt.report import format_debt_table
+from skylos.debt.report import (
+    format_debt_history_json,
+    format_debt_history_table,
+    format_debt_table,
+)
 from skylos.debt.result import (
     DebtAdvisory,
     DebtHotspot,
@@ -240,6 +249,23 @@ def test_save_baseline_normalizes_changed_scope_to_project(tmp_path):
 
     assert payload["summary"]["scope"]["hotspots"] == "project"
     assert "baseline" not in payload["summary"]
+
+
+def test_load_history_reads_saved_jsonl_entries(tmp_path):
+    snapshot = _snapshot(str(tmp_path))
+
+    append_history(tmp_path, snapshot)
+    entries = load_history(tmp_path)
+
+    assert len(entries) == 1
+    assert entries[0]["timestamp"] == "2026-03-28T00:00:00+00:00"
+    assert entries[0]["score"]["score_pct"] == 93
+    assert entries[0]["hotspots"][0]["file"] == "app/services.py"
+    assert entries[0]["hotspots"][0]["score"] == 14.0
+
+
+def test_load_history_returns_empty_for_missing_history(tmp_path):
+    assert load_history(tmp_path) == []
 
 
 def test_parse_policy_accepts_gate_and_report():
@@ -521,6 +547,67 @@ def test_format_debt_table_orders_by_priority_and_applies_top_limit():
     assert "app/services.py" not in rendered
 
 
+def test_format_debt_history_table_renders_deltas_and_limit():
+    entries = [
+        {
+            "timestamp": "2026-03-28T00:00:00+00:00",
+            "score": {
+                "score_pct": 93,
+                "risk_rating": "LOW",
+                "hotspot_count": 1,
+                "signal_count": 1,
+            },
+        },
+        {
+            "timestamp": "2026-03-29T00:00:00+00:00",
+            "score": {
+                "score_pct": 90,
+                "risk_rating": "MODERATE",
+                "hotspot_count": 2,
+                "signal_count": 4,
+            },
+            "hotspots": [
+                {
+                    "file": "app/core.py",
+                    "score": 18.0,
+                    "signal_count": 3,
+                    "primary_dimension": "complexity",
+                }
+            ],
+        },
+    ]
+
+    rendered = format_debt_history_table(entries)
+    limited = format_debt_history_table(entries, limit=1)
+
+    assert "Skylos Debt History" in rendered
+    assert "Entries: 2 shown (2 total)" in rendered
+    assert "2026-03-29T00:00:00+00:00" in rendered
+    assert "-3" in rendered
+    assert "Entries: 1 shown (2 total)" in limited
+    assert "-3" in limited
+    assert "Latest Top Hotspots:" in limited
+    assert "app/core.py | score=18.00 | signals=3 | complexity" in limited
+    assert "2026-03-28T00:00:00+00:00" not in limited
+
+
+def test_format_debt_history_table_handles_old_entries_without_hotspots():
+    entries = [{"timestamp": "2026-03-28T00:00:00+00:00", "score": {}}]
+
+    rendered = format_debt_history_table(entries)
+
+    assert "Latest Top Hotspots:" in rendered
+    assert "Not recorded in saved history." in rendered
+
+
+def test_format_debt_history_json_wraps_entries():
+    entries = [{"timestamp": "2026-03-28T00:00:00+00:00", "score": {}}]
+
+    payload = json.loads(format_debt_history_json(entries))
+
+    assert payload == {"history": entries}
+
+
 def test_cli_debt_json_outputs_snapshot_and_exits_zero(tmp_path, monkeypatch):
     snapshot = _snapshot(str(tmp_path))
     monkeypatch.setattr(sys, "argv", ["skylos", "debt", str(tmp_path), "--json"])
@@ -728,3 +815,98 @@ def test_cli_debt_history_requires_project_root_scan(tmp_path, monkeypatch):
     mock_history.assert_not_called()
     message = mock_console.print.call_args.args[0]
     assert "--history only supports project-root scans" in message
+
+
+def test_cli_debt_show_history_reads_history_without_scanning(tmp_path, monkeypatch):
+    history_dir = tmp_path / ".skylos"
+    history_dir.mkdir()
+    (history_dir / "debt_history.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-03-28T00:00:00+00:00",
+                "score": {
+                    "score_pct": 93,
+                    "risk_rating": "LOW",
+                    "hotspot_count": 1,
+                    "signal_count": 1,
+                },
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "timestamp": "2026-03-29T00:00:00+00:00",
+                "score": {
+                    "score_pct": 90,
+                    "risk_rating": "MODERATE",
+                    "hotspot_count": 2,
+                    "signal_count": 4,
+                },
+                "hotspots": [
+                    {
+                        "file": "app/core.py",
+                        "score": 18.0,
+                        "signal_count": 3,
+                        "primary_dimension": "complexity",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "debt", str(tmp_path), "--show-history", "--history-limit", "1"],
+    )
+    mock_console = Mock()
+
+    with (
+        patch("skylos.debt.run_debt_analysis") as mock_scan,
+        patch("skylos.cli.Console", return_value=mock_console),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    mock_scan.assert_not_called()
+    output = mock_console.print.call_args.args[0]
+    assert "Skylos Debt History" in output
+    assert "Entries: 1 shown (2 total)" in output
+    assert "2026-03-29T00:00:00+00:00" in output
+    assert "app/core.py | score=18.00 | signals=3 | complexity" in output
+    assert "2026-03-28T00:00:00+00:00" not in output
+
+
+def test_cli_debt_show_history_json_outputs_saved_entries(tmp_path, monkeypatch):
+    history_dir = tmp_path / ".skylos"
+    history_dir.mkdir()
+    (history_dir / "debt_history.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-03-28T00:00:00+00:00",
+                "score": {"score_pct": 93},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "debt", str(tmp_path), "--show-history", "--json"],
+    )
+
+    with (
+        patch("skylos.debt.run_debt_analysis") as mock_scan,
+        patch("builtins.print") as mock_print,
+        patch("skylos.cli.Console", return_value=Mock()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    mock_scan.assert_not_called()
+    payload = json.loads(mock_print.call_args.args[0])
+    assert payload["history"][0]["score"]["score_pct"] == 93

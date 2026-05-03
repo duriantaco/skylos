@@ -81,6 +81,17 @@ def run_debt_command(
         help="Append the current debt summary to the history log",
     )
     debt_parser.add_argument(
+        "--show-history",
+        action="store_true",
+        help="Show saved debt history without running a new scan",
+    )
+    debt_parser.add_argument(
+        "--history-limit",
+        type=int,
+        default=None,
+        help="Maximum number of saved history entries to show",
+    )
+    debt_parser.add_argument(
         "--policy",
         dest="policy_file",
         help="Path to skylos-debt.yaml policy file",
@@ -108,9 +119,12 @@ def run_debt_command(
         append_history as append_debt_history,
         augment_hotspots_with_advisories,
         compare_to_baseline as compare_debt_baseline,
+        format_debt_history_json,
+        format_debt_history_table,
         format_debt_json,
         format_debt_table,
         load_baseline as load_debt_baseline,
+        load_history as load_debt_history,
         load_policy as load_debt_policy,
         run_debt_analysis,
         save_baseline as save_debt_baseline,
@@ -135,6 +149,44 @@ def run_debt_command(
             f"[red]Error: --agent-top must be > 0, got {debt_args.agent_top}[/red]"
         )
         return 1
+    if debt_args.history_limit is not None and debt_args.history_limit <= 0:
+        console.print(
+            f"[red]Error: --history-limit must be > 0, got {debt_args.history_limit}[/red]"
+        )
+        return 1
+
+    if debt_args.show_history:
+        try:
+            history_entries = load_debt_history(target)
+        except ValueError as e:
+            console.print(f"[red]Error reading debt history: {e}[/red]")
+            return 1
+
+        if debt_args.output_json:
+            visible_entries = (
+                history_entries[-debt_args.history_limit :]
+                if debt_args.history_limit
+                else history_entries
+            )
+            output = format_debt_history_json(visible_entries)
+        else:
+            output = format_debt_history_table(
+                history_entries,
+                limit=debt_args.history_limit,
+            )
+
+        if debt_args.output_file:
+            try:
+                Path(debt_args.output_file).write_text(output, encoding="utf-8")  # skylos: ignore[SKY-D215]
+            except OSError as e:
+                console.print(f"[red]Error writing output file: {e}[/red]")
+                return 1
+            console.print(f"[green]Output written to {debt_args.output_file}[/green]")
+        elif debt_args.output_json:
+            print(output)
+        else:
+            console.print(output)
+        return 0
 
     exclude = set(
         parse_exclude_folders_func(
