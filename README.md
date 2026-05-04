@@ -28,6 +28,7 @@
 [VS Code Extension](./editors/vscode/README.md) |
 [Real-World Results](./REAL_WORLD_RESULTS.md) |
 [Benchmarks](./BENCHMARK.md) |
+[Roadmap](./ROADMAP.md) |
 [Contributing](./CONTRIBUTING.md)
 
 **English** | [Chinese README](./README_CN.md)
@@ -273,6 +274,7 @@ metadata, and supports monorepo subprojects through `--scan-path`.
 | Benchmarks and methodology | [BENCHMARK.md](./BENCHMARK.md) |
 | Security policy | [SECURITY.md](./SECURITY.md) |
 | Release process | [RELEASE_WORKFLOW.md](./RELEASE_WORKFLOW.md) |
+| Contribution priorities | [ROADMAP.md](./ROADMAP.md) |
 | Contributing | [CONTRIBUTING.md](./CONTRIBUTING.md) |
 
 ## Common Questions
@@ -303,6 +305,7 @@ Use baselines, whitelists, inline suppressions, or runtime tracing. See the
 
 - Report security issues through [SECURITY.md](./SECURITY.md).
 - Open bugs and false-positive reports with minimal repros.
+- Check [ROADMAP.md](./ROADMAP.md) for useful contribution areas.
 - Read [CONTRIBUTING.md](./CONTRIBUTING.md) before sending a pull request.
 - See [QUALITY.md](./QUALITY.md) for project quality and gate expectations.
 - Join the [Discord](https://discord.gg/Ftn9t9tErf) for community support.
