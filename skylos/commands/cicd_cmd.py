@@ -158,6 +158,11 @@ def run_cicd_command(
     p_ci_rev.add_argument("--max-comments", type=int, default=25)
     p_ci_rev.add_argument("--diff-base", default="origin/main")
     p_ci_rev.add_argument("--llm-input", help="LLM agent review results JSON file")
+    p_ci_rev.add_argument(
+        "--evidence-cards",
+        action="store_true",
+        help="Format PR comments with Proven, Likely, or Speculative evidence labels.",
+    )
 
     if not argv:
         cicd_parser.print_help()
@@ -253,6 +258,7 @@ def run_cicd_command(
             max_comments=cicd_args.max_comments,
             diff_base=cicd_args.diff_base,
             llm_findings=llm_findings,
+            evidence_cards=cicd_args.evidence_cards,
         )
         return 0
 

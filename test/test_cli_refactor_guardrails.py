@@ -739,6 +739,34 @@ def test_cicd_gate_command_reads_input_and_returns_gate_exit(tmp_path):
     assert mock_gate.call_args.kwargs["result"]["project_root"] == str(tmp_path)
 
 
+def test_cicd_review_command_passes_evidence_cards_flag(tmp_path):
+    results_path = tmp_path / "results.json"
+    results_path.write_text(json.dumps({"project_root": str(tmp_path), "danger": []}))
+    from skylos.commands.cicd_cmd import run_cicd_command
+
+    with patch("skylos.cicd.review.run_pr_review") as mock_review:
+        exit_code = run_cicd_command(
+            [
+                "review",
+                "--input",
+                str(results_path),
+                "--pr",
+                "12",
+                "--repo",
+                "owner/repo",
+                "--evidence-cards",
+            ],
+            console_factory=lambda: Mock(),
+            load_config_func=lambda path: {},
+            run_gate_interaction_func=Mock(),
+            emit_github_annotations_func=Mock(),
+        )
+
+    assert exit_code == 0
+    assert mock_review.call_args.kwargs["evidence_cards"] is True
+    assert mock_review.call_args.kwargs["pr_number"] == 12
+
+
 def test_cli_guardrail_static_json_output_passthrough(monkeypatch):
     result = {
         "unused_functions": [{"name": "unused_func", "file": "test.py", "line": 10}],
