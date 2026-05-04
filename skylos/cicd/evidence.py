@@ -1,0 +1,342 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import re
+from typing import Any, Literal
+
+EvidenceLabel = Literal["proven", "likely", "speculative"]
+EvidenceKind = Literal[
+    "security",
+    "security_regression",
+    "secret",
+    "quality",
+    "dependency",
+    "custom",
+]
+
+
+@dataclass(frozen=True)
+class EvidenceCard:
+    label: EvidenceLabel
+    kind: EvidenceKind
+    confidence: int
+    title: str
+    rule_id: str
+    file: str
+    line: int
+    symbol: str | None = None
+    evidence: tuple[str, ...] = ()
+    impact: str = ""
+    suggested_fix: str | None = None
+    gate_blocking: bool = False
+
+
+_SECRET_PATTERNS = (
+    re.compile(r"\bsk_(?:live|test|proj)_[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"),
+    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+    re.compile(r"\b[A-Za-z0-9_./+=-]{40,}\b"),
+)
+
+_RULE_SUGGESTIONS: dict[str, str] = {
+    "SKY-D201": "Replace dynamic evaluation with a safe parser for the expected input format.",
+    "SKY-D203": "Use subprocess with an argument list and shell disabled.",
+    "SKY-D211": "Use parameterized queries instead of building SQL with string interpolation.",
+    "SKY-D212": "Validate or escape command input, or pass arguments without a shell.",
+    "SKY-D215": "Resolve paths under an allowed directory before opening filesystem paths.",
+    "SKY-D216": "Validate outbound URLs against an allowlist and block internal network targets.",
+    "SKY-D223": "Declare the dependency in project metadata or remove the import.",
+    "SKY-D280": "Verify webhook signatures before trusting webhook request bodies.",
+    "SKY-D281": "Keep webhook signature verification before any request body parsing or side effects.",
+    "SKY-D282": "Use a webhook library or HMAC comparison that verifies the provider signature.",
+    "SKY-S101": "Move the secret to environment variables or a secrets manager, then rotate it.",
+    "SKY-S102": "Move the credential to a secrets manager, then rotate the exposed value.",
+}
+
+_REGRESSION_SUGGESTIONS: dict[str, str] = {
+    "auth": "Re-add the authentication check before the protected handler runs.",
+    "csrf": "Re-enable CSRF protection for the affected request path.",
+    "tls": "Keep TLS certificate verification enabled.",
+    "crypto": "Use a modern cryptographic primitive or hash algorithm.",
+    "rate_limit": "Re-add rate limiting around the affected endpoint or action.",
+    "validation": "Restore input validation before the value reaches the risky sink.",
+    "headers": "Restore the security header or middleware.",
+    "encryption": "Restore encryption before sensitive data is stored or transmitted.",
+    "logging": "Restore audit logging for the security-relevant action.",
+    "sanitization": "Restore output sanitization before rendering user-controlled content.",
+    "permission": "Re-add the permission check before the protected action runs.",
+}
+
+_SEVERITY_CONFIDENCE = {
+    "proven": {"CRITICAL": 96, "HIGH": 92, "MEDIUM": 84, "LOW": 76},
+    "likely": {"CRITICAL": 86, "HIGH": 80, "MEDIUM": 72, "LOW": 64},
+    "speculative": {"CRITICAL": 58, "HIGH": 55, "MEDIUM": 50, "LOW": 45},
+}
+
+
+def build_evidence_cards(findings: list[dict[str, Any]]) -> list[EvidenceCard]:
+    return [build_evidence_card(finding) for finding in findings]
+
+
+def build_evidence_card(finding: dict[str, Any]) -> EvidenceCard:
+    kind = _evidence_kind(finding)
+    label = _evidence_label(finding, kind)
+    rule_id = str(finding.get("rule_id") or "")
+    severity = str(finding.get("severity") or "MEDIUM").upper()
+    control_type = str(finding.get("control_type") or "")
+
+    return EvidenceCard(
+        label=label,
+        kind=kind,
+        confidence=_confidence(label, severity, finding),
+        title=_title(finding, kind),
+        rule_id=rule_id,
+        file=str(finding.get("file") or ""),
+        line=_line_number(finding.get("line")),
+        symbol=_optional_text(finding.get("symbol")),
+        evidence=_evidence_lines(finding, kind, label),
+        impact=_impact(kind, control_type),
+        suggested_fix=_suggested_fix(finding, kind, rule_id, control_type),
+        gate_blocking=severity in {"CRITICAL", "HIGH"},
+    )
+
+
+def evidence_counts(cards: list[EvidenceCard]) -> dict[EvidenceLabel, int]:
+    counts: dict[EvidenceLabel, int] = {
+        "proven": 0,
+        "likely": 0,
+        "speculative": 0,
+    }
+    for card in cards:
+        counts[card.label] += 1
+    return counts
+
+
+def evidence_label_title(label: EvidenceLabel) -> str:
+    return {
+        "proven": "Proven",
+        "likely": "Likely",
+        "speculative": "Speculative",
+    }[label]
+
+
+def redact_sensitive_text(value: Any) -> str:
+    text = "" if value is None else str(value)
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub("[redacted]", text)
+    return text
+
+
+def _evidence_kind(finding: dict[str, Any]) -> EvidenceKind:
+    category = str(finding.get("category") or "").lower()
+    kind = str(finding.get("kind") or "").lower()
+
+    if category == "security_regression" or kind == "security_regression":
+        return "security_regression"
+    if category in {"secrets", "secret"}:
+        return "secret"
+    if category in {"danger", "security"}:
+        return "security"
+    if category in {"dependency", "dependencies"}:
+        return "dependency"
+    if category == "custom_rules":
+        return "custom"
+    return "quality"
+
+
+def _evidence_label(finding: dict[str, Any], kind: EvidenceKind) -> EvidenceLabel:
+    if kind in {"security_regression", "secret"}:
+        return "proven"
+
+    if _verification_verdict(finding) == "VERIFIED":
+        return "proven"
+
+    source = str(finding.get("_source") or "").lower()
+    security_evidence = _security_evidence(finding)
+    if source == "llm" and security_evidence == "hypothesis":
+        return "speculative"
+    if source == "llm":
+        return "likely" if security_evidence == "review_supported" else "speculative"
+
+    rule_id = str(finding.get("rule_id") or "")
+    if kind == "security" and rule_id.startswith(("SKY-D", "SKY-S")):
+        return "proven"
+    if kind == "quality" and rule_id.startswith("SKY-UC"):
+        return "proven"
+
+    if security_evidence == "hypothesis":
+        return "speculative"
+
+    return "likely"
+
+
+def _confidence(label: EvidenceLabel, severity: str, finding: dict[str, Any]) -> int:
+    explicit = finding.get("confidence")
+    if isinstance(explicit, int):
+        return max(1, min(99, explicit))
+    return _SEVERITY_CONFIDENCE[label].get(
+        severity, _SEVERITY_CONFIDENCE[label]["MEDIUM"]
+    )
+
+
+def _title(finding: dict[str, Any], kind: EvidenceKind) -> str:
+    if kind == "secret":
+        return "Hardcoded secret detected"
+    if kind == "security_regression":
+        control_type = str(finding.get("control_type") or "")
+        if control_type:
+            control_label = control_type.replace("_", " ")
+            return f"Security control regression: {control_label}"
+        return "Security control regression"
+
+    message = redact_sensitive_text(finding.get("message") or "")
+    if not message:
+        message = str(finding.get("rule_id") or kind.replace("_", " "))
+    return _limit(message, 120)
+
+
+def _evidence_lines(
+    finding: dict[str, Any], kind: EvidenceKind, label: EvidenceLabel
+) -> tuple[str, ...]:
+    rule_id = str(finding.get("rule_id") or "")
+    control_type = str(finding.get("control_type") or "")
+    lines: list[str] = []
+
+    if kind == "secret":
+        return (
+            "Static secret detection matched a credential pattern.",
+            "The secret value is intentionally omitted from PR output.",
+        )
+
+    if kind == "security_regression":
+        return (f"PR diff removed or weakened {_control_phrase(control_type)}.",)
+
+    if _verification_verdict(finding) == "VERIFIED":
+        lines.append("Skylos verification marked this finding as verified.")
+    elif label == "speculative":
+        lines.append("The finding is not backed by verifier-confirmed evidence yet.")
+    elif str(finding.get("_source") or "").lower() == "llm":
+        lines.append("LLM review supplied supporting evidence, but no verifier proof.")
+    elif rule_id:
+        prefix = "Configured custom rule" if kind == "custom" else "Static Skylos rule"
+        lines.append(f"{prefix} {rule_id} matched this line.")
+    else:
+        lines.append("Static analysis matched this line.")
+
+    reason = _review_reason(finding)
+    if reason:
+        lines.append(_limit(redact_sensitive_text(reason), 180))
+
+    return tuple(lines)
+
+
+def _impact(kind: EvidenceKind, control_type: str) -> str:
+    if kind == "secret":
+        return "A committed credential can be copied from the repository or logs."
+    if kind == "security_regression":
+        return f"The affected change may reduce protection from {_control_phrase(control_type)}."
+    if kind == "security":
+        return "The affected code may expose a security weakness if reachable."
+    if kind == "dependency":
+        return "The dependency change may affect supply-chain or runtime safety."
+    if kind == "custom":
+        return "The change violates a configured project rule."
+    return "The issue can increase maintenance cost or review risk."
+
+
+def _suggested_fix(
+    finding: dict[str, Any],
+    kind: EvidenceKind,
+    rule_id: str,
+    control_type: str,
+) -> str | None:
+    if kind == "secret":
+        return "Rotate the exposed credential and move it to a secrets manager or environment variable."
+    if kind == "security_regression":
+        return _REGRESSION_SUGGESTIONS.get(
+            control_type,
+            "Restore or replace the removed security control before merging.",
+        )
+
+    suggestion = finding.get("suggestion")
+    if suggestion:
+        return _limit(redact_sensitive_text(suggestion), 220)
+    return _RULE_SUGGESTIONS.get(rule_id) or _fallback_suggested_fix(kind)
+
+
+def _fallback_suggested_fix(kind: EvidenceKind) -> str:
+    if kind == "security":
+        return "Review the risky data flow and add the narrowest validation, escaping, or guard needed."
+    if kind == "dependency":
+        return "Review the dependency change and pin, update, or remove the package as appropriate."
+    if kind == "custom":
+        return "Update the code to satisfy the configured project rule, or adjust the rule if this case is intentional."
+    return "Refactor the affected code to remove the reported maintainability issue."
+
+
+def _control_phrase(control_type: str) -> str:
+    control_label = control_type.replace("_", " ") if control_type else "security"
+    if control_label.endswith("control"):
+        return control_label
+    return f"{control_label} control"
+
+
+def _verification_verdict(finding: dict[str, Any]) -> str:
+    verification = finding.get("verification")
+    if isinstance(verification, dict):
+        verdict = verification.get("verdict")
+        if isinstance(verdict, str):
+            return verdict.upper()
+
+    verdict = finding.get("_review_verdict")
+    if isinstance(verdict, str):
+        return verdict.upper()
+    return ""
+
+
+def _security_evidence(finding: dict[str, Any]) -> str:
+    evidence = finding.get("_security_evidence")
+    if isinstance(evidence, str):
+        return evidence
+
+    metadata = finding.get("metadata")
+    if isinstance(metadata, dict):
+        evidence = metadata.get("security_evidence")
+        if isinstance(evidence, str):
+            return evidence
+    return ""
+
+
+def _review_reason(finding: dict[str, Any]) -> str:
+    reason = finding.get("_review_reason")
+    if isinstance(reason, str):
+        return reason
+
+    metadata = finding.get("metadata")
+    if isinstance(metadata, dict):
+        reason = metadata.get("review_reason")
+        if isinstance(reason, str):
+            return reason
+    return ""
+
+
+def _line_number(value: Any) -> int:
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _optional_text(value: Any) -> str | None:
+    if not value:
+        return None
+    return _limit(redact_sensitive_text(value), 120)
+
+
+def _limit(text: str, max_length: int) -> str:
+    if len(text) <= max_length:
+        return text
+    return f"{text[: max_length - 3].rstrip()}..."

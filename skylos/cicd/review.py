@@ -7,6 +7,14 @@ import subprocess
 
 from rich.console import Console
 
+from skylos.cicd.evidence import (
+    EvidenceCard,
+    build_evidence_card,
+    build_evidence_cards,
+    evidence_counts,
+    evidence_label_title,
+    redact_sensitive_text,
+)
 from skylos.rules.quality.regression import detect_security_regressions
 
 console = Console()
@@ -23,6 +31,7 @@ def run_pr_review(
     grade: dict | None = None,
     previous_grade: dict | None = None,
     llm_findings: list[dict] | None = None,
+    evidence_cards: bool = False,
 ) -> None:
     pr_number = pr_number or _detect_pr_number()
     repo = repo or os.environ.get("GITHUB_REPOSITORY")
@@ -64,7 +73,12 @@ def run_pr_review(
     all_findings.extend(regression_findings)
 
     if findings and not summary_only:
-        _post_pr_review(findings[:max_comments], pr_number, repo)
+        _post_pr_review(
+            findings[:max_comments],
+            pr_number,
+            repo,
+            evidence_cards=evidence_cards,
+        )
 
     _post_summary_comment(
         all_findings,
@@ -73,6 +87,7 @@ def run_pr_review(
         repo,
         grade=grade,
         previous_grade=previous_grade,
+        evidence_cards=evidence_cards,
     )
 
     console.print(
@@ -209,26 +224,75 @@ def filter_findings_to_diff(
     return filtered
 
 
+_SAFE_FINDING_METADATA_FIELDS = (
+    "security_evidence",
+    "review_verdict",
+    "review_reason",
+)
+_SAFE_VERIFICATION_FIELDS = ("verdict", "confidence", "reason")
+
+
 def _flatten_findings(results: dict) -> list[dict]:
     findings = []
 
     for category in ("danger", "quality", "secrets", "custom_rules"):
         for f in results.get(category, []) or []:
-            findings.append(
-                {
-                    "file": f.get("file") or f.get("file_path") or "",
-                    "line": f.get("line") or f.get("line_number") or 1,
-                    "message": f.get("message")
-                    or f.get("msg")
-                    or f.get("detail")
-                    or "",
-                    "rule_id": f.get("rule_id") or "",
-                    "severity": f.get("severity", "MEDIUM"),
-                    "category": category,
-                }
-            )
+            finding = {
+                "file": f.get("file") or f.get("file_path") or "",
+                "line": f.get("line") or f.get("line_number") or 1,
+                "message": f.get("message") or f.get("msg") or f.get("detail") or "",
+                "rule_id": f.get("rule_id") or "",
+                "severity": f.get("severity", "MEDIUM"),
+                "category": category,
+            }
+            _copy_safe_finding_metadata(f, finding)
+            findings.append(finding)
 
     return findings
+
+
+def _copy_safe_finding_metadata(source: dict, target: dict) -> None:
+    for key in ("_security_evidence", "_review_verdict", "_review_reason"):
+        value = source.get(key)
+        if isinstance(value, str):
+            target[key] = value
+
+    symbol = source.get("symbol")
+    if isinstance(symbol, str):
+        target["symbol"] = symbol
+
+    confidence = source.get("confidence")
+    if isinstance(confidence, int):
+        target["confidence"] = confidence
+
+    verification = source.get("verification")
+    if isinstance(verification, dict):
+        safe_verification = {
+            key: value
+            for key, value in verification.items()
+            if key in _SAFE_VERIFICATION_FIELDS
+            and isinstance(value, (str, int, float, bool))
+        }
+        if safe_verification:
+            target["verification"] = safe_verification
+
+    metadata = source.get("metadata")
+    if not isinstance(metadata, dict):
+        return
+
+    safe_metadata = {
+        key: value
+        for key, value in metadata.items()
+        if key in _SAFE_FINDING_METADATA_FIELDS and isinstance(value, str)
+    }
+    if safe_metadata:
+        target["metadata"] = safe_metadata
+        if "security_evidence" in safe_metadata:
+            target["_security_evidence"] = safe_metadata["security_evidence"]
+        if "review_verdict" in safe_metadata:
+            target["_review_verdict"] = safe_metadata["review_verdict"]
+        if "review_reason" in safe_metadata:
+            target["_review_reason"] = safe_metadata["review_reason"]
 
 
 def _merge_llm_findings(
@@ -256,25 +320,26 @@ def _merge_llm_findings(
                 finding["vulnerable_code"] = llm["vulnerable_code"]
             if llm.get("fixed_code"):
                 finding["fixed_code"] = llm["fixed_code"]
+            _copy_safe_finding_metadata(llm, finding)
             matched_keys.add(key)
 
     for key, llm in llm_by_loc.items():
         if key not in matched_keys:
-            static_findings.append(
-                {
-                    "file": llm.get("file", ""),
-                    "line": llm.get("line", 0),
-                    "message": llm.get("message", ""),
-                    "rule_id": llm.get("rule_id", ""),
-                    "severity": llm.get("severity", "MEDIUM"),
-                    "category": llm.get("_category", "security"),
-                    "suggestion": llm.get("suggestion"),
-                    "explanation": llm.get("explanation"),
-                    "vulnerable_code": llm.get("vulnerable_code"),
-                    "fixed_code": llm.get("fixed_code"),
-                    "_source": "llm",
-                }
-            )
+            finding = {
+                "file": llm.get("file", ""),
+                "line": llm.get("line", 0),
+                "message": llm.get("message", ""),
+                "rule_id": llm.get("rule_id", ""),
+                "severity": llm.get("severity", "MEDIUM"),
+                "category": llm.get("_category", "security"),
+                "suggestion": llm.get("suggestion"),
+                "explanation": llm.get("explanation"),
+                "vulnerable_code": llm.get("vulnerable_code"),
+                "fixed_code": llm.get("fixed_code"),
+            }
+            _copy_safe_finding_metadata(llm, finding)
+            finding["_source"] = "llm"
+            static_findings.append(finding)
 
     return static_findings
 
@@ -309,7 +374,7 @@ def _format_review_comment(finding: dict) -> str:
     kind = finding.get("kind", "")
     severity = finding.get("severity", "MEDIUM")
     rule_id = finding.get("rule_id", "")
-    message = finding.get("message", "")
+    message = redact_sensitive_text(finding.get("message", ""))
     rule_str = f" `{rule_id}`" if rule_id else ""
 
     if kind == "security_regression":
@@ -324,7 +389,7 @@ def _format_review_comment(finding: dict) -> str:
         ]
         suggestion = _REGRESSION_SUGGESTIONS.get(control_type)
         if suggestion:
-            parts.extend(["", f"**Fix:** {suggestion}"])
+            parts.extend(["", f"**Fix:** {redact_sensitive_text(suggestion)}"])
     else:
         badge = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵"}.get(
             severity, "⚪"
@@ -333,7 +398,7 @@ def _format_review_comment(finding: dict) -> str:
 
         explanation = finding.get("explanation")
         if explanation:
-            parts.extend(["", f"**Why:** {explanation}"])
+            parts.extend(["", f"**Why:** {redact_sensitive_text(explanation)}"])
 
         vulnerable_code = finding.get("vulnerable_code")
         fixed_code = finding.get("fixed_code")
@@ -344,23 +409,66 @@ def _format_review_comment(finding: dict) -> str:
                     "",
                     "**Vulnerable code:**",
                     "```python",
-                    vulnerable_code,
+                    redact_sensitive_text(vulnerable_code),
                     "```",
                     "",
                     "**Fixed code:**",
                     "```python",
-                    fixed_code,
+                    redact_sensitive_text(fixed_code),
                     "```",
                 ]
             )
         else:
             suggestion = finding.get("suggestion") or _RULE_SUGGESTIONS.get(rule_id)
             if suggestion:
-                parts.extend(["", f"**Fix:** {suggestion}"])
+                parts.extend(["", f"**Fix:** {redact_sensitive_text(suggestion)}"])
 
     footer = "\n\n---\n_🤖 Analyzed by [Skylos](https://github.com/duriantaco/skylos) • [Add to your repo](https://github.com/duriantaco/skylos#cicd)_"
     parts.append(footer)
 
+    return "\n".join(parts)
+
+
+def _format_evidence_card_comment(
+    finding: dict, card: EvidenceCard | None = None
+) -> str:
+    card = card or build_evidence_card(finding)
+    rule_str = f" `{card.rule_id}`" if card.rule_id else ""
+    risk = {
+        "security": "security finding",
+        "security_regression": "security regression",
+        "secret": "secret exposure",
+        "quality": "quality issue",
+        "dependency": "dependency issue",
+        "custom": "custom rule match",
+    }[card.kind]
+    location = f"{card.file}:{card.line}" if card.file else str(card.line)
+
+    parts = [
+        f"**Risk: {evidence_label_title(card.label)} {risk}**{rule_str}",
+        "",
+        redact_sensitive_text(card.title),
+        "",
+        f"**Location:** `{location}`",
+        "",
+        "**Evidence:**",
+    ]
+
+    for item in card.evidence or ("No extra evidence attached.",):
+        parts.append(f"- {redact_sensitive_text(item)}")
+
+    if card.impact:
+        parts.extend(["", f"**Impact:** {redact_sensitive_text(card.impact)}"])
+
+    if card.suggested_fix:
+        parts.extend(
+            ["", f"**Suggested fix:** {redact_sensitive_text(card.suggested_fix)}"]
+        )
+
+    parts.extend(["", f"**Confidence:** {card.confidence}%"])
+
+    footer = "\n\n---\n_🤖 Analyzed by [Skylos](https://github.com/duriantaco/skylos) • [Add to your repo](https://github.com/duriantaco/skylos#cicd)_"
+    parts.append(footer)
     return "\n".join(parts)
 
 
@@ -380,16 +488,27 @@ def _to_relative_path(filepath: str) -> str:
     return filepath
 
 
-def _post_pr_review(findings: list[dict], pr_number: int, repo: str) -> None:
+def _post_pr_review(
+    findings: list[dict],
+    pr_number: int,
+    repo: str,
+    *,
+    evidence_cards: bool = False,
+) -> None:
     comments = []
     for f in findings:
         if not f.get("file") or not f.get("line"):
             continue
+        body = (
+            _format_evidence_card_comment(f)
+            if evidence_cards
+            else _format_review_comment(f)
+        )
         comments.append(
             {
                 "path": _to_relative_path(f["file"]),
                 "line": f["line"],
-                "body": _format_review_comment(f),
+                "body": body,
             }
         )
 
@@ -435,6 +554,7 @@ def _post_summary_comment(
     *,
     grade: dict | None = None,
     previous_grade: dict | None = None,
+    evidence_cards: bool = False,
 ) -> None:
     by_severity = {}
     for f in all_findings:
@@ -496,8 +616,26 @@ def _post_summary_comment(
         for f in regression_findings:
             control = f.get("control_type", "unknown")
             file = os.path.basename(f.get("file", ""))
-            msg = f.get("message", "")
+            msg = redact_sensitive_text(f.get("message", ""))
             lines.append(f"| {control} | {file} | {msg} |")
+
+    if evidence_cards:
+        cards = build_evidence_cards(all_findings)
+        counts = evidence_counts(cards)
+        if cards:
+            lines.extend(
+                [
+                    "",
+                    "### Evidence",
+                    "",
+                    "| Label | Count |",
+                    "|-------|-------|",
+                ]
+            )
+            for label in ("proven", "likely", "speculative"):
+                count = counts[label]
+                if count > 0:
+                    lines.append(f"| {evidence_label_title(label)} | {count} |")
 
     critical_findings = [
         f for f in diff_findings if f.get("severity") in ("CRITICAL", "HIGH")
@@ -511,7 +649,8 @@ def _post_summary_comment(
             file = os.path.basename(f.get("file", ""))
             line_no = f.get("line", "")
             loc = f" ({file}:{line_no})" if file else ""
-            lines.append(f"- {badge} **{sev}**{rule}{loc}: {f.get('message', '')}")
+            message = redact_sensitive_text(f.get("message", ""))
+            lines.append(f"- {badge} **{sev}**{rule}{loc}: {message}")
 
             vuln_code = f.get("vulnerable_code")
             fix_code = f.get("fixed_code")
@@ -521,12 +660,12 @@ def _post_summary_comment(
                 lines.append("")
                 lines.append("  **Vulnerable:**")
                 lines.append("  ```python")
-                for code_line in vuln_code.splitlines():
+                for code_line in redact_sensitive_text(vuln_code).splitlines():
                     lines.append(f"  {code_line}")
                 lines.append("  ```")
                 lines.append("  **Fixed:**")
                 lines.append("  ```python")
-                for code_line in fix_code.splitlines():
+                for code_line in redact_sensitive_text(fix_code).splitlines():
                     lines.append(f"  {code_line}")
                 lines.append("  ```")
                 lines.append("  </details>")
@@ -534,7 +673,7 @@ def _post_summary_comment(
             else:
                 fix = f.get("suggestion") or _RULE_SUGGESTIONS.get(f.get("rule_id", ""))
                 if fix:
-                    lines.append(f"  - **Fix:** {fix}")
+                    lines.append(f"  - **Fix:** {redact_sensitive_text(fix)}")
 
     if grade:
         overall = grade["overall"]
@@ -566,7 +705,7 @@ def _post_summary_comment(
         for cat_name in ("security", "quality", "dead_code", "dependencies", "secrets"):
             cat = cats[cat_name]
             display = cat_name.replace("_", " ").title()
-            issue = (cat.get("key_issue") or "-")[:50]
+            issue = redact_sensitive_text(cat.get("key_issue") or "-")[:50]
 
             delta_str = ""
             if previous_grade and cat_name in previous_grade.get("categories", {}):
