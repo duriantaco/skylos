@@ -53,6 +53,13 @@ def _default_workflow_output() -> str:
     return str(base / ".github" / "workflows" / "skylos.yml")
 
 
+def _read_review_sidecar_json(raw_path: str, *, label: str) -> dict | list:
+    safe_name = Path(raw_path).name
+    if not safe_name or safe_name != str(raw_path):
+        raise ValueError(f"{label} must be a filename in the current directory")
+    return json.loads(Path(safe_name).read_text(encoding="utf-8"))
+
+
 def run_cicd_command(
     argv: list[str],
     *,
@@ -159,6 +166,13 @@ def run_cicd_command(
     p_ci_rev.add_argument("--diff-base", default="origin/main")
     p_ci_rev.add_argument("--llm-input", help="LLM agent review results JSON file")
     p_ci_rev.add_argument(
+        "--defense-input",
+        help=(
+            "AI defense sidecar JSON filename from `skylos defend` "
+            "(for example: defense-results.json)"
+        ),
+    )
+    p_ci_rev.add_argument(
         "--evidence-cards",
         action="store_true",
         help="Format PR comments with Proven, Likely, or Speculative evidence labels.",
@@ -250,6 +264,18 @@ def run_cicd_command(
             except Exception as e:
                 console.print(f"[yellow]Could not read LLM results: {e}[/yellow]")
 
+        defense_report = None
+        if getattr(cicd_args, "defense_input", None):
+            try:
+                defense_report = _read_review_sidecar_json(
+                    cicd_args.defense_input,
+                    label="--defense-input",
+                )
+            except Exception as e:
+                console.print(
+                    f"[yellow]Could not read defense results: {e}[/yellow]"
+                )
+
         run_pr_review(
             results,
             pr_number=cicd_args.pr,
@@ -258,6 +284,7 @@ def run_cicd_command(
             max_comments=cicd_args.max_comments,
             diff_base=cicd_args.diff_base,
             llm_findings=llm_findings,
+            defense_report=defense_report,
             evidence_cards=cicd_args.evidence_cards,
         )
         return 0

@@ -127,6 +127,14 @@ def generate_workflow(
             defend_parts.append(_upload_env_block())
         defend_step = "\n".join(defend_parts)
 
+    review_args = ["--input skylos-results.json"]
+    if use_llm:
+        review_args.append("--llm-input skylos-llm-results.json")
+    if use_defend:
+        review_args.append("--defense-input defense-results.json")
+    review_args.extend([f"--diff-base {pr_base_ref}", "--evidence-cards"])
+    review_command = "skylos cicd review " + " ".join(review_args)
+
     permissions_block = """permissions:
   contents: read
   pull-requests: write
@@ -180,9 +188,7 @@ jobs:
 
       - name: PR Review Comments
         if: github.event_name == 'pull_request' && always()
-        run: skylos cicd review --input skylos-results.json{
-        " --llm-input skylos-llm-results.json" if use_llm else ""
-    } --diff-base {pr_base_ref}
+        run: {review_command}
         env:
           GH_TOKEN: ${{{{ github.token }}}}
 {

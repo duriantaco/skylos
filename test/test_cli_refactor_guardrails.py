@@ -739,9 +739,12 @@ def test_cicd_gate_command_reads_input_and_returns_gate_exit(tmp_path):
     assert mock_gate.call_args.kwargs["result"]["project_root"] == str(tmp_path)
 
 
-def test_cicd_review_command_passes_evidence_cards_flag(tmp_path):
+def test_cicd_review_command_passes_evidence_cards_flag(tmp_path, monkeypatch):
     results_path = tmp_path / "results.json"
     results_path.write_text(json.dumps({"project_root": str(tmp_path), "danger": []}))
+    defense_path = tmp_path / "defense.json"
+    defense_path.write_text(json.dumps({"findings": []}))
+    monkeypatch.chdir(tmp_path)
     from skylos.commands.cicd_cmd import run_cicd_command
 
     with patch("skylos.cicd.review.run_pr_review") as mock_review:
@@ -755,6 +758,8 @@ def test_cicd_review_command_passes_evidence_cards_flag(tmp_path):
                 "--repo",
                 "owner/repo",
                 "--evidence-cards",
+                "--defense-input",
+                defense_path.name,
             ],
             console_factory=lambda: Mock(),
             load_config_func=lambda path: {},
@@ -764,6 +769,7 @@ def test_cicd_review_command_passes_evidence_cards_flag(tmp_path):
 
     assert exit_code == 0
     assert mock_review.call_args.kwargs["evidence_cards"] is True
+    assert mock_review.call_args.kwargs["defense_report"] == {"findings": []}
     assert mock_review.call_args.kwargs["pr_number"] == 12
 
 
