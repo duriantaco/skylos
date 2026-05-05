@@ -595,6 +595,68 @@ class TestAnalyze:
             result.get("quality", [])
         )
 
+    def test_analyze_architecture_metrics_preserve_dotted_submodule_imports(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "package_a").mkdir()
+            (root / "package_b").mkdir()
+            (root / "package_a" / "__init__.py").write_text("", encoding="utf-8")
+            (root / "package_a" / "cli.py").write_text(
+                "import sync_common\n"
+                "def main():\n"
+                "    return sync_common.VALUE\n",
+                encoding="utf-8",
+            )
+            (root / "package_b" / "__init__.py").write_text("", encoding="utf-8")
+            (root / "package_b" / "cli.py").write_text(
+                "from package_a.cli import main as run_a\n"
+                "import sync_common\n"
+                "def main():\n"
+                "    return run_a() + sync_common.VALUE\n",
+                encoding="utf-8",
+            )
+            (root / "sync_common.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+            result_json = analyze(str(root), enable_quality=True, grep_verify=False)
+
+        result = json.loads(result_json)
+        metrics = result["architecture_metrics"]["module_metrics"]
+        assert metrics["package_a"]["ca"] == 0
+        assert metrics["package_a.cli"]["ca"] == 1
+        assert metrics["package_a.cli"]["zone"] != "zone_of_uselessness"
+
+    def test_analyze_architecture_metrics_preserve_resolved_relative_imports(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "app" / "package_a").mkdir(parents=True)
+            (root / "app" / "package_b").mkdir()
+            (root / "app" / "__init__.py").write_text("", encoding="utf-8")
+            (root / "app" / "package_a" / "__init__.py").write_text(
+                "", encoding="utf-8"
+            )
+            (root / "app" / "package_a" / "cli.py").write_text(
+                "def main():\n"
+                "    return 1\n",
+                encoding="utf-8",
+            )
+            (root / "app" / "package_b" / "__init__.py").write_text(
+                "", encoding="utf-8"
+            )
+            (root / "app" / "package_b" / "cli.py").write_text(
+                "from ..package_a.cli import main as run_a\n"
+                "def main():\n"
+                "    return run_a()\n",
+                encoding="utf-8",
+            )
+
+            result_json = analyze(str(root), enable_quality=True, grep_verify=False)
+
+        result = json.loads(result_json)
+        metrics = result["architecture_metrics"]["module_metrics"]
+        assert metrics["app.package_a"]["ca"] == 0
+        assert metrics["app.package_a.cli"]["ca"] == 1
+        assert metrics["app.package_a.cli"]["zone"] != "zone_of_uselessness"
+
     @patch("skylos.analyzer.scan_typescript_file")
     def test_proc_file_dispatches_mjs_to_typescript_scanner(self, mock_scan):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".mjs", delete=False) as f:

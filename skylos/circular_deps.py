@@ -10,6 +10,47 @@ except ImportError:
     _fast_find_cycles = None
 
 
+def _module_root(module_name: str) -> str:
+    return module_name.split(".")[0] if module_name else ""
+
+
+def _known_module_names(module_name: str) -> Set[str]:
+    if not module_name:
+        return set()
+    return {module_name, _module_root(module_name)}
+
+
+def _resolve_known_module(module_name: str, known_modules: Set[str]) -> str | None:
+    parts = module_name.split(".")
+    for end in range(len(parts), 0, -1):
+        candidate = ".".join(parts[:end])
+        if candidate in known_modules:
+            return candidate
+    return None
+
+
+def _resolve_from_import_targets(
+    import_module: str, imported_names: List[str], known_modules: Set[str]
+) -> Dict[str, List[str]]:
+    base_target = _resolve_known_module(import_module, known_modules)
+    targets: Dict[str, List[str]] = defaultdict(list)
+
+    if not imported_names:
+        if base_target:
+            targets[base_target] = []
+        return dict(targets)
+
+    for imported_name in imported_names:
+        member_target = _resolve_known_module(
+            f"{import_module}.{imported_name}", known_modules
+        )
+        target = member_target or base_target
+        if target:
+            targets[target].append(imported_name)
+
+    return dict(targets)
+
+
 @dataclass
 class ModuleDependency:
     from_module: str
@@ -44,6 +85,7 @@ class DependencyGraphBuilder(ast.NodeVisitor):
         self.file_path = file_path
         self.known_modules = known_modules
         self.dependencies: List[ModuleDependency] = []
+        self.architecture_dependencies: List[ModuleDependency] = []
 
     def generic_visit(self, node):
         for child in ast.iter_child_nodes(node):
@@ -51,12 +93,21 @@ class DependencyGraphBuilder(ast.NodeVisitor):
 
     def visit_Import(self, node: ast.Import):
         for alias in node.names:
-            module = alias.name.split(".")[0]
-            if self._is_internal_module(alias.name):
+            module = _resolve_known_module(alias.name, self.known_modules)
+            if module:
                 self.dependencies.append(
                     ModuleDependency(
                         from_module=self.module_name,
-                        to_module=alias.name.split(".")[0],
+                        to_module=_module_root(alias.name),
+                        import_line=node.lineno,
+                        import_type="import",
+                        imported_names=[alias.asname or alias.name],
+                    )
+                )
+                self.architecture_dependencies.append(
+                    ModuleDependency(
+                        from_module=self.module_name,
+                        to_module=module,
                         import_line=node.lineno,
                         import_type="import",
                         imported_names=[alias.asname or alias.name],
@@ -65,47 +116,57 @@ class DependencyGraphBuilder(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom):
         if node.module and node.level == 0:
-            module = node.module.split(".")[0]
-            if self._is_internal_module(node.module):
-                names = [a.name for a in node.names if a.name != "*"]
+            names = [a.name for a in node.names if a.name != "*"]
+            targets = _resolve_from_import_targets(
+                node.module, names, self.known_modules
+            )
+            if targets:
                 self.dependencies.append(
                     ModuleDependency(
                         from_module=self.module_name,
-                        to_module=module,
+                        to_module=_module_root(node.module),
                         import_line=node.lineno,
                         import_type="from_import",
                         imported_names=names,
                     )
                 )
+                for target, target_names in targets.items():
+                    self.architecture_dependencies.append(
+                        ModuleDependency(
+                            from_module=self.module_name,
+                            to_module=target,
+                            import_line=node.lineno,
+                            import_type="from_import",
+                            imported_names=target_names,
+                        )
+                    )
         elif node.level > 0:
             pass
 
     def _is_internal_module(self, module: str) -> bool:
-        root = module.split(".")[0]
-        return root in self.known_modules
+        return _resolve_known_module(module, self.known_modules) is not None
 
 
 class CircularDependencyAnalyzer:
     def __init__(self):
         self.modules: Dict[str, str] = {}
         self.dependencies: Dict[str, Set[str]] = defaultdict(set)
+        self.architecture_dependencies: Dict[str, Set[str]] = defaultdict(set)
         self.all_deps: List[ModuleDependency] = []
         self.known_modules: Set[str] = set()
 
     def add_file(self, tree: ast.AST, file_path: str, module_name: str):
         self.modules[module_name] = file_path
-        root_module = module_name.split(".")[0]
-        self.known_modules.add(root_module)
+        self.known_modules.update(_known_module_names(module_name))
 
     def build_graph_from_raw_imports(self, raw_imports_by_module: Dict[str, list]):
         for module_name in self.modules:
-            root = module_name.split(".")[0]
-            self.known_modules.add(root)
+            self.known_modules.update(_known_module_names(module_name))
 
         for module_name, raw_imports in raw_imports_by_module.items():
             file_path = self.modules.get(module_name, "")
             for import_module, line, import_type, names in raw_imports:
-                root = import_module.split(".")[0]
+                root = _module_root(import_module)
                 if root in self.known_modules:
                     dep = ModuleDependency(
                         from_module=module_name,
@@ -117,10 +178,24 @@ class CircularDependencyAnalyzer:
                     self.dependencies[dep.from_module].add(dep.to_module)
                     self.all_deps.append(dep)
 
+                if import_type == "from_import":
+                    architecture_targets = _resolve_from_import_targets(
+                        import_module, names, self.known_modules
+                    )
+                else:
+                    architecture_target = _resolve_known_module(
+                        import_module, self.known_modules
+                    )
+                    architecture_targets = (
+                        {architecture_target: names} if architecture_target else {}
+                    )
+
+                for target in architecture_targets:
+                    self.architecture_dependencies[module_name].add(target)
+
     def build_graph(self, trees: Dict[str, ast.AST]):
         for module_name in self.modules:
-            root = module_name.split(".")[0]
-            self.known_modules.add(root)
+            self.known_modules.update(_known_module_names(module_name))
 
         for module_name, file_path in self.modules.items():
             if module_name in trees:
@@ -132,6 +207,8 @@ class CircularDependencyAnalyzer:
                 for dep in builder.dependencies:
                     self.dependencies[dep.from_module].add(dep.to_module)
                     self.all_deps.append(dep)
+                for dep in builder.architecture_dependencies:
+                    self.architecture_dependencies[dep.from_module].add(dep.to_module)
 
     def find_simple_cycles(self) -> List[List[str]]:
         if _fast_find_cycles is not None:

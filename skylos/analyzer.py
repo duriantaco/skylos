@@ -1563,7 +1563,9 @@ class Skylos:
                     try:
                         from skylos.architecture import get_architecture_findings
 
-                        dep_graph = dict(circular_rule._analyzer.dependencies)
+                        dep_graph = dict(
+                            circular_rule._analyzer.architecture_dependencies
+                        )
                         mod_files = dict(circular_rule._analyzer.modules)
 
                         mod_trees = {}
