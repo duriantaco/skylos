@@ -23,6 +23,7 @@ from skylos.defend.policy import (
     compute_owasp_coverage,
     _parse_policy,
     OWASP_LLM_MAPPING,
+    get_owasp_mapping,
 )
 from skylos.defend.plugins import ALL_PLUGINS
 from skylos.defend.plugins.no_dangerous_sink import NoDangerousSinkPlugin
@@ -330,9 +331,34 @@ class TestEngine:
         results, score, _ops = run_defense_checks(
             [integ], _empty_graph(), owasp_filter=["LLM01"]
         )
-        for r in results:
-            # Plugins with owasp_llm=None pass through the filter (ops plugins)
-            assert r.owasp_llm == "LLM01" or r.owasp_llm is None
+        allowed = set(OWASP_LLM_MAPPING["LLM01"]["plugins"])
+        assert {r.plugin_id for r in results} <= allowed
+        assert "logging-present" not in {r.plugin_id for r in results}
+
+    def test_agentic_owasp_filter(self):
+        tool = ToolDef(
+            name="shell",
+            location="t.py:1",
+            dangerous_calls=["subprocess.run (L5)"],
+            has_typed_schema=False,
+        )
+        integ = _make_integration(
+            integration_type="agent",
+            tools=[tool],
+            output_sinks=["eval (L45)"],
+        )
+        results, score, _ops = run_defense_checks(
+            [integ],
+            _empty_graph(),
+            owasp_filter=["ASI02"],
+            owasp_framework="agentic",
+            owasp_version="2026",
+        )
+        allowed = set(get_owasp_mapping("agentic", "2026")["ASI02"]["plugins"])
+        plugin_ids = {r.plugin_id for r in results}
+        assert plugin_ids <= allowed
+        assert "tool-scope" in plugin_ids
+        assert "no-dangerous-sink" in plugin_ids
 
     def test_policy_disables_plugin(self):
         integ = _make_integration(model_value="gpt-4o", model_pinned=False)
@@ -409,9 +435,42 @@ class TestReport:
         output = format_defense_json(results, score, 1, 10)
         data = json.loads(output)
         assert data["version"] == "1.0"
+        assert data["owasp_framework"] == "llm"
+        assert data["owasp_version"] == "2025"
         assert data["summary"]["total_checks"] == 1
         assert data["summary"]["passed"] == 1
         assert len(data["findings"]) == 1
+
+    def test_table_uses_selected_owasp_label(self):
+        results = [
+            DefenseResult(
+                "tool-scope",
+                False,
+                "t.py:10",
+                "t.py:10",
+                "tool too broad",
+                "high",
+                5,
+                "defense",
+            ),
+        ]
+        score = compute_defense_score(results)
+        coverage = compute_owasp_coverage(
+            results,
+            framework="agentic",
+            version="2026",
+        )
+        output = format_defense_table(
+            results,
+            score,
+            1,
+            10,
+            coverage,
+            owasp_framework="agentic",
+            owasp_version="2026",
+        )
+        assert "OWASP Agentic Top 10 2026 Coverage" in output
+        assert "ASI02" in output
 
 
 # ---------------------------------------------------------------------------
@@ -509,15 +568,15 @@ class TestOWASPCoverage:
                 owasp_llm="LLM01",
             ),
             DefenseResult(
-                "no-dangerous-sink",
+                "output-pii-filter",
                 True,
                 "t:1",
                 "t:1",
                 "ok",
-                "critical",
-                8,
+                "high",
+                5,
                 "defense",
-                owasp_llm="LLM02",
+                owasp_llm="LLM06",
             ),
         ]
         coverage = compute_owasp_coverage(results)
@@ -556,13 +615,52 @@ class TestOWASPCoverage:
     def test_coverage_not_applicable(self):
         results = []
         coverage = compute_owasp_coverage(results)
-        assert coverage["LLM06"]["status"] == "not_applicable"
+        assert coverage["LLM07"]["status"] == "not_applicable"
 
     def test_all_owasp_ids_present(self):
         coverage = compute_owasp_coverage([])
         for i in range(1, 11):
             key = f"LLM{i:02d}"
             assert key in coverage
+
+    def test_coverage_supports_llm_2024(self):
+        results = [
+            DefenseResult(
+                "no-dangerous-sink",
+                False,
+                "t:1",
+                "t:1",
+                "bad",
+                "critical",
+                8,
+                "defense",
+                owasp_llm="LLM02",
+            ),
+        ]
+        coverage = compute_owasp_coverage(results, framework="llm", version="2024")
+        assert coverage["LLM02"]["name"] == "Insecure Output Handling"
+        assert coverage["LLM02"]["status"] == "uncovered"
+
+    def test_coverage_supports_agentic_2026(self):
+        results = [
+            DefenseResult(
+                "tool-scope",
+                True,
+                "t:1",
+                "t:1",
+                "ok",
+                "high",
+                5,
+                "defense",
+            ),
+        ]
+        coverage = compute_owasp_coverage(
+            results,
+            framework="agentic",
+            version="2026",
+        )
+        assert "ASI10" in coverage
+        assert coverage["ASI02"]["status"] == "covered"
 
 
 # ---------------------------------------------------------------------------
@@ -1403,11 +1501,23 @@ def chat(msg):
         assert "rate-limiting" in ids
 
     def test_owasp_mapping_updated(self):
-        """OWASP mapping should include Phase 3 plugins."""
+        """Default OWASP LLM 2025 mapping should include Phase 3 plugins."""
         assert "untrusted-input-to-prompt" in OWASP_LLM_MAPPING["LLM01"]["plugins"]
         assert "rag-context-isolation" in OWASP_LLM_MAPPING["LLM01"]["plugins"]
-        assert "output-pii-filter" in OWASP_LLM_MAPPING["LLM06"]["plugins"]
+        assert "output-pii-filter" in OWASP_LLM_MAPPING["LLM02"]["plugins"]
+        assert "tool-scope" in OWASP_LLM_MAPPING["LLM06"]["plugins"]
         assert "cost-controls" in OWASP_LLM_MAPPING["LLM10"]["plugins"]
+
+    def test_owasp_registry_has_supported_versions(self):
+        assert get_owasp_mapping("llm", "2024")["LLM10"]["name"] == "Model Theft"
+        assert (
+            get_owasp_mapping("llm", "2025")["LLM10"]["name"]
+            == "Unbounded Consumption"
+        )
+        assert (
+            get_owasp_mapping("agentic", "2026")["ASI01"]["name"]
+            == "Agent Goal Hijack"
+        )
 
     def test_policy_accepts_phase3_plugins(self):
         """Policy parser should accept Phase 3 plugin IDs."""
