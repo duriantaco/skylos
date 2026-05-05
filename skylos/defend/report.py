@@ -7,7 +7,11 @@ from typing import Any
 
 from skylos.defend.result import DefenseResult, DefenseScore, OpsScore
 from skylos.defend.scoring import compute_defense_score, SEVERITY_WEIGHTS
-from skylos.defend.policy import compute_owasp_coverage
+from skylos.defend.owasp import (
+    DEFAULT_OWASP_FRAMEWORK,
+    normalize_owasp_selection,
+    owasp_report_label,
+)
 
 
 def format_defense_table(
@@ -17,6 +21,8 @@ def format_defense_table(
     files_scanned: int = 0,
     owasp_coverage: dict | None = None,
     ops_score: OpsScore | None = None,
+    owasp_framework: str | None = DEFAULT_OWASP_FRAMEWORK,
+    owasp_version: str | int | None = None,
 ) -> str:
     lines = []
 
@@ -71,7 +77,7 @@ def format_defense_table(
 
     if owasp_coverage:
         lines.append("")
-        lines.append("OWASP LLM Top 10 Coverage:")
+        lines.append(f"{owasp_report_label(owasp_framework, owasp_version)} Coverage:")
         for owasp_id, info in owasp_coverage.items():
             if info["status"] == "not_applicable":
                 continue
@@ -102,7 +108,13 @@ def format_defense_json(
     owasp_coverage: dict | None = None,
     ops_score: OpsScore | None = None,
     integrations: list | None = None,
+    owasp_framework: str | None = DEFAULT_OWASP_FRAMEWORK,
+    owasp_version: str | int | None = None,
 ) -> str:
+    owasp_framework, owasp_version = normalize_owasp_selection(
+        owasp_framework,
+        owasp_version,
+    )
     by_severity: dict[str, dict[str, int]] = {}
     for sev in ("critical", "high", "medium", "low"):
         sev_results: list[DefenseResult] = []
@@ -158,6 +170,8 @@ def format_defense_json(
         "version": "1.0",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "project": project_path,
+        "owasp_framework": owasp_framework,
+        "owasp_version": owasp_version,
         "summary": {
             "integrations_found": integrations_count,
             "files_scanned": files_scanned,
@@ -174,7 +188,7 @@ def format_defense_json(
         "findings": findings,
     }
 
-    if owasp_coverage:
+    if owasp_coverage is not None:
         data["owasp_coverage"] = owasp_coverage
 
     if ops_score:

@@ -4,11 +4,29 @@ from pathlib import Path
 
 from rich.progress import SpinnerColumn, TextColumn
 
+from skylos.defend.owasp import (
+    DEFAULT_OWASP_FRAMEWORK,
+    compute_owasp_coverage,
+    normalize_owasp_selection,
+    supported_owasp_frameworks,
+    validate_owasp_ids,
+)
 
-def _build_empty_defense_json() -> str:
+
+def _build_empty_defense_json(
+    *,
+    owasp_framework: str = DEFAULT_OWASP_FRAMEWORK,
+    owasp_version: str | int | None = None,
+) -> str:
+    owasp_framework, owasp_version = normalize_owasp_selection(
+        owasp_framework,
+        owasp_version,
+    )
     return json.dumps(
         {
             "version": "1.0",
+            "owasp_framework": owasp_framework,
+            "owasp_version": owasp_version,
             "summary": {
                 "integrations_found": 0,
                 "total_checks": 0,
@@ -18,6 +36,11 @@ def _build_empty_defense_json() -> str:
                 "risk_rating": "SECURE",
             },
             "findings": [],
+            "owasp_coverage": compute_owasp_coverage(
+                [],
+                framework=owasp_framework,
+                version=owasp_version,
+            ),
             "ops_score": {
                 "passed": 0,
                 "total": 0,
@@ -69,7 +92,18 @@ def run_defend_command(
     def_parser.add_argument(
         "--owasp",
         dest="owasp_filter",
-        help="Comma-separated OWASP LLM IDs to filter (e.g. LLM01,LLM04)",
+        help="Comma-separated OWASP IDs to filter (e.g. LLM01,LLM04 or ASI02)",
+    )
+    def_parser.add_argument(
+        "--owasp-framework",
+        choices=supported_owasp_frameworks(),
+        default=DEFAULT_OWASP_FRAMEWORK,
+        type=str.lower,
+        help="OWASP framework to report against",
+    )
+    def_parser.add_argument(
+        "--owasp-version",
+        help="OWASP framework version (llm: 2024/2025, agentic: 2026)",
     )
     def_parser.add_argument(
         "--exclude",
@@ -87,7 +121,7 @@ def run_defend_command(
     console = console_factory()
 
     from skylos.defend.engine import run_defense_checks
-    from skylos.defend.policy import compute_owasp_coverage, load_policy
+    from skylos.defend.policy import load_policy
     from skylos.defend.report import format_defense_json, format_defense_table
     from skylos.discover.detector import _collect_ai_files, detect_integrations
 
@@ -103,6 +137,15 @@ def run_defend_command(
         console.print(
             f"[red]Error: --min-score must be 0-100, got {def_args.min_score}[/red]"
         )
+        return 1
+
+    try:
+        owasp_framework, owasp_version = normalize_owasp_selection(
+            def_args.owasp_framework,
+            def_args.owasp_version,
+        )
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
         return 1
 
     exclude = {
@@ -133,16 +176,15 @@ def run_defend_command(
 
     owasp_filter = None
     if def_args.owasp_filter:
-        from skylos.defend.policy import OWASP_LLM_MAPPING
-
-        owasp_filter = [s.strip().upper() for s in def_args.owasp_filter.split(",")]
-        for oid in owasp_filter:
-            if oid not in OWASP_LLM_MAPPING:
-                console.print(
-                    f"[red]Error: unknown OWASP ID '{oid}'. "
-                    f"Valid: {', '.join(sorted(OWASP_LLM_MAPPING))}[/red]"
-                )
-                return 1
+        try:
+            owasp_filter = validate_owasp_ids(
+                def_args.owasp_filter.split(","),
+                framework=owasp_framework,
+                version=owasp_version,
+            )
+        except ValueError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            return 1
 
     with progress_factory(
         SpinnerColumn(),
@@ -156,7 +198,10 @@ def run_defend_command(
 
     if not integrations:
         if def_args.output_json:
-            empty = _build_empty_defense_json()
+            empty = _build_empty_defense_json(
+                owasp_framework=owasp_framework,
+                owasp_version=owasp_version,
+            )
             if def_args.output_file:
                 Path(def_args.output_file).write_text(empty, encoding="utf-8")
             else:
@@ -173,9 +218,15 @@ def run_defend_command(
         policy=policy,
         min_severity=def_args.min_severity,
         owasp_filter=owasp_filter,
+        owasp_framework=owasp_framework,
+        owasp_version=owasp_version,
     )
 
-    owasp_coverage = compute_owasp_coverage(results)
+    owasp_coverage = compute_owasp_coverage(
+        results,
+        framework=owasp_framework,
+        version=owasp_version,
+    )
 
     json_output = None
     if def_args.output_json or def_args.upload:
@@ -188,6 +239,8 @@ def run_defend_command(
             owasp_coverage,
             ops_score,
             integrations=integrations,
+            owasp_framework=owasp_framework,
+            owasp_version=owasp_version,
         )
 
     if def_args.output_json:
@@ -200,6 +253,8 @@ def run_defend_command(
             len(files),
             owasp_coverage,
             ops_score,
+            owasp_framework=owasp_framework,
+            owasp_version=owasp_version,
         )
 
     if def_args.output_file:

@@ -4,6 +4,41 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from skylos.defend.owasp import (
+    DEFAULT_OWASP_FRAMEWORK,
+    DEFAULT_OWASP_VERSION_BY_FRAMEWORK,
+    OWASP_LLM_MAPPING,
+    OWASP_REGISTRY,
+    compute_owasp_coverage,
+    get_owasp_mapping,
+    normalize_owasp_framework,
+    normalize_owasp_selection,
+    owasp_report_label,
+    plugin_ids_for_owasp_filter,
+    supported_owasp_frameworks,
+    supported_owasp_versions,
+    validate_owasp_ids,
+)
+
+__all__ = [
+    "DefensePolicy",
+    "DEFAULT_OWASP_FRAMEWORK",
+    "DEFAULT_OWASP_VERSION_BY_FRAMEWORK",
+    "OWASP_LLM_MAPPING",
+    "OWASP_REGISTRY",
+    "compute_owasp_coverage",
+    "get_owasp_mapping",
+    "load_policy",
+    "normalize_owasp_framework",
+    "normalize_owasp_selection",
+    "owasp_report_label",
+    "plugin_ids_for_owasp_filter",
+    "supported_owasp_frameworks",
+    "supported_owasp_versions",
+    "validate_owasp_ids",
+    "_parse_policy",
+]
+
 try:
     import yaml
 
@@ -26,55 +61,6 @@ class DefensePolicy:
                 "fail_on": self.gate_fail_on,
             },
         }
-
-
-OWASP_LLM_MAPPING: dict[str, dict[str, Any]] = {
-    "LLM01": {
-        "name": "Prompt Injection",
-        "plugins": [
-            "prompt-delimiter",
-            "input-length-limit",
-            "untrusted-input-to-prompt",
-            "rag-context-isolation",
-        ],
-    },
-    "LLM02": {
-        "name": "Insecure Output Handling",
-        "plugins": ["no-dangerous-sink", "output-validation"],
-    },
-    "LLM03": {
-        "name": "Training Data Poisoning / Supply Chain",
-        "plugins": ["model-pinned"],
-    },
-    "LLM04": {
-        "name": "Excessive Agency",
-        "plugins": ["tool-schema-present", "tool-scope"],
-    },
-    "LLM05": {
-        "name": "Improper Error Handling",
-        "plugins": [],
-    },
-    "LLM06": {
-        "name": "PII Disclosure",
-        "plugins": ["output-pii-filter"],
-    },
-    "LLM07": {
-        "name": "Insecure Plugin Design",
-        "plugins": ["tool-schema-present", "tool-scope"],
-    },
-    "LLM08": {
-        "name": "Excessive Autonomy",
-        "plugins": ["tool-scope"],
-    },
-    "LLM09": {
-        "name": "Overreliance",
-        "plugins": ["output-validation"],
-    },
-    "LLM10": {
-        "name": "Unbounded Consumption",
-        "plugins": ["input-length-limit", "cost-controls", "rate-limiting"],
-    },
-}
 
 
 def load_policy(path: str | Path | None = None) -> Optional[DefensePolicy]:
@@ -174,36 +160,3 @@ def _parse_policy(raw: dict) -> DefensePolicy:
         gate_min_score=gate_min_score,
         gate_fail_on=gate_fail_on,
     )
-
-
-def compute_owasp_coverage(
-    results: list,
-) -> dict[str, dict[str, Any]]:
-    coverage = {}
-    for owasp_id, info in OWASP_LLM_MAPPING.items():
-        relevant = [r for r in results if r.owasp_llm == owasp_id]
-        passed = sum(1 for r in relevant if r.passed)
-        total = len(relevant)
-
-        if total == 0:
-            status = "not_applicable"
-            pct = None
-        else:
-            pct = round(passed / total * 100)
-            if pct == 100:
-                status = "covered"
-            elif pct > 0:
-                status = "partial"
-            else:
-                status = "uncovered"
-
-        coverage[owasp_id] = {
-            "name": info["name"],
-            "plugins": info["plugins"],
-            "status": status,
-            "passed": passed,
-            "total": total,
-            "coverage_pct": pct,
-        }
-
-    return coverage

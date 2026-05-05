@@ -55,7 +55,7 @@ STEPS = [
             "[bold]Map LLM integrations[/bold] in your codebase:\n"
             "  [bold cyan]skylos discover .[/bold cyan]\n"
             "\n"
-            "[bold]Check for missing defenses[/bold] (OWASP LLM Top 10):\n"
+            "[bold]Check for missing defenses[/bold] (OWASP LLM/Agentic Top 10):\n"
             "  [bold cyan]skylos defend .[/bold cyan]\n"
             "\n"
             "Detects prompt injection risks, missing PII filters,\n"

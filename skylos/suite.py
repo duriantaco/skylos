@@ -20,9 +20,14 @@ _DEFENSE_NOTE = "AI defense currently scans Python and TypeScript direct SDK int
 
 
 def _empty_defense_payload(project_path: str) -> dict[str, Any]:
+    from skylos.defend.owasp import compute_owasp_coverage, normalize_owasp_selection
+
+    owasp_framework, owasp_version = normalize_owasp_selection()
     return {
         "version": "1.0",
         "project": project_path,
+        "owasp_framework": owasp_framework,
+        "owasp_version": owasp_version,
         "summary": {
             "integrations_found": 0,
             "files_scanned": 0,
@@ -45,6 +50,11 @@ def _empty_defense_payload(project_path: str) -> dict[str, Any]:
         },
         "integrations": [],
         "findings": [],
+        "owasp_coverage": compute_owasp_coverage(
+            [],
+            framework=owasp_framework,
+            version=owasp_version,
+        ),
         "ops_score": {
             "passed": 0,
             "total": 0,
@@ -327,6 +337,8 @@ def run_suite(
                 owasp_coverage,
                 ops_score,
                 integrations=integrations,
+                owasp_framework="llm",
+                owasp_version="2025",
             )
         )
         defense_report["note"] = _DEFENSE_NOTE

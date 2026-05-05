@@ -585,6 +585,9 @@ def test_defend_command_json_output_prints_empty_report(tmp_path):
     payload = json.loads(mock_print.call_args.args[0])
     assert payload["summary"]["integrations_found"] == 0
     assert payload["summary"]["score_pct"] == 100
+    assert payload["owasp_framework"] == "llm"
+    assert payload["owasp_version"] == "2025"
+    assert "LLM01" in payload["owasp_coverage"]
     assert payload["ops_score"]["rating"] == "EXCELLENT"
 
 
@@ -617,7 +620,27 @@ def test_defend_command_json_output_writes_empty_report_file(tmp_path):
     payload = json.loads(output_file.read_text(encoding="utf-8"))
     assert payload["summary"]["integrations_found"] == 0
     assert payload["summary"]["score_pct"] == 100
+    assert payload["owasp_framework"] == "llm"
+    assert payload["owasp_version"] == "2025"
+    assert "LLM01" in payload["owasp_coverage"]
     assert payload["ops_score"]["rating"] == "EXCELLENT"
+
+
+def test_defend_command_rejects_invalid_owasp_version(tmp_path):
+    target = tmp_path / "repo"
+    target.mkdir()
+    console = Mock()
+
+    from skylos.commands.defend_cmd import run_defend_command
+
+    exit_code = run_defend_command(
+        [str(target), "--owasp-version", "2026"],
+        console_factory=lambda: console,
+        progress_factory=lambda *args, **kwargs: _progress_ctx(),
+    )
+
+    assert exit_code == 1
+    assert "Unsupported OWASP version" in console.print.call_args.args[0]
 
 
 def test_defend_command_json_upload_formats_once(tmp_path):
