@@ -13,6 +13,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v4
 
@@ -21,7 +23,62 @@ jobs:
           uv venv
           uv pip install -e .
 
-      - name: Run quality benchmark
+      - name: Run quality benchmark (head)
+        id: head
+        shell: bash
         run: |
-          uv run python scripts/quality_benchmark.py --manifest benchmarks/quality/manifest.json | tee /tmp/quality-benchmark-summary.txt
+          set +e
+          uv run python scripts/quality_benchmark.py --manifest benchmarks/quality/manifest.json --json > quality-benchmark-head.json
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          uv run python - <<'PY' | tee /tmp/quality-benchmark-summary.txt
+          import json
+          from skylos.quality_benchmark import format_summary
+
+          with open("quality-benchmark-head.json", encoding="utf-8") as fh:
+              print(format_summary(json.load(fh)))
+          PY
           cat /tmp/quality-benchmark-summary.txt >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Run quality benchmark (base)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          git worktree add /tmp/skylos-quality-base "${{ github.event.pull_request.base.sha }}"
+          cd /tmp/skylos-quality-base
+          uv venv
+          uv pip install -e .
+          set +e
+          uv run python scripts/quality_benchmark.py --manifest benchmarks/quality/manifest.json --json > "$GITHUB_WORKSPACE/quality-benchmark-base.json"
+          exit 0
+
+      - name: Compare quality benchmark regression delta
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set +e
+          uv run python scripts/regression_delta.py \
+            --kind quality \
+            --base quality-benchmark-base.json \
+            --head quality-benchmark-head.json \
+            | tee quality-benchmark-delta.txt
+          status=${PIPESTATUS[0]}
+          cat quality-benchmark-delta.txt >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Require quality benchmark success on push
+        if: github.event_name != 'pull_request' && steps.head.outputs.status != '0'
+        run: exit 1
+
+      - name: Upload quality benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-benchmark-results
+          path: |
+            quality-benchmark-head.json
+            quality-benchmark-base.json
+            quality-benchmark-delta.txt
+          if-no-files-found: ignore
