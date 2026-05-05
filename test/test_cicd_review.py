@@ -139,6 +139,26 @@ def test_flatten_findings_preserves_safe_evidence_metadata():
     assert "raw_context" not in finding["verification"]
 
 
+def test_flatten_findings_preserves_ai_provenance_flags():
+    findings = _flatten_findings(
+        {
+            "danger": [
+                {
+                    "rule_id": "SKY-D201",
+                    "file": "app.py",
+                    "line": 3,
+                    "message": "eval",
+                    "ai_authored": True,
+                    "ai_agent": "codex",
+                }
+            ]
+        }
+    )
+
+    assert findings[0]["ai_authored"] is True
+    assert findings[0]["ai_agent"] == "codex"
+
+
 def test_merge_llm_hypothesis_does_not_downgrade_static_finding_source():
     static_findings = [
         {
@@ -307,6 +327,48 @@ def test_summary_comment_includes_evidence_counts_when_enabled():
     assert "### Evidence" in body
     assert "| Proven | 1 |" in body
     assert "| Speculative | 1 |" in body
+
+
+def test_summary_comment_includes_risk_passport_when_supplied():
+    captured = {}
+
+    def mock_run(cmd, **kwargs):
+        if "pr" in cmd and "comment" in cmd:
+            captured["body"] = cmd[cmd.index("--body") + 1]
+
+        class FakeResult:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return FakeResult()
+
+    risk_passport = {
+        "recommendation": "BLOCK",
+        "ai_authored_files": 2,
+        "ai_agents": ["codex"],
+        "provenance_confidence": "high",
+        "changed_line_evidence": {"proven": 1, "likely": 0, "speculative": 0},
+        "high_risk_ai_files": ["app.py"],
+        "security_controls_weakened": ["auth"],
+        "missing_llm_guardrails": [],
+        "reasons": ["Changed-line security regression: auth"],
+        "warnings": [],
+    }
+
+    with patch("skylos.cicd.review.subprocess.run", side_effect=mock_run):
+        _post_summary_comment(
+            [],
+            [],
+            42,
+            "owner/repo",
+            risk_passport=risk_passport,
+        )
+
+    body = captured["body"]
+    assert "### AI PR Risk Passport" in body
+    assert "**Merge recommendation: BLOCK**" in body
+    assert "| Security controls weakened | auth |" in body
 
 
 def test_detect_pr_number(monkeypatch):

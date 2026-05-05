@@ -15,6 +15,10 @@ from skylos.cicd.evidence import (
     evidence_label_title,
     redact_sensitive_text,
 )
+from skylos.cicd.risk_passport import (
+    build_risk_passport,
+    format_risk_passport_markdown,
+)
 from skylos.rules.quality.regression import detect_security_regressions
 
 console = Console()
@@ -31,6 +35,7 @@ def run_pr_review(
     grade: dict | None = None,
     previous_grade: dict | None = None,
     llm_findings: list[dict] | None = None,
+    defense_report: dict | None = None,
     evidence_cards: bool = False,
 ) -> None:
     pr_number = pr_number or _detect_pr_number()
@@ -71,6 +76,13 @@ def run_pr_review(
         findings = all_findings + regression_findings
 
     all_findings.extend(regression_findings)
+    provenance = _resolve_review_provenance(results, diff_base=diff_base)
+    risk_passport = build_risk_passport(
+        all_findings=all_findings,
+        diff_findings=findings,
+        provenance=provenance,
+        defense_report=defense_report,
+    )
 
     if findings and not summary_only:
         _post_pr_review(
@@ -88,12 +100,27 @@ def run_pr_review(
         grade=grade,
         previous_grade=previous_grade,
         evidence_cards=evidence_cards,
+        risk_passport=risk_passport,
     )
 
     console.print(
         f"[green]Posted review on PR #{pr_number} "
         f"({len(findings)} inline, {len(all_findings)} total)[/green]"
     )
+
+
+def _resolve_review_provenance(results: dict, *, diff_base: str) -> dict | None:
+    provenance = results.get("provenance")
+    if isinstance(provenance, dict):
+        return provenance
+
+    project_root = results.get("project_root") or "."
+    try:
+        from skylos.provenance import analyze_provenance
+
+        return analyze_provenance(project_root, base_ref=diff_base).to_dict()
+    except Exception:
+        return None
 
 
 def get_changed_line_ranges(base_ref: str = "origin/main") -> list[dict]:
@@ -264,6 +291,14 @@ def _copy_safe_finding_metadata(source: dict, target: dict) -> None:
     confidence = source.get("confidence")
     if isinstance(confidence, int):
         target["confidence"] = confidence
+
+    ai_authored = source.get("ai_authored")
+    if isinstance(ai_authored, bool):
+        target["ai_authored"] = ai_authored
+
+    ai_agent = source.get("ai_agent")
+    if isinstance(ai_agent, str):
+        target["ai_agent"] = ai_agent
 
     verification = source.get("verification")
     if isinstance(verification, dict):
@@ -555,6 +590,7 @@ def _post_summary_comment(
     grade: dict | None = None,
     previous_grade: dict | None = None,
     evidence_cards: bool = False,
+    risk_passport: dict | None = None,
 ) -> None:
     by_severity = {}
     for f in all_findings:
@@ -571,10 +607,15 @@ def _post_summary_comment(
         "",
         f"**{len(diff_findings)}** issue(s) on changed lines | "
         f"**{len(all_findings)}** total",
-        "",
-        "| Severity | Count |",
-        "|----------|-------|",
     ]
+    lines.extend(format_risk_passport_markdown(risk_passport))
+    lines.extend(
+        [
+            "",
+            "| Severity | Count |",
+            "|----------|-------|",
+        ]
+    )
 
     for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
         count = by_severity.get(sev, 0)
