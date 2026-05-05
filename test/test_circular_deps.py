@@ -1,5 +1,6 @@
 import ast
 import pytest
+from skylos.architecture import get_architecture_findings
 from skylos.circular_deps import (
     CircularDependencyAnalyzer,
     CircularDependencyRule,
@@ -22,6 +23,21 @@ class TestDependencyGraphBuilder:
         assert len(builder.dependencies) == 1
         assert builder.dependencies[0].to_module == "foo"
         assert builder.dependencies[0].import_type == "import"
+        assert len(builder.architecture_dependencies) == 1
+        assert builder.architecture_dependencies[0].to_module == "foo"
+
+    def test_from_package_import_known_submodule(self):
+        code = "from myproject import submodule"
+        tree = ast.parse(code)
+        known = {"myproject", "myproject.submodule"}
+
+        builder = DependencyGraphBuilder("main", "main.py", known)
+        builder.visit(tree)
+
+        assert len(builder.dependencies) == 1
+        assert builder.dependencies[0].to_module == "myproject"
+        assert len(builder.architecture_dependencies) == 1
+        assert builder.architecture_dependencies[0].to_module == "myproject.submodule"
 
     def test_from_import(self):
         code = "from foo import bar, baz"
@@ -52,6 +68,8 @@ import myproject
 
         assert len(builder.dependencies) == 1
         assert builder.dependencies[0].to_module == "myproject"
+        assert len(builder.architecture_dependencies) == 1
+        assert builder.architecture_dependencies[0].to_module == "myproject"
 
     def test_dotted_import(self):
         code = "from myproject.submodule import thing"
@@ -62,6 +80,9 @@ import myproject
         builder.visit(tree)
 
         assert len(builder.dependencies) == 1
+        assert builder.dependencies[0].to_module == "myproject"
+        assert len(builder.architecture_dependencies) == 1
+        assert builder.architecture_dependencies[0].to_module == "myproject.submodule"
 
     def test_tracks_line_number(self):
         code = """# comment
@@ -227,6 +248,107 @@ def main():
         passed, message = rule.check()
 
         assert passed is True
+
+    @pytest.mark.parametrize(
+        "package_b_import",
+        [
+            ("package_a.cli", 1, "from_import", ["main"]),
+            ("package_a.cli", 1, "import", ["package_a.cli"]),
+            ("package_a.cli", 1, "import", ["_mod"]),
+        ],
+    )
+    def test_raw_imports_preserve_precise_architecture_edges_for_dotted_imports(
+        self, package_b_import
+    ):
+        rule = CircularDependencyRule()
+        modules = {
+            "package_a": ("/project/package_a/__init__.py", []),
+            "package_a.cli": (
+                "/project/package_a/cli.py",
+                [("sync_common", 1, "import", ["sync_common"])],
+            ),
+            "package_b": ("/project/package_b/__init__.py", []),
+            "package_b.cli": (
+                "/project/package_b/cli.py",
+                [package_b_import, ("sync_common", 2, "import", ["sync_common"])],
+            ),
+            "sync_common": ("/project/sync_common.py", []),
+        }
+
+        for module_name, (file_path, raw_imports) in modules.items():
+            rule.add_file_imports(file_path, module_name, raw_imports)
+
+        rule.analyze()
+
+        circular_graph = dict(rule._analyzer.dependencies)
+        architecture_graph = dict(rule._analyzer.architecture_dependencies)
+        assert circular_graph["package_b.cli"] == {"package_a", "sync_common"}
+        assert architecture_graph["package_b.cli"] == {
+            "package_a.cli",
+            "sync_common",
+        }
+
+        _, summary = get_architecture_findings(
+            dependency_graph=architecture_graph,
+            module_files=dict(rule._analyzer.modules),
+        )
+
+        assert summary["module_metrics"]["package_a"]["ca"] == 0
+        assert summary["module_metrics"]["package_a.cli"]["ca"] == 1
+        assert summary["module_metrics"]["package_a.cli"]["zone"] != (
+            "zone_of_uselessness"
+        )
+
+    def test_raw_imports_do_not_trace_init_reexports(self):
+        rule = CircularDependencyRule()
+        modules = {
+            "package_a": (
+                "/project/package_a/__init__.py",
+                [("package_a.cli", 1, "from_import", ["main"])],
+            ),
+            "package_a.cli": ("/project/package_a/cli.py", []),
+            "package_b.cli": (
+                "/project/package_b/cli.py",
+                [("package_a", 1, "from_import", ["main"])],
+            ),
+        }
+
+        for module_name, (file_path, raw_imports) in modules.items():
+            rule.add_file_imports(file_path, module_name, raw_imports)
+
+        rule.analyze()
+
+        architecture_graph = dict(rule._analyzer.architecture_dependencies)
+        assert architecture_graph["package_b.cli"] == {"package_a"}
+
+    def test_raw_imports_keep_circular_cycle_detection_root_collapsed(self):
+        rule = CircularDependencyRule()
+        modules = {
+            "package_a": (
+                "/project/package_a/__init__.py",
+                [("package_b.cli", 1, "from_import", ["main"])],
+            ),
+            "package_a.cli": ("/project/package_a/cli.py", []),
+            "package_b": (
+                "/project/package_b/__init__.py",
+                [("package_a.cli", 1, "from_import", ["main"])],
+            ),
+            "package_b.cli": ("/project/package_b/cli.py", []),
+        }
+
+        for module_name, (file_path, raw_imports) in modules.items():
+            rule.add_file_imports(file_path, module_name, raw_imports)
+
+        findings = rule.analyze()
+
+        circular_graph = dict(rule._analyzer.dependencies)
+        architecture_graph = dict(rule._analyzer.architecture_dependencies)
+        assert circular_graph["package_a"] == {"package_b"}
+        assert circular_graph["package_b"] == {"package_a"}
+        assert architecture_graph["package_a"] == {"package_b.cli"}
+        assert architecture_graph["package_b"] == {"package_a.cli"}
+        assert len(findings) == 1
+        assert set(findings[0]["cycle"]) == {"package_a", "package_b"}
 
 
 class TestConvenienceFunction:
