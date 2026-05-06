@@ -21,6 +21,7 @@ snugbug
 .ruff_cache
 dist
 node_modules
+*.vsix
 .pytest_cache
 .venv
 .coverage

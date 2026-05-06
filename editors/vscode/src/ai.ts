@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as crypto from "crypto";
 import type { FindingsStore } from "./store";
 import type { SkylosFinding, AIIssue, FunctionBlock, AIProvider } from "./types";
-import { getAIProvider, getAIApiKey, getAIModel, getOpenAIBaseUrl, getPopupCooldownMs, isStreamingEnabled, isFixPreviewFirst, getPostFixCommand } from "./config";
+import { getAIProvider, getAIApiKey, getAIModel, getOpenAIBaseUrl, getPopupCooldownMs, isStreamingEnabled, isFixPreviewFirst, getPostFixCommand, isRealtimeAIEnabled } from "./config";
 import { out } from "./scanner";
 
 
@@ -28,6 +28,9 @@ export class AIAnalyzer {
   }
 
   async maybeAnalyze(document: vscode.TextDocument): Promise<void> {
+    if (!isRealtimeAIEnabled())
+      return;
+
     const apiKey = getAIApiKey();
     if (!apiKey) 
       return;
@@ -150,7 +153,7 @@ export class AIAnalyzer {
         this.streamingManager?.clearAll();
         return;
       }
-      out.appendLine(`AI Error: ${err}`);
+      out.appendLine(`AI Assist failed. Static scan results are unaffected: ${formatAIError(err)}`);
       if (this.statusBar) this.statusBar.text = prevText;
     } finally {
       this.inFlight = false;
@@ -199,6 +202,10 @@ export class AIAnalyzer {
   }
 }
 
+function formatAIError(err: unknown): string {
+  if (err instanceof Error) return `${err.name}: ${err.message}`;
+  return String(err);
+}
 
 export function extractFunctions(code: string, langId: string): FunctionBlock[] {
   if (langId === "python") 
@@ -548,11 +555,11 @@ export async function fixWithAI(
   if (!apiKey) {
     let msg: string;
     if (provider === "anthropic") {
-      msg = "Set skylos.anthropicApiKey first.";
+      msg = "AI Fix needs a provider. Set skylos.anthropicApiKey or use engine fixes when available.";
     } else if (provider === "local") {
-      msg = "Set skylos.localBaseUrl to your local AI server (e.g. http://localhost:11434 for Ollama) and skylos.localModel to the model name.";
+      msg = "AI Fix needs a provider. Set skylos.localBaseUrl and skylos.localModel, or use engine fixes when available.";
     } else {
-      msg = 'Set skylos.openaiApiKey, or switch aiProvider to "local" and configure skylos.localBaseUrl.';
+      msg = 'AI Fix needs a provider. Set skylos.openaiApiKey, configure local AI Assist, or use engine fixes when available.';
     }
     vscode.window.showErrorMessage(msg);
     return;

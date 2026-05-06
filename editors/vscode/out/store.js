@@ -2,10 +2,13 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FindingsStore = void 0;
 const vscode = require("vscode");
+const provenanceCore_1 = require("./provenanceCore");
+const reviewCore_1 = require("./reviewCore");
 class FindingsStore {
     constructor() {
         this.workspaceCliFindingsByFile = new Map();
         this.focusedCliFindingsByFile = new Map();
+        this.agentFindingsByFile = new Map();
         this.aiFindingsByFile = new Map();
         this._circularDeps = [];
         this._depVulns = [];
@@ -30,16 +33,37 @@ class FindingsStore {
         this.focusedCliFindingsByFile.set(filePath, findings);
         this._onDidChange.fire();
     }
+    setAgentFindings(findings) {
+        this.agentFindingsByFile.clear();
+        for (const f of findings) {
+            const list = this.agentFindingsByFile.get(f.file) ?? [];
+            list.push(f);
+            this.agentFindingsByFile.set(f.file, list);
+        }
+        this._onDidChange.fire();
+    }
     setEngineMetadata(grade, summary, circularDeps, depVulns) {
         this._grade = grade;
         this._summary = summary;
         this._circularDeps = circularDeps ?? [];
         this._depVulns = depVulns ?? [];
+        this._onDidChange.fire();
+    }
+    setLastScan(metadata) {
+        this._lastScan = metadata;
+        this._lastError = undefined;
+        this._onDidChange.fire();
+    }
+    setLastError(error) {
+        this._lastError = error;
+        this._onDidChange.fire();
     }
     get grade() { return this._grade; }
     get summary() { return this._summary; }
     get circularDeps() { return this._circularDeps; }
     get depVulns() { return this._depVulns; }
+    get lastScan() { return this._lastScan; }
+    get lastError() { return this._lastError; }
     get deltaMode() { return this._deltaMode; }
     set deltaMode(v) { this._deltaMode = v; }
     get filter() { return this._filter; }
@@ -58,6 +82,7 @@ class FindingsStore {
         else {
             this.aiFindingsByFile.set(filePath, findings);
         }
+        this._onDidChange.fire();
         this._onDidChangeAI.fire();
     }
     getFindingsForFile(filePath, options) {
@@ -69,7 +94,11 @@ class FindingsStore {
         return findings;
     }
     getAllRawFindings() {
-        return [...this.getCurrentCLIFindings(), ...this.getAIFindings()];
+        return (0, provenanceCore_1.mergeCorrelatedFindings)([
+            ...this.getCurrentCLIFindings(),
+            ...this.getAgentFindings(),
+            ...this.getAIFindings(),
+        ]);
     }
     getAllFindings() {
         return this.getFindingsByScope("working");
@@ -147,11 +176,14 @@ class FindingsStore {
     clear() {
         this.workspaceCliFindingsByFile.clear();
         this.focusedCliFindingsByFile.clear();
+        this.agentFindingsByFile.clear();
         this.aiFindingsByFile.clear();
         this._grade = undefined;
         this._summary = undefined;
         this._circularDeps = [];
         this._depVulns = [];
+        this._lastScan = undefined;
+        this._lastError = undefined;
         this._onDidChange.fire();
         this._onDidChangeAI.fire();
     }
@@ -171,8 +203,12 @@ class FindingsStore {
     }
     getQueriedFindings(options) {
         let findings = this.getAllRawFindings();
-        if (options?.source) {
-            findings = findings.filter((f) => f.source === options.source);
+        if (options?.source === "confirmed") {
+            findings = findings.filter(provenanceCore_1.isCorroborated);
+        }
+        else if (options?.source) {
+            const source = options.source;
+            findings = findings.filter((f) => (f.sources ?? [f.source]).includes(source));
         }
         if (options?.includeDeadCode === false) {
             findings = findings.filter((f) => f.category !== "dead_code");
@@ -185,7 +221,7 @@ class FindingsStore {
             return false;
         if (f.category && finding.category !== f.category)
             return false;
-        if (f.source && finding.source !== f.source)
+        if (f.source && !(0, provenanceCore_1.matchesSourceFilter)(finding, f.source))
             return false;
         if (f.filePattern && !finding.file.toLowerCase().includes(f.filePattern.toLowerCase()))
             return false;
@@ -215,6 +251,12 @@ class FindingsStore {
             all.push(...list);
         return all;
     }
+    getAgentFindings() {
+        const all = [];
+        for (const list of this.agentFindingsByFile.values())
+            all.push(...list);
+        return all;
+    }
 }
 exports.FindingsStore = FindingsStore;
 function sortFindingsForDisplay(findings) {
@@ -229,46 +271,14 @@ function sortFindingsForDisplay(findings) {
 }
 function sortFindingsInFile(findings) {
     return [...findings].sort((a, b) => {
-        const sevDelta = severityRank(b.severity) - severityRank(a.severity);
+        const sevDelta = (0, reviewCore_1.severityRank)(b.severity) - (0, reviewCore_1.severityRank)(a.severity);
         if (sevDelta !== 0)
             return sevDelta;
         return a.line - b.line || a.message.localeCompare(b.message);
     });
 }
 function getDisplayScore(finding, activeFile, visibleFiles) {
-    let score = severityRank(finding.severity) * 100;
-    if (finding.file === activeFile) {
-        score += 100000;
-    }
-    else if (visibleFiles.has(finding.file)) {
-        score += 50000;
-    }
-    if (finding.category === "security" || finding.category === "secrets") {
-        score += 500;
-    }
-    if (finding.source === "cli") {
-        score += 50;
-    }
-    if (finding.confidence !== undefined) {
-        score += Math.min(99, finding.confidence);
-    }
-    return score;
-}
-function severityRank(severity) {
-    switch (severity.toUpperCase()) {
-        case "CRITICAL":
-            return 5;
-        case "HIGH":
-            return 4;
-        case "MEDIUM":
-        case "WARN":
-            return 3;
-        case "LOW":
-            return 2;
-        case "INFO":
-        default:
-            return 1;
-    }
+    return (0, reviewCore_1.reviewScore)(finding, { currentFile: activeFile, visibleFiles });
 }
 function limitFindings(findings, maxTotal, maxPerFile) {
     if (!Number.isFinite(maxTotal) || maxTotal <= 0) {

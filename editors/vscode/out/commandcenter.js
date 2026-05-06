@@ -7,6 +7,7 @@ const child_process_1 = require("child_process");
 const vscode = require("vscode");
 const config_1 = require("./config");
 const scanner_1 = require("./scanner");
+const automationCore_1 = require("./automationCore");
 class SummaryNode {
     constructor(state) {
         this.state = state;
@@ -76,7 +77,7 @@ class SkylosCommandCenterProvider {
     async refresh() {
         const root = this.getWorkspaceRoot();
         if (!root) {
-            vscode.window.showWarningMessage("Skylos: open a folder to use Command Center.");
+            vscode.window.showWarningMessage("Skylos: open a folder to use Automation Activity.");
             return;
         }
         if (this.refreshing) {
@@ -85,14 +86,14 @@ class SkylosCommandCenterProvider {
         }
         this.refreshing = true;
         this._onDidChangeTreeData.fire();
-        vscode.window.setStatusBarMessage("Skylos: refreshing Command Center...", 3000);
+        vscode.window.setStatusBarMessage("Skylos: refreshing Automation Activity...", 3000);
         try {
             await this.runCommandCenterRefresh(root);
             await this.loadState();
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            vscode.window.showErrorMessage(`Skylos Command Center refresh failed: ${msg}`);
+            vscode.window.showErrorMessage(`Automation refresh failed. Static scan results are unaffected. ${msg}`);
         }
         finally {
             this.refreshing = false;
@@ -113,6 +114,11 @@ class SkylosCommandCenterProvider {
     getFindingById(actionId) {
         return (this.state?.findings ?? []).find((finding) => finding.fingerprint === actionId);
     }
+    getQueueFindings() {
+        return this.getActions()
+            .map((action) => this.toSkylosFinding(action))
+            .filter((finding) => Boolean(finding));
+    }
     toSkylosFinding(action) {
         const finding = this.getFindingForAction(action);
         const absoluteFile = action.absolute_file || finding?.absolute_file || resolveActionPath(action.file);
@@ -125,25 +131,30 @@ class SkylosCommandCenterProvider {
             severity: normalizeSeverity(action.severity || finding?.severity),
             message: action.message || finding?.message || action.title,
             file: absoluteFile,
-            line: Number(action.line || finding?.line || 1),
+            line: (0, automationCore_1.normalizeAutomationLine)(action.line || finding?.line),
             col: 1,
+            fingerprint: finding?.fingerprint || action.id,
             confidence: finding?.confidence,
-            source: "cli",
+            source: "agent",
+            safeFix: action.safe_fix,
+            fixPatch: action.fix_patch || action.fixPatch || action.patch,
+            baselineStatus: action.baseline_status || finding?.baseline_status,
+            reviewReason: action.reason,
         };
     }
     async dismissAction(action) {
-        await this.runTriagingCommand(["dismiss", this.requireWorkspaceRoot(), action.id]);
+        await this.runTriagingCommand(["triage", "dismiss", this.requireWorkspaceRoot(), action.id]);
     }
     async snoozeAction(action, hours) {
-        await this.runTriagingCommand(["snooze", this.requireWorkspaceRoot(), action.id, "--hours", String(hours)]);
+        await this.runTriagingCommand(["triage", "snooze", this.requireWorkspaceRoot(), action.id, "--hours", String(hours)]);
     }
     async restoreAction(actionId) {
-        await this.runTriagingCommand(["restore", this.requireWorkspaceRoot(), actionId]);
+        await this.runTriagingCommand(["triage", "restore", this.requireWorkspaceRoot(), actionId]);
     }
     getTreeItem(element) {
         if (element instanceof SummaryNode) {
             const summary = element.state.summary;
-            const item = new vscode.TreeItem(summary?.headline ?? "Command Center", vscode.TreeItemCollapsibleState.None);
+            const item = new vscode.TreeItem(summary?.headline ?? "Automation Activity", vscode.TreeItemCollapsibleState.None);
             item.iconPath = new vscode.ThemeIcon("pulse");
             item.description = summary?.subtitle ?? describeState(element.state);
             item.tooltip = buildSummaryTooltip(element.state);
@@ -163,7 +174,7 @@ class SkylosCommandCenterProvider {
             item.iconPath = new vscode.ThemeIcon(this.refreshing ? "sync~spin" : "circle-slash");
             item.description = element.description;
             if (!this.refreshing) {
-                item.command = { title: "Refresh Command Center", command: "skylos.refreshCommandCenter" };
+                item.command = { title: "Refresh Automation", command: "skylos.refreshCommandCenter" };
             }
             return item;
         }
@@ -174,7 +185,8 @@ class SkylosCommandCenterProvider {
         item.description = `${action.file}:${action.line}`;
         item.tooltip = buildActionTooltip(action);
         item.iconPath = getActionIcon(action.severity);
-        item.contextValue = action.safe_fix ? "skylosCommandCenterActionSafeFix" : "skylosCommandCenterAction";
+        const hasEnginePatch = Boolean(action.fix_patch || action.fixPatch || action.patch);
+        item.contextValue = hasEnginePatch ? "skylosCommandCenterActionSafeFix" : "skylosCommandCenterAction";
         if (absoluteFile) {
             item.command = {
                 title: "Open action target",
@@ -192,14 +204,14 @@ class SkylosCommandCenterProvider {
             return [];
         }
         if (this.refreshing && !this.state) {
-            return [new EmptyNode("Refreshing Command Center...", "Running repo-level agent analysis")];
+            return [new EmptyNode("Refreshing Automation Activity...", "Running optional repo-level automation")];
         }
         if (!this.getWorkspaceRoot()) {
-            return [new EmptyNode("Open a workspace folder to use Command Center")];
+            return [new EmptyNode("Open a workspace folder to use Automation Activity")];
         }
         if (!this.state) {
             return [
-                new EmptyNode("No Command Center state yet", "Run Refresh Command Center or `skylos agent watch .`"),
+                new EmptyNode("No Automation Activity yet", "Optional: refresh once or run `skylos agent watch .`"),
             ];
         }
         const nodes = [new SummaryNode(this.state)];
@@ -270,7 +282,7 @@ class SkylosCommandCenterProvider {
     requireWorkspaceRoot() {
         const root = this.getWorkspaceRoot();
         if (!root) {
-            throw new Error("Open a workspace folder to use Command Center.");
+            throw new Error("Open a workspace folder to use Automation Activity.");
         }
         return root;
     }
@@ -308,7 +320,15 @@ class SkylosCommandCenterProvider {
         }));
     }
     runCommandCenterRefresh(root) {
-        const args = ["command-center", root, "--refresh", "--limit", String((0, config_1.getCommandCenterLimit)())];
+        const args = [
+            "status",
+            root,
+            "--refresh",
+            "--format",
+            "json",
+            "--limit",
+            String((0, config_1.getCommandCenterLimit)()),
+        ];
         const stateFile = (0, config_1.getCommandCenterStateFile)();
         if (stateFile) {
             args.push("--state-file", stateFile);
@@ -332,7 +352,7 @@ class SkylosCommandCenterProvider {
         if (stateFile && !fullArgs.includes("--state-file")) {
             fullArgs.push("--state-file", stateFile);
         }
-        scanner_1.out.appendLine(`Running Command Center command: ${bin} ${fullArgs.join(" ")}`);
+        scanner_1.out.appendLine(`Running Automation command: ${bin} ${fullArgs.join(" ")}`);
         return new Promise((resolve, reject) => {
             const proc = (0, child_process_1.spawn)(bin, fullArgs, { cwd: root });
             let stderr = "";
@@ -344,13 +364,13 @@ class SkylosCommandCenterProvider {
             });
             proc.on("close", (code) => {
                 if (stderr.trim()) {
-                    scanner_1.out.appendLine(`Command Center stderr: ${stderr.trim()}`);
+                    scanner_1.out.appendLine(`Automation stderr: ${stderr.trim()}`);
                 }
                 if (code === 0) {
                     resolve();
                     return;
                 }
-                reject(new Error(stderr.trim() || `Command Center exited with code ${code}`));
+                reject(new Error(stderr.trim() || `Automation exited with code ${code}`));
             });
             proc.on("error", (err) => reject(err));
         });

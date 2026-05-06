@@ -6,6 +6,7 @@ exports.getExcludeFolders = getExcludeFolders;
 exports.isFeatureEnabled = isFeatureEnabled;
 exports.isRunOnSave = isRunOnSave;
 exports.isScanOnOpen = isScanOnOpen;
+exports.isRealtimeAIEnabled = isRealtimeAIEnabled;
 exports.getIdleMs = getIdleMs;
 exports.getPopupCooldownMs = getPopupCooldownMs;
 exports.isShowPopup = isShowPopup;
@@ -14,6 +15,8 @@ exports.getMaxProblemsPerFile = getMaxProblemsPerFile;
 exports.getMaxTreeFindings = getMaxTreeFindings;
 exports.getMaxTreeFindingsPerFile = getMaxTreeFindingsPerFile;
 exports.getMaxDecorationsPerFile = getMaxDecorationsPerFile;
+exports.getEditorSignalLevel = getEditorSignalLevel;
+exports.getCodeLensMode = getCodeLensMode;
 exports.isShowDeadCodeInProblems = isShowDeadCodeInProblems;
 exports.getCommandCenterLimit = getCommandCenterLimit;
 exports.isCommandCenterRefreshOnOpen = isCommandCenterRefreshOnOpen;
@@ -21,6 +24,7 @@ exports.isCommandCenterRefreshOnSave = isCommandCenterRefreshOnSave;
 exports.getCommandCenterStateFile = getCommandCenterStateFile;
 exports.getAIProvider = getAIProvider;
 exports.getOpenAIBaseUrl = getOpenAIBaseUrl;
+exports.getLocalBaseUrl = getLocalBaseUrl;
 exports.isLocalProvider = isLocalProvider;
 exports.getAIApiKey = getAIApiKey;
 exports.getAIModel = getAIModel;
@@ -58,6 +62,9 @@ function isRunOnSave() {
 function isScanOnOpen() {
     return cfg().get("scanOnOpen", true);
 }
+function isRealtimeAIEnabled() {
+    return cfg().get("enableRealtimeAI", false);
+}
 function getIdleMs() {
     return cfg().get("idleMs", 1000);
 }
@@ -82,6 +89,12 @@ function getMaxTreeFindingsPerFile() {
 function getMaxDecorationsPerFile() {
     return cfg().get("maxDecorationsPerFile", 25);
 }
+function getEditorSignalLevel() {
+    return cfg().get("editorSignalLevel", "quiet");
+}
+function getCodeLensMode() {
+    return cfg().get("codeLensMode", "highValue");
+}
 function isShowDeadCodeInProblems() {
     return cfg().get("showDeadCodeInProblems", false);
 }
@@ -103,9 +116,12 @@ function getAIProvider() {
 function getOpenAIBaseUrl() {
     const provider = getAIProvider();
     if (provider === "local") {
-        return (cfg().get("localBaseUrl", "") || "").replace(/\/+$/, "");
+        return getLocalBaseUrl();
     }
     return cfg().get("openaiBaseUrl", "https://api.openai.com").replace(/\/+$/, "");
+}
+function getLocalBaseUrl() {
+    return (cfg().get("localBaseUrl", "") || "").replace(/\/+$/, "");
 }
 function isLocalProvider() {
     return getAIProvider() === "local";
@@ -134,7 +150,7 @@ function isLanguageSupported(langId) {
     return types_1.SUPPORTED_LANGUAGES.includes(langId);
 }
 function isStreamingEnabled() {
-    return cfg().get("streamingInline", true);
+    return isRealtimeAIEnabled() && cfg().get("streamingInline", false);
 }
 function getAutoFixMaxFindings() {
     return cfg().get("autoFixMaxFindings", 50);

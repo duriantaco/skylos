@@ -13,6 +13,12 @@ export interface RuleMeta {
 }
 
 const RULES: Record<string, RuleMeta> = {
+  "SKY-U001": { name: "Unused function", severity: "INFO", category: "dead_code", description: "Function is defined but never called anywhere in the project.", fix: "Remove the function or add it to the whitelist." },
+  "SKY-U002": { name: "Unused import", severity: "INFO", category: "dead_code", description: "Import is never referenced in the module.", fix: "Remove the import statement." },
+  "SKY-U003": { name: "Unused variable", severity: "INFO", category: "dead_code", description: "Variable is assigned but never read.", fix: "Remove the variable or prefix with underscore." },
+  "SKY-U004": { name: "Unused class", severity: "INFO", category: "dead_code", description: "Class is defined but never instantiated or referenced.", fix: "Remove the class or add it to the whitelist." },
+  "SKY-U005": { name: "Unused parameter", severity: "INFO", category: "dead_code", description: "Parameter is declared but never used in the function body.", fix: "Remove the parameter or prefix with underscore." },
+
   "DEAD-FUNC": { name: "Unused function", severity: "INFO", category: "dead_code", description: "Function is defined but never called anywhere in the project.", fix: "Remove the function or add it to the whitelist." },
   "DEAD-IMPORT": { name: "Unused import", severity: "INFO", category: "dead_code", description: "Import is never referenced in the module.", fix: "Remove the import statement." },
   "DEAD-CLASS": { name: "Unused class", severity: "INFO", category: "dead_code", description: "Class is defined but never instantiated or referenced.", fix: "Remove the class or add it to the whitelist." },

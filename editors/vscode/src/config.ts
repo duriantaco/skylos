@@ -35,6 +35,10 @@ export function isScanOnOpen(): boolean {
   return cfg().get<boolean>("scanOnOpen", true);
 }
 
+export function isRealtimeAIEnabled(): boolean {
+  return cfg().get<boolean>("enableRealtimeAI", false);
+}
+
 export function getIdleMs(): number {
   return cfg().get<number>("idleMs", 1000);
 }
@@ -67,6 +71,14 @@ export function getMaxDecorationsPerFile(): number {
   return cfg().get<number>("maxDecorationsPerFile", 25);
 }
 
+export function getEditorSignalLevel(): "quiet" | "balanced" | "verbose" {
+  return cfg().get<"quiet" | "balanced" | "verbose">("editorSignalLevel", "quiet");
+}
+
+export function getCodeLensMode(): "off" | "activeLine" | "highValue" | "all" {
+  return cfg().get<"off" | "activeLine" | "highValue" | "all">("codeLensMode", "highValue");
+}
+
 export function isShowDeadCodeInProblems(): boolean {
   return cfg().get<boolean>("showDeadCodeInProblems", false);
 }
@@ -94,9 +106,13 @@ export function getAIProvider(): AIProvider {
 export function getOpenAIBaseUrl(): string {
   const provider = getAIProvider();
   if (provider === "local") {
-    return (cfg().get<string>("localBaseUrl", "") || "").replace(/\/+$/, "");
+    return getLocalBaseUrl();
   }
   return cfg().get<string>("openaiBaseUrl", "https://api.openai.com").replace(/\/+$/, "");
+}
+
+export function getLocalBaseUrl(): string {
+  return (cfg().get<string>("localBaseUrl", "") || "").replace(/\/+$/, "");
 }
 
 export function isLocalProvider(): boolean {
@@ -126,7 +142,7 @@ export function isLanguageSupported(langId: string): boolean {
 }
 
 export function isStreamingEnabled(): boolean {
-  return cfg().get<boolean>("streamingInline", true);
+  return isRealtimeAIEnabled() && cfg().get<boolean>("streamingInline", false);
 }
 
 export function getAutoFixMaxFindings(): number {

@@ -2,7 +2,7 @@
   "name": "skylos-vscode-extension",
   "displayName": "Skylos",
   "description": "VS Code extension for dead code detection, Python SAST, security scanning, and AI code review for Python, TypeScript, JavaScript, and Go.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "oha",
   "icon": "icon.png",
   "repository": { "type": "git", "url": "https://github.com/duriantaco/skylos" },
@@ -32,21 +32,22 @@
     "onLanguage:javascript",
     "onLanguage:javascriptreact",
     "onLanguage:go",
-    "onCommand:skylos.scan"
+    "onCommand:skylos.scan",
+    "onCommand:skylos.doctor"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       { "command": "skylos.scan", "title": "Skylos: Scan Workspace", "icon": "$(refresh)" },
-      { "command": "skylos.fix", "title": "Skylos: Fix Issue with AI" },
+      { "command": "skylos.doctor", "title": "Skylos: Doctor", "icon": "$(tools)" },
+      { "command": "skylos.fix", "title": "Skylos: Fix Issue with AI Assist" },
+      { "command": "skylos.previewSafeFix", "title": "Skylos: Preview Engine Fix", "icon": "$(diff)" },
       { "command": "skylos.refresh", "title": "Skylos: Refresh", "icon": "$(refresh)" },
       { "command": "skylos.clear", "title": "Skylos: Clear All Findings", "icon": "$(clear-all)" },
       { "command": "skylos.dismissIssue", "title": "Skylos: Dismiss AI Finding" },
-      { "command": "skylos.removeImport", "title": "Skylos: Remove Unused Import" },
-      { "command": "skylos.removeFunction", "title": "Skylos: Remove Unused Function" },
       { "command": "skylos.addToWhitelist", "title": "Skylos: Add to Whitelist" },
-      { "command": "skylos.fixAll", "title": "Skylos: Auto-Fix All", "icon": "$(wand)" },
-      { "command": "skylos.fixAllDryRun", "title": "Skylos: Auto-Fix Dry Run", "icon": "$(preview)" },
+      { "command": "skylos.fixAll", "title": "Skylos: Auto-Fix All with AI Assist", "icon": "$(wand)" },
+      { "command": "skylos.fixAllDryRun", "title": "Skylos: Auto-Fix AI Assist Dry Run", "icon": "$(preview)" },
       { "command": "skylos.chatAboutFinding", "title": "Skylos: Ask AI About Finding", "icon": "$(comment-discussion)" },
       { "command": "skylos.clearChat", "title": "Skylos: Clear Chat", "icon": "$(clear-all)" },
       { "command": "skylos.dashboard", "title": "Skylos: Security Dashboard", "icon": "$(graph)" },
@@ -54,16 +55,16 @@
       { "command": "skylos.prevFinding", "title": "Skylos: Previous Finding", "icon": "$(arrow-up)" },
       { "command": "skylos.exportReport", "title": "Skylos: Export Report", "icon": "$(export)" },
       { "command": "skylos.scanFile", "title": "Skylos: Scan This File", "icon": "$(file-code)" },
-      { "command": "skylos.toggleDelta", "title": "Skylos: Toggle Delta Mode", "icon": "$(git-compare)" },
+      { "command": "skylos.toggleDelta", "title": "Skylos: Toggle New Issues Only", "icon": "$(git-compare)" },
       { "command": "skylos.showFindingDetail", "title": "Skylos: Show Finding Detail", "icon": "$(info)" },
       { "command": "skylos.filterFindings", "title": "Skylos: Filter Findings", "icon": "$(filter)" },
       { "command": "skylos.clearFilter", "title": "Skylos: Clear Filter", "icon": "$(close)" },
-      { "command": "skylos.refreshCommandCenter", "title": "Skylos: Refresh Command Center", "icon": "$(pulse)" },
-      { "command": "skylos.commandCenterOpenDetail", "title": "Skylos: Open Command Center Detail", "icon": "$(info)" },
-      { "command": "skylos.commandCenterApplySafeFix", "title": "Skylos: Apply Command Center Safe Fix", "icon": "$(wrench)" },
-      { "command": "skylos.commandCenterDismiss", "title": "Skylos: Dismiss Command Center Action", "icon": "$(close)" },
-      { "command": "skylos.commandCenterSnooze", "title": "Skylos: Snooze Command Center Action", "icon": "$(clock)" },
-      { "command": "skylos.commandCenterRestoreTriaged", "title": "Skylos: Restore Triaged Command Center Action", "icon": "$(history)" },
+      { "command": "skylos.refreshCommandCenter", "title": "Skylos: Refresh Automation", "icon": "$(pulse)" },
+      { "command": "skylos.commandCenterOpenDetail", "title": "Skylos: Open Automation Detail", "icon": "$(info)" },
+      { "command": "skylos.commandCenterApplySafeFix", "title": "Skylos: Preview Automation Fix", "icon": "$(diff)" },
+      { "command": "skylos.commandCenterDismiss", "title": "Skylos: Dismiss Automation Action", "icon": "$(close)" },
+      { "command": "skylos.commandCenterSnooze", "title": "Skylos: Snooze Automation Action", "icon": "$(clock)" },
+      { "command": "skylos.commandCenterRestoreTriaged", "title": "Skylos: Restore Automation Action", "icon": "$(history)" },
       { "command": "skylos.fixDeadCode", "title": "Skylos: Preview Dead Code Removal", "icon": "$(trash)" }
     ],
     "viewsContainers": {
@@ -79,12 +80,12 @@
       "skylos": [
         {
           "id": "skylosFindings",
-          "name": "Findings",
-          "icon": "$(shield)"
+          "name": "Review Queue",
+          "icon": "$(list-ordered)"
         },
         {
           "id": "skylosCommandCenter",
-          "name": "Command Center",
+          "name": "Automation Activity",
           "icon": "$(pulse)"
         },
         {
@@ -97,9 +98,7 @@
     "menus": {
       "view/title": [
         { "command": "skylos.refresh", "when": "view == skylosFindings", "group": "navigation" },
-        { "command": "skylos.clear", "when": "view == skylosFindings", "group": "navigation" },
-        { "command": "skylos.fixAll", "when": "view == skylosFindings", "group": "navigation" },
-        { "command": "skylos.dashboard", "when": "view == skylosFindings", "group": "navigation" },
+        { "command": "skylos.doctor", "when": "view == skylosFindings", "group": "navigation" },
         { "command": "skylos.toggleDelta", "when": "view == skylosFindings", "group": "navigation" },
         { "command": "skylos.filterFindings", "when": "view == skylosFindings", "group": "navigation" },
         { "command": "skylos.clearFilter", "when": "view == skylosFindings && skylos.filterActive", "group": "navigation" },
@@ -109,7 +108,10 @@
       ],
       "view/item/context": [
         { "command": "skylos.showFindingDetail", "when": "viewItem == skylosFinding", "group": "inline" },
+        { "command": "skylos.showFindingDetail", "when": "viewItem == skylosFindingSafeFix", "group": "inline" },
+        { "command": "skylos.previewSafeFix", "when": "viewItem == skylosFindingSafeFix", "group": "inline" },
         { "command": "skylos.chatAboutFinding", "when": "viewItem == skylosFinding", "group": "inline" },
+        { "command": "skylos.chatAboutFinding", "when": "viewItem == skylosFindingSafeFix", "group": "inline" },
         { "command": "skylos.commandCenterOpenDetail", "when": "view == skylosCommandCenter && viewItem == skylosCommandCenterAction", "group": "inline" },
         { "command": "skylos.commandCenterOpenDetail", "when": "view == skylosCommandCenter && viewItem == skylosCommandCenterActionSafeFix", "group": "inline" },
         { "command": "skylos.commandCenterApplySafeFix", "when": "view == skylosCommandCenter && viewItem == skylosCommandCenterActionSafeFix", "group": "inline" },
@@ -152,11 +154,52 @@
     "viewsWelcome": [
       {
         "view": "skylosFindings",
-        "contents": "No security findings yet.\n[Run Scan](command:skylos.scan)\n[Open Settings](command:workbench.action.openSettings?%5B%22skylos%22%5D)"
+        "contents": "No Skylos issues in the review queue yet.\n[Run Scan](command:skylos.scan)\n[Run Doctor](command:skylos.doctor)\n[Open Settings](command:workbench.action.openSettings?%5B%22skylos%22%5D)"
       },
       {
         "view": "skylosCommandCenter",
-        "contents": "No active command center state yet.\n[Refresh Command Center](command:skylos.refreshCommandCenter)\nRun `skylos agent watch .` in a terminal for continuous updates.\n[Restore Triaged Actions](command:skylos.commandCenterRestoreTriaged)"
+        "contents": "Optional repo-level automation. Static scans work without this.\n[Refresh Automation](command:skylos.refreshCommandCenter)\nFor continuous triage, run `skylos agent watch .` in a terminal.\n[Restore Triaged Actions](command:skylos.commandCenterRestoreTriaged)"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "skylos.setup",
+        "title": "Get Started with Skylos",
+        "description": "Validate the Skylos CLI, run a scan, and review the highest-value issues first.",
+        "steps": [
+          {
+            "id": "skylos.setup.doctor",
+            "title": "Check the Skylos CLI",
+            "description": "Run Doctor to verify the configured Skylos executable, workspace, and version output before relying on scan results.\n[Run Doctor](command:skylos.doctor)",
+            "completionEvents": [
+              "onCommand:skylos.doctor"
+            ]
+          },
+          {
+            "id": "skylos.setup.scan",
+            "title": "Run your first scan",
+            "description": "Scan the workspace and populate the Skylos Review Queue with security, quality, secrets, and dead-code findings.\n[Scan Workspace](command:skylos.scan)",
+            "completionEvents": [
+              "onCommand:skylos.scan"
+            ]
+          },
+          {
+            "id": "skylos.setup.newIssues",
+            "title": "Focus on new issues",
+            "description": "For legacy repos, switch to New Issues mode so Skylos prioritizes findings introduced since your configured base branch.\n[Toggle New Issues Only](command:skylos.toggleDelta)",
+            "completionEvents": [
+              "onCommand:skylos.toggleDelta"
+            ]
+          },
+          {
+            "id": "skylos.setup.privacy",
+            "title": "Choose AI privacy settings",
+            "description": "Static analysis runs locally and does not need AI. Optional AI features only run when you explicitly use AI commands or enable `skylos.enableRealtimeAI`.\n[Open Skylos AI Settings](command:workbench.action.openSettings?%5B%22skylos.enableRealtimeAI%22%5D)",
+            "completionEvents": [
+              "onSettingChanged:skylos.enableRealtimeAI"
+            ]
+          }
+        ]
       }
     ],
     "configuration": {
@@ -245,6 +288,38 @@
           "maximum": 250,
           "description": "Maximum findings per file to decorate inline with hover/code lenses"
         },
+        "skylos.editorSignalLevel": {
+          "type": "string",
+          "enum": [
+            "quiet",
+            "balanced",
+            "verbose"
+          ],
+          "default": "quiet",
+          "enumDescriptions": [
+            "Minimal editor noise. Inline messages only for critical/high issues; other findings stay in Problems, hover, and Review Queue.",
+            "Show concise inline messages for security and quality issues; keep dead code quiet.",
+            "Show all inline messages, including dead code and low-severity findings."
+          ],
+          "description": "Controls how much Skylos renders directly in the editor"
+        },
+        "skylos.codeLensMode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "activeLine",
+            "highValue",
+            "all"
+          ],
+          "default": "highValue",
+          "enumDescriptions": [
+            "Disable Skylos CodeLens actions.",
+            "Show Skylos CodeLens actions only for findings on the active line.",
+            "Show CodeLens actions only for high-risk, AI, or engine-fixable findings.",
+            "Show all Skylos CodeLens actions."
+          ],
+          "description": "Controls how often Skylos action CodeLens entries appear above code"
+        },
         "skylos.showDeadCodeInProblems": {
           "type": "boolean",
           "default": false,
@@ -255,17 +330,17 @@
           "default": 10,
           "minimum": 3,
           "maximum": 50,
-          "description": "Maximum ranked actions to show in the Command Center view"
+          "description": "Maximum ranked actions to show in the optional Automation Activity view"
         },
         "skylos.commandCenterRefreshOnOpen": {
           "type": "boolean",
           "default": false,
-          "description": "Refresh the repo-level Command Center when the extension loads"
+          "description": "Refresh the optional repo-level Automation Activity when the extension loads"
         },
         "skylos.commandCenterRefreshOnSave": {
           "type": "boolean",
           "default": false,
-          "description": "Refresh the repo-level Command Center after saving a supported file"
+          "description": "Refresh the optional repo-level Automation Activity after saving a supported file"
         },
         "skylos.commandCenterStateFile": {
           "type": "string",
@@ -276,7 +351,7 @@
           "type": "number",
           "default": 1000,
           "minimum": 200,
-          "description": "Milliseconds of idle time before AI auto-analysis"
+          "description": "Milliseconds of idle time before optional real-time AI Assist starts"
         },
         "skylos.popupCooldownMs": {
           "type": "number",
@@ -293,7 +368,12 @@
             "Anthropic (cloud)",
             "Local AI server (Ollama, LM Studio, LocalAI, vLLM — any OpenAI-compatible endpoint)"
           ],
-          "description": "AI provider for code analysis and fixes"
+          "description": "AI Assist provider for optional analysis and fixes"
+        },
+        "skylos.enableRealtimeAI": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run AI Assist automatically as you edit. Static scans, Review Queue, and engine-backed findings work with this off."
         },
         "skylos.openaiBaseUrl": {
           "type": "string",
@@ -332,8 +412,8 @@
         },
         "skylos.streamingInline": {
           "type": "boolean",
-          "default": true,
-          "description": "Show streaming inline ghost text during AI analysis"
+          "default": false,
+          "description": "Show streaming inline ghost text when optional real-time AI Assist is enabled"
         },
         "skylos.enableDeadCode": {
           "type": "boolean",
@@ -360,12 +440,12 @@
         "skylos.fixPreviewFirst": {
           "type": "boolean",
           "default": true,
-          "description": "Always show a diff preview before applying AI fixes"
+          "description": "Always show a diff preview before applying AI Assist fixes"
         },
         "skylos.postFixCommand": {
           "type": "string",
           "default": "",
-          "description": "Shell command to run after applying an AI fix (e.g. 'npm test', 'pytest -x'). Leave empty to skip."
+          "description": "Shell command to run after applying an AI Assist fix (e.g. 'npm test', 'pytest -x'). Leave empty to skip."
         }
       }
     }
@@ -373,11 +453,13 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
+    "test": "npm run compile && node --test test/*.test.js",
     "package": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.87.0",
+    "@vscode/vsce": "^3.9.1",
     "typescript": "^5.0.0"
   }
 }

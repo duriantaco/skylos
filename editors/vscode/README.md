@@ -6,21 +6,23 @@
 
 ## Features
 
-* **Streaming Inline Analysis**: Ghost text appears character-by-character as the AI streams findings — see issues the instant they're detected
-* **Active Command Center**: A ranked repo-level queue highlights what matters now, fed by Skylos agent state instead of dumping every finding
+* **Skylos Review Queue**: A ranked sidebar queue puts CI-blocking, new, high-risk, evidence-backed, and fixable issues first
+* **Source provenance and confirmation**: Findings are labeled as Static, Automation, AI Assist, or Confirmed by multiple sources
+* **Decision-grade finding details**: Each finding explains why it was prioritized, what evidence Skylos has, likely CI impact, and the safest fix path
+* **Optional Automation Activity**: Repo-level background triage fed by Skylos automation state when you explicitly use it
 * **AI Security Copilot Chat**: Sidebar chat panel to ask questions about findings, get explanations, and apply fixes from code blocks
 * **Auto-Remediation**: One-click "Fix All" with severity picker, progress tracking, and dry-run preview mode
-* **AI-Powered Analysis**: Real-time bug detection as you type using GPT-4, Claude, or any local model — no save required
+* **Optional Real-Time AI Assist**: Opt-in bug detection as you type using GPT, Claude, or a local model
 * **Multi-Provider Support**: OpenAI, Anthropic, or any OpenAI-compatible local server (Ollama, LM Studio, LocalAI, vLLM)
-* **CodeLens Buttons**: "Fix with AI" and "Dismiss" buttons appear inline on error lines
+* **CodeLens Buttons**: Contextual "Fix with AI Assist", "Preview Engine Fix", "Ignore", and "Dismiss" actions appear on relevant lines
 * **Smart Caching**: Only re-analyzes functions that actually changed
 * **Multi-Language**: Python, TypeScript, JavaScript, TSX, JSX, Go
-* **CST-safe removals**: Uses LibCST to remove selected imports or functions (handles multiline imports, aliases, decorators, async etc..)
+* **Engine-backed cleanup previews**: Safe cleanup actions are previewed from Skylos engine output when an engine patch is available
 * **Framework-Aware Detection**: Handles Flask, Django, FastAPI routes and decorators
 * **Secrets Scanning**: Detects API keys & secrets (GitHub, GitLab, Slack, Stripe, AWS, Google, SendGrid, Twilio, private key blocks)
 * **Dangerous Patterns**: Flags risky code such as `eval/exec`, `os.system`, `subprocess(shell=True)`, `pickle.load/loads`, `yaml.load` without SafeLoader, hashlib.md5/sha1. Refer to `DANGEROUS_CODE.md` for the whole list.
 
-All analysis runs locally on your machine. AI features require an API key.
+Static analysis runs locally on your machine. AI Assist features are optional; they only send code to a configured provider when you explicitly use AI Assist commands or enable real-time AI Assist.
 
 ## How it works
 
@@ -30,8 +32,8 @@ On save, the extension scans the current file by default. Full workspace scans a
 skylos <workspace-folder> --json -c <confidence> [--secrets] [--danger] [--quality]
 ```
 
-**AI Analysis**
-As you type, the extension waits for idle (default 1s), extracts changed functions, and sends them to the configured AI provider for bug detection.
+**Optional AI Assist**
+Manual AI Assist commands and chat use your configured provider. Real-time AI Assist is off by default; when enabled, the extension waits for idle, extracts changed functions, and sends them to the configured AI provider.
 
 ## Requirements
 
@@ -57,36 +59,45 @@ Open your project in VS Code and save a file — diagnostics appear.
 
 ## Usage
 
+### First Run
+
+Open the VS Code walkthrough **Get Started with Skylos** or run:
+
+1. `Skylos: Doctor` to verify the CLI path and version
+2. `Skylos: Scan Workspace` to populate the Review Queue
+3. `Skylos: Toggle New Issues Only` on legacy repos or PR branches
+
 ### Basic
 
 - **Save any file** → Skylos CLI refreshes findings for that file
-- **Type and pause** → AI analyzes changed functions
-- **Click "Fix with AI"** on any error line to auto-fix
+- **Type and pause** → nothing leaves your machine unless `skylos.enableRealtimeAI` is enabled
+- **Click "Fix with AI Assist"** on any error line to auto-fix
 - **Command Palette** → `Skylos: Scan Workspace` for a full project scan
 
-### Streaming Inline Analysis
+### Optional Real-Time AI Assist
 
-When you have an API key set, streaming analysis activates automatically:
+Real-time AI is off by default so normal static scans do not make network calls. To enable it:
 
-1. Type in any supported file (Python, TS, JS, Go)
-2. After the idle delay (default 1s), `analyzing...` ghost text appears on function lines
-3. As the AI streams its response, issues appear character-by-character as blue italic text
-4. When the stream completes, normal decorations and diagnostics take over
+1. Set `skylos.enableRealtimeAI` to `true`
+2. Configure an AI Assist provider or local OpenAI-compatible server
+3. Optionally set `skylos.streamingInline` to `true` for ghost-text streaming
+
+When enabled, typing in a supported file starts analysis after the idle delay. If streaming inline is also enabled, `analyzing...` ghost text appears on function lines and streamed findings are rendered inline until normal diagnostics take over.
 
 If you start typing again during analysis, the previous stream is cancelled and a new one starts.
 
-To disable: set `skylos.streamingInline` to `false` in settings.
+To disable all automatic AI Assist, keep `skylos.enableRealtimeAI` set to `false`.
 
 ### AI Security Copilot Chat
 
 The chat panel lives in the Skylos sidebar:
 
 1. Open the **Skylos** sidebar (shield icon in the activity bar)
-2. The **Security Copilot** panel is below Findings
+2. The **Security Copilot** panel is below the Review Queue
 3. Type a question about any security topic and get a streamed response
 
 **Ask about a specific finding:**
-- In the Findings tree, **right-click any finding** → **"Ask AI About Finding"**
+- In the Review Queue, **right-click any finding** → **"Ask AI About Finding"**
 - The chat panel opens with that finding's context (file, severity, surrounding code)
 - Ask follow-up questions — the AI knows which finding you're looking at
 
@@ -100,7 +111,7 @@ The chat panel lives in the Skylos sidebar:
 
 Fix multiple findings at once:
 
-1. **`Cmd+Alt+F`** (Mac) / **`Ctrl+Alt+F`** (Windows/Linux), or Command Palette → `Skylos: Auto-Fix All`
+1. **`Cmd+Alt+F`** (Mac) / **`Ctrl+Alt+F`** (Windows/Linux), or Command Palette → `Skylos: Auto-Fix All with AI Assist`
 2. Pick a severity level:
    - **Fix Errors Only** — CRITICAL + HIGH
    - **Fix Errors + Warnings** — + MEDIUM
@@ -111,13 +122,13 @@ Fix multiple findings at once:
 6. After completion, Skylos re-scans to verify
 
 **Dry Run** — preview fixes without editing:
-1. Command Palette → `Skylos: Auto-Fix Dry Run`
+1. Command Palette → `Skylos: Auto-Fix AI Assist Dry Run`
 2. Pick severity level
 3. A markdown report opens with before/after code for each finding
 4. No files are modified
 
 **Safety:**
-- Dead code findings are skipped (use Remove Import/Function instead)
+- Dead code findings are skipped unless Skylos provides an engine-backed cleanup patch
 - Capped at 50 findings per run (change with `skylos.autoFixMaxFindings`)
 - 200ms delay between API calls to avoid rate limits
 - Cancellable via the progress notification
@@ -156,31 +167,35 @@ You can use any OpenAI-compatible local server instead of a cloud API. No API ke
 
 That's it — 3 lines. All AI features (inline analysis, chat, auto-fix) work with local models. No API key, no cloud, everything stays on your machine.
 
-### Sidebar Filters
+### Review Queue Filters
 
-The Findings sidebar has a filter button (funnel icon) in the title bar:
+The Review Queue has a filter button (funnel icon) in the title bar:
 
 1. Click the **filter icon** or Command Palette → `Skylos: Filter Findings`
 2. Choose a filter dimension:
    - **By Severity** — show only CRITICAL, HIGH, MEDIUM, etc.
-   - **By Category** — security, secrets, dead code, quality, or AI
-   - **By Source** — CLI (static analysis) vs AI (real-time)
+   - **By Category** — security, secrets, dead code, quality, or AI Assist
+   - **By Source** — Static scan, Automation, AI Assist, or Confirmed findings
    - **By File Name** — substring match (e.g. `auth.py`, `src/utils`)
 3. Filters stack — filter by severity, then by category to narrow further
 4. An **X** button appears in the title bar when a filter is active — click to clear
 
-### Command Center
+Click any Review Queue item to jump to the code, or open **Show Finding Detail** for the decision view. The detail panel keeps the editor quiet while still showing why a finding matters: priority reasons, evidence or trace metadata when the CLI emits it, CI-blocking risk, and whether the safest next step is an engine patch, safe-fix guidance, AI assistance, or manual review.
 
-The **Command Center** view in the Skylos sidebar shows a ranked repo-level action queue:
+If static analysis and Automation report the same rule at the same location, Skylos merges them into one confirmed finding labeled **Confirmed by Static + Automation**. Confirmed findings keep their severity color and rank higher because two analysis paths agree. Static-only findings remain first-class results; missing Automation or AI Assist state is not an error unless you explicitly invoke those optional modes.
 
-1. Click **Refresh Command Center** in the Command Center title bar, or run `Skylos: Refresh Command Center`
+### Automation Activity
+
+The **Automation Activity** view is optional. It is separate from the primary Review Queue and uses Skylos automation state for repo-level background triage:
+
+1. Click **Refresh Automation** in the Automation Activity title bar, or run `Skylos: Refresh Automation`
 2. Skylos reads `.skylos/agent_state.json` and shows the top ranked actions first
 3. Click an action to open the file at the flagged line
 4. Right-click an action to:
    - open a richer detail panel
-   - apply a safe cleanup fix when available
+   - preview an engine-backed cleanup patch when available
    - snooze or dismiss the action
-5. Use **Restore Triaged Actions** from the Command Center title bar to bring snoozed or dismissed items back
+5. Use **Restore Triaged Actions** from the Automation Activity title bar to bring snoozed or dismissed items back
 
 For continuous repo-level updates, run this in a terminal from your project root:
 
@@ -188,18 +203,18 @@ For continuous repo-level updates, run this in a terminal from your project root
 skylos agent watch .
 ```
 
-When the agent state file changes, the Command Center view refreshes automatically. You can also enable:
+When the automation state file changes, the Automation Activity view refreshes automatically. You can also enable:
 
 - `skylos.commandCenterRefreshOnOpen`
 - `skylos.commandCenterRefreshOnSave`
 - `skylos.commandCenterLimit`
 - `skylos.commandCenterStateFile`
 
-### Delta Mode
+### New Issues Mode
 
-Delta mode shows only **new issues since a base branch**, useful for PRs and legacy repos:
+New Issues mode shows only **new issues since a base branch**, useful for PRs and legacy repos:
 
-1. Click the **git-compare icon** in the sidebar title bar, or Command Palette → `Skylos: Toggle Delta Mode`
+1. Click the **git-compare icon** in the sidebar title bar, or Command Palette → `Skylos: Toggle New Issues Only`
 2. Configure the base branch via `skylos.diffBase` (default: `origin/main`)
 3. Supports any git ref: `origin/develop`, `HEAD~5`, a commit SHA, etc.
 
@@ -221,14 +236,17 @@ Open Settings → Extensions → Skylos (or settings.json):
 | `skylos.confidence` | number | `80` | Confidence threshold (0-100) |
 | `skylos.excludeFolders` | string[] | `["venv",".venv","build","dist",".git","__pycache__"]` | Exclude these folders |
 | `skylos.runOnSave` | boolean | `true` | Run Skylos on save |
-| `skylos.scanOnOpen` | boolean | `true` | Auto scan workspace on open |
+| `skylos.scanOnOpen` | boolean | `true` | Auto scan the first supported file opened in the session |
 | `skylos.enableSecrets` | boolean | `true` | Include secrets scanning |
 | `skylos.enableDanger` | boolean | `true` | Include dangerous-pattern checks |
 | `skylos.enableDeadCode` | boolean | `true` | Show dead code findings (functions, imports, classes, variables) |
 | `skylos.showDeadParams` | boolean | `false` | Show unused parameter findings (noisy with callbacks/interfaces) |
 | `skylos.enableQuality` | boolean | `true` | Include code quality checks |
 | `skylos.showPopup` | boolean | `true` | Show toast notification after scans |
-| `skylos.aiProvider` | string | `"openai"` | AI provider: `"openai"`, `"anthropic"`, or `"local"` |
+| `skylos.editorSignalLevel` | string | `"quiet"` | Editor visual noise: `quiet`, `balanced`, or `verbose` |
+| `skylos.codeLensMode` | string | `"highValue"` | CodeLens frequency: `off`, `activeLine`, `highValue`, or `all` |
+| `skylos.enableRealtimeAI` | boolean | `false` | Automatically run AI Assist as you edit |
+| `skylos.aiProvider` | string | `"openai"` | AI Assist provider: `"openai"`, `"anthropic"`, or `"local"` |
 | `skylos.openaiBaseUrl` | string | `"https://api.openai.com"` | Base URL for OpenAI API |
 | `skylos.openaiApiKey` | string | `""` | OpenAI API key |
 | `skylos.openaiModel` | string | `"gpt-4o"` | OpenAI model |
@@ -236,29 +254,31 @@ Open Settings → Extensions → Skylos (or settings.json):
 | `skylos.localModel` | string | `""` | Model name on your local server (e.g. `llama3.1`) |
 | `skylos.anthropicApiKey` | string | `""` | Anthropic API key |
 | `skylos.anthropicModel` | string | `"claude-sonnet-4-20250514"` | Anthropic model for analysis |
-| `skylos.idleMs` | number | `1000` | Milliseconds to wait before AI analysis |
+| `skylos.idleMs` | number | `1000` | Milliseconds to wait before optional real-time AI Assist |
 | `skylos.popupCooldownMs` | number | `8000` | Cooldown between AI popups (ms) |
-| `skylos.streamingInline` | boolean | `true` | Show streaming ghost text during AI analysis |
+| `skylos.streamingInline` | boolean | `false` | Show streaming ghost text when real-time AI Assist is enabled |
 | `skylos.autoFixMaxFindings` | number | `50` | Max findings to auto-fix per run (1-200) |
 | `skylos.diffBase` | string | `"origin/main"` | Git ref for delta mode base |
-| `skylos.fixPreviewFirst` | boolean | `true` | Always show diff preview before applying AI fixes |
-| `skylos.postFixCommand` | string | `""` | Shell command to run after AI fix (e.g. `npm test`, `pytest -x`) |
+| `skylos.fixPreviewFirst` | boolean | `true` | Always show diff preview before applying AI Assist fixes |
+| `skylos.postFixCommand` | string | `""` | Shell command to run after AI Assist fix (e.g. `npm test`, `pytest -x`) |
 
 ## Keyboard Shortcuts
 
 | Shortcut | Command |
 |----------|---------|
 | `Cmd+Alt+S` / `Ctrl+Alt+S` | Scan Workspace |
-| `Cmd+Alt+F` / `Ctrl+Alt+F` | Auto-Fix All |
+| `Cmd+Alt+F` / `Ctrl+Alt+F` | Auto-Fix All with AI Assist |
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `Skylos: Scan Workspace` | Run skylos over the entire workspace |
-| `Skylos: Fix Issue with AI` | Fix the issue at cursor with AI |
-| `Skylos: Auto-Fix All` | Fix all findings with severity picker |
-| `Skylos: Auto-Fix Dry Run` | Preview fixes without editing files |
+| `Skylos: Doctor` | Check the configured Skylos CLI path and print setup details |
+| `Skylos: Fix Issue with AI Assist` | Fix the issue at cursor with AI Assist |
+| `Skylos: Preview Engine Fix` | Preview an engine-backed patch when one is available |
+| `Skylos: Auto-Fix All with AI Assist` | Fix all findings with severity picker |
+| `Skylos: Auto-Fix AI Assist Dry Run` | Preview fixes without editing files |
 | `Skylos: Ask AI About Finding` | Open chat with finding context (right-click in sidebar) |
 | `Skylos: Clear Chat` | Clear chat history and context |
 | `Skylos: Refresh` | Re-run scan |
@@ -266,14 +286,14 @@ Open Settings → Extensions → Skylos (or settings.json):
 | `Skylos: Filter Findings` | Filter sidebar by severity, category, source, or file |
 | `Skylos: Clear Filter` | Remove active sidebar filter |
 | `Skylos: Export Report` | Export findings as Markdown, JSON, or SARIF |
-| `Skylos: Toggle Delta Mode` | Toggle delta mode (new issues only vs all) |
+| `Skylos: Toggle New Issues Only` | Toggle new issues only vs all findings |
 
 ## Privacy
 
 - Static analysis runs entirely on your machine
 - AI features send only changed function code to your configured provider (OpenAI/Anthropic/local server)
 - Chat messages are sent to your configured provider — no third parties
-- With a local AI server, all AI analysis stays entirely on your machine
+- With a local AI server, all AI Assist analysis stays entirely on your machine
 - No telemetry, no data collection
 
 ## Contributing

@@ -3,6 +3,7 @@ import type { FindingsStore } from "./store";
 import { getRuleMeta } from "./rules";
 import { getDocumentFilters } from "./types";
 import { getMaxDecorationsPerFile } from "./config";
+import { provenanceLabel } from "./provenanceCore";
 
 
 export class SkylosHoverProvider implements vscode.HoverProvider {
@@ -28,6 +29,7 @@ export class SkylosHoverProvider implements vscode.HoverProvider {
 
       md.appendMarkdown(`### ${sevEmoji} ${f.ruleId} — ${ruleName}\n\n`);
       md.appendMarkdown(`**Severity:** \`${f.severity}\`\n\n`);
+      md.appendMarkdown(`**Source:** \`${provenanceLabel(f)}\`\n\n`);
       md.appendMarkdown(`${f.message}\n\n`);
 
       if (meta?.description) {

@@ -2,41 +2,30 @@ import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import type { SkylosFinding, Severity } from "./types";
 import { getMaxProblems, getMaxProblemsPerFile, isShowDeadCodeInProblems } from "./config";
+import { getDiagnosticRange } from "./diagnosticCore";
+import { diagnosticSource, provenanceLabel } from "./provenanceCore";
 
 export class DiagnosticsManager {
-  private cliCollection: vscode.DiagnosticCollection;
-  private aiCollection: vscode.DiagnosticCollection;
+  private collection: vscode.DiagnosticCollection;
   private disposables: vscode.Disposable[] = [];
 
   constructor(private store: FindingsStore) {
-    this.cliCollection = vscode.languages.createDiagnosticCollection("skylos");
-    this.aiCollection = vscode.languages.createDiagnosticCollection("skylos-ai");
+    this.collection = vscode.languages.createDiagnosticCollection("skylos");
 
     this.disposables.push(
-      this.cliCollection,
-      this.aiCollection,
-      store.onDidChange(() => this.refreshCLI()),
-      store.onDidChangeAI(() => this.refreshAI()),
+      this.collection,
+      store.onDidChange(() => this.refresh()),
+      store.onDidChangeAI(() => this.refresh()),
     );
   }
 
-  private refreshCLI(): void {
-    this.cliCollection.clear();
+  private refresh(): void {
+    this.collection.clear();
     const findings = this.store.getVisibleFindings(getMaxProblems(), {
-      source: "cli",
       includeDeadCode: isShowDeadCodeInProblems(),
       maxPerFile: getMaxProblemsPerFile(),
     });
-    this.publish(this.cliCollection, findings);
-  }
-
-  private refreshAI(): void {
-    this.aiCollection.clear();
-    const findings = this.store.getVisibleFindings(getMaxProblems(), {
-      source: "ai",
-      maxPerFile: getMaxProblemsPerFile(),
-    });
-    this.publish(this.aiCollection, findings);
+    this.publish(this.collection, findings);
   }
 
   dispose(): void {
@@ -59,16 +48,36 @@ export class DiagnosticsManager {
 }
 
 function toDiagnostic(f: SkylosFinding): vscode.Diagnostic {
-  const line = Math.max(0, f.line - 1);
-  const col = Math.max(0, f.col);
-  const start = new vscode.Position(line, col);
-  const range = new vscode.Range(start, start);
+  const rangeFields = getDiagnosticRange(f);
+  const range = new vscode.Range(
+    rangeFields.startLine,
+    rangeFields.startCol,
+    rangeFields.endLine,
+    rangeFields.endCol,
+  );
   const severity = mapSeverity(f.severity);
-  const prefix = f.source === "ai" ? "[AI] " : f.ruleId !== "SKYLOS" ? `[${f.ruleId}] ` : "";
+  const provenance = provenanceLabel(f);
+  const prefix = f.ruleId !== "SKYLOS" ? `[${provenance}] [${f.ruleId}] ` : `[${provenance}] `;
   const diag = new vscode.Diagnostic(range, `${prefix}${f.message}`, severity);
-  diag.source = f.source === "ai" ? "skylos-ai" : "skylos";
-  diag.code = f.ruleId;
+  diag.source = diagnosticSource(f);
+  diag.code = f.ruleUrl
+    ? { value: f.ruleId, target: vscode.Uri.parse(f.ruleUrl) }
+    : f.ruleId;
+  diag.relatedInformation = relatedInformation(f);
   return diag;
+}
+
+function relatedInformation(f: SkylosFinding): vscode.DiagnosticRelatedInformation[] | undefined {
+  const related: vscode.DiagnosticRelatedInformation[] = [];
+  for (const step of f.trace ?? []) {
+    if (!step.file) continue;
+    const line = Math.max(0, (step.line ?? 1) - 1);
+    related.push(new vscode.DiagnosticRelatedInformation(
+      new vscode.Location(vscode.Uri.file(step.file), new vscode.Position(line, 0)),
+      step.message ?? step.label ?? step.symbol ?? "Related Skylos evidence",
+    ));
+  }
+  return related.length > 0 ? related : undefined;
 }
 
 function mapSeverity(s: Severity): vscode.DiagnosticSeverity {

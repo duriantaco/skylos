@@ -5,6 +5,7 @@ const vscode = require("vscode");
 const rules_1 = require("./rules");
 const types_1 = require("./types");
 const config_1 = require("./config");
+const provenanceCore_1 = require("./provenanceCore");
 class SkylosHoverProvider {
     constructor(store) {
         this.store = store;
@@ -24,6 +25,7 @@ class SkylosHoverProvider {
             const ruleName = meta?.name ?? f.ruleId;
             md.appendMarkdown(`### ${sevEmoji} ${f.ruleId} — ${ruleName}\n\n`);
             md.appendMarkdown(`**Severity:** \`${f.severity}\`\n\n`);
+            md.appendMarkdown(`**Source:** \`${(0, provenanceCore_1.provenanceLabel)(f)}\`\n\n`);
             md.appendMarkdown(`${f.message}\n\n`);
             if (meta?.description) {
                 md.appendMarkdown(`*${meta.description}*\n\n`);
