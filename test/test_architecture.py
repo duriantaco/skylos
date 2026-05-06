@@ -4,6 +4,7 @@ from skylos.architecture import (
     get_architecture_findings,
     _compute_abstractness,
     _classify_zone,
+    _has_main_guard,
 )
 
 
@@ -84,6 +85,79 @@ class TestClassifyZone:
 
     def test_healthy(self):
         assert _classify_zone(0.5, 0.2) == "healthy"
+
+
+class TestArchitectureContext:
+    def test_main_guard_detected(self):
+        tree = ast.parse("""
+def main():
+    pass
+
+if __name__ == "__main__":
+    main()
+""")
+        assert _has_main_guard(tree)
+
+    def test_entrypoint_and_private_helpers_filter_contextual_findings(self):
+        graph = {
+            "mypkg.cli": {"mypkg.flow_a", "mypkg.flow_b", "mypkg.flow_c"},
+            "mypkg.flow_a": {"mypkg._helpers"},
+            "mypkg.flow_b": {"mypkg._helpers"},
+            "mypkg.flow_c": {"mypkg._helpers"},
+            "mypkg._helpers": set(),
+        }
+        module_files = {
+            "mypkg.cli": "/p/mypkg/cli.py",
+            "mypkg.flow_a": "/p/mypkg/flow_a.py",
+            "mypkg.flow_b": "/p/mypkg/flow_b.py",
+            "mypkg.flow_c": "/p/mypkg/flow_c.py",
+            "mypkg._helpers": "/p/mypkg/_helpers.py",
+        }
+
+        raw_findings, _ = get_architecture_findings(
+            dependency_graph=graph,
+            module_files=module_files,
+            private_helper_ce_limit=-1,
+        )
+        assert ("SKY-Q803", "mypkg.cli") in {
+            (f["rule_id"], f["name"]) for f in raw_findings
+        }
+        assert ("SKY-Q802", "mypkg._helpers") in {
+            (f["rule_id"], f["name"]) for f in raw_findings
+        }
+
+        findings, summary = get_architecture_findings(
+            dependency_graph=graph,
+            module_files=module_files,
+            entrypoint_modules={"mypkg.cli"},
+        )
+
+        rules = {(f["rule_id"], f["name"]) for f in findings}
+        assert ("SKY-Q803", "mypkg.cli") not in rules
+        assert ("SKY-Q802", "mypkg._helpers") not in rules
+        assert summary["module_metrics"]["mypkg.cli"]["zone"] == "zone_of_uselessness"
+        assert summary["module_metrics"]["mypkg._helpers"]["distance"] == 1.0
+
+    def test_main_guard_module_filters_zone_warning(self):
+        tree = ast.parse("""
+from worker import run
+
+def main():
+    run()
+
+if __name__ == "__main__":
+    main()
+""")
+
+        findings, summary = get_architecture_findings(
+            dependency_graph={"cli": {"worker"}, "worker": set()},
+            module_files={"cli": "/p/cli.py", "worker": "/p/worker.py"},
+            module_trees={"cli": tree},
+        )
+
+        rules = {(f["rule_id"], f["name"]) for f in findings}
+        assert summary["module_metrics"]["cli"]["zone"] == "zone_of_uselessness"
+        assert ("SKY-Q803", "cli") not in rules
 
 
 class TestAnalyzeArchitecture:

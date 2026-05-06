@@ -135,6 +135,44 @@ _RUST_SOURCE_EXTS = (".rs",)
 
 _TRY_NODE_TYPES = (ast.Try, getattr(ast, "TryStar", ast.Try))
 
+
+def _entrypoint_module_name(qname: str) -> str | None:
+    if not isinstance(qname, str) or "." not in qname:
+        return None
+    module_name, _symbol = qname.rsplit(".", 1)
+    return module_name or None
+
+
+def _expand_reexported_entrypoint_modules(
+    entrypoint_qnames: set[str],
+    entrypoint_modules: set[str],
+    raw_imports_by_file: dict[Path, list],
+    modmap: dict[Path, str],
+    module_files: dict[str, str],
+) -> set[str]:
+    modules = set(entrypoint_modules)
+    known_modules = set(module_files)
+
+    for qname in entrypoint_qnames:
+        if "." not in qname:
+            continue
+
+        entry_module, entry_symbol = qname.rsplit(".", 1)
+        for file_path, raw_imports in raw_imports_by_file.items():
+            if modmap.get(file_path) != entry_module:
+                continue
+
+            for import_module, _line, import_type, imported_names in raw_imports:
+                if import_type != "from_import":
+                    continue
+                if entry_symbol not in imported_names:
+                    continue
+                if import_module in known_modules:
+                    modules.add(import_module)
+
+    return modules
+
+
 _LINTER_RULE_NODE_TYPES = {
     ComplexityRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     CognitiveComplexityRule: (ast.FunctionDef, ast.AsyncFunctionDef),
@@ -1354,8 +1392,14 @@ class Skylos:
         workspace_inventory=None,
         architecture_abstractness=None,
         architecture_loc=None,
+        architecture_main_guard_modules=None,
+        pyproject_entrypoint_qnames=None,
+        pyproject_entrypoint_modules=None,
     ):
         """Assemble the final result dict from analysis outputs."""
+        architecture_main_guard_modules = set(architecture_main_guard_modules or ())
+        pyproject_entrypoint_qnames = set(pyproject_entrypoint_qnames or ())
+        pyproject_entrypoint_modules = set(pyproject_entrypoint_modules or ())
         unused = []
         dead_class_keys = {
             key
@@ -1567,6 +1611,17 @@ class Skylos:
                             circular_rule._analyzer.architecture_dependencies
                         )
                         mod_files = dict(circular_rule._analyzer.modules)
+                        entrypoint_modules = (
+                            pyproject_entrypoint_modules
+                            | architecture_main_guard_modules
+                        )
+                        entrypoint_modules = _expand_reexported_entrypoint_modules(
+                            pyproject_entrypoint_qnames,
+                            entrypoint_modules,
+                            all_raw_imports,
+                            modmap,
+                            mod_files,
+                        )
 
                         mod_trees = {}
                         if not architecture_abstractness:
@@ -1588,6 +1643,7 @@ class Skylos:
                             module_trees=mod_trees,
                             module_abstractness=architecture_abstractness,
                             module_loc=architecture_loc,
+                            entrypoint_modules=entrypoint_modules,
                         )
                         ignored_rules = set(project_cfg.get("ignore", []))
                         if arch_findings:
@@ -1716,12 +1772,18 @@ class Skylos:
         project_cfg = load_config(project_root)
         project_ignore = set(project_cfg.get("ignore", []))
         requested_changed_files = changed_files
+        pyproject_entrypoint_qnames = set()
+        pyproject_entrypoint_modules = set()
 
         try:
             from skylos.pyproject_entrypoints import extract_entrypoints
 
             for qname in extract_entrypoints(project_root):
+                pyproject_entrypoint_qnames.add(qname)
                 global_pattern_tracker.known_qualified_refs.add(qname)
+                module_name = _entrypoint_module_name(qname)
+                if module_name:
+                    pyproject_entrypoint_modules.add(module_name)
         except Exception:
             logger.debug("Failed to extract pyproject entrypoints", exc_info=True)
 
@@ -1748,6 +1810,7 @@ class Skylos:
         all_clone_fragments = []
         architecture_abstractness = {}
         architecture_loc = {}
+        architecture_main_guard_modules = set()
 
         per_file_ignore_lines = {}
         pattern_trackers = {}
@@ -1876,10 +1939,13 @@ class Skylos:
                 if file_architecture_metrics:
                     abstractness = file_architecture_metrics.get("abstractness")
                     loc = file_architecture_metrics.get("loc")
+                    has_main_guard = file_architecture_metrics.get("has_main_guard")
                     if abstractness is not None:
                         architecture_abstractness[mod] = abstractness
                     if loc is not None:
                         architecture_loc[mod] = loc
+                    if has_main_guard:
+                        architecture_main_guard_modules.add(mod)
                 for callee, method_refs in file_param_method_refs.items():
                     all_param_method_refs[callee].extend(method_refs)
                 for callee, arg_refs in file_call_arg_types.items():
@@ -2513,6 +2579,9 @@ class Skylos:
             workspace_inventory=workspace_inventory,
             architecture_abstractness=architecture_abstractness,
             architecture_loc=architecture_loc,
+            architecture_main_guard_modules=architecture_main_guard_modules,
+            pyproject_entrypoint_qnames=pyproject_entrypoint_qnames,
+            pyproject_entrypoint_modules=pyproject_entrypoint_modules,
         )
 
         return json.dumps(result, indent=2)
@@ -2911,10 +2980,11 @@ def proc_file(
                 else:
                     architecture_tree = tree
 
-                from skylos.architecture import _compute_abstractness
+                from skylos.architecture import _compute_abstractness, _has_main_guard
 
                 architecture_metrics = {
                     "abstractness": _compute_abstractness(architecture_tree),
+                    "has_main_guard": _has_main_guard(architecture_tree),
                     "loc": sum(
                         1
                         for line in source.splitlines()

@@ -657,6 +657,66 @@ class TestAnalyze:
         assert metrics["app.package_a.cli"]["ca"] == 1
         assert metrics["app.package_a.cli"]["zone"] != "zone_of_uselessness"
 
+    def test_analyze_architecture_filters_cli_entrypoint_and_private_helper_noise(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pkg = root / "mypkg"
+            pkg.mkdir()
+            (root / "pyproject.toml").write_text(
+                "[project]\n"
+                'name = "issue300-repro"\n'
+                'version = "0.1.0"\n\n'
+                "[project.scripts]\n"
+                'mypkg = "mypkg:main"\n',
+                encoding="utf-8",
+            )
+            (pkg / "__init__.py").write_text(
+                "from .cli import main\n"
+                '__all__ = ["main"]\n',
+                encoding="utf-8",
+            )
+            (pkg / "cli.py").write_text(
+                "from .flow_a import run_a\n"
+                "from .flow_b import run_b\n"
+                "from .flow_c import run_c\n\n"
+                "def main():\n"
+                "    run_a()\n"
+                "    run_b()\n"
+                "    run_c()\n",
+                encoding="utf-8",
+            )
+            (pkg / "_helpers.py").write_text(
+                "def normalize(value):\n"
+                "    return value.strip().lower()\n\n"
+                "def emit(value):\n"
+                "    print(normalize(value))\n",
+                encoding="utf-8",
+            )
+            for suffix in ("a", "b", "c"):
+                (pkg / f"flow_{suffix}.py").write_text(
+                    "from ._helpers import emit\n\n"
+                    f"def run_{suffix}():\n"
+                    f'    emit("{suffix}")\n',
+                    encoding="utf-8",
+                )
+
+            result_json = analyze(str(root), enable_quality=True, grep_verify=False)
+
+        result = json.loads(result_json)
+        metrics = result["architecture_metrics"]["module_metrics"]
+        assert metrics["mypkg"]["zone"] == "zone_of_uselessness"
+        assert metrics["mypkg.cli"]["zone"] == "zone_of_uselessness"
+        assert metrics["mypkg._helpers"]["distance"] == 1.0
+
+        architecture_rules = {
+            (f.get("rule_id"), f.get("name"))
+            for f in result.get("quality", [])
+            if f.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
+        }
+        assert ("SKY-Q803", "mypkg") not in architecture_rules
+        assert ("SKY-Q803", "mypkg.cli") not in architecture_rules
+        assert ("SKY-Q802", "mypkg._helpers") not in architecture_rules
+
     @patch("skylos.analyzer.scan_typescript_file")
     def test_proc_file_dispatches_mjs_to_typescript_scanner(self, mock_scan):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".mjs", delete=False) as f:

@@ -166,6 +166,26 @@ def _classify_zone(abstractness: float, instability: float) -> str:
     return "healthy"
 
 
+def _has_main_guard(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+
+        test = node.test
+        if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
+            left = test.left
+            right = test.comparators[0]
+            if isinstance(test.ops[0], ast.Eq):
+                left_is_name = isinstance(left, ast.Name) and left.id == "__name__"
+                right_is_main = isinstance(right, ast.Constant) and right.value == "__main__"
+                right_is_name = isinstance(right, ast.Name) and right.id == "__name__"
+                left_is_main = isinstance(left, ast.Constant) and left.value == "__main__"
+                if (left_is_name and right_is_main) or (right_is_name and left_is_main):
+                    return True
+
+    return False
+
+
 def analyze_architecture(
     dependency_graph: dict[str, set[str]],
     module_files: dict[str, str],
@@ -481,6 +501,8 @@ def get_architecture_findings(
     module_trees: dict[str, ast.AST] | None = None,
     module_abstractness: dict[str, dict[str, Any]] | None = None,
     module_loc: dict[str, int] | None = None,
+    entrypoint_modules: set[str] | None = None,
+    private_helper_ce_limit: int = 2,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     result = analyze_architecture(
         dependency_graph=dependency_graph,
@@ -488,6 +510,19 @@ def get_architecture_findings(
         module_trees=module_trees,
         module_abstractness=module_abstractness,
         module_loc=module_loc,
+    )
+
+    contextual_entrypoints = set(entrypoint_modules or ())
+    if module_trees:
+        for module_name, tree in module_trees.items():
+            if tree is not None and _has_main_guard(tree):
+                contextual_entrypoints.add(module_name)
+
+    findings = _filter_contextual_findings(
+        result.findings,
+        result.modules,
+        entrypoint_modules=contextual_entrypoints,
+        private_helper_ce_limit=private_helper_ce_limit,
     )
 
     summary = {
@@ -515,4 +550,34 @@ def get_architecture_findings(
         },
     }
 
-    return result.findings, summary
+    return findings, summary
+
+
+def _filter_contextual_findings(
+    findings: list[dict[str, Any]],
+    modules: dict[str, ModuleMetrics],
+    *,
+    entrypoint_modules: set[str],
+    private_helper_ce_limit: int,
+) -> list[dict[str, Any]]:
+    filtered = []
+    for finding in findings:
+        rule_id = finding.get("rule_id")
+        module_name = finding.get("name")
+
+        if rule_id == "SKY-Q803" and module_name in entrypoint_modules:
+            continue
+
+        if rule_id == "SKY-Q802" and isinstance(module_name, str):
+            simple_name = module_name.rsplit(".", 1)[-1]
+            metrics = modules.get(module_name)
+            if (
+                simple_name.startswith("_")
+                and metrics is not None
+                and metrics.ce <= private_helper_ce_limit
+            ):
+                continue
+
+        filtered.append(finding)
+
+    return filtered
