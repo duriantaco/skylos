@@ -8,17 +8,24 @@ from typing import Any
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:
-    safe_path = _safe_workspace_json(path)
+    workspace = Path.cwd().resolve()
+    safe_path = _safe_workspace_json(path, workspace)
+    if not safe_path.is_relative_to(workspace):
+        raise ValueError(f"JSON path escapes workspace: {path}")
     return json.loads(safe_path.read_text(encoding="utf-8"))
 
 
-def _safe_workspace_json(path: str | Path) -> Path:
+def _safe_workspace_json(path: str | Path, workspace: Path) -> Path:
     candidate = Path(path)
-    if str(candidate) != candidate.name:
+    if candidate.is_absolute() or str(candidate) != candidate.name:
         raise ValueError(f"expected a workspace-local JSON filename, got: {path}")
-    if candidate.suffix != ".json":
+    if candidate.suffix.lower() != ".json":
         raise ValueError(f"expected a .json file, got: {path}")
-    return Path.cwd() / candidate.name
+
+    safe_path = (workspace / candidate.name).resolve()
+    if not safe_path.is_relative_to(workspace):
+        raise ValueError(f"JSON path escapes workspace: {path}")
+    return safe_path
 
 
 def _case_failures(summary: dict[str, Any]) -> dict[str, set[tuple[str, ...]]]:
