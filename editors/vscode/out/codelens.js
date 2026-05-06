@@ -4,54 +4,65 @@ exports.SkylosCodeLensProvider = void 0;
 const vscode = require("vscode");
 const types_1 = require("./types");
 const config_1 = require("./config");
+const findingCore_1 = require("./findingCore");
 class SkylosCodeLensProvider {
     constructor(store) {
         this.store = store;
         this._onDidChangeCodeLenses = new vscode.EventEmitter();
         this.onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
         this.disposables = [];
-        this.disposables.push(store.onDidChange(() => this._onDidChangeCodeLenses.fire()), store.onDidChangeAI(() => this._onDidChangeCodeLenses.fire()));
+        this.disposables.push(store.onDidChange(() => this._onDidChangeCodeLenses.fire()), store.onDidChangeAI(() => this._onDidChangeCodeLenses.fire()), vscode.window.onDidChangeTextEditorSelection(() => {
+            if ((0, config_1.getCodeLensMode)() === "activeLine") {
+                this._onDidChangeCodeLenses.fire();
+            }
+        }));
     }
     refresh() {
         this._onDidChangeCodeLenses.fire();
     }
     provideCodeLenses(document) {
         const lenses = [];
+        const mode = (0, config_1.getCodeLensMode)();
+        if (mode === "off")
+            return lenses;
         const findings = this.store.getFindingsForFile(document.uri.fsPath, { max: (0, config_1.getMaxDecorationsPerFile)() });
+        const activeEditor = vscode.window.activeTextEditor;
+        const activeLine = activeEditor?.document.uri.fsPath === document.uri.fsPath
+            ? activeEditor.selection.active.line
+            : undefined;
         for (const f of findings) {
             const line = Math.max(0, f.line - 1);
             if (line >= document.lineCount)
                 continue;
+            const isActiveLine = activeLine === line;
+            if (mode === "activeLine" && !isActiveLine) {
+                continue;
+            }
             const range = new vscode.Range(line, 0, line, 0);
-            if (f.category === "security" || f.category === "ai") {
+            const showAllActions = mode === "all" || mode === "activeLine";
+            const showHighValueActions = showAllActions || mode === "highValue";
+            if (showHighValueActions && (f.category === "security" || f.category === "ai")) {
                 lenses.push(new vscode.CodeLens(range, {
-                    title: "Fix with AI",
+                    title: "Fix with AI Assist",
                     command: "skylos.fix",
                     arguments: [document.uri.fsPath, range, f.message, false],
                 }));
             }
-            if (f.ruleId === "DEAD-IMPORT") {
+            if (showHighValueActions && f.fixPatch) {
                 lenses.push(new vscode.CodeLens(range, {
-                    title: "Remove Import",
-                    command: "skylos.removeImport",
-                    arguments: [document.uri, line],
+                    title: "Preview Engine Fix",
+                    command: "skylos.previewSafeFix",
+                    arguments: [f],
                 }));
             }
-            if (f.ruleId === "DEAD-FUNC") {
-                lenses.push(new vscode.CodeLens(range, {
-                    title: "Remove Function",
-                    command: "skylos.removeFunction",
-                    arguments: [document.uri, line],
-                }));
-            }
-            if (f.ruleId.startsWith("DEAD-")) {
+            if (showAllActions && (0, findingCore_1.isDeadCodeRule)(f.ruleId)) {
                 lenses.push(new vscode.CodeLens(range, {
                     title: "Ignore",
                     command: "skylos.addToWhitelist",
                     arguments: [f.message],
                 }));
             }
-            if (f.source === "ai") {
+            if (showHighValueActions && f.source === "ai") {
                 lenses.push(new vscode.CodeLens(range, {
                     title: "\u2715 Dismiss",
                     command: "skylos.dismissIssue",

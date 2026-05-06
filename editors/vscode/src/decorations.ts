@@ -1,13 +1,14 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import type { SkylosFinding } from "./types";
-import { getMaxDecorationsPerFile } from "./config";
+import { getEditorSignalLevel, getMaxDecorationsPerFile } from "./config";
+import { isCorroborated, sourceSummary } from "./provenanceCore";
 
 const deadCodeType = (): vscode.DecorationRenderOptions => ({
-  isWholeLine: true,
-  opacity: "0.45",
-  textDecoration: "line-through rgba(120, 160, 220, 0.5)",
-  overviewRulerColor: "rgba(80, 160, 255, 0.4)",
+  isWholeLine: false,
+  opacity: "0.72",
+  textDecoration: "underline dotted rgba(120, 160, 220, 0.35)",
+  overviewRulerColor: "rgba(80, 160, 255, 0.25)",
   overviewRulerLane: vscode.OverviewRulerLane.Right,
   after: {
     margin: "0 0 0 4ch",
@@ -48,7 +49,7 @@ const highType = (): vscode.DecorationRenderOptions => ({
 });
 
 const mediumType = (): vscode.DecorationRenderOptions => ({
-  isWholeLine: true,
+  isWholeLine: false,
   borderWidth: "0 0 1px 0",
   borderStyle: "dotted",
   borderColor: "rgba(250, 204, 21, 0.4)",
@@ -62,8 +63,8 @@ const mediumType = (): vscode.DecorationRenderOptions => ({
 });
 
 const lowType = (): vscode.DecorationRenderOptions => ({
-  isWholeLine: true,
-  overviewRulerColor: "rgba(80, 160, 255, 0.4)",
+  isWholeLine: false,
+  overviewRulerColor: "rgba(80, 160, 255, 0.25)",
   overviewRulerLane: vscode.OverviewRulerLane.Right,
   after: {
     margin: "0 0 0 4ch",
@@ -115,7 +116,7 @@ function classifyFinding(f: SkylosFinding): DecoCategory {
 }
 
 function formatInlineMessage(f: SkylosFinding, cat: DecoCategory): string {
-  const maxLen = 70;
+  const maxLen = 44;
   const ruleTag = f.ruleId !== "SKYLOS" ? `${f.ruleId} ` : "";
 
   if (cat === "dead") {
@@ -131,12 +132,15 @@ function formatInlineMessage(f: SkylosFinding, cat: DecoCategory): string {
 
   if (cat === "critical" || cat === "high") {
     const sevLabel = f.severity.toUpperCase();
-    const msg = f.message.length > (maxLen - 15) ? f.message.slice(0, maxLen - 18) + "..." : f.message;
-    return `  ${sevLabel} ${ruleTag}— ${msg}`;
+    const shortMessage = simplifySecurityMessage(f.message);
+    const msg = shortMessage.length > (maxLen - 15) ? shortMessage.slice(0, maxLen - 18) + "..." : shortMessage;
+    const confirmed = isCorroborated(f) ? " · Confirmed" : "";
+    return `  ${sevLabel} ${ruleTag}${msg}${confirmed}`;
   }
 
   const msg = f.message.length > maxLen ? f.message.slice(0, maxLen - 3) + "..." : f.message;
-  return `  ${ruleTag}${msg}`;
+  const confirmed = isCorroborated(f) ? " · Confirmed" : "";
+  return `  ${ruleTag}${msg}${confirmed}`;
 }
 
 
@@ -187,6 +191,7 @@ export class DecorationsManager {
   private applyToEditor(editor: vscode.TextEditor): void {
     const filePath = editor.document.uri.fsPath;
     const findings = this.store.getFindingsForFile(filePath, { max: getMaxDecorationsPerFile() });
+    const signalLevel = getEditorSignalLevel();
 
     const byCat = new Map<DecoCategory, vscode.DecorationOptions[]>();
     for (const key of this.decoTypes.keys()) {
@@ -205,19 +210,23 @@ export class DecorationsManager {
 
       const range = new vscode.Range(line, 0, line, 0);
       const cat = classifyFinding(f);
-      const inlineMsg = formatInlineMessage(f, cat);
+      const showInline = shouldShowInlineMessage(f, cat, signalLevel);
+      const showLineDecoration = shouldShowLineDecoration(cat, signalLevel);
+      const inlineMsg = showInline ? formatInlineMessage(f, cat) : "";
       const sevKey = f.severity.toUpperCase();
 
-      const list = byCat.get(cat)!;
-      list.push({
-        range,
-        hoverMessage: f.message,
-        renderOptions: {
-          after: { contentText: inlineMsg },
-        },
-      });
+      if (showInline || showLineDecoration) {
+        const list = byCat.get(cat)!;
+        list.push({
+          range,
+          hoverMessage: `${sourceSummary(f)}: ${f.message}`,
+          renderOptions: {
+            after: { contentText: inlineMsg },
+          },
+        });
+      }
 
-      if (cat !== "dead") {
+      if (showLineDecoration && cat !== "dead") {
         const gutterColor = GUTTER_SEVERITY[sevKey] ?? "blue";
         byGutter.get(gutterColor)!.push({ range });
       }
@@ -237,4 +246,29 @@ export class DecorationsManager {
   dispose(): void {
     this.disposables.forEach((d) => d.dispose());
   }
+}
+
+function shouldShowInlineMessage(
+  finding: SkylosFinding,
+  cat: DecoCategory,
+  signalLevel: "quiet" | "balanced" | "verbose",
+): boolean {
+  if (signalLevel === "verbose") return true;
+  if (signalLevel === "balanced") {
+    return cat === "critical" || cat === "high" || cat === "medium" || finding.source === "ai";
+  }
+  return cat === "critical" || cat === "high" || isCorroborated(finding);
+}
+
+function shouldShowLineDecoration(cat: DecoCategory, signalLevel: "quiet" | "balanced" | "verbose"): boolean {
+  if (signalLevel === "verbose") return true;
+  if (signalLevel === "balanced") return cat !== "dead" && cat !== "low";
+  return cat === "critical" || cat === "high";
+}
+
+function simplifySecurityMessage(message: string): string {
+  return message
+    .replace(/^Possible\s+/i, "")
+    .replace(/\s+vulnerability$/i, "")
+    .trim();
 }

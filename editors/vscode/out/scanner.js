@@ -1,15 +1,21 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.out = void 0;
+exports.SkylosScanError = exports.buildScanErrorMessage = exports.out = void 0;
 exports.cancelScan = cancelScan;
 exports.scanWorkspace = scanWorkspace;
 exports.scanFile = scanFile;
+exports.doctorSkylos = doctorSkylos;
 exports.normalizeReport = normalizeReport;
 const vscode = require("vscode");
 const child_process_1 = require("child_process");
 const path = require("path");
 const config_1 = require("./config");
+const scanCore_1 = require("./scanCore");
+const findingCore_1 = require("./findingCore");
 exports.out = vscode.window.createOutputChannel("Skylos");
+var scanCore_2 = require("./scanCore");
+Object.defineProperty(exports, "buildScanErrorMessage", { enumerable: true, get: function () { return scanCore_2.buildScanErrorMessage; } });
+Object.defineProperty(exports, "SkylosScanError", { enumerable: true, get: function () { return scanCore_2.SkylosScanError; } });
 let activeProcess = null;
 function cancelScan() {
     if (activeProcess) {
@@ -30,26 +36,18 @@ async function scanFile(filePath, token) {
     const wsRoot = ws?.uri.fsPath ?? path.dirname(filePath);
     return runScan(filePath, wsRoot, token);
 }
-async function runScan(target, wsRoot, token, diffBase) {
-    cancelScan();
+async function doctorSkylos() {
     const bin = (0, config_1.getSkylosBin)();
-    const conf = (0, config_1.getConfidenceThreshold)();
-    const excludes = (0, config_1.getExcludeFolders)();
-    const args = [target, "--json", "-c", String(conf)];
-    excludes.forEach((f) => args.push("--exclude-folder", f));
-    if ((0, config_1.isFeatureEnabled)("secrets"))
-        args.push("--secrets");
-    if ((0, config_1.isFeatureEnabled)("danger"))
-        args.push("--danger");
-    if ((0, config_1.isFeatureEnabled)("quality"))
-        args.push("--quality");
-    if (diffBase)
-        args.push("--diff-base", diffBase);
+    const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const args = ["--version"];
+    const command = (0, scanCore_1.formatCommand)(bin, args);
     exports.out.appendLine("=".repeat(60));
-    exports.out.appendLine(`Running: ${bin} ${args.join(" ")}`);
-    return new Promise((resolve, reject) => {
+    exports.out.appendLine("Skylos Doctor");
+    exports.out.appendLine(`Workspace: ${wsRoot ?? "(none)"}`);
+    exports.out.appendLine(`Configured binary: ${bin}`);
+    exports.out.appendLine(`Version command: ${command}`);
+    return new Promise((resolve) => {
         const proc = (0, child_process_1.spawn)(bin, args, { cwd: wsRoot });
-        activeProcess = proc;
         let stdout = "";
         let stderr = "";
         proc.stdout.on("data", (data) => {
@@ -58,12 +56,90 @@ async function runScan(target, wsRoot, token, diffBase) {
         proc.stderr.on("data", (data) => {
             stderr += data.toString();
         });
-        token?.onCancellationRequested(() => {
-            proc.kill();
-            reject(new Error("Scan cancelled"));
+        proc.on("close", (code) => {
+            const ok = code === 0;
+            if (stdout.trim())
+                exports.out.appendLine(`stdout: ${stdout.trim()}`);
+            if (stderr.trim())
+                exports.out.appendLine(`stderr: ${stderr.trim()}`);
+            exports.out.appendLine(ok ? "Doctor result: OK" : `Doctor result: failed with exit code ${code}`);
+            resolve({
+                ok,
+                command,
+                bin,
+                workspaceRoot: wsRoot,
+                stdout,
+                stderr,
+                error: ok ? undefined : `Version command exited with code ${code}`,
+            });
         });
-        proc.on("close", () => {
+        proc.on("error", (err) => {
+            const errno = err.code;
+            const error = errno === "ENOENT"
+                ? "Skylos executable was not found. Set `skylos.path` or install the Skylos CLI."
+                : err.message;
+            exports.out.appendLine(`Doctor result: ${error}`);
+            resolve({
+                ok: false,
+                command,
+                bin,
+                workspaceRoot: wsRoot,
+                stdout,
+                stderr,
+                error,
+            });
+        });
+    });
+}
+async function runScan(target, wsRoot, token, diffBase) {
+    cancelScan();
+    const bin = (0, config_1.getSkylosBin)();
+    const command = (0, scanCore_1.buildScanCommand)(bin, {
+        target,
+        confidence: (0, config_1.getConfidenceThreshold)(),
+        excludeFolders: (0, config_1.getExcludeFolders)(),
+        enableSecrets: (0, config_1.isFeatureEnabled)("secrets"),
+        enableDanger: (0, config_1.isFeatureEnabled)("danger"),
+        enableQuality: (0, config_1.isFeatureEnabled)("quality"),
+        diffBase,
+    });
+    exports.out.appendLine("=".repeat(60));
+    exports.out.appendLine(`Running: ${command.display}`);
+    const startedAt = Date.now();
+    return new Promise((resolve, reject) => {
+        const proc = (0, child_process_1.spawn)(bin, command.args, { cwd: wsRoot });
+        activeProcess = proc;
+        let stdout = "";
+        let stderr = "";
+        let cancelled = false;
+        let settled = false;
+        const fail = (error) => {
+            if (settled)
+                return;
+            settled = true;
+            reject(error);
+        };
+        const succeed = (result) => {
+            if (settled)
+                return;
+            settled = true;
+            resolve(result);
+        };
+        proc.stdout.on("data", (data) => {
+            stdout += data.toString();
+        });
+        proc.stderr.on("data", (data) => {
+            stderr += data.toString();
+        });
+        token?.onCancellationRequested(() => {
+            cancelled = true;
+            proc.kill();
+            fail(new scanCore_1.SkylosScanError("cancelled", "Scan cancelled", { command: command.display }));
+        });
+        proc.on("close", (code) => {
             activeProcess = null;
+            if (cancelled)
+                return;
             if (stderr) {
                 exports.out.appendLine(`stderr: ${stderr}`);
             }
@@ -73,133 +149,46 @@ async function runScan(target, wsRoot, token, diffBase) {
             }
             catch {
                 exports.out.appendLine("Invalid JSON from CLI");
-                reject(new Error("Skylos returned invalid JSON."));
+                fail(new scanCore_1.SkylosScanError(code === 0 ? "invalid_json" : "nonzero_exit", code === 0 ? "Skylos returned invalid JSON." : `Skylos exited with code ${code}.`, { command: command.display, exitCode: code, stderr, stdout }));
                 return;
+            }
+            if (code !== 0) {
+                exports.out.appendLine(`Skylos exited with code ${code} but returned parseable JSON; showing parsed findings.`);
             }
             const findings = normalizeReport(report, wsRoot);
             printReport(findings, wsRoot);
-            resolve({
+            succeed({
                 findings,
                 grade: report.grade,
                 summary: report.analysis_summary,
                 circularDeps: report.circular_dependencies,
                 depVulns: report.dependency_vulnerabilities,
+                metadata: {
+                    command: command.display,
+                    target,
+                    workspaceRoot: wsRoot,
+                    diffBase,
+                    durationMs: Date.now() - startedAt,
+                    exitCode: code,
+                    stderr,
+                },
             });
         });
         proc.on("error", (err) => {
             activeProcess = null;
-            reject(err);
+            const errno = err.code;
+            const kind = errno === "ENOENT" ? "missing_binary" : "unknown";
+            fail(new scanCore_1.SkylosScanError(kind, err.message, { command: command.display, stderr }));
         });
     });
-}
-function resolvePath(filePath, wsRoot) {
-    if (path.isAbsolute(filePath))
-        return filePath;
-    return path.join(wsRoot, filePath);
-}
-let findingCounter = 0;
-function nextId() {
-    return `f-${++findingCounter}`;
 }
 function normalizeReport(report, wsRoot) {
-    const findings = [];
-    const mapUnused = (items, itemType, ruleId) => {
-        for (const u of items ?? []) {
-            if (!u.file)
-                continue;
-            const name = u.name ?? u.simple_name ?? "";
-            findings.push({
-                id: nextId(),
-                ruleId,
-                category: "dead_code",
-                severity: "INFO",
-                message: `Unused ${itemType}: ${name}`,
-                file: resolvePath(u.file, wsRoot),
-                line: u.line ?? u.lineno ?? 1,
-                col: 0,
-                confidence: u.confidence,
-                itemType,
-                itemName: name,
-                source: "cli",
-            });
-        }
-    };
-    mapUnused(report.unused_functions, "function", "DEAD-FUNC");
-    mapUnused(report.unused_imports, "import", "DEAD-IMPORT");
-    mapUnused(report.unused_classes, "class", "DEAD-CLASS");
-    mapUnused(report.unused_variables, "variable", "DEAD-VAR");
-    mapUnused(report.unused_parameters, "parameter", "DEAD-PARAM");
-    for (const s of report.secrets ?? []) {
-        if (!s.file)
-            continue;
-        findings.push(cliFindingToSkylos(s, "secrets", wsRoot));
-    }
-    for (const d of report.danger ?? []) {
-        if (!d.file)
-            continue;
-        findings.push(cliFindingToSkylos(d, "security", wsRoot));
-    }
-    for (const q of report.quality ?? []) {
-        if (!q.file)
-            continue;
-        const sev = normalizeSeverity(q.severity);
-        const ruleId = q.rule_id ?? "SKY-Q000";
-        const msg = q.message ?? `Quality issue (${q.kind ?? q.metric ?? "quality"})`;
-        findings.push({
-            id: nextId(),
-            ruleId,
-            category: "quality",
-            severity: sev,
-            message: msg,
-            file: resolvePath(q.file, wsRoot),
-            line: q.line ?? 1,
-            col: 0,
-            source: "cli",
-        });
-    }
-    const deadCodeOn = (0, config_1.isDeadCodeEnabled)();
-    const deadParamsOn = (0, config_1.isShowDeadParams)();
-    const confThreshold = (0, config_1.getConfidenceThreshold)();
-    return findings.filter((f) => {
-        if (f.category === "dead_code") {
-            if (!deadCodeOn)
-                return false;
-            if (f.ruleId === "DEAD-PARAM" && !deadParamsOn)
-                return false;
-            if (f.confidence !== undefined && f.confidence < confThreshold)
-                return false;
-        }
-        return true;
+    return (0, findingCore_1.normalizeReportCore)(report, {
+        wsRoot,
+        deadCodeEnabled: (0, config_1.isDeadCodeEnabled)(),
+        showDeadParams: (0, config_1.isShowDeadParams)(),
+        confidenceThreshold: (0, config_1.getConfidenceThreshold)(),
     });
-}
-function cliFindingToSkylos(f, category, wsRoot) {
-    const sev = normalizeSeverity(f.severity);
-    const ruleId = f.rule_id ?? "SKYLOS";
-    return {
-        id: nextId(),
-        ruleId,
-        category,
-        severity: sev,
-        message: f.message,
-        file: resolvePath(f.file, wsRoot),
-        line: f.line ?? 1,
-        col: f.col ?? 0,
-        source: "cli",
-    };
-}
-function normalizeSeverity(s) {
-    const t = (s ?? "").toUpperCase();
-    if (t === "CRITICAL")
-        return "CRITICAL";
-    if (t === "HIGH")
-        return "HIGH";
-    if (t === "MEDIUM")
-        return "MEDIUM";
-    if (t === "LOW")
-        return "LOW";
-    if (t === "WARN" || t === "WARNING")
-        return "WARN";
-    return "INFO";
 }
 function printReport(findings, wsRoot) {
     if (findings.length === 0) {

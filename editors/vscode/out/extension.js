@@ -23,6 +23,7 @@ const filedecorations_1 = require("./filedecorations");
 const export_1 = require("./export");
 const commandcenter_1 = require("./commandcenter");
 const config_1 = require("./config");
+const configCore_1 = require("./configCore");
 function activate(context) {
     scanner_1.out.appendLine("Skylos extension activated");
     const store = new store_1.FindingsStore();
@@ -81,16 +82,40 @@ function activate(context) {
             }
             : undefined;
     };
-    commandCenterProvider.onDidUpdateState(updateCommandCenterBadge);
+    commandCenterProvider.onDidUpdateState(() => {
+        store.setAgentFindings(commandCenterProvider.getQueueFindings());
+        updateCommandCenterBadge();
+    });
     updateCommandCenterBadge();
     context.subscriptions.push(store, diagnostics, decorations, statusBar, treeProvider, codeLensProvider, treeView, commandCenterProvider, commandCenterView, hoverProvider.register(), codeLensProvider.register(), quickFixProvider.register(), streamingManager, dashboard, navigator, detailPanel, fileDecoProvider, fileDecoProvider.register(), scanner_1.out);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(chatview_1.SkylosChatViewProvider.viewType, chatProvider));
     void commandCenterProvider.initialize();
+    function recordScanFailure(err) {
+        const message = (0, scanner_1.buildScanErrorMessage)(err);
+        if (err instanceof scanner_1.SkylosScanError) {
+            store.setLastError({
+                kind: err.kind,
+                message,
+                command: err.details.command,
+                exitCode: err.details.exitCode,
+                stderr: err.details.stderr,
+            });
+        }
+        else {
+            store.setLastError({
+                kind: "unknown",
+                message,
+            });
+        }
+        return message;
+    }
     async function doWorkspaceScan(diffBase) {
         statusBar.setScanning(true);
         try {
             const result = await (0, scanner_1.scanWorkspace)(undefined, diffBase);
             store.setEngineMetadata(result.grade, result.summary, result.circularDeps, result.depVulns);
+            if (result.metadata)
+                store.setLastScan(result.metadata);
             store.setWorkspaceCLIFindings(result.findings);
             const total = result.findings.length;
             const criticalOrHigh = result.findings.filter((finding) => finding.severity === "CRITICAL" || finding.severity === "HIGH").length;
@@ -112,7 +137,7 @@ function activate(context) {
             }
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = recordScanFailure(err);
             if (msg !== "Scan cancelled") {
                 vscode.window.showErrorMessage(`Skylos scan failed: ${msg}`);
             }
@@ -125,6 +150,8 @@ function activate(context) {
         statusBar.setScanning(true);
         try {
             const result = await (0, scanner_1.scanFile)(filePath);
+            if (result.metadata)
+                store.setLastScan(result.metadata);
             const fileFindings = result.findings.filter((finding) => finding.file === filePath);
             store.setFocusedCLIFindings(filePath, fileFindings);
             if (announce) {
@@ -134,7 +161,7 @@ function activate(context) {
             }
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = recordScanFailure(err);
             if (msg !== "Scan cancelled") {
                 vscode.window.showErrorMessage(`Skylos scan failed: ${msg}`);
             }
@@ -151,32 +178,37 @@ function activate(context) {
     async function openCommandCenterDetail(node) {
         const finding = commandCenterProvider.toSkylosFinding(node.action);
         if (!finding) {
-            vscode.window.showWarningMessage("Skylos: this command-center action has no file target.");
+            vscode.window.showWarningMessage("Skylos: this Automation action has no file target.");
             return;
         }
         detailPanel.show(finding);
     }
     async function applyCommandCenterSafeFix(node) {
         const finding = commandCenterProvider.toSkylosFinding(node.action);
-        const safeFix = node.action.safe_fix;
-        if (!finding || !safeFix) {
+        if (!finding) {
             vscode.window.showInformationMessage("Skylos: no safe fix is available for this action.");
             return;
         }
-        const uri = vscode.Uri.file(finding.file);
-        const line = Math.max(0, finding.line - 1);
-        if (safeFix === "remove_import") {
-            await vscode.commands.executeCommand("skylos.removeImport", uri, line);
-        }
-        else if (safeFix === "remove_function") {
-            await vscode.commands.executeCommand("skylos.removeFunction", uri, line);
-        }
-        else {
-            vscode.window.showInformationMessage("Skylos: no safe fix is available for this action.");
+        await previewSafeFix(finding);
+    }
+    function resolveFinding(candidate) {
+        if (!candidate)
+            return undefined;
+        if (candidate instanceof sidebar_1.FindingNode)
+            return candidate.finding;
+        return candidate;
+    }
+    async function previewSafeFix(candidate) {
+        const finding = resolveFinding(candidate);
+        if (!finding?.fixPatch) {
+            vscode.window.showInformationMessage("Skylos: no engine-backed patch is available for this finding yet.");
             return;
         }
-        await scanSingleFile(finding.file, false);
-        commandCenterProvider.scheduleRefresh(250);
+        const patchDoc = await vscode.workspace.openTextDocument({
+            language: "diff",
+            content: finding.fixPatch,
+        });
+        await vscode.window.showTextDocument(patchDoc, { preview: true });
     }
     async function snoozeCommandCenterAction(node) {
         const pick = await vscode.window.showQuickPick([
@@ -193,7 +225,7 @@ function activate(context) {
     async function restoreTriagedCommandCenterAction() {
         const triaged = commandCenterProvider.getTriagedEntries();
         if (triaged.length === 0) {
-            vscode.window.showInformationMessage("Skylos: there are no snoozed or dismissed command-center actions.");
+            vscode.window.showInformationMessage("Skylos: there are no snoozed or dismissed Automation actions.");
             return;
         }
         const pick = await vscode.window.showQuickPick(triaged.map(({ id, entry }) => {
@@ -211,11 +243,20 @@ function activate(context) {
             return;
         await commandCenterProvider.restoreAction(pick.id);
         updateCommandCenterBadge();
-        vscode.window.setStatusBarMessage("Skylos: restored command-center action", 3000);
+        vscode.window.setStatusBarMessage("Skylos: restored Automation action", 3000);
     }
     context.subscriptions.push(vscode.commands.registerCommand("skylos.scan", () => {
         const diffBase = store.deltaMode ? (0, config_1.getDiffBase)() : undefined;
         doWorkspaceScan(diffBase);
+    }), vscode.commands.registerCommand("skylos.doctor", async () => {
+        const result = await (0, scanner_1.doctorSkylos)();
+        scanner_1.out.show(true);
+        if (result.ok) {
+            vscode.window.showInformationMessage("Skylos Doctor: CLI is reachable.");
+        }
+        else {
+            vscode.window.showWarningMessage(`Skylos Doctor: ${result.error ?? "CLI check failed."}`);
+        }
     }), vscode.commands.registerCommand("skylos.scanFile", async (uri) => {
         const targetUri = uri ?? vscode.window.activeTextEditor?.document.uri;
         if (!targetUri) {
@@ -228,56 +269,14 @@ function activate(context) {
         const label = store.deltaMode ? "Delta mode ON — showing new issues only" : "Delta mode OFF — showing all issues";
         vscode.window.setStatusBarMessage(`Skylos: ${label}`, 4000);
         void vscode.commands.executeCommand("skylos.scan");
-    }), vscode.commands.registerCommand("skylos.fix", ai_1.fixWithAI), vscode.commands.registerCommand("skylos.dismissIssue", (filePath, line) => {
+    }), vscode.commands.registerCommand("skylos.fix", ai_1.fixWithAI), vscode.commands.registerCommand("skylos.previewSafeFix", async (finding) => {
+        await previewSafeFix(finding);
+    }), vscode.commands.registerCommand("skylos.dismissIssue", (filePath, line) => {
         store.dismissAIFinding(filePath, line);
-    }), vscode.commands.registerCommand("skylos.removeImport", async (uri, line) => {
-        const doc = await vscode.workspace.openTextDocument(uri);
-        const editor = await vscode.window.showTextDocument(doc);
-        await editor.edit((eb) => {
-            eb.delete(new vscode.Range(line, 0, line + 1, 0));
-        });
-        store.removeFindingAtLine(uri.fsPath, line + 1);
-    }), vscode.commands.registerCommand("skylos.removeFunction", async (uri, line) => {
-        const doc = await vscode.workspace.openTextDocument(uri);
-        const editor = await vscode.window.showTextDocument(doc);
-        const langId = doc.languageId;
-        let endLine = line;
-        if (langId === "python") {
-            const startText = doc.lineAt(line).text;
-            const indent = startText.match(/^(\s*)/)?.[1].length ?? 0;
-            for (let j = line + 1; j < doc.lineCount; j++) {
-                const nextLine = doc.lineAt(j).text;
-                if (nextLine.trim() === "") {
-                    endLine = j;
-                    continue;
-                }
-                const nextIndent = nextLine.match(/^(\s*)/)?.[1].length ?? 0;
-                if (nextIndent <= indent && nextLine.trim() !== "")
-                    break;
-                endLine = j;
-            }
-        }
-        else {
-            let braceCount = 0;
-            let foundBrace = false;
-            for (let j = line; j < doc.lineCount; j++) {
-                for (const ch of doc.lineAt(j).text) {
-                    if (ch === "{") {
-                        braceCount++;
-                        foundBrace = true;
-                    }
-                    if (ch === "}")
-                        braceCount--;
-                }
-                endLine = j;
-                if (foundBrace && braceCount <= 0)
-                    break;
-            }
-        }
-        await editor.edit((eb) => {
-            eb.delete(new vscode.Range(line, 0, endLine + 1, 0));
-        });
-        store.removeFindingAtLine(uri.fsPath, line + 1);
+    }), vscode.commands.registerCommand("skylos.removeImport", async () => {
+        vscode.window.showInformationMessage("Skylos: direct line-delete cleanup is disabled. Use an engine-backed fix preview when available.");
+    }), vscode.commands.registerCommand("skylos.removeFunction", async () => {
+        vscode.window.showInformationMessage("Skylos: direct line-delete cleanup is disabled. Use an engine-backed fix preview when available.");
     }), vscode.commands.registerCommand("skylos.addToWhitelist", async (message) => {
         const match = message.match(/Unused \w+:\s*(.+)/);
         const name = match?.[1]?.trim();
@@ -330,7 +329,7 @@ function activate(context) {
     }), vscode.commands.registerCommand("skylos.commandCenterDismiss", async (node) => {
         await commandCenterProvider.dismissAction(node.action);
         updateCommandCenterBadge();
-        vscode.window.setStatusBarMessage("Skylos: dismissed command-center action", 3000);
+        vscode.window.setStatusBarMessage("Skylos: dismissed Automation action", 3000);
     }), vscode.commands.registerCommand("skylos.commandCenterSnooze", async (node) => {
         await snoozeCommandCenterAction(node);
     }), vscode.commands.registerCommand("skylos.commandCenterRestoreTriaged", async () => {
@@ -382,7 +381,7 @@ function activate(context) {
         const filterType = await vscode.window.showQuickPick([
             { label: "$(warning) By Severity", value: "severity" },
             { label: "$(symbol-class) By Category", value: "category" },
-            { label: "$(source-control) By Source (CLI vs AI)", value: "source" },
+            { label: "$(source-control) By Source", value: "source" },
             { label: "$(file) By File Name", value: "file" },
         ], { placeHolder: "Filter findings by..." });
         if (!filterType)
@@ -399,15 +398,17 @@ function activate(context) {
                 { label: "Technical Debt", value: "debt" },
                 { label: "Dead Code", value: "dead_code" },
                 { label: "Quality", value: "quality" },
-                { label: "AI Analysis", value: "ai" },
+                { label: "AI Assist", value: "ai" },
             ].map((c) => ({ ...c, description: c.value })), { placeHolder: "Show only this category" });
             if (cat)
                 store.filter = { ...store.filter, category: cat.value };
         }
         else if (filterType.value === "source") {
             const src = await vscode.window.showQuickPick([
-                { label: "CLI (static analysis)", value: "cli" },
-                { label: "AI (real-time analysis)", value: "ai" },
+                { label: "Static scan", value: "cli" },
+                { label: "Automation", value: "agent" },
+                { label: "AI Assist (optional real-time)", value: "ai" },
+                { label: "Confirmed findings", value: "confirmed" },
             ], { placeHolder: "Show only this source" });
             if (src)
                 store.filter = { ...store.filter, source: src.value };
@@ -489,12 +490,14 @@ function activate(context) {
             return;
         if (event.contentChanges.length === 0)
             return;
+        if (!(0, config_1.isRealtimeAIEnabled)())
+            return;
         if (aiDebounceTimer)
             clearTimeout(aiDebounceTimer);
         aiDebounceTimer = setTimeout(() => aiAnalyzer.maybeAnalyze(event.document), (0, config_1.getIdleMs)());
     }));
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
-        if (editor && (0, config_1.isLanguageSupported)(editor.document.languageId)) {
+        if (editor && (0, config_1.isRealtimeAIEnabled)() && (0, config_1.isLanguageSupported)(editor.document.languageId)) {
             if (aiDebounceTimer)
                 clearTimeout(aiDebounceTimer);
             aiDebounceTimer = setTimeout(() => aiAnalyzer.maybeAnalyze(editor.document), 1000);
@@ -506,8 +509,12 @@ function activate(context) {
             void commandCenterProvider.handleConfigurationChanged();
         }
     }));
-    if ((0, config_1.getAIProvider)() === "local" && !(0, config_1.getOpenAIBaseUrl)()) {
-        vscode.window.showWarningMessage('Skylos: AI provider is "local" but no server URL set. Configure skylos.localBaseUrl (e.g. http://localhost:11434 for Ollama).', "Open Settings").then((action) => {
+    if ((0, configCore_1.shouldWarnMissingLocalAI)({
+        realtimeAIEnabled: (0, config_1.isRealtimeAIEnabled)(),
+        provider: (0, config_1.getAIProvider)(),
+        localBaseUrl: (0, config_1.getLocalBaseUrl)(),
+    })) {
+        vscode.window.showWarningMessage('Skylos: AI Assist is enabled but not configured. Static scanning is still running locally. Configure skylos.localBaseUrl.', "Open Settings").then((action) => {
             if (action === "Open Settings") {
                 vscode.commands.executeCommand("workbench.action.openSettings", "skylos.localBaseUrl");
             }

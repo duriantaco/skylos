@@ -6,19 +6,27 @@ import type {
   CircularDependency,
   DependencyVulnerability,
   FindingsFilter,
+  ScanFailureMetadata,
+  ScanMetadata,
 } from "./types";
+import type { FindingSource } from "./provenanceCore";
+import { isCorroborated, matchesSourceFilter, mergeCorrelatedFindings } from "./provenanceCore";
+import { reviewScore, severityRank } from "./reviewCore";
 
 type FindingsScope = "raw" | "working";
 
 export class FindingsStore {
   private workspaceCliFindingsByFile = new Map<string, SkylosFinding[]>();
   private focusedCliFindingsByFile = new Map<string, SkylosFinding[]>();
+  private agentFindingsByFile = new Map<string, SkylosFinding[]>();
   private aiFindingsByFile = new Map<string, SkylosFinding[]>();
 
   private _grade: CLIGrade | undefined;
   private _summary: AnalysisSummary | undefined;
   private _circularDeps: CircularDependency[] = [];
   private _depVulns: DependencyVulnerability[] = [];
+  private _lastScan: ScanMetadata | undefined;
+  private _lastError: ScanFailureMetadata | undefined;
   private _deltaMode = false;
   private _filter: FindingsFilter = {};
 
@@ -44,6 +52,16 @@ export class FindingsStore {
     this._onDidChange.fire();
   }
 
+  setAgentFindings(findings: SkylosFinding[]): void {
+    this.agentFindingsByFile.clear();
+    for (const f of findings) {
+      const list = this.agentFindingsByFile.get(f.file) ?? [];
+      list.push(f);
+      this.agentFindingsByFile.set(f.file, list);
+    }
+    this._onDidChange.fire();
+  }
+
   setEngineMetadata(
     grade?: CLIGrade,
     summary?: AnalysisSummary,
@@ -54,12 +72,26 @@ export class FindingsStore {
     this._summary = summary;
     this._circularDeps = circularDeps ?? [];
     this._depVulns = depVulns ?? [];
+    this._onDidChange.fire();
+  }
+
+  setLastScan(metadata: ScanMetadata): void {
+    this._lastScan = metadata;
+    this._lastError = undefined;
+    this._onDidChange.fire();
+  }
+
+  setLastError(error: ScanFailureMetadata): void {
+    this._lastError = error;
+    this._onDidChange.fire();
   }
 
   get grade(): CLIGrade | undefined { return this._grade; }
   get summary(): AnalysisSummary | undefined { return this._summary; }
   get circularDeps(): CircularDependency[] { return this._circularDeps; }
   get depVulns(): DependencyVulnerability[] { return this._depVulns; }
+  get lastScan(): ScanMetadata | undefined { return this._lastScan; }
+  get lastError(): ScanFailureMetadata | undefined { return this._lastError; }
 
   get deltaMode(): boolean { return this._deltaMode; }
   set deltaMode(v: boolean) { this._deltaMode = v; }
@@ -81,13 +113,14 @@ export class FindingsStore {
     } else {
       this.aiFindingsByFile.set(filePath, findings);
     }
+    this._onDidChange.fire();
     this._onDidChangeAI.fire();
   }
 
   getFindingsForFile(
     filePath: string,
     options?: {
-      source?: "cli" | "ai";
+      source?: FindingSource | "confirmed";
       includeDeadCode?: boolean;
       max?: number;
     },
@@ -101,7 +134,11 @@ export class FindingsStore {
   }
 
   getAllRawFindings(): SkylosFinding[] {
-    return [...this.getCurrentCLIFindings(), ...this.getAIFindings()];
+    return mergeCorrelatedFindings([
+      ...this.getCurrentCLIFindings(),
+      ...this.getAgentFindings(),
+      ...this.getAIFindings(),
+    ]);
   }
 
   getAllFindings(): SkylosFinding[] {
@@ -111,7 +148,7 @@ export class FindingsStore {
   getVisibleFindings(
     maxTotal: number,
     options?: {
-      source?: "cli" | "ai";
+      source?: FindingSource | "confirmed";
       includeDeadCode?: boolean;
       maxPerFile?: number;
     },
@@ -123,7 +160,7 @@ export class FindingsStore {
   getVisibleSummary(
     maxTotal: number,
     options?: {
-      source?: "cli" | "ai";
+      source?: FindingSource | "confirmed";
       includeDeadCode?: boolean;
       maxPerFile?: number;
     },
@@ -196,11 +233,14 @@ export class FindingsStore {
   clear(): void {
     this.workspaceCliFindingsByFile.clear();
     this.focusedCliFindingsByFile.clear();
+    this.agentFindingsByFile.clear();
     this.aiFindingsByFile.clear();
     this._grade = undefined;
     this._summary = undefined;
     this._circularDeps = [];
     this._depVulns = [];
+    this._lastScan = undefined;
+    this._lastError = undefined;
     this._onDidChange.fire();
     this._onDidChangeAI.fire();
   }
@@ -223,12 +263,15 @@ export class FindingsStore {
   }
 
   private getQueriedFindings(options?: {
-    source?: "cli" | "ai";
+    source?: FindingSource | "confirmed";
     includeDeadCode?: boolean;
   }): SkylosFinding[] {
     let findings = this.getAllRawFindings();
-    if (options?.source) {
-      findings = findings.filter((f) => f.source === options.source);
+    if (options?.source === "confirmed") {
+      findings = findings.filter(isCorroborated);
+    } else if (options?.source) {
+      const source = options.source;
+      findings = findings.filter((f) => (f.sources ?? [f.source]).includes(source));
     }
     if (options?.includeDeadCode === false) {
       findings = findings.filter((f) => f.category !== "dead_code");
@@ -240,7 +283,7 @@ export class FindingsStore {
     const f = this._filter;
     if (f.severity && finding.severity !== f.severity) return false;
     if (f.category && finding.category !== f.category) return false;
-    if (f.source && finding.source !== f.source) return false;
+    if (f.source && !matchesSourceFilter(finding, f.source)) return false;
     if (f.filePattern && !finding.file.toLowerCase().includes(f.filePattern.toLowerCase())) return false;
     return true;
   }
@@ -269,6 +312,12 @@ export class FindingsStore {
     for (const list of this.aiFindingsByFile.values()) all.push(...list);
     return all;
   }
+
+  private getAgentFindings(): SkylosFinding[] {
+    const all: SkylosFinding[] = [];
+    for (const list of this.agentFindingsByFile.values()) all.push(...list);
+    return all;
+  }
 }
 
 function sortFindingsForDisplay(findings: SkylosFinding[]): SkylosFinding[] {
@@ -295,42 +344,7 @@ function getDisplayScore(
   activeFile: string | undefined,
   visibleFiles: Set<string>,
 ): number {
-  let score = severityRank(finding.severity) * 100;
-
-  if (finding.file === activeFile) {
-    score += 100000;
-  } else if (visibleFiles.has(finding.file)) {
-    score += 50000;
-  }
-
-  if (finding.category === "security" || finding.category === "secrets") {
-    score += 500;
-  }
-  if (finding.source === "cli") {
-    score += 50;
-  }
-  if (finding.confidence !== undefined) {
-    score += Math.min(99, finding.confidence);
-  }
-
-  return score;
-}
-
-function severityRank(severity: string): number {
-  switch (severity.toUpperCase()) {
-    case "CRITICAL":
-      return 5;
-    case "HIGH":
-      return 4;
-    case "MEDIUM":
-    case "WARN":
-      return 3;
-    case "LOW":
-      return 2;
-    case "INFO":
-    default:
-      return 1;
-  }
+  return reviewScore(finding, { currentFile: activeFile, visibleFiles });
 }
 
 function limitFindings(findings: SkylosFinding[], maxTotal: number, maxPerFile?: number): SkylosFinding[] {

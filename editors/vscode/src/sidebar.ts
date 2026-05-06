@@ -1,10 +1,20 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import type { FindingsStore } from "./store";
-import type { SkylosFinding, Category } from "./types";
-import { getMaxTreeFindings, getMaxTreeFindingsPerFile } from "./config";
+import type { SkylosFinding, Category, ScanFailureMetadata, ScanMetadata } from "./types";
+import { getMaxTreeFindings, getMaxTreeFindingsPerFile, isRealtimeAIEnabled } from "./config";
+import {
+  ciImpact,
+  hasEvidence,
+  isLikelyCiBlocker,
+  priorityReasons,
+  sortReviewQueue,
+  type CiImpact,
+  type ReviewContext,
+} from "./reviewCore";
+import { isCorroborated, sourceSummary } from "./provenanceCore";
 
-type TreeNode = SummaryNode | CategoryNode | FileNode | FindingNode;
+type TreeNode = SummaryNode | SectionNode | FindingNode | InfoNode;
 
 class SummaryNode {
   constructor(
@@ -12,22 +22,23 @@ class SummaryNode {
     public readonly visibleTotal: number,
     public readonly rawTotal: number,
     public readonly filterActive: boolean,
+    public readonly lastScan?: ScanMetadata,
+    public readonly lastError?: ScanFailureMetadata,
+    public readonly impact?: CiImpact,
   ) {}
 }
 
-class CategoryNode {
+class SectionNode {
   constructor(
-    public readonly category: Category,
+    public readonly findings: SkylosFinding[],
     public readonly label: string,
-    public readonly findings: SkylosFinding[],
+    public readonly description?: string,
+    public readonly icon = "list-ordered",
   ) {}
 }
 
-class FileNode {
-  constructor(
-    public readonly filePath: string,
-    public readonly findings: SkylosFinding[],
-  ) {}
+class InfoNode {
+  constructor(public readonly label: string, public readonly description?: string, public readonly command?: string) {}
 }
 
 export class FindingNode {
@@ -40,16 +51,7 @@ const CATEGORY_LABELS: Record<Category, string> = {
   secrets: "Secrets",
   quality: "Quality",
   debt: "Technical Debt",
-  ai: "AI Analysis",
-};
-
-const CATEGORY_ICONS: Record<Category, string> = {
-  dead_code: "trash",
-  security: "shield",
-  secrets: "key",
-  quality: "beaker",
-  debt: "wrench",
-  ai: "sparkle",
+  ai: "AI Assist",
 };
 
 export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
@@ -68,18 +70,31 @@ export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     if (element instanceof SummaryNode) {
       const item = new vscode.TreeItem(
         element.workingTotal === 0
-          ? (element.filterActive ? "No findings match the current filter" : "No findings in scope")
-          : `Showing ${element.visibleTotal} of ${element.workingTotal} findings`,
+          ? (element.filterActive ? "No matching Skylos issues" : "No Skylos issues in scope")
+          : `${element.workingTotal} issue(s) to review`,
         vscode.TreeItemCollapsibleState.None,
       );
-      item.iconPath = new vscode.ThemeIcon("filter");
-      if (element.rawTotal !== element.workingTotal) {
+      item.iconPath = element.lastError
+        ? new vscode.ThemeIcon("warning", new vscode.ThemeColor("editorWarning.foreground"))
+        : new vscode.ThemeIcon("shield");
+      if (element.lastError) {
+        item.description = "Last scan failed";
+      } else if (element.impact?.status === "blocking") {
+        item.description = `${element.impact.blockerCount} likely CI blocker(s)`;
+      } else if (element.impact?.status === "attention") {
+        item.description = `${element.impact.attentionCount} need review`;
+      } else if (element.lastScan?.diffBase) {
+        item.description = `New issues vs ${element.lastScan.diffBase}`;
+      } else if (element.rawTotal !== element.workingTotal) {
         item.description = `${element.rawTotal} total in repo`;
+      } else if (element.lastScan?.durationMs !== undefined) {
+        item.description = `Last scan ${Math.round(element.lastScan.durationMs / 100) / 10}s`;
       } else if (element.workingTotal > element.visibleTotal) {
-        item.description = "Refine with filters or open Dashboard";
+        item.description = `Top ${element.visibleTotal} shown`;
       } else if (element.filterActive) {
         item.description = "Filter active";
       }
+      item.tooltip = buildSummaryTooltip(element);
       item.command = {
         title: "Filter findings",
         command: element.filterActive ? "skylos.clearFilter" : "skylos.filterFindings",
@@ -87,32 +102,33 @@ export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       return item;
     }
 
-    if (element instanceof CategoryNode) {
+    if (element instanceof SectionNode) {
       const item = new vscode.TreeItem(
         `${element.label} (${element.findings.length})`,
-        vscode.TreeItemCollapsibleState.Collapsed,
+        vscode.TreeItemCollapsibleState.Expanded,
       );
-      item.iconPath = new vscode.ThemeIcon(CATEGORY_ICONS[element.category]);
+      item.iconPath = new vscode.ThemeIcon(element.icon);
+      item.description = element.description;
       return item;
     }
 
-    if (element instanceof FileNode) {
-      const fileName = path.basename(element.filePath);
-      const item = new vscode.TreeItem(
-        `${fileName} (${element.findings.length})`,
-        vscode.TreeItemCollapsibleState.Collapsed,
-      );
-      item.iconPath = vscode.ThemeIcon.File;
-      item.description = path.dirname(element.filePath);
-      item.resourceUri = vscode.Uri.file(element.filePath);
+    if (element instanceof InfoNode) {
+      const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
+      item.iconPath = new vscode.ThemeIcon(element.command ? "play" : "info");
+      item.description = element.description;
+      if (element.command) {
+        item.command = { title: element.label, command: element.command };
+      }
       return item;
     }
 
     const f = element.finding;
-    const item = new vscode.TreeItem(`L${f.line}: ${f.message}`, vscode.TreeItemCollapsibleState.None);
+    const item = new vscode.TreeItem(buildFindingLabel(f), vscode.TreeItemCollapsibleState.None);
     item.iconPath = getSeverityIcon(f.severity);
-    item.tooltip = `[${f.ruleId}] ${f.message}`;
-    item.contextValue = "skylosFinding";
+    item.description = buildFindingDescription(f, getReviewContext(this.store.lastScan));
+    item.tooltip = buildFindingTooltip(f, getReviewContext(this.store.lastScan));
+    item.contextValue = f.fixPatch ? "skylosFindingSafeFix" : "skylosFinding";
+    item.resourceUri = vscode.Uri.file(f.file);
     item.command = {
       title: "Go to finding",
       command: "vscode.open",
@@ -129,47 +145,44 @@ export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       const summary = this.store.getVisibleSummary(getMaxTreeFindings(), {
         maxPerFile: getMaxTreeFindingsPerFile(),
       });
-      const all = this.store.getVisibleFindings(getMaxTreeFindings(), {
+      const context = getReviewContext(this.store.lastScan);
+      const findings = sortReviewQueue(this.store.getVisibleFindings(getMaxTreeFindings(), {
         maxPerFile: getMaxTreeFindingsPerFile(),
-      });
-      const byCategory = new Map<Category, SkylosFinding[]>();
-      for (const f of all) {
-        const list = byCategory.get(f.category) ?? [];
-        list.push(f);
-        byCategory.set(f.category, list);
+      }), context);
+      const allFindings = this.store.getAllFindings();
+      const impact = ciImpact(allFindings, context);
+      const nodes: TreeNode[] = [
+        new SummaryNode(
+          summary.workingTotal,
+          summary.visibleTotal,
+          summary.rawTotal,
+          this.store.hasActiveFilter,
+          this.store.lastScan,
+          this.store.lastError,
+          impact,
+        ),
+      ];
+      nodes.push(buildStatusNode(this.store.lastScan, this.store.lastError, allFindings));
+
+      if (findings.length === 0) {
+        if (this.store.lastError) {
+          nodes.push(new InfoNode("Run Doctor", "Check the Skylos CLI setup", "skylos.doctor"));
+        } else {
+          nodes.push(new InfoNode("Scan Workspace", "Populate the Skylos review queue", "skylos.scan"));
+        }
+        return nodes;
       }
 
-      const nodes: CategoryNode[] = [];
-      const order: Category[] = ["security", "secrets", "debt", "dead_code", "quality", "ai"];
-      for (const cat of order) {
-        const findings = byCategory.get(cat);
-        if (findings && findings.length > 0) {
-          nodes.push(new CategoryNode(cat, CATEGORY_LABELS[cat], findings));
-        }
-      }
-      return [new SummaryNode(summary.workingTotal, summary.visibleTotal, summary.rawTotal, this.store.hasActiveFilter), ...nodes];
+      nodes.push(...buildReviewSections(findings, context));
+      return nodes;
     }
 
-    if (element instanceof SummaryNode) {
+    if (element instanceof SummaryNode || element instanceof InfoNode) {
       return [];
     }
 
-    if (element instanceof CategoryNode) {
-      const byFile = new Map<string, SkylosFinding[]>();
-      for (const f of element.findings) {
-        const list = byFile.get(f.file) ?? [];
-        list.push(f);
-        byFile.set(f.file, list);
-      }
-      return [...byFile.entries()]
-        .sort((a, b) => compareFileBuckets(a[1], b[1]))
-        .map(([filePath, findings]) => new FileNode(filePath, findings));
-    }
-
-    if (element instanceof FileNode) {
-      return element.findings
-        .sort(compareFindingsInTree)
-        .map((f) => new FindingNode(f));
+    if (element instanceof SectionNode) {
+      return element.findings.map((f) => new FindingNode(f));
     }
 
     return [];
@@ -179,6 +192,167 @@ export class SkylosTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     this._onDidChangeTreeData.dispose();
     this.disposables.forEach((d) => d.dispose());
   }
+}
+
+function buildStatusNode(
+  lastScan: ScanMetadata | undefined,
+  lastError: ScanFailureMetadata | undefined,
+  findings: SkylosFinding[],
+): InfoNode {
+  const staticLabel = lastError ? "Static scan failed" : lastScan ? "Static scan complete" : "Static scan pending";
+  const automationOn = findings.some((finding) => (finding.sources ?? [finding.source]).includes("agent"));
+  const aiOn = isRealtimeAIEnabled();
+  return new InfoNode(
+    staticLabel,
+    `Automation: ${automationOn ? "On" : "Off"} · AI Assist: ${aiOn ? "On" : "Off"}`,
+    lastError ? "skylos.doctor" : undefined,
+  );
+}
+
+function buildReviewSections(findings: SkylosFinding[], context: ReviewContext): SectionNode[] {
+  const blockers = findings.filter((finding) => isBlockerFinding(finding, context));
+  const blockerKeys = new Set(blockers.map(findingKey));
+  const needsReview = findings.filter((finding) =>
+    !blockerKeys.has(findingKey(finding)) && isNeedsReviewFinding(finding, context),
+  );
+  const reviewKeys = new Set(needsReview.map(findingKey));
+  const safeFixes = findings.filter((finding) =>
+    finding.fixPatch && !blockerKeys.has(findingKey(finding)) && !reviewKeys.has(findingKey(finding)),
+  );
+  const used = new Set([...blockers, ...needsReview, ...safeFixes].map(findingKey));
+  const later = findings.filter((finding) => !used.has(findingKey(finding)));
+
+  const sections: SectionNode[] = [];
+  if (blockers.length > 0) {
+    sections.push(new SectionNode(
+      blockers,
+      "Blockers",
+      "Likely to fail CI or expose security risk",
+      "flame",
+    ));
+  }
+  if (needsReview.length > 0) {
+    sections.push(new SectionNode(
+      needsReview,
+      "Needs Review",
+      "Important findings without a safe automatic fix",
+      "eye",
+    ));
+  }
+  if (safeFixes.length > 0) {
+    sections.push(new SectionNode(
+      safeFixes,
+      "Fixable",
+      "Engine-backed patch available",
+      "diff",
+    ));
+  }
+  if (later.length > 0) {
+    sections.push(new SectionNode(
+      later,
+      sections.length === 0 ? "Review Queue" : "Review Later",
+      "Lower-risk quality and dead-code findings",
+      "list-ordered",
+    ));
+  }
+  return sections;
+}
+
+function isBlockerFinding(finding: SkylosFinding, context: ReviewContext): boolean {
+  const severity = finding.severity.toUpperCase();
+  return isLikelyCiBlocker(finding)
+    || severity === "CRITICAL"
+    || finding.category === "secrets"
+    || (finding.category === "security" && severity === "HIGH")
+    || (isCorroborated(finding) && (severity === "HIGH" || severity === "CRITICAL"));
+}
+
+function isNeedsReviewFinding(finding: SkylosFinding, context: ReviewContext): boolean {
+  const severity = finding.severity.toUpperCase();
+  return finding.file === context.currentFile
+    || finding.isNew === true
+    || finding.baselineStatus === "new"
+    || isCorroborated(finding)
+    || severity === "HIGH"
+    || finding.category === "security"
+    || severity === "MEDIUM"
+    || severity === "WARN";
+}
+
+function findingKey(finding: SkylosFinding): string {
+  return finding.fingerprint ?? `${finding.ruleId}:${finding.file}:${finding.line}:${finding.message}`;
+}
+
+function buildFindingLabel(finding: SkylosFinding): string {
+  return `${finding.severity} ${finding.ruleId}: ${shorten(finding.message, 72)}`;
+}
+
+function buildFindingDescription(finding: SkylosFinding, context: ReviewContext): string {
+  const file = `${path.basename(finding.file)}:${finding.line}`;
+  const badges = buildFindingBadges(finding, context);
+  return badges.length > 0 ? `${file}  ${badges.join(" ")}` : file;
+}
+
+function buildFindingBadges(finding: SkylosFinding, context: ReviewContext): string[] {
+  const badges: string[] = [];
+  if (finding.file === context.currentFile) badges.push("current");
+  if (isCorroborated(finding)) badges.push("Confirmed");
+  if (isLikelyCiBlocker(finding)) badges.push("ci");
+  if (finding.isNew || finding.baselineStatus === "new") badges.push("new");
+  if (finding.fixPatch) badges.push("fix");
+  if (hasEvidence(finding)) badges.push("evidence");
+  if (finding.confidence !== undefined) badges.push(`${finding.confidence}%`);
+  badges.push(sourceSummary(finding));
+  badges.push(CATEGORY_LABELS[finding.category] ?? finding.category);
+  return badges;
+}
+
+function buildFindingTooltip(finding: SkylosFinding, context: ReviewContext): string {
+  const lines = [
+    `[${finding.ruleId}] ${finding.message}`,
+    `Severity: ${finding.severity}`,
+    `Category: ${CATEGORY_LABELS[finding.category] ?? finding.category}`,
+    `Source: ${isCorroborated(finding) ? `Confirmed by ${sourceSummary(finding)}` : sourceSummary(finding)}`,
+    `Location: ${finding.relativePath ?? finding.file}:${finding.line}`,
+    "",
+    "Why ranked here:",
+    ...priorityReasons(finding, context).map((reason) => `- ${reason}`),
+  ];
+  if (finding.confidence !== undefined) lines.push(`Confidence: ${finding.confidence}%`);
+  if (finding.isNew || finding.baselineStatus) lines.push(`Baseline: ${finding.baselineStatus ?? "new"}`);
+  if (finding.fixPatch) lines.push("Engine fix: preview available");
+  if (hasEvidence(finding)) lines.push("Evidence: attached");
+  return lines.join("\n");
+}
+
+function buildSummaryTooltip(node: SummaryNode): string {
+  const lines = [
+    `Visible: ${node.visibleTotal}`,
+    `In current scope: ${node.workingTotal}`,
+    `Raw total: ${node.rawTotal}`,
+  ];
+  if (node.impact) {
+    lines.push("", node.impact.headline);
+    for (const reason of node.impact.reasons) lines.push(`- ${reason}`);
+  }
+  if (node.lastScan) {
+    lines.push(`Last command: ${node.lastScan.command}`);
+    if (node.lastScan.durationMs !== undefined) {
+      lines.push(`Duration: ${Math.round(node.lastScan.durationMs / 100) / 10}s`);
+    }
+  }
+  if (node.lastError) {
+    lines.push(`Last error: ${node.lastError.message}`);
+  }
+  return lines.join("\n");
+}
+
+function getReviewContext(lastScan?: ScanMetadata): ReviewContext {
+  return {
+    currentFile: vscode.window.activeTextEditor?.document.uri.fsPath,
+    visibleFiles: vscode.window.visibleTextEditors.map((editor) => editor.document.uri.fsPath),
+    diffBase: lastScan?.diffBase,
+  };
 }
 
 function getSeverityIcon(severity: string): vscode.ThemeIcon {
@@ -192,35 +366,7 @@ function getSeverityIcon(severity: string): vscode.ThemeIcon {
   return new vscode.ThemeIcon("info", new vscode.ThemeColor("editorInfo.foreground"));
 }
 
-function compareFileBuckets(a: SkylosFinding[], b: SkylosFinding[]): number {
-  const severityDelta = maxSeverityRank(b) - maxSeverityRank(a);
-  if (severityDelta !== 0) return severityDelta;
-  return b.length - a.length || a[0].file.localeCompare(b[0].file);
-}
-
-function compareFindingsInTree(a: SkylosFinding, b: SkylosFinding): number {
-  const severityDelta = severityRank(b.severity) - severityRank(a.severity);
-  if (severityDelta !== 0) return severityDelta;
-  return a.line - b.line || a.message.localeCompare(b.message);
-}
-
-function maxSeverityRank(findings: SkylosFinding[]): number {
-  return findings.reduce((max, finding) => Math.max(max, severityRank(finding.severity)), 0);
-}
-
-function severityRank(severity: string): number {
-  switch (severity.toUpperCase()) {
-    case "CRITICAL":
-      return 5;
-    case "HIGH":
-      return 4;
-    case "MEDIUM":
-    case "WARN":
-      return 3;
-    case "LOW":
-      return 2;
-    case "INFO":
-    default:
-      return 1;
-  }
+function shorten(value: string, max: number): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, Math.max(0, max - 1)).trimEnd()}...`;
 }

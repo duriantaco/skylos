@@ -26,6 +26,8 @@ class AIAnalyzer {
         this.statusBar = sb;
     }
     async maybeAnalyze(document) {
+        if (!(0, config_1.isRealtimeAIEnabled)())
+            return;
         const apiKey = (0, config_1.getAIApiKey)();
         if (!apiKey)
             return;
@@ -125,7 +127,7 @@ class AIAnalyzer {
                 this.streamingManager?.clearAll();
                 return;
             }
-            scanner_1.out.appendLine(`AI Error: ${err}`);
+            scanner_1.out.appendLine(`AI Assist failed. Static scan results are unaffected: ${formatAIError(err)}`);
             if (this.statusBar)
                 this.statusBar.text = prevText;
         }
@@ -166,6 +168,11 @@ class AIAnalyzer {
     }
 }
 exports.AIAnalyzer = AIAnalyzer;
+function formatAIError(err) {
+    if (err instanceof Error)
+        return `${err.name}: ${err.message}`;
+    return String(err);
+}
 function extractFunctions(code, langId) {
     if (langId === "python")
         return extractPythonFunctions(code);
@@ -472,13 +479,13 @@ async function fixWithAI(filePath, range, errorMsg, previewOnly) {
     if (!apiKey) {
         let msg;
         if (provider === "anthropic") {
-            msg = "Set skylos.anthropicApiKey first.";
+            msg = "AI Fix needs a provider. Set skylos.anthropicApiKey or use engine fixes when available.";
         }
         else if (provider === "local") {
-            msg = "Set skylos.localBaseUrl to your local AI server (e.g. http://localhost:11434 for Ollama) and skylos.localModel to the model name.";
+            msg = "AI Fix needs a provider. Set skylos.localBaseUrl and skylos.localModel, or use engine fixes when available.";
         }
         else {
-            msg = 'Set skylos.openaiApiKey, or switch aiProvider to "local" and configure skylos.localBaseUrl.';
+            msg = 'AI Fix needs a provider. Set skylos.openaiApiKey, configure local AI Assist, or use engine fixes when available.';
         }
         vscode.window.showErrorMessage(msg);
         return;

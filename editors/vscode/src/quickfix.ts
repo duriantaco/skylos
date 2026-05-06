@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import { getDocumentFilters } from "./types";
+import { isDeadCodeRule } from "./findingCore";
 
 
 export class SkylosQuickFixProvider implements vscode.CodeActionProvider {
@@ -16,13 +17,18 @@ export class SkylosQuickFixProvider implements vscode.CodeActionProvider {
     const actions: vscode.CodeAction[] = [];
 
     for (const diag of context.diagnostics) {
-      if (diag.source !== "skylos" && diag.source !== "skylos-ai") 
+      if (!diag.source?.startsWith("skylos"))
         continue;
 
       const line = diag.range.start.line;
       const lineText = document.lineAt(line).text;
-      const ruleId = typeof diag.code === "string" ? diag.code : String(diag.code ?? "");
+      const ruleId = getRuleId(diag.code);
       const langId = document.languageId;
+      const finding = this.store.getFindingsForFile(document.uri.fsPath)
+        .find((candidate) =>
+          candidate.line === line + 1
+          && (candidate.ruleId === ruleId || candidate.legacyRuleId === ruleId),
+        );
 
       const ignoreComment = getIgnoreComment(langId);
 
@@ -51,34 +57,21 @@ export class SkylosQuickFixProvider implements vscode.CodeActionProvider {
       fileIgnore.diagnostics = [diag];
       actions.push(fileIgnore);
 
-      if (ruleId === "DEAD-IMPORT") {
-        const removeAction = new vscode.CodeAction(
-          `Remove unused import`,
+      if (finding?.fixPatch) {
+        const previewFix = new vscode.CodeAction(
+          "Skylos: Preview engine fix",
           vscode.CodeActionKind.QuickFix,
         );
-        removeAction.isPreferred = true;
-        removeAction.edit = new vscode.WorkspaceEdit();
-        const fullLine = new vscode.Range(line, 0, line + 1, 0);
-        removeAction.edit.delete(document.uri, fullLine);
-        removeAction.diagnostics = [diag];
-        actions.push(removeAction);
-      }
-
-      if (ruleId === "DEAD-FUNC") {
-        const removeFunc = new vscode.CodeAction(
-          `Remove unused function`,
-          vscode.CodeActionKind.QuickFix,
-        );
-        removeFunc.command = {
-          title: "Remove function",
-          command: "skylos.removeFunction",
-          arguments: [document.uri, line],
+        previewFix.command = {
+          title: "Preview engine fix",
+          command: "skylos.previewSafeFix",
+          arguments: [finding],
         };
-        removeFunc.diagnostics = [diag];
-        actions.push(removeFunc);
+        previewFix.diagnostics = [diag];
+        actions.push(previewFix);
       }
 
-      if (ruleId.startsWith("DEAD-")) {
+      if (isDeadCodeRule(ruleId)) {
         const whitelist = new vscode.CodeAction(
           `Add to whitelist`,
           vscode.CodeActionKind.QuickFix,
@@ -92,18 +85,18 @@ export class SkylosQuickFixProvider implements vscode.CodeActionProvider {
         actions.push(whitelist);
       }
 
-      if (diag.source === "skylos-ai" || ruleId.startsWith("SKY-D") || ruleId.startsWith("SKY-S")) {
+      if (diag.source.includes("ai-assist") || ruleId.startsWith("SKY-D") || ruleId.startsWith("SKY-S")) {
         const fixAI = new vscode.CodeAction(
-          `Fix with AI`,
+          `Fix with AI Assist`,
           vscode.CodeActionKind.QuickFix,
         );
         fixAI.command = {
-          title: "Fix with AI",
+          title: "Fix with AI Assist",
           command: "skylos.fix",
           arguments: [
             document.uri.fsPath,
             diag.range,
-            diag.message.replace("[AI] ", ""),
+            diag.message,
             false,
           ],
         };
@@ -120,6 +113,16 @@ export class SkylosQuickFixProvider implements vscode.CodeActionProvider {
       providedCodeActionKinds: SkylosQuickFixProvider.providedCodeActionKinds,
     });
   }
+}
+
+function getRuleId(code: vscode.Diagnostic["code"]): string {
+  if (typeof code === "string" || typeof code === "number") {
+    return String(code);
+  }
+  if (code && typeof code === "object" && "value" in code) {
+    return String(code.value);
+  }
+  return "";
 }
 
 function getIgnoreComment(langId: string): string {

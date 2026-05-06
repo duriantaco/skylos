@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type { FindingSource } from "./provenanceCore";
 
 export const SUPPORTED_LANGUAGES = [
   "python",
@@ -13,19 +14,49 @@ export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO" | "WARN";
 export type Category = "dead_code" | "security" | "secrets" | "quality" | "debt" | "ai";
 
+export interface FindingTraceStep {
+  file?: string;
+  line?: number;
+  label?: string;
+  message?: string;
+  symbol?: string;
+}
+
 export interface SkylosFinding {
   id: string;
+  fingerprint?: string;
   ruleId: string;
+  legacyRuleId?: string;
   category: Category;
   severity: Severity;
   message: string;
   file: string;
+  relativePath?: string;
+  workspaceRoot?: string;
   line: number;
   col: number;
+  endLine?: number;
+  endCol?: number;
   confidence?: number;
   itemType?: string;
   itemName?: string;
-  source: "cli" | "ai";
+  source: FindingSource;
+  sources?: FindingSource[];
+  ruleUrl?: string;
+  safeFix?: string;
+  fixPatch?: string;
+  baselineStatus?: string;
+  isNew?: boolean;
+  snippet?: string;
+  explanation?: string;
+  suggestion?: string;
+  evidence?: string[];
+  trace?: FindingTraceStep[];
+  sourceSymbol?: string;
+  sinkSymbol?: string;
+  securityEvidence?: Record<string, unknown>;
+  reviewReason?: string;
+  ciBlocking?: boolean;
 }
 
 export interface UnusedItem {
@@ -37,6 +68,10 @@ export interface UnusedItem {
   lineno?: number;
   confidence?: number;
   module?: string;
+  rule_id?: string;
+  fingerprint?: string;
+  baseline_status?: string;
+  is_new?: boolean;
 }
 
 export interface CLIFinding {
@@ -47,6 +82,45 @@ export interface CLIFinding {
   rule_id?: string;
   severity?: string;
   compliance_tags?: string[];
+  confidence?: number;
+  fingerprint?: string;
+  rule_url?: string;
+  ruleUrl?: string;
+  end_line?: number;
+  endLine?: number;
+  end_col?: number;
+  endCol?: number;
+  end_column?: number;
+  endColumn?: number;
+  safe_fix?: string;
+  safeFix?: string;
+  fix_patch?: string;
+  fixPatch?: string;
+  patch?: string;
+  baseline_status?: string;
+  baselineStatus?: string;
+  is_new?: boolean;
+  isNew?: boolean;
+  snippet?: string;
+  code_snippet?: string;
+  codeSnippet?: string;
+  vulnerable_code?: string;
+  explanation?: string;
+  suggestion?: string;
+  evidence?: unknown;
+  trace?: unknown;
+  dataflow?: unknown;
+  source_symbol?: string;
+  sourceSymbol?: string;
+  sink_symbol?: string;
+  sinkSymbol?: string;
+  _security_evidence?: Record<string, unknown>;
+  security_evidence?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  _review_reason?: string;
+  review_reason?: string;
+  _ci_blocking?: boolean;
+  ci_blocking?: boolean;
 }
 
 export interface QualityFinding {
@@ -59,6 +133,64 @@ export interface QualityFinding {
   message?: string;
   file: string;
   line?: number;
+  col?: number;
+  confidence?: number;
+  fingerprint?: string;
+  rule_url?: string;
+  ruleUrl?: string;
+  end_line?: number;
+  endLine?: number;
+  end_col?: number;
+  endCol?: number;
+  end_column?: number;
+  endColumn?: number;
+  safe_fix?: string;
+  safeFix?: string;
+  fix_patch?: string;
+  fixPatch?: string;
+  patch?: string;
+  baseline_status?: string;
+  baselineStatus?: string;
+  is_new?: boolean;
+  isNew?: boolean;
+  snippet?: string;
+  code_snippet?: string;
+  codeSnippet?: string;
+  vulnerable_code?: string;
+  explanation?: string;
+  suggestion?: string;
+  evidence?: unknown;
+  trace?: unknown;
+  dataflow?: unknown;
+  source_symbol?: string;
+  sourceSymbol?: string;
+  sink_symbol?: string;
+  sinkSymbol?: string;
+  _security_evidence?: Record<string, unknown>;
+  security_evidence?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  _review_reason?: string;
+  review_reason?: string;
+  _ci_blocking?: boolean;
+  ci_blocking?: boolean;
+}
+
+export interface ScanMetadata {
+  command: string;
+  target: string;
+  workspaceRoot: string;
+  diffBase?: string;
+  durationMs?: number;
+  exitCode?: number | null;
+  stderr?: string;
+}
+
+export interface ScanFailureMetadata {
+  kind: string;
+  message: string;
+  command?: string;
+  exitCode?: number | null;
+  stderr?: string;
 }
 
 export interface CLIGrade {
@@ -147,7 +279,7 @@ export interface AutoFixOptions {
 export interface FindingsFilter {
   severity?: Severity;
   category?: Category;
-  source?: "cli" | "ai";
+  source?: FindingSource | "confirmed";
   filePattern?: string;
 }
 
@@ -167,6 +299,9 @@ export interface AgentCommandCenterItem {
   rule_id?: string;
   message?: string;
   safe_fix?: string;
+  fix_patch?: string;
+  fixPatch?: string;
+  patch?: string;
   hotspot_score?: number;
   priority_score?: number;
   signal_count?: number;

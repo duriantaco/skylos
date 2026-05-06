@@ -1,11 +1,27 @@
 ## Changelog
 
+## [0.6.0] - 2026-05-06
+
+### Added
+- **Review Queue source provenance**: findings now show Static, Automation, AI Assist, or Confirmed source labels
+- **Confirmed findings**: matching Static + Automation findings are merged into one Review Queue item and ranked higher
+- **Decision-focused finding details**: detail view now shows source, CI impact, evidence, priority reasons, and fix path
+- **Optional Automation Activity**: repo-level automation is clearly separated from the primary static Review Queue
+- **Optional real-time AI Assist**: automatic AI Assist is off by default and labeled separately from static analysis
+
+### Changed
+- Review Queue sections now use Blockers, Needs Review, Fixable, and Review Later
+- Severity remains the primary editor color; Confirmed appears as a badge/suffix instead of a separate primary color
+- Source filters now cover Static scan, Automation, AI Assist, and Confirmed findings
+- AI Assist and Automation failure copy now states static scan results are unaffected
+- Auto-fix commands now identify AI Assist explicitly in user-facing labels
+
 ## [0.5.0] - 2026-03-10
 
 ### Added
 - **Local AI support**: new `"local"` provider option with dedicated `skylos.localBaseUrl` and `skylos.localModel` settings. Works with Ollama, LM Studio, LocalAI, vLLM, Kimi, or any OpenAI-compatible server. No API key required
 - **SARIF export**: `Skylos: Export Report` now offers SARIF v2.1.0 output for CI/code-scanning integrations (GitHub Code Scanning, GitLab SAST, Azure DevOps). Includes rule metadata with CWE, OWASP, and PCI-DSS tags
-- **Sidebar filters**: filter findings by severity, category, source (CLI vs AI), or file name via the funnel icon in the sidebar title bar. Filters stack and can be cleared with the X button
+- **Sidebar filters**: filter findings by severity, category, source, or file name via the funnel icon in the sidebar title bar. Filters stack and can be cleared with the X button
 - **Configurable delta base branch**: `skylos.diffBase` setting (default `origin/main`) replaces the hardcoded base ref for delta mode. Supports any git ref
 - **Safer AI fix workflow**: `skylos.fixPreviewFirst` (default `true`) enforces diff preview before applying fixes. `skylos.postFixCommand` runs tests/linter after each fix with one-click undo on failure
 - Clear warning when `"local"` provider is selected but no server URL is configured, with "Open Settings" action
