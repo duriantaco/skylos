@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.11.1](https://github.com/duriantaco/skylos/compare/v4.11.0...v4.11.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* **architecture:** suppress cli entrypoint false positives ([#301](https://github.com/duriantaco/skylos/issues/301)) ([73886c9](https://github.com/duriantaco/skylos/commit/73886c9ec74722b3278331677c050d44c98240a6))
+
 ## [4.11.0](https://github.com/duriantaco/skylos/compare/v4.10.0...v4.11.0) (2026-05-05)
 
 
