@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 
 from scripts.regression_delta import _safe_workspace_json, compare
 
@@ -145,10 +146,12 @@ def test_quality_score_improvement_passes():
 
 
 def test_json_inputs_must_be_workspace_local_filenames():
-    assert _safe_workspace_json("head.json").name == "head.json"
+    workspace = Path.cwd().resolve()
+
+    assert _safe_workspace_json("head.json", workspace).name == "head.json"
 
     with pytest.raises(ValueError, match="workspace-local"):
-        _safe_workspace_json("../head.json")
+        _safe_workspace_json("../head.json", workspace)
 
     with pytest.raises(ValueError, match=".json"):
-        _safe_workspace_json("head.txt")
+        _safe_workspace_json("head.txt", workspace)
