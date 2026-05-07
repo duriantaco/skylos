@@ -704,8 +704,8 @@ class TestAnalyze:
 
         result = json.loads(result_json)
         metrics = result["architecture_metrics"]["module_metrics"]
-        assert metrics["mypkg"]["zone"] == "zone_of_uselessness"
-        assert metrics["mypkg.cli"]["zone"] == "zone_of_uselessness"
+        assert metrics["mypkg"]["zone"] == "main_sequence"
+        assert metrics["mypkg.cli"]["zone"] == "healthy"
         assert metrics["mypkg._helpers"]["distance"] == 1.0
 
         architecture_rules = {
@@ -716,6 +716,68 @@ class TestAnalyze:
         assert ("SKY-Q803", "mypkg") not in architecture_rules
         assert ("SKY-Q803", "mypkg.cli") not in architecture_rules
         assert ("SKY-Q802", "mypkg._helpers") not in architecture_rules
+
+    def test_analyze_architecture_filters_library_reexport_and_test_leaf_noise(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pkg = root / "src" / "mini_pkg"
+            tests = root / "tests"
+            pkg.mkdir(parents=True)
+            tests.mkdir()
+            (root / "pyproject.toml").write_text(
+                "[project]\n"
+                'name = "mini-pkg"\n'
+                'version = "0.1.0"\n'
+                'requires-python = ">=3.10"\n\n'
+                "[build-system]\n"
+                'requires = ["setuptools>=68"]\n'
+                'build-backend = "setuptools.build_meta"\n\n'
+                "[tool.setuptools]\n"
+                'package-dir = {"" = "src"}\n',
+                encoding="utf-8",
+            )
+            (pkg / "__init__.py").write_text(
+                '"""Minimal library entry point that re-exports core symbols."""\n'
+                "from .core import Greeter, greet\n\n"
+                '__all__ = ["Greeter", "greet"]\n',
+                encoding="utf-8",
+            )
+            (pkg / "core.py").write_text(
+                '"""Concrete library implementation."""\n'
+                "from dataclasses import dataclass\n\n\n"
+                "@dataclass(frozen=True)\n"
+                "class Greeter:\n"
+                "    name: str\n\n"
+                "    def hello(self) -> str:\n"
+                '        return f"Hello, {self.name}!"\n\n\n'
+                "def greet(name: str) -> str:\n"
+                "    return Greeter(name=name).hello()\n",
+                encoding="utf-8",
+            )
+            (tests / "__init__.py").write_text("", encoding="utf-8")
+            (tests / "test_core.py").write_text(
+                "from mini_pkg import greet\n\n\n"
+                "def test_greet():\n"
+                '    assert greet("world") == "Hello, world!"\n',
+                encoding="utf-8",
+            )
+
+            result_json = analyze(str(root), enable_quality=True, grep_verify=False)
+
+        result = json.loads(result_json)
+        metrics = result["architecture_metrics"]["module_metrics"]
+        assert metrics["mini_pkg.core"]["distance"] == 1.0
+        assert metrics["mini_pkg.core"]["zone"] == "zone_of_pain"
+        assert metrics["tests.test_core"]["zone"] == "main_sequence"
+
+        architecture_rules = {
+            (f.get("rule_id"), f.get("name"))
+            for f in result.get("quality", [])
+            if f.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
+        }
+        assert ("SKY-Q802", "mini_pkg.core") not in architecture_rules
+        assert ("SKY-Q803", "mini_pkg.core") not in architecture_rules
+        assert ("SKY-Q803", "tests.test_core") not in architecture_rules
 
     @patch("skylos.analyzer.scan_typescript_file")
     def test_proc_file_dispatches_mjs_to_typescript_scanner(self, mock_scan):
