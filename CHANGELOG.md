@@ -1,5 +1,18 @@
 ## Changelog
 
+## [4.12.0](https://github.com/duriantaco/skylos/compare/v4.11.1...v4.12.0) (2026-05-07)
+
+
+### Features
+
+* **vscode:** add review queue provenance ([#303](https://github.com/duriantaco/skylos/issues/303)) ([280239a](https://github.com/duriantaco/skylos/commit/280239ab39593326956a792e73ea5766633ff720))
+
+
+### Bug Fixes
+
+* **architecture:** rename misleading healthy zone fallback ([#308](https://github.com/duriantaco/skylos/issues/308)) ([3eba72c](https://github.com/duriantaco/skylos/commit/3eba72c7ba641a9ce350a16d030df40ce2397012))
+* **architecture:** suppress library re-export false positives ([#307](https://github.com/duriantaco/skylos/issues/307)) ([117142d](https://github.com/duriantaco/skylos/commit/117142d24aa0ed3a1ed822fa471efd58d09a9d1d))
+
 ## [4.11.1](https://github.com/duriantaco/skylos/compare/v4.11.0...v4.11.1) (2026-05-06)
 
 
