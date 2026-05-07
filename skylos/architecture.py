@@ -24,7 +24,7 @@ class ModuleMetrics:
     instability: float = 0.0
     abstractness: float = 0.0
     distance: float = 0.0
-    zone: str = "healthy"
+    zone: str = "off_main_sequence"
     total_classes: int = 0
     abstract_classes: int = 0
     total_functions: int = 0
@@ -163,7 +163,7 @@ def _classify_zone(abstractness: float, instability: float) -> str:
     if abstractness > 0.7 and instability > 0.7:
         return "zone_of_uselessness"
 
-    return "healthy"
+    return "off_main_sequence"
 
 
 def _has_main_guard(tree: ast.AST) -> bool:
@@ -376,7 +376,9 @@ def analyze_architecture(
                 "main_sequence": sum(
                     1 for m in all_metrics if m.zone == "main_sequence"
                 ),
-                "healthy": sum(1 for m in all_metrics if m.zone == "healthy"),
+                "off_main_sequence": sum(
+                    1 for m in all_metrics if m.zone == "off_main_sequence"
+                ),
                 "zone_of_pain": sum(1 for m in all_metrics if m.zone == "zone_of_pain"),
                 "zone_of_uselessness": sum(
                     1 for m in all_metrics if m.zone == "zone_of_uselessness"
