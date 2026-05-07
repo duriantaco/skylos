@@ -15,7 +15,7 @@ except ImportError:
 
 from skylos.visitor import Visitor
 
-from skylos.circular_deps import CircularDependencyRule
+from skylos.circular_deps import CircularDependencyRule, _resolve_from_import_targets
 
 from skylos.constants import AUTO_CALLED, MARKREFS_TICK_DEFAULT
 
@@ -169,6 +169,37 @@ def _expand_reexported_entrypoint_modules(
                     continue
                 if import_module in known_modules:
                     modules.add(import_module)
+
+    return modules
+
+
+def _find_package_boundary_modules(
+    raw_imports_by_file: dict[Path, list],
+    modmap: dict[Path, str],
+    module_files: dict[str, str],
+) -> set[str]:
+    modules: set[str] = set()
+    known_modules = set(module_files)
+
+    for file_path, raw_imports in raw_imports_by_file.items():
+        package_module = modmap.get(file_path)
+        if not package_module or Path(file_path).name != "__init__.py":
+            continue
+
+        for import_module, _line, import_type, imported_names in raw_imports:
+            if import_type != "from_import":
+                continue
+
+            targets = _resolve_from_import_targets(
+                import_module,
+                imported_names,
+                known_modules,
+            )
+            for target in targets:
+                if target != package_module and target.startswith(
+                    package_module + "."
+                ):
+                    modules.add(target)
 
     return modules
 
@@ -1622,6 +1653,11 @@ class Skylos:
                             modmap,
                             mod_files,
                         )
+                        package_boundary_modules = _find_package_boundary_modules(
+                            all_raw_imports,
+                            modmap,
+                            mod_files,
+                        )
 
                         mod_trees = {}
                         if not architecture_abstractness:
@@ -1644,6 +1680,7 @@ class Skylos:
                             module_abstractness=architecture_abstractness,
                             module_loc=architecture_loc,
                             entrypoint_modules=entrypoint_modules,
+                            package_boundary_modules=package_boundary_modules,
                         )
                         ignored_rules = set(project_cfg.get("ignore", []))
                         if arch_findings:

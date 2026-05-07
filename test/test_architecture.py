@@ -76,12 +76,13 @@ class TestClassifyZone:
         assert _classify_zone(0.5, 0.5) == "main_sequence"
         assert _classify_zone(0.4, 0.6) == "main_sequence"
         assert _classify_zone(0.6, 0.4) == "main_sequence"
+        assert _classify_zone(0.0, 0.9) == "main_sequence"
 
     def test_zone_of_pain(self):
-        assert _classify_zone(0.9, 0.0) == "zone_of_pain"
+        assert _classify_zone(0.0, 0.0) == "zone_of_pain"
 
     def test_zone_of_uselessness(self):
-        assert _classify_zone(0.0, 0.9) == "zone_of_uselessness"
+        assert _classify_zone(0.9, 0.9) == "zone_of_uselessness"
 
     def test_healthy(self):
         assert _classify_zone(0.5, 0.2) == "healthy"
@@ -117,6 +118,14 @@ if __name__ == "__main__":
         raw_findings, _ = get_architecture_findings(
             dependency_graph=graph,
             module_files=module_files,
+            module_trees={
+                "mypkg.cli": ast.parse("""
+from typing import Protocol
+
+class Command(Protocol):
+    ...
+""")
+            },
             private_helper_ce_limit=-1,
         )
         assert ("SKY-Q803", "mypkg.cli") in {
@@ -129,6 +138,14 @@ if __name__ == "__main__":
         findings, summary = get_architecture_findings(
             dependency_graph=graph,
             module_files=module_files,
+            module_trees={
+                "mypkg.cli": ast.parse("""
+from typing import Protocol
+
+class Command(Protocol):
+    ...
+""")
+            },
             entrypoint_modules={"mypkg.cli"},
         )
 
@@ -140,7 +157,20 @@ if __name__ == "__main__":
 
     def test_main_guard_module_filters_zone_warning(self):
         tree = ast.parse("""
+from typing import Protocol
 from worker import run
+
+class CommandA(Protocol):
+    ...
+
+class CommandB(Protocol):
+    ...
+
+class CommandC(Protocol):
+    ...
+
+class CommandD(Protocol):
+    ...
 
 def main():
     run()
@@ -158,6 +188,74 @@ if __name__ == "__main__":
         rules = {(f["rule_id"], f["name"]) for f in findings}
         assert summary["module_metrics"]["cli"]["zone"] == "zone_of_uselessness"
         assert ("SKY-Q803", "cli") not in rules
+
+    def test_reexported_package_boundary_filters_structural_findings(self):
+        graph = {
+            "mini_pkg": {"mini_pkg.core"},
+            "mini_pkg.core": set(),
+        }
+        module_files = {
+            "mini_pkg": "/p/mini_pkg/__init__.py",
+            "mini_pkg.core": "/p/mini_pkg/core.py",
+        }
+
+        raw_findings, _ = get_architecture_findings(
+            dependency_graph=graph,
+            module_files=module_files,
+        )
+        assert ("SKY-Q802", "mini_pkg.core") in {
+            (f["rule_id"], f["name"]) for f in raw_findings
+        }
+        assert ("SKY-Q803", "mini_pkg.core") in {
+            (f["rule_id"], f["name"]) for f in raw_findings
+        }
+
+        findings, summary = get_architecture_findings(
+            dependency_graph=graph,
+            module_files=module_files,
+            package_boundary_modules={"mini_pkg.core"},
+        )
+
+        rules = {(f["rule_id"], f["name"]) for f in findings}
+        assert ("SKY-Q802", "mini_pkg.core") not in rules
+        assert ("SKY-Q803", "mini_pkg.core") not in rules
+        assert summary["module_metrics"]["mini_pkg.core"]["zone"] == "zone_of_pain"
+
+    def test_q803_skips_test_modules(self):
+        test_tree = ast.parse("""
+from typing import Protocol
+
+class CommandA(Protocol):
+    ...
+
+class CommandB(Protocol):
+    ...
+
+class CommandC(Protocol):
+    ...
+
+class CommandD(Protocol):
+    ...
+
+def test_contract():
+    assert True
+""")
+
+        findings, summary = get_architecture_findings(
+            dependency_graph={"tests.test_contract": {"app"}, "app": set()},
+            module_files={
+                "tests.test_contract": "/p/tests/test_contract.py",
+                "app": "/p/app.py",
+            },
+            module_trees={"tests.test_contract": test_tree},
+        )
+
+        assert summary["module_metrics"]["tests.test_contract"]["zone"] == (
+            "zone_of_uselessness"
+        )
+        assert ("SKY-Q803", "tests.test_contract") not in {
+            (f["rule_id"], f["name"]) for f in findings
+        }
 
 
 class TestAnalyzeArchitecture:
