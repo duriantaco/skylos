@@ -705,7 +705,7 @@ class TestAnalyze:
         result = json.loads(result_json)
         metrics = result["architecture_metrics"]["module_metrics"]
         assert metrics["mypkg"]["zone"] == "main_sequence"
-        assert metrics["mypkg.cli"]["zone"] == "healthy"
+        assert metrics["mypkg.cli"]["zone"] == "off_main_sequence"
         assert metrics["mypkg._helpers"]["distance"] == 1.0
 
         architecture_rules = {

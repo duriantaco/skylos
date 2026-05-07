@@ -72,6 +72,19 @@ class Baz:
 
 
 class TestClassifyZone:
+    def test_canonical_truth_table(self):
+        cases = [
+            (0.0, 0.0, "zone_of_pain"),
+            (1.0, 1.0, "zone_of_uselessness"),
+            (0.0, 1.0, "main_sequence"),
+            (1.0, 0.0, "main_sequence"),
+            (0.0, 0.5, "off_main_sequence"),
+            (0.5, 0.0, "off_main_sequence"),
+        ]
+
+        for abstractness, instability, expected in cases:
+            assert _classify_zone(abstractness, instability) == expected
+
     def test_main_sequence(self):
         assert _classify_zone(0.5, 0.5) == "main_sequence"
         assert _classify_zone(0.4, 0.6) == "main_sequence"
@@ -84,8 +97,9 @@ class TestClassifyZone:
     def test_zone_of_uselessness(self):
         assert _classify_zone(0.9, 0.9) == "zone_of_uselessness"
 
-    def test_healthy(self):
-        assert _classify_zone(0.5, 0.2) == "healthy"
+    def test_off_main_sequence(self):
+        assert _classify_zone(0.5, 0.2) == "off_main_sequence"
+        assert _classify_zone(0.0, 0.4) == "off_main_sequence"
 
 
 class TestArchitectureContext:
@@ -352,6 +366,8 @@ class TestAnalyzeArchitecture:
         assert "architecture_fitness" in sm
         assert "coupling_health" in sm
         assert "zone_distribution" in sm
+        assert "off_main_sequence" in sm["zone_distribution"]
+        assert "healthy" not in sm["zone_distribution"]
 
     def test_abstractness_from_trees(self):
         tree_a = ast.parse("""
@@ -402,3 +418,37 @@ class Base2(ABC):
             module_trees={"a": tree_a},
         )
         assert isinstance(findings, list)
+
+    def test_high_distance_message_does_not_call_fallback_healthy(self):
+        result = analyze_architecture(
+            dependency_graph={
+                "stableish": set(),
+                "consumer_a": {"stableish"},
+                "consumer_b": {"stableish"},
+            },
+            module_files={
+                "stableish": "/p/stableish.py",
+                "consumer_a": "/p/consumer_a.py",
+                "consumer_b": "/p/consumer_b.py",
+            },
+            module_abstractness={
+                "stableish": {
+                    "abstractness": 0.4,
+                    "total_classes": 1,
+                    "abstract_classes": 0,
+                    "total_functions": 0,
+                    "abstract_methods": 0,
+                    "type_vars": 0,
+                    "protocols": 0,
+                },
+            },
+        )
+
+        q802 = next(
+            f
+            for f in result.findings
+            if f["rule_id"] == "SKY-Q802" and f["name"] == "stableish"
+        )
+        assert result.modules["stableish"].zone == "off_main_sequence"
+        assert "Zone: off main sequence." in q802["message"]
+        assert "Zone: healthy." not in q802["message"]
