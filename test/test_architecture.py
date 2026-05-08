@@ -169,6 +169,59 @@ class Command(Protocol):
         assert summary["module_metrics"]["mypkg.cli"]["zone"] == "zone_of_uselessness"
         assert summary["module_metrics"]["mypkg._helpers"]["distance"] == 1.0
 
+    def test_private_helper_low_fan_in_filters_q803_zone_of_pain(self):
+        graph = {
+            "mypkg.cli": {"mypkg._banner"},
+            "mypkg._banner": set(),
+        }
+        module_files = {
+            "mypkg.cli": "/p/mypkg/cli.py",
+            "mypkg._banner": "/p/mypkg/_banner.py",
+        }
+
+        raw_findings, _ = get_architecture_findings(
+            dependency_graph=graph,
+            module_files=module_files,
+            private_helper_ca_limit=0,
+        )
+        assert ("SKY-Q803", "mypkg._banner") in {
+            (f["rule_id"], f["name"]) for f in raw_findings
+        }
+
+        findings, summary = get_architecture_findings(
+            dependency_graph=graph,
+            module_files=module_files,
+        )
+
+        rules = {(f["rule_id"], f["name"]) for f in findings}
+        assert summary["module_metrics"]["mypkg._banner"]["ca"] == 1
+        assert summary["module_metrics"]["mypkg._banner"]["zone"] == "zone_of_pain"
+        assert ("SKY-Q803", "mypkg._banner") not in rules
+
+    def test_private_helper_high_fan_in_keeps_q803_zone_of_pain(self):
+        graph = {
+            "consumer_a": {"mypkg._shared"},
+            "consumer_b": {"mypkg._shared"},
+            "consumer_c": {"mypkg._shared"},
+            "mypkg._shared": set(),
+        }
+        module_files = {
+            "consumer_a": "/p/consumer_a.py",
+            "consumer_b": "/p/consumer_b.py",
+            "consumer_c": "/p/consumer_c.py",
+            "mypkg._shared": "/p/mypkg/_shared.py",
+        }
+
+        findings, summary = get_architecture_findings(
+            dependency_graph=graph,
+            module_files=module_files,
+        )
+
+        assert summary["module_metrics"]["mypkg._shared"]["ca"] == 3
+        assert ("SKY-Q803", "mypkg._shared") in {
+            (f["rule_id"], f["name"]) for f in findings
+        }
+
     def test_main_guard_module_filters_zone_warning(self):
         tree = ast.parse("""
 from typing import Protocol
