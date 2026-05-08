@@ -506,6 +506,7 @@ def get_architecture_findings(
     entrypoint_modules: set[str] | None = None,
     package_boundary_modules: set[str] | None = None,
     private_helper_ce_limit: int = 2,
+    private_helper_ca_limit: int = 2,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     result = analyze_architecture(
         dependency_graph=dependency_graph,
@@ -528,6 +529,7 @@ def get_architecture_findings(
         entrypoint_modules=contextual_entrypoints,
         package_boundary_modules=set(package_boundary_modules or ()),
         private_helper_ce_limit=private_helper_ce_limit,
+        private_helper_ca_limit=private_helper_ca_limit,
     )
 
     summary = {
@@ -566,6 +568,7 @@ def _filter_contextual_findings(
     entrypoint_modules: set[str],
     package_boundary_modules: set[str],
     private_helper_ce_limit: int,
+    private_helper_ca_limit: int,
 ) -> list[dict[str, Any]]:
     afferent: dict[str, set[str]] = defaultdict(set)
     for importer, deps in dependency_graph.items():
@@ -598,13 +601,22 @@ def _filter_contextual_findings(
         if rule_id == "SKY-Q803" and module_name in entrypoint_modules:
             continue
 
-        if rule_id == "SKY-Q802" and isinstance(module_name, str):
+        if rule_id in {"SKY-Q802", "SKY-Q803"} and isinstance(module_name, str):
             simple_name = module_name.rsplit(".", 1)[-1]
             metrics = modules.get(module_name)
             if (
-                simple_name.startswith("_")
+                rule_id == "SKY-Q802"
+                and simple_name.startswith("_")
                 and metrics is not None
                 and metrics.ce <= private_helper_ce_limit
+            ):
+                continue
+            if (
+                rule_id == "SKY-Q803"
+                and simple_name.startswith("_")
+                and metrics is not None
+                and metrics.zone == "zone_of_pain"
+                and metrics.ca <= private_helper_ca_limit
             ):
                 continue
 

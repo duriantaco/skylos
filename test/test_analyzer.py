@@ -717,6 +717,47 @@ class TestAnalyze:
         assert ("SKY-Q803", "mypkg.cli") not in architecture_rules
         assert ("SKY-Q802", "mypkg._helpers") not in architecture_rules
 
+    def test_analyze_architecture_filters_low_fan_in_private_helper_q803(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pkg = root / "mypkg"
+            pkg.mkdir()
+            (root / "pyproject.toml").write_text(
+                "[project]\n"
+                'name = "q803-private-helper-repro"\n'
+                'version = "0.1.0"\n\n'
+                "[project.scripts]\n"
+                'mypkg = "mypkg.cli:main"\n',
+                encoding="utf-8",
+            )
+            (pkg / "__init__.py").write_text("", encoding="utf-8")
+            (pkg / "cli.py").write_text(
+                "from ._banner import print_banner\n\n"
+                "def main():\n"
+                "    print_banner()\n",
+                encoding="utf-8",
+            )
+            (pkg / "_banner.py").write_text(
+                "def print_banner():\n"
+                '    print("hello")\n',
+                encoding="utf-8",
+            )
+
+            result_json = analyze(str(root), enable_quality=True, grep_verify=False)
+
+        result = json.loads(result_json)
+        metrics = result["architecture_metrics"]["module_metrics"]
+        assert metrics["mypkg._banner"]["ca"] == 1
+        assert metrics["mypkg._banner"]["ce"] == 0
+        assert metrics["mypkg._banner"]["zone"] == "zone_of_pain"
+
+        architecture_rules = {
+            (f.get("rule_id"), f.get("name"))
+            for f in result.get("quality", [])
+            if f.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
+        }
+        assert ("SKY-Q803", "mypkg._banner") not in architecture_rules
+
     def test_analyze_architecture_filters_library_reexport_and_test_leaf_noise(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
