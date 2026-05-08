@@ -108,6 +108,13 @@ class TestCheckToolAccess:
         assert allowed is False
         assert "requires authentication" in err
 
+    def test_unauthenticated_focused_quality_tools_blocked(self):
+        self._set_session(authenticated=False)
+        for tool in ("architecture_check", "health_score"):
+            allowed, err = check_tool_access(tool)
+            assert allowed is False
+            assert "requires authentication" in err
+
     def test_unauthenticated_secrets_scan_blocked(self):
         self._set_session(authenticated=False)
         allowed, err = check_tool_access("secrets_scan")
@@ -281,6 +288,8 @@ class TestDeductCredits:
             "analyze": "mcp_analyze",
             "security_scan": "mcp_security_scan",
             "quality_check": "mcp_quality_check",
+            "architecture_check": "mcp_quality_check",
+            "health_score": "mcp_quality_check",
             "secrets_scan": "mcp_secrets_scan",
             "remediate": "mcp_remediate",
         }

@@ -466,6 +466,16 @@ def _run_analysis(
     return json.loads(result_json)
 
 
+_ARCHITECTURE_RULE_IDS = {"SKY-Q701", "SKY-Q802", "SKY-Q803", "SKY-Q804", "SKY-Q805"}
+
+
+def _is_architecture_finding(finding: dict) -> bool:
+    return (
+        finding.get("kind") == "architecture"
+        or finding.get("rule_id") in _ARCHITECTURE_RULE_IDS
+    )
+
+
 def _make_summary(result: dict, focus: str | None = None) -> dict:
     summary = result.get("analysis_summary", {})
     out: dict[str, Any] = {"analysis_summary": summary}
@@ -508,6 +518,79 @@ def _make_summary(result: dict, focus: str | None = None) -> dict:
             out["secrets"] = result["secrets"]
 
     return out
+
+
+def _architecture_payload(result: dict) -> dict:
+    findings = [
+        finding
+        for finding in result.get("quality", []) or []
+        if _is_architecture_finding(finding)
+    ]
+    payload: dict[str, Any] = {
+        "analysis_summary": result.get("analysis_summary", {}),
+        "architecture_metrics": result.get("architecture_metrics", {}),
+        "findings": findings,
+    }
+    if result.get("circular_dependencies"):
+        payload["circular_dependencies"] = result["circular_dependencies"]
+    return payload
+
+
+def _health_score_payload(result: dict) -> dict:
+    summary = result.get("analysis_summary", {})
+    grade = result.get("grade", {})
+    categories = grade.get("categories", {}) if isinstance(grade, dict) else {}
+    dead_code_count = sum(
+        len(result.get(key, []) or [])
+        for key in [
+            "unused_functions",
+            "unused_imports",
+            "unused_classes",
+            "unused_variables",
+            "unused_parameters",
+            "unused_files",
+        ]
+    )
+
+    architecture_metrics = result.get("architecture_metrics", {}) or {}
+    layer_policy = architecture_metrics.get("layer_policy", {}) or {}
+    system_metrics = architecture_metrics.get("system_metrics", {}) or {}
+    counts = {
+        "dead_code": dead_code_count,
+        "quality": summary.get("quality_count", 0),
+        "security": summary.get("danger_count", 0),
+        "secrets": summary.get("secrets_count", 0),
+        "dependencies": summary.get("sca_count", 0),
+        "architecture_policy_violations": layer_policy.get("violation_count", 0),
+        "circular_dependencies": len(result.get("circular_dependencies", []) or []),
+    }
+    category_scores = {
+        name: {
+            "score": data.get("score"),
+            "letter": data.get("letter"),
+            "key_issue": data.get("key_issue"),
+        }
+        for name, data in categories.items()
+        if isinstance(data, dict)
+    }
+    top_issues = [
+        {
+            "category": name,
+            "key_issue": data["key_issue"],
+        }
+        for name, data in category_scores.items()
+        if data.get("key_issue")
+        and not str(data["key_issue"]).lower().startswith("no ")
+    ]
+
+    return {
+        "grade": grade,
+        "category_scores": category_scores,
+        "counts": counts,
+        "architecture_fitness": system_metrics.get("architecture_fitness"),
+        "analysis_summary": summary,
+        "top_issues": top_issues,
+    }
 
 
 def _gate(tool_name: str) -> str | None:
@@ -589,6 +672,53 @@ def _register_tools(mcp):
         )
         summary = _make_summary(result, focus="quality")
         run_id = _store_result(result, "quality_check", path)
+        summary["_run_id"] = run_id
+        return json.dumps(summary, indent=2)
+
+    @mcp.tool()
+    def architecture_check(
+        path: str,
+        confidence: int = 60,
+        exclude_folders: list[str] | None = None,
+    ) -> str:
+        gate_err = _gate("architecture_check")
+        if gate_err:
+            return gate_err
+
+        result = _run_analysis(
+            path,
+            confidence=confidence,
+            exclude_folders=exclude_folders,
+            enable_quality=True,
+        )
+        summary = _architecture_payload(result)
+        run_id = _store_result(result, "architecture_check", path)
+        summary["_run_id"] = run_id
+        return json.dumps(summary, indent=2)
+
+    @mcp.tool()
+    def health_score(
+        path: str,
+        confidence: int = 60,
+        include_security: bool = True,
+        include_secrets: bool = True,
+        include_quality: bool = True,
+        exclude_folders: list[str] | None = None,
+    ) -> str:
+        gate_err = _gate("health_score")
+        if gate_err:
+            return gate_err
+
+        result = _run_analysis(
+            path,
+            confidence=confidence,
+            exclude_folders=exclude_folders,
+            enable_secrets=include_secrets,
+            enable_danger=include_security,
+            enable_quality=include_quality,
+        )
+        summary = _health_score_payload(result)
+        run_id = _store_result(result, "health_score", path)
         summary["_run_id"] = run_id
         return json.dumps(summary, indent=2)
 

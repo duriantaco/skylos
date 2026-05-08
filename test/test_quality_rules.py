@@ -20,6 +20,7 @@ from skylos.rules.quality.logic import (
     PhantomCallRule,
     InsecureRandomRule,
     HardcodedCredentialRule,
+    MockPlaceholderDataRule,
     DuplicateStringLiteralRule,
     TooManyReturnsRule,
     BooleanTrapRule,
@@ -362,6 +363,47 @@ password = os.environ["PASSWORD"]
         rule = HardcodedCredentialRule()
         findings = check_code(rule, code)
         assert not any(f["rule_id"] == "SKY-L014" for f in findings)
+
+
+# --- SKY-L032: Mock Or Placeholder Data ---
+
+
+class TestMockPlaceholderData:
+    def test_obvious_production_placeholders(self):
+        code = """
+SUPPORT_EMAIL = "test@example.com"
+USER_ID = "00000000-0000-0000-0000-000000000000"
+PLACEHOLDER_PHONE = "123-456-7890"
+API_PASSWORD = "password123"
+"""
+        rule = MockPlaceholderDataRule()
+        findings = check_code(rule, code, filename="app.py")
+        types = {f["mock_data_type"] for f in findings}
+        assert {
+            "placeholder_email",
+            "low_entropy_uuid",
+            "placeholder_phone",
+            "test_credential",
+        } <= types
+
+    def test_skips_test_files(self):
+        code = """
+SUPPORT_EMAIL = "test@example.com"
+API_PASSWORD = "password123"
+"""
+        rule = MockPlaceholderDataRule()
+        findings = check_code(rule, code, filename="test_app.py")
+        assert not any(f["rule_id"] == "SKY-L032" for f in findings)
+
+    def test_domain_requires_mock_context(self):
+        code = """
+BASE_URL = "https://example.com"
+SAMPLE_URL = "https://example.com/users"
+"""
+        rule = MockPlaceholderDataRule()
+        findings = check_code(rule, code, filename="app.py")
+        assert [f["name"] for f in findings] == ["SAMPLE_URL"]
+        assert findings[0]["mock_data_type"] == "placeholder_domain"
 
 
 # --- SKY-UC001: Unreachable Code ---

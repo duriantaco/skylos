@@ -78,6 +78,7 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
         }
     ],
     "SKY-L031": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
+    "SKY-L032": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-T101": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-T102": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-F101": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
@@ -139,6 +140,8 @@ STANDARD_REFS: dict[str, list[str]] = {
     "SKY-C401": ["Clone detection: duplicated implementation fragments"],
     "SKY-Q701": ["CK Metrics: CBO (Coupling Between Objects)", "ISO/IEC 9126"],
     "SKY-Q702": ["CK Metrics: LCOM (Lack of Cohesion of Methods)", "ISO/IEC 9126"],
+    "SKY-Q805": ["Architecture layer dependency policy"],
+    "SKY-L032": ["Production data hygiene: mock and placeholder values"],
     "SKY-C303": ["ISO/IEC 5055:2021 §6.3.2"],
     "SKY-C304": ["ISO/IEC 5055:2021 §6.3.3"],
     "SKY-T101": ["PEP 484", "Typed public API parameters"],

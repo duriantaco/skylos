@@ -2,6 +2,7 @@ import ast
 from skylos.architecture import (
     analyze_architecture,
     get_architecture_findings,
+    get_layer_policy_findings,
     _compute_abstractness,
     _classify_zone,
     _has_main_guard,
@@ -258,6 +259,55 @@ class Command(Protocol):
         assert ("SKY-Q803", "mypkg._shared") in {
             (f["rule_id"], f["name"]) for f in findings
         }
+
+
+class TestLayerPolicy:
+    def test_layer_policy_deny_rule_reports_violation(self):
+        graph = {
+            "app.domain.model": {"app.api.routes"},
+            "app.api.routes": set(),
+        }
+        module_files = {
+            "app.domain.model": "/p/app/domain/model.py",
+            "app.api.routes": "/p/app/api/routes.py",
+        }
+        policy = {
+            "layers": [
+                {"name": "domain", "patterns": ["app.domain"]},
+                {"name": "api", "patterns": ["app.api"]},
+            ],
+            "rules": [{"from": "domain", "deny": ["api"]}],
+        }
+
+        findings, summary = get_layer_policy_findings(graph, module_files, policy)
+
+        assert summary["violation_count"] == 1
+        assert findings[0]["rule_id"] == "SKY-Q805"
+        assert findings[0]["from_layer"] == "domain"
+        assert findings[0]["to_layer"] == "api"
+
+    def test_layer_policy_allow_rule_accepts_allowed_edges(self):
+        graph = {
+            "app.api.routes": {"app.domain.model"},
+            "app.domain.model": set(),
+        }
+        module_files = {
+            "app.api.routes": "/p/app/api/routes.py",
+            "app.domain.model": "/p/app/domain/model.py",
+        }
+        policy = {
+            "layers": [
+                {"name": "api", "patterns": ["app.api"]},
+                {"name": "domain", "patterns": ["app.domain"]},
+            ],
+            "rules": [{"from": "api", "allow": ["domain"]}],
+        }
+
+        findings, summary = get_layer_policy_findings(graph, module_files, policy)
+
+        assert findings == []
+        assert summary["checked_edges"] == 1
+        assert summary["module_layers"]["app.api.routes"] == "api"
 
     def test_private_helper_filters_q803_zone_of_uselessness(self):
         graph = {

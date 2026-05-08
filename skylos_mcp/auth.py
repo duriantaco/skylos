@@ -16,6 +16,8 @@ TOOL_CREDIT_MAP: dict[str, str] = {
     "analyze": "mcp_analyze",
     "security_scan": "mcp_security_scan",
     "quality_check": "mcp_quality_check",
+    "architecture_check": "mcp_quality_check",
+    "health_score": "mcp_quality_check",
     "secrets_scan": "mcp_secrets_scan",
     "remediate": "mcp_remediate",
     "provenance_scan": "mcp_provenance_scan",

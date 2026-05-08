@@ -657,6 +657,52 @@ class TestAnalyze:
         assert metrics["app.package_a.cli"]["ca"] == 1
         assert metrics["app.package_a.cli"]["zone"] != "zone_of_uselessness"
 
+    def test_analyze_applies_configured_architecture_layer_policy(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "pyproject.toml").write_text(
+                "[tool.skylos.architecture]\n"
+                "strict = false\n\n"
+                "[[tool.skylos.architecture.layers]]\n"
+                'name = "api"\n'
+                'patterns = ["app.api"]\n\n'
+                "[[tool.skylos.architecture.layers]]\n"
+                'name = "domain"\n'
+                'patterns = ["app.domain"]\n\n'
+                "[[tool.skylos.architecture.rules]]\n"
+                'from = "domain"\n'
+                'deny = ["api"]\n',
+                encoding="utf-8",
+            )
+            (root / "app" / "api").mkdir(parents=True)
+            (root / "app" / "domain").mkdir(parents=True)
+            (root / "app" / "__init__.py").write_text("", encoding="utf-8")
+            (root / "app" / "api" / "__init__.py").write_text("", encoding="utf-8")
+            (root / "app" / "domain" / "__init__.py").write_text(
+                "", encoding="utf-8"
+            )
+            (root / "app" / "api" / "routes.py").write_text(
+                "API_VALUE = 1\n",
+                encoding="utf-8",
+            )
+            (root / "app" / "domain" / "model.py").write_text(
+                "from app.api.routes import API_VALUE\n"
+                "def model_value():\n"
+                "    return API_VALUE\n",
+                encoding="utf-8",
+            )
+
+            result_json = analyze(str(root), enable_quality=True, grep_verify=False)
+
+        result = json.loads(result_json)
+        policy_findings = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-Q805"
+        ]
+        assert len(policy_findings) == 1
+        assert policy_findings[0]["from_layer"] == "domain"
+        assert policy_findings[0]["to_layer"] == "api"
+        assert result["architecture_metrics"]["layer_policy"]["violation_count"] == 1
+
     def test_analyze_architecture_filters_cli_entrypoint_and_private_helper_noise(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1936,6 +1982,26 @@ def fake_call():
         dependency_findings = [f for f in quality if f.get("rule_id") == "SKY-U005"]
 
         assert dependency_findings == []
+
+    def test_analyze_flags_mock_placeholder_data_in_production_file(self, tmp_path):
+        src = tmp_path / "app.py"
+        src.write_text(
+            'SUPPORT_EMAIL = "test@example.com"\n'
+            'USER_ID = "00000000-0000-0000-0000-000000000000"\n',
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), conf=0, enable_quality=True, grep_verify=False)
+        )
+        findings = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L032"
+        ]
+
+        assert {f["mock_data_type"] for f in findings} == {
+            "placeholder_email",
+            "low_entropy_uuid",
+        }
 
     def test_analyze_repo_rules_use_root_project_ignore_config(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text(
