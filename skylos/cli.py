@@ -712,6 +712,15 @@ def _is_tty():
         return False
 
 
+def _is_main_machine_output(args) -> bool:
+    return bool(
+        getattr(args, "json", False)
+        or getattr(args, "llm", False)
+        or getattr(args, "github", False)
+        or getattr(args, "concise", False)
+    )
+
+
 def _has_high_intent_findings(result: dict) -> bool:
     secrets = result.get("secrets") or []
     if len(secrets) > 0:
@@ -2896,8 +2905,7 @@ def _apply_config_driven_analysis_flags(args, project_cfg, console):
 
         if (
             enabled_from_policy
-            and not getattr(args, "json", False)
-            and not getattr(args, "concise", False)
+            and not _is_main_machine_output(args)
         ):
             console.print(
                 "[brand]Using synced/local Skylos policy:[/brand] enabling "
@@ -2910,7 +2918,7 @@ def _apply_config_driven_analysis_flags(args, project_cfg, console):
     # always run danger analysis so the contracts cannot be silently skipped.
     if not getattr(args, "danger", False) and security_contracts_configured:
         args.danger = True
-        if not getattr(args, "json", False) and not getattr(args, "concise", False):
+        if not _is_main_machine_output(args):
             console.print(
                 "[brand]Security contracts configured:[/brand] enabling danger analysis automatically."
             )
@@ -2921,7 +2929,7 @@ def _print_main_scan_banner(args, console, final_exclude_folders):
         _print_default_excludes(console)
         return True
 
-    if args.json or getattr(args, "concise", False):
+    if _is_main_machine_output(args):
         return False
 
     banner = (
@@ -2950,7 +2958,7 @@ def _print_main_scan_banner(args, console, final_exclude_folders):
 
 def _run_pre_analysis_steps(args, project_root, console):
     pytest_fixtures_ok = None
-    quiet_output = bool(args.json or getattr(args, "concise", False))
+    quiet_output = _is_main_machine_output(args)
 
     if args.coverage:
         if not quiet_output:
@@ -4824,6 +4832,7 @@ def main() -> None:
     console = context.console
     final_exclude_folders = context.final_exclude_folders
     config = context.config
+    machine_output = _is_main_machine_output(args)
 
     if _print_main_scan_banner(args, console, final_exclude_folders):
         return
@@ -4851,16 +4860,14 @@ def main() -> None:
                 enable_sca=bool(args.sca),
             )
 
-        if args.json or args.concise:
+        if machine_output:
             analyzer_logger = logging.getLogger("Skylos")
             analyzer_logger_level = analyzer_logger.level
-            if args.concise:
-                analyzer_logger.setLevel(logging.WARNING)
+            analyzer_logger.setLevel(logging.WARNING)
             try:
                 result_json = run_main_analysis()
             finally:
-                if args.concise:
-                    analyzer_logger.setLevel(analyzer_logger_level)
+                analyzer_logger.setLevel(analyzer_logger_level)
         else:
             with Progress(
                 SpinnerColumn(style="brand"),
@@ -4969,12 +4976,12 @@ def main() -> None:
                             items, changed_ranges
                         )
                 result_json = json.dumps(result)
-                if not args.json and not args.concise:
+                if not machine_output:
                     console.print(
                         f"[brand]--diff:[/brand] filtered to {len(changed_ranges)} changed line ranges "
                         f"from {base_ref}"
                     )
-            elif not args.json and not args.concise:
+            elif not machine_output:
                 console.print(
                     f"[warn]--diff: no changed lines found vs {base_ref}[/warn]"
                 )
@@ -5008,7 +5015,7 @@ def main() -> None:
                 except Exception as e:
                     result["unused_fixtures"] = []
                     result["unused_fixtures_counts"] = {}
-                    if args.verbose and not args.json and not args.concise:
+                    if args.verbose and not machine_output:
                         console.print(
                             f"[warn]Could not read unused fixture report: {e}[/warn]"
                         )
@@ -5016,7 +5023,7 @@ def main() -> None:
                 result["unused_fixtures"] = []
                 result["unused_fixtures_counts"] = {}
 
-        if args.verify and (not args.json) and (not args.concise):
+        if args.verify and not machine_output:
             try:
                 from skylos.api import verify_report
 
@@ -5050,14 +5057,17 @@ def main() -> None:
                     raise RuntimeError("not a git repository")
                 prov_base = getattr(args, "provenance_base", None)
 
-                with Progress(
-                    SpinnerColumn(style="brand"),
-                    TextColumn("[brand]Skylos[/brand] {task.description}"),
-                    transient=True,
-                    console=console,
-                ) as progress:
-                    progress.add_task("detecting AI provenance...", total=None)
+                if machine_output:
                     prov_report = analyze_provenance(git_root, base_ref=prov_base)
+                else:
+                    with Progress(
+                        SpinnerColumn(style="brand"),
+                        TextColumn("[brand]Skylos[/brand] {task.description}"),
+                        transient=True,
+                        console=console,
+                    ) as progress:
+                        progress.add_task("detecting AI provenance...", total=None)
+                        prov_report = analyze_provenance(git_root, base_ref=prov_base)
 
                 _finding_categories = [
                     "danger",
@@ -5088,7 +5098,7 @@ def main() -> None:
 
                 result_json = json.dumps(result)
 
-                if not args.json and not args.concise:
+                if not machine_output:
                     ai_count = ai_stats["ai_authored_findings"]
                     ai_pct = ai_stats["ai_authored_pct"]
                     if ai_count > 0:
@@ -5268,8 +5278,6 @@ def main() -> None:
             llm_report = _generate_llm_report(result, project_root)
             if args.output:
                 pathlib.Path(args.output).write_text(llm_report, encoding="utf-8")
-                if not args.json:
-                    console.print(f"[good]LLM report written to {args.output}[/good]")
             else:
                 print(llm_report)
 

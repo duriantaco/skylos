@@ -1147,7 +1147,10 @@ def test_main_strict_failure_renders_results_then_exits_nonzero(monkeypatch):
     badge.assert_called_once()
 
 
-def test_main_llm_gate_failure_exits_nonzero(monkeypatch):
+@pytest.mark.parametrize("llm_args", (["--llm"], ["--format", "llm"]))
+def test_main_llm_output_is_quiet_and_gate_failure_exits_nonzero(
+    monkeypatch, llm_args
+):
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [],
@@ -1171,16 +1174,23 @@ def test_main_llm_gate_failure_exits_nonzero(monkeypatch):
     monkeypatch.setattr(
         cli.sys,
         "argv",
-        ["skylos", ".", "--llm", "--gate", "--strict", "--no-provenance"],
+        ["skylos", ".", *llm_args, "--gate", "--strict", "--no-provenance"],
     )
 
     fake_logger = Mock()
     fake_logger.console = Mock()
+    analyzer_logger = logging.getLogger("Skylos")
+    original_level = analyzer_logger.level
+    observed = {}
+
+    def fake_analyze(*args, **kwargs):
+        observed["analyzer_level"] = analyzer_logger.level
+        return json.dumps(result)
 
     with (
         patch("skylos.cli.setup_logger", return_value=fake_logger),
-        patch("skylos.cli.Progress", return_value=_progress_ctx()),
-        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.Progress") as progress,
+        patch("skylos.cli.run_analyze", side_effect=fake_analyze),
         patch("skylos.cli.load_config", return_value={}),
         patch("builtins.print") as mock_print,
     ):
@@ -1189,6 +1199,10 @@ def test_main_llm_gate_failure_exits_nonzero(monkeypatch):
 
     assert e.value.code == 1
     assert mock_print.call_args.args[0].startswith("# Skylos Report")
+    assert observed["analyzer_level"] == logging.WARNING
+    assert analyzer_logger.level == original_level
+    fake_logger.console.print.assert_not_called()
+    progress.assert_not_called()
 
 
 def test_main_upload_gate_failed_does_not_exit_when_forced(monkeypatch):
