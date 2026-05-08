@@ -1,5 +1,14 @@
 ## Changelog
 
+## [4.12.1](https://github.com/duriantaco/skylos/compare/v4.12.0...v4.12.1) (2026-05-08)
+
+
+### Bug Fixes
+
+* **architecture:** repair Q802/Q803 audit defects ([#316](https://github.com/duriantaco/skylos/issues/316)) ([633e911](https://github.com/duriantaco/skylos/commit/633e911e17bfb4e2f62ac42175ebe528ddd29359))
+* **architecture:** suppress private helper Q803 false positives ([#315](https://github.com/duriantaco/skylos/issues/315)) ([8ec8799](https://github.com/duriantaco/skylos/commit/8ec8799264fef70c60bb40ae33e9575af60fac6a))
+* **cli:** quiet LLM scan output ([#313](https://github.com/duriantaco/skylos/issues/313)) ([f13fff2](https://github.com/duriantaco/skylos/commit/f13fff2c3798005221243b8294ce22711161958f))
+
 ## [4.12.0](https://github.com/duriantaco/skylos/compare/v4.11.1...v4.12.0) (2026-05-07)
 
 
