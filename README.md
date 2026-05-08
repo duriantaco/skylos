@@ -1,13 +1,7 @@
-# Skylos
-**What:** Local-first scanner and PR gate for dead code, security, secrets, quality, and AI-generated-code mistakes across Python, TS/JS, Java, Go, PHP, and Rust.
-**Install:** `pip install skylos`
-**Use:** `skylos .` for dead code, `skylos . -a` for the main security/secrets/quality audit, `skylos cicd init` for CI.
-**Main commands:** `skylos init`, `skylos rules init`, `skylos defend .`, `skylos agent scan .`, `skylos debt .`.
-
 <div align="center">
-    <img src="assets/DOG_1.png" alt="Skylos open-source Python SAST, dead code detection, AI code security, and CI/CD PR gate" width="260">
-    <h1>Open-Source SAST, Dead Code Detection, and AI Code Security</h1>
-    <h3>Find unused code, hardcoded secrets, exploitable flows, and AI-generated security regressions before they land in main.</h3>
+    <img src="assets/DOG_1.png" alt="Skylos" width="260">
+    <h1>Skylos</h1>
+    <h3>Local-first code scanning for dead code, security, secrets, quality, and AI-generated-code mistakes.</h3>
 </div>
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
