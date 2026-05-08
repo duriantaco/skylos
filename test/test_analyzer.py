@@ -758,6 +758,40 @@ class TestAnalyze:
         }
         assert ("SKY-Q803", "mypkg._banner") not in architecture_rules
 
+    def test_analyze_architecture_labels_empty_package_disconnected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pkg = root / "mypkg"
+            pkg.mkdir()
+            (root / "pyproject.toml").write_text(
+                "[project]\n"
+                'name = "disconnected-package-repro"\n'
+                'version = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (pkg / "__init__.py").write_text("", encoding="utf-8")
+
+            result_json = analyze(str(root), enable_quality=True, grep_verify=False)
+
+        result = json.loads(result_json)
+        metrics = result["architecture_metrics"]["module_metrics"]
+        distribution = result["architecture_metrics"]["system_metrics"][
+            "zone_distribution"
+        ]
+        assert metrics["mypkg"]["ca"] == 0
+        assert metrics["mypkg"]["ce"] == 0
+        assert metrics["mypkg"]["zone"] == "disconnected"
+        assert distribution["disconnected"] == 1
+        assert distribution["zone_of_pain"] == 0
+
+        architecture_rules = {
+            (f.get("rule_id"), f.get("name"))
+            for f in result.get("quality", [])
+            if f.get("rule_id") in {"SKY-Q802", "SKY-Q803"}
+        }
+        assert ("SKY-Q802", "mypkg") not in architecture_rules
+        assert ("SKY-Q803", "mypkg") not in architecture_rules
+
     def test_analyze_architecture_filters_library_reexport_and_test_leaf_noise(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

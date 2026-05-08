@@ -240,7 +240,10 @@ def analyze_architecture(
                 metrics.protocols = abs_data["protocols"]
 
         metrics.distance = abs(metrics.abstractness + metrics.instability - 1.0)
-        metrics.zone = _classify_zone(metrics.abstractness, metrics.instability)
+        if metrics.total_coupling == 0:
+            metrics.zone = "disconnected"
+        else:
+            metrics.zone = _classify_zone(metrics.abstractness, metrics.instability)
 
         if module_loc and module_name in module_loc:
             metrics.loc = module_loc[module_name]
@@ -383,6 +386,9 @@ def analyze_architecture(
                 "zone_of_uselessness": sum(
                     1 for m in all_metrics if m.zone == "zone_of_uselessness"
                 ),
+                "disconnected": sum(
+                    1 for m in all_metrics if m.zone == "disconnected"
+                ),
             },
         }
     else:
@@ -506,7 +512,7 @@ def get_architecture_findings(
     entrypoint_modules: set[str] | None = None,
     package_boundary_modules: set[str] | None = None,
     private_helper_ce_limit: int = 2,
-    private_helper_ca_limit: int = 2,
+    private_helper_ca_limit: int = 3,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     result = analyze_architecture(
         dependency_graph=dependency_graph,
@@ -615,7 +621,7 @@ def _filter_contextual_findings(
                 rule_id == "SKY-Q803"
                 and simple_name.startswith("_")
                 and metrics is not None
-                and metrics.zone == "zone_of_pain"
+                and metrics.zone in {"zone_of_pain", "zone_of_uselessness"}
                 and metrics.ca <= private_helper_ca_limit
             ):
                 continue
