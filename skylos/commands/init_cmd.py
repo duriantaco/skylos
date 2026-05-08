@@ -36,6 +36,21 @@ extra_credential_names = []
 extra_sensitive_file_keywords = []
 extra_network_timeout_calls = []
 
+[tool.skylos.architecture]
+strict = false
+
+# [[tool.skylos.architecture.layers]]
+# name = "api"
+# patterns = ["app.api", "app.routes"]
+#
+# [[tool.skylos.architecture.layers]]
+# name = "domain"
+# patterns = ["app.domain", "app.models"]
+#
+# [[tool.skylos.architecture.rules]]
+# from = "domain"
+# deny = ["api"]
+
 [tool.skylos.whitelist]
 names = []
 

@@ -1995,6 +1995,48 @@ _CREDENTIAL_DSN_RE = re.compile(
 )
 
 _PLACEHOLDER_VALUES = DEFAULT_VIBE_DICTIONARY.placeholder_values
+_MOCK_CONTEXT_WORDS = {
+    "mock",
+    "fake",
+    "dummy",
+    "placeholder",
+    "sample",
+    "example",
+    "fixture",
+    "stub",
+    "demo",
+}
+_PLACEHOLDER_EMAIL_RE = re.compile(
+    r"(?i)^[a-z0-9._%+-]+@"
+    r"("
+    r"example\.(?:com|org|net)|test\.(?:com|org|net)|localhost|invalid|"
+    r"foo\.com|bar\.com"
+    r")$"
+)
+_PLACEHOLDER_PHONE_RE = re.compile(
+    r"(?:^|[^0-9])"
+    r"(\(?(?:0{3}|1{3}|123)\)?[-.\s]?(?:0{3,4}|1{3,4}|456)[-.\s]?"
+    r"(?:0{4}|1{4}|7890))"
+    r"(?:[^0-9]|$)"
+)
+_UUID_RE = re.compile(
+    r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+_TEST_CREDENTIAL_RE = re.compile(
+    r"(?i)^(?:password|secret|api[_-]?key|token|credential|auth)[0-9]*$"
+    r"|^(?:password|secret)123$"
+    r"|^test(?:password|secret|key)$"
+)
+_PLACEHOLDER_DOMAINS = (
+    "example.com",
+    "example.org",
+    "example.net",
+    "test.com",
+    "test.org",
+    "test.net",
+    "foo.com",
+    "bar.com",
+)
 
 
 def _is_credential_var(name, vibe_dictionary=None):
@@ -2006,6 +2048,104 @@ def _is_credential_var(name, vibe_dictionary=None):
         if lower.endswith(suffix):
             return True
     return False
+
+
+def _name_has_mock_context(name: str) -> bool:
+    parts = {p for p in re.split(r"[^a-zA-Z0-9]+", name.lower()) if p}
+    return bool(parts & _MOCK_CONTEXT_WORDS)
+
+
+def _target_names(node) -> list[str]:
+    names = []
+
+    def collect(target):
+        if isinstance(target, ast.Name):
+            names.append(target.id)
+        elif isinstance(target, ast.Attribute):
+            names.append(target.attr)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for item in target.elts:
+                collect(item)
+
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            collect(target)
+    elif isinstance(node, ast.AnnAssign):
+        collect(node.target)
+
+    return names
+
+
+def _is_low_entropy_uuid(value: str) -> bool:
+    if not _UUID_RE.match(value):
+        return False
+    cleaned = value.replace("-", "").lower()
+    if not cleaned:
+        return False
+    if len(set(cleaned)) <= 2:
+        return True
+    return cleaned in {
+        "00000000000000000000000000000000",
+        "11111111111111111111111111111111",
+        "ffffffffffffffffffffffffffffffff",
+        "12345678123456781234567812345678",
+    }
+
+
+def _is_repetitive_placeholder(value: str) -> bool:
+    if len(value) < 4 or len(value) > 20:
+        return False
+    if len(set(value)) == 1:
+        return True
+    if len(value) % 2 == 0:
+        pair = value[:2]
+        return pair * (len(value) // 2) == value
+    return False
+
+
+def _classify_placeholder_value(
+    value: str,
+    target_names: list[str],
+    vibe_dictionary=None,
+):
+    vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
+    stripped = value.strip()
+    lower = stripped.lower()
+    target_context = any(_name_has_mock_context(name) for name in target_names)
+    credential_context = any(
+        _is_credential_var(name, vibe_dictionary) for name in target_names
+    )
+
+    if _PLACEHOLDER_EMAIL_RE.match(stripped):
+        return "placeholder_email", "MEDIUM", "Email uses a test/example domain"
+
+    if _is_low_entropy_uuid(stripped):
+        return (
+            "low_entropy_uuid",
+            "MEDIUM",
+            "UUID has a low-entropy placeholder pattern",
+        )
+
+    if _PLACEHOLDER_PHONE_RE.search(stripped):
+        return "placeholder_phone", "MEDIUM", "Phone number uses a placeholder pattern"
+
+    if credential_context and _TEST_CREDENTIAL_RE.match(stripped):
+        return (
+            "test_credential",
+            "HIGH",
+            "Credential value is a common test placeholder",
+        )
+
+    if target_context and lower in vibe_dictionary.placeholder_values:
+        return "placeholder_value", "MEDIUM", "Value is a configured placeholder token"
+
+    if target_context and any(domain in lower for domain in _PLACEHOLDER_DOMAINS):
+        return "placeholder_domain", "LOW", "Value references a test/example domain"
+
+    if target_context and _is_repetitive_placeholder(stripped):
+        return "repetitive_placeholder", "LOW", "Value is a repetitive placeholder"
+
+    return None
 
 
 def _is_env_lookup(node):
@@ -2155,6 +2295,110 @@ class HardcodedCredentialRule(SkylosRule):
                             )
 
         return findings if findings else None
+
+
+class MockPlaceholderDataRule(SkylosRule):
+    rule_id = "SKY-L032"
+    name = "Mock Or Placeholder Data"
+
+    def __init__(self, vibe_dictionary=None):
+        self.vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
+
+    def visit_node(self, node, context):
+        if not isinstance(
+            node,
+            (ast.Assign, ast.AnnAssign, ast.FunctionDef, ast.AsyncFunctionDef),
+        ):
+            return None
+
+        filename = context.get("filename", "")
+        if _is_test_file(filename):
+            return None
+
+        findings = []
+        basename = _basename(filename)
+
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = _string_literal_value(node.value)
+            if value is not None:
+                self._add_finding(
+                    findings,
+                    value=value,
+                    target_names=_target_names(node),
+                    filename=filename,
+                    basename=basename,
+                    line=getattr(node.value, "lineno", getattr(node, "lineno", 1)),
+                    col=getattr(
+                        node.value,
+                        "col_offset",
+                        getattr(node, "col_offset", 0),
+                    ),
+                )
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for arg, default in _iter_arg_defaults(node):
+                value = _string_literal_value(default)
+                if value is None:
+                    continue
+                arg_name = arg.arg if hasattr(arg, "arg") else str(arg)
+                self._add_finding(
+                    findings,
+                    value=value,
+                    target_names=[arg_name],
+                    filename=filename,
+                    basename=basename,
+                    line=getattr(default, "lineno", getattr(node, "lineno", 1)),
+                    col=getattr(
+                        default,
+                        "col_offset",
+                        getattr(node, "col_offset", 0),
+                    ),
+                )
+
+        return findings if findings else None
+
+    def _add_finding(
+        self,
+        findings,
+        *,
+        value,
+        target_names,
+        filename,
+        basename,
+        line,
+        col,
+    ):
+        classification = _classify_placeholder_value(
+            value,
+            target_names,
+            self.vibe_dictionary,
+        )
+        if not classification:
+            return
+
+        placeholder_type, severity, rationale = classification
+        name = target_names[0] if target_names else placeholder_type
+        findings.append(
+            {
+                "rule_id": self.rule_id,
+                "kind": "logic",
+                "severity": severity,
+                "type": "literal",
+                "name": name,
+                "simple_name": name,
+                "value": placeholder_type,
+                "threshold": 0,
+                "mock_data_type": placeholder_type,
+                "message": (
+                    f"Mock or placeholder data in '{name}' "
+                    f"({placeholder_type}). {rationale}."
+                ),
+                "file": filename,
+                "basename": basename,
+                "line": line,
+                "col": col,
+            }
+        )
 
 
 def _iter_arg_defaults(func_node):

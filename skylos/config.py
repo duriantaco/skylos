@@ -20,6 +20,11 @@ DEFAULTS = {
     "nudges": True,
     "check_circular": True,
     "max_circular_deps": -1,
+    "architecture": {
+        "strict": False,
+        "layers": [],
+        "rules": [],
+    },
     "masking": {
         "names": [],
         "decorators": [],
@@ -183,7 +188,9 @@ def _merge_user_config(base_cfg: dict, user_cfg: dict | None) -> dict:
             merged_masking.update(value or {})
             final_cfg["masking"] = merged_masking
             continue
-        if key in ("gate", "templates", "vibe") and isinstance(value, dict):
+        if key in ("gate", "templates", "vibe", "architecture") and isinstance(
+            value, dict
+        ):
             merged_section = {}
             merged_section.update(final_cfg.get(key, {}) or {})
             merged_section.update(value)

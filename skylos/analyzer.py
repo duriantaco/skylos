@@ -66,6 +66,7 @@ from skylos.rules.quality.logic import (
     PhantomCallRule,
     InsecureRandomRule,
     HardcodedCredentialRule,
+    MockPlaceholderDataRule,
     ErrorDisclosureRule,
     BroadFilePermissionsRule,
     PhantomDecoratorRule,
@@ -1681,6 +1682,7 @@ class Skylos:
                             module_loc=architecture_loc,
                             entrypoint_modules=entrypoint_modules,
                             package_boundary_modules=package_boundary_modules,
+                            layer_policy=project_cfg.get("architecture"),
                         )
                         ignored_rules = set(project_cfg.get("ignore", []))
                         if arch_findings:
@@ -2836,6 +2838,10 @@ def proc_file(
                 q_rules.append(InsecureRandomRule(vibe_dictionary=vibe_dictionary))
             if "SKY-L014" not in cfg["ignore"]:
                 q_rules.append(HardcodedCredentialRule(vibe_dictionary=vibe_dictionary))
+            if "SKY-L032" not in cfg["ignore"]:
+                q_rules.append(
+                    MockPlaceholderDataRule(vibe_dictionary=vibe_dictionary)
+                )
             if "SKY-L017" not in cfg["ignore"]:
                 q_rules.append(ErrorDisclosureRule())
             if "SKY-L020" not in cfg["ignore"]:
