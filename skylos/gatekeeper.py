@@ -21,6 +21,7 @@ DEAD_CODE_RESULT_KEYS = (
     "unused_parameters",
 )
 AGENT_GATE_PREFIX = "Agent gate: "
+ADVISORY_QUALITY_RULE_IDS = {"SKY-Q802", "SKY-Q803"}
 
 
 def run_cmd(cmd_list, error_msg="Git command failed"):
@@ -138,6 +139,18 @@ def _split_danger_by_severity(danger):
         elif sev == "high":
             high_issues.append(issue)
     return critical_issues, high_issues
+
+
+def _is_advisory_quality_finding(finding):
+    return (
+        isinstance(finding, dict)
+        and bool(finding.get("advisory"))
+        and str(finding.get("rule_id", "")) in ADVISORY_QUALITY_RULE_IDS
+    )
+
+
+def _gate_quality_findings(quality):
+    return [finding for finding in quality if not _is_advisory_quality_finding(finding)]
 
 
 def _append_threshold_reason(reasons, *, count, limit, message_template):
@@ -286,7 +299,8 @@ def _check_agent_gate(findings_lists, agent_file_set, agent_cfg, reasons):
 
 
 def _check_strict_gate(*, total_findings, danger, quality, secrets):
-    total_issues = total_findings + len(danger) + len(quality) + len(secrets)
+    gate_quality = _gate_quality_findings(quality)
+    total_issues = total_findings + len(danger) + len(gate_quality) + len(secrets)
     if total_issues > 0:
         return False, [f"Strict mode: {total_issues} issue(s) found"]
     return True, []
@@ -382,6 +396,7 @@ def check_gate(results, config, strict=False, provenance=None):
     total_findings = _count_dead_code_findings(results)
     danger = results.get("danger", []) or []
     quality = results.get("quality", []) or []
+    gate_quality = _gate_quality_findings(quality)
     secrets = results.get("secrets", []) or []
     gate_config = config.get("gate", {}) if config else {}
 
@@ -389,7 +404,7 @@ def check_gate(results, config, strict=False, provenance=None):
         return _check_strict_gate(
             total_findings=total_findings,
             danger=danger,
-            quality=quality,
+            quality=gate_quality,
             secrets=secrets,
         )
 
@@ -403,7 +418,7 @@ def check_gate(results, config, strict=False, provenance=None):
         max_high=gate_config.get("max_high", 5),
         security_count=len(danger),
         max_security=gate_config.get("max_security", 10),
-        quality_count=len(quality),
+        quality_count=len(gate_quality),
         max_quality=gate_config.get("max_quality", 10),
         secrets_count=len(secrets),
         max_secrets=gate_config.get("max_secrets", None),
@@ -416,7 +431,7 @@ def check_gate(results, config, strict=False, provenance=None):
     if provenance and agent_cfg and provenance.agent_files:
         agent_file_set = set(provenance.agent_files)
         agent_passed = _check_agent_gate(
-            _build_findings_lists(results, danger, quality, secrets),
+            _build_findings_lists(results, danger, gate_quality, secrets),
             agent_file_set,
             agent_cfg,
             reasons,

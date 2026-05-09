@@ -10,7 +10,13 @@ from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.penalties import apply_penalties
 
-from skylos.analyzer import Skylos, proc_file, analyze, _resolve_analysis_root
+from skylos.analyzer import (
+    Skylos,
+    proc_file,
+    analyze,
+    _architecture_iad_strict,
+    _resolve_analysis_root,
+)
 
 
 @pytest.fixture
@@ -373,6 +379,11 @@ class TestHeuristics:
 
 
 class TestAnalyze:
+    def test_architecture_iad_strict_requires_explicit_iad_opt_in(self):
+        assert _architecture_iad_strict({"strict": True}) is False
+        assert _architecture_iad_strict({"enforce_iad": True}) is True
+        assert _architecture_iad_strict({"strict_iad": True}) is True
+
     @patch("skylos.analyzer.proc_file")
     def test_analyze_basic(self, mock_proc_file, temp_python_project):
         mock_def = Mock()
