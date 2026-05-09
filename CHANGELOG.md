@@ -1,5 +1,28 @@
 ## Changelog
 
+## [4.13.0](https://github.com/duriantaco/skylos/compare/v4.12.1...v4.13.0) (2026-05-09)
+
+
+### Features
+
+* **languages:** add Dart support and harden PHP scanning ([#327](https://github.com/duriantaco/skylos/issues/327)) ([681e754](https://github.com/duriantaco/skylos/commit/681e75409bef06976afbeb5f78206dca28cbf782))
+* **languages:** harden Java and Go security flows ([#323](https://github.com/duriantaco/skylos/issues/323)) ([4f02b69](https://github.com/duriantaco/skylos/commit/4f02b69d6673e030491046b42819fadb0f95264b))
+* **quality:** add architecture policy and placeholder checks ([#318](https://github.com/duriantaco/skylos/issues/318)) ([15e6be4](https://github.com/duriantaco/skylos/commit/15e6be4c55e233e077b18f9496332878f51925cc))
+
+
+### Bug Fixes
+
+* **analyzer:** keep scanner caches at project root ([#324](https://github.com/duriantaco/skylos/issues/324)) ([294a03c](https://github.com/duriantaco/skylos/commit/294a03c8c1f852c68f701a8b1999b9ab44a47ff7))
+* **architecture:** add Q802 Q803 remediation hints ([#326](https://github.com/duriantaco/skylos/issues/326)) ([2f0f3f0](https://github.com/duriantaco/skylos/commit/2f0f3f0b8eaf5d76f3908b8702a8ca9d3ba9449d))
+* **gate:** make file-level IAD architecture findings advisory ([#325](https://github.com/duriantaco/skylos/issues/325)) ([1df7ee1](https://github.com/duriantaco/skylos/commit/1df7ee166e0655445625fdfad4c321a1fd658267))
+* **python:** keep pyproject GUI scripts live ([#328](https://github.com/duriantaco/skylos/issues/328)) ([151b7e2](https://github.com/duriantaco/skylos/commit/151b7e2ffea42cc792adbb1e149075bd3e9383a5))
+* **python:** suppress override method parameters ([#329](https://github.com/duriantaco/skylos/issues/329)) ([2a5cba3](https://github.com/duriantaco/skylos/commit/2a5cba37a77fa21df3a82bc7efdf6004e534f61b))
+
+
+### Documentation
+
+* **readme:** simplify hero section ([#319](https://github.com/duriantaco/skylos/issues/319)) ([8aa979e](https://github.com/duriantaco/skylos/commit/8aa979e143e6d0b209f13fce800d69fcb09ad85a))
+
 ## [4.12.1](https://github.com/duriantaco/skylos/compare/v4.12.0...v4.12.1) (2026-05-08)
 
 
