@@ -57,6 +57,28 @@ file_get_contents($path);
     assert "SKY-D215" in _rule_ids(findings)
 
 
+def test_filter_input_to_file_put_contents_flags(tmp_path):
+    findings = _scan_php_findings(
+        tmp_path,
+        """<?php
+$path = filter_input(INPUT_GET, 'path');
+file_put_contents($path, 'data');
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
+def test_filter_input_to_rename_flags(tmp_path):
+    findings = _scan_php_findings(
+        tmp_path,
+        """<?php
+$from = filter_input(INPUT_POST, 'from');
+rename($from, '/srv/data/archive.txt');
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
 def test_fixed_path_file_sink_is_safe(tmp_path):
     findings = _scan_php_findings(
         tmp_path,

@@ -3604,6 +3604,7 @@ def main() -> None:
                     ".java",
                     ".php",
                     ".rs",
+                    ".dart",
                 }
                 config_exts = {
                     ".yaml",

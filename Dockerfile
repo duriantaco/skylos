@@ -16,12 +16,17 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 
 WORKDIR /src
 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc libc6-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml README.md LICENSE ./
 COPY skylos ./skylos
 COPY --from=go-build /out/skylos-go ./skylos/engines/go/skylos-go
 
 RUN python -m pip install --upgrade pip build && \
-    python -m build --wheel --outdir /dist
+    python -m build --wheel --outdir /dist && \
+    python -m pip wheel --wheel-dir /wheelhouse /dist/*.whl
 
 FROM python:3.12-slim
 
@@ -32,10 +37,10 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 
 WORKDIR /work
 
-COPY --from=build /dist/*.whl /tmp/dist/
+COPY --from=build /wheelhouse /tmp/wheelhouse
 
-RUN python -m pip install /tmp/dist/*.whl && \
-    rm -rf /tmp/dist
+RUN python -m pip install --no-index --find-links=/tmp/wheelhouse skylos && \
+    rm -rf /tmp/wheelhouse
 
 ENTRYPOINT ["skylos"]
 CMD ["--help"]

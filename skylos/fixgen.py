@@ -43,6 +43,7 @@ _BRACE_LANG_EXTS = {
     ".go": "go",
     ".rs": "rust",
     ".java": "java",
+    ".dart": "dart",
 }
 
 
@@ -160,7 +161,7 @@ def _validate_file(file_path: str, content: str) -> list[str]:
         return _validate_go_syntax(file_path, content)
     if ext == ".rs":
         return _validate_rust_syntax(file_path, content)
-    if ext == ".java":
+    if ext in {".java", ".dart"}:
         return _check_brace_balance(file_path, content)
     return []
 
