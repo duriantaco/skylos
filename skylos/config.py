@@ -22,6 +22,7 @@ DEFAULTS = {
     "max_circular_deps": -1,
     "architecture": {
         "strict": False,
+        "enforce_iad": False,
         "layers": [],
         "rules": [],
     },

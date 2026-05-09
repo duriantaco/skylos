@@ -194,6 +194,7 @@ def analyze_architecture(
     module_trees: dict[str, ast.AST] | None = None,
     module_abstractness: dict[str, dict[str, Any]] | None = None,
     module_loc: dict[str, int] | None = None,
+    iad_findings_advisory: bool = True,
 ) -> ArchitectureResult:
     result = ArchitectureResult()
 
@@ -407,12 +408,50 @@ def analyze_architecture(
             "zone_distribution": {},
         }
 
-    _generate_findings(result)
+    _generate_findings(result, iad_findings_advisory=iad_findings_advisory)
 
     return result
 
 
-def _generate_findings(result: ArchitectureResult):
+def _iad_scope_fields(advisory: bool) -> dict[str, Any]:
+    fields = {
+        "advisory": advisory,
+        "scope": "file",
+        "metric_granularity": "file-level heuristic",
+        "metric_origin": "Martin I/A/D release-unit metric",
+    }
+    if advisory:
+        fields["advisory_reason"] = (
+            "Martin's instability/abstractness/distance metric was defined for "
+            "release units. Skylos reports it at Python file granularity as an "
+            "architecture signal; it is not gate-blocking unless I/A/D enforcement "
+            "is enabled."
+        )
+    else:
+        fields["enforcement_reason"] = (
+            "I/A/D enforcement is enabled, so this file-level architecture signal "
+            "can block strict gates."
+        )
+    return fields
+
+
+def _iad_gate_note(advisory: bool) -> str:
+    if advisory:
+        return (
+            "Advisory: this file-level I/A/D signal does not block gates unless "
+            "I/A/D enforcement is enabled."
+        )
+    return (
+        "I/A/D enforcement is enabled, so this file-level architecture signal can "
+        "block strict gates."
+    )
+
+
+def _generate_findings(
+    result: ArchitectureResult,
+    *,
+    iad_findings_advisory: bool = True,
+):
     for name, m in result.modules.items():
         # SKY-Q802: High distance from main sequence
         if m.distance > 0.5 and m.total_coupling > 0:
@@ -436,11 +475,13 @@ def _generate_findings(result: ArchitectureResult):
                     "message": (
                         f"Module '{name}' is far from the Main Sequence "
                         f"(D={m.distance:.2f}, I={m.instability:.2f}, A={m.abstractness:.2f}). "
-                        f"Zone: {m.zone.replace('_', ' ')}."
+                        f"Zone: {m.zone.replace('_', ' ')}. "
+                        f"{_iad_gate_note(iad_findings_advisory)}"
                     ),
                     "file": m.file_path,
                     "basename": Path(m.file_path).name if m.file_path else name,
                     "line": 1,
+                    **_iad_scope_fields(iad_findings_advisory),
                 }
             )
 
@@ -450,13 +491,15 @@ def _generate_findings(result: ArchitectureResult):
                 zone_msg = (
                     f"Module '{name}' is in the Zone of Pain "
                     f"(concrete A={m.abstractness:.2f}, stable I={m.instability:.2f}). "
-                    f"Changes here can ripple widely. Consider introducing stable abstractions or reducing fan-in."
+                    "Changes here can ripple widely at file granularity. "
+                    f"{_iad_gate_note(iad_findings_advisory)}"
                 )
             else:
                 zone_msg = (
                     f"Module '{name}' is in the Zone of Uselessness "
                     f"(abstract A={m.abstractness:.2f}, unstable I={m.instability:.2f}). "
-                    f"Few stable consumers depend on it. Consider moving abstractions toward stable packages or removing unused abstractions."
+                    "Few stable consumers depend on it. "
+                    f"{_iad_gate_note(iad_findings_advisory)}"
                 )
 
             result.findings.append(
@@ -475,6 +518,7 @@ def _generate_findings(result: ArchitectureResult):
                     "file": m.file_path,
                     "basename": Path(m.file_path).name if m.file_path else name,
                     "line": 1,
+                    **_iad_scope_fields(iad_findings_advisory),
                 }
             )
 
@@ -722,6 +766,7 @@ def get_architecture_findings(
     private_helper_ce_limit: int = 2,
     private_helper_ca_limit: int = 3,
     layer_policy: dict[str, Any] | None = None,
+    iad_findings_advisory: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     result = analyze_architecture(
         dependency_graph=dependency_graph,
@@ -729,6 +774,7 @@ def get_architecture_findings(
         module_trees=module_trees,
         module_abstractness=module_abstractness,
         module_loc=module_loc,
+        iad_findings_advisory=iad_findings_advisory,
     )
 
     contextual_entrypoints = set(entrypoint_modules or ())

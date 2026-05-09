@@ -624,3 +624,53 @@ class Base2(ABC):
         assert result.modules["stableish"].zone == "off_main_sequence"
         assert "Zone: off main sequence." in q802["message"]
         assert "Zone: healthy." not in q802["message"]
+
+    def test_iad_findings_are_advisory_by_default(self):
+        findings, _ = get_architecture_findings(
+            dependency_graph={
+                "stableish": set(),
+                "consumer_a": {"stableish"},
+                "consumer_b": {"stableish"},
+            },
+            module_files={
+                "stableish": "/p/stableish.py",
+                "consumer_a": "/p/consumer_a.py",
+                "consumer_b": "/p/consumer_b.py",
+            },
+        )
+
+        iad_findings = [
+            f for f in findings if f["rule_id"] in {"SKY-Q802", "SKY-Q803"}
+        ]
+
+        assert {f["rule_id"] for f in iad_findings} == {"SKY-Q802", "SKY-Q803"}
+        assert all(f["advisory"] is True for f in iad_findings)
+        assert all(
+            f["metric_granularity"] == "file-level heuristic" for f in iad_findings
+        )
+        assert all("Martin I/A/D" in f["metric_origin"] for f in iad_findings)
+        assert all("Advisory:" in f["message"] for f in iad_findings)
+
+    def test_iad_findings_can_be_marked_enforced(self):
+        findings, _ = get_architecture_findings(
+            dependency_graph={
+                "stableish": set(),
+                "consumer_a": {"stableish"},
+                "consumer_b": {"stableish"},
+            },
+            module_files={
+                "stableish": "/p/stableish.py",
+                "consumer_a": "/p/consumer_a.py",
+                "consumer_b": "/p/consumer_b.py",
+            },
+            iad_findings_advisory=False,
+        )
+
+        iad_findings = [
+            f for f in findings if f["rule_id"] in {"SKY-Q802", "SKY-Q803"}
+        ]
+
+        assert {f["rule_id"] for f in iad_findings} == {"SKY-Q802", "SKY-Q803"}
+        assert all(f["advisory"] is False for f in iad_findings)
+        assert all("enforcement_reason" in f for f in iad_findings)
+        assert all("Advisory:" not in f["message"] for f in iad_findings)

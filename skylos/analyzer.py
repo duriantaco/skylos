@@ -144,6 +144,15 @@ def _entrypoint_module_name(qname: str) -> str | None:
     return module_name or None
 
 
+def _architecture_iad_strict(architecture_cfg) -> bool:
+    if not isinstance(architecture_cfg, dict):
+        return False
+    for key in ("enforce_iad", "strict_iad"):
+        if key in architecture_cfg:
+            return bool(architecture_cfg.get(key))
+    return False
+
+
 def _expand_reexported_entrypoint_modules(
     entrypoint_qnames: set[str],
     entrypoint_modules: set[str],
@@ -1683,6 +1692,9 @@ class Skylos:
                             entrypoint_modules=entrypoint_modules,
                             package_boundary_modules=package_boundary_modules,
                             layer_policy=project_cfg.get("architecture"),
+                            iad_findings_advisory=not _architecture_iad_strict(
+                                project_cfg.get("architecture")
+                            ),
                         )
                         ignored_rules = set(project_cfg.get("ignore", []))
                         if arch_findings:

@@ -165,6 +165,73 @@ def test_check_gate_provenance_none_ignores_agent():
     assert passed is True
 
 
+def test_check_gate_strict_ignores_advisory_iad_quality():
+    results = {
+        "danger": [],
+        "quality": [
+            {
+                "rule_id": "SKY-Q802",
+                "advisory": True,
+                "file": "pkg/helpers.py",
+                "line": 1,
+            },
+            {
+                "rule_id": "SKY-Q803",
+                "advisory": True,
+                "file": "pkg/helpers.py",
+                "line": 1,
+            },
+        ],
+        "secrets": [],
+    }
+
+    passed, reasons = gk.check_gate(results, {}, strict=True)
+
+    assert passed is True
+    assert reasons == []
+
+
+def test_check_gate_strict_blocks_enforced_iad_quality():
+    results = {
+        "danger": [],
+        "quality": [
+            {
+                "rule_id": "SKY-Q802",
+                "advisory": False,
+                "file": "pkg/helpers.py",
+                "line": 1,
+            }
+        ],
+        "secrets": [],
+    }
+
+    passed, reasons = gk.check_gate(results, {}, strict=True)
+
+    assert passed is False
+    assert "Strict mode" in reasons[0]
+
+
+def test_check_gate_quality_threshold_ignores_advisory_iad_quality():
+    results = {
+        "danger": [],
+        "quality": [
+            {
+                "rule_id": "SKY-Q803",
+                "advisory": True,
+                "file": "pkg/helpers.py",
+                "line": 1,
+            }
+        ],
+        "secrets": [],
+    }
+    config = {"gate": {"max_quality": 0}}
+
+    passed, reasons = gk.check_gate(results, config)
+
+    assert passed is True
+    assert reasons == []
+
+
 def test_check_gate_agent_stricter_threshold():
     results = {
         "danger": [{"severity": "high", "file": "ai_file.py"}],
