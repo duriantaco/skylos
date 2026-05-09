@@ -62,6 +62,12 @@ PYTHON_BUILTINS = {
 
 DYNAMIC_PATTERNS = {"getattr", "globals", "eval", "exec"}
 
+OVERRIDE_DECORATORS = {
+    "override",
+    "typing.override",
+    "typing_extensions.override",
+}
+
 IMPLICIT_DUNDERS = {
     "__init__",
     "__new__",
@@ -763,6 +769,10 @@ class Visitor(ast.NodeVisitor):
                 is_abstract_or_overload = True
                 break
 
+        is_explicit_override = bool(self.cls) and any(
+            deco_name in OVERRIDE_DECORATORS for deco_name in decorator_names
+        )
+
         if self.cls and self.cls in self.abc_classes and is_abstract_or_overload:
             if self.cls not in self.abstract_methods:
                 self.abstract_methods[self.cls] = set()
@@ -835,7 +845,7 @@ class Visitor(ast.NodeVisitor):
 
         skip_params = self._in_protocol_class or getattr(
             self, "_in_abstract_or_overload", False
-        )
+        ) or is_explicit_override
 
         for arg in all_args:
             param_name = f"{qualified_name}.{arg.arg}"
