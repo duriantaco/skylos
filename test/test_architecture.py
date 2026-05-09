@@ -650,6 +650,16 @@ class Base2(ABC):
         )
         assert all("Martin I/A/D" in f["metric_origin"] for f in iad_findings)
         assert all("Advisory:" in f["message"] for f in iad_findings)
+        assert all(f["docs_url"].endswith(f["rule_id"]) for f in iad_findings)
+        assert all(f.get("remediations") for f in iad_findings)
+        remediation_titles = {
+            item["title"]
+            for finding in iad_findings
+            for item in finding["remediations"]
+        }
+        assert "Mark internal helpers as private" in remediation_titles
+        assert "Introduce a real abstraction boundary" in remediation_titles
+        assert "Split responsibilities when fan-in is meaningful" in remediation_titles
 
     def test_iad_findings_can_be_marked_enforced(self):
         findings, _ = get_architecture_findings(
@@ -674,3 +684,31 @@ class Base2(ABC):
         assert all(f["advisory"] is False for f in iad_findings)
         assert all("enforcement_reason" in f for f in iad_findings)
         assert all("Advisory:" not in f["message"] for f in iad_findings)
+        assert all(f.get("remediations") for f in iad_findings)
+
+    def test_private_helper_remediation_does_not_suggest_fake_metric_workarounds(self):
+        findings, _ = get_architecture_findings(
+            dependency_graph={
+                "pkg._helpers": set(),
+                "pkg.consumer_a": {"pkg._helpers"},
+                "pkg.consumer_b": {"pkg._helpers"},
+                "pkg.consumer_c": {"pkg._helpers"},
+                "pkg.consumer_d": {"pkg._helpers"},
+            },
+            module_files={
+                "pkg._helpers": "/p/pkg/_helpers.py",
+                "pkg.consumer_a": "/p/pkg/consumer_a.py",
+                "pkg.consumer_b": "/p/pkg/consumer_b.py",
+                "pkg.consumer_c": "/p/pkg/consumer_c.py",
+                "pkg.consumer_d": "/p/pkg/consumer_d.py",
+            },
+        )
+
+        q803 = next(f for f in findings if f["rule_id"] == "SKY-Q803")
+        titles = {item["title"] for item in q803["remediations"]}
+        hints = " ".join(item["hint"] for item in q803["remediations"])
+
+        assert q803["name"] == "pkg._helpers"
+        assert "Keep private-helper intent explicit" in titles
+        assert "fake" in hints
+        assert "one-off abstractions" in hints
