@@ -2350,13 +2350,8 @@ class Skylos:
                     f for f in files if str(f).endswith((".py", ".pyi", ".pyw"))
                 ]
                 if py_files:
-                    dep_root = Path(
-                        os.path.commonpath([str(p.resolve()) for p in py_files])
-                    )
-                    if dep_root.is_file():
-                        dep_root = dep_root.parent
                     dep_findings = scan_python_dependency_hallucinations(
-                        dep_root, py_files
+                        project_root, py_files
                     )
                     if dep_findings:
                         dep_findings = [
@@ -2513,13 +2508,7 @@ class Skylos:
             try:
                 from skylos.rules.sca.vulnerability_scanner import scan_dependencies
 
-                scan_root = (
-                    Path(os.path.commonpath([str(p.resolve()) for p in files]))
-                    if files
-                    else Path(path[0] if isinstance(path, (list, tuple)) else path)
-                )
-                if scan_root.is_file():
-                    scan_root = scan_root.parent
+                scan_root = project_root
                 sca_findings = scan_dependencies(scan_root)
                 if sca_findings:
                     all_sca.extend(sca_findings)

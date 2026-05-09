@@ -2452,6 +2452,85 @@ def handler(request):
         assert result["analysis_summary"]["sca_count"] == 1
         assert result["dependency_vulnerabilities"][0]["rule_id"] == "CVE-TEST"
 
+    def test_danger_dependency_scan_uses_project_root_for_src_layout(
+        self, tmp_path, monkeypatch
+    ):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        pkg = tmp_path / "src" / "my_package"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "module.py").write_text("import requests\n", encoding="utf-8")
+
+        from skylos.rules.danger.danger_hallucination import dependency_hallucination
+
+        seen = {}
+
+        def fake_scan(repo_root, py_files):
+            seen["repo_root"] = Path(repo_root)
+            seen["py_files"] = list(py_files)
+            cache_path = Path(repo_root) / ".skylos" / "cache" / "pypi_exists.json"
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text("{}", encoding="utf-8")
+            return []
+
+        monkeypatch.setattr(
+            dependency_hallucination,
+            "scan_python_dependency_hallucinations",
+            fake_scan,
+        )
+
+        result = json.loads(
+            analyze(
+                str(tmp_path / "src"),
+                conf=0,
+                enable_danger=True,
+                grep_verify=False,
+            )
+        )
+
+        assert "error" not in result
+        assert seen["repo_root"] == tmp_path.resolve()
+        assert (tmp_path / ".skylos" / "cache" / "pypi_exists.json").exists()
+        assert not (pkg / ".skylos").exists()
+
+    def test_sca_scan_uses_project_root_for_src_layout(self, tmp_path, monkeypatch):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        pkg = tmp_path / "src" / "my_package"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "module.py").write_text("def handler():\n    return 1\n")
+
+        from skylos.rules.sca import vulnerability_scanner
+
+        seen = {}
+
+        def fake_scan(root):
+            seen["root"] = Path(root)
+            cache_path = Path(root) / ".skylos" / "cache" / "osv_cache.json"
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text("{}", encoding="utf-8")
+            return []
+
+        monkeypatch.setattr(
+            vulnerability_scanner,
+            "scan_dependencies",
+            fake_scan,
+        )
+
+        result = json.loads(
+            analyze(
+                str(tmp_path / "src"),
+                conf=0,
+                enable_sca=True,
+                grep_verify=False,
+            )
+        )
+
+        assert "error" not in result
+        assert seen["root"] == tmp_path.resolve()
+        assert (tmp_path / ".skylos" / "cache" / "osv_cache.json").exists()
+        assert not (pkg / ".skylos").exists()
+
     def test_prompt_injection_scan_includes_scannable_docs(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
         app = tmp_path / "app.py"
