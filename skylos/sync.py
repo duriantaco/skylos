@@ -172,11 +172,6 @@ def _write_link(
         "linked_at": payload["linked_at"],
     }
     payload["projects"] = projects
-    # if folder_id:
-    #     payload["folder_id"] = str(folder_id)
-    # if folder_name:
-    #     payload["folder_name"] = str(folder_name)
-
     link_path.write_text(json.dumps(payload, indent=2))
     return str(link_path)
 
@@ -615,6 +610,7 @@ PRECOMMIT_HOOK_DEPENDENCIES = [
     "tree-sitter-java>=0.23.0",
     "tree-sitter-php>=0.24.1",
     "tree-sitter-rust>=0.24.2",
+    "tree-sitter-dart-orchard>=0.3.2",
     "tomli>=2.0.1; python_version < '3.11'",
     "pyyaml",
     "networkx",
@@ -663,9 +659,10 @@ repos:
 def _write_sync_config(skylos_dir: Path, config_data):
     config_payload = config_data.get("config")
     if not isinstance(config_payload, dict):
-        # Backward-compat: older/newer cloud deployments may return the
-        # sync config directly at the top level instead of wrapping it.
-        config_payload = config_data if isinstance(config_data, dict) else {}
+        if isinstance(config_data, dict):
+            config_payload = config_data
+        else:
+            config_payload = {}
 
     config_path = skylos_dir / CONFIG_FILE
     with config_path.open("w") as f:

@@ -47,6 +47,7 @@ _GO_EXTS = {".go"}
 _JAVA_EXTS = {".java"}
 _PHP_EXTS = {".php"}
 _RUST_EXTS = {".rs"}
+_DART_EXTS = {".dart"}
 
 _ALL_SOURCE_GLOBS = [
     "*.py",
@@ -61,6 +62,7 @@ _ALL_SOURCE_GLOBS = [
     "*.java",
     "*.php",
     "*.rs",
+    "*.dart",
     "*.rst",
     "*.md",
     "*.yaml",
@@ -78,6 +80,7 @@ _LANG_GLOBS: dict[str, list[str]] = {
     "java": ["*.java"],
     "php": ["*.php"],
     "rust": ["*.rs"],
+    "dart": ["*.dart"],
 }
 
 _IGNORED_GREP_PATH_PARTS = (
@@ -121,6 +124,8 @@ def detect_language(file_path: str) -> str:
         return "php"
     if ext in _RUST_EXTS:
         return "rust"
+    if ext in _DART_EXTS:
+        return "dart"
     return "python"
 
 
@@ -639,7 +644,6 @@ def _run_ts_strategies(
         if usages:
             results["ts_imports"] = usages[:max_per_strategy]
 
-    # require("...") references
     require_pattern = rf'require\s*\(["\x27].*{re.escape(simple_name)}["\x27]\)'
     require_refs = _run_grep(
         require_pattern,
@@ -653,7 +657,6 @@ def _run_ts_strategies(
         if usages:
             results["ts_require"] = usages[:max_per_strategy]
 
-    # JSX usage: <Component /> or <Component>
     if kind in ("class", "function", "variable") and simple_name[0].isupper():
         jsx_pattern = rf"<{re.escape(simple_name)}[\s/>]"
         jsx_refs = _run_grep(
@@ -697,7 +700,6 @@ def _run_ts_strategies(
             if usages:
                 results["ts_decorator"] = usages[:max_per_strategy]
 
-    # implements Interface
     if kind in ("class", "interface"):
         impl_pattern = rf"implements\s+.*\b{re.escape(simple_name)}\b"
         impl_refs = _run_grep(

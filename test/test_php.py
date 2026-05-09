@@ -111,3 +111,80 @@ class UserTest extends TestCase {
     assert "UserTest.test_it_works" in exported
     assert visitor.is_test_file is True
     assert visitor.test_decorated_lines
+
+
+def test_php_scanner_collects_grouped_imports_enums_and_constants(tmp_path):
+    defs, _, _, _, _, _, _, _, _, _, _, _, raw_imports = _scan_php(
+        tmp_path,
+        """<?php
+namespace App;
+
+use Foo\\{Bar, Baz as Quux};
+
+const GLOBAL_FLAG = true;
+
+class Demo {
+    public const VERSION = '1';
+}
+
+enum Role {
+    case Admin;
+    case User;
+}
+""",
+    )
+
+    def_names = {d.name for d in defs}
+    exported = {d.name for d in defs if d.is_exported}
+
+    assert "Bar" in def_names
+    assert "Quux" in def_names
+    assert "App.GLOBAL_FLAG" in def_names
+    assert "App.Demo.VERSION" in def_names
+    assert "App.Role" in def_names
+    assert "App.Role.Admin" in def_names
+    assert "App.Role.User" in def_names
+
+    assert "App.GLOBAL_FLAG" not in exported
+    assert "App.Demo.VERSION" in exported
+    assert "App.Role" in exported
+    assert "App.Role.Admin" in exported
+
+    assert raw_imports == [{"source": "use", "names": ["Bar", "Quux"], "line": 4}]
+
+
+def test_phpunit_test_attribute_marks_method_as_entrypoint(tmp_path):
+    defs, _, _, _, visitor, _, _, _, _, _, _, _, _ = _scan_php(
+        tmp_path,
+        """<?php
+use PHPUnit\\Framework\\Attributes\\Test;
+
+class DemoTest extends TestCase {
+    #[Test]
+    public function it_works(): void {}
+}
+""",
+        filename="tests/DemoTest.php",
+    )
+
+    method = next(d for d in defs if d.name == "DemoTest.it_works")
+
+    assert method.is_exported is True
+    assert visitor.test_decorated_lines
+
+
+def test_non_phpunit_attribute_does_not_mark_method_as_entrypoint(tmp_path):
+    defs, _, _, _, visitor, _, _, _, _, _, _, _, _ = _scan_php(
+        tmp_path,
+        """<?php
+class Demo {
+    #[Latest]
+    private function helper(): void {}
+}
+""",
+    )
+
+    method = next(d for d in defs if d.name == "Demo.helper")
+
+    assert method.is_exported is False
+    assert not visitor.test_decorated_lines

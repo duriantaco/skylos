@@ -32,7 +32,18 @@ SKIP_DIRS = {
     ".coverage",
 }
 
-CODE_EXTENSIONS = {".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java", ".php"}
+CODE_EXTENSIONS = {
+    ".py",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".php",
+    ".dart",
+}
 
 MAX_FILE_SIZE = 100_000  # bytes
 MAX_FILE_LINES = 2000

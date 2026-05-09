@@ -10,8 +10,27 @@ _SUPERGLOBALS = {
     "$_FILES",
 }
 
-_FILE_SINKS = {"file_get_contents", "fopen", "readfile", "unlink", "file"}
+_FILE_SINKS = {
+    "file_get_contents",
+    "file_put_contents",
+    "fopen",
+    "readfile",
+    "unlink",
+    "file",
+    "copy",
+    "rename",
+    "mkdir",
+    "rmdir",
+    "chmod",
+}
 _SANITIZERS = {"basename"}
+_FILTER_INPUT_SOURCES = {
+    "INPUT_GET",
+    "INPUT_POST",
+    "INPUT_REQUEST",
+    "INPUT_COOKIE",
+    "INPUT_SERVER",
+}
 
 
 def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
@@ -32,9 +51,23 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
     def is_superglobal_var(node) -> bool:
         return node is not None and node.type == "variable_name" and text(node).strip() in _SUPERGLOBALS
 
+    def is_filter_input_source(node) -> bool:
+        if node is None or node.type != "function_call_expression":
+            return False
+        name_node = child_by_type(node, "name")
+        call_name = text(name_node).strip().lstrip("\\") if name_node else ""  # skylos: ignore[SKY-D211]
+        if call_name != "filter_input":
+            return False
+        args = child_by_type(node, "arguments")
+        return args is not None and any(
+            text(child).strip() in _FILTER_INPUT_SOURCES for child in args.children
+        )
+
     def is_tainted_expr(node, tainted_vars: set[str]) -> bool:
         if node is None:
             return False
+        if is_filter_input_source(node):
+            return True
         if is_superglobal_var(node):
             return True
         if node.type == "variable_name":

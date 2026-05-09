@@ -18,6 +18,7 @@ def get_git_changed_files(root_path):
         ".java",
         ".php",
         ".rs",
+        ".dart",
     }
 
     def _collect_supported(output, repo_root):

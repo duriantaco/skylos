@@ -22,6 +22,7 @@ from skylos.constants import AUTO_CALLED, MARKREFS_TICK_DEFAULT
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.languages.php import scan_php_file
+from skylos.visitors.languages.dart import scan_dart_file
 from skylos.visitors.languages.typescript import scan_typescript_file
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
@@ -133,6 +134,7 @@ _TS_JS_SOURCE_EXTS = (
 )
 _PHP_SOURCE_EXTS = (".php",)
 _RUST_SOURCE_EXTS = (".rs",)
+_DART_SOURCE_EXTS = (".dart",)
 
 _TRY_NODE_TYPES = (ast.Try, getattr(ast, "TryStar", ast.Try))
 
@@ -412,6 +414,7 @@ class Skylos:
         ".java": "Java",
         ".php": "PHP",
         ".rs": "Rust",
+        ".dart": "Dart",
     }
 
     def _count_languages(self, files) -> dict[str, int]:
@@ -439,6 +442,7 @@ class Skylos:
             ".java",
             *(_PHP_SOURCE_EXTS),
             *(_RUST_SOURCE_EXTS),
+            *(_DART_SOURCE_EXTS),
         }
         ext_list = [
             "py",
@@ -454,6 +458,7 @@ class Skylos:
             "java",
             "php",
             "rs",
+            "dart",
         ]
 
         # use rust file discovery when avail
@@ -2703,6 +2708,16 @@ def proc_file(
 
     if str(file).endswith(".rs"):
         out = scan_rust_file(
+            file,
+            cfg,
+            enable_danger_rules=enable_danger_rules,
+        )
+        if isinstance(out, tuple) and len(out) < 13:
+            return (*out, *([None] * (13 - len(out))))
+        return out[:13]
+
+    if str(file).endswith(".dart"):
+        out = scan_dart_file(
             file,
             cfg,
             enable_danger_rules=enable_danger_rules,
