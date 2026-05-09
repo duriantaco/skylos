@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "skylos"
 version = "4.12.1"
 requires-python = ">=3.10"
-description = "Open-source AI code security and static analysis for Python, TypeScript/JavaScript, Go, Java, PHP, and Rust. Finds dead code, secrets, vulnerabilities, and diff-aware regressions."
+description = "Open-source AI code security and static analysis for Python, TypeScript/JavaScript, Go, Java, PHP, Rust, and Dart. Finds dead code, secrets, vulnerabilities, and diff-aware regressions."
 authors = [{name = "Aaron Oh", email = "aaronoh2015@gmail.com"}]
 readme = "README.md"
 license = "Apache-2.0"
@@ -77,6 +77,7 @@ dependencies = [
     "tree-sitter-java>=0.23.0",
     "tree-sitter-php>=0.24.1",
     "tree-sitter-rust>=0.24.2",
+    "tree-sitter-dart-orchard>=0.3.2",
     "tomli>=2.0.1; python_version < '3.11'",
     "pyyaml",
     "networkx",

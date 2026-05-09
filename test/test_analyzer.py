@@ -212,6 +212,7 @@ class TestSkylos:
                 ".java",
                 ".php",
                 ".rs",
+                ".dart",
             },
             exclude_folders=None,
         )

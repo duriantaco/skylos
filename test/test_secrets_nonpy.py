@@ -28,6 +28,9 @@ class TestAllowedSuffixes:
     def test_rust_suffix_allowed(self):
         assert ".rs" in ALLOWED_FILE_SUFFIXES
 
+    def test_dart_suffix_allowed(self):
+        assert ".dart" in ALLOWED_FILE_SUFFIXES
+
 
 class TestEnvFileScanning:
     def test_detects_aws_key_in_env(self):

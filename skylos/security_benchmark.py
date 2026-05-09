@@ -45,7 +45,15 @@ DEFAULT_SCAN = {
 }
 
 SUPPORTED_SCANNERS = {"skylos", "bandit"}
-SUPPORTED_LANGUAGES = {"python", "go", "java", "javascript", "typescript", "rust"}
+SUPPORTED_LANGUAGES = {
+    "python",
+    "go",
+    "java",
+    "javascript",
+    "typescript",
+    "rust",
+    "dart",
+}
 SCANNER_LANGUAGE_SUPPORT = {
     "skylos": SUPPORTED_LANGUAGES,
     "bandit": {"python"},

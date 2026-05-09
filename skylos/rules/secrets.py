@@ -43,6 +43,7 @@ ALLOWED_FILE_SUFFIXES = (
     ".go",
     ".php",
     ".rs",
+    ".dart",
 )
 
 PROVIDER_PATTERNS = [

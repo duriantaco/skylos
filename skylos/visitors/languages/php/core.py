@@ -215,6 +215,19 @@ class PhpCore:
                 self._scan_class_like(child, namespace=active_namespace)
                 continue
 
+            if child.type == "enum_declaration":
+                self._scan_enum(child, namespace=active_namespace)
+                continue
+
+            if child.type == "const_declaration":
+                self._scan_constant_declaration(
+                    child,
+                    current_class=None,
+                    namespace=active_namespace,
+                    is_exported=False,
+                )
+                continue
+
             if child.type == "function_definition":
                 self._scan_function(child, namespace=active_namespace)
                 continue
@@ -280,11 +293,78 @@ class PhpCore:
                 self._scan_property_declaration(child, current_class=qualified)
                 continue
 
+            if child.type == "const_declaration":
+                self._scan_constant_declaration(
+                    child,
+                    current_class=qualified,
+                    namespace=namespace,
+                    is_exported=self._is_publicish(child, default_public=False),
+                )
+                continue
+
             if child.type == "method_declaration":
                 self._scan_method(child, current_class=qualified, class_bases=bases)
                 continue
 
             self._scan_refs_in_node(child, current_callable=None)
+
+    def _scan_enum(self, node, *, namespace: str) -> None:
+        name_node = self._child_by_type(node, "name")
+        enum_name = self._node_name_text(name_node)
+        if not enum_name:
+            return
+        qualified = self._qualified_symbol(enum_name, namespace)
+        enum_def = Definition(
+            qualified,
+            "class",
+            self.file_path,
+            name_node.start_point[0] + 1,
+        )
+        enum_def.is_exported = True
+        self.defs.append(enum_def)
+
+        declaration_list = self._child_by_type(node, "enum_declaration_list")
+        if declaration_list is None:
+            return
+        for case in self._children_of_type(declaration_list, "enum_case"):
+            case_node = self._child_by_type(case, "name")
+            case_name = self._node_name_text(case_node)
+            if not case_name:
+                continue
+            d = Definition(
+                f"{qualified}.{case_name}",
+                "variable",
+                self.file_path,
+                case_node.start_point[0] + 1,
+            )
+            d.is_exported = True
+            self.defs.append(d)
+
+    def _scan_constant_declaration(
+        self,
+        node,
+        *,
+        current_class: str | None,
+        namespace: str,
+        is_exported: bool,
+    ) -> None:
+        for const in self._children_of_type(node, "const_element"):
+            name_node = self._child_by_type(const, "name")
+            const_name = self._node_name_text(name_node)
+            if not const_name:
+                continue
+            if current_class:
+                qualified = f"{current_class}.{const_name}"
+            else:
+                qualified = self._qualified_symbol(const_name, namespace)
+            d = Definition(
+                qualified,
+                "variable",
+                self.file_path,
+                name_node.start_point[0] + 1,
+            )
+            d.is_exported = is_exported
+            self.defs.append(d)
 
     def _scan_property_declaration(self, node, *, current_class: str) -> None:
         is_exported = self._is_publicish(node, default_public=False)
@@ -312,7 +392,7 @@ class PhpCore:
         qualified = f"{current_class}.{method_name}"
         implicit_entrypoint = self._is_magic_or_test_entrypoint(
             method_name, class_bases, line
-        )
+        ) or self._has_test_attribute(node, line)
 
         d = Definition(qualified, "method", self.file_path, line)
         d.is_exported = self._is_publicish(node) or implicit_entrypoint
@@ -346,6 +426,17 @@ class PhpCore:
                 class_bases=class_bases,
             )
 
+    def _has_test_attribute(self, node, line: int) -> bool:
+        for attr_list in self._children_of_type(node, "attribute_list"):
+            for attr in self._descendants_of_type(attr_list, "attribute"):
+                name_node = self._child_by_type(attr, "name")
+                attr_name = self._node_name_text(name_node)
+                if attr_name != "Test" and not attr_name.endswith("\\Test"):
+                    continue
+                self.test_decorated_lines.add(line)
+                return True
+        return False
+
     def _scan_function(self, node, *, namespace: str) -> None:
         name_node = self._child_by_type(node, "name")
         func_name = self._node_name_text(name_node)
@@ -370,9 +461,13 @@ class PhpCore:
     def _scan_use_imports(self, node) -> None:
         names: list[str] = []
         line = node.start_point[0] + 1
-        for clause in self._children_of_type(node, "namespace_use_clause"):
-            target_node = self._child_by_type(clause, "qualified_name")
-            alias_node = self._child_by_type(clause, "name")
+        for clause in self._descendants_of_type(node, "namespace_use_clause"):
+            target_node = (
+                clause.child_by_field_name("name")
+                or self._child_by_type(clause, "qualified_name")
+                or self._child_by_type(clause, "name")
+            )
+            alias_node = clause.child_by_field_name("alias")
             target = self._node_name_text(target_node)
             alias = self._node_name_text(alias_node) or target.split("\\")[-1]
             if not alias:
@@ -385,6 +480,12 @@ class PhpCore:
             names.append(alias)
         if names:
             self.raw_imports.append({"source": "use", "names": names, "line": line})
+
+    def _descendants_of_type(self, node, type_name: str):
+        if node.type == type_name:
+            yield node
+        for child in node.children:
+            yield from self._descendants_of_type(child, type_name)
 
     def _scan_include_import(self, node) -> None:
         expr = None
