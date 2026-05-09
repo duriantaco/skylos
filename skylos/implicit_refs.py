@@ -32,7 +32,7 @@ class ImplicitRefTracker:
 
     def should_mark_as_used(self, definition):
         if getattr(definition, "name", None) in self.known_qualified_refs:
-            return True, 100, "entrypoint (pyproject.scripts)"
+            return True, 100, "entrypoint (pyproject)"
 
         simple_name = definition.simple_name
 

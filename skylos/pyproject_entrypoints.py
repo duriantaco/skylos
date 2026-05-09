@@ -39,12 +39,14 @@ def extract_entrypoints(project_root):
     out: set[str] = set()
 
     # PEP 621
-    scripts = (data.get("project") or {}).get("scripts") or {}
-    if isinstance(scripts, dict):
-        for _, target in scripts.items():
-            q = _to_qname(target)
-            if q:
-                out.add(q)
+    project = data.get("project") or {}
+    for table_name in ("scripts", "gui-scripts"):
+        scripts = project.get(table_name) or {}
+        if isinstance(scripts, dict):
+            for _, target in scripts.items():
+                q = _to_qname(target)
+                if q:
+                    out.add(q)
 
     poetry_scripts = (
         ((data.get("tool") or {}).get("poetry") or {}).get("scripts")
