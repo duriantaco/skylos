@@ -1559,6 +1559,45 @@ def pytest_assertrepr_compare(config, op, left, right):
         assert "left" not in unused_parameters
         assert "right" not in unused_parameters
 
+    def test_analyze_suppresses_override_method_parameters(self, tmp_path):
+        src = tmp_path / "models.py"
+        src.write_text(
+            """
+from typing import override
+import typing_extensions
+
+class Base:
+    def render(self, value, context, unused_base):
+        return value + context + unused_base
+
+class TypedChild(Base):
+    @override
+    def render(self, value, context, compat):
+        return value + context
+
+class ExtensionChild(Base):
+    @typing_extensions.override()
+    def render(self, value, context, compat_ext):
+        return value + context
+
+class PlainChild(Base):
+    def render(self, value, context, plain_unused):
+        return value + context
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unused_parameters = {
+            item["full_name"] for item in result["unused_parameters"]
+        }
+
+        assert "models.TypedChild.render.compat" not in unused_parameters
+        assert "models.ExtensionChild.render.compat_ext" not in unused_parameters
+        assert "models.PlainChild.render.plain_unused" in unused_parameters
+
     def test_analyze_suppresses_sqlalchemy_listener_parameters(self, tmp_path):
         src = tmp_path / "listener.py"
         src.write_text(
