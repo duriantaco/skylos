@@ -750,6 +750,431 @@ class App {
     assert "xpath_injection" in _categories(findings)
 
 
+def test_java_url_openstream_tainted_request_flags_ssrf(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.*;
+import javax.servlet.http.*;
+
+class App {
+  void run(HttpServletRequest request) throws Exception {
+    String target = request.getParameter("url");
+    new URL(target).openStream();
+  }
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_java_url_constructor_without_network_use_is_not_ssrf(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.*;
+import javax.servlet.http.*;
+
+class App {
+  String run(HttpServletRequest request) throws Exception {
+    String target = request.getParameter("url");
+    URL url = new URL(target);
+    return url.toString();
+  }
+}
+""",
+    )
+    assert "SKY-D216" not in _rule_ids(findings)
+
+
+def test_java_http_request_builder_tainted_uri_flags_ssrf(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.URI;
+import java.net.http.HttpRequest;
+import javax.servlet.http.*;
+
+class App {
+  HttpRequest run(HttpServletRequest request) throws Exception {
+    String target = request.getParameter("url");
+    URI uri = URI.create(target);
+    return HttpRequest.newBuilder(uri).build();
+  }
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_java_http_request_builder_uri_chain_tainted_uri_flags_ssrf(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.URI;
+import java.net.http.HttpRequest;
+import javax.servlet.http.*;
+
+class App {
+  HttpRequest run(HttpServletRequest request) throws Exception {
+    String target = request.getParameter("url");
+    return HttpRequest.newBuilder().uri(URI.create(target)).build();
+  }
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_java_http_request_builder_variable_uri_tainted_uri_flags_ssrf(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.URI;
+import java.net.http.HttpRequest;
+import javax.servlet.http.*;
+
+class App {
+  HttpRequest run(HttpServletRequest request) throws Exception {
+    String target = request.getParameter("url");
+    URI uri = URI.create(target);
+    HttpRequest.Builder builder = HttpRequest.newBuilder();
+    return builder.uri(uri).build();
+  }
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_java_http_request_builder_split_declaration_flags_ssrf(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.URI;
+import java.net.http.HttpRequest;
+import javax.servlet.http.*;
+
+class App {
+  HttpRequest run(HttpServletRequest request) throws Exception {
+    String target = request.getParameter("url");
+    URI uri = URI.create(target);
+    HttpRequest.Builder builder;
+    builder = HttpRequest.newBuilder();
+    return builder.uri(uri).build();
+  }
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_java_http_request_builder_host_allowlist_guard_is_safe(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.URI;
+import java.net.http.HttpRequest;
+import javax.servlet.http.*;
+
+class App {
+  HttpRequest run(HttpServletRequest request) throws Exception {
+    String target = request.getParameter("url");
+    URI uri = URI.create(target);
+    if (!"api.example.com".equals(uri.getHost())) {
+      throw new IllegalArgumentException("bad host");
+    }
+    return HttpRequest.newBuilder(uri).build();
+  }
+}
+""",
+    )
+    assert "SKY-D216" not in _rule_ids(findings)
+
+
+def test_java_http_request_builder_host_allowlist_with_benign_else_is_safe(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.URI;
+import java.net.http.HttpRequest;
+import javax.servlet.http.*;
+
+class App {
+  HttpRequest run(HttpServletRequest request) throws Exception {
+    String target = request.getParameter("url");
+    URI uri = URI.create(target);
+    if (!"api.example.com".equals(uri.getHost())) {
+      throw new IllegalArgumentException("bad host");
+    } else {
+      System.out.println("allowed");
+    }
+    return HttpRequest.newBuilder(uri).build();
+  }
+}
+""",
+    )
+    assert "SKY-D216" not in _rule_ids(findings)
+
+
+def test_java_http_request_builder_partial_host_guard_still_flags(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.URI;
+import java.net.http.HttpRequest;
+import javax.servlet.http.*;
+
+class App {
+  HttpRequest run(HttpServletRequest request, boolean debug) throws Exception {
+    String target = request.getParameter("url");
+    URI uri = URI.create(target);
+    if (!"api.example.com".equals(uri.getHost()) && debug) {
+      throw new IllegalArgumentException("bad host");
+    }
+    return HttpRequest.newBuilder(uri).build();
+  }
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_java_http_request_builder_else_reassignment_after_guard_still_flags(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.URI;
+import java.net.http.HttpRequest;
+import javax.servlet.http.*;
+
+class App {
+  HttpRequest run(HttpServletRequest request) throws Exception {
+    String target = request.getParameter("url");
+    URI uri = URI.create(target);
+    if (!"api.example.com".equals(uri.getHost())) {
+      throw new IllegalArgumentException("bad host");
+    } else {
+      uri = URI.create(request.getParameter("next"));
+    }
+    return HttpRequest.newBuilder(uri).build();
+  }
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_java_http_request_builder_weak_host_contains_guard_still_flags(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.URI;
+import java.net.http.HttpRequest;
+import javax.servlet.http.*;
+
+class App {
+  HttpRequest run(HttpServletRequest request) throws Exception {
+    String target = request.getParameter("url");
+    URI uri = URI.create(target);
+    if (!uri.getHost().contains(".")) {
+      throw new IllegalArgumentException("bad host");
+    }
+    return HttpRequest.newBuilder(uri).build();
+  }
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_java_http_request_builder_unrelated_host_guard_still_flags(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.net.URI;
+import java.net.http.HttpRequest;
+import javax.servlet.http.*;
+
+class App {
+  HttpRequest run(HttpServletRequest request) throws Exception {
+    String target = request.getParameter("url");
+    URI uri = URI.create(target);
+    URI checked = URI.create("https://api.example.com/users");
+    if (!"api.example.com".equals(checked.getHost())) {
+      throw new IllegalArgumentException("bad host");
+    }
+    return HttpRequest.newBuilder(uri).build();
+  }
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_java_rest_template_tainted_url_flags_ssrf(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import javax.servlet.http.*;
+import org.springframework.web.client.RestTemplate;
+
+class App {
+  Object run(HttpServletRequest request) {
+    String target = request.getParameter("url");
+    RestTemplate restTemplate = new RestTemplate();
+    return restTemplate.getForObject(target, String.class);
+  }
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_java_rest_template_method_name_without_receiver_type_is_not_ssrf(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import javax.servlet.http.*;
+
+class Exchange {
+  Object exchange(String value) { return value; }
+}
+
+class App {
+  Object run(HttpServletRequest request) {
+    String target = request.getParameter("url");
+    Exchange exchange = new Exchange();
+    return exchange.exchange(target);
+  }
+}
+""",
+    )
+    assert "SKY-D216" not in _rule_ids(findings)
+
+
+def test_java_rest_template_known_non_rest_template_receiver_is_not_ssrf(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import javax.servlet.http.*;
+
+class FakeClient {
+  Object getForObject(String value, Class<?> type) { return value; }
+}
+
+class App {
+  Object run(HttpServletRequest request) {
+    String target = request.getParameter("url");
+    FakeClient restTemplate = new FakeClient();
+    return restTemplate.getForObject(target, String.class);
+  }
+}
+""",
+    )
+    assert "SKY-D216" not in _rule_ids(findings)
+
+
+def test_java_send_redirect_tainted_target_flags_open_redirect(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import javax.servlet.http.*;
+
+class App {
+  void run(HttpServletRequest request, HttpServletResponse response) throws Exception {
+    String next = request.getParameter("next");
+    response.sendRedirect(next);
+  }
+}
+""",
+    )
+    assert "SKY-D230" in _rule_ids(findings)
+
+
+def test_java_send_redirect_relative_guard_is_safe(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import javax.servlet.http.*;
+
+class App {
+  void run(HttpServletRequest request, HttpServletResponse response) throws Exception {
+    String next = request.getParameter("next");
+    if (!next.startsWith("/") || next.startsWith("//")) {
+      throw new IllegalArgumentException("bad redirect");
+    }
+    response.sendRedirect(next);
+  }
+}
+""",
+    )
+    assert "SKY-D230" not in _rule_ids(findings)
+
+
+def test_java_send_redirect_relative_guard_with_benign_else_is_safe(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import javax.servlet.http.*;
+
+class App {
+  void run(HttpServletRequest request, HttpServletResponse response) throws Exception {
+    String next = request.getParameter("next");
+    if (!next.startsWith("/") || next.startsWith("//")) {
+      throw new IllegalArgumentException("bad redirect");
+    } else {
+      System.out.println("allowed");
+    }
+    response.sendRedirect(next);
+  }
+}
+""",
+    )
+    assert "SKY-D230" not in _rule_ids(findings)
+
+
+def test_java_send_redirect_partial_relative_guard_still_flags(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import javax.servlet.http.*;
+
+class App {
+  void run(HttpServletRequest request, HttpServletResponse response, boolean debug) throws Exception {
+    String next = request.getParameter("next");
+    if (debug && (!next.startsWith("/") || next.startsWith("//"))) {
+      throw new IllegalArgumentException("bad redirect");
+    }
+    response.sendRedirect(next);
+  }
+}
+""",
+    )
+    assert "SKY-D230" in _rule_ids(findings)
+
+
+def test_java_send_redirect_else_reassignment_after_guard_still_flags(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import javax.servlet.http.*;
+
+class App {
+  void run(HttpServletRequest request, HttpServletResponse response) throws Exception {
+    String next = request.getParameter("next");
+    if (!next.startsWith("/") || next.startsWith("//")) {
+      throw new IllegalArgumentException("bad redirect");
+    } else {
+      next = request.getParameter("fallback");
+    }
+    response.sendRedirect(next);
+  }
+}
+""",
+    )
+    assert "SKY-D230" in _rule_ids(findings)
+
+
+def test_java_send_redirect_slash_guard_without_protocol_relative_check_flags(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import javax.servlet.http.*;
+
+class App {
+  void run(HttpServletRequest request, HttpServletResponse response) throws Exception {
+    String next = request.getParameter("next");
+    if (!next.startsWith("/")) {
+      throw new IllegalArgumentException("bad redirect");
+    }
+    response.sendRedirect(next);
+  }
+}
+""",
+    )
+    assert "SKY-D230" in _rule_ids(findings)
+
+
 def test_tainted_writer_output_flags_xss(tmp_path):
     findings = _scan_java(
         tmp_path,
