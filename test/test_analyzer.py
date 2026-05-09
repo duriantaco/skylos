@@ -775,6 +775,34 @@ class TestAnalyze:
         assert ("SKY-Q803", "mypkg.cli") not in architecture_rules
         assert ("SKY-Q802", "mypkg._helpers") not in architecture_rules
 
+    def test_pyproject_gui_script_entrypoint_is_not_reported_dead(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pkg = root / "mypkg"
+            pkg.mkdir()
+            (root / "pyproject.toml").write_text(
+                "[project]\n"
+                'name = "gui-entrypoint-repro"\n'
+                'version = "0.1.0"\n\n'
+                "[project.gui-scripts]\n"
+                'mypkg-gui = "mypkg.gui:launch"\n',
+                encoding="utf-8",
+            )
+            (pkg / "__init__.py").write_text("", encoding="utf-8")
+            (pkg / "gui.py").write_text(
+                "def launch():\n"
+                '    print("hello")\n',
+                encoding="utf-8",
+            )
+
+            result_json = analyze(str(root), conf=0, grep_verify=False)
+
+        result = json.loads(result_json)
+        unused_functions = {
+            item["full_name"] for item in result.get("unused_functions", [])
+        }
+        assert "mypkg.gui.launch" not in unused_functions
+
     def test_analyze_architecture_filters_low_fan_in_private_helper_q803(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

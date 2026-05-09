@@ -2266,10 +2266,6 @@ class Skylos:
 
         self.pattern_trackers = pattern_trackers
 
-        for tracker in pattern_trackers.values():
-            if hasattr(tracker, "known_qualified_refs"):
-                tracker.known_qualified_refs.clear()
-
         self._global_abc_classes = set()
         self._global_protocol_classes = set()
         self._global_abstract_methods = {}
