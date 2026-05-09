@@ -177,6 +177,20 @@ func (a *Analyzer) checkCallExpr(call *ast.CallExpr, path string) {
 		}
 	}
 
+	if pkg == "net/http" {
+		urlArg := -1
+		switch funcName {
+		case "NewRequest":
+			urlArg = 1
+		case "NewRequestWithContext":
+			urlArg = 2
+		}
+		if urlArg >= 0 && len(call.Args) > urlArg && a.isVariable(call.Args[urlArg]) {
+			a.addFinding(call, path, "SKY-G216", "CRITICAL", "Potential SSRF",
+				"HTTP request URL includes variable input. Validate against allowlist.")
+		}
+	}
+
 	if funcs, ok := cryptoWeakFuncs[pkg]; ok && contains(funcs, funcName) {
 		rule := "SKY-G207"
 		msg := "Weak hash algorithm MD5"

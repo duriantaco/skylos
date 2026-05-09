@@ -191,6 +191,104 @@ func run(name string) error {
     assert "SKY-D212" not in _rule_ids(findings)
 
 
+def test_http_new_request_variable_url_flags_ssrf(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "net/http"
+
+func run(target string) (*http.Request, error) {
+    return http.NewRequest("GET", target, nil)
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_http_new_request_alias_import_variable_url_flags_ssrf(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import h "net/http"
+
+func run(target string) (*h.Request, error) {
+    return h.NewRequest("GET", target, nil)
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_http_new_request_with_context_variable_url_flags_ssrf(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import (
+    "context"
+    "net/http"
+)
+
+func run(ctx context.Context, target string) (*http.Request, error) {
+    return http.NewRequestWithContext(ctx, "GET", target, nil)
+}
+""",
+    )
+    assert "SKY-D216" in _rule_ids(findings)
+
+
+def test_http_new_request_fixed_literal_url_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "net/http"
+
+func run() (*http.Request, error) {
+    return http.NewRequest("GET", "https://api.example.com/users", nil)
+}
+""",
+    )
+    assert "SKY-D216" not in _rule_ids(findings)
+
+
+def test_new_request_lookalike_non_http_receiver_is_safe(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+type Client struct{}
+type Request struct{}
+
+func (Client) NewRequest(method string, target string) (*Request, error) {
+    return &Request{}, nil
+}
+
+func run(client Client, target string) (*Request, error) {
+    return client.NewRequest("GET", target)
+}
+""",
+    )
+    assert "SKY-D216" not in _rule_ids(findings)
+
+
+def test_http_client_do_variable_request_is_not_flagged_without_request_taint(tmp_path):
+    findings = _scan_go(
+        tmp_path,
+        """package main
+
+import "net/http"
+
+func run(client *http.Client, req *http.Request) (*http.Response, error) {
+    return client.Do(req)
+}
+""",
+    )
+    assert "SKY-D216" not in _rule_ids(findings)
+
+
 def test_insecure_cookie_remapped_to_shared_rule(tmp_path):
     findings = _scan_go(
         tmp_path,

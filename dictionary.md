@@ -20,14 +20,14 @@ Rule IDs are unified across languages — same vulnerability, same ID.
 | D212 | CRITICAL | Command injection | Python, TS, Go | CWE-78 | A03:2021 |
 | D214 | HIGH | Broken access control | Python | — | A01:2021 |
 | D215 | HIGH | Path traversal | Python, Go | CWE-22 | A01:2021 |
-| D216 | CRITICAL | SSRF | Python, TS, Go | CWE-918 | A10:2021 |
+| D216 | CRITICAL | SSRF | Python, TS, Go, Java | CWE-918 | A10:2021 |
 | D217 | CRITICAL | SQL injection (ORM — sqlalchemy.text, pandas.read_sql, Django .raw) | Python | CWE-89 | A03:2021 |
 | D222 | MEDIUM | Dependency hallucination | Python | — | — |
 | D223 | MEDIUM | Undeclared third-party dependency | Python | — | — |
 | D226 | CRITICAL | XSS (mark_safe, innerHTML, outerHTML, document.write, dangerouslySetInnerHTML) | Python, TS | CWE-79 | A03:2021 |
 | D227 | HIGH | XSS: unsafe template rendering | Python | CWE-79 | A03:2021 |
 | D228 | HIGH | XSS: unescaped HTML output | Python | CWE-79 | A03:2021 |
-| D230 | HIGH | Open redirect | Python, TS, Go | CWE-601 | A01:2021 |
+| D230 | HIGH | Open redirect | Python, TS, Go, Java | CWE-601 | A01:2021 |
 | D231 | HIGH | CORS misconfiguration | Python | — | A05:2021 |
 | D232 | CRITICAL | JWT vulnerability (algorithms=none, verify=False) | Python | — | A02:2021 |
 | D233 | CRITICAL | Unsafe deserialization (marshal, shelve, jsonpickle, dill) | Python | — | A08:2021 |

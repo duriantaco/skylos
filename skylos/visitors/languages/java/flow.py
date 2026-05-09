@@ -28,6 +28,10 @@ REQUEST_TYPES = {
     "ServletRequest",
 }
 
+RESPONSE_TYPES = {
+    "HttpServletResponse",
+}
+
 PATH_NORMALIZER_METHODS = {
     "normalize",
     "toRealPath",
@@ -62,6 +66,35 @@ XSS_SANITIZER_METHODS = {
     "forHtml",
     "escapeHtml",
     "htmlEscape",
+}
+
+URL_NETWORK_METHODS = {
+    "connect",
+    "openConnection",
+    "openStream",
+    "getContent",
+    "getInputStream",
+    "getOutputStream",
+}
+
+HTTP_REQUEST_BUILDER_METHODS = {
+    "newBuilder": (0,),
+    "uri": (0,),
+}
+
+REST_TEMPLATE_URL_METHODS = {
+    "delete": (0,),
+    "exchange": (0,),
+    "execute": (0,),
+    "getForEntity": (0,),
+    "getForObject": (0,),
+    "headForHeaders": (0,),
+    "optionsForAllow": (0,),
+    "patchForObject": (0,),
+    "postForEntity": (0,),
+    "postForLocation": (0,),
+    "postForObject": (0,),
+    "put": (0,),
 }
 
 FILES_PATH_METHODS = {
@@ -116,6 +149,8 @@ class JavaFlowState:
     slash_terminated_vars: set[str] = field(default_factory=set)
     canonical_path_sources: dict[str, set[str]] = field(default_factory=dict)
     pending_path_objects: dict[str, int] = field(default_factory=dict)
+    guarded_url_vars: set[str] = field(default_factory=set)
+    guarded_redirect_vars: set[str] = field(default_factory=set)
 
     def copy(self) -> "JavaFlowState":
         return JavaFlowState(
@@ -138,6 +173,8 @@ class JavaFlowState:
                 key: set(value) for key, value in self.canonical_path_sources.items()
             },
             pending_path_objects=dict(self.pending_path_objects),
+            guarded_url_vars=set(self.guarded_url_vars),
+            guarded_redirect_vars=set(self.guarded_redirect_vars),
         )
 
     def merge_from(self, left: "JavaFlowState", right: "JavaFlowState") -> None:
@@ -176,6 +213,10 @@ class JavaFlowState:
             )
             for name in set(left.pending_path_objects) | set(right.pending_path_objects)
         }
+        self.guarded_url_vars = left.guarded_url_vars & right.guarded_url_vars
+        self.guarded_redirect_vars = (
+            left.guarded_redirect_vars & right.guarded_redirect_vars
+        )
 
     def _merge_map_entries(
         self,
@@ -258,6 +299,8 @@ class JavaSecurityFlowAnalyzer:
                 state.request_vars.add(name)
             if annotations & REQUEST_PARAM_ANNOTATIONS:
                 state.tainted_vars.add(name)
+            if type_name:
+                state.object_types[name] = type_name
         return state
 
     def _collect_helper_summaries(
@@ -428,12 +471,22 @@ class JavaSecurityFlowAnalyzer:
     ) -> None:
         name_node = declarator.child_by_field_name("name")
         value_node = declarator.child_by_field_name("value")
-        if name_node is None or value_node is None:
+        if name_node is None:
             return
         name = self._text(name_node)
+        declared_type = self._declared_type_for_declarator(declarator)
+        if value_node is None:
+            if declared_type:
+                state.object_types[name] = declared_type
+            return
         if collect_findings:
             self._scan_expression_effects(value_node, state)
-        self._assign_var(name, value_node, state)
+        self._assign_var(
+            name,
+            value_node,
+            state,
+            declared_type=declared_type,
+        )
 
     def _process_assignment(
         self, assignment, state: JavaFlowState, *, collect_findings: bool
@@ -448,8 +501,17 @@ class JavaSecurityFlowAnalyzer:
         if name:
             self._assign_var(name, right, state)
 
-    def _assign_var(self, name: str, value_node, state: JavaFlowState) -> None:
+    def _assign_var(
+        self,
+        name: str,
+        value_node,
+        state: JavaFlowState,
+        *,
+        declared_type: str | None = None,
+    ) -> None:
         state.guarded_path_vars.discard(name)
+        state.guarded_url_vars.discard(name)
+        state.guarded_redirect_vars.discard(name)
         state.pending_path_objects.pop(name, None)
 
         const_value = self._eval_constant(value_node, state)
@@ -459,6 +521,7 @@ class JavaSecurityFlowAnalyzer:
             state.constants.pop(name, None)
 
         object_type = self._object_creation_type(value_node)
+        builder_type = self._http_request_builder_type(value_node)
         if object_type:
             state.object_types[name] = object_type
             if object_type == "Cookie":
@@ -473,6 +536,10 @@ class JavaSecurityFlowAnalyzer:
                 facts = self._expr_facts(value_node, state)
                 if facts.tainted:
                     state.pending_path_objects[name] = self._line(value_node)
+        elif builder_type:
+            state.object_types[name] = builder_type
+        elif declared_type:
+            state.object_types[name] = declared_type
         else:
             state.object_types.pop(name, None)
 
@@ -510,6 +577,8 @@ class JavaSecurityFlowAnalyzer:
         self, node, state: JavaFlowState, *, collect_findings: bool
     ) -> None:
         guarded_after = self._path_guards_from_if(node, state)
+        guarded_urls_after = self._url_guards_from_if(node, state)
+        guarded_redirects_after = self._redirect_guards_from_if(node, state)
         condition = node.child_by_field_name("condition")
         selected = self._eval_condition(condition, state)
         consequence = node.child_by_field_name("consequence")
@@ -541,6 +610,8 @@ class JavaSecurityFlowAnalyzer:
         state.guarded_path_vars.update(guarded_after)
         for name in guarded_after:
             state.pending_path_objects.pop(name, None)
+        state.guarded_url_vars.update(guarded_urls_after)
+        state.guarded_redirect_vars.update(guarded_redirects_after)
 
     def _process_enhanced_for(
         self, node, state: JavaFlowState, *, collect_findings: bool
@@ -782,6 +853,53 @@ class JavaSecurityFlowAnalyzer:
                 cwe="CWE-501",
             )
 
+        if self._is_send_redirect_sink(call, state) and self._redirect_sink_tainted(
+            args, state
+        ):
+            self._add_finding(
+                "SKY-D230",
+                "HIGH",
+                "Servlet redirect uses request-controlled data. Validate redirect targets against a relative-path or host allowlist.",
+                line,
+                cwe="CWE-601",
+            )
+
+        if self._is_url_network_sink(call, state):
+            self._add_finding(
+                "SKY-D216",
+                "CRITICAL",
+                "Request-controlled URL reaches a network client. Validate scheme and host against an allowlist.",
+                line,
+                cwe="CWE-918",
+            )
+
+        builder_url_arg_positions = (
+            HTTP_REQUEST_BUILDER_METHODS[method]
+            if method in HTTP_REQUEST_BUILDER_METHODS
+            else ()
+        )
+        if self._is_http_request_builder_sink(call, state) and self._url_sink_args_tainted(
+            args, builder_url_arg_positions, state
+        ):
+            self._add_finding(
+                "SKY-D216",
+                "CRITICAL",
+                "Request-controlled URL reaches Java HTTP request construction. Validate scheme and host against an allowlist.",
+                line,
+                cwe="CWE-918",
+            )
+
+        if self._is_rest_template_sink(call, state) and self._url_sink_args_tainted(
+            args, REST_TEMPLATE_URL_METHODS.get(method, ()), state
+        ):
+            self._add_finding(
+                "SKY-D216",
+                "CRITICAL",
+                "Request-controlled URL reaches RestTemplate. Validate scheme and host against an allowlist.",
+                line,
+                cwe="CWE-918",
+            )
+
         if self._is_files_path_sink(call):
             positions = FILES_PATH_METHODS.get(method, ())
             if self._path_sink_tainted(call, args, positions, state):
@@ -991,6 +1109,100 @@ class JavaSecurityFlowAnalyzer:
             current = current.parent
         return False
 
+    def _url_sink_args_tainted(
+        self, args: list, positions: tuple[int, ...], state: JavaFlowState
+    ) -> bool:
+        for pos in positions:
+            if pos >= len(args):
+                continue
+            arg = args[pos]
+            facts = self._expr_facts(arg, state)
+            if not facts.tainted:
+                continue
+            names = self._tainted_identifiers(arg, state)
+            if names and names <= state.guarded_url_vars:
+                continue
+            return True
+        return False
+
+    def _redirect_sink_tainted(self, args: list, state: JavaFlowState) -> bool:
+        if not args:
+            return False
+        target = args[0]
+        facts = self._expr_facts(target, state)
+        if not facts.tainted:
+            return False
+        names = self._tainted_identifiers(target, state)
+        return not (names and names <= state.guarded_redirect_vars)
+
+    def _is_url_network_sink(self, call, state: JavaFlowState) -> bool:
+        method = self._call_name(call)
+        if method not in URL_NETWORK_METHODS:
+            return False
+        receiver = call.child_by_field_name("object")
+        if receiver is None or not self._expr_facts(receiver, state).tainted:
+            return False
+        names = self._tainted_identifiers(receiver, state)
+        if names and names <= state.guarded_url_vars:
+            return False
+        receiver_class = self._receiver_class_name(call, state)
+        if receiver_class in {"URL", "URLConnection", "HttpURLConnection", "URI"}:
+            return True
+        if receiver.type == "method_invocation":
+            receiver_method = self._call_name(receiver)
+            return receiver_method in {"toURL", "openConnection", "create"}
+        return False
+
+    def _is_http_request_builder_sink(self, call, state: JavaFlowState) -> bool:
+        method = self._call_name(call)
+        if method not in HTTP_REQUEST_BUILDER_METHODS:
+            return False
+        receiver = self._simple_name(self._receiver_text(call))
+        if method == "newBuilder":
+            return receiver == "HttpRequest"
+        if method == "uri":
+            receiver_class = self._receiver_class_name(call, state)
+            if receiver_class == "HttpRequest.Builder":
+                return True
+            receiver_text = self._receiver_text(call)
+            return receiver_text.startswith(
+                "HttpRequest.newBuilder("
+            ) or receiver_text.startswith("java.net.http.HttpRequest.newBuilder(")
+        return False
+
+    def _is_rest_template_sink(self, call, state: JavaFlowState) -> bool:
+        method = self._call_name(call)
+        if method not in REST_TEMPLATE_URL_METHODS:
+            return False
+        receiver_class = self._receiver_class_name(call, state)
+        if receiver_class == "RestTemplate":
+            return True
+        if receiver_class is not None:
+            return False
+        receiver = self._receiver_name(call)
+        return receiver is not None and receiver.lower() in {
+            "resttemplate",
+            "rest_template",
+        }
+
+    def _is_send_redirect_sink(self, call, state: JavaFlowState) -> bool:
+        if self._call_name(call) != "sendRedirect":
+            return False
+        receiver_class = self._receiver_class_name(call, state)
+        if receiver_class in RESPONSE_TYPES:
+            return True
+        receiver = self._receiver_name(call)
+        return receiver in {"response", "resp", "res"}
+
+    def _receiver_class_name(self, call, state: JavaFlowState) -> str | None:
+        receiver = self._receiver_name(call)
+        if receiver:
+            return state.object_types.get(receiver)
+        receiver_node = call.child_by_field_name("object")
+        if receiver_node is not None and receiver_node.type == "object_creation_expression":
+            return self._object_creation_type(receiver_node)
+        return None
+
     def _path_guards_from_if(self, node, state: JavaFlowState) -> set[str]:
         condition = node.child_by_field_name("condition")
         consequence = node.child_by_field_name("consequence")
@@ -1010,6 +1222,32 @@ class JavaSecurityFlowAnalyzer:
             if self._is_safe_path_guard_call(call, state):
                 guards.add(receiver)
                 guards.update(state.canonical_path_sources.get(receiver, set()))
+        return guards
+
+    def _url_guards_from_if(self, node, state: JavaFlowState) -> set[str]:
+        condition = node.child_by_field_name("condition")
+        consequence = node.child_by_field_name("consequence")
+        alternative = node.child_by_field_name("alternative")
+        if condition is None or consequence is None:
+            return set()
+        if not self._statement_always_exits(consequence, state):
+            return set()
+        guards = self._url_host_rejection_guard_names(condition, state)
+        if alternative is not None and self._statement_assigns_names(alternative, guards):
+            return set()
+        return guards
+
+    def _redirect_guards_from_if(self, node, state: JavaFlowState) -> set[str]:
+        condition = node.child_by_field_name("condition")
+        consequence = node.child_by_field_name("consequence")
+        alternative = node.child_by_field_name("alternative")
+        if condition is None or consequence is None:
+            return set()
+        if not self._statement_always_exits(consequence, state):
+            return set()
+        guards = self._relative_redirect_guard_names(condition, state)
+        if alternative is not None and self._statement_assigns_names(alternative, guards):
+            return set()
         return guards
 
     def _positive_path_guard_names(self, node, state: JavaFlowState) -> set[str]:
@@ -1046,6 +1284,96 @@ class JavaSecurityFlowAnalyzer:
             if arg_name in state.canonical_string_vars:
                 return arg_name in state.slash_terminated_vars
         return True
+
+    def _url_host_rejection_guard_names(
+        self, node, state: JavaFlowState
+    ) -> set[str]:
+        node = self._strip_parentheses(node)
+        if node is None or node.type != "unary_expression":
+            return set()
+        text = self._text(node).strip()
+        if not text.startswith("!"):
+            return set()
+        target = self._strip_parentheses(self._first_expression_child(node))
+        if target is None or target.type != "method_invocation":
+            return set()
+        if self._call_name(target) not in {"equals", "equalsIgnoreCase"}:
+            return set()
+
+        args = self._call_args(target)
+        receiver = target.child_by_field_name("object")
+        if len(args) != 1 or receiver is None:
+            return set()
+
+        if receiver.type == "string_literal":
+            return self._host_call_tainted_names(args[0], state)
+        if args[0].type == "string_literal":
+            return self._host_call_tainted_names(receiver, state)
+        return set()
+
+    def _host_call_tainted_names(self, node, state: JavaFlowState) -> set[str]:
+        node = self._strip_parentheses(node)
+        if node is None or node.type != "method_invocation":
+            return set()
+        if self._call_name(node) != "getHost":
+            return set()
+        receiver = self._receiver_name(node)
+        if receiver and receiver in state.tainted_vars:
+            return {receiver}
+        receiver_node = node.child_by_field_name("object")
+        return self._tainted_identifiers(receiver_node, state)
+
+    def _relative_redirect_guard_names(
+        self, node, state: JavaFlowState
+    ) -> set[str]:
+        node = self._strip_parentheses(node)
+        if node is None or node.type != "binary_expression":
+            return set()
+        if self._binary_operator(node) != "||":
+            return set()
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+
+        left_neg = self._negative_startswith_guard_name(left, "/", state)
+        right_pos = self._positive_startswith_guard_name(right, "//", state)
+        if left_neg and left_neg == right_pos:
+            return {left_neg}
+
+        left_pos = self._positive_startswith_guard_name(left, "//", state)
+        right_neg = self._negative_startswith_guard_name(right, "/", state)
+        if left_pos and left_pos == right_neg:
+            return {left_pos}
+
+        return set()
+
+    def _negative_startswith_guard_name(
+        self, node, value: str, state: JavaFlowState
+    ) -> str | None:
+        node = self._strip_parentheses(node)
+        if node is None or node.type != "unary_expression":
+            return None
+        text = self._text(node).strip()
+        if not text.startswith("!"):
+            return None
+        return self._positive_startswith_guard_name(
+            self._first_expression_child(node), value, state
+        )
+
+    def _positive_startswith_guard_name(
+        self, node, value: str, state: JavaFlowState
+    ) -> str | None:
+        node = self._strip_parentheses(node)
+        if node is None or node.type != "method_invocation":
+            return None
+        if self._call_name(node) != "startsWith":
+            return None
+        receiver = self._receiver_name(node)
+        if not receiver or receiver not in state.tainted_vars:
+            return None
+        args = self._call_args(node)
+        if not args or self._string_literal_value(args[0]) != value:
+            return None
+        return receiver
 
     def _flush_pending_path_objects(self, state: JavaFlowState) -> None:
         for name, line in sorted(state.pending_path_objects.items(), key=lambda item: item[1]):
@@ -1268,6 +1596,20 @@ class JavaSecurityFlowAnalyzer:
             )
         return False
 
+    def _statement_assigns_names(self, node, names: set[str]) -> bool:
+        if not names:
+            return False
+        for child in self._iter_nodes(node):
+            if child.type == "assignment_expression":
+                target = self._assignment_target_name(child.child_by_field_name("left"))
+                if target in names:
+                    return True
+            elif child.type == "variable_declarator":
+                name = child.child_by_field_name("name")
+                if name is not None and self._text(name) in names:
+                    return True
+        return False
+
     def _is_in_consequence(self, node, if_node) -> bool:
         consequence = if_node.child_by_field_name("consequence")
         current = node
@@ -1324,6 +1666,15 @@ class JavaSecurityFlowAnalyzer:
             and left.start_byte == right.start_byte
             and left.end_byte == right.end_byte
         )
+
+    def _strip_parentheses(self, node):
+        while node is not None and node.type == "parenthesized_expression":
+            node = self._first_expression_child(node)
+        return node
+
+    def _binary_operator(self, node) -> str:
+        op_node = node.child_by_field_name("operator")
+        return self._text(op_node) if op_node is not None else ""
 
     def _method_nodes(self) -> list:
         return [
@@ -1415,6 +1766,27 @@ class JavaSecurityFlowAnalyzer:
     def _call_args(self, call) -> list:
         args = call.child_by_field_name("arguments")
         return self._argument_children(args)
+
+    def _declared_type_for_declarator(self, declarator) -> str | None:
+        declaration = declarator.parent
+        if declaration is None or declaration.type != "local_variable_declaration":
+            return None
+        type_node = declaration.child_by_field_name("type")
+        if type_node is None:
+            return None
+        raw = self._text(type_node).replace("[]", "").split("<", 1)[0].strip()
+        if raw.endswith("HttpRequest.Builder"):
+            return "HttpRequest.Builder"
+        return self._simple_name(raw)
+
+    def _http_request_builder_type(self, node) -> str | None:
+        if node is None or node.type != "method_invocation":
+            return None
+        if self._call_name(node) != "newBuilder":
+            return None
+        if self._simple_name(self._receiver_text(node)) != "HttpRequest":
+            return None
+        return "HttpRequest.Builder"
 
     def _object_creation_type(self, node) -> str | None:
         if node is None or node.type != "object_creation_expression":
