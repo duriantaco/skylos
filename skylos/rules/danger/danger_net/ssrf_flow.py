@@ -209,6 +209,77 @@ def _is_interpolated_string(node):
     return False
 
 
+def _safe_expr_text(node: ast.AST | None, max_length: int = 160) -> str:
+    if node is None:
+        return "unknown"
+    try:
+        text = ast.unparse(node)
+    except Exception:
+        text = type(node).__name__
+    text = " ".join(str(text).split())
+    if len(text) > max_length:
+        return text[: max_length - 3] + "..."
+    return text or "unknown"
+
+
+def _request_base_name(node: ast.AST | None) -> str | None:
+    current = node
+    while isinstance(current, (ast.Attribute, ast.Subscript)):
+        current = current.value
+    if isinstance(current, ast.Name):
+        return current.id
+    return None
+
+
+def _source_label(node: ast.AST, *, interpolated: bool) -> str:
+    if _request_base_name(node) == "request":
+        return "request-derived URL value"
+    if isinstance(node, ast.Name):
+        return f"tainted variable `{node.id}`"
+    if isinstance(node, ast.JoinedStr) or interpolated:
+        return "interpolated URL expression"
+    return "tainted URL expression"
+
+
+def _ssrf_security_evidence(
+    *,
+    symbol: str,
+    sink: str,
+    url_arg: ast.AST,
+    interpolated: bool,
+) -> dict:
+    source = _source_label(url_arg, interpolated=interpolated)
+    expression = _safe_expr_text(url_arg)
+    entrypoint = symbol if symbol and symbol != "<module>" else None
+
+    evidence = {
+        "evidence_kind": "source_to_sink",
+        "source": source,
+        "sink": sink,
+        "path": [
+            source,
+            f"url expression `{expression}`",
+            f"HTTP sink `{sink}`",
+        ],
+        "guards_seen": [],
+        "guards_missing": [
+            "URL host or scheme allowlist",
+            "private, loopback, and metadata host rejection",
+        ],
+        "confidence_reason": (
+            "Untrusted URL data can influence the outbound HTTP request target."
+        ),
+        "test_hint": (
+            "Assert untrusted input cannot control the request host and private "
+            "or metadata URLs are rejected before the HTTP client call."
+        ),
+        "fix_shape": "validate and allowlist the URL before the HTTP request",
+    }
+    if entrypoint:
+        evidence["entrypoint"] = entrypoint
+    return evidence
+
+
 class _SSRFFlowChecker(TaintVisitor):
     HTTP_METHODS = {"get", "post", "put", "delete", "head", "options", "request"}
 
@@ -258,6 +329,29 @@ class _SSRFFlowChecker(TaintVisitor):
 
         return False
 
+    def _append_finding(self, node: ast.Call, url_arg: ast.AST, sink: str) -> None:
+        interpolated = _is_interpolated_string(url_arg)
+        symbol = self._current_symbol()
+        self.findings.append(
+            {
+                "rule_id": "SKY-D216",
+                "severity": "CRITICAL",
+                "message": "Possible SSRF: tainted URL passed to HTTP client.",
+                "file": str(self.file_path),
+                "line": node.lineno,
+                "col": node.col_offset,
+                "symbol": symbol,
+                "metadata": {
+                    "security_evidence": _ssrf_security_evidence(
+                        symbol=symbol,
+                        sink=sink,
+                        url_arg=url_arg,
+                        interpolated=interpolated,
+                    )
+                },
+            }
+        )
+
     def visit_Call(self, node):
         qn = _qualified_name_from_call(node)
 
@@ -270,34 +364,14 @@ class _SSRFFlowChecker(TaintVisitor):
                     if _is_interpolated_string(url_arg) or _tainted_url_is_ssrf_relevant(
                         self, url_arg
                     ):
-                        self.findings.append(
-                            {
-                                "rule_id": "SKY-D216",
-                                "severity": "CRITICAL",
-                                "message": "Possible SSRF: tainted URL passed to HTTP client.",
-                                "file": str(self.file_path),
-                                "line": node.lineno,
-                                "col": node.col_offset,
-                                "symbol": self._current_symbol(),
-                            }
-                        )
+                        self._append_finding(node, url_arg, qn)
 
         if qn and qn.endswith(".urlopen") and node.args:
             url_arg = node.args[0]
             if _is_interpolated_string(url_arg) or _tainted_url_is_ssrf_relevant(
                 self, url_arg
             ):
-                self.findings.append(
-                    {
-                        "rule_id": "SKY-D216",
-                        "severity": "CRITICAL",
-                        "message": "Possible SSRF: tainted URL passed to HTTP client.",
-                        "file": str(self.file_path),
-                        "line": node.lineno,
-                        "col": node.col_offset,
-                        "symbol": self._current_symbol(),
-                    }
-                )
+                self._append_finding(node, url_arg, qn)
 
         self.generic_visit(node)
 
