@@ -33,15 +33,41 @@ logger = logging.getLogger("skylos-mcp")
 
 RESULTS_DIR = Path(
     os.getenv("SKYLOS_MCP_RESULTS_DIR", Path.home() / ".skylos" / "mcp_results")
-)
+).expanduser().resolve()
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 _results_cache: dict[str, dict[str, Any]] = {}
+_RUN_ID_RE = re.compile(r"^[a-f0-9]{12}$")
+
+
+def _make_run_id(tool: str, path: str, ts: str) -> str:
+    return hashlib.sha256(f"{ts}-{tool}-{path}".encode()).hexdigest()[:12]
+
+
+def _validate_run_id(run_id: str) -> str | None:
+    candidate = str(run_id or "")
+    if candidate == "latest":
+        return candidate
+    if _RUN_ID_RE.fullmatch(candidate):
+        return candidate
+    return None
+
+
+def _result_path(run_id: str) -> Path | None:
+    safe_id = _validate_run_id(run_id)
+    if safe_id is None:
+        return None
+    candidate = (RESULTS_DIR / f"{safe_id}.json").resolve()
+    try:
+        candidate.relative_to(RESULTS_DIR)
+    except ValueError:
+        return None
+    return candidate
 
 
 def _store_result(result: dict, tool: str, path: str) -> str:
     ts = datetime.now(timezone.utc).isoformat()
-    run_id = hashlib.sha256(f"{ts}-{tool}-{path}".encode()).hexdigest()[:12]
+    run_id = _make_run_id(tool, path, ts)
 
     envelope = {
         "run_id": run_id,
@@ -55,8 +81,12 @@ def _store_result(result: dict, tool: str, path: str) -> str:
     _results_cache["latest"] = envelope
 
     try:
-        (RESULTS_DIR / f"{run_id}.json").write_text(json.dumps(envelope, indent=2))
-        (RESULTS_DIR / "latest.json").write_text(json.dumps(envelope, indent=2))
+        run_path = _result_path(run_id)
+        latest_path = _result_path("latest")
+        if run_path is not None:
+            run_path.write_text(json.dumps(envelope, indent=2))
+        if latest_path is not None:
+            latest_path.write_text(json.dumps(envelope, indent=2))
     except OSError as exc:
         logger.warning("Could not persist result to disk: %s", exc)
 
@@ -64,13 +94,18 @@ def _store_result(result: dict, tool: str, path: str) -> str:
 
 
 def _load_result(run_id: str) -> dict | None:
-    if run_id in _results_cache:
-        return _results_cache[run_id]
+    safe_id = _validate_run_id(run_id)
+    if safe_id is None:
+        return None
+    if safe_id in _results_cache:
+        return _results_cache[safe_id]
 
-    disk = RESULTS_DIR / f"{run_id}.json"
+    disk = _result_path(safe_id)
+    if disk is None:
+        return None
     if disk.exists():
         data = json.loads(disk.read_text())
-        _results_cache[run_id] = data
+        _results_cache[safe_id] = data
         return data
     return None
 
@@ -280,9 +315,22 @@ def _validate_code_change_impl(
     }
 
 
+def _resolve_analysis_target(path: str) -> Path:
+    return Path(path).expanduser().resolve()
+
+
+def _resolve_policy_path(target: Path, policy_name: str) -> Path | None:
+    candidate = (target / policy_name).resolve()
+    try:
+        candidate.relative_to(target)
+    except ValueError:
+        return None
+    return candidate
+
+
 def _get_security_context_impl(path: str) -> dict:
     """Core logic for get_security_context, extracted for testability."""
-    target = Path(path).resolve()
+    target = _resolve_analysis_target(path)
     if not target.exists():
         return {"error": f"Path does not exist: {path}"}
 
@@ -428,7 +476,9 @@ def _get_security_context_impl(path: str) -> dict:
     context["input_validation"] = sorted(validation)
 
     for policy_name in (".skylos.yml", ".skylos.yaml", "skylos.yml", "skylos.yaml"):
-        policy_path = target / policy_name
+        policy_path = _resolve_policy_path(target, policy_name)
+        if policy_path is None:
+            continue
         if policy_path.exists():
             try:
                 import yaml

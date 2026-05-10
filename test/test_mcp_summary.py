@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import skylos_mcp.server as mcp_server
 from skylos_mcp.server import (
     _architecture_payload,
     _health_score_payload,
@@ -93,3 +94,11 @@ def test_health_score_payload_summarizes_counts_and_grade():
     assert payload["top_issues"] == [
         {"category": "quality", "key_issue": "Architecture layer violation"}
     ]
+
+
+def test_load_result_rejects_path_traversal_run_id(monkeypatch, tmp_path):
+    monkeypatch.setattr(mcp_server, "RESULTS_DIR", tmp_path)
+    mcp_server._results_cache.clear()
+
+    assert mcp_server._load_result("../latest") is None
+    assert mcp_server._load_result("latest/../../secret") is None

@@ -5,7 +5,7 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlsplit, urlparse
 
 from skylos.agent_center import (
     clear_action_triage,
@@ -20,6 +20,64 @@ from skylos.agent_center import (
 
 def _error_payload(message: str) -> dict[str, str]:
     return {"error": message}
+
+
+def _format_origin_host(host: str) -> str:
+    host = str(host or "").strip()
+    if host.startswith("[") and host.endswith("]"):
+        return host
+    if ":" in host:
+        return f"[{host}]"
+    return host
+
+
+def _origin_for_host(host: str, port: int) -> str | None:
+    formatted = _format_origin_host(host)
+    if not formatted:
+        return None
+    return f"http://{formatted}:{port}"
+
+
+def _normalize_origin(origin: str) -> str | None:
+    origin = str(origin or "").strip()
+    if not origin:
+        return None
+
+    parsed = urlsplit(origin)
+    if not parsed.scheme or not parsed.netloc or parsed.username or parsed.password:
+        return None
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        return None
+
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+
+def _default_allowed_origins(host: str, port: int) -> frozenset[str]:
+    host = str(host or "").strip()
+    if host in {"", "0.0.0.0", "::", "::0"}:
+        origin_hosts = ("127.0.0.1", "localhost", "::1")
+    elif host in {"127.0.0.1", "localhost"}:
+        origin_hosts = ("127.0.0.1", "localhost")
+    elif host in {"::1", "[::1]"}:
+        origin_hosts = ("::1", "localhost")
+    else:
+        origin_hosts = (host,)
+
+    origins = {
+        normalized
+        for origin_host in origin_hosts
+        if (origin := _origin_for_host(origin_host, port))
+        if (normalized := _normalize_origin(origin))
+    }
+    return frozenset(origins)
+
+
+def _normalize_allowed_origins(origins: list[str]) -> frozenset[str]:
+    return frozenset(
+        normalized
+        for origin in origins
+        if (normalized := _normalize_origin(origin)) is not None
+    )
 
 
 class AgentServiceController:
@@ -240,13 +298,28 @@ class AgentServiceHandler(BaseHTTPRequestHandler):
     controller: AgentServiceController
     token: str | None = None
     default_limit: int = 10
+    allowed_origins: frozenset[str] = frozenset()
 
     def do_OPTIONS(self) -> None:
+        if not self._origin_is_allowed():
+            self._send_json(
+                HTTPStatus.FORBIDDEN,
+                _error_payload("Origin is not allowed"),
+            )
+            return
+
         self.send_response(HTTPStatus.NO_CONTENT)
         self._send_cors_headers()
         self.end_headers()
 
     def do_GET(self) -> None:
+        if not self._origin_is_allowed():
+            self._send_json(
+                HTTPStatus.FORBIDDEN,
+                _error_payload("Origin is not allowed"),
+            )
+            return
+
         if not self._is_authorized():
             return
 
@@ -260,6 +333,13 @@ class AgentServiceHandler(BaseHTTPRequestHandler):
         self._send_json(status, payload)
 
     def do_POST(self) -> None:
+        if not self._origin_is_allowed():
+            self._send_json(
+                HTTPStatus.FORBIDDEN,
+                _error_payload("Origin is not allowed"),
+            )
+            return
+
         if not self._is_authorized():
             return
 
@@ -284,6 +364,15 @@ class AgentServiceHandler(BaseHTTPRequestHandler):
             return True
         self._send_json(HTTPStatus.UNAUTHORIZED, _error_payload("Unauthorized"))
         return False
+
+    def _origin_is_allowed(self) -> bool:
+        raw_origin = self.headers.get("Origin", "")
+        if not raw_origin:
+            return True
+        origin = _normalize_origin(raw_origin)
+        if origin is None:
+            return False
+        return origin in self.allowed_origins
 
     def _read_json_body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -321,11 +410,19 @@ class AgentServiceHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _send_cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header(
-            "Access-Control-Allow-Headers", "Content-Type, X-Skylos-Agent-Token"
-        )
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        raw_origin = self.headers.get("Origin", "")
+        if not raw_origin:
+            return
+
+        self.send_header("Vary", "Origin")
+        origin = _normalize_origin(raw_origin)
+        if origin in self.allowed_origins:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type, X-Skylos-Agent-Token",
+            )
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
 
 class SafeAgentServiceHandler(AgentServiceHandler):
@@ -353,6 +450,7 @@ def _bind_agent_service_handler(
     *,
     token: str | None,
     default_limit: int,
+    allowed_origins: frozenset[str],
 ) -> type[SafeAgentServiceHandler]:
     return type(
         "BoundAgentServiceHandler",
@@ -361,6 +459,7 @@ def _bind_agent_service_handler(
             "controller": controller,
             "token": token,
             "default_limit": default_limit,
+            "allowed_origins": allowed_origins,
         },
     )
 
@@ -376,6 +475,7 @@ def create_agent_service(
     use_baseline: bool = True,
     default_limit: int = 10,
     refresh_on_start: bool = False,
+    allowed_origins: list[str] | None = None,
 ) -> ThreadingHTTPServer:
     controller = AgentServiceController(
         path,
@@ -385,12 +485,22 @@ def create_agent_service(
         default_limit=default_limit,
         refresh_on_start=refresh_on_start,
     )
+    server = ThreadingHTTPServer((host, port), SafeAgentServiceHandler)
+    actual_host = str(server.server_address[0])
+    actual_port = int(server.server_address[1])
+    if allowed_origins is not None:
+        normalized_allowed_origins = _normalize_allowed_origins(allowed_origins)
+    else:
+        default_origins = set(_default_allowed_origins(host, actual_port))
+        default_origins.update(_default_allowed_origins(actual_host, actual_port))
+        normalized_allowed_origins = frozenset(default_origins)
     handler_class = _bind_agent_service_handler(
         controller,
         token=token,
         default_limit=default_limit,
+        allowed_origins=normalized_allowed_origins,
     )
-    server = ThreadingHTTPServer((host, port), handler_class)
+    server.RequestHandlerClass = handler_class
     server.controller = controller  # type: ignore[attr-defined]
     return server
 
@@ -406,6 +516,7 @@ def serve_agent_service(
     use_baseline: bool = True,
     default_limit: int = 10,
     refresh_on_start: bool = False,
+    allowed_origins: list[str] | None = None,
 ) -> ThreadingHTTPServer:
     server = create_agent_service(
         path,
@@ -417,6 +528,7 @@ def serve_agent_service(
         use_baseline=use_baseline,
         default_limit=default_limit,
         refresh_on_start=refresh_on_start,
+        allowed_origins=allowed_origins,
     )
     server.serve_forever()
     return server

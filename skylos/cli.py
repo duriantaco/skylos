@@ -3492,6 +3492,13 @@ def _build_agent_parser():
     p_serve.add_argument("--no-baseline", action="store_true")
     p_serve.add_argument("--limit", type=int, default=10)
     p_serve.add_argument("--refresh-on-start", action="store_true")
+    p_serve.add_argument(
+        "--allowed-origin",
+        dest="allowed_origins",
+        action="append",
+        default=None,
+        help="Trusted browser origin for the agent API CORS allow-list. Repeatable.",
+    )
 
     return agent_parser
 
@@ -4073,6 +4080,7 @@ def main() -> None:
                     use_baseline=not agent_args.no_baseline,
                     default_limit=agent_args.limit,
                     refresh_on_start=agent_args.refresh_on_start,
+                    allowed_origins=agent_args.allowed_origins,
                 )
                 address = server.server_address
                 console.print(

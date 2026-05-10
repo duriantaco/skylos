@@ -427,7 +427,20 @@ def _parse_callback_request(path: str, *, expected_state: str | None):
 
 
 def _whoami_url(base_url: str) -> str:
-    normalized = (base_url or DEFAULT_BASE_URL).rstrip("/")
+    return _safe_whoami_url(base_url)
+
+
+def _safe_whoami_url(base_url: str) -> str:
+    normalized = (base_url or DEFAULT_BASE_URL).strip().rstrip("/")
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("Login base URL must use HTTP or HTTPS")
+    if not parsed.netloc:
+        raise ValueError("Login base URL must include a host")
+    if parsed.username or parsed.password:
+        raise ValueError("Login base URL must not include credentials")
+    if parsed.fragment:
+        raise ValueError("Login base URL must not include a fragment")
     if normalized.endswith("/api"):
         return f"{normalized}/sync/whoami"
     return f"{normalized}/api/sync/whoami"
@@ -435,8 +448,13 @@ def _whoami_url(base_url: str) -> str:
 
 def _verify_login_result(token: str, *, base_url: str) -> LoginResult | None:
     try:
+        whoami_url = _safe_whoami_url(base_url)
+    except ValueError:
+        return None
+
+    try:
         resp = requests.get(
-            _whoami_url(base_url),
+            whoami_url,
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )

@@ -64,6 +64,15 @@ def test_verify_login_result_rejects_missing_project_id(monkeypatch):
     assert loginmod._verify_login_result("TOK", base_url="https://skylos.dev") is None
 
 
+def test_verify_login_result_rejects_unsafe_base_url(monkeypatch):
+    def fail_get(*args, **kwargs):
+        raise AssertionError("unsafe login URL should not be requested")
+
+    monkeypatch.setattr(loginmod.requests, "get", fail_get)
+
+    assert loginmod._verify_login_result("TOK", base_url="file:///tmp/socket") is None
+
+
 def test_browser_login_rejects_unverified_callback(monkeypatch):
     class FakeServer:
         timeout = 5
