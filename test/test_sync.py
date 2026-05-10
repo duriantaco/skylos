@@ -180,6 +180,25 @@ def test_api_get_success(monkeypatch):
     assert out == {"ok": True}
 
 
+def test_api_get_rejects_absolute_endpoint(monkeypatch):
+    def fail_get(*args, **kwargs):
+        raise AssertionError("unsafe endpoint should not be requested")
+
+    monkeypatch.setattr(syncmod.requests, "get", fail_get)
+
+    with pytest.raises(syncmod.AuthError) as e:
+        syncmod.api_get("https://evil.example/api/sync/whoami", "TOKEN")
+    assert "relative" in str(e.value)
+
+
+def test_api_get_rejects_unsafe_base_url(monkeypatch):
+    monkeypatch.setenv("SKYLOS_API_URL", "file:///tmp/socket")
+
+    with pytest.raises(syncmod.AuthError) as e:
+        syncmod.api_get("/api/sync/whoami", "TOKEN")
+    assert "HTTP or HTTPS" in str(e.value)
+
+
 def test_api_get_401_raises(monkeypatch):
     def fake_get(url, headers=None, timeout=None):
         return FakeResponse(401, {"ok": False})

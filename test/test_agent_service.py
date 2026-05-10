@@ -6,12 +6,20 @@ import json
 import threading
 
 from skylos.agent_center import rebuild_agent_state_from_existing, save_agent_state
-from skylos.agent_service import AgentServiceController, create_agent_service
+from skylos.agent_service import (
+    AgentServiceController,
+    _default_allowed_origins,
+    create_agent_service,
+)
 
 
 @contextlib.contextmanager
 def running_agent_service(
-    project_root, *, token: str | None = None, default_limit: int = 10
+    project_root,
+    *,
+    token: str | None = None,
+    default_limit: int = 10,
+    allowed_origins: list[str] | None = None,
 ):
     server = create_agent_service(
         str(project_root),
@@ -19,6 +27,7 @@ def running_agent_service(
         port=0,
         token=token,
         default_limit=default_limit,
+        allowed_origins=allowed_origins,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -30,6 +39,41 @@ def running_agent_service(
         thread.join(timeout=5)
 
 
+def request_http(
+    server,
+    method: str,
+    path: str,
+    *,
+    token: str | None = None,
+    body: dict | None = None,
+    raw_body: str | None = None,
+    origin: str | None = None,
+    headers: dict[str, str] | None = None,
+):
+    host, port = server.server_address
+    conn = http.client.HTTPConnection(host, port, timeout=5)
+    request_headers = {"Content-Type": "application/json"}
+    if origin is not None:
+        request_headers["Origin"] = origin
+    if token is not None:
+        request_headers["X-Skylos-Agent-Token"] = token
+    if headers:
+        request_headers.update(headers)
+    payload = (
+        raw_body
+        if raw_body is not None
+        else (None if body is None else json.dumps(body))
+    )
+    try:
+        conn.request(method, path, body=payload, headers=request_headers)
+        response = conn.getresponse()
+        response_headers = {k.lower(): v for k, v in response.getheaders()}
+        raw = response.read().decode("utf-8")
+        return response.status, response_headers, raw
+    finally:
+        conn.close()
+
+
 def request_json(
     server,
     method: str,
@@ -38,24 +82,24 @@ def request_json(
     token: str | None = None,
     body: dict | None = None,
     raw_body: str | None = None,
+    origin: str | None = None,
+    headers: dict[str, str] | None = None,
 ):
-    host, port = server.server_address
-    conn = http.client.HTTPConnection(host, port, timeout=5)
-    headers = {"Content-Type": "application/json"}
-    if token is not None:
-        headers["X-Skylos-Agent-Token"] = token
-    payload = (
-        raw_body
-        if raw_body is not None
-        else (None if body is None else json.dumps(body))
+    status, _headers, raw = request_http(
+        server,
+        method,
+        path,
+        token=token,
+        body=body,
+        raw_body=raw_body,
+        origin=origin,
+        headers=headers,
     )
-    try:
-        conn.request(method, path, body=payload, headers=headers)
-        response = conn.getresponse()
-        raw = response.read().decode("utf-8")
-        return response.status, json.loads(raw)
-    finally:
-        conn.close()
+    return status, json.loads(raw)
+
+
+def service_origin(server, host: str = "127.0.0.1") -> str:
+    return f"http://{host}:{server.server_address[1]}"
 
 
 def build_service_state(project_root, findings):
@@ -384,3 +428,181 @@ def test_create_agent_service_limit_fallback_and_clamp(tmp_path):
         )
         assert status == 200
         assert len(payload["items"]) == 10
+
+
+def test_agent_service_cors_rejects_disallowed_origin_before_mutation(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    build_service_state(
+        project_root,
+        [
+            {
+                "fingerprint": "security:1",
+                "rule_id": "SKY-D999",
+                "category": "security",
+                "severity": "HIGH",
+                "message": "Shell injection path",
+                "file": "src/auth.py",
+                "absolute_file": str(project_root / "src" / "auth.py"),
+                "line": 9,
+                "confidence": 91,
+                "is_new_vs_baseline": True,
+                "is_new_since_last_scan": True,
+                "is_in_changed_file": True,
+            },
+        ],
+    )
+
+    with running_agent_service(project_root) as server:
+        status, headers, raw = request_http(
+            server,
+            "POST",
+            "/triage/dismiss",
+            origin="https://evil.example.com",
+            body={"action_id": "security:1"},
+        )
+        assert status == 403
+        assert json.loads(raw) == {"error": "Origin is not allowed"}
+        assert "access-control-allow-origin" not in headers
+        assert headers["vary"] == "Origin"
+
+        status, headers, raw = request_http(
+            server,
+            "POST",
+            "/triage/dismiss",
+            origin="null",
+            body={"action_id": "security:1"},
+        )
+        assert status == 403
+        assert json.loads(raw) == {"error": "Origin is not allowed"}
+        assert "access-control-allow-origin" not in headers
+        assert headers["vary"] == "Origin"
+
+        status, payload = request_json(server, "GET", "/state")
+        assert status == 200
+        assert payload.get("triage", {}) == {}
+
+
+def test_agent_service_cors_allows_default_local_origin_to_mutate(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    build_service_state(
+        project_root,
+        [
+            {
+                "fingerprint": "security:1",
+                "rule_id": "SKY-D999",
+                "category": "security",
+                "severity": "HIGH",
+                "message": "Shell injection path",
+                "file": "src/auth.py",
+                "absolute_file": str(project_root / "src" / "auth.py"),
+                "line": 9,
+                "confidence": 91,
+                "is_new_vs_baseline": True,
+                "is_new_since_last_scan": True,
+                "is_in_changed_file": True,
+            },
+        ],
+    )
+
+    with running_agent_service(project_root) as server:
+        origin = service_origin(server)
+        status, headers, raw = request_http(
+            server,
+            "POST",
+            "/triage/dismiss",
+            origin=origin,
+            body={"action_id": "security:1"},
+        )
+        payload = json.loads(raw)
+
+        assert status == 200
+        assert headers["access-control-allow-origin"] == origin
+        assert headers["vary"] == "Origin"
+        assert payload["triage"]["security:1"]["status"] == "dismissed"
+
+
+def test_agent_service_cors_preflight_origin_policy(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    build_service_state(project_root, [])
+
+    with running_agent_service(project_root) as server:
+        status, headers, _raw = request_http(
+            server,
+            "OPTIONS",
+            "/triage/dismiss",
+            origin="https://evil.example.com",
+            headers={"Access-Control-Request-Method": "POST"},
+        )
+        assert status == 403
+        assert "access-control-allow-origin" not in headers
+
+        origin = service_origin(server)
+        status, headers, raw = request_http(
+            server,
+            "OPTIONS",
+            "/triage/dismiss",
+            origin=origin,
+            headers={"Access-Control-Request-Method": "POST"},
+        )
+        assert status == 204
+        assert raw == ""
+        assert headers["access-control-allow-origin"] == origin
+        assert "X-Skylos-Agent-Token" in headers["access-control-allow-headers"]
+        assert "POST" in headers["access-control-allow-methods"]
+
+
+def test_agent_service_cors_custom_allowed_origins_override_defaults(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    build_service_state(project_root, [])
+
+    with running_agent_service(
+        project_root,
+        allowed_origins=["https://dashboard.example.com/"],
+    ) as server:
+        status, headers, raw = request_http(
+            server,
+            "GET",
+            "/health",
+            origin="https://dashboard.example.com",
+        )
+        assert status == 200
+        assert json.loads(raw)["ok"] is True
+        assert (
+            headers["access-control-allow-origin"]
+            == "https://dashboard.example.com"
+        )
+
+        status, headers, _raw = request_http(
+            server,
+            "GET",
+            "/health",
+            origin=service_origin(server),
+        )
+        assert status == 403
+        assert "access-control-allow-origin" not in headers
+
+
+def test_agent_service_no_origin_header_still_works_without_cors_grant(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    build_service_state(project_root, [])
+
+    with running_agent_service(project_root) as server:
+        status, headers, raw = request_http(server, "GET", "/health")
+        assert status == 200
+        assert json.loads(raw)["ok"] is True
+        assert "access-control-allow-origin" not in headers
+
+
+def test_default_allowed_origins_include_ipv6_loopback():
+    wildcard_origins = _default_allowed_origins("0.0.0.0", 5089)
+    ipv6_origins = _default_allowed_origins("::1", 5089)
+
+    assert "http://127.0.0.1:5089" in wildcard_origins
+    assert "http://localhost:5089" in wildcard_origins
+    assert "http://[::1]:5089" in wildcard_origins
+    assert "http://[::1]:5089" in ipv6_origins

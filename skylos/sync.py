@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 import subprocess
+from urllib.parse import urlparse
 
 try:
     import requests
@@ -185,8 +186,39 @@ def _delete_link(repo_root: Path):
 
 
 def get_api_url():
-    return os.environ.get("SKYLOS_API_URL", DEFAULT_API_URL)
+    return _normalize_api_base_url(os.environ.get("SKYLOS_API_URL", DEFAULT_API_URL))
     # return os.environ.get("SKYLOS_API_URL", LOCAL_API_URL)
+
+
+def _normalize_api_base_url(base_url: str) -> str:
+    normalized = (base_url or DEFAULT_API_URL).strip().rstrip("/")
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"}:
+        raise AuthError("SKYLOS_API_URL must use HTTP or HTTPS")
+    if not parsed.netloc:
+        raise AuthError("SKYLOS_API_URL must include a host")
+    if parsed.username or parsed.password:
+        raise AuthError("SKYLOS_API_URL must not include credentials")
+    if parsed.fragment:
+        raise AuthError("SKYLOS_API_URL must not include a fragment")
+    return normalized
+
+
+def _normalize_api_endpoint(endpoint: str) -> str:
+    if not isinstance(endpoint, str):
+        raise AuthError("API endpoint must be a string")
+    parsed = urlparse(endpoint)
+    if parsed.scheme or parsed.netloc:
+        raise AuthError("API endpoint must be relative")
+    if not endpoint.startswith("/") or endpoint.startswith("//"):
+        raise AuthError("API endpoint must start with a single slash")
+    if "\\" in endpoint or any(part == ".." for part in parsed.path.split("/")):
+        raise AuthError("API endpoint contains an unsafe path segment")
+    return endpoint
+
+
+def _safe_sync_url(endpoint: str) -> str:
+    return f"{get_api_url()}{_normalize_api_endpoint(endpoint)}"
 
 
 def _try_ci_oidc_token():
@@ -287,7 +319,7 @@ def _auth_headers(token):
 
 
 def api_get(endpoint, token):
-    url = f"{get_api_url()}{endpoint}"
+    url = _safe_sync_url(endpoint)
 
     try:
         resp = requests.get(

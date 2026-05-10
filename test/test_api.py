@@ -5,7 +5,7 @@ import subprocess
 import gzip
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock
 
 import skylos.api as api
 from skylos.api import (
@@ -232,20 +232,46 @@ class TestSkylosApi(unittest.TestCase):
 
     def test_extract_snippet_valid(self):
         content = "line1\nline2\nline3\nline4\nline5\n"
-        with patch("builtins.open", mock_open(read_data=content)):
-            snippet = extract_snippet("fake.py", 3, context=1)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+            handle.write(content)
+            file_path = handle.name
+        try:
+            snippet = extract_snippet(file_path, 3, context=1)
             self.assertEqual(snippet, "line2\nline3\nline4")
+        finally:
+            os.unlink(file_path)
 
     def test_extract_snippet_context_zero(self):
         content = "a\nb\nc\nd\n"
-        with patch("builtins.open", mock_open(read_data=content)):
-            snippet = extract_snippet("fake.py", 3, context=0)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+            handle.write(content)
+            file_path = handle.name
+        try:
+            snippet = extract_snippet(file_path, 3, context=0)
             self.assertEqual(snippet, "c")
+        finally:
+            os.unlink(file_path)
 
     def test_extract_snippet_missing_file_returns_none(self):
-        with patch("builtins.open", side_effect=FileNotFoundError):
-            snippet = extract_snippet("missing.py", 1, context=2)
-            self.assertIsNone(snippet)
+        snippet = extract_snippet("missing.py", 1, context=2)
+        self.assertIsNone(snippet)
+
+    def test_extract_snippet_rejects_file_outside_repo_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = api.Path(td) / "repo"
+            outside = api.Path(td) / "outside.txt"
+            inside = repo / "inside.txt"
+            repo.mkdir()
+            inside.write_text("inside\n", encoding="utf-8")
+            outside.write_text("outside\n", encoding="utf-8")
+
+            self.assertEqual(
+                extract_snippet(str(inside), 1, context=0, repo_root=str(repo)),
+                "inside",
+            )
+            self.assertIsNone(
+                extract_snippet(str(outside), 1, context=0, repo_root=str(repo))
+            )
 
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
@@ -1067,6 +1093,61 @@ class TestSkylosApi(unittest.TestCase):
         kwargs = mock_post.call_args.kwargs
         self.assertEqual(kwargs["data"]["key"], "artifact-key")
         self.assertEqual(kwargs["files"]["file"][0], "definitions.json.gz")
+
+    @patch("requests.put")
+    def test_upload_artifact_rejects_private_upload_url(self, mock_put):
+        with tempfile.NamedTemporaryFile(delete=False) as handle:
+            handle.write(b"abc")
+            artifact_path = handle.name
+
+        artifact = api.UploadArtifact(
+            name="definitions",
+            file_path=api.Path(artifact_path),
+            filename="definitions.json.gz",
+            required=False,
+            content_type="application/json",
+            content_encoding="gzip",
+            size_bytes=3,
+            sha256="abc123",
+        )
+        try:
+            result = api.upload_artifact(
+                artifact,
+                {"method": "PUT", "url": "https://169.254.169.254/upload"},
+            )
+        finally:
+            artifact.cleanup()
+
+        self.assertFalse(result["success"])
+        self.assertIn("Unsafe upload URL", result["error"])
+        mock_put.assert_not_called()
+
+    @patch("requests.post")
+    def test_post_json_with_retries_rejects_non_http_url(self, mock_post):
+        response, error = api._post_json_with_retries(
+            "file:///tmp/report",
+            {},
+            {"ok": True},
+            quiet=True,
+        )
+
+        self.assertIsNone(response)
+        self.assertIn("Unsafe API URL", error)
+        mock_post.assert_not_called()
+
+    @patch("requests.get")
+    def test_github_oidc_token_rejects_non_github_url(self, mock_get):
+        with patch.dict(
+            os.environ,
+            {
+                "ACTIONS_ID_TOKEN_REQUEST_URL": "https://169.254.169.254/token",
+                "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "TOKEN",
+            },
+            clear=False,
+        ):
+            self.assertIsNone(api._try_github_oidc_token())
+
+        mock_get.assert_not_called()
 
 
 class TestDetectCI(unittest.TestCase):

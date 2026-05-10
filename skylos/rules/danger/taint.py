@@ -18,11 +18,21 @@ CMD_SANITIZERS = {
 URL_SANITIZERS = {
     "urllib.parse.quote",
     "urllib.parse.quote_plus",
+    "_safe_sync_url",
+    "_safe_whoami_url",
+    "_validate_api_request_url",
+    "_validate_artifact_upload_url",
+    "_validate_github_oidc_request_url",
 }
 
 PATH_SANITIZERS = {
     "os.path.basename",
     "pathlib.PurePath.name",
+    "_resolve_analysis_target",
+    "_resolve_policy_path",
+    "_resolve_repo_link_path",
+    "_resolve_snippet_path",
+    "_result_path",
 }
 
 

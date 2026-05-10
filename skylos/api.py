@@ -1,4 +1,5 @@
 import os
+import ipaddress
 import logging
 import requests
 import subprocess
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import json
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 from skylos.constants import (
@@ -175,15 +177,115 @@ else:
 UPLOAD_PROTOCOL_VERSION = 1
 
 
+def _normalize_http_url(
+    url: Any,
+    *,
+    allowed_schemes: frozenset[str],
+    allow_fragment: bool = False,
+) -> str:
+    if not isinstance(url, str):
+        raise ValueError("URL must be a string")
+    stripped = url.strip()
+    parsed = urlsplit(stripped)
+    scheme = parsed.scheme.lower()
+    if scheme not in allowed_schemes:
+        raise ValueError("URL scheme is not allowed")
+    if not parsed.hostname:
+        raise ValueError("URL host is required")
+    if parsed.username or parsed.password:
+        raise ValueError("URL credentials are not allowed")
+    if parsed.fragment and not allow_fragment:
+        raise ValueError("URL fragment is not allowed")
+    return urlunsplit(
+        (
+            scheme,
+            parsed.netloc.lower(),
+            parsed.path,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
+
+
+def _host_is_private_or_metadata(hostname: str | None) -> bool:
+    if not hostname:
+        return True
+    host = hostname.strip("[]").rstrip(".").lower()
+    if host in {
+        "localhost",
+        "localhost.localdomain",
+        "metadata.google.internal",
+    }:
+        return True
+    if host.endswith(".localhost") or host.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _validate_api_request_url(url: Any) -> str:
+    return _normalize_http_url(
+        url,
+        allowed_schemes=frozenset({"http", "https"}),
+    )
+
+
+def _validate_artifact_upload_url(url: Any) -> str:
+    safe_url = _normalize_http_url(url, allowed_schemes=frozenset({"https"}))
+    parsed = urlsplit(safe_url)
+    if _host_is_private_or_metadata(parsed.hostname):
+        raise ValueError("upload URL host is not allowed")
+    return safe_url
+
+
+def _validate_github_oidc_request_url(url: Any) -> str:
+    safe_url = _normalize_http_url(url, allowed_schemes=frozenset({"https"}))
+    host = (urlsplit(safe_url).hostname or "").rstrip(".").lower()
+    if host != "actions.githubusercontent.com" and not host.endswith(
+        ".actions.githubusercontent.com"
+    ):
+        raise ValueError("GitHub OIDC URL host is not allowed")
+    return safe_url
+
+
+def _append_query_param(url: str, key: str, value: str) -> str:
+    parsed = urlsplit(url)
+    query = parse_qsl(parsed.query, keep_blank_values=True)
+    query.append((key, value))
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query),
+            parsed.fragment,
+        )
+    )
+
+
 def _try_github_oidc_token():
     oidc_url = os.getenv("ACTIONS_ID_TOKEN_REQUEST_URL")
     oidc_token = os.getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
     if not oidc_url or not oidc_token:
         return None
     try:
-        sep = "&" if "?" in oidc_url else "?"
+        oidc_url = _append_query_param(
+            _validate_github_oidc_request_url(oidc_url),
+            "audience",
+            "skylos",
+        )
         resp = requests.get(
-            f"{oidc_url}{sep}audience=skylos",
+            oidc_url,
             headers={"Authorization": f"Bearer {oidc_token}"},
             timeout=SUBPROCESS_TIMEOUT,
         )
@@ -293,16 +395,27 @@ def get_git_root() -> str | None:
         return None
 
 
+def _resolve_repo_link_path(git_root) -> Path | None:
+    if not git_root:
+        return None
+    root = Path(git_root).resolve()
+    candidate = (root / ".skylos" / "link.json").resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
 def _load_repo_link(git_root):
     try:
-        if not git_root:
+        p = _resolve_repo_link_path(git_root)
+        if p is None:
             return {}
-        p = os.path.join(git_root, ".skylos", "link.json")
-        if not os.path.exists(p):
+        if not p.exists():
             return {}
-        import json
 
-        return json.loads(open(p, "r", encoding="utf-8").read() or "{}")
+        return json.loads(p.read_text(encoding="utf-8") or "{}")
     except (OSError, json.JSONDecodeError, ValueError):
         return {}
 
@@ -408,15 +521,38 @@ def get_git_info() -> tuple[str, str, str, dict]:
     return commit, branch, actor, ci
 
 
-def extract_snippet(file_abs, line_number, context=SNIPPET_CONTEXT_LINES) -> str | None:
+def _resolve_snippet_path(file_abs, repo_root=None) -> Path | None:
     if not file_abs:
         return None
     try:
-        with open(file_abs, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
+        candidate = Path(file_abs).resolve()
+        if repo_root:
+            root = Path(repo_root).resolve()
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                return None
+        if not candidate.is_file():
+            return None
+        return candidate
+    except OSError:
+        return None
+
+
+def extract_snippet(
+    file_abs,
+    line_number,
+    context=SNIPPET_CONTEXT_LINES,
+    repo_root=None,
+) -> str | None:
+    safe_path = _resolve_snippet_path(file_abs, repo_root)
+    if safe_path is None:
+        return None
+    try:
+        lines = safe_path.read_text(encoding="utf-8", errors="ignore").splitlines()
         start = max(0, line_number - 1 - context)
         end = min(len(lines), line_number + context)
-        return "\n".join([line.rstrip("\n") for line in lines[start:end]])
+        return "\n".join(lines[start:end])
     except (OSError, UnicodeDecodeError):
         return None
 
@@ -818,7 +954,9 @@ def _normalize_findings(
 
         if file_abs and line:
             finding["snippet"] = (
-                finding.get("snippet") or extract_snippet(file_abs, line) or None
+                finding.get("snippet")
+                or extract_snippet(file_abs, line, repo_root=git_root)
+                or None
             )
 
         if extract_metadata:
@@ -1366,6 +1504,11 @@ def _post_json_with_retries(
     initial_message=None,
     accepted_statuses=(200, 201, 401, 402),
 ):
+    try:
+        safe_url = _validate_api_request_url(url)
+    except ValueError as exc:
+        return None, f"Unsafe API URL: {exc}"
+
     last_err = None
     for attempt in range(3):
         try:
@@ -1375,7 +1518,7 @@ def _post_json_with_retries(
                 elif attempt > 0:
                     print(f" retrying ({attempt + 1}/3)...", end="", flush=True)
             response = requests.post(
-                url,
+                safe_url,
                 json=payload,
                 headers=headers,
                 timeout=NETWORK_TIMEOUT_LONG,
@@ -1429,6 +1572,13 @@ def upload_artifact(
     url = instruction.get("url")
     if not url:
         return {"success": False, "error": f"Missing upload URL for {artifact.name}."}
+    try:
+        safe_url = _validate_artifact_upload_url(url)
+    except ValueError as exc:
+        return {
+            "success": False,
+            "error": f"Unsafe upload URL for {artifact.name}: {exc}",
+        }
 
     headers = dict(instruction.get("headers") or {})
     accepted_statuses = tuple(instruction.get("accepted_statuses") or (200, 201, 204))
@@ -1445,7 +1595,7 @@ def upload_artifact(
                         **headers,
                     }
                     response = requests.put(
-                        url,
+                        safe_url,
                         data=handle,
                         headers=req_headers,
                         timeout=timeout,
@@ -1454,7 +1604,7 @@ def upload_artifact(
                     file_field = instruction.get("file_field") or "file"
                     fields = dict(instruction.get("fields") or {})
                     response = requests.post(
-                        url,
+                        safe_url,
                         data=fields,
                         files={
                             file_field: (
