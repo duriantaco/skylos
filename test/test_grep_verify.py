@@ -471,6 +471,43 @@ class TestAnalyzerIntegration:
 
         assert len(unused_names_on) <= len(unused_names_off)
 
+    def test_grep_verify_keeps_same_name_wrapper_dead(self, tmp_path):
+        (tmp_path / "app.py").write_text(
+            """
+class InternalClass:
+    @staticmethod
+    def same_name_method():
+        return "internal"
+
+class PublicClass:
+    @staticmethod
+    def same_name_method():
+        return InternalClass.same_name_method()
+
+    @staticmethod
+    def different_name_wrapper():
+        return InternalClass.same_name_method()
+
+    @staticmethod
+    def used_method():
+        return "used"
+
+result = PublicClass.used_method()
+""",
+            encoding="utf-8",
+        )
+
+        from skylos.analyzer import analyze
+        import json
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=True))
+        unused_methods = {
+            finding.get("full_name") for finding in result.get("unused_functions", [])
+        }
+
+        assert "app.PublicClass.same_name_method" in unused_methods
+        assert "app.PublicClass.different_name_wrapper" in unused_methods
+
 
 class TestAnalyzerGrepVerifyOrdering:
     def test_candidates_are_sorted_by_rescue_priority(self, tmp_path):

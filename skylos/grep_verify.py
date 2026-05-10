@@ -489,6 +489,54 @@ def _is_python_source_reference(grep_line: str, simple_name: str) -> bool:
     return _python_line_has_name_token(grep_line, simple_name)
 
 
+def _method_owner_simple(finding: dict) -> str:
+    full_name = str(finding.get("full_name", finding.get("name", "")))
+    parts = full_name.split(".")
+    if len(parts) < 3:
+        return ""
+    return parts[-2]
+
+
+def _called_owner_method_names(finding: dict) -> set[tuple[str, str]]:
+    calls = finding.get("calls", []) or []
+    if not isinstance(calls, list):
+        return set()
+
+    out: set[tuple[str, str]] = set()
+    for call in calls:
+        parts = str(call).split(".")
+        if len(parts) >= 2:
+            out.add((parts[-2], parts[-1]))
+    return out
+
+
+def _is_other_owner_same_method_call(grep_line: str, finding: dict) -> bool:
+    if str(finding.get("type", "")).lower() != "method":
+        return False
+
+    simple_name = str(finding.get("simple_name", finding.get("name", "")))
+    owner = _method_owner_simple(finding)
+    if not simple_name or not owner:
+        return False
+
+    content = _grep_line_content(grep_line)
+    for call_owner, call_name in _called_owner_method_names(finding):
+        if call_name != simple_name or call_owner == owner:
+            continue
+        pattern = rf"\b{re.escape(call_owner)}\.{re.escape(simple_name)}\s*\("
+        if re.search(pattern, content):
+            return True
+    return False
+
+
+def _filter_other_owner_same_method_calls(
+    lines: list[str], finding: dict
+) -> list[str]:
+    return [
+        line for line in lines if not _is_other_owner_same_method_call(line, finding)
+    ]
+
+
 def _deduplicate_grep_results(
     results: dict[str, list[str]],
 ) -> dict[str, list[str]]:
@@ -1043,6 +1091,7 @@ def multi_strategy_search(
                 if not is_substring_match(r, simple_name)
                 and _is_python_source_reference(r, simple_name)
             ]
+            refs = _filter_other_owner_same_method_calls(refs, finding)
             _defs, usages = filter_grep_results(refs, finding)
             if usages:
                 results["references"] = usages[:max_per_strategy]
@@ -1076,6 +1125,7 @@ def multi_strategy_search(
             max_results=max_per_strategy,
         )
         if call_refs:
+            call_refs = _filter_other_owner_same_method_calls(call_refs, finding)
             _defs, usages = filter_grep_results(call_refs, finding)
             if usages:
                 results["method_calls"] = usages[:max_per_strategy]
