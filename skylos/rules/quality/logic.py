@@ -3017,3 +3017,89 @@ class BroadExceptionRule(SkylosRule):
                 "col": node.col_offset,
             }
         ]
+
+
+_NO_EFFECT_EXPR_TYPES = (
+    ast.BinOp,
+    ast.BoolOp,
+    ast.Compare,
+    ast.Dict,
+    ast.IfExp,
+    ast.List,
+    ast.Name,
+    ast.Set,
+    ast.Tuple,
+    ast.UnaryOp,
+)
+
+_PURE_DISCARDED_CALLS = {
+    "uuid.uuid1",
+    "uuid.uuid3",
+    "uuid.uuid4",
+    "uuid.uuid5",
+}
+
+
+def _contains_possible_effect(node):
+    return any(
+        isinstance(child, (ast.Call, ast.Await, ast.Yield, ast.YieldFrom, ast.NamedExpr))
+        for child in ast.walk(node)
+    )
+
+
+class NoEffectStatementRule(SkylosRule):
+    rule_id = "SKY-L033"
+    name = "No-Effect Statement"
+
+    def visit_node(self, node, context):
+        if not isinstance(node, ast.Expr):
+            return None
+
+        value = node.value
+        issue_name = "expression"
+        issue_value = "no_effect"
+        message = (
+            "Expression statement has no effect because its result is discarded. "
+            "Assign/use the result or remove the statement."
+        )
+
+        if isinstance(value, ast.Constant):
+            if isinstance(value.value, str) or value.value is ...:
+                return None
+            if value.value is None:
+                return None
+        elif isinstance(value, (ast.Await, ast.Yield, ast.YieldFrom)):
+            return None
+        elif isinstance(value, ast.Call):
+            call_name = _qualified_call_name(value.func)
+            if call_name not in _PURE_DISCARDED_CALLS:
+                return None
+            issue_name = call_name
+            issue_value = "discarded_result"
+            message = (
+                f"Return value from '{call_name}()' is discarded. "
+                "Assign/use the result or remove the call."
+            )
+        elif not isinstance(value, _NO_EFFECT_EXPR_TYPES):
+            return None
+        elif _contains_possible_effect(value):
+            return None
+
+        filename = context.get("filename", "")
+        return [
+            {
+                "rule_id": self.rule_id,
+                "kind": "logic",
+                "severity": "LOW",
+                "type": "statement",
+                "name": issue_name,
+                "simple_name": issue_name,
+                "value": issue_value,
+                "threshold": 0,
+                "message": message,
+                "file": filename,
+                "basename": Path(filename).name,
+                "line": node.lineno,
+                "col": node.col_offset,
+            }
+        ]

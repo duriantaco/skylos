@@ -79,6 +79,7 @@ from skylos.rules.quality.logic import (
     BooleanTrapRule,
     BroadExceptionRule,
     MissingNetworkTimeoutRule,
+    NoEffectStatementRule,
 )
 from skylos.rules.quality.practices import (
     FrameworkPracticeRule,
@@ -261,6 +262,7 @@ _LINTER_RULE_NODE_TYPES = {
     BooleanTrapRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     BroadExceptionRule: (ast.ExceptHandler,),
     MissingNetworkTimeoutRule: (ast.Call,),
+    NoEffectStatementRule: (ast.Expr,),
     GodClassRule: (ast.ClassDef,),
     CBORule: (ast.ClassDef,),
     LCOMRule: (ast.ClassDef,),
@@ -2884,6 +2886,8 @@ def proc_file(
                 q_rules.append(
                     MissingNetworkTimeoutRule(vibe_dictionary=vibe_dictionary)
                 )
+            if "SKY-L033" not in cfg["ignore"]:
+                q_rules.append(NoEffectStatementRule())
             # SKY-D260 (prompt injection) is now handled by injection_scanner..
             if "SKY-Q501" not in cfg["ignore"]:
                 q_rules.append(GodClassRule())

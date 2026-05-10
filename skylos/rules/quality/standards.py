@@ -79,6 +79,7 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     ],
     "SKY-L031": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
     "SKY-L032": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
+    "SKY-L033": [{"id": "CWE-1164", "name": "Irrelevant Code"}],
     "SKY-T101": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-T102": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
     "SKY-F101": [{"id": "CWE-710", "name": "Improper Adherence to Coding Standards"}],
@@ -153,6 +154,7 @@ STANDARD_REFS: dict[str, list[str]] = {
     "SKY-R103": ["Repository policy: Skylos quality gate"],
     "SKY-R104": ["Repository policy: pre-commit"],
     "SKY-R105": ["Repository policy: TypeScript type checking"],
+    "SKY-L033": ["Python no-effect expression statements"],
 }
 
 
