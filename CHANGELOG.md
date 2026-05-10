@@ -1,5 +1,15 @@
 ## Changelog
 
+## [4.13.1](https://github.com/duriantaco/skylos/compare/v4.13.0...v4.13.1) (2026-05-10)
+
+
+### Bug Fixes
+
+* **python:** detect no-effect statements ([#332](https://github.com/duriantaco/skylos/issues/332)) ([7ffa1c9](https://github.com/duriantaco/skylos/commit/7ffa1c9fa52ea80c52a22580d22d23901d1b5405))
+* **python:** detect unreachable loop code ([#334](https://github.com/duriantaco/skylos/issues/334)) ([676a414](https://github.com/duriantaco/skylos/commit/676a414b495a8997495f61402c896cfeeb7ee5b1))
+* **python:** keep same-name wrappers dead ([#330](https://github.com/duriantaco/skylos/issues/330)) ([7d4d32c](https://github.com/duriantaco/skylos/commit/7d4d32c3ece94ed4fcbe72cdf43fe5d6c7f43c1c))
+* **security:** harden agent service and API surfaces ([#335](https://github.com/duriantaco/skylos/issues/335)) ([05393ea](https://github.com/duriantaco/skylos/commit/05393ea444903ea0ba94bde039a0824b0fef4b87))
+
 ## [4.13.0](https://github.com/duriantaco/skylos/compare/v4.12.1...v4.13.0) (2026-05-09)
 
 
