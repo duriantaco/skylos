@@ -19,6 +19,22 @@ _BODY_NODE_TYPES = (
 )
 
 
+def _static_bool(value):
+    if value is None:
+        return None
+    return bool(value)
+
+
+def _iter_is_statically_empty(node):
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return len(node.elts) == 0
+    if isinstance(node, ast.Dict):
+        return len(node.keys) == 0
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+        return len(node.value) == 0
+    return False
+
+
 class UnreachableCodeRule(SkylosRule):
     rule_id = "SKY-UC001"
     name = "Unreachable Code"
@@ -69,7 +85,7 @@ class UnreachableCodeRule(SkylosRule):
                 return findings
 
         if isinstance(node, ast.While):
-            cond = evaluate_static_condition(node.test, file_path=filename)
+            cond = _static_bool(evaluate_static_condition(node.test, file_path=filename))
 
             if cond is False and node.body:
                 first = node.body[0]
@@ -81,6 +97,25 @@ class UnreachableCodeRule(SkylosRule):
                         col=getattr(first, "col_offset", node.col_offset),
                         msg="Dead code: loop body never runs because condition is always False",
                         value="while_false",
+                        kind="dead_branch",
+                    )
+                )
+                return findings
+
+        if isinstance(node, ast.For):
+            if _iter_is_statically_empty(node.iter) and node.body:
+                first = node.body[0]
+                findings.append(
+                    self._mk(
+                        filename,
+                        basename,
+                        line=getattr(first, "lineno", node.lineno),
+                        col=getattr(first, "col_offset", node.col_offset),
+                        msg=(
+                            "Dead code: loop body never runs because iterable is "
+                            "statically empty"
+                        ),
+                        value="for_empty_iterable",
                         kind="dead_branch",
                     )
                 )
@@ -142,6 +177,10 @@ class UnreachableCodeRule(SkylosRule):
                 stmt.orelse
             )
 
+        if isinstance(stmt, ast.While):
+            cond = _static_bool(evaluate_static_condition(stmt.test))
+            return cond is True and not self._has_current_loop_break(stmt.body)
+
         return False
 
     def _block_terminates(self, stmts):
@@ -161,4 +200,28 @@ class UnreachableCodeRule(SkylosRule):
             return "continue"
         if isinstance(stmt, ast.If):
             return "return"
+        if isinstance(stmt, ast.While):
+            return "loop that cannot fall through"
         return "return"
+
+    def _has_current_loop_break(self, stmts):
+        stack = list(reversed(stmts))
+        boundary_nodes = (
+            ast.For,
+            ast.AsyncFor,
+            ast.While,
+            ast.FunctionDef,
+            ast.AsyncFunctionDef,
+            ast.ClassDef,
+            ast.Lambda,
+        )
+
+        while stack:
+            node = stack.pop()
+            if isinstance(node, ast.Break):
+                return True
+            if isinstance(node, boundary_nodes):
+                continue
+            stack.extend(reversed(list(ast.iter_child_nodes(node))))
+
+        return False

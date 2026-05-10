@@ -135,6 +135,74 @@ def loop_func():
         self.assertEqual(findings[0]["line"], 4)
         self.assertIn("always False", findings[0]["message"])
 
+    def test_for_empty_iterable_dead_branch(self):
+        code = """
+def loop_func():
+    for item in []:
+        print(item)
+    return 1
+"""
+        tree = ast.parse(code)
+        for_node = tree.body[0].body[0]
+        findings = self.rule.visit_node(for_node, self.context)
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["line"], 4)
+        self.assertEqual(findings[0]["value"], "for_empty_iterable")
+        self.assertIn("statically empty", findings[0]["message"])
+
+    def test_while_true_without_break_makes_following_code_unreachable(self):
+        code = """
+def loop_func():
+    while True:
+        poll()
+    print("unreachable")
+"""
+        findings = self._analyze(code)
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["line"], 5)
+        self.assertEqual(findings[0]["value"], "loop that cannot fall through")
+
+    def test_while_one_without_break_makes_following_code_unreachable(self):
+        code = """
+def loop_func():
+    while 1:
+        poll()
+    print("unreachable")
+"""
+        findings = self._analyze(code)
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["line"], 5)
+
+    def test_while_true_with_current_loop_break_allows_following_code(self):
+        code = """
+def loop_func(ready):
+    while True:
+        if ready():
+            break
+        poll()
+    return 1
+"""
+        findings = self._analyze(code)
+
+        self.assertEqual(findings, [])
+
+    def test_nested_break_does_not_make_outer_while_fall_through(self):
+        code = """
+def loop_func(rows):
+    while True:
+        for row in rows:
+            break
+        poll()
+    print("unreachable")
+"""
+        findings = self._analyze(code)
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["line"], 7)
+
     def test_nested_if_else_termination(self):
         code = """
 def complex_logic(x, y):
