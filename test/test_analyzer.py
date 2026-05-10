@@ -2107,6 +2107,34 @@ def make_id():
         assert findings[0]["name"] == "uuid.uuid4"
         assert findings[0]["value"] == "discarded_result"
 
+    def test_analyze_flags_unreachable_loop_code(self, tmp_path):
+        src = tmp_path / "app.py"
+        src.write_text(
+            """
+def poll():
+    return None
+
+def run():
+    while True:
+        poll()
+    return "unreachable"
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), conf=0, enable_quality=True, grep_verify=False)
+        )
+        findings = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-UC001"
+        ]
+
+        assert any(
+            f["value"] == "loop that cannot fall through" and f["line"] == 7
+            for f in findings
+        )
+
     def test_analyze_repo_rules_use_root_project_ignore_config(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text(
             """
