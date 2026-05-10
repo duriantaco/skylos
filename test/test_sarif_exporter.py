@@ -170,8 +170,11 @@ def test_results_include_skylos_metadata_when_present():
             "category": "SECURITY",
             "metadata": {
                 "security_evidence": {
+                    "evidence_kind": "source_to_sink",
+                    "entrypoint": "admin_handler",
                     "contract_id": "admin-route-auth",
                     "missing_guards": ["require_admin"],
+                    "path": ["request", "handler", "response"],
                 }
             },
         }
@@ -181,6 +184,9 @@ def test_results_include_skylos_metadata_when_present():
     result = sarif["runs"][0]["results"][0]
 
     assert result["properties"]["skylos_metadata"]["security_evidence"] == {
+        "evidence_kind": "source_to_sink",
+        "entrypoint": "admin_handler",
         "contract_id": "admin-route-auth",
         "missing_guards": ["require_admin"],
+        "path": ["request", "handler", "response"],
     }

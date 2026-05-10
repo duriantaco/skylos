@@ -960,7 +960,12 @@ def _normalize_findings(
             )
 
         if extract_metadata:
-            metadata = {}
+            existing_metadata = finding.get("metadata")
+            metadata = (
+                dict(existing_metadata)
+                if isinstance(existing_metadata, dict)
+                else {}
+            )
             for meta_key in (
                 "_source",
                 "_confidence",

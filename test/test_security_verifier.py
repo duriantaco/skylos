@@ -136,3 +136,37 @@ def test_normalize_findings_preserves_security_review_metadata():
     assert metadata["ci_blocking"] is False
     assert metadata["security_evidence"] == "review_supported"
     assert metadata["review_verdict"] == "SUPPORTED"
+
+
+def test_normalize_findings_preserves_existing_security_evidence_packet():
+    packet = {
+        "evidence_kind": "source_to_sink",
+        "entrypoint": "fetch_url",
+        "source": "tainted variable `url`",
+        "sink": "requests.get",
+        "path": ["tainted variable `url`", "HTTP sink `requests.get`"],
+        "guards_missing": ["URL host or scheme allowlist"],
+    }
+
+    normalized = api._normalize_findings(
+        [
+            {
+                "file": "app.py",
+                "line": 8,
+                "message": "Possible SSRF",
+                "rule_id": "SKY-D216",
+                "severity": "CRITICAL",
+                "metadata": {"security_evidence": packet},
+                "_source": "static",
+                "_confidence": "high",
+            }
+        ],
+        "SECURITY",
+        "/repo",
+        extract_metadata=True,
+    )
+
+    metadata = normalized[0]["metadata"]
+    assert metadata["source"] == "static"
+    assert metadata["confidence"] == "high"
+    assert metadata["security_evidence"] == packet
