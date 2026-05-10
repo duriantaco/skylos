@@ -15,6 +15,7 @@ from skylos.rules.quality.logic import (
     DuplicateStringLiteralRule,
     TooManyReturnsRule,
     BooleanTrapRule,
+    NoEffectStatementRule,
 )
 from skylos.sarif_exporter import SarifExporter
 
@@ -321,6 +322,72 @@ def foo(self, flag=True):
 def foo(x, y=42, z="hello"):
     pass
 """
+        assert self._run(code) == []
+
+
+# ---------------------------------------------------------------------------
+# NoEffectStatementRule (SKY-L033)
+# ---------------------------------------------------------------------------
+
+
+class TestNoEffectStatementRule:
+    def _run(self, code):
+        rule = NoEffectStatementRule()
+        tree = ast.parse(textwrap.dedent(code))
+        ctx = {"filename": "app.py"}
+        results = []
+        for node in ast.walk(tree):
+            r = rule.visit_node(node, ctx)
+            if r:
+                results.extend(r)
+        return results
+
+    def test_detects_useless_expression_statement(self):
+        code = """
+def foo(value):
+    value + 1
+    return value
+"""
+        results = self._run(code)
+        assert len(results) == 1
+        assert results[0]["rule_id"] == "SKY-L033"
+        assert results[0]["value"] == "no_effect"
+        assert results[0]["line"] == 3
+
+    def test_detects_discarded_pure_uuid_call(self):
+        code = """
+import uuid
+
+def make_id():
+    uuid.uuid4()
+"""
+        results = self._run(code)
+        assert len(results) == 1
+        assert results[0]["name"] == "uuid.uuid4"
+        assert results[0]["value"] == "discarded_result"
+
+    def test_skips_side_effecting_calls(self):
+        code = """
+def foo(logger):
+    print("hello")
+    logger.info("hello")
+"""
+        assert self._run(code) == []
+
+    def test_skips_expressions_containing_side_effecting_calls(self):
+        code = """
+def foo(logger):
+    (logger.info("hello"), 1)
+"""
+        assert self._run(code) == []
+
+    def test_skips_docstrings_ellipsis_and_await(self):
+        code = '''
+async def foo(task):
+    """Docstring."""
+    ...
+    await task()
+'''
         assert self._run(code) == []
 
 

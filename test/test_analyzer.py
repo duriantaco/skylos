@@ -2082,6 +2082,31 @@ def fake_call():
             "low_entropy_uuid",
         }
 
+    def test_analyze_flags_no_effect_statement(self, tmp_path):
+        src = tmp_path / "app.py"
+        src.write_text(
+            """
+import uuid
+
+def make_id():
+    uuid.uuid4()
+    return "ok"
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), conf=0, enable_quality=True, grep_verify=False)
+        )
+        findings = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L033"
+        ]
+
+        assert len(findings) == 1
+        assert findings[0]["name"] == "uuid.uuid4"
+        assert findings[0]["value"] == "discarded_result"
+
     def test_analyze_repo_rules_use_root_project_ignore_config(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text(
             """
