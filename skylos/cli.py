@@ -2379,6 +2379,36 @@ EARLY_COMMAND_HANDLERS = {
 }
 
 
+def _is_first_level_help_request(argv):
+    return len(argv) == 2 and argv[1] in {"-h", "--help"}
+
+
+def _run_early_command_help(command):
+    from skylos.help import COMMANDS
+
+    console = Console()
+    matches = [
+        item
+        for item in COMMANDS
+        if item.get("name", "").split()[:2] == ["skylos", command]
+    ]
+    if not matches:
+        console.print(f"[bold]Usage:[/bold] skylos {command} [options]")
+        console.print("\nRun [bold]skylos commands[/bold] for all commands.")
+        return 0
+
+    console.print("[bold]Usage:[/bold]")
+    for item in matches:
+        console.print(f"  {item['name']}")
+
+    console.print("\n[bold]Description:[/bold]")
+    for item in matches:
+        console.print(f"  {item['desc']}")
+
+    console.print("\nRun [bold]skylos commands[/bold] for all commands.")
+    return 0
+
+
 def _dispatch_early_command(argv):
     if not argv:
         return _run_command_overview([])
@@ -2386,6 +2416,9 @@ def _dispatch_early_command(argv):
     handler_name = EARLY_COMMAND_HANDLERS.get(argv[0])
     if handler_name is None:
         return None
+
+    if _is_first_level_help_request(argv):
+        return _run_early_command_help(argv[0])
 
     return globals()[handler_name](argv[1:])
 
