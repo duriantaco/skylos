@@ -10,6 +10,7 @@ from skylos.audit_redaction import sanitize_for_audit
 from skylos.audit_store import AuditStore
 from skylos.audit_types import (
     STATUS_ANALYZED,
+    STATUS_DELETED,
     STATUS_ERROR,
     STATUS_NOT_ANALYZED,
     STATUS_PENDING,
@@ -38,6 +39,7 @@ EXPORT_VERDICTS = {
     "not_analyzed",
     "error",
     "skipped",
+    "deleted",
 }
 
 MARKDOWN_FORMATS = {"md", "markdown"}
@@ -50,12 +52,21 @@ def build_deep_audit_export(
     min_severity: str | None = None,
     verdicts: list[str] | tuple[str, ...] | set[str] | str | None = None,
     allowed_files: list[str | Path] | None = None,
+    include_deleted: bool = False,
 ) -> dict[str, Any]:
     allowed = _normalized_allowed_files(store, allowed_files)
-    records = [
+    all_records = [
         record
         for record in store.iter_file_records()
         if allowed is None or record.file in allowed
+    ]
+    deleted_records = [
+        record for record in all_records if record.status == STATUS_DELETED
+    ]
+    records = [
+        record
+        for record in all_records
+        if include_deleted or record.status != STATUS_DELETED
     ]
     entries = _build_entries(records)
     severity_filter = _normalize_severity(min_severity) if min_severity else None
@@ -77,7 +88,10 @@ def build_deep_audit_export(
                 "min_severity": severity_filter,
                 "verdicts": sorted(verdict_filter) if verdict_filter else [],
             },
-            "completion": _completion(records),
+            "completion": _completion(
+                records,
+                deleted_file_count=0 if include_deleted else len(deleted_records),
+            ),
             "entry_count": len(filtered_entries),
             "entries": filtered_entries,
             "records": [record.to_dict() for record in records],
@@ -151,6 +165,7 @@ def _build_entries(records: list[AuditFileRecord]) -> list[dict[str, Any]]:
             STATUS_NOT_ANALYZED,
             STATUS_ERROR,
             STATUS_SKIPPED,
+            STATUS_DELETED,
         }:
             entries.extend(_candidate_entries(record))
 
@@ -162,8 +177,12 @@ def _finding_entry(
     finding: dict[str, Any],
 ) -> dict[str, Any]:
     finding_id = _finding_id(finding)
-    latest = _latest_revalidation(record, finding_id)
-    verdict = str((latest or {}).get("verdict") or "uncertain").lower()
+    if record.status == STATUS_DELETED:
+        latest = None
+        verdict = "deleted"
+    else:
+        latest = _latest_revalidation(record, finding_id)
+        verdict = str((latest or {}).get("verdict") or "uncertain").lower()
     if verdict not in EXPORT_VERDICTS:
         verdict = "uncertain"
     severity = _normalize_severity(
@@ -229,10 +248,16 @@ def _record_status_verdict(status: str) -> str:
         return "error"
     if status == STATUS_SKIPPED:
         return "skipped"
+    if status == STATUS_DELETED:
+        return "deleted"
     return "uncertain"
 
 
-def _completion(records: list[AuditFileRecord]) -> dict[str, Any]:
+def _completion(
+    records: list[AuditFileRecord],
+    *,
+    deleted_file_count: int = 0,
+) -> dict[str, Any]:
     status_counts = {
         STATUS_PENDING: 0,
         STATUS_PROCESSING: 0,
@@ -240,13 +265,18 @@ def _completion(records: list[AuditFileRecord]) -> dict[str, Any]:
         STATUS_NOT_ANALYZED: 0,
         STATUS_ERROR: 0,
         STATUS_SKIPPED: 0,
+        STATUS_DELETED: 0,
     }
     candidate_count = 0
     finding_count = 0
     redacted_candidates = 0
     skipped_candidates = 0
+    no_candidate_files = 0
     for record in records:
-        if record.status in status_counts:
+        has_audit_work = bool(record.candidates or record.findings)
+        if record.status == STATUS_NOT_ANALYZED and not has_audit_work:
+            no_candidate_files += 1
+        elif record.status in status_counts:
             status_counts[record.status] += 1
         candidate_count += len(record.candidates)
         finding_count += len(record.findings)
@@ -275,6 +305,8 @@ def _completion(records: list[AuditFileRecord]) -> dict[str, Any]:
         "not_analyzed_files": status_counts[STATUS_NOT_ANALYZED],
         "error_files": status_counts[STATUS_ERROR],
         "skipped_files": status_counts[STATUS_SKIPPED],
+        "deleted_files": status_counts[STATUS_DELETED] + deleted_file_count,
+        "no_candidate_files": no_candidate_files,
     }
 
 
@@ -416,6 +448,8 @@ def _export_to_markdown(export: dict[str, Any]) -> str:
         f"- Not analyzed files: `{completion.get('not_analyzed_files', 0)}`",
         f"- Error files: `{completion.get('error_files', 0)}`",
         f"- Skipped files: `{completion.get('skipped_files', 0)}`",
+        f"- Deleted files: `{completion.get('deleted_files', 0)}`",
+        f"- No-candidate files: `{completion.get('no_candidate_files', 0)}`",
         "",
     ]
     filters = export.get("filters") or {}

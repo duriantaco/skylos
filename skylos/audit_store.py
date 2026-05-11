@@ -15,6 +15,7 @@ from skylos.audit_types import (
     SCHEMA_VERSION,
     STATUS_ANALYZED,
     STATUS_ERROR,
+    STATUS_DELETED,
     STATUS_NOT_ANALYZED,
     STATUS_PENDING,
     STATUS_PROCESSING,
@@ -137,6 +138,44 @@ class AuditStore:
         payload = sanitize_for_audit(record.to_dict())
         self._write_json_atomic(self.record_path(record.file), payload)
 
+    def mark_deleted_records(
+        self,
+        *,
+        allowed_files: list[str | Path] | None = None,
+        now: str | None = None,
+    ) -> list[AuditFileRecord]:
+        allowed = self._normalized_allowed_files(allowed_files)
+        marked: list[AuditFileRecord] = []
+        timestamp = now or utc_now()
+        for record in self.iter_file_records():
+            if allowed is not None and record.file not in allowed:
+                continue
+            source_path = self.project_root / record.file
+            if source_path.exists():
+                continue
+            if record.status == STATUS_DELETED:
+                marked.append(record)
+                continue
+            record.status = STATUS_DELETED
+            record.locked_by_run_id = None
+            record.locked_at = None
+            record.last_scanned_at = timestamp
+            record.analysis_history.append(
+                sanitize_for_audit(
+                    {
+                        "stage": "file_deleted",
+                        "reason": (
+                            "Source file no longer exists; record retained as "
+                            "audit history."
+                        ),
+                        "at": timestamp,
+                    }
+                )
+            )
+            self.write_file_record(record)
+            marked.append(record)
+        return marked
+
     def upsert_scan_record(
         self,
         *,
@@ -181,9 +220,7 @@ class AuditStore:
             status=status,
             candidates=ordered_candidates,
             findings=(
-                sanitize_for_audit(list(existing.findings))
-                if preserve_history
-                else []
+                sanitize_for_audit(list(existing.findings)) if preserve_history else []
             ),
             analysis_history=(
                 sanitize_for_audit(list(existing.analysis_history))
@@ -206,9 +243,7 @@ class AuditStore:
                 else None
             ),
             last_scanned_at=now,
-            last_analyzed_at=(
-                existing.last_analyzed_at if preserve_history else None
-            ),
+            last_analyzed_at=(existing.last_analyzed_at if preserve_history else None),
             skylos_version=skylos.__version__,
             config_hash=config_hash,
             candidate_engine_version=CANDIDATE_ENGINE_VERSION,
@@ -301,6 +336,20 @@ class AuditStore:
             locked = locked.replace(tzinfo=timezone.utc)
         age = datetime.now(timezone.utc) - locked
         return age.total_seconds() >= stale_after_seconds
+
+    def _normalized_allowed_files(
+        self,
+        allowed_files: list[str | Path] | None,
+    ) -> set[str] | None:
+        if allowed_files is None:
+            return None
+        allowed: set[str] = set()
+        for file_path in allowed_files:
+            try:
+                allowed.add(normalize_relative_path(self.project_root, file_path))
+            except ValueError:
+                continue
+        return allowed
 
     def _write_json_atomic(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

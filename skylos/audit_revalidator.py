@@ -8,6 +8,7 @@ from uuid import uuid4
 from skylos.audit_redaction import redact_text, sanitize_for_audit
 from skylos.audit_store import AuditStore
 from skylos.audit_types import (
+    STATUS_DELETED,
     AuditFileRecord,
     AuditRevalidationSummary,
     normalize_relative_path,
@@ -36,7 +37,9 @@ def revalidate_deep_audit_findings(
     records = [
         record
         for record in store.iter_file_records()
-        if record.findings and (allowed is None or record.file in allowed)
+        if record.findings
+        and record.status != STATUS_DELETED
+        and (allowed is None or record.file in allowed)
     ]
 
     considered = 0

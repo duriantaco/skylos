@@ -11,6 +11,7 @@ from skylos.audit_export import (
 from skylos.audit_store import AuditStore
 from skylos.audit_types import (
     STATUS_ANALYZED,
+    STATUS_DELETED,
     STATUS_NOT_ANALYZED,
     STATUS_PENDING,
     STATUS_SKIPPED,
@@ -180,6 +181,62 @@ def test_export_surfaces_not_analyzed_polyglot_work(tmp_path: Path):
     assert export["completion"]["not_analyzed_files"] == 1
     assert export["entry_count"] == 1
     assert export["entries"][0]["verdict"] == "not_analyzed"
+
+
+def test_export_treats_no_candidate_files_as_complete(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "plain.py"
+    app.write_text("print('ok')\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    store.upsert_scan_record(
+        file_path=app,
+        file_hash=sha256_file(app),
+        language="python",
+        candidates=[],
+        config_hash="cfg",
+    )
+
+    export = build_deep_audit_export(store=store)
+
+    assert export["completion"]["complete"] is True
+    assert export["completion"]["no_candidate_files"] == 1
+    assert export["completion"]["not_analyzed_files"] == 0
+    assert export["entry_count"] == 0
+
+
+def test_export_excludes_deleted_records_from_active_entries(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "deleted.py"
+    app.write_text("eval(user_input)\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    record = _record(store, app, status=STATUS_DELETED)
+    record.findings = [
+        {
+            "audit_finding_id": "finding-deleted",
+            "rule_id": "SKY-D001",
+            "severity": "critical",
+            "message": "old finding",
+            "line": 1,
+        }
+    ]
+    store.write_file_record(record)
+
+    export = build_deep_audit_export(store=store)
+
+    assert export["completion"]["deleted_files"] == 1
+    assert export["entry_count"] == 0
+    assert export["records"] == []
+
+    with_deleted = build_deep_audit_export(store=store, include_deleted=True)
+
+    assert with_deleted["completion"]["deleted_files"] == 1
+    assert with_deleted["entry_count"] == 2
+    assert {entry["verdict"] for entry in with_deleted["entries"]} == {"deleted"}
+    assert with_deleted["records"][0]["status"] == STATUS_DELETED
 
 
 def test_sarif_export_includes_results_rules_and_completion(tmp_path: Path):

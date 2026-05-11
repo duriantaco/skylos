@@ -148,6 +148,7 @@ def scan_deep_audit_candidates(
 
     store = AuditStore(project_root, project_id=project_id, audit_root=audit_root)
     store.init_project(config_hash=config_hash)
+    deleted_records = store.mark_deleted_records(allowed_files=changed_files)
 
     records_written = 0
     candidate_count = 0
@@ -198,9 +199,8 @@ def scan_deep_audit_candidates(
         processing_files=processing_files,
         not_analyzed_files=not_analyzed_files,
         error_files=error_files,
-        complete=(
-            pending_files == 0 and processing_files == 0 and error_files == 0
-        ),
+        deleted_files=len(deleted_records),
+        complete=(pending_files == 0 and processing_files == 0 and error_files == 0),
     )
     run_id = f"scan-{uuid4().hex[:12]}"
     store.write_run(
@@ -251,10 +251,10 @@ def _discover_audit_files(
     target = Path(path).resolve()
     root = target.parent if target.is_file() else target
     if target.is_file():
-        if _is_audit_file(target) and not should_exclude_path(
-            target, root, exclude_folders
-        ) and not _is_excluded_output_path(
-            target, project_root, excluded_paths
+        if (
+            _is_audit_file(target)
+            and not should_exclude_path(target, root, exclude_folders)
+            and not _is_excluded_output_path(target, project_root, excluded_paths)
         ):
             discovered.append(target)
     else:
@@ -434,9 +434,7 @@ def _add_repo_activation_candidates(
         if rel_path not in candidates_by_file:
             continue
         reasons = list(
-            meta.entrypoint_reasons
-            + meta.registration_hints
-            + meta.security_hints
+            meta.entrypoint_reasons + meta.registration_hints + meta.security_hints
         )
         if not reasons:
             continue

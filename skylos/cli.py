@@ -231,6 +231,137 @@ def _deep_audit_output_exclude_paths(
     return [output]
 
 
+def _deep_audit_project_root(audit_path: pathlib.Path) -> pathlib.Path:
+    target = audit_path.resolve()
+    return target.parent if target.is_file() else target
+
+
+def _empty_changed_deep_audit_payload(
+    audit_path: pathlib.Path,
+    *,
+    fail_on: str | None,
+    export_format: str,
+    severity: str | None,
+    verdicts: list[str] | None,
+) -> tuple[dict, object | None]:
+    from skylos.audit_export import build_deep_audit_export
+    from skylos.audit_store import AuditStore
+    from skylos.audit_types import AuditCIGateSummary, AuditScanSummary
+
+    project_root = _deep_audit_project_root(audit_path)
+    store = AuditStore(project_root)
+    summary = AuditScanSummary(
+        project_id=store.project_id,
+        project_root=str(project_root),
+        files_scanned=0,
+        records_written=0,
+        candidate_count=0,
+        redacted_candidates=0,
+        pending_files=0,
+        not_analyzed_files=0,
+        complete=True,
+    )
+    payload = {
+        "mode": "deep_no_changes",
+        "changed_scope": True,
+        "no_changed_files": True,
+        "summary": summary.to_dict(),
+        "audit_project_dir": str(store.project_dir),
+        "changed_files": [],
+    }
+    if fail_on:
+        payload["ci"] = AuditCIGateSummary(
+            fail_on=fail_on,
+            exit_code=0,
+            blocking_counts={
+                "findings": 0,
+                "pending": 0,
+                "not_analyzed": 0,
+                "skipped": 0,
+                "error": 0,
+                "locked": 0,
+                "stale_analyzed": 0,
+                "limited": 0,
+            },
+            complete=True,
+            reason="no changed files to audit",
+        ).to_dict()
+
+    export_payload = None
+    if export_format in {"json", "sarif", "md", "markdown", "md-dir"}:
+        export_payload = build_deep_audit_export(
+            store=store,
+            min_severity=severity,
+            verdicts=verdicts,
+            allowed_files=[],
+        )
+        payload["export"] = export_payload
+    return payload, export_payload
+
+
+def _write_deep_audit_payload(path: str | pathlib.Path, payload: dict) -> None:
+    from skylos.audit_export import write_deep_audit_export
+
+    write_deep_audit_export(payload, path, "json")
+
+
+def _handle_empty_changed_deep_audit(
+    agent_args,
+    audit_path: pathlib.Path,
+    console,
+) -> int:
+    export_format = getattr(agent_args, "format", "table")
+    output_path = getattr(agent_args, "output", None)
+    quiet = getattr(agent_args, "quiet", False)
+    payload, export_payload = _empty_changed_deep_audit_payload(
+        audit_path,
+        fail_on=getattr(agent_args, "fail_on", None),
+        export_format=export_format,
+        severity=getattr(agent_args, "severity", None),
+        verdicts=getattr(agent_args, "verdict", None),
+    )
+
+    if export_format in {"sarif", "md", "markdown", "md-dir"}:
+        if export_payload is None:
+            return 1
+        from skylos.audit_export import (
+            render_deep_audit_export,
+            write_deep_audit_export,
+        )
+
+        if output_path:
+            written_paths = write_deep_audit_export(
+                export_payload,
+                output_path,
+                export_format,
+            )
+            if not quiet:
+                console.print(
+                    f"[dim]No changed files to audit. Written "
+                    f"{len(written_paths)} empty export file(s) to "
+                    f"{output_path}[/dim]"
+                )
+        elif not quiet:
+            print(render_deep_audit_export(export_payload, export_format), end="")
+        return 0
+
+    if output_path:
+        _write_deep_audit_payload(output_path, payload)
+
+    if export_format == "json":
+        if not quiet:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+    elif not quiet:
+        if output_path:
+            console.print(
+                f"[dim]No changed files to audit. Wrote empty audit report "
+                f"to {output_path}[/dim]"
+            )
+        else:
+            console.print("[dim]No changed files to audit.[/dim]")
+    return 0
+
+
 def _create_precommit_snapshot(project_root: Path):
     snapshot_dir = tempfile.TemporaryDirectory(prefix="skylos_precommit_")
     snapshot_root = Path(snapshot_dir.name).resolve()
@@ -341,7 +472,9 @@ def _path_suffixes(path: str) -> tuple[str, ...]:
     return tuple("/".join(parts[idx:]) for idx in range(len(parts)))
 
 
-def _build_changed_range_index(changed_ranges: list[dict]) -> dict[str, list[tuple[int, int]]]:
+def _build_changed_range_index(
+    changed_ranges: list[dict],
+) -> dict[str, list[tuple[int, int]]]:
     index: dict[str, list[tuple[int, int]]] = {}
     for entry in changed_ranges:
         key = _normalize_precommit_path(entry["file"])
@@ -2116,13 +2249,20 @@ def run_whitelist(pattern=None, reason=None, show=False):
     return run_whitelist_impl(pattern=pattern, reason=reason, show=show)
 
 
-def get_git_changed_files(root_path, base_ref=None, *, strict_base=False):
+def get_git_changed_files(
+    root_path,
+    base_ref=None,
+    *,
+    strict_base=False,
+    include_deleted=False,
+):
     from skylos.cli_shared import get_git_changed_files as get_git_changed_files_impl
 
     return get_git_changed_files_impl(
         root_path,
         base_ref=base_ref,
         strict_base=strict_base,
+        include_deleted=include_deleted,
     )
 
 
@@ -2960,10 +3100,7 @@ def _apply_config_driven_analysis_flags(args, project_cfg, console):
             args.quality = True
             enabled_from_policy.append("quality")
 
-        if (
-            enabled_from_policy
-            and not _is_main_machine_output(args)
-        ):
+        if enabled_from_policy and not _is_main_machine_output(args):
             console.print(
                 "[brand]Using synced/local Skylos policy:[/brand] enabling "
                 + ", ".join(enabled_from_policy)
@@ -3377,8 +3514,14 @@ def _build_agent_parser():
             "not_analyzed",
             "error",
             "skipped",
+            "deleted",
         ],
         help="Filter Deep Mode export entries by verdict/status",
+    )
+    p_audit.add_argument(
+        "--include-deleted",
+        action="store_true",
+        help="Include deleted Deep Mode audit records in exports",
     )
     p_audit.add_argument("--out", "--output", "-o", dest="output")
     _add_agent_quiet_arg(p_audit)
@@ -4300,14 +4443,19 @@ def main() -> None:
                         audit_path,
                         base_ref=getattr(agent_args, "base", None),
                         strict_base=bool(getattr(agent_args, "base", None)),
+                        include_deleted=True,
                     )
                 except ValueError as exc:
                     console.print(f"[bad]{exc}[/bad]")
                     sys.exit(2)
                 if not changed_files:
-                    if not getattr(agent_args, "quiet", False):
-                        console.print("[dim]No changed files[/dim]")
-                    sys.exit(0)
+                    sys.exit(
+                        _handle_empty_changed_deep_audit(
+                            agent_args,
+                            audit_path,
+                            console,
+                        )
+                    )
 
             from skylos.audit_candidates import scan_deep_audit_candidates
 
@@ -4344,8 +4492,7 @@ def main() -> None:
                         "deepseek": "deepseek/deepseek-chat",
                         "xai": "xai/grok-2",
                         "together": (
-                            "together/meta-llama/"
-                            "Meta-Llama-3-70B-Instruct-Turbo"
+                            "together/meta-llama/Meta-Llama-3-70B-Instruct-Turbo"
                         ),
                         "ollama": "ollama/llama3",
                     }
@@ -4364,7 +4511,9 @@ def main() -> None:
                     os.environ["SKYLOS_LLM_BASE_URL"] = base_url
                 if api_key is None or api_key == "":
                     if not is_local:
-                        env_var = PROVIDERS.get(provider) or f"{provider.upper()}_API_KEY"
+                        env_var = (
+                            PROVIDERS.get(provider) or f"{provider.upper()}_API_KEY"
+                        )
                         console.print(
                             f"[bad]No {env_var} configured. Run `skylos key` or "
                             "set the environment variable.[/bad]"
@@ -4455,6 +4604,7 @@ def main() -> None:
                         min_severity=getattr(agent_args, "severity", None),
                         verdicts=getattr(agent_args, "verdict", None),
                         allowed_files=changed_files if changed_scope else None,
+                        include_deleted=getattr(agent_args, "include_deleted", False),
                     )
                     payload["export"] = export_payload
 
@@ -4511,20 +4661,40 @@ def main() -> None:
                 pass
             elif not getattr(agent_args, "quiet", False):
                 heading = "scan-only" if process_summary is None else "scan"
-                console.print(
-                    f"[brand]Deep audit {heading}:[/brand] static queue updated"
-                )
-                console.print(f"  Project: {summary.project_root}")
-                console.print(f"  Files scanned: {summary.files_scanned}")
-                console.print(f"  Candidates: {summary.candidate_count}")
-                console.print(f"  Redacted candidates: {summary.redacted_candidates}")
-                console.print(f"  Pending files: {summary.pending_files}")
-                console.print(f"  Processing files: {summary.processing_files}")
-                console.print(f"  Error files: {summary.error_files}")
-                console.print(f"  Not analyzed: {summary.not_analyzed_files}")
+                if (
+                    summary.candidate_count == 0
+                    and process_summary is None
+                    and revalidation_summary is None
+                    and ci_summary is None
+                ):
+                    console.print(
+                        f"[brand]Deep audit {heading}:[/brand] no candidates found"
+                    )
+                    console.print(f"  Files scanned: {summary.files_scanned}")
+                    if summary.deleted_files:
+                        console.print(f"  Deleted records: {summary.deleted_files}")
+                    console.print(f"  Store: {store.project_dir}")
+                else:
+                    console.print(
+                        f"[brand]Deep audit {heading}:[/brand] static queue updated"
+                    )
+                    console.print(f"  Project: {summary.project_root}")
+                    console.print(f"  Files scanned: {summary.files_scanned}")
+                    console.print(f"  Candidates: {summary.candidate_count}")
+                    console.print(
+                        f"  Redacted candidates: {summary.redacted_candidates}"
+                    )
+                    console.print(f"  Pending files: {summary.pending_files}")
+                    console.print(f"  Processing files: {summary.processing_files}")
+                    console.print(f"  Error files: {summary.error_files}")
+                    console.print(f"  Not analyzed: {summary.not_analyzed_files}")
+                    if summary.deleted_files:
+                        console.print(f"  Deleted records: {summary.deleted_files}")
                 if process_summary is not None:
                     console.print("[brand]Deep audit processing:[/brand] finished")
-                    console.print(f"  Processed files: {process_summary.processed_files}")
+                    console.print(
+                        f"  Processed files: {process_summary.processed_files}"
+                    )
                     console.print(f"  Findings added: {process_summary.findings_added}")
                     console.print(
                         f"  Skipped secret files: "
@@ -4534,8 +4704,7 @@ def main() -> None:
                         f"  Unsupported files: {process_summary.unsupported_files}"
                     )
                     console.print(
-                        f"  Remaining work: "
-                        f"{process_summary.remaining_pending_files}"
+                        f"  Remaining work: {process_summary.remaining_pending_files}"
                     )
                 if revalidation_summary is not None:
                     console.print("[brand]Deep audit revalidation:[/brand] finished")
@@ -4551,9 +4720,7 @@ def main() -> None:
                         f"  Uncertain verdicts: {revalidation_summary.uncertain}"
                     )
                 if ci_summary is not None:
-                    console.print(
-                        f"[brand]Deep audit CI:[/brand] {ci_summary.reason}"
-                    )
+                    console.print(f"[brand]Deep audit CI:[/brand] {ci_summary.reason}")
                 console.print(f"  Store: {store.project_dir}")
             sys.exit(ci_summary.exit_code if ci_summary is not None else 0)
 

@@ -7,7 +7,13 @@ import subprocess
 from pathlib import Path
 
 
-def get_git_changed_files(root_path, base_ref=None, *, strict_base=False):
+def get_git_changed_files(
+    root_path,
+    base_ref=None,
+    *,
+    strict_base=False,
+    include_deleted=False,
+):
     supported_exts = {
         ".py",
         ".go",
@@ -34,12 +40,12 @@ def get_git_changed_files(root_path, base_ref=None, *, strict_base=False):
         for line in output.splitlines():
             full_path = pathlib.Path(repo_root) / line
             if (
-                full_path.name != ".env"
-                and not full_path.name.startswith(".env.")
-                and full_path.suffix.lower() not in supported_exts
+                pathlib.Path(line).name != ".env"
+                and not pathlib.Path(line).name.startswith(".env.")
+                and pathlib.Path(line).suffix.lower() not in supported_exts
             ):
                 continue
-            if full_path.exists():
+            if full_path.exists() or include_deleted:
                 files.append(full_path)
         return files
 

@@ -7,6 +7,7 @@ import pytest
 from skylos.audit_store import AuditStore
 from skylos.audit_types import (
     STATUS_ANALYZED,
+    STATUS_DELETED,
     STATUS_PENDING,
     AuditCandidate,
     sha256_file,
@@ -208,3 +209,34 @@ def test_audit_store_sanitizes_preserved_history_and_errors(tmp_path: Path):
     stored = store.record_path(source).read_text(encoding="utf-8")
 
     assert raw_secret not in stored
+
+
+def test_audit_store_marks_deleted_records_without_losing_history(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    source = repo / "app.py"
+    source.write_text("print('hello')\n", encoding="utf-8")
+
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    record = store.upsert_scan_record(
+        file_path=source,
+        file_hash=sha256_file(source),
+        language="python",
+        candidates=[_candidate()],
+        config_hash="cfg",
+    )
+    record.status = STATUS_ANALYZED
+    record.findings = [{"audit_finding_id": "finding-one", "rule_id": "OLD"}]
+    store.write_file_record(record)
+
+    source.unlink()
+    marked = store.mark_deleted_records()
+    loaded = store.read_file_record("app.py")
+
+    assert [item.file for item in marked] == ["app.py"]
+    assert loaded is not None
+    assert loaded.status == STATUS_DELETED
+    assert loaded.findings == [{"audit_finding_id": "finding-one", "rule_id": "OLD"}]
+    assert loaded.locked_by_run_id is None
+    assert loaded.analysis_history[-1]["stage"] == "file_deleted"

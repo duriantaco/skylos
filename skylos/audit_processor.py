@@ -8,6 +8,7 @@ from skylos.audit_redaction import redact_text, sanitize_for_audit
 from skylos.audit_store import AuditStore
 from skylos.audit_types import (
     STATUS_ANALYZED,
+    STATUS_DELETED,
     STATUS_ERROR,
     STATUS_NOT_ANALYZED,
     STATUS_PENDING,
@@ -41,7 +42,9 @@ def process_deep_audit_records(
     records = [
         record
         for record in store.iter_file_records()
-        if record.candidates and (allowed is None or record.file in allowed)
+        if record.candidates
+        and record.status != STATUS_DELETED
+        and (allowed is None or record.file in allowed)
     ]
     locked_files = 0
     run_error_files = 0
@@ -165,9 +168,7 @@ def process_deep_audit_records(
         ),
         pending_files=state_counts[STATUS_PENDING],
         processing_files=state_counts[STATUS_PROCESSING],
-        analyzed_files=(
-            state_counts[STATUS_ANALYZED] - state_counts["stale_analyzed"]
-        ),
+        analyzed_files=(state_counts[STATUS_ANALYZED] - state_counts["stale_analyzed"]),
         stale_analyzed_files=state_counts["stale_analyzed"],
     )
     store.write_run(
@@ -458,13 +459,14 @@ def _audit_state_counts(
     for record in store.iter_file_records():
         if allowed is not None and record.file not in allowed:
             continue
+        if record.status == STATUS_DELETED:
+            continue
         if not record.candidates:
             continue
         if record.status in counts:
             counts[record.status] += 1
-        if (
-            record.status == STATUS_ANALYZED
-            and not _agent_context_matches(record, model=model, provider=provider)
+        if record.status == STATUS_ANALYZED and not _agent_context_matches(
+            record, model=model, provider=provider
         ):
             counts["stale_analyzed"] += 1
         if _is_unresolved_record(record, model=model, provider=provider):

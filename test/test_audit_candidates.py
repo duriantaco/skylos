@@ -158,6 +158,30 @@ def test_scan_deep_audit_candidates_records_non_candidate_files(
     assert payload["candidates"] == []
 
 
+def test_scan_deep_audit_candidates_marks_deleted_records(tmp_path: Path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "deleted.py"
+    app.write_text("eval(user_input)\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        audit_candidates,
+        "run_static_on_files",
+        lambda files, **kwargs: {"danger": [], "secrets": []},
+    )
+
+    _summary, store = audit_candidates.scan_deep_audit_candidates(repo)
+    app.unlink()
+
+    summary, store = audit_candidates.scan_deep_audit_candidates(repo)
+    record = store.read_file_record("deleted.py")
+
+    assert summary.deleted_files == 1
+    assert summary.files_scanned == 0
+    assert record is not None
+    assert record.status == "deleted"
+
+
 def test_scan_deep_audit_candidates_changed_files_respect_excludes(
     tmp_path: Path, monkeypatch
 ):
@@ -337,7 +361,7 @@ def test_scan_deep_audit_candidates_reports_error_records_incomplete(
         (
             "main.go",
             "package main\n"
-            "import \"os/exec\"\n"
+            'import "os/exec"\n'
             "func run(name string) { exec.Command(name) }\n",
             "go",
             "SKY-D212",

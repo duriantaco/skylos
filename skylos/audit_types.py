@@ -19,6 +19,7 @@ STATUS_ANALYZED = "analyzed"
 STATUS_ERROR = "error"
 STATUS_NOT_ANALYZED = "not_analyzed"
 STATUS_SKIPPED = "skipped"
+STATUS_DELETED = "deleted"
 
 VALID_STATUSES = {
     STATUS_PENDING,
@@ -27,6 +28,7 @@ VALID_STATUSES = {
     STATUS_ERROR,
     STATUS_NOT_ANALYZED,
     STATUS_SKIPPED,
+    STATUS_DELETED,
 }
 
 
@@ -267,9 +269,7 @@ class AuditFileRecord:
             ),
             skylos_version=str(payload.get("skylos_version") or skylos.__version__),
             config_hash=str(payload.get("config_hash") or ""),
-            candidate_engine_version=str(
-                payload.get("candidate_engine_version") or ""
-            ),
+            candidate_engine_version=str(payload.get("candidate_engine_version") or ""),
         )
 
 
@@ -285,6 +285,7 @@ class AuditScanSummary:
     not_analyzed_files: int
     processing_files: int = 0
     error_files: int = 0
+    deleted_files: int = 0
     complete: bool = True
 
     def to_dict(self) -> dict[str, Any]:
@@ -299,6 +300,7 @@ class AuditScanSummary:
             "processing_files": self.processing_files,
             "not_analyzed_files": self.not_analyzed_files,
             "error_files": self.error_files,
+            "deleted_files": self.deleted_files,
             "complete": self.complete,
         }
 

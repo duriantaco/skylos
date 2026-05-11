@@ -6,6 +6,7 @@ from typing import Any
 from skylos.audit_store import AuditStore
 from skylos.audit_types import (
     STATUS_ANALYZED,
+    STATUS_DELETED,
     STATUS_ERROR,
     STATUS_NOT_ANALYZED,
     STATUS_PENDING,
@@ -49,6 +50,8 @@ def evaluate_deep_audit_ci_gate(
 
     for record in store.iter_file_records():
         if allowed is not None and record.file not in allowed:
+            continue
+        if record.status == STATUS_DELETED:
             continue
         if not record.candidates and not record.findings:
             continue
