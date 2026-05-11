@@ -839,25 +839,8 @@ _pip_temp_dirs: list = []
 
 
 def _pip_install_to_temp(pip_name: str) -> str | None:
-    if pip_name in _pip_install_cache:
-        return _pip_install_cache[pip_name]
-    import subprocess as _sp
-    import tempfile
-
-    td = tempfile.mkdtemp(prefix=f"skylos_dep_{pip_name}_")
-    _pip_temp_dirs.append(td)
-    try:
-        result = _sp.run(
-            ["pip3", "install", "--target", td, pip_name],
-            capture_output=True,
-            timeout=60,
-        )
-        if result.returncode == 0:
-            _pip_install_cache[pip_name] = td
-            return td
-    except Exception:
-        pass
-    _pip_install_cache[pip_name] = None
+    """Disabled: installing packages named by analyzed repositories is unsafe."""
+    logger.debug("_pip_install_to_temp disabled for security (requested: %s)", pip_name)
     return None
 
 
@@ -1104,92 +1087,6 @@ def _find_parent_class_info(
                             break
                     except Exception:
                         pass
-
-            if not found_in_parent:
-                _root = Path(project_root)
-                _bases_to_check = []
-                for base in bases:
-                    base_name = base.split(".")[-1].strip()
-                    if base_name in ("object", "ABC", "Protocol"):
-                        continue
-                    import_match = re.search(
-                        rf"from\s+([\w.]+)\s+import\s+\([^)]*\b{re.escape(base_name)}\b[^)]*\)",
-                        source,
-                        re.DOTALL,
-                    ) or re.search(
-                        rf"from\s+([\w.]+)\s+import\s+[^(\n]*\b{re.escape(base_name)}\b",
-                        source,
-                    )
-                    if import_match:
-                        _bases_to_check.append((base_name, import_match.group(1)))
-
-                if _bases_to_check:
-                    _project_deps: list[str] = []
-                    _pyproject = _root / "pyproject.toml"
-                    if _pyproject.exists():
-                        try:
-                            import tomllib
-
-                            with open(_pyproject, "rb") as _f:
-                                _toml = tomllib.load(_f)
-                            _project_deps = _toml.get("project", {}).get(
-                                "dependencies", []
-                            )
-                        except Exception:
-                            pass
-                    if not _project_deps:
-                        _req_file = _root / "requirements.txt"
-                        if _req_file.exists():
-                            try:
-                                _project_deps = [
-                                    line.strip()
-                                    for line in _req_file.read_text().splitlines()
-                                    if line.strip() and not line.startswith("#")
-                                ]
-                            except Exception:
-                                pass
-
-                    for base_name, module_path in _bases_to_check:
-                        if found_in_parent:
-                            break
-                        top_module = module_path.split(".")[0]
-                        pip_name = top_module.replace("_", "-")
-                        dep_match = any(
-                            pip_name.lower()
-                            in dep.lower()
-                            .split("[")[0]
-                            .split(">")[0]
-                            .split("<")[0]
-                            .split("=")[0]
-                            .split("!")[0]
-                            .strip()
-                            for dep in _project_deps
-                        )
-                        if not dep_match:
-                            continue
-                        try:
-                            _td = _pip_install_to_temp(pip_name)
-                            if not _td:
-                                continue
-                            _check = _sp.run(
-                                [
-                                    "python3",
-                                    "-c",
-                                    f"import sys; sys.path.insert(0, '{_td}'); "
-                                    f"import {module_path}; "
-                                    f"cls = getattr({module_path}, '{base_name}', None); "
-                                    f"print('HAS_METHOD' if cls and hasattr(cls, '{simple_name}') else 'NO_METHOD')",
-                                ],
-                                capture_output=True,
-                                text=True,
-                                timeout=10,
-                            )
-                            if "HAS_METHOD" in _check.stdout:
-                                info += f"\n  CONFIRMED (pip install): Parent `{module_path}.{base_name}` defines `{simple_name}`"
-                                found_in_parent = True
-                                break
-                        except Exception:
-                            pass
 
             if not found_in_parent:
                 import sys
