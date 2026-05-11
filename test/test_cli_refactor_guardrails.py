@@ -171,6 +171,36 @@ def test_cli_guardrail_init_dispatch_exits_zero(monkeypatch):
     mock_init.assert_called_once_with()
 
 
+@pytest.mark.parametrize("help_flag", ["--help", "-h"])
+def test_cli_guardrail_init_help_has_no_side_effects(
+    tmp_path, monkeypatch, help_flag
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["skylos", "init", help_flag])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 0
+    assert not (tmp_path / "pyproject.toml").exists()
+
+
+@pytest.mark.parametrize("help_flag", ["--help", "-h"])
+def test_cli_guardrail_baseline_help_has_no_side_effects(
+    tmp_path, monkeypatch, help_flag
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["skylos", "baseline", help_flag])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 0
+    assert not (tmp_path / "--help").exists()
+    assert not (tmp_path / "-h").exists()
+    assert not (tmp_path / ".skylos").exists()
+
+
 def test_cli_guardrail_whitelist_dispatch_preserves_argv(monkeypatch):
     monkeypatch.setattr(
         sys,
