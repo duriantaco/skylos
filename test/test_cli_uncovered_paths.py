@@ -227,6 +227,22 @@ def test_get_git_changed_files_returns_existing_supported_files_only(tmp_path):
     assert names == ["a.py", "b.tsx", "c.go", "d.js", "e.jsx"]
 
 
+def test_get_git_changed_files_can_include_deleted_supported_files(tmp_path):
+    root = tmp_path
+
+    def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return str(root).encode("utf-8")
+        if cmd[:3] == ["git", "diff", "--name-only"]:
+            return b"deleted.py\ndeleted.txt\n"
+        raise AssertionError("unexpected cmd")
+
+    with patch("skylos.cli.subprocess.check_output", side_effect=fake_check_output):
+        files = cli.get_git_changed_files(root, include_deleted=True)
+
+    assert files == [root / "deleted.py"]
+
+
 def test_get_git_changed_files_uses_repo_root_for_subdir_targets(tmp_path):
     root = tmp_path
     src = root / "src"

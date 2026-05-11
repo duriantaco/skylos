@@ -93,9 +93,7 @@ def test_agent_audit_requires_explicit_deep_flag(tmp_path: Path, monkeypatch):
     assert exc.value.code == 2
 
 
-def test_agent_audit_scan_only_runs_ci_gate(
-    tmp_path: Path, monkeypatch
-):
+def test_agent_audit_scan_only_runs_ci_gate(tmp_path: Path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     out = tmp_path / "audit.json"
@@ -568,6 +566,55 @@ def test_agent_audit_invalid_base_ref_exits_without_full_scan(
         cli.main()
 
     assert exc.value.code == 2
+
+
+def test_agent_audit_changed_no_files_writes_empty_json_artifact(
+    tmp_path: Path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    out = tmp_path / "audit.json"
+
+    def fail_scan(*args, **kwargs):
+        raise AssertionError("scan should not run when there are no changed files")
+
+    monkeypatch.setattr(cli, "get_git_changed_files", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "skylos.audit_candidates.scan_deep_audit_candidates",
+        fail_scan,
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            "agent",
+            "audit",
+            str(repo),
+            "--deep",
+            "--changed",
+            "--scan-only",
+            "--fail-on",
+            "high",
+            "--format",
+            "json",
+            "--output",
+            str(out),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert exc.value.code == 0
+    assert payload["mode"] == "deep_no_changes"
+    assert payload["changed_scope"] is True
+    assert payload["no_changed_files"] is True
+    assert payload["changed_files"] == []
+    assert payload["summary"]["files_scanned"] == 0
+    assert payload["ci"]["exit_code"] == 0
+    assert payload["export"]["entry_count"] == 0
 
 
 def test_agent_audit_scan_only_rejects_revalidate(tmp_path: Path, monkeypatch):
