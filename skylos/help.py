@@ -27,6 +27,11 @@ COMMANDS = [
         "group": "AI Agent",
     },
     {
+        "name": "skylos agent audit <path> --deep --scan-only",
+        "desc": "Create/update the persistent Deep Mode audit queue",
+        "group": "AI Agent",
+    },
+    {
         "name": "skylos agent verify <path>",
         "desc": "LLM-verify dead code (100% accuracy)",
         "group": "AI Agent",
