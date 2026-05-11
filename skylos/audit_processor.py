@@ -33,10 +33,16 @@ def process_deep_audit_records(
     provider: str | None = None,
     limit: int | None = None,
     force: bool = False,
+    allowed_files: list[str | Path] | None = None,
     run_id: str | None = None,
 ) -> AuditProcessSummary:
     run_id = run_id or f"process-{uuid4().hex[:12]}"
-    records = [record for record in store.iter_file_records() if record.candidates]
+    allowed = _normalized_allowed_files(store, allowed_files)
+    records = [
+        record
+        for record in store.iter_file_records()
+        if record.candidates and (allowed is None or record.file in allowed)
+    ]
     locked_files = 0
     run_error_files = 0
     processed_files = 0
@@ -131,7 +137,12 @@ def process_deep_audit_records(
         store.write_file_record(record)
         processed_files += 1
 
-    state_counts = _audit_state_counts(store, model=model, provider=provider)
+    state_counts = _audit_state_counts(
+        store,
+        model=model,
+        provider=provider,
+        allowed_files=allowed_files,
+    )
     remaining = state_counts["unresolved"]
     summary = AuditProcessSummary(
         run_id=run_id,
@@ -174,6 +185,21 @@ def _record_sort_key(record: AuditFileRecord) -> tuple[int, str]:
         -max((candidate.priority for candidate in record.candidates), default=0),
         record.file,
     )
+
+
+def _normalized_allowed_files(
+    store: AuditStore,
+    allowed_files: list[str | Path] | None,
+) -> set[str] | None:
+    if allowed_files is None:
+        return None
+    allowed: set[str] = set()
+    for file_path in allowed_files:
+        try:
+            allowed.add(normalize_relative_path(store.project_root, file_path))
+        except ValueError:
+            continue
+    return allowed
 
 
 def _is_active_record(record: AuditFileRecord, *, force: bool) -> bool:
@@ -253,20 +279,31 @@ def _mark_unsupported(
     current.status = STATUS_NOT_ANALYZED
     current.locked_by_run_id = None
     current.locked_at = None
-    current.analysis_history.append(
-        sanitize_for_audit(
-            {
-                "stage": "unsupported_agent_language",
-                "run_id": run_id,
-                "language": current.language,
-                "reason": (
-                    "Deep Mode agent processing currently supports Python files only."
-                ),
-                "at": utc_now(),
-            }
+    if not _has_unsupported_language_history(current):
+        current.analysis_history.append(
+            sanitize_for_audit(
+                {
+                    "stage": "unsupported_agent_language",
+                    "run_id": run_id,
+                    "language": current.language,
+                    "reason": (
+                        "Deep Mode agent processing currently supports "
+                        "Python files only."
+                    ),
+                    "at": utc_now(),
+                }
+            )
         )
-    )
     store.write_file_record(current)
+
+
+def _has_unsupported_language_history(record: AuditFileRecord) -> bool:
+    return any(
+        isinstance(item, dict)
+        and item.get("stage") == "unsupported_agent_language"
+        and item.get("language") == record.language
+        for item in record.analysis_history
+    )
 
 
 def _mark_secret_skipped(
@@ -405,7 +442,9 @@ def _audit_state_counts(
     *,
     model: str,
     provider: str | None,
+    allowed_files: list[str | Path] | None = None,
 ) -> dict[str, int]:
+    allowed = _normalized_allowed_files(store, allowed_files)
     counts = {
         STATUS_PENDING: 0,
         STATUS_PROCESSING: 0,
@@ -417,6 +456,8 @@ def _audit_state_counts(
         "unresolved": 0,
     }
     for record in store.iter_file_records():
+        if allowed is not None and record.file not in allowed:
+            continue
         if not record.candidates:
             continue
         if record.status in counts:

@@ -150,6 +150,34 @@ def test_process_deep_audit_records_prioritizes_and_respects_limit(tmp_path: Pat
     assert store.read_file_record(low).status == "pending"
 
 
+def test_process_deep_audit_records_respects_allowed_file_scope(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    changed = repo / "changed.py"
+    old = repo / "old.py"
+    changed.write_text("eval(user_input)\n", encoding="utf-8")
+    old.write_text("eval(user_input)\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, changed, candidates=[_candidate("changed", priority=100)])
+    _write_record(store, old, candidates=[_candidate("old", priority=900)])
+
+    analyzer = FakeAnalyzer()
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        allowed_files=[changed],
+        run_id="run-changed",
+    )
+
+    assert [path.name for path in analyzer.calls] == ["changed.py"]
+    assert summary.considered_files == 1
+    assert summary.processed_files == 1
+    assert summary.complete is True
+    assert store.read_file_record(old).status == "pending"
+
+
 def test_process_deep_audit_records_skips_secret_candidates(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -284,7 +312,13 @@ def test_process_deep_audit_records_marks_unsupported_languages(tmp_path: Path):
     assert summary.unsupported_files == 1
     assert summary.remaining_pending_files == 1
     assert summary.complete is False
-    assert store.read_file_record(app).status == "not_analyzed"
+    record = store.read_file_record(app)
+    assert record.status == "not_analyzed"
+    assert [
+        item.get("stage")
+        for item in record.analysis_history
+        if isinstance(item, dict)
+    ] == ["unsupported_agent_language"]
 
     rerun_summary = process_deep_audit_records(
         store=store,
@@ -297,6 +331,23 @@ def test_process_deep_audit_records_marks_unsupported_languages(tmp_path: Path):
     assert rerun_summary.unsupported_files == 1
     assert rerun_summary.remaining_pending_files == 1
     assert rerun_summary.complete is False
+
+    forced_summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        force=True,
+        run_id="run-ts-force",
+    )
+    forced_record = store.read_file_record(app)
+
+    assert analyzer.calls == []
+    assert forced_summary.unsupported_files == 1
+    assert [
+        item.get("stage")
+        for item in forced_record.analysis_history
+        if isinstance(item, dict)
+    ] == ["unsupported_agent_language"]
 
 
 def test_process_deep_audit_records_skips_analyzed_with_same_context_unless_forced(

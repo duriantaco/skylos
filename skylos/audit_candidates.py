@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from skylos.audit_redaction import sanitize_for_audit
+from skylos.audit_polyglot import build_polyglot_signal_candidates
 from skylos.audit_store import AuditStore
 from skylos.audit_types import (
     DEFAULT_PROJECT_ID,
@@ -84,6 +85,7 @@ def scan_deep_audit_candidates(
     project_id: str = DEFAULT_PROJECT_ID,
     changed_files: list[str | Path] | None = None,
     exclude_folders: list[str] | None = None,
+    exclude_paths: list[str | Path] | None = None,
     audit_root: str | Path | None = None,
 ) -> tuple[AuditScanSummary, AuditStore]:
     project_root = _project_root(path)
@@ -110,6 +112,7 @@ def scan_deep_audit_candidates(
         project_root=project_root,
         changed_files=changed_files,
         exclude_folders=parsed_excludes,
+        exclude_paths=exclude_paths,
     )
     static_result = run_static_on_files(
         files,
@@ -129,6 +132,11 @@ def scan_deep_audit_candidates(
         files,
         project_root=project_root,
         static_result=static_result,
+    )
+    _add_polyglot_signal_candidates(
+        candidates_by_file,
+        files,
+        project_root=project_root,
     )
     _add_repo_activation_candidates(
         candidates_by_file,
@@ -216,7 +224,9 @@ def _discover_audit_files(
     project_root: Path,
     changed_files: list[str | Path] | None,
     exclude_folders: list[str],
+    exclude_paths: list[str | Path] | None,
 ) -> list[Path]:
+    excluded_paths = _normalized_exclude_paths(project_root, exclude_paths)
     if changed_files is not None:
         files = []
         for item in changed_files:
@@ -226,6 +236,8 @@ def _discover_audit_files(
                 continue
             candidate = project_root / rel
             if should_exclude_path(candidate, project_root, exclude_folders):
+                continue
+            if _is_excluded_output_path(candidate, project_root, excluded_paths):
                 continue
             if _is_audit_file(candidate) and candidate.exists():
                 files.append(candidate.resolve())
@@ -241,6 +253,8 @@ def _discover_audit_files(
     if target.is_file():
         if _is_audit_file(target) and not should_exclude_path(
             target, root, exclude_folders
+        ) and not _is_excluded_output_path(
+            target, project_root, excluded_paths
         ):
             discovered.append(target)
     else:
@@ -249,14 +263,52 @@ def _discover_audit_files(
                 continue
             if should_exclude_path(env_file, target, exclude_folders):
                 continue
+            if _is_excluded_output_path(env_file, project_root, excluded_paths):
+                continue
             discovered.append(env_file.resolve())
-    return sorted(set(discovered))
+    return sorted(
+        {
+            file_path.resolve()
+            for file_path in discovered
+            if not _is_excluded_output_path(file_path, project_root, excluded_paths)
+        }
+    )
 
 
 def _is_audit_file(path: Path) -> bool:
     if path.name == ".env" or path.name.startswith(".env."):
         return True
     return path.suffix.lower() in DEEP_AUDIT_EXTENSIONS
+
+
+def _normalized_exclude_paths(
+    project_root: Path,
+    exclude_paths: list[str | Path] | None,
+) -> set[str]:
+    excluded: set[str] = set()
+    for item in exclude_paths or []:
+        try:
+            excluded.add(normalize_relative_path(project_root, item))
+        except ValueError:
+            continue
+    return excluded
+
+
+def _is_excluded_output_path(
+    path: Path,
+    project_root: Path,
+    excluded_paths: set[str],
+) -> bool:
+    if not excluded_paths:
+        return False
+    try:
+        rel_path = normalize_relative_path(project_root, path)
+    except ValueError:
+        return False
+    return any(
+        rel_path == excluded or rel_path.startswith(f"{excluded}/")
+        for excluded in excluded_paths
+    )
 
 
 def _build_static_candidates(
@@ -414,6 +466,27 @@ def _add_repo_activation_candidates(
                 },
             )
         )
+
+
+def _add_polyglot_signal_candidates(
+    candidates_by_file: dict[str, list[AuditCandidate]],
+    files: list[Path],
+    *,
+    project_root: Path,
+) -> None:
+    for file_path in files:
+        rel_path = normalize_relative_path(project_root, file_path)
+        existing = candidates_by_file.setdefault(rel_path, [])
+        existing_locations = {
+            (candidate.rule_id, candidate.line) for candidate in existing
+        }
+        for candidate in build_polyglot_signal_candidates(
+            file_path, project_root=project_root
+        ):
+            if (candidate.rule_id, candidate.line) in existing_locations:
+                continue
+            existing.append(candidate)
+            existing_locations.add((candidate.rule_id, candidate.line))
 
 
 def _add_path_signal_candidates(

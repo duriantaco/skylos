@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 
-def get_git_changed_files(root_path):
+def get_git_changed_files(root_path, base_ref=None, *, strict_base=False):
     supported_exts = {
         ".py",
         ".go",
@@ -54,6 +54,21 @@ def get_git_changed_files(root_path):
             .decode("utf-8")
             .strip()
         )
+        if base_ref:
+            try:
+                output = subprocess.check_output(
+                    ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
+                    cwd=repo_root,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30,
+                ).decode("utf-8")
+                return _collect_supported(output, repo_root)
+            except Exception as exc:
+                if strict_base:
+                    message = f"Unable to diff against base ref {base_ref}"
+                    raise ValueError(message) from exc
+                return []
+
         output = subprocess.check_output(
             ["git", "diff", "--name-only", "HEAD"],
             cwd=repo_root,
@@ -75,7 +90,9 @@ def get_git_changed_files(root_path):
             return _collect_supported(output, repo_root)
         except Exception:
             return []
-    except Exception:
+    except Exception as exc:
+        if strict_base:
+            raise ValueError("Unable to discover git changed files") from exc
         return []
 
 
