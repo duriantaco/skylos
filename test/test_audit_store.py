@@ -79,7 +79,9 @@ def test_audit_store_rerun_deduplicates_candidates(tmp_path: Path):
     assert [candidate.candidate_id for candidate in loaded.candidates] == ["cand-one"]
 
 
-def test_audit_store_file_hash_change_invalidates_prior_findings(tmp_path: Path):
+def test_audit_store_file_hash_change_resets_status_but_preserves_history(
+    tmp_path: Path,
+):
     repo = tmp_path / "repo"
     repo.mkdir()
     source = repo / "app.py"
@@ -109,8 +111,8 @@ def test_audit_store_file_hash_change_invalidates_prior_findings(tmp_path: Path)
     )
 
     assert updated.status == STATUS_PENDING
-    assert updated.findings == []
-    assert updated.analysis_history == []
+    assert updated.findings == [{"rule_id": "OLD"}]
+    assert updated.analysis_history == [{"stage": "old"}]
 
 
 def test_audit_store_rejects_corrupted_json(tmp_path: Path):

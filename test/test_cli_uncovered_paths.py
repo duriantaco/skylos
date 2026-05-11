@@ -252,6 +252,43 @@ def test_get_git_changed_files_on_error_returns_empty(tmp_path):
     assert files == []
 
 
+def test_get_git_changed_files_with_base_ref_uses_pr_diff(tmp_path):
+    root = tmp_path
+    (root / "changed.py").write_text("x=1", encoding="utf-8")
+    seen = []
+
+    def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        seen.append(cmd)
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return str(root).encode("utf-8")
+        if cmd[:3] == ["git", "diff", "--name-only"]:
+            return b"changed.py\n"
+        raise AssertionError("unexpected cmd")
+
+    with patch("skylos.cli.subprocess.check_output", side_effect=fake_check_output):
+        files = cli.get_git_changed_files(root, base_ref="origin/main")
+
+    assert files == [root / "changed.py"]
+    assert ["git", "diff", "--name-only", "origin/main...HEAD"] in seen
+
+
+def test_get_git_changed_files_strict_base_raises_on_invalid_ref(tmp_path):
+    root = tmp_path
+
+    def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return str(root).encode("utf-8")
+        raise Exception("bad ref")
+
+    with patch("skylos.cli.subprocess.check_output", side_effect=fake_check_output):
+        with pytest.raises(ValueError):
+            cli.get_git_changed_files(
+                root,
+                base_ref="origin/nope",
+                strict_base=True,
+            )
+
+
 def test_estimate_cost_counts_chars(tmp_path):
     f1 = tmp_path / "a.py"
     f2 = tmp_path / "b.py"

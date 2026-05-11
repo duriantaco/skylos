@@ -7,7 +7,15 @@ from types import SimpleNamespace
 import pytest
 
 import skylos.cli as cli
-from skylos.audit_types import AuditProcessSummary, AuditScanSummary
+from skylos.audit_store import AuditStore
+from skylos.audit_types import (
+    AuditCIGateSummary,
+    AuditCandidate,
+    AuditProcessSummary,
+    AuditRevalidationSummary,
+    AuditScanSummary,
+    sha256_file,
+)
 
 
 def test_agent_audit_deep_scan_only_runs_without_llm_support(
@@ -85,11 +93,54 @@ def test_agent_audit_requires_explicit_deep_flag(tmp_path: Path, monkeypatch):
     assert exc.value.code == 2
 
 
-def test_agent_audit_scan_only_rejects_unimplemented_ci_flags(
+def test_agent_audit_scan_only_runs_ci_gate(
     tmp_path: Path, monkeypatch
 ):
     repo = tmp_path / "repo"
     repo.mkdir()
+    out = tmp_path / "audit.json"
+    store = SimpleNamespace(
+        project_dir=repo / ".skylos" / "audit" / "projects" / "default"
+    )
+
+    def fake_scan(path, *, changed_files=None):
+        return (
+            AuditScanSummary(
+                project_id="default",
+                project_root=str(repo),
+                files_scanned=1,
+                records_written=1,
+                candidate_count=1,
+                redacted_candidates=0,
+                pending_files=1,
+                not_analyzed_files=0,
+            ),
+            store,
+        )
+
+    def fake_gate(**kwargs):
+        return AuditCIGateSummary(
+            fail_on="high",
+            exit_code=1,
+            blocking_counts={
+                "findings": 0,
+                "pending": 1,
+                "not_analyzed": 0,
+                "skipped": 0,
+                "error": 0,
+                "locked": 0,
+                "stale_analyzed": 0,
+                "limited": 0,
+            },
+            complete=False,
+            reason="pending high-risk deep audit work remains",
+        )
+
+    monkeypatch.setattr(
+        "skylos.audit_candidates.scan_deep_audit_candidates",
+        fake_scan,
+    )
+    monkeypatch.setattr("skylos.audit_ci.evaluate_deep_audit_ci_gate", fake_gate)
     monkeypatch.setattr(
         cli.sys,
         "argv",
@@ -102,13 +153,158 @@ def test_agent_audit_scan_only_rejects_unimplemented_ci_flags(
             "--scan-only",
             "--fail-on",
             "high",
+            "--format",
+            "json",
+            "--output",
+            str(out),
         ],
     )
 
     with pytest.raises(SystemExit) as exc:
         cli.main()
 
-    assert exc.value.code == 2
+    assert exc.value.code == 1
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["ci"]["blocking_counts"]["pending"] == 1
+
+
+def test_agent_audit_scan_only_writes_sarif_export_from_persisted_state(
+    tmp_path: Path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text("eval(user_input)\n", encoding="utf-8")
+    out = tmp_path / "audit.sarif.json"
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    store.upsert_scan_record(
+        file_path=app,
+        file_hash=sha256_file(app),
+        language="python",
+        candidates=[
+            AuditCandidate(
+                candidate_id="candidate-one",
+                kind="static_finding",
+                rule_id="SKY-D999",
+                line=1,
+                severity_hint="high",
+                reason="dangerous sink",
+                priority=800,
+            )
+        ],
+        config_hash="cfg",
+    )
+
+    def fake_scan(path, *, changed_files=None):
+        return (
+            AuditScanSummary(
+                project_id="default",
+                project_root=str(repo),
+                files_scanned=1,
+                records_written=1,
+                candidate_count=1,
+                redacted_candidates=0,
+                pending_files=1,
+                not_analyzed_files=0,
+                complete=False,
+            ),
+            store,
+        )
+
+    def fail_if_llm_checked():
+        raise AssertionError("LLM support should not be checked")
+
+    monkeypatch.setattr(
+        "skylos.audit_candidates.scan_deep_audit_candidates",
+        fake_scan,
+    )
+    monkeypatch.setattr(cli, "_ensure_llm_support", fail_if_llm_checked)
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            "agent",
+            "audit",
+            str(repo),
+            "--deep",
+            "--scan-only",
+            "--format",
+            "sarif",
+            "--severity",
+            "high",
+            "--verdict",
+            "pending",
+            "--output",
+            str(out),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    sarif = json.loads(out.read_text(encoding="utf-8"))
+    assert exc.value.code == 0
+    assert sarif["version"] == "2.1.0"
+    assert sarif["runs"][0]["results"][0]["ruleId"] == "SKY-D999"
+    assert sarif["runs"][0]["properties"]["deep_audit"]["entry_count"] == 1
+
+
+def test_agent_audit_excludes_repo_local_output_from_scan(
+    tmp_path: Path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    out = repo / "audit.json"
+    called = {}
+
+    def fake_scan(path, *, changed_files=None, exclude_paths=None):
+        called["exclude_paths"] = exclude_paths
+        return (
+            AuditScanSummary(
+                project_id="default",
+                project_root=str(repo),
+                files_scanned=1,
+                records_written=1,
+                candidate_count=0,
+                redacted_candidates=0,
+                pending_files=0,
+                not_analyzed_files=1,
+                complete=True,
+            ),
+            SimpleNamespace(
+                project_dir=repo / ".skylos" / "audit" / "projects" / "default"
+            ),
+        )
+
+    monkeypatch.setattr(
+        "skylos.audit_candidates.scan_deep_audit_candidates",
+        fake_scan,
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            "agent",
+            "audit",
+            str(repo),
+            "--deep",
+            "--scan-only",
+            "--format",
+            "json",
+            "--output",
+            str(out),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 0
+    assert called["exclude_paths"] == [out.resolve()]
 
 
 def test_agent_audit_scan_only_rejects_unimplemented_processing_flags(
@@ -152,30 +348,6 @@ def test_agent_audit_scan_only_rejects_force_until_processing_exists(
             "--deep",
             "--scan-only",
             "--force",
-        ],
-    )
-
-    with pytest.raises(SystemExit) as exc:
-        cli.main()
-
-    assert exc.value.code == 2
-
-
-def test_agent_audit_processing_rejects_changed_until_ci_phase(
-    tmp_path: Path, monkeypatch
-):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    monkeypatch.setattr(
-        cli.sys,
-        "argv",
-        [
-            "skylos",
-            "agent",
-            "audit",
-            str(repo),
-            "--deep",
-            "--changed",
         ],
     )
 
@@ -276,3 +448,256 @@ def test_agent_audit_deep_processing_runs_after_scan(tmp_path: Path, monkeypatch
     assert payload["processing"]["processed_files"] == 1
     assert calls["process"]["limit"] == 3
     assert calls["process"]["force"] is False
+
+
+def test_agent_audit_changed_processing_scopes_scan_and_processing(
+    tmp_path: Path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    changed = repo / "changed.py"
+    changed.write_text("eval(user_input)\n", encoding="utf-8")
+    store = SimpleNamespace(
+        project_dir=repo / ".skylos" / "audit" / "projects" / "default"
+    )
+    calls = {}
+
+    def fake_scan(path, *, changed_files=None):
+        calls["scan_changed_files"] = changed_files
+        return (
+            AuditScanSummary(
+                project_id="default",
+                project_root=str(repo),
+                files_scanned=1,
+                records_written=1,
+                candidate_count=1,
+                redacted_candidates=0,
+                pending_files=1,
+                not_analyzed_files=0,
+                complete=False,
+            ),
+            store,
+        )
+
+    def fake_process(**kwargs):
+        calls["process"] = kwargs
+        return AuditProcessSummary(
+            run_id="process-one",
+            project_id="default",
+            project_root=str(repo),
+            considered_files=1,
+            processed_files=1,
+            findings_added=0,
+            skipped_secret_files=0,
+            unsupported_files=0,
+            locked_files=0,
+            error_files=0,
+            remaining_pending_files=0,
+            limited=False,
+            complete=True,
+        )
+
+    class FakeLLM:
+        def __init__(self, config):
+            self.config = config
+
+    monkeypatch.setattr(cli, "get_git_changed_files", lambda *a, **k: [changed])
+    monkeypatch.setattr(
+        "skylos.audit_candidates.scan_deep_audit_candidates",
+        fake_scan,
+    )
+    monkeypatch.setattr(
+        "skylos.audit_processor.process_deep_audit_records",
+        fake_process,
+    )
+    monkeypatch.setattr(cli, "_ensure_llm_support", lambda: True)
+    monkeypatch.setattr(cli, "_build_analyzer_config", lambda **kwargs: kwargs)
+    monkeypatch.setattr(cli, "SkylosLLM", FakeLLM)
+    monkeypatch.setattr(
+        cli,
+        "resolve_llm_runtime",
+        lambda **kwargs: ("ollama", None, None, True),
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["skylos", "agent", "audit", str(repo), "--deep", "--changed"],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 0
+    assert calls["scan_changed_files"] == [changed]
+    assert calls["process"]["allowed_files"] == [changed]
+
+
+def test_agent_audit_invalid_base_ref_exits_without_full_scan(
+    tmp_path: Path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def fake_changed(*args, **kwargs):
+        raise ValueError("Unable to diff against base ref nope")
+
+    def fail_scan(*args, **kwargs):
+        raise AssertionError("scan should not run for invalid base")
+
+    monkeypatch.setattr(cli, "get_git_changed_files", fake_changed)
+    monkeypatch.setattr(
+        "skylos.audit_candidates.scan_deep_audit_candidates",
+        fail_scan,
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            "agent",
+            "audit",
+            str(repo),
+            "--deep",
+            "--changed",
+            "--base",
+            "nope",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 2
+
+
+def test_agent_audit_scan_only_rejects_revalidate(tmp_path: Path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            "agent",
+            "audit",
+            str(repo),
+            "--deep",
+            "--scan-only",
+            "--revalidate",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 2
+
+
+def test_agent_audit_challenge_requires_revalidate(tmp_path: Path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["skylos", "agent", "audit", str(repo), "--deep", "--challenge"],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 2
+
+
+def test_agent_audit_revalidate_runs_after_scan(tmp_path: Path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    out = tmp_path / "audit.json"
+    store = SimpleNamespace(
+        project_dir=repo / ".skylos" / "audit" / "projects" / "default"
+    )
+    calls = {}
+
+    def fake_scan(path, *, changed_files=None):
+        return (
+            AuditScanSummary(
+                project_id="default",
+                project_root=str(repo),
+                files_scanned=1,
+                records_written=1,
+                candidate_count=1,
+                redacted_candidates=0,
+                pending_files=0,
+                not_analyzed_files=0,
+                complete=True,
+            ),
+            store,
+        )
+
+    def fake_revalidate(**kwargs):
+        calls["revalidate"] = kwargs
+        return AuditRevalidationSummary(
+            run_id="revalidate-one",
+            project_id="default",
+            project_root=str(repo),
+            considered_findings=1,
+            revalidated_findings=1,
+            challenged_findings=1,
+            skipped_findings=0,
+            error_findings=0,
+            true_positive=0,
+            false_positive=1,
+            fixed=0,
+            uncertain=0,
+            forced=True,
+            challenge=True,
+            complete=True,
+        )
+
+    class FakeLLM:
+        def __init__(self, config):
+            self.config = config
+
+    monkeypatch.setattr(
+        "skylos.audit_candidates.scan_deep_audit_candidates",
+        fake_scan,
+    )
+    monkeypatch.setattr(
+        "skylos.audit_revalidator.revalidate_deep_audit_findings",
+        fake_revalidate,
+    )
+    monkeypatch.setattr(cli, "_ensure_llm_support", lambda: True)
+    monkeypatch.setattr(cli, "_build_analyzer_config", lambda **kwargs: kwargs)
+    monkeypatch.setattr(cli, "SkylosLLM", FakeLLM)
+    monkeypatch.setattr(
+        cli,
+        "resolve_llm_runtime",
+        lambda **kwargs: ("ollama", None, None, True),
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            "agent",
+            "audit",
+            str(repo),
+            "--deep",
+            "--revalidate",
+            "--challenge",
+            "--force",
+            "--format",
+            "json",
+            "--output",
+            str(out),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert exc.value.code == 0
+    assert payload["mode"] == "deep_challenge"
+    assert payload["revalidation"]["false_positive"] == 1
+    assert calls["revalidate"]["force"] is True
+    assert calls["revalidate"]["challenge"] is True

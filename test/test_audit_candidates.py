@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from skylos import audit_candidates
 from skylos.audit_store import AuditStore
 from skylos.audit_types import AuditFileRecord, sha256_file
@@ -189,6 +191,35 @@ def test_scan_deep_audit_candidates_changed_files_respect_excludes(
     assert seen["files"] == ["app.py"]
 
 
+def test_scan_deep_audit_candidates_excludes_active_output_path(
+    tmp_path: Path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text("print('ok')\n", encoding="utf-8")
+    out = repo / "audit.json"
+    out.write_text('{"previous": true}\n', encoding="utf-8")
+    seen = {}
+
+    def fake_static(files, **kwargs):
+        seen["files"] = sorted(Path(file_path).name for file_path in files)
+        return {"danger": [], "secrets": []}
+
+    monkeypatch.setattr(audit_candidates, "run_static_on_files", fake_static)
+
+    summary, store = audit_candidates.scan_deep_audit_candidates(
+        repo,
+        exclude_paths=[out],
+    )
+
+    assert summary.files_scanned == 1
+    assert seen["files"] == ["app.py"]
+    assert store.read_file_record(app) is not None
+    assert store.read_file_record(out) is None
+
+
 def test_audit_store_rejects_record_with_mismatched_internal_file(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -286,3 +317,95 @@ def test_scan_deep_audit_candidates_reports_error_records_incomplete(
 
     assert summary.error_files == 1
     assert summary.complete is False
+
+
+@pytest.mark.parametrize(
+    ("filename", "source", "language", "rule_id"),
+    [
+        (
+            "route.ts",
+            "import cp from 'child_process';\ncp.exec(userInput);\n",
+            "typescript",
+            "SKY-D212",
+        ),
+        (
+            "handler.js",
+            "export function get(req) { return fetch(req.query.url); }\n",
+            "javascript",
+            "SKY-D216",
+        ),
+        (
+            "main.go",
+            "package main\n"
+            "import \"os/exec\"\n"
+            "func run(name string) { exec.Command(name) }\n",
+            "go",
+            "SKY-D212",
+        ),
+        (
+            "Controller.java",
+            "class Controller {\n"
+            "  void run(String cmd) throws Exception {\n"
+            "    Runtime.getRuntime().exec(cmd);\n"
+            "  }\n"
+            "}\n",
+            "java",
+            "SKY-D212",
+        ),
+        (
+            "index.php",
+            "<?php system($_GET['cmd']); ?>\n",
+            "php",
+            "SKY-D212",
+        ),
+        (
+            "main.rs",
+            "use std::process::Command;\n"
+            "fn run(cmd: &str) { Command::new(cmd).spawn(); }\n",
+            "rust",
+            "SKY-D212",
+        ),
+        (
+            "main.dart",
+            "import 'dart:io';\nvoid run(String cmd) { Process.run(cmd, []); }\n",
+            "dart",
+            "SKY-D212",
+        ),
+    ],
+)
+def test_scan_deep_audit_candidates_ingests_polyglot_static_signals(
+    tmp_path: Path,
+    monkeypatch,
+    filename: str,
+    source: str,
+    language: str,
+    rule_id: str,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / filename
+    target.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(
+        audit_candidates,
+        "run_static_on_files",
+        lambda files, **kwargs: {"danger": [], "secrets": []},
+    )
+
+    summary, store = audit_candidates.scan_deep_audit_candidates(repo)
+    record = store.read_file_record(target)
+
+    assert summary.candidate_count >= 1
+    assert record is not None
+    assert record.language == language
+    assert record.status == "pending"
+    assert any(
+        candidate.kind == "polyglot_static_signal" and candidate.rule_id == rule_id
+        for candidate in record.candidates
+    )
+
+    first_ids = [candidate.candidate_id for candidate in record.candidates]
+    _summary, store = audit_candidates.scan_deep_audit_candidates(repo)
+    rerun = store.read_file_record(target)
+
+    assert rerun is not None
+    assert [candidate.candidate_id for candidate in rerun.candidates] == first_ids

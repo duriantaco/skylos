@@ -343,3 +343,59 @@ class AuditProcessSummary:
             "analyzed_files": self.analyzed_files,
             "stale_analyzed_files": self.stale_analyzed_files,
         }
+
+
+@dataclass
+class AuditCIGateSummary:
+    fail_on: str
+    exit_code: int
+    blocking_counts: dict[str, int]
+    complete: bool
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "fail_on": self.fail_on,
+            "exit_code": self.exit_code,
+            "blocking_counts": dict(self.blocking_counts),
+            "complete": self.complete,
+            "reason": self.reason,
+        }
+
+
+@dataclass
+class AuditRevalidationSummary:
+    run_id: str
+    project_id: str
+    project_root: str
+    considered_findings: int
+    revalidated_findings: int
+    challenged_findings: int
+    skipped_findings: int
+    error_findings: int
+    true_positive: int
+    false_positive: int
+    fixed: int
+    uncertain: int
+    forced: bool
+    challenge: bool
+    complete: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "project_id": self.project_id,
+            "project_root": self.project_root,
+            "considered_findings": self.considered_findings,
+            "revalidated_findings": self.revalidated_findings,
+            "challenged_findings": self.challenged_findings,
+            "skipped_findings": self.skipped_findings,
+            "error_findings": self.error_findings,
+            "true_positive": self.true_positive,
+            "false_positive": self.false_positive,
+            "fixed": self.fixed,
+            "uncertain": self.uncertain,
+            "forced": self.forced,
+            "challenge": self.challenge,
+            "complete": self.complete,
+        }

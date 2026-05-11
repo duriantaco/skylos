@@ -156,13 +156,13 @@ class AuditStore:
         )
 
         status = STATUS_PENDING if ordered_candidates else STATUS_NOT_ANALYZED
-        preserve_history = False
-        if existing and self._record_matches_current_scan(
+        preserve_history = existing is not None
+        current_scan_matches = existing and self._record_matches_current_scan(
             existing,
             file_hash=file_hash,
             config_hash=config_hash,
-        ):
-            preserve_history = True
+        )
+        if existing and current_scan_matches:
             existing_ids = {candidate.candidate_id for candidate in existing.candidates}
             new_ids = set(candidate_map)
             if existing.status == STATUS_ANALYZED and existing_ids == new_ids:
@@ -182,17 +182,17 @@ class AuditStore:
             candidates=ordered_candidates,
             findings=(
                 sanitize_for_audit(list(existing.findings))
-                if existing and preserve_history
+                if preserve_history
                 else []
             ),
             analysis_history=(
                 sanitize_for_audit(list(existing.analysis_history))
-                if existing and preserve_history
+                if preserve_history
                 else []
             ),
             revalidation=(
                 sanitize_for_audit(list(existing.revalidation))
-                if existing and preserve_history
+                if preserve_history
                 else []
             ),
             locked_by_run_id=(
@@ -207,7 +207,7 @@ class AuditStore:
             ),
             last_scanned_at=now,
             last_analyzed_at=(
-                existing.last_analyzed_at if existing and preserve_history else None
+                existing.last_analyzed_at if preserve_history else None
             ),
             skylos_version=skylos.__version__,
             config_hash=config_hash,
