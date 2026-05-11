@@ -1,5 +1,21 @@
 ## Changelog
 
+## [4.14.0](https://github.com/duriantaco/skylos/compare/v4.13.1...v4.14.0) (2026-05-11)
+
+
+### Features
+
+* **security:** add Deep Mode audit foundation ([#339](https://github.com/duriantaco/skylos/issues/339)) ([d4a89d2](https://github.com/duriantaco/skylos/commit/d4a89d2478891834afde6f46d87c1468d2804a41))
+* **security:** add SSRF evidence packets ([#336](https://github.com/duriantaco/skylos/issues/336)) ([2990d2c](https://github.com/duriantaco/skylos/commit/2990d2cb1bd9a76cdfc29a1f2ce79e108f17fbea))
+* **security:** complete deep audit workflow phases ([#341](https://github.com/duriantaco/skylos/issues/341)) ([3e3702b](https://github.com/duriantaco/skylos/commit/3e3702bb3fcf4fc8e9f6511dfe73f50c8d9d2918))
+
+
+### Bug Fixes
+
+* **cli:** prevent help from creating artifacts ([#340](https://github.com/duriantaco/skylos/issues/340)) ([72af4f0](https://github.com/duriantaco/skylos/commit/72af4f0e735ba3e01cb59fc7a28787e58ea5a25e))
+* **security:** disable arbitrary pip install in verifier ([#344](https://github.com/duriantaco/skylos/issues/344)) ([8307280](https://github.com/duriantaco/skylos/commit/8307280cc29198e116e1db37e548a1fabfccf56a))
+* **security:** polish Deep Mode audit states ([#343](https://github.com/duriantaco/skylos/issues/343)) ([9b229ee](https://github.com/duriantaco/skylos/commit/9b229ee55b4769db2ab37f608db3917e9278768f))
+
 ## [4.13.1](https://github.com/duriantaco/skylos/compare/v4.13.0...v4.13.1) (2026-05-10)
 
 
