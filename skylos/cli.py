@@ -3237,6 +3237,64 @@ def _build_agent_parser():
         help="Interactive file selection (with --security)",
     )
 
+    p_audit = agent_sub.add_parser(
+        "audit",
+        help="Deep security audit state and candidate workflow",
+    )
+    p_audit.add_argument("path", nargs="?", default=".")
+    _add_agent_model_arg(p_audit)
+    _add_agent_provider_arg(p_audit)
+    _add_agent_base_url_arg(p_audit)
+    p_audit.add_argument(
+        "--deep",
+        action="store_true",
+        help="Enable the explicit Deep Mode audit workflow",
+    )
+    p_audit.add_argument(
+        "--scan-only",
+        action="store_true",
+        help="Create/update static audit candidates without LLM calls",
+    )
+    p_audit.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume pending Deep Mode processing work",
+    )
+    p_audit.add_argument(
+        "--force",
+        action="store_true",
+        help="Force Deep Mode reprocessing for already analyzed files",
+    )
+    p_audit.add_argument(
+        "--changed",
+        action="store_true",
+        help="Restrict scan-only candidate discovery to git-changed files",
+    )
+    p_audit.add_argument(
+        "--base",
+        default=None,
+        help="Base ref for changed-file scans (reserved for CI gating)",
+    )
+    p_audit.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit Deep Mode agent processing; scan-only records all candidates",
+    )
+    p_audit.add_argument(
+        "--fail-on",
+        choices=["critical", "high", "medium", "low"],
+        default=None,
+        help="Reserved for Deep Mode CI gating",
+    )
+    p_audit.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+    )
+    p_audit.add_argument("--out", "--output", "-o", dest="output")
+    _add_agent_quiet_arg(p_audit)
+
     p_remediate = agent_sub.add_parser(
         "remediate",
         help="Scan, fix, test, and create PR for security/quality issues",
@@ -4096,6 +4154,195 @@ def main() -> None:
                 finally:
                     server.server_close()
                 sys.exit(0)
+
+        if cmd == "audit":
+            if not getattr(agent_args, "deep", False):
+                console.print(
+                    "[bad]Deep audit is explicit. Re-run with `--deep`.[/bad]"
+                )
+                sys.exit(2)
+
+            if getattr(agent_args, "base", None):
+                console.print(
+                    "[warn]Deep audit `--base` support belongs to the CI phase "
+                    "and is not enabled yet.[/warn]"
+                )
+                sys.exit(2)
+
+            if getattr(agent_args, "fail_on", None):
+                console.print(
+                    "[warn]Deep audit `--fail-on` support belongs to the CI phase "
+                    "and is not enabled yet.[/warn]"
+                )
+                sys.exit(2)
+
+            if getattr(agent_args, "scan_only", False) and getattr(
+                agent_args, "resume", False
+            ):
+                console.print(
+                    "[warn]Deep audit `--resume` requires processing mode, "
+                    "not `--scan-only`.[/warn]"
+                )
+                sys.exit(2)
+
+            if getattr(agent_args, "scan_only", False) and getattr(
+                agent_args, "force", False
+            ):
+                console.print(
+                    "[warn]Deep audit `--force` requires processing mode, "
+                    "not `--scan-only`.[/warn]"
+                )
+                sys.exit(2)
+
+            if getattr(agent_args, "changed", False) and not getattr(
+                agent_args, "scan_only", False
+            ):
+                console.print(
+                    "[warn]Deep audit processing with `--changed` belongs to the "
+                    "CI phase and is not enabled yet. Use `--scan-only --changed` "
+                    "for changed-file candidate discovery.[/warn]"
+                )
+                sys.exit(2)
+
+            audit_path = pathlib.Path(agent_args.path)
+            if not audit_path.exists():
+                console.print(f"[bad]Path not found: {audit_path}[/bad]")
+                sys.exit(1)
+
+            changed_files = None
+            if getattr(agent_args, "changed", False):
+                changed_files = get_git_changed_files(audit_path)
+                if not changed_files:
+                    if not getattr(agent_args, "quiet", False):
+                        console.print("[dim]No changed files[/dim]")
+                    sys.exit(0)
+
+            from skylos.audit_candidates import scan_deep_audit_candidates
+
+            summary, store = scan_deep_audit_candidates(
+                audit_path,
+                changed_files=changed_files,
+            )
+            audit_project_root = pathlib.Path(summary.project_root)
+            process_summary = None
+            mode = "deep_scan_only"
+
+            if not getattr(agent_args, "scan_only", False):
+                if not _ensure_llm_support():
+                    Console().print("[bold red]Agent module not available[/bold red]")
+                    sys.exit(1)
+
+                model = agent_args.model
+                provider_override = getattr(agent_args, "provider", None)
+                if provider_override and model == "gpt-4.1":
+                    provider_default_models = {
+                        "anthropic": "claude-sonnet-4-20250514",
+                        "google": "gemini/gemini-2.0-flash",
+                        "mistral": "mistral/mistral-large-latest",
+                        "groq": "groq/llama3-70b-8192",
+                        "deepseek": "deepseek/deepseek-chat",
+                        "xai": "xai/grok-2",
+                        "together": (
+                            "together/meta-llama/"
+                            "Meta-Llama-3-70B-Instruct-Turbo"
+                        ),
+                        "ollama": "ollama/llama3",
+                    }
+                    if provider_override in provider_default_models:
+                        model = provider_default_models[provider_override]
+
+                provider, api_key, base_url, is_local = resolve_llm_runtime(
+                    model=model,
+                    provider_override=provider_override,
+                    base_url_override=getattr(agent_args, "base_url", None),
+                    console=console,
+                    allow_prompt=_is_tty(),
+                )
+                if base_url:
+                    os.environ["OPENAI_BASE_URL"] = base_url
+                    os.environ["SKYLOS_LLM_BASE_URL"] = base_url
+                if api_key is None or api_key == "":
+                    if not is_local:
+                        env_var = PROVIDERS.get(provider) or f"{provider.upper()}_API_KEY"
+                        console.print(
+                            f"[bad]No {env_var} configured. Run `skylos key` or "
+                            "set the environment variable.[/bad]"
+                        )
+                        sys.exit(1)
+
+                project_cfg = load_config(audit_project_root)
+                config = _build_analyzer_config(
+                    model=model,
+                    api_key=api_key,
+                    provider=provider,
+                    base_url=base_url,
+                    quiet=getattr(agent_args, "quiet", False),
+                    enable_security=True,
+                    enable_quality=False,
+                    prompt_templates=project_cfg.get("templates"),
+                    prompt_template_root=audit_project_root,
+                )
+                analyzer = SkylosLLM(config)
+
+                from skylos.audit_processor import process_deep_audit_records
+
+                process_summary = process_deep_audit_records(
+                    store=store,
+                    analyzer=analyzer,
+                    model=model,
+                    provider=provider,
+                    limit=getattr(agent_args, "limit", None),
+                    force=getattr(agent_args, "force", False),
+                )
+                mode = "deep_process"
+
+            payload = {
+                "mode": mode,
+                "summary": summary.to_dict(),
+                "audit_project_dir": str(store.project_dir),
+            }
+            if process_summary is not None:
+                payload["processing"] = process_summary.to_dict()
+
+            if agent_args.output:
+                pathlib.Path(agent_args.output).write_text(
+                    json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+
+            if agent_args.format == "json":
+                if not getattr(agent_args, "quiet", False):
+                    print(json.dumps(payload, indent=2, sort_keys=True))
+            elif not getattr(agent_args, "quiet", False):
+                heading = "scan-only" if process_summary is None else "scan"
+                console.print(
+                    f"[brand]Deep audit {heading}:[/brand] static queue updated"
+                )
+                console.print(f"  Project: {summary.project_root}")
+                console.print(f"  Files scanned: {summary.files_scanned}")
+                console.print(f"  Candidates: {summary.candidate_count}")
+                console.print(f"  Redacted candidates: {summary.redacted_candidates}")
+                console.print(f"  Pending files: {summary.pending_files}")
+                console.print(f"  Processing files: {summary.processing_files}")
+                console.print(f"  Error files: {summary.error_files}")
+                console.print(f"  Not analyzed: {summary.not_analyzed_files}")
+                if process_summary is not None:
+                    console.print("[brand]Deep audit processing:[/brand] finished")
+                    console.print(f"  Processed files: {process_summary.processed_files}")
+                    console.print(f"  Findings added: {process_summary.findings_added}")
+                    console.print(
+                        f"  Skipped secret files: "
+                        f"{process_summary.skipped_secret_files}"
+                    )
+                    console.print(
+                        f"  Unsupported files: {process_summary.unsupported_files}"
+                    )
+                    console.print(
+                        f"  Remaining work: "
+                        f"{process_summary.remaining_pending_files}"
+                    )
+                console.print(f"  Store: {store.project_dir}")
+            sys.exit(0)
 
         if not _ensure_llm_support():
             Console().print("[bold red]Agent module not available[/bold red]")

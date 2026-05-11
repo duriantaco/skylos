@@ -275,7 +275,14 @@ def run_static_on_files(
     if project_root is None:
         project_root = _infer_root(files[0])
 
+    project_root_path = pathlib.Path(project_root).resolve()
     target_files = {_norm(f) for f in files}
+
+    def _norm_static_item_file(item_file):
+        item_path = pathlib.Path(item_file or "")
+        if not item_path.is_absolute():
+            item_path = project_root_path / item_path
+        return _norm(item_path)
 
     try:
         from skylos.sync import get_custom_rules
@@ -325,7 +332,7 @@ def run_static_on_files(
         filtered[key] = []
         for item in full_result.get(key, []) or []:
             item_file = item.get("file", "")
-            if _norm(item_file) in target_files:
+            if _norm_static_item_file(item_file) in target_files:
                 filtered[key].append(item)
 
     if "analysis_summary" in full_result:

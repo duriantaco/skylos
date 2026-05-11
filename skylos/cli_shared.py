@@ -19,13 +19,25 @@ def get_git_changed_files(root_path):
         ".php",
         ".rs",
         ".dart",
+        ".env",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
     }
 
     def _collect_supported(output, repo_root):
         files = []
         for line in output.splitlines():
             full_path = pathlib.Path(repo_root) / line
-            if full_path.suffix.lower() not in supported_exts:
+            if (
+                full_path.name != ".env"
+                and not full_path.name.startswith(".env.")
+                and full_path.suffix.lower() not in supported_exts
+            ):
                 continue
             if full_path.exists():
                 files.append(full_path)

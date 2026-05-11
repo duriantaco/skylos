@@ -205,7 +205,10 @@ def scan_ctx(
     ignore_tests=True,
 ):
     rel_path = ctx.get("relpath", "")
-    if not rel_path.endswith(ALLOWED_FILE_SUFFIXES):
+    rel_name = rel_path.replace("\\", "/").rsplit("/", 1)[-1]
+    if not rel_path.endswith(ALLOWED_FILE_SUFFIXES) and not rel_name.startswith(
+        ".env."
+    ):
         return []
 
     if ignore_tests and IS_TEST_PATH.search(rel_path.replace("\\", "/")):
