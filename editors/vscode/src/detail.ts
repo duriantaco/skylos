@@ -3,11 +3,16 @@ import type { SkylosFinding } from "./types";
 import { getRuleMeta } from "./rules";
 import { evidenceLines, fixPlan, isLikelyCiBlocker, priorityReasons } from "./reviewCore";
 import { provenanceLabel } from "./provenanceCore";
+import { createWebviewNonce, escapeHtml, isRecord, webviewCsp } from "./webviewSecurity";
 
 export class FindingDetailPanel {
   private panel: vscode.WebviewPanel | undefined;
+  private currentFinding: SkylosFinding | undefined;
+  private messageDisposable: vscode.Disposable | undefined;
 
   show(finding: SkylosFinding): void {
+    this.currentFinding = finding;
+
     if (this.panel) {
       this.panel.reveal();
     } else {
@@ -15,42 +20,54 @@ export class FindingDetailPanel {
         "skylosFindingDetail",
         "Finding Detail",
         vscode.ViewColumn.Beside,
-        { enableScripts: true },
+        { enableScripts: true, localResourceRoots: [] },
       );
-      this.panel.onDidDispose(() => { this.panel = undefined; });
+      this.messageDisposable = this.panel.webview.onDidReceiveMessage((msg: unknown) => this.handleMessage(msg));
+      this.panel.onDidDispose(() => {
+        this.panel = undefined;
+        this.currentFinding = undefined;
+        this.messageDisposable?.dispose();
+        this.messageDisposable = undefined;
+      });
     }
 
     this.panel.title = `[${finding.ruleId}] Detail`;
-    this.panel.webview.html = this.getHtml(finding);
-
-    this.panel.webview.onDidReceiveMessage((msg) => {
-      switch (msg.command) {
-        case "fix":
-          vscode.commands.executeCommand(
-            "skylos.fix",
-            finding.file,
-            new vscode.Range(Math.max(0, finding.line - 1), 0, Math.max(0, finding.line - 1), 0),
-            finding.message,
-            false,
-          );
-          break;
-        case "dismiss":
-          vscode.commands.executeCommand("skylos.dismissIssue", finding.file, finding.line);
-          this.panel?.dispose();
-          break;
-        case "previewFix":
-          vscode.commands.executeCommand("skylos.previewSafeFix", finding);
-          break;
-        case "openFile":
-          vscode.commands.executeCommand("vscode.open", vscode.Uri.file(finding.file), {
-            selection: new vscode.Range(Math.max(0, finding.line - 1), 0, Math.max(0, finding.line - 1), 0),
-          });
-          break;
-      }
-    });
+    this.panel.webview.html = this.getHtml(this.panel.webview, finding);
   }
 
-  private getHtml(f: SkylosFinding): string {
+  private handleMessage(msg: unknown): void {
+    const command = getDetailCommand(msg);
+    const finding = this.currentFinding;
+    if (!command || !finding) return;
+
+    switch (command) {
+      case "fix":
+        vscode.commands.executeCommand(
+          "skylos.fix",
+          finding.file,
+          new vscode.Range(Math.max(0, finding.line - 1), 0, Math.max(0, finding.line - 1), 0),
+          finding.message,
+          false,
+        );
+        break;
+      case "dismiss":
+        vscode.commands.executeCommand("skylos.dismissIssue", finding.file, finding.line);
+        this.panel?.dispose();
+        break;
+      case "previewFix":
+        vscode.commands.executeCommand("skylos.previewSafeFix", finding);
+        break;
+      case "openFile":
+        vscode.commands.executeCommand("vscode.open", vscode.Uri.file(finding.file), {
+          selection: new vscode.Range(Math.max(0, finding.line - 1), 0, Math.max(0, finding.line - 1), 0),
+        });
+        break;
+    }
+  }
+
+  private getHtml(webview: vscode.Webview, f: SkylosFinding): string {
+    const nonce = createWebviewNonce();
+    const csp = webviewCsp(webview, nonce);
     const meta = getRuleMeta(f.ruleId);
     const shortFile = f.file.split("/").slice(-2).join("/");
     const sevColor = getSevColor(f.severity);
@@ -86,6 +103,7 @@ export class FindingDetailPanel {
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
+<meta http-equiv="Content-Security-Policy" content="${escapeHtml(csp)}"/>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);background:var(--vscode-editor-background);padding:24px;line-height:1.6}
@@ -123,7 +141,7 @@ hr{border:none;border-top:1px solid var(--vscode-widget-border,rgba(255,255,255,
 <body>
 <span class="severity">${f.severity}</span>
 <h1>${escapeHtml(meta?.name ?? f.ruleId)}</h1>
-<div class="location" onclick="post('openFile')">${escapeHtml(shortFile)}:${f.line}</div>
+<div class="location" data-command="openFile" role="button" tabindex="0">${escapeHtml(shortFile)}:${f.line}</div>
 
 <p class="desc"><strong>${escapeHtml(summary)}</strong></p>
 <p class="desc">${escapeHtml(f.message)}</p>
@@ -172,15 +190,27 @@ ${meta?.fix ? `
 
 <hr/>
 <div class="actions">
-  ${f.fixPatch ? `<button class="btn btn-primary" onclick="post('previewFix')">Preview Engine Fix</button>` : ""}
-  <button class="btn btn-primary" onclick="post('fix')">Fix with AI Assist</button>
-  <button class="btn btn-secondary" onclick="post('dismiss')">Dismiss</button>
-  <button class="btn btn-secondary" onclick="post('openFile')">Go to File</button>
+  ${f.fixPatch ? `<button class="btn btn-primary" type="button" data-command="previewFix">Preview Engine Fix</button>` : ""}
+  <button class="btn btn-primary" type="button" data-command="fix">Fix with AI Assist</button>
+  <button class="btn btn-secondary" type="button" data-command="dismiss">Dismiss</button>
+  <button class="btn btn-secondary" type="button" data-command="openFile">Go to File</button>
 </div>
 
-<script>
+<script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
-function post(cmd){vscode.postMessage({command:cmd})}
+const allowedCommands = new Set(['fix', 'dismiss', 'previewFix', 'openFile']);
+function postCommandFromElement(target) {
+  if (!(target instanceof HTMLElement)) return;
+  const command = target.dataset.command;
+  if (allowedCommands.has(command)) {
+    vscode.postMessage({ command });
+  }
+}
+document.body.addEventListener('click', (event) => postCommandFromElement(event.target));
+document.body.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  postCommandFromElement(event.target);
+});
 </script>
 </body>
 </html>`;
@@ -189,15 +219,6 @@ function post(cmd){vscode.postMessage({command:cmd})}
   dispose(): void {
     this.panel?.dispose();
   }
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function getSevColor(sev: string): string {
@@ -225,4 +246,17 @@ function getFindingSummary(finding: SkylosFinding, provenance: string): string {
     return `${provenance} finding`;
   }
   return `${provenance} finding`;
+}
+
+function getDetailCommand(msg: unknown): "fix" | "dismiss" | "previewFix" | "openFile" | undefined {
+  if (!isRecord(msg)) return undefined;
+  switch (msg.command) {
+    case "fix":
+    case "dismiss":
+    case "previewFix":
+    case "openFile":
+      return msg.command;
+    default:
+      return undefined;
+  }
 }

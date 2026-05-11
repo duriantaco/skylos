@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { FindingsStore } from "./store";
 import { getMaxProblems } from "./config";
+import { createWebviewNonce, escapeHtml, isRecord, webviewCsp } from "./webviewSecurity";
 
 interface ScoreResult {
   score: number;
@@ -70,15 +71,18 @@ export class SkylosDashboard {
       "skylosDashboard",
       "Skylos Security Dashboard",
       vscode.ViewColumn.One,
-      { enableScripts: true },
+      { enableScripts: true, localResourceRoots: [] },
     );
 
     this.panel.onDidDispose(() => {
       this.panel = undefined;
     }, null, this.disposables);
 
-    this.panel.webview.onDidReceiveMessage((msg) => {
-      switch (msg.command) {
+    this.panel.webview.onDidReceiveMessage((msg: unknown) => {
+      const command = getDashboardCommand(msg);
+      if (!command) return;
+
+      switch (command) {
         case "scan":
           vscode.commands.executeCommand("skylos.scan");
           break;
@@ -102,10 +106,12 @@ export class SkylosDashboard {
   private update(): void {
     if (!this.panel) 
       return;
-    this.panel.webview.html = this.getHtml();
+    this.panel.webview.html = this.getHtml(this.panel.webview);
   }
 
-  private getHtml(): string {
+  private getHtml(webview: vscode.Webview): string {
+    const nonce = createWebviewNonce();
+    const csp = webviewCsp(webview, nonce);
     const { score, grade, color } = computeSecurityScore(this.store);
     const counts = this.store.countBySeverity();
     const catCounts = this.store.countByCategory();
@@ -153,7 +159,7 @@ export class SkylosDashboard {
       if (entries.length > 0) {
         catGradesHtml = `<div class="cat-grades">${entries.map(([cat, g]) => {
           const c = GRADE_COLOR[g.letter] ?? "#888";
-          return `<div class="cat-grade-item"><span class="cat-grade-letter" style="color:${c}">${g.letter}</span><span class="cat-grade-label">${cat}</span></div>`;
+          return `<div class="cat-grade-item"><span class="cat-grade-letter" style="color:${c}">${escapeHtml(g.letter)}</span><span class="cat-grade-label">${escapeHtml(cat)}</span></div>`;
         }).join("")}</div>`;
       }
     }
@@ -164,7 +170,9 @@ export class SkylosDashboard {
       if (summary.total_files) parts.push(`<span>${summary.total_files} files</span>`);
       if (summary.total_loc) parts.push(`<span>${summary.total_loc.toLocaleString()} LOC</span>`);
       if (summary.languages) {
-        const langs = Object.entries(summary.languages).map(([l, n]) => `${l}: ${n}`).join(", ");
+        const langs = Object.entries(summary.languages)
+          .map(([l, n]) => `${escapeHtml(l)}: ${escapeHtml(n)}`)
+          .join(", ");
         parts.push(`<span>${langs}</span>`);
       }
       if (parts.length > 0) {
@@ -191,7 +199,7 @@ export class SkylosDashboard {
     <h3>&#128260; Circular Dependencies (${circularDeps.length})</h3>
     <div class="circ-list">
       ${circularDeps.slice(0, 10).map((d) => {
-        const chain = d.cycle.map((m) => m.split("/").pop()).join(" &#8594; ");
+        const chain = d.cycle.map((m) => escapeHtml(m.split("/").pop() ?? m)).join(" &#8594; ");
         return `<div class="circ-item">${chain}</div>`;
       }).join("")}
       ${circularDeps.length > 10 ? `<p style="opacity:.5;font-size:12px;margin-top:8px">...and ${circularDeps.length - 10} more</p>` : ""}
@@ -209,10 +217,10 @@ export class SkylosDashboard {
       ${depVulns.slice(0, 10).map((v) => {
         const sevColor = v.severity?.toUpperCase() === "CRITICAL" ? "#ef4444" : v.severity?.toUpperCase() === "HIGH" ? "#fb923c" : "#facc15";
         return `<tr>
-          <td class="mono">${v.package}${v.version ? `@${v.version}` : ""}</td>
-          <td><span style="color:${sevColor}">${v.severity ?? "?"}</span></td>
-          <td>${v.summary ?? v.vulnerability_id ?? ""}</td>
-          <td class="mono">${v.fix_version ?? "-"}</td>
+          <td class="mono">${escapeHtml(v.package)}${v.version ? `@${escapeHtml(v.version)}` : ""}</td>
+          <td><span style="color:${sevColor}">${escapeHtml(v.severity ?? "?")}</span></td>
+          <td>${escapeHtml(v.summary ?? v.vulnerability_id ?? "")}</td>
+          <td class="mono">${escapeHtml(v.fix_version ?? "-")}</td>
         </tr>`;
       }).join("")}
     </table>
@@ -223,6 +231,7 @@ export class SkylosDashboard {
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
+<meta http-equiv="Content-Security-Policy" content="${escapeHtml(csp)}"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -292,7 +301,7 @@ ${scopeHtml}
     <div class="score-wrap">
       <div class="donut">
         <div class="donut-label">
-          <span class="donut-grade">${grade}</span>
+          <span class="donut-grade">${escapeHtml(grade)}</span>
           <span class="donut-score">${donutPct}/100</span>
         </div>
       </div>
@@ -331,7 +340,7 @@ ${scopeHtml}
     <h3>Categories</h3>
     <div class="cat-grid">
       ${Object.entries(catCounts)
-        .map(([cat, count]) => `<div class="cat-item"><span class="cat-icon">${catIcons[cat] ?? "&#128196;"}</span>${cat}<span class="cat-count">${count}</span></div>`)
+        .map(([cat, count]) => `<div class="cat-item"><span class="cat-icon">${catIcons[cat] ?? "&#128196;"}</span>${escapeHtml(cat)}<span class="cat-count">${count}</span></div>`)
         .join("")}
     </div>
   </div>
@@ -343,7 +352,7 @@ ${scopeHtml}
       <tr><th>File</th><th>Critical/High</th><th>Total</th></tr>
       ${topFiles.map(([file, c]) => {
         const short = file.split("/").slice(-2).join("/");
-        return `<tr><td class="mono">${short}</td><td>${c.critical}</td><td>${c.total}</td></tr>`;
+        return `<tr><td class="mono">${escapeHtml(short)}</td><td>${c.critical}</td><td>${c.total}</td></tr>`;
       }).join("")}
     </table>`}
   </div>
@@ -353,14 +362,21 @@ ${scopeHtml}
 </div>
 
 <div class="actions">
-  <button class="btn btn-primary" onclick="post('scan')">&#8635; Scan</button>
-  <button class="btn btn-secondary" onclick="post('fixAll')">&#9889; Fix All</button>
-  <button class="btn btn-secondary" onclick="post('export')">&#128196; Export</button>
+  <button class="btn btn-primary" type="button" data-command="scan">&#8635; Scan</button>
+  <button class="btn btn-secondary" type="button" data-command="fixAll">&#9889; Fix All</button>
+  <button class="btn btn-secondary" type="button" data-command="export">&#128196; Export</button>
 </div>
 
-<script>
+<script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
-function post(cmd){vscode.postMessage({command:cmd})}
+document.querySelector('.actions')?.addEventListener('click', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const command = target.dataset.command;
+  if (command === 'scan' || command === 'fixAll' || command === 'export') {
+    vscode.postMessage({ command });
+  }
+});
 </script>
 </body>
 </html>`;
@@ -369,5 +385,17 @@ function post(cmd){vscode.postMessage({command:cmd})}
   dispose(): void {
     this.panel?.dispose();
     this.disposables.forEach((d) => d.dispose());
+  }
+}
+
+function getDashboardCommand(msg: unknown): "scan" | "fixAll" | "export" | undefined {
+  if (!isRecord(msg)) return undefined;
+  switch (msg.command) {
+    case "scan":
+    case "fixAll":
+    case "export":
+      return msg.command;
+    default:
+      return undefined;
   }
 }

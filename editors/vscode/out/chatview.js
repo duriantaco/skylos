@@ -4,6 +4,10 @@ exports.SkylosChatViewProvider = void 0;
 const vscode = require("vscode");
 const config_1 = require("./config");
 const scanner_1 = require("./scanner");
+const webviewSecurity_1 = require("./webviewSecurity");
+const MAX_CHAT_TEXT_LENGTH = 20000;
+const MAX_FIX_CODE_LENGTH = 200000;
+const MAX_LANGUAGE_ID_LENGTH = 64;
 class SkylosChatViewProvider {
     constructor(context) {
         this.context = context;
@@ -17,14 +21,18 @@ class SkylosChatViewProvider {
         this.view = webviewView;
         webviewView.webview.options = {
             enableScripts: true,
+            localResourceRoots: [],
         };
-        webviewView.webview.html = this.getHtml();
+        webviewView.webview.html = this.getHtml(webviewView.webview);
         webviewView.webview.onDidReceiveMessage(async (msg) => {
-            if (msg.type === "userMessage") {
+            if (isUserMessage(msg)) {
                 await this.handleUserMessage(msg.text);
             }
-            else if (msg.type === "applyFix") {
+            else if (isApplyFixMessage(msg)) {
                 await this.applyCodeFix(msg.code, msg.language);
+            }
+            else {
+                scanner_1.out.appendLine("Ignored invalid chat webview message.");
             }
         });
         if (this.history.length > 0) {
@@ -232,11 +240,14 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
     persistHistory() {
         this.context.workspaceState.update("skylosChatHistory", this.history.slice(-20));
     }
-    getHtml() {
+    getHtml(webview) {
+        const nonce = (0, webviewSecurity_1.createWebviewNonce)();
+        const csp = (0, webviewSecurity_1.webviewCsp)(webview, nonce);
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="${(0, webviewSecurity_1.escapeHtml)(csp)}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -365,7 +376,7 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
     <button id="send">Send</button>
   </div>
 
-<script>
+<script nonce="${nonce}">
   const vscode = acquireVsCodeApi();
   const messagesEl = document.getElementById('messages');
   const inputEl = document.getElementById('input');
@@ -386,7 +397,7 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
     // Code fences
     html = html.replace(/\`\`\`(\\w*)\n([\\s\\S]*?)\`\`\`/g, (_, lang, code) => {
       const langAttr = lang || '';
-      return '<pre data-lang="' + langAttr + '"><button class="apply-btn" onclick="applyCode(this)">Apply Fix</button><code>' + code + '</code></pre>';
+      return '<pre data-lang="' + langAttr + '"><button class="apply-btn" type="button">Apply Fix</button><code>' + code + '</code></pre>';
     });
 
     // Inline code
@@ -435,12 +446,16 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
     inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
   });
 
-  window.applyCode = function(btn) {
-    const pre = btn.parentElement;
-    const code = pre.querySelector('code').textContent;
+  messagesEl.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !target.classList.contains('apply-btn')) return;
+    const pre = target.closest('pre');
+    const codeEl = pre?.querySelector('code');
+    if (!pre || !codeEl) return;
+    const code = codeEl.textContent || '';
     const lang = pre.getAttribute('data-lang') || '';
     vscode.postMessage({ type: 'applyFix', code, language: lang });
-  };
+  });
 
   window.addEventListener('message', (event) => {
     const msg = event.data;
@@ -494,3 +509,19 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
 }
 exports.SkylosChatViewProvider = SkylosChatViewProvider;
 SkylosChatViewProvider.viewType = "skylosChatPanel";
+function isUserMessage(msg) {
+    return (0, webviewSecurity_1.isRecord)(msg)
+        && msg.type === "userMessage"
+        && typeof msg.text === "string"
+        && msg.text.length > 0
+        && msg.text.length <= MAX_CHAT_TEXT_LENGTH;
+}
+function isApplyFixMessage(msg) {
+    return (0, webviewSecurity_1.isRecord)(msg)
+        && msg.type === "applyFix"
+        && typeof msg.code === "string"
+        && msg.code.length > 0
+        && msg.code.length <= MAX_FIX_CODE_LENGTH
+        && (msg.language === undefined
+            || (typeof msg.language === "string" && msg.language.length <= MAX_LANGUAGE_ID_LENGTH));
+}
