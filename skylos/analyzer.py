@@ -1809,28 +1809,26 @@ class Skylos:
             }
             if enable_danger:
                 try:
-                    from skylos.rules.danger.github_actions import scan_github_actions
+                    from skylos.rules.config import scan_config_files
 
                     scan_target = _first if _first.is_file() else project_root
-                    github_actions_findings = scan_github_actions(
+                    config_findings = scan_config_files(
                         scan_target,
                         changed_files=changed_files,
                         ignore=project_ignore,
                     )
-                    if github_actions_findings:
+                    if config_findings:
                         from skylos.rules.compliance import (
                             enrich_findings_with_compliance,
                         )
 
                         result["danger"] = enrich_findings_with_compliance(
-                            github_actions_findings
+                            config_findings
                         )
-                        result["analysis_summary"]["danger_count"] = len(
-                            github_actions_findings
-                        )
+                        result["analysis_summary"]["danger_count"] = len(config_findings)
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
-                        logger.error("GitHub Actions scan failed", exc_info=True)
+                        logger.error("Config scan failed", exc_info=True)
             return json.dumps(result)
 
         logger.info(f"Analyzing {len(files)} files...")
@@ -2381,19 +2379,19 @@ class Skylos:
 
         if enable_danger:
             try:
-                from skylos.rules.danger.github_actions import scan_github_actions
+                from skylos.rules.config import scan_config_files
 
                 scan_target = _first if _first.is_file() else project_root
-                github_actions_findings = scan_github_actions(
+                config_findings = scan_config_files(
                     scan_target,
                     changed_files=changed_files,
                     ignore=project_ignore,
                 )
-                if github_actions_findings:
-                    all_dangers.extend(github_actions_findings)
+                if config_findings:
+                    all_dangers.extend(config_findings)
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
-                    logger.error("GitHub Actions scan failed", exc_info=True)
+                    logger.error("Config scan failed", exc_info=True)
 
             try:
                 from skylos.rules.danger.danger_hallucination.dependency_hallucination import (

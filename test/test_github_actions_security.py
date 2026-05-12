@@ -1,18 +1,16 @@
 import json
 
 from skylos.analyzer import analyze
-from skylos.rules.danger.github_actions import scan_github_actions
+from skylos.rules.config import scan_config_files
+from skylos.rules.config.cicd.github_actions import scan_github_actions
 
 
 def _rule_ids(findings):
     return {finding["rule_id"] for finding in findings}
 
 
-def test_github_actions_scanner_detects_workflow_supply_chain_risks(tmp_path):
-    workflows = tmp_path / ".github" / "workflows"
-    workflows.mkdir(parents=True)
-    workflow = workflows / "ci.yml"
-    workflow.write_text(
+def _write_risky_workflow(path):
+    path.write_text(
         """
 name: CI
 on:
@@ -27,6 +25,13 @@ jobs:
         encoding="utf-8",
     )
 
+
+def test_github_actions_scanner_detects_workflow_supply_chain_risks(tmp_path):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    workflow = workflows / "ci.yml"
+    _write_risky_workflow(workflow)
+
     findings = scan_github_actions(tmp_path)
 
     assert {
@@ -36,6 +41,12 @@ jobs:
         "SKY-D293",
         "SKY-D294",
     }.issubset(_rule_ids(findings))
+    assert {
+        "kind": "config",
+        "domain": "cicd",
+        "provider": "github_actions",
+        "type": "workflow",
+    }.items() <= findings[0].items()
 
 
 def test_github_actions_scanner_accepts_pinned_minimal_workflow(tmp_path):
@@ -88,12 +99,54 @@ jobs:
         encoding="utf-8",
     )
 
-    findings = scan_github_actions(
+    findings = scan_config_files(
         repo,
         changed_files={str(outside_workflow), "../outside/.github/workflows/ci.yml"},
     )
 
     assert findings == []
+
+
+def test_config_scanner_routes_single_github_actions_file(tmp_path):
+    workflow = tmp_path / ".github" / "workflows" / "ci.yml"
+    workflow.parent.mkdir(parents=True)
+    _write_risky_workflow(workflow)
+
+    findings = scan_config_files(workflow)
+
+    assert {"SKY-D290", "SKY-D292", "SKY-D294"}.issubset(_rule_ids(findings))
+
+
+def test_config_scanner_ignores_unowned_config_files(tmp_path):
+    for relative in (
+        "app.py",
+        "config.yml",
+        ".gitlab-ci.yml",
+        "Jenkinsfile",
+        "Dockerfile",
+        "main.tf",
+    ):
+        path = tmp_path / relative
+        path.write_text(
+            """
+name: CI
+on:
+  pull_request_target:
+jobs:
+  test:
+    script:
+      - echo test
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+    assert scan_config_files(tmp_path) == []
+    assert scan_config_files(tmp_path / "app.py") == []
+    assert scan_config_files(tmp_path / "config.yml") == []
+    assert scan_config_files(tmp_path / ".gitlab-ci.yml") == []
+    assert scan_config_files(tmp_path / "Jenkinsfile") == []
+    assert scan_config_files(tmp_path / "Dockerfile") == []
+    assert scan_config_files(tmp_path / "main.tf") == []
 
 
 def test_github_actions_scanner_detects_extended_offline_risks(tmp_path):
