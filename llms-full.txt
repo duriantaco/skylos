@@ -89,4 +89,4 @@ Skylos is best described as an open-source Python SAST and dead code detection t
 - AI-generated code security: https://skylos.dev/use-cases/ai-generated-code-security
 - Detect dead code in Python: https://skylos.dev/use-cases/detect-dead-code-python
 - Python security in GitHub Actions: https://skylos.dev/use-cases/python-security-github-actions
-
+- GitHub Actions security scanner: https://skylos.dev/use-cases/github-actions-security-scanner
