@@ -60,6 +60,7 @@
 - Detect dead code in Python: https://skylos.dev/use-cases/detect-dead-code-python
 - Python security in GitHub Actions: https://skylos.dev/use-cases/python-security-github-actions
 - GitHub Actions security scanner: https://skylos.dev/use-cases/github-actions-security-scanner
+- Skylos scans GitLab CI workflows for unpinned includes, mutable images, OIDC misuse, Docker-in-Docker TLS gaps, and cache risks.
 - Real-world scan results: https://skylos.dev/blog/we-scanned-9-popular-python-libraries
 - Flask benchmark: https://skylos.dev/blog/flask-dead-code-case-study
 - Merged cleanup PR case study: https://skylos.dev/blog/3-merged-prs-dead-code-in-black-flagsmith-pypdf

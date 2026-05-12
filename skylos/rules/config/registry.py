@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from skylos.rules.config.cicd.github_actions import scan_github_actions
+from skylos.rules.config.cicd.gitlab_ci import scan_gitlab_ci
 
 
 def scan_config_files(
@@ -16,4 +17,5 @@ def scan_config_files(
     findings.extend(
         scan_github_actions(root, changed_files=changed_files, ignore=ignore)
     )
+    findings.extend(scan_gitlab_ci(root, changed_files=changed_files, ignore=ignore))
     return findings

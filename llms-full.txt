@@ -90,3 +90,4 @@ Skylos is best described as an open-source Python SAST and dead code detection t
 - Detect dead code in Python: https://skylos.dev/use-cases/detect-dead-code-python
 - Python security in GitHub Actions: https://skylos.dev/use-cases/python-security-github-actions
 - GitHub Actions security scanner: https://skylos.dev/use-cases/github-actions-security-scanner
+- Skylos scans GitLab CI workflows for unpinned includes, mutable images, OIDC misuse, Docker-in-Docker TLS gaps, and cache risks.
