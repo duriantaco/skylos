@@ -5,38 +5,52 @@ const vscode = require("vscode");
 const rules_1 = require("./rules");
 const reviewCore_1 = require("./reviewCore");
 const provenanceCore_1 = require("./provenanceCore");
+const webviewSecurity_1 = require("./webviewSecurity");
 class FindingDetailPanel {
     show(finding) {
+        this.currentFinding = finding;
         if (this.panel) {
             this.panel.reveal();
         }
         else {
-            this.panel = vscode.window.createWebviewPanel("skylosFindingDetail", "Finding Detail", vscode.ViewColumn.Beside, { enableScripts: true });
-            this.panel.onDidDispose(() => { this.panel = undefined; });
+            this.panel = vscode.window.createWebviewPanel("skylosFindingDetail", "Finding Detail", vscode.ViewColumn.Beside, { enableScripts: true, localResourceRoots: [] });
+            this.messageDisposable = this.panel.webview.onDidReceiveMessage((msg) => this.handleMessage(msg));
+            this.panel.onDidDispose(() => {
+                this.panel = undefined;
+                this.currentFinding = undefined;
+                this.messageDisposable?.dispose();
+                this.messageDisposable = undefined;
+            });
         }
         this.panel.title = `[${finding.ruleId}] Detail`;
-        this.panel.webview.html = this.getHtml(finding);
-        this.panel.webview.onDidReceiveMessage((msg) => {
-            switch (msg.command) {
-                case "fix":
-                    vscode.commands.executeCommand("skylos.fix", finding.file, new vscode.Range(Math.max(0, finding.line - 1), 0, Math.max(0, finding.line - 1), 0), finding.message, false);
-                    break;
-                case "dismiss":
-                    vscode.commands.executeCommand("skylos.dismissIssue", finding.file, finding.line);
-                    this.panel?.dispose();
-                    break;
-                case "previewFix":
-                    vscode.commands.executeCommand("skylos.previewSafeFix", finding);
-                    break;
-                case "openFile":
-                    vscode.commands.executeCommand("vscode.open", vscode.Uri.file(finding.file), {
-                        selection: new vscode.Range(Math.max(0, finding.line - 1), 0, Math.max(0, finding.line - 1), 0),
-                    });
-                    break;
-            }
-        });
+        this.panel.webview.html = this.getHtml(this.panel.webview, finding);
     }
-    getHtml(f) {
+    handleMessage(msg) {
+        const command = getDetailCommand(msg);
+        const finding = this.currentFinding;
+        if (!command || !finding)
+            return;
+        switch (command) {
+            case "fix":
+                vscode.commands.executeCommand("skylos.fix", finding.file, new vscode.Range(Math.max(0, finding.line - 1), 0, Math.max(0, finding.line - 1), 0), finding.message, false);
+                break;
+            case "dismiss":
+                vscode.commands.executeCommand("skylos.dismissIssue", finding.file, finding.line);
+                this.panel?.dispose();
+                break;
+            case "previewFix":
+                vscode.commands.executeCommand("skylos.previewSafeFix", finding);
+                break;
+            case "openFile":
+                vscode.commands.executeCommand("vscode.open", vscode.Uri.file(finding.file), {
+                    selection: new vscode.Range(Math.max(0, finding.line - 1), 0, Math.max(0, finding.line - 1), 0),
+                });
+                break;
+        }
+    }
+    getHtml(webview, f) {
+        const nonce = (0, webviewSecurity_1.createWebviewNonce)();
+        const csp = (0, webviewSecurity_1.webviewCsp)(webview, nonce);
         const meta = (0, rules_1.getRuleMeta)(f.ruleId);
         const shortFile = f.file.split("/").slice(-2).join("/");
         const sevColor = getSevColor(f.severity);
@@ -64,15 +78,16 @@ class FindingDetailPanel {
         ];
         const tags = [];
         if (meta?.owasp)
-            tags.push(`<span class="tag owasp">OWASP ${escapeHtml(meta.owasp)}</span>`);
+            tags.push(`<span class="tag owasp">OWASP ${(0, webviewSecurity_1.escapeHtml)(meta.owasp)}</span>`);
         if (meta?.cwe)
-            tags.push(`<span class="tag cwe">${escapeHtml(meta.cwe)}</span>`);
+            tags.push(`<span class="tag cwe">${(0, webviewSecurity_1.escapeHtml)(meta.cwe)}</span>`);
         if (meta?.pciDss)
-            tags.push(`<span class="tag pci">PCI-DSS ${escapeHtml(meta.pciDss)}</span>`);
+            tags.push(`<span class="tag pci">PCI-DSS ${(0, webviewSecurity_1.escapeHtml)(meta.pciDss)}</span>`);
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
+<meta http-equiv="Content-Security-Policy" content="${(0, webviewSecurity_1.escapeHtml)(csp)}"/>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);background:var(--vscode-editor-background);padding:24px;line-height:1.6}
@@ -109,65 +124,77 @@ hr{border:none;border-top:1px solid var(--vscode-widget-border,rgba(255,255,255,
 </head>
 <body>
 <span class="severity">${f.severity}</span>
-<h1>${escapeHtml(meta?.name ?? f.ruleId)}</h1>
-<div class="location" onclick="post('openFile')">${escapeHtml(shortFile)}:${f.line}</div>
+<h1>${(0, webviewSecurity_1.escapeHtml)(meta?.name ?? f.ruleId)}</h1>
+<div class="location" data-command="openFile" role="button" tabindex="0">${(0, webviewSecurity_1.escapeHtml)(shortFile)}:${f.line}</div>
 
-<p class="desc"><strong>${escapeHtml(summary)}</strong></p>
-<p class="desc">${escapeHtml(f.message)}</p>
+<p class="desc"><strong>${(0, webviewSecurity_1.escapeHtml)(summary)}</strong></p>
+<p class="desc">${(0, webviewSecurity_1.escapeHtml)(f.message)}</p>
 
 ${tags.length > 0 ? `<div class="tags">${tags.join("")}</div>` : ""}
 
 <div class="decision">
-  ${decisionRows.map(([key, value]) => `<div class="k">${escapeHtml(key)}</div><div class="v">${escapeHtml(String(value))}</div>`).join("")}
+  ${decisionRows.map(([key, value]) => `<div class="k">${(0, webviewSecurity_1.escapeHtml)(key)}</div><div class="v">${(0, webviewSecurity_1.escapeHtml)(String(value))}</div>`).join("")}
 </div>
 
 <h2>Why This Is Here</h2>
 <div class="section">
-  <ul class="list">${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>
+  <ul class="list">${reasons.map((reason) => `<li>${(0, webviewSecurity_1.escapeHtml)(reason)}</li>`).join("")}</ul>
 </div>
 
 <h2>Evidence</h2>
 <div class="section">
   ${evidence.length > 0
-            ? `<ul class="list">${evidence.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`
+            ? `<ul class="list">${evidence.map((line) => `<li>${(0, webviewSecurity_1.escapeHtml)(line)}</li>`).join("")}</ul>`
             : f.snippet
                 ? `<p>Code snippet attached; no separate trace metadata was provided.</p>`
                 : `<p>No evidence trace was provided by this finding.</p>`}
-  ${f.snippet ? `<pre class="snippet">${escapeHtml(f.snippet)}</pre>` : ""}
+  ${f.snippet ? `<pre class="snippet">${(0, webviewSecurity_1.escapeHtml)(f.snippet)}</pre>` : ""}
 </div>
 
 <h2>CI Impact</h2>
-<div class="section impact"><p>${escapeHtml(ciCopy)}</p></div>
+<div class="section impact"><p>${(0, webviewSecurity_1.escapeHtml)(ciCopy)}</p></div>
 
 <h2>Fix Plan</h2>
 <div class="fix-box">
-  <h3>${escapeHtml(plan.title)}</h3>
-  <ul class="list">${plan.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ul>
+  <h3>${(0, webviewSecurity_1.escapeHtml)(plan.title)}</h3>
+  <ul class="list">${plan.steps.map((step) => `<li>${(0, webviewSecurity_1.escapeHtml)(step)}</li>`).join("")}</ul>
 </div>
 
 ${meta?.description ? `
 <h2>Description</h2>
-<div class="section"><p>${escapeHtml(meta.description)}</p></div>
+<div class="section"><p>${(0, webviewSecurity_1.escapeHtml)(meta.description)}</p></div>
 ` : ""}
 
 ${meta?.fix ? `
 <div class="fix-box">
   <h3>Rule Guidance</h3>
-  <p>${escapeHtml(meta.fix)}</p>
+  <p>${(0, webviewSecurity_1.escapeHtml)(meta.fix)}</p>
 </div>
 ` : ""}
 
 <hr/>
 <div class="actions">
-  ${f.fixPatch ? `<button class="btn btn-primary" onclick="post('previewFix')">Preview Engine Fix</button>` : ""}
-  <button class="btn btn-primary" onclick="post('fix')">Fix with AI Assist</button>
-  <button class="btn btn-secondary" onclick="post('dismiss')">Dismiss</button>
-  <button class="btn btn-secondary" onclick="post('openFile')">Go to File</button>
+  ${f.fixPatch ? `<button class="btn btn-primary" type="button" data-command="previewFix">Preview Engine Fix</button>` : ""}
+  <button class="btn btn-primary" type="button" data-command="fix">Fix with AI Assist</button>
+  <button class="btn btn-secondary" type="button" data-command="dismiss">Dismiss</button>
+  <button class="btn btn-secondary" type="button" data-command="openFile">Go to File</button>
 </div>
 
-<script>
+<script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
-function post(cmd){vscode.postMessage({command:cmd})}
+const allowedCommands = new Set(['fix', 'dismiss', 'previewFix', 'openFile']);
+function postCommandFromElement(target) {
+  if (!(target instanceof HTMLElement)) return;
+  const command = target.dataset.command;
+  if (allowedCommands.has(command)) {
+    vscode.postMessage({ command });
+  }
+}
+document.body.addEventListener('click', (event) => postCommandFromElement(event.target));
+document.body.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  postCommandFromElement(event.target);
+});
 </script>
 </body>
 </html>`;
@@ -177,14 +204,6 @@ function post(cmd){vscode.postMessage({command:cmd})}
     }
 }
 exports.FindingDetailPanel = FindingDetailPanel;
-function escapeHtml(value) {
-    return value
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-}
 function getSevColor(sev) {
     switch (sev.toUpperCase()) {
         case "CRITICAL":
@@ -209,4 +228,17 @@ function getFindingSummary(finding, provenance) {
         return `${provenance} finding`;
     }
     return `${provenance} finding`;
+}
+function getDetailCommand(msg) {
+    if (!(0, webviewSecurity_1.isRecord)(msg))
+        return undefined;
+    switch (msg.command) {
+        case "fix":
+        case "dismiss":
+        case "previewFix":
+        case "openFile":
+            return msg.command;
+        default:
+            return undefined;
+    }
 }

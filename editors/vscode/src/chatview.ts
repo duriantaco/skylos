@@ -2,6 +2,11 @@ import * as vscode from "vscode";
 import type { SkylosFinding, ChatMessage } from "./types";
 import { getAIProvider, getAIApiKey, getAIModel, getOpenAIBaseUrl } from "./config";
 import { out } from "./scanner";
+import { createWebviewNonce, escapeHtml, isRecord, webviewCsp } from "./webviewSecurity";
+
+const MAX_CHAT_TEXT_LENGTH = 20000;
+const MAX_FIX_CODE_LENGTH = 200000;
+const MAX_LANGUAGE_ID_LENGTH = 64;
 
 export class SkylosChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "skylosChatPanel";
@@ -25,15 +30,18 @@ export class SkylosChatViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.options = {
       enableScripts: true,
+      localResourceRoots: [],
     };
 
-    webviewView.webview.html = this.getHtml();
+    webviewView.webview.html = this.getHtml(webviewView.webview);
 
-    webviewView.webview.onDidReceiveMessage(async (msg) => {
-      if (msg.type === "userMessage") {
+    webviewView.webview.onDidReceiveMessage(async (msg: unknown) => {
+      if (isUserMessage(msg)) {
         await this.handleUserMessage(msg.text);
-      } else if (msg.type === "applyFix") {
+      } else if (isApplyFixMessage(msg)) {
         await this.applyCodeFix(msg.code, msg.language);
+      } else {
+        out.appendLine("Ignored invalid chat webview message.");
       }
     });
 
@@ -285,11 +293,15 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
     this.context.workspaceState.update("skylosChatHistory", this.history.slice(-20));
   }
 
-  private getHtml(): string {
+  private getHtml(webview: vscode.Webview): string {
+    const nonce = createWebviewNonce();
+    const csp = webviewCsp(webview, nonce);
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="${escapeHtml(csp)}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -418,7 +430,7 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
     <button id="send">Send</button>
   </div>
 
-<script>
+<script nonce="${nonce}">
   const vscode = acquireVsCodeApi();
   const messagesEl = document.getElementById('messages');
   const inputEl = document.getElementById('input');
@@ -439,7 +451,7 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
     // Code fences
     html = html.replace(/\`\`\`(\\w*)\n([\\s\\S]*?)\`\`\`/g, (_, lang, code) => {
       const langAttr = lang || '';
-      return '<pre data-lang="' + langAttr + '"><button class="apply-btn" onclick="applyCode(this)">Apply Fix</button><code>' + code + '</code></pre>';
+      return '<pre data-lang="' + langAttr + '"><button class="apply-btn" type="button">Apply Fix</button><code>' + code + '</code></pre>';
     });
 
     // Inline code
@@ -488,12 +500,16 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
     inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
   });
 
-  window.applyCode = function(btn) {
-    const pre = btn.parentElement;
-    const code = pre.querySelector('code').textContent;
+  messagesEl.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !target.classList.contains('apply-btn')) return;
+    const pre = target.closest('pre');
+    const codeEl = pre?.querySelector('code');
+    if (!pre || !codeEl) return;
+    const code = codeEl.textContent || '';
     const lang = pre.getAttribute('data-lang') || '';
     vscode.postMessage({ type: 'applyFix', code, language: lang });
-  };
+  });
 
   window.addEventListener('message', (event) => {
     const msg = event.data;
@@ -544,4 +560,24 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
 </body>
 </html>`;
   }
+}
+
+function isUserMessage(msg: unknown): msg is { type: "userMessage"; text: string } {
+  return isRecord(msg)
+    && msg.type === "userMessage"
+    && typeof msg.text === "string"
+    && msg.text.length > 0
+    && msg.text.length <= MAX_CHAT_TEXT_LENGTH;
+}
+
+function isApplyFixMessage(msg: unknown): msg is { type: "applyFix"; code: string; language?: string } {
+  return isRecord(msg)
+    && msg.type === "applyFix"
+    && typeof msg.code === "string"
+    && msg.code.length > 0
+    && msg.code.length <= MAX_FIX_CODE_LENGTH
+    && (
+      msg.language === undefined
+      || (typeof msg.language === "string" && msg.language.length <= MAX_LANGUAGE_ID_LENGTH)
+    );
 }
