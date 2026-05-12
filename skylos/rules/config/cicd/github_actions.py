@@ -7,6 +7,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from skylos.rules.config.findings import config_finding
+
 try:
     import yaml
 except ImportError:  # pragma: no cover - PyYAML is a runtime dependency.
@@ -167,22 +169,18 @@ def _finding(
     severity: str,
     value: str,
 ) -> dict[str, Any]:
-    return {
-        "rule_id": rule_id,
-        "kind": "github_actions",
-        "severity": severity,
-        "type": "workflow",
-        "name": name,
-        "simple_name": name,
-        "value": value,
-        "threshold": 0,
-        "message": message,
-        "file": str(file),
-        "basename": file.name,
-        "line": max(1, line),
-        "col": 0,
-        "category": "SECURITY",
-    }
+    return config_finding(
+        rule_id=rule_id,
+        domain="cicd",
+        provider="github_actions",
+        name=name,
+        message=message,
+        file=file,
+        line=line,
+        severity=severity,
+        value=value,
+        finding_type="workflow",
+    )
 
 
 def _is_workflow_file(path: Path) -> bool:
