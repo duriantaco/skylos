@@ -31,6 +31,7 @@ PATH_SANITIZERS = {
     "_resolve_analysis_target",
     "_resolve_policy_path",
     "_resolve_repo_link_path",
+    "_resolve_github_actions_scan_path",
     "_resolve_snippet_path",
     "_result_path",
 }

@@ -1785,6 +1785,8 @@ class Skylos:
         )
 
         workspace_inventory = discover_workspace_inventory(project_root)
+        project_cfg = load_config(project_root)
+        project_ignore = set(project_cfg.get("ignore", []))
 
         if not files:
             logger.warning(f"No Python files found in {path}")
@@ -1805,6 +1807,30 @@ class Skylos:
                 },
                 "workspaces": workspace_inventory.to_dict(project_root),
             }
+            if enable_danger:
+                try:
+                    from skylos.rules.danger.github_actions import scan_github_actions
+
+                    scan_target = _first if _first.is_file() else project_root
+                    github_actions_findings = scan_github_actions(
+                        scan_target,
+                        changed_files=changed_files,
+                        ignore=project_ignore,
+                    )
+                    if github_actions_findings:
+                        from skylos.rules.compliance import (
+                            enrich_findings_with_compliance,
+                        )
+
+                        result["danger"] = enrich_findings_with_compliance(
+                            github_actions_findings
+                        )
+                        result["analysis_summary"]["danger_count"] = len(
+                            github_actions_findings
+                        )
+                except Exception:
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error("GitHub Actions scan failed", exc_info=True)
             return json.dumps(result)
 
         logger.info(f"Analyzing {len(files)} files...")
@@ -1827,8 +1853,6 @@ class Skylos:
         global_pattern_tracker.traced_by_file.clear()
         global_pattern_tracker._traced_by_basename.clear()
 
-        project_cfg = load_config(project_root)
-        project_ignore = set(project_cfg.get("ignore", []))
         requested_changed_files = changed_files
         pyproject_entrypoint_qnames = set()
         pyproject_entrypoint_modules = set()
@@ -2356,6 +2380,21 @@ class Skylos:
                 apply_penalties(self, definition, test_flags, framework_flags, cfg)
 
         if enable_danger:
+            try:
+                from skylos.rules.danger.github_actions import scan_github_actions
+
+                scan_target = _first if _first.is_file() else project_root
+                github_actions_findings = scan_github_actions(
+                    scan_target,
+                    changed_files=changed_files,
+                    ignore=project_ignore,
+                )
+                if github_actions_findings:
+                    all_dangers.extend(github_actions_findings)
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error("GitHub Actions scan failed", exc_info=True)
+
             try:
                 from skylos.rules.danger.danger_hallucination.dependency_hallucination import (
                     scan_python_dependency_hallucinations,
