@@ -1998,6 +1998,16 @@ def _display_rule_name(rule_id):
         "SKY-D311": "GitHub Actions lax artifact upload",
         "SKY-D312": "GitHub Actions JavaScript install scripts",
         "SKY-D313": "GitHub Actions privileged job missing timeout",
+        "SKY-D314": "GitLab CI mutable container image",
+        "SKY-D315": "GitLab CI unpinned external include",
+        "SKY-D316": "GitLab CI literal secret variable",
+        "SKY-D317": "GitLab CI untrusted eval",
+        "SKY-D318": "GitLab CI Docker-in-Docker TLS disabled",
+        "SKY-D319": "GitLab CI OIDC local-script exposure",
+        "SKY-D320": "GitLab CI release cache poisoning risk",
+        "SKY-D321": "GitLab CI privileged job missing timeout",
+        "SKY-D322": "GitLab CI dynamic runner tag",
+        "SKY-D323": "GitLab CI ambiguous secret token",
     }
     return RULE_TITLES.get(rule_id, "Security issue")
 

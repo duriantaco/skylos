@@ -425,6 +425,16 @@ _RULE_SUGGESTIONS: dict[str, str] = {
     "SKY-D311": "Set `if-no-files-found: error` on `actions/upload-artifact` for required outputs.",
     "SKY-D312": "Use `npm ci --ignore-scripts` or an equivalent package-manager flag unless lifecycle scripts are required.",
     "SKY-D313": "Add `timeout-minutes` to privileged or release-like jobs.",
+    "SKY-D314": "Pin GitLab CI `image:` and `services:` entries by digest, especially `docker:dind` services.",
+    "SKY-D315": "Pin `include:project` entries to full commit SHAs and add `integrity:` to remote includes.",
+    "SKY-D316": "Move literal secrets out of `.gitlab-ci.yml` and into protected, masked GitLab CI/CD variables.",
+    "SKY-D317": "Do not pass merge request or ref metadata into `eval`, `sh -c`, `bash -c`, or interpreter `-c`/`-e` commands.",
+    "SKY-D318": "Use TLS-enabled Docker-in-Docker, or avoid privileged Docker socket access in this job.",
+    "SKY-D319": "Separate OIDC token issuance from repository-controlled scripts; publish from prebuilt artifacts.",
+    "SKY-D320": "Remove cache restore from release/deploy jobs or use isolated release-only cache keys.",
+    "SKY-D321": "Add `timeout:` to GitLab CI release, deploy, or OIDC jobs.",
+    "SKY-D322": "Use static GitLab runner tags so untrusted refs cannot select privileged runners.",
+    "SKY-D323": "Set an explicit `token:` for each GitLab CI secret when the job defines multiple `id_tokens`.",
     "SKY-S101": "Move secrets to environment variables: `os.getenv('SECRET_KEY')`. Never hardcode credentials.",
 }
 

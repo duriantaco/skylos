@@ -29,6 +29,8 @@ keywords = [
     "ci-cd",
     "github-actions",
     "github-actions-security",
+    "gitlab-ci",
+    "gitlab-ci-security",
     "supply-chain-security",
     "code-review",
     "secrets-detection",
