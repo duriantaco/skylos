@@ -994,10 +994,6 @@ def _render_upload_failure(console: Console, upload_resp: dict[str, object]) -> 
         console.print(
             "[dim]Large scans need artifact upload support via /api/report/init and /api/report/complete.[/dim]"
         )
-        if not os.getenv("SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD", "").strip():
-            console.print(
-                "[dim]Temporary workaround:[/dim] set `SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD=1` to retry with a condensed compatibility upload."
-            )
         return
 
     if err and err != (

@@ -637,11 +637,13 @@ class UploadArtifact:
 class PreparedReportUpload:
     legacy_payload: dict[str, Any]
     core_payload: dict[str, Any]
+    compatibility_payload: dict[str, Any]
     definitions_payload: dict[str, Any] | None
     metadata: dict[str, Any]
     scan_summary: dict[str, Any]
     grade_data: dict[str, Any] | None
     legacy_payload_size_bytes: int
+    compatibility_payload_size_bytes: int
 
 
 def _write_gzip_json_artifact(
@@ -1088,16 +1090,23 @@ def _prepare_report_upload(
     )
     core_payload.update(metadata)
     legacy_payload = _build_legacy_payload(core_payload, definitions)
+    compatibility_payload = _build_compatibility_inline_payload(
+        all_findings,
+        result_json,
+        metadata,
+    )
     scan_summary = _build_report_scan_summary(all_findings, core_payload, definitions)
 
     return PreparedReportUpload(
         legacy_payload=legacy_payload,
         core_payload=core_payload,
+        compatibility_payload=compatibility_payload,
         definitions_payload={"definitions": definitions} if definitions else None,
         metadata=metadata,
         scan_summary=scan_summary,
         grade_data=grade_data,
         legacy_payload_size_bytes=_json_size_bytes(legacy_payload),
+        compatibility_payload_size_bytes=_json_size_bytes(compatibility_payload),
     )
 
 
@@ -1168,11 +1177,13 @@ def _prepare_debt_upload(
     return PreparedReportUpload(
         legacy_payload=dict(core_payload),
         core_payload=core_payload,
+        compatibility_payload=dict(core_payload),
         definitions_payload=None,
         metadata=metadata,
         scan_summary=scan_summary,
         grade_data=None,
         legacy_payload_size_bytes=_json_size_bytes(core_payload),
+        compatibility_payload_size_bytes=_json_size_bytes(core_payload),
     )
 
 
@@ -1350,6 +1361,105 @@ def _build_report_metadata(
     return metadata
 
 
+def _truncate_upload_text(value: Any, max_len: int) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if len(text) <= max_len else text[:max_len] + "..."
+
+
+def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
+    if not isinstance(metadata, dict):
+        return None
+
+    keep_keys = {
+        "source",
+        "confidence",
+        "llm_verdict",
+        "llm_challenged",
+        "needs_review",
+        "blame_email",
+        "package_name",
+        "package_version",
+        "ecosystem",
+        "vuln_id",
+        "display_id",
+        "affected_range",
+        "fixed_version",
+        "cvss_score",
+    }
+    compact = {key: metadata[key] for key in keep_keys if key in metadata}
+    aliases = metadata.get("aliases")
+    if isinstance(aliases, list):
+        compact["aliases"] = aliases[:5]
+    return compact or None
+
+
+def _int_upload_value(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _compact_upload_finding(
+    finding: dict[str, Any],
+    *,
+    include_snippet: bool,
+) -> dict[str, Any]:
+    compact = {
+        "rule_id": str(finding.get("rule_id") or "UNKNOWN")[:100],
+        "file_path": str(finding.get("file_path") or finding.get("file") or "unknown"),
+        "line_number": _int_upload_value(
+            finding.get("line_number") or finding.get("line") or 0
+        ),
+        "message": _truncate_upload_text(finding.get("message"), 500),
+        "severity": str(finding.get("severity") or "MEDIUM").upper(),
+        "category": str(finding.get("category") or "QUALITY").upper(),
+    }
+    tool_rule_id = finding.get("tool_rule_id")
+    if tool_rule_id:
+        compact["tool_rule_id"] = str(tool_rule_id)[:100]
+    if include_snippet:
+        snippet = _truncate_upload_text(finding.get("snippet"), 240)
+        if snippet:
+            compact["snippet"] = snippet
+    metadata = _compact_finding_metadata(finding.get("metadata"))
+    if metadata:
+        compact["metadata"] = metadata
+    return compact
+
+
+def _build_compatibility_inline_payload(
+    all_findings: list[dict[str, Any]],
+    result_json: Any,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    result = result_json if isinstance(result_json, dict) else {}
+    summary = result.get("analysis_summary")
+    if not isinstance(summary, dict):
+        summary = {}
+
+    payload = {
+        **metadata,
+        "tool": "skylos",
+        "summary": summary,
+        "findings": [
+            _compact_upload_finding(finding, include_snippet=True)
+            for finding in all_findings
+        ],
+    }
+
+    if _json_size_bytes(payload) <= _legacy_inline_upload_limit_bytes():
+        return payload
+
+    payload["findings"] = [
+        _compact_upload_finding(finding, include_snippet=False)
+        for finding in all_findings
+    ]
+    return payload
+
+
 def _build_legacy_payload(core_payload, definitions) -> dict[str, Any]:
     legacy_payload = dict(core_payload)
     legacy_payload["definitions"] = definitions
@@ -1508,6 +1618,7 @@ def _post_json_with_retries(
     quiet=False,
     initial_message=None,
     accepted_statuses=(200, 201, 401, 402),
+    timeout=NETWORK_TIMEOUT_LONG,
 ):
     try:
         safe_url = _validate_api_request_url(url)
@@ -1526,7 +1637,7 @@ def _post_json_with_retries(
                 safe_url,
                 json=payload,
                 headers=headers,
-                timeout=NETWORK_TIMEOUT_LONG,
+                timeout=timeout,
             )
             if response.status_code in accepted_statuses:
                 return response, None
@@ -1546,10 +1657,18 @@ def _post_report_payload(token, payload, *, quiet=False, initial_message=None):
         payload,
         quiet=quiet,
         initial_message=initial_message,
+        timeout=UPLOAD_TIMEOUT,
     )
 
 
-def _build_large_upload_protocol_error(prepared: PreparedReportUpload) -> dict:
+def _looks_like_server_error(error: str | None) -> bool:
+    return bool(error and error.startswith("Server Error 5"))
+
+
+def _build_large_upload_protocol_error(
+    prepared: PreparedReportUpload,
+    detail: str | None = None,
+) -> dict:
     limit = _legacy_inline_upload_limit_bytes()
     error = (
         "Connected Skylos Cloud endpoint does not support large scan uploads yet. "
@@ -1558,15 +1677,27 @@ def _build_large_upload_protocol_error(prepared: PreparedReportUpload) -> dict:
         f"{limit} bytes. Upgrade the Skylos Cloud endpoint to support "
         f"{REPORT_INIT_URL} and {REPORT_COMPLETE_URL}."
     )
-    if not _truthy_env("SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD"):
-        error += (
-            " During rollout, you can opt into a condensed compatibility upload "
-            "with SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD=1."
-        )
+    if detail:
+        error += f" Artifact init failed with: {detail}"
     return {
         "success": False,
         "error": error,
         "code": "UPLOAD_PROTOCOL_UNSUPPORTED",
+    }
+
+
+def _build_compatibility_upload_too_large_error(
+    prepared: PreparedReportUpload,
+) -> dict[str, Any]:
+    limit = _legacy_inline_upload_limit_bytes()
+    return {
+        "success": False,
+        "error": (
+            "Skylos Cloud artifact upload is unavailable, and the compact "
+            f"compatibility payload is {prepared.compatibility_payload_size_bytes} "
+            f"bytes, above the client safety limit of {limit} bytes."
+        ),
+        "code": "UPLOAD_COMPATIBILITY_PAYLOAD_TOO_LARGE",
     }
 
 
@@ -1666,6 +1797,31 @@ def upload_report_legacy(
     )
 
 
+def upload_report_compatibility(
+    token,
+    prepared: PreparedReportUpload,
+    *,
+    quiet=False,
+    strict=False,
+    is_forced=False,
+    initial_message=None,
+) -> dict:
+    if (
+        prepared.compatibility_payload_size_bytes
+        > _legacy_inline_upload_limit_bytes()
+    ):
+        return _build_compatibility_upload_too_large_error(prepared)
+    return upload_report_legacy(
+        token,
+        prepared.compatibility_payload,
+        grade_data=prepared.grade_data,
+        quiet=quiet,
+        strict=strict,
+        is_forced=is_forced,
+        initial_message=initial_message,
+    )
+
+
 def _missing_artifact_instruction_result(
     artifact_name: str, artifact: UploadArtifact
 ) -> dict[str, Any]:
@@ -1747,6 +1903,8 @@ def upload_report_v2(
             accepted_statuses=(200, 201, 401, 402, 404, 405, 501),
         )
         if init_response is None:
+            if _looks_like_server_error(last_err):
+                return _build_large_upload_protocol_error(prepared, last_err)
             return {"success": False, "error": last_err or "Unknown error"}
         if init_response.status_code in (404, 405, 501):
             return _build_large_upload_protocol_error(prepared)
@@ -1828,6 +1986,7 @@ def upload_report_v2(
             complete_payload,
             quiet=True,
             accepted_statuses=(200, 201, 401, 402),
+            timeout=UPLOAD_TIMEOUT,
         )
         if complete_response is None:
             return {"success": False, "error": last_err or "Unknown error"}
@@ -1892,14 +2051,13 @@ def upload_report(
     if _should_retry_with_degraded_large_upload(upload_result):
         if not quiet:
             print(
-                " Skylos Cloud artifact upload unavailable; retrying condensed compatibility upload...",
+                " Skylos Cloud artifact upload unavailable; retrying compact compatibility upload...",
                 end="",
                 flush=True,
             )
-        return upload_report_legacy(
+        return upload_report_compatibility(
             token,
-            prepared.core_payload,
-            grade_data=prepared.grade_data,
+            prepared,
             quiet=quiet,
             strict=strict,
             is_forced=is_forced,
@@ -1956,14 +2114,13 @@ def upload_debt_report(
     if _should_retry_with_degraded_large_upload(upload_result):
         if not quiet:
             print(
-                " Skylos Cloud artifact upload unavailable; retrying condensed compatibility upload...",
+                " Skylos Cloud artifact upload unavailable; retrying compact compatibility upload...",
                 end="",
                 flush=True,
             )
-        return upload_report_legacy(
+        return upload_report_compatibility(
             token,
-            prepared.core_payload,
-            grade_data=prepared.grade_data,
+            prepared,
             quiet=quiet,
             strict=strict,
             is_forced=is_forced,
@@ -1982,7 +2139,6 @@ def _should_retry_with_degraded_large_upload(upload_result: dict[str, Any]) -> b
     return (
         (not upload_result.get("success"))
         and upload_result.get("code") == "UPLOAD_PROTOCOL_UNSUPPORTED"
-        and _truthy_env("SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD")
     )
 
 

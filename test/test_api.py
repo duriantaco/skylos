@@ -139,6 +139,58 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(mock_post.call_count, 3)
         self.assertIn("Server Error 500", result["error"])
 
+    @patch("skylos.api._should_use_legacy_inline_report_upload", return_value=False)
+    @patch("skylos.api.get_git_root", return_value="/mock/git/root")
+    @patch(
+        "skylos.api.get_git_info",
+        return_value=("mock_commit_hash", "main", "mock_actor", {}),
+    )
+    @patch("skylos.api.get_project_token")
+    @patch("requests.post")
+    def test_upload_report_falls_back_to_compact_inline_when_artifact_init_500(
+        self,
+        mock_post,
+        mock_token,
+        _mock_git_info,
+        _mock_git_root,
+        _mock_inline,
+    ):
+        mock_token.return_value = "token"
+
+        init_error = MagicMock()
+        init_error.status_code = 500
+        init_error.text = '{"error":"Something went wrong"}'
+
+        upload_ok = MagicMock()
+        upload_ok.status_code = 200
+        upload_ok.json.return_value = {"scanId": "scan_compact_123"}
+
+        mock_post.side_effect = [init_error, init_error, init_error, upload_ok]
+
+        result = upload_report(
+            {
+                "analysis_summary": {"total_files": 1},
+                "danger": [
+                    {
+                        "file": "app.py",
+                        "line": 10,
+                        "message": "High risk",
+                        "rule_id": "SKY-D001",
+                    }
+                ],
+            },
+            quiet=True,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["scan_id"], "scan_compact_123")
+        self.assertEqual(mock_post.call_count, 4)
+        fallback_payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(fallback_payload["tool"], "skylos")
+        self.assertEqual(fallback_payload["commit_hash"], "mock_commit_hash")
+        self.assertEqual(fallback_payload["findings"][0]["rule_id"], "SKY-D001")
+        self.assertNotIn("runs", fallback_payload)
+
     def test_write_gzip_json_artifact_is_deterministic(self):
         first = api._write_gzip_json_artifact(
             "scan-report",
@@ -714,6 +766,12 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(result["scan_id"], "scan_artifact")
         self.assertEqual(mock_post.call_count, 2)
         self.assertEqual(mock_put.call_count, 2)
+        self.assertEqual(
+            mock_post.call_args_list[0].kwargs["timeout"], api.NETWORK_TIMEOUT_LONG
+        )
+        self.assertEqual(
+            mock_post.call_args_list[1].kwargs["timeout"], api.UPLOAD_TIMEOUT
+        )
 
         init_payload = mock_post.call_args_list[0].kwargs["json"]
         self.assertEqual(init_payload["upload_protocol_version"], 1)
@@ -969,11 +1027,11 @@ class TestSkylosApi(unittest.TestCase):
                     "definitions": {"app.func": {"file": "app.py", "line": 5}},
                 },
                 quiet=True,
-            )
+        )
 
         self.assertFalse(result["success"])
-        self.assertEqual(result["code"], "UPLOAD_PROTOCOL_UNSUPPORTED")
-        self.assertIn("does not support large scan uploads yet", result["error"])
+        self.assertEqual(result["code"], "UPLOAD_COMPATIBILITY_PAYLOAD_TOO_LARGE")
+        self.assertIn("compact compatibility payload", result["error"])
         self.assertEqual(mock_post.call_count, 1)
         self.assertEqual(
             mock_post.call_args.kwargs["json"]["upload_protocol_version"],
@@ -1015,7 +1073,7 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(mock_post.call_args.kwargs["json"]["commit_hash"], "c")
         self.assertNotIn("upload_protocol_version", mock_post.call_args.kwargs["json"])
 
-    @patch.dict(os.environ, {"SKYLOS_ALLOW_DEGRADED_LARGE_UPLOAD": "1"}, clear=False)
+    @patch("skylos.api._should_use_legacy_inline_report_upload", return_value=False)
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
     @patch("skylos.api.get_git_root", return_value=None)
@@ -1030,6 +1088,7 @@ class TestSkylosApi(unittest.TestCase):
         _mock_root,
         _mock_git_info,
         mock_token,
+        _mock_inline,
     ):
         mock_token.return_value = "token"
 
@@ -1041,18 +1100,18 @@ class TestSkylosApi(unittest.TestCase):
         legacy_resp.json.return_value = {"scanId": "scan_condensed"}
         mock_post.side_effect = [init_resp, legacy_resp]
 
-        with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
-            result = upload_report(
-                {
-                    "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
-                    "definitions": {"app.func": {"file": "app.py", "line": 5}},
-                },
-                quiet=True,
-            )
+        result = upload_report(
+            {
+                "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
+                "definitions": {"app.func": {"file": "app.py", "line": 5}},
+            },
+            quiet=True,
+        )
 
         self.assertTrue(result["success"])
         degraded_payload = mock_post.call_args_list[1].kwargs["json"]
         self.assertNotIn("definitions", degraded_payload)
+        self.assertNotIn("runs", degraded_payload)
 
     @patch("requests.post")
     def test_upload_artifact_supports_signed_post_form(self, mock_post):
