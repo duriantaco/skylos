@@ -18,6 +18,7 @@ _QUALITY_DIMENSION_MAP: dict[str, str] = {
     "SKY-C303": "complexity",
     "SKY-C304": "complexity",
     "SKY-Q501": "modularity",
+    "SKY-Q502": "modularity",
     "SKY-Q701": "modularity",
     "SKY-Q702": "modularity",
     "SKY-Q802": "architecture",

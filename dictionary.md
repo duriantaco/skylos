@@ -128,6 +128,7 @@ Go rules that DO have equivalents (G211, G212, etc.) are remapped to their unifi
 | Q401 | HIGH | Async blocking call (time.sleep, requests in async) | Python | — |
 | Q402 | MEDIUM | Await in loop (prefer Promise.all) | TS | — |
 | Q501 | MEDIUM | God class | Python | >20 methods or >15 attrs |
+| Q502 | MEDIUM–HIGH | God file | Python | >500 code lines, >40 definitions, or >25 top-level definitions |
 | Q701 | MEDIUM | High coupling (CBO) | Python | — |
 | Q702 | MEDIUM | Low cohesion (LCOM) | Python | — |
 

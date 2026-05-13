@@ -91,7 +91,7 @@ from skylos.rules.vibe_dictionary import build_vibe_dictionary
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
 from skylos.rules.quality.async_blocking import AsyncBlockingRule
-from skylos.rules.quality.class_size import GodClassRule
+from skylos.rules.quality.class_size import GodClassRule, GodFileRule
 from skylos.rules.quality.coupling import CBORule
 from skylos.rules.quality.cohesion import LCOMRule
 from skylos.rules.quality.clones import (
@@ -263,6 +263,7 @@ _LINTER_RULE_NODE_TYPES = {
     BroadExceptionRule: (ast.ExceptHandler,),
     MissingNetworkTimeoutRule: (ast.Call,),
     NoEffectStatementRule: (ast.Expr,),
+    GodFileRule: (ast.Module,),
     GodClassRule: (ast.ClassDef,),
     CBORule: (ast.ClassDef,),
     LCOMRule: (ast.ClassDef,),
@@ -2942,6 +2943,17 @@ def proc_file(
             if "SKY-L033" not in cfg["ignore"]:
                 q_rules.append(NoEffectStatementRule())
             # SKY-D260 (prompt injection) is now handled by injection_scanner..
+            if "SKY-Q502" not in cfg["ignore"]:
+                q_rules.append(
+                    GodFileRule(
+                        max_lines=cfg.get("god_file_max_lines", 500),
+                        max_definitions=cfg.get("god_file_max_definitions", 40),
+                        max_top_level_definitions=cfg.get(
+                            "god_file_max_top_level_definitions",
+                            25,
+                        ),
+                    )
+                )
             if "SKY-Q501" not in cfg["ignore"]:
                 q_rules.append(GodClassRule())
             if "SKY-Q701" not in cfg["ignore"]:
@@ -2998,6 +3010,7 @@ def proc_file(
 
             _set_linter_node_types(q_rules)
             linter_q = LinterVisitor(q_rules, str(file))
+            linter_q.context["source"] = source
             linter_q.visit(tree)
             quality_findings = [
                 f for f in linter_q.findings if f.get("rule_id") not in cfg["ignore"]

@@ -69,6 +69,7 @@ const RULES = {
     "SKY-Q302": { name: "Deep nesting", severity: "MEDIUM", category: "quality", description: "Code is nested too deeply (threshold: 3 levels).", fix: "Use early returns, guard clauses, or extract helper functions." },
     "SKY-Q401": { name: "Async blocking call", severity: "HIGH", category: "quality", description: "Blocking call inside async function (e.g., time.sleep, requests).", fix: "Use async equivalents (asyncio.sleep, aiohttp).", language: "python" },
     "SKY-Q501": { name: "God class", severity: "MEDIUM", category: "quality", description: "Class has too many methods (>20) or attributes (>15).", fix: "Split into smaller, focused classes." },
+    "SKY-Q502": { name: "God file", severity: "MEDIUM", category: "quality", description: "File has too many code lines, definitions, or top-level responsibilities.", fix: "Split the file by responsibility.", language: "python" },
     "SKY-Q701": { name: "High coupling", severity: "MEDIUM", category: "quality", description: "High coupling between objects (CBO metric).", fix: "Reduce dependencies between classes." },
     "SKY-Q702": { name: "Low cohesion", severity: "MEDIUM", category: "quality", description: "Low cohesion within class (LCOM metric).", fix: "Group related methods and attributes." },
     "SKY-C303": { name: "Too many arguments", severity: "MEDIUM", category: "quality", description: "Function has too many parameters (>5 required, >10 total).", fix: "Group related parameters into a data class or dict." },
