@@ -1,6 +1,6 @@
 import ast
 from skylos.rules.quality.logic import UnusedExceptVarRule, ReturnConsistencyRule
-from skylos.rules.quality.class_size import GodClassRule
+from skylos.rules.quality.class_size import GodClassRule, GodFileRule
 
 
 def check_code(rule, code, filename="test.py"):
@@ -169,3 +169,58 @@ class TestGodClass:
         ]
         assert len(method_findings) >= 1
         assert len(attr_findings) >= 1
+
+
+class TestGodFile:
+    def test_too_many_code_lines(self):
+        code = "\n".join(f"x{i} = {i}" for i in range(11))
+        findings = check_code(
+            GodFileRule(
+                max_lines=10,
+                max_definitions=99,
+                max_top_level_definitions=99,
+            ),
+            code,
+        )
+
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-Q502"
+        assert findings[0]["metric"] == "code_lines"
+        assert findings[0]["value"] == 11
+        assert findings[0]["threshold"] == 10
+
+    def test_too_many_definitions(self):
+        code = "\n".join(f"def f{i}():\n    return {i}" for i in range(6))
+        findings = check_code(
+            GodFileRule(
+                max_lines=99,
+                max_definitions=5,
+                max_top_level_definitions=99,
+            ),
+            code,
+        )
+
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-Q502"
+        assert findings[0]["metric"] == "total_definitions"
+        assert findings[0]["total_definitions"] == 6
+        assert findings[0]["top_level_definitions"] == 6
+
+    def test_small_file_safe(self):
+        code = (
+            "def load_user():\n"
+            "    return 1\n\n"
+            "class UserService:\n"
+            "    def get(self):\n"
+            "        return load_user()\n"
+        )
+        findings = check_code(
+            GodFileRule(
+                max_lines=20,
+                max_definitions=10,
+                max_top_level_definitions=10,
+            ),
+            code,
+        )
+
+        assert len(findings) == 0

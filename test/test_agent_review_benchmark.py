@@ -2,8 +2,8 @@ import json
 from pathlib import Path
 
 import pytest
-import skylos.agent_review_benchmark as benchmark
-from skylos.agent_review_benchmark import (
+import skylos.benchmarks.agent_review as benchmark
+from skylos.benchmarks.agent_review import (
     ALLOWED_SCAN_ISSUE_TYPES,
     AGENT_REVIEW_TAXONOMY,
     SECURITY_BENCHMARK_CLASSES,

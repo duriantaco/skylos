@@ -82,6 +82,7 @@ advisory checks first.
 | **Async / Class Design** | | |
 | Blocking call in async code | SKY-Q401 | Synchronous I/O or blocking calls in async handlers |
 | God class | SKY-Q501 | Classes with too many methods or attributes |
+| God file | SKY-Q502 | Files with too many code lines or too many responsibilities |
 | Coupling | SKY-Q701 | Classes coupled to too many other classes |
 | Low cohesion | SKY-Q702 | Classes whose methods do not share state or responsibilities |
 | **Architecture** | | |

@@ -1,5 +1,5 @@
 # test_gate_kwargs.py
-from skylos.gatekeeper import run_gate_interaction, check_gate
+from skylos.core.gatekeeper import run_gate_interaction, check_gate
 from skylos.constants import parse_exclude_folders
 
 

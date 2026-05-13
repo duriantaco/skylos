@@ -7,8 +7,8 @@ import contextlib
 import gzip
 import hashlib
 import io
-from skylos.credentials import get_key
-from skylos.sarif_exporter import SarifExporter
+from skylos.cloud.credentials import get_key
+from skylos.reporting.sarif import SarifExporter
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -424,7 +424,7 @@ def _current_repo_subpath(git_root) -> str:
     try:
         if not git_root:
             return ""
-        from skylos.project_context import repo_subpath_for_project
+        from skylos.cloud.project_context import repo_subpath_for_project
 
         return repo_subpath_for_project(Path.cwd(), git_root)
     except Exception:
@@ -1189,7 +1189,7 @@ def _annotate_findings_with_blame(all_findings: list[dict], git_root) -> None:
 def _detect_report_provenance_data(git_root):
     provenance_data = None
     try:
-        from skylos.provenance import analyze_provenance
+        from skylos.reporting.provenance import analyze_provenance
 
         prov_report = analyze_provenance(git_root)
         if prov_report.agent_files:
@@ -1214,7 +1214,7 @@ def _infer_upload_project_root(payload, git_root) -> str | None:
         candidates.append(payload.get("project"))
 
     try:
-        from skylos.project_context import (
+        from skylos.cloud.project_context import (
             normalize_repo_subpath,
             repo_subpath_for_project,
         )

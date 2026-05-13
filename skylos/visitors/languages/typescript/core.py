@@ -6,7 +6,7 @@ from pathlib import Path
 
 from tree_sitter import Language, Parser, Query, QueryCursor
 import tree_sitter_typescript as tsts
-from skylos.visitor import Definition
+from skylos.visitors.base import Definition
 
 try:
     TS_LANG: Language | None = Language(tsts.language_typescript())

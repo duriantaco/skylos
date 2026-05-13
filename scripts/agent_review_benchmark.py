@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from skylos.agent_review_benchmark import format_summary, run_manifest  # noqa: E402
+from skylos.benchmarks.agent_review import format_summary, run_manifest  # noqa: E402
 from skylos.llm.runtime import resolve_llm_runtime  # noqa: E402
 
 

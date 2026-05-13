@@ -19,7 +19,7 @@ from skylos_fast import (
     analyze_coupling as fast_analyze_coupling,
 )
 from skylos.rules.quality.coupling import analyze_coupling as py_analyze_coupling
-from skylos.circular_deps import CircularDependencyAnalyzer
+from skylos.analysis.circular_deps import CircularDependencyAnalyzer
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SKYLOS_PKG = PROJECT_ROOT / "skylos"
@@ -63,7 +63,7 @@ def _run_dead_code_parity_scans_in_subprocess(target: Path) -> tuple[dict, dict]
         import skylos.rules.quality.coupling as coupling_mod
         coupling_mod._fast_analyze_coupling = None
 
-        import skylos.circular_deps as circ_mod
+        import skylos.analysis.circular_deps as circ_mod
         circ_mod._fast_find_cycles = None
 
         result_py = json.loads(

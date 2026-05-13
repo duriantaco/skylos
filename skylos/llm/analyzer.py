@@ -11,7 +11,7 @@ from .ui import SkylosUI, estimate_cost
 from .schemas import Confidence, AnalysisResult
 from skylos.config import load_config
 from skylos.llm.graph import CodeGraph
-from skylos.file_discovery import discover_source_files
+from skylos.core.file_discovery import discover_source_files
 
 SECURITY_AUDIT_ISSUE = "security_audit"
 

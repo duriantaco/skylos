@@ -1,6 +1,6 @@
 import subprocess
 from subprocess import CalledProcessError
-import skylos.gatekeeper as gk
+import skylos.core.gatekeeper as gk
 
 
 class DummyCompleted:

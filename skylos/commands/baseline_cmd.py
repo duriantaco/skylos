@@ -3,7 +3,7 @@ import json
 from rich.console import Console
 
 from skylos import analyze as run_analyze
-from skylos.baseline import save_baseline
+from skylos.core.baseline import save_baseline
 
 
 def run_baseline_command(argv: list[str]) -> int:

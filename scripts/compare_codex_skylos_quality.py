@@ -15,7 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from skylos.analyzer import analyze  # noqa: E402
-from skylos.quality_benchmark import (  # noqa: E402
+from skylos.benchmarks.quality import (  # noqa: E402
     DEFAULT_SCAN,
     IMPORTANCE_WEIGHTS,
     load_manifest,

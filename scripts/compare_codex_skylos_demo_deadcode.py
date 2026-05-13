@@ -15,8 +15,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from skylos.analyzer import analyze
-from skylos.dead_code import collect_dead_code_findings
-from skylos.demo_deadcode_benchmark import (
+from skylos.deadcode.collect import collect_dead_code_findings
+from skylos.benchmarks.demo_deadcode import (
     DEFAULT_DEMO_ROOT,
     hard_cases,
     hard_case_keys,

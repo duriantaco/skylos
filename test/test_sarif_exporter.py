@@ -1,7 +1,7 @@
 import os
 import pytest
 
-from skylos.sarif_exporter import (
+from skylos.reporting.sarif import (
     SarifExporter,
     severity_to_sarif_level,
     normalize_file_path_for_sarif,

@@ -1,4 +1,4 @@
-from skylos.provenance import (
+from skylos.reporting.provenance import (
     FileProvenance,
     ProvenanceReport,
     annotate_findings_with_provenance,

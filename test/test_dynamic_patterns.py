@@ -3,8 +3,8 @@ import json
 import tempfile
 from pathlib import Path
 
-from skylos.visitor import Visitor, Definition
-from skylos.implicit_refs import ImplicitRefTracker
+from skylos.visitors.base import Visitor, Definition
+from skylos.analysis.implicit_refs import ImplicitRefTracker
 
 
 class TestGetAttrFStringPattern:
@@ -607,7 +607,7 @@ result = data.get("key")
 
 class TestModuleReachabilityRefinement:
     def test_refine_removes_deep_modules(self):
-        from skylos.module_reachability import ModuleReachabilityAnalyzer
+        from skylos.analysis.module_reachability import ModuleReachabilityAnalyzer
 
         analyzer = ModuleReachabilityAnalyzer()
         analyzer.all_modules = {

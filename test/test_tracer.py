@@ -4,8 +4,8 @@ import sys
 import threading
 from pathlib import Path
 from unittest.mock import patch
-from skylos.tracer import CallTracer, start_tracing, stop_tracing
-import skylos.tracer as tracer_mod
+from skylos.core.tracer import CallTracer, start_tracing, stop_tracing
+import skylos.core.tracer as tracer_mod
 
 
 def _collect_traced_names(tracer):

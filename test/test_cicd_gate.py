@@ -3,7 +3,7 @@ import tempfile
 
 import pytest
 
-from skylos.gatekeeper import (
+from skylos.core.gatekeeper import (
     check_gate,
     build_summary_markdown,
     run_gate_interaction,

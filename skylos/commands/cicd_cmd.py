@@ -217,7 +217,7 @@ def run_cicd_command(
         if gate_cfg.get("agent"):
             try:
                 from skylos.api import get_git_root
-                from skylos.provenance import analyze_provenance
+                from skylos.reporting.provenance import analyze_provenance
 
                 git_root = get_git_root() or results.get("project_root", ".")
                 diff_base = getattr(cicd_args, "diff_base", None)

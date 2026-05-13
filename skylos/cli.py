@@ -15,7 +15,7 @@ from skylos.constants import (
     get_non_library_dir_kind,
 )
 from skylos.config import load_config
-from skylos.credentials import PROVIDERS
+from skylos.cloud.credentials import PROVIDERS
 
 from pathlib import Path
 import pathlib
@@ -32,6 +32,7 @@ from rich.theme import Theme
 from rich.logging import RichHandler
 from rich.rule import Rule
 from rich.tree import Tree
+from rich.markup import escape
 
 try:
     import inquirer
@@ -62,7 +63,7 @@ AGENT_BASE_URL_HELP = "OpenAI-compatible base URL (Ollama/LM Studio/vLLM)"
 
 
 def _codemods_module():
-    return importlib.import_module("skylos.codemods")
+    return importlib.import_module("skylos.remediation.codemods")
 
 
 def remove_unused_import_cst(*args, **kwargs):
@@ -94,7 +95,7 @@ def resolve_llm_runtime(*args, **kwargs):
 
 
 def run_gate_interaction(*args, **kwargs):
-    from skylos.gatekeeper import run_gate_interaction as run_gate_interaction_impl
+    from skylos.core.gatekeeper import run_gate_interaction as run_gate_interaction_impl
 
     return run_gate_interaction_impl(*args, **kwargs)
 
@@ -128,7 +129,7 @@ def run_security_taskflow(*args, **kwargs):
 
 
 def discover_source_files(*args, **kwargs):
-    from skylos.file_discovery import (
+    from skylos.core.file_discovery import (
         discover_source_files as discover_source_files_impl,
     )
 
@@ -244,9 +245,9 @@ def _empty_changed_deep_audit_payload(
     severity: str | None,
     verdicts: list[str] | None,
 ) -> tuple[dict, object | None]:
-    from skylos.audit_export import build_deep_audit_export
-    from skylos.audit_store import AuditStore
-    from skylos.audit_types import AuditCIGateSummary, AuditScanSummary
+    from skylos.audit.export import build_deep_audit_export
+    from skylos.audit.store import AuditStore
+    from skylos.audit.types import AuditCIGateSummary, AuditScanSummary
 
     project_root = _deep_audit_project_root(audit_path)
     store = AuditStore(project_root)
@@ -300,7 +301,7 @@ def _empty_changed_deep_audit_payload(
 
 
 def _write_deep_audit_payload(path: str | pathlib.Path, payload: dict) -> None:
-    from skylos.audit_export import write_deep_audit_export
+    from skylos.audit.export import write_deep_audit_export
 
     write_deep_audit_export(payload, path, "json")
 
@@ -324,7 +325,7 @@ def _handle_empty_changed_deep_audit(
     if export_format in {"sarif", "md", "markdown", "md-dir"}:
         if export_payload is None:
             return 1
-        from skylos.audit_export import (
+        from skylos.audit.export import (
             render_deep_audit_export,
             write_deep_audit_export,
         )
@@ -581,7 +582,7 @@ def _get_sarif_exporter_class():
     global SarifExporter
 
     if SarifExporter is None:
-        from skylos.sarif_exporter import SarifExporter as sarif_exporter_impl
+        from skylos.reporting.sarif import SarifExporter as sarif_exporter_impl
 
         SarifExporter = sarif_exporter_impl
 
@@ -969,7 +970,7 @@ def _selected_main_upload_static_categories(args) -> list[str]:
 
 
 def _print_main_upload_manifest(console: Console, args, result) -> None:
-    from skylos.upload_manifest import build_code_scan_manifest, print_upload_manifest
+    from skylos.cloud.upload_manifest import build_code_scan_manifest, print_upload_manifest
 
     print_upload_manifest(
         console,
@@ -1569,7 +1570,7 @@ def _score_style(score):
 
 
 def _render_grade(console: Console, grade_data):
-    from skylos.grader import generate_badge_url
+    from skylos.reporting.grader import generate_badge_url
 
     overall = grade_data["overall"]
     cats = grade_data["categories"]
@@ -1763,7 +1764,7 @@ def _render_quality(console: Console, limit, items):
     for i, quality in enumerate(show, 1):
         kind, func, detail = _quality_detail(quality)
         loc = f"{quality.get('basename', '?')}:{quality.get('line', '?')}"
-        table.add_row(str(i), kind, func, detail, loc)
+        table.add_row(str(i), escape(kind), escape(func), escape(detail), escape(loc))
 
     console.print(table)
     if overflow:
@@ -2290,7 +2291,7 @@ def get_git_changed_files(
     strict_base=False,
     include_deleted=False,
 ):
-    from skylos.cli_shared import get_git_changed_files as get_git_changed_files_impl
+    from skylos.core.cli_shared import get_git_changed_files as get_git_changed_files_impl
 
     return get_git_changed_files_impl(
         root_path,
@@ -2301,7 +2302,7 @@ def get_git_changed_files(
 
 
 def estimate_cost(files):
-    from skylos.cli_shared import estimate_cost as estimate_cost_impl
+    from skylos.core.cli_shared import estimate_cost as estimate_cost_impl
 
     return estimate_cost_impl(files)
 
@@ -2395,7 +2396,7 @@ def run_cicd_command(argv):
 
 
 def _load_addopts():
-    from skylos.cli_shared import load_addopts
+    from skylos.core.cli_shared import load_addopts
 
     return load_addopts()
 
@@ -2428,21 +2429,21 @@ def _rules_remove(console, rules_dir, name):
 
 
 def _run_command_overview(_argv):
-    from skylos.help import print_command_overview
+    from skylos.ui.help import print_command_overview
 
     print_command_overview(Console())
     return 0
 
 
 def _run_commands_command(_argv):
-    from skylos.help import print_flat_commands
+    from skylos.ui.help import print_flat_commands
 
     print_flat_commands(Console())
     return 0
 
 
 def _run_tour_command(_argv):
-    from skylos.tour import run_tour
+    from skylos.ui.tour import run_tour
 
     run_tour(Console())
     return 0
@@ -2521,7 +2522,7 @@ def _run_sonar_command(argv):
 def _attach_upload_project_context(result: dict, project_root: pathlib.Path) -> None:
     try:
         from skylos.api import get_git_root as _get_git_root
-        from skylos.project_context import project_context_for_upload
+        from skylos.cloud.project_context import project_context_for_upload
 
         upload_context = project_context_for_upload(project_root, _get_git_root())
         result["project_root"] = upload_context["project_root"]
@@ -2582,7 +2583,7 @@ def _is_first_level_help_request(argv):
 
 
 def _run_early_command_help(command):
-    from skylos.help import COMMANDS
+    from skylos.ui.help import COMMANDS
 
     console = Console()
     matches = [
@@ -3014,7 +3015,7 @@ def _formatted_output_gate_exit_code(
     provenance=None,
 ) -> int:
     """Evaluate --gate for output modes that must not print gate UI."""
-    from skylos.gatekeeper import (
+    from skylos.core.gatekeeper import (
         build_summary_markdown,
         check_gate,
         write_github_summary,
@@ -3045,7 +3046,7 @@ def _concise_scan_exit_code(
         )
 
     if not bool(getattr(args, "force", False)):
-        from skylos.gatekeeper import check_gate
+        from skylos.core.gatekeeper import check_gate
 
         passed, _reasons = check_gate(result, {}, strict=True)
         return 0 if passed else 1
@@ -3107,7 +3108,7 @@ def _strict_scan_exit_code(result: dict, args) -> int:
     if bool(getattr(args, "gate", False)) or bool(getattr(args, "force", False)):
         return 0
 
-    from skylos.gatekeeper import check_gate
+    from skylos.core.gatekeeper import check_gate
 
     passed, _reasons = check_gate(result, {}, strict=True)
     return 0 if passed else 1
@@ -3199,7 +3200,7 @@ def _run_pre_analysis_steps(args, project_root, console):
             env["SKYLOS_UNUSED_FIXTURES_OUT"] = str(
                 project_root / ".skylos_unused_fixtures.json"
             )
-            cmd += ["-p", "skylos.pytest_unused_fixtures"]
+            cmd += ["-p", "skylos.plugins.pytest_unused_fixtures"]
 
         pytest_result = subprocess.run(
             cmd,
@@ -3228,7 +3229,7 @@ def _run_pre_analysis_steps(args, project_root, console):
 import os
 import sys
 sys.path.insert(0, {str(project_root)!r})
-from skylos.tracer import CallTracer
+from skylos.core.tracer import CallTracer
 
 tracer = CallTracer(exclude_patterns=["site-packages", "venv", ".venv", "pytest", "_pytest"])
 tracer.start()
@@ -3240,7 +3241,7 @@ try:
     pytest_args = ["-q"]
     if {bool(args.pytest_fixtures)!r}:
         os.environ["SKYLOS_UNUSED_FIXTURES_OUT"] = {str(project_root / ".skylos_unused_fixtures.json")!r}
-        pytest_args += ["-p", "skylos.pytest_unused_fixtures"]
+        pytest_args += ["-p", "skylos.plugins.pytest_unused_fixtures"]
 
     ret = pytest.main(pytest_args)
 
@@ -3293,7 +3294,7 @@ sys.exit(ret)
                 pytest_targets = [str(path)]
 
         fixture_result = subprocess.run(
-            ["pytest", "-q", *pytest_targets, "-p", "skylos.pytest_unused_fixtures"],
+            ["pytest", "-q", *pytest_targets, "-p", "skylos.plugins.pytest_unused_fixtures"],
             cwd=project_root,
             capture_output=True,
             text=True,
@@ -3313,7 +3314,7 @@ sys.exit(ret)
     custom_rules_data = None
     if not quiet_output:
         try:
-            from skylos.sync import get_custom_rules, get_token
+            from skylos.cloud.sync import get_custom_rules, get_token
 
             token = get_token()
             if token:
@@ -3839,7 +3840,7 @@ def main() -> None:
         cmd = agent_args.agent_cmd
 
         if cmd in {"watch", "pre-commit", "triage", "status", "serve"}:
-            from skylos.agent_center import (
+            from skylos.agents.center import (
                 clear_action_triage,
                 command_center_payload,
                 load_agent_state,
@@ -3918,7 +3919,7 @@ def main() -> None:
 
             if cmd == "pre-commit":
                 import subprocess as _sp
-                from skylos.baseline import filter_new_findings, load_baseline
+                from skylos.core.baseline import filter_new_findings, load_baseline
 
                 source_exts = {
                     ".py",
@@ -4303,7 +4304,7 @@ def main() -> None:
                 tcmd = agent_args.triage_cmd
 
                 if tcmd == "suggest":
-                    from skylos.triage_learner import TriageLearner
+                    from skylos.agents.triage_learner import TriageLearner
 
                     project_root = find_project_root(agent_args.path)
                     learner = TriageLearner()
@@ -4390,7 +4391,7 @@ def main() -> None:
                 sys.exit(0)
 
             if cmd == "serve":
-                from skylos.agent_service import create_agent_service
+                from skylos.agents.service import create_agent_service
 
                 token = agent_args.token or secrets_lib.token_urlsafe(24)
                 server = create_agent_service(
@@ -4491,7 +4492,7 @@ def main() -> None:
                         )
                     )
 
-            from skylos.audit_candidates import scan_deep_audit_candidates
+            from skylos.audit.candidates import scan_deep_audit_candidates
 
             output_exclude_paths = _deep_audit_output_exclude_paths(
                 audit_path,
@@ -4569,7 +4570,7 @@ def main() -> None:
                 analyzer = SkylosLLM(config)
 
                 if getattr(agent_args, "revalidate", False):
-                    from skylos.audit_revalidator import (
+                    from skylos.audit.revalidator import (
                         revalidate_deep_audit_findings,
                     )
 
@@ -4589,7 +4590,7 @@ def main() -> None:
                         else "deep_revalidate"
                     )
                 else:
-                    from skylos.audit_processor import process_deep_audit_records
+                    from skylos.audit.processor import process_deep_audit_records
 
                     process_summary = process_deep_audit_records(
                         store=store,
@@ -4603,7 +4604,7 @@ def main() -> None:
                     mode = "deep_process"
 
             if getattr(agent_args, "fail_on", None):
-                from skylos.audit_ci import evaluate_deep_audit_ci_gate
+                from skylos.audit.ci import evaluate_deep_audit_ci_gate
 
                 ci_summary = evaluate_deep_audit_ci_gate(
                     store=store,
@@ -4631,7 +4632,7 @@ def main() -> None:
             if export_format in {"json", "sarif", "md", "markdown", "md-dir"}:
                 iter_records = getattr(store, "iter_file_records", None)
                 if callable(iter_records):
-                    from skylos.audit_export import build_deep_audit_export
+                    from skylos.audit.export import build_deep_audit_export
 
                     export_payload = build_deep_audit_export(
                         store=store,
@@ -4649,7 +4650,7 @@ def main() -> None:
                     )
                     sys.exit(1)
 
-                from skylos.audit_export import (
+                from skylos.audit.export import (
                     render_deep_audit_export,
                     write_deep_audit_export,
                 )
@@ -5051,7 +5052,7 @@ def main() -> None:
             )
             static_result = json.loads(raw) if isinstance(raw, str) else raw
 
-            from skylos.dead_code import collect_dead_code_findings
+            from skylos.deadcode.collect import collect_dead_code_findings
 
             all_findings = collect_dead_code_findings(static_result)
 
@@ -5179,7 +5180,7 @@ def main() -> None:
             )
 
             if getattr(agent_args, "fix", False):
-                from skylos.fixgen import (
+                from skylos.remediation.fixgen import (
                     generate_removal_plan,
                     generate_unified_diff,
                     apply_patches,
@@ -5460,7 +5461,7 @@ def main() -> None:
                 os.environ["SKYLOS_PORT"] = str(run_port)
 
             try:
-                from skylos.server import start_server
+                from skylos.web.server import start_server
             except ImportError:
                 Console().print("[bold red]Error: Flask is required[/bold red]")
                 Console().print(
@@ -5581,7 +5582,7 @@ def main() -> None:
                     console.print(f"[warn]SCA scan error: {e}[/warn]")
 
         if args.baseline:
-            from skylos.baseline import load_baseline, filter_new_findings
+            from skylos.core.baseline import load_baseline, filter_new_findings
 
             baseline = load_baseline(project_root)
             if baseline is None:
@@ -5715,7 +5716,7 @@ def main() -> None:
         )
         if not _skip_provenance:
             try:
-                from skylos.provenance import (
+                from skylos.reporting.provenance import (
                     analyze_provenance,
                     annotate_findings_with_provenance,
                     compute_ai_security_stats,
@@ -6088,7 +6089,7 @@ def main() -> None:
                 console.print("[muted]No items selected.[/muted]")
 
     if args.tui:
-        from skylos.tui import run_tui
+        from skylos.ui.tui import run_tui
 
         run_tui(result, root_path=project_root)
     elif not args.upload:
@@ -6168,7 +6169,7 @@ def main() -> None:
                     )
                 )
 
-            from skylos.nudge import pick_nudge
+            from skylos.ui.nudge import pick_nudge
 
             nudge = pick_nudge(result, args, project_root)
             if nudge:
@@ -6180,7 +6181,7 @@ def main() -> None:
                 "[good]✨ Clean codebase! No issues found.[/good]\n"
                 "[dim]💡 Show others you maintain quality code: [/dim][bold cyan]skylos badge[/bold cyan]"
             )
-            from skylos.nudge import pick_nudge
+            from skylos.ui.nudge import pick_nudge
 
             nudge = pick_nudge(result, args, project_root)
             if nudge:
@@ -6220,7 +6221,7 @@ def main() -> None:
                     "\n[bold yellow]No Skylos token found.[/bold yellow] "
                     "Let's connect to Skylos Cloud.\n"
                 )
-                from skylos.login import run_login
+                from skylos.cloud.login import run_login
 
                 login_result = run_login(console=console)
                 if login_result is None:
@@ -6233,7 +6234,7 @@ def main() -> None:
                 console.print("  See: https://docs.skylos.dev/ci-setup")
                 raise SystemExit(1)
             else:
-                from skylos.login import manual_token_fallback
+                from skylos.cloud.login import manual_token_fallback
 
                 login_result = manual_token_fallback(console=console)
                 if login_result is None:

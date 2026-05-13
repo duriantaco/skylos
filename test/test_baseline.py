@@ -1,5 +1,5 @@
 import json
-from skylos.baseline import save_baseline, load_baseline, filter_new_findings
+from skylos.core.baseline import save_baseline, load_baseline, filter_new_findings
 
 
 def _sample_result():

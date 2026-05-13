@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import subprocess
-from skylos.fixgen import (
+from skylos.remediation.fixgen import (
     RemovalPatch,
     _build_dependency_dag,
     _compute_safety_score,

@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import pytest
-import skylos.sync as syncmod
+import skylos.cloud.sync as syncmod
 import builtins
 
 

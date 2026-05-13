@@ -116,7 +116,7 @@ def _resolve_review_provenance(results: dict, *, diff_base: str) -> dict | None:
 
     project_root = results.get("project_root") or "."
     try:
-        from skylos.provenance import analyze_provenance
+        from skylos.reporting.provenance import analyze_provenance
 
         return analyze_provenance(project_root, base_ref=diff_base).to_dict()
     except Exception:

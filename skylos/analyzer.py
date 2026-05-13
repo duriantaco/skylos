@@ -13,9 +13,9 @@ try:
 except ImportError:
     _fast_discover = None
 
-from skylos.visitor import Visitor
+from skylos.visitors.base import Visitor
 
-from skylos.circular_deps import CircularDependencyRule, _resolve_from_import_targets
+from skylos.analysis.circular_deps import CircularDependencyRule, _resolve_from_import_targets
 
 from skylos.constants import AUTO_CALLED, MARKREFS_TICK_DEFAULT
 
@@ -40,13 +40,13 @@ from skylos.rules.danger.calls import DangerousCallsRule
 
 
 from skylos.config import get_all_ignore_lines, load_config
-from skylos.file_discovery import (
+from skylos.core.file_discovery import (
     discover_source_files,
     find_git_root,
     should_exclude_path,
 )
 
-from skylos.linter import LinterVisitor
+from skylos.core.linter import LinterVisitor
 
 from skylos.rules.quality.complexity import ComplexityRule, CognitiveComplexityRule
 from skylos.rules.quality.nesting import NestingRule
@@ -91,7 +91,7 @@ from skylos.rules.vibe_dictionary import build_vibe_dictionary
 from skylos.rules.quality.performance import PerformanceRule
 from skylos.rules.quality.unreachable import UnreachableCodeRule
 from skylos.rules.quality.async_blocking import AsyncBlockingRule
-from skylos.rules.quality.class_size import GodClassRule
+from skylos.rules.quality.class_size import GodClassRule, GodFileRule
 from skylos.rules.quality.coupling import CBORule
 from skylos.rules.quality.cohesion import LCOMRule
 from skylos.rules.quality.clones import (
@@ -103,7 +103,7 @@ from skylos.rules.quality.clones import (
     group_pairs,
 )
 
-from skylos.penalties import apply_penalties
+from skylos.analysis.penalties import apply_penalties
 
 from skylos.scale.parallel_static import run_proc_file_parallel
 from skylos.rules.custom import load_custom_rules, load_community_rules
@@ -263,6 +263,7 @@ _LINTER_RULE_NODE_TYPES = {
     BroadExceptionRule: (ast.ExceptHandler,),
     MissingNetworkTimeoutRule: (ast.Call,),
     NoEffectStatementRule: (ast.Expr,),
+    GodFileRule: (ast.Module,),
     GodClassRule: (ast.ClassDef,),
     CBORule: (ast.ClassDef,),
     LCOMRule: (ast.ClassDef,),
@@ -845,8 +846,8 @@ class Skylos:
 
     def _grep_verify(self):
         """Post-pass: use grep strategies to rescue false-positive dead code."""
-        from skylos.grep_cache import GrepCache
-        from skylos.grep_verify import grep_verify_findings
+        from skylos.core.grep_cache import GrepCache
+        from skylos.core.grep_verify import grep_verify_findings
 
         candidates = []
         candidate_defs = {}
@@ -896,7 +897,7 @@ class Skylos:
 
     def _apply_dead_code_liveness(self, files):
         try:
-            from skylos.dead_code_liveness import apply_dead_code_liveness
+            from skylos.deadcode.liveness import apply_dead_code_liveness
 
             report = apply_dead_code_liveness(
                 self.defs,
@@ -1092,7 +1093,7 @@ class Skylos:
                         d.references += 1
                     continue
 
-        from skylos.implicit_refs import pattern_tracker as global_tracker
+        from skylos.analysis.implicit_refs import pattern_tracker as global_tracker
 
         if (
             global_tracker.traced_calls
@@ -1653,7 +1654,7 @@ class Skylos:
 
                 if enable_quality:
                     try:
-                        from skylos.architecture import get_architecture_findings
+                        from skylos.analysis.architecture import get_architecture_findings
 
                         dep_graph = dict(
                             circular_rule._analyzer.architecture_dependencies
@@ -1731,7 +1732,7 @@ class Skylos:
                     traceback.print_exc()
 
         try:
-            from skylos.grader import count_lines_of_code, compute_grade
+            from skylos.reporting.grader import count_lines_of_code, compute_grade
 
             total_loc = count_lines_of_code(files)
             result["analysis_summary"]["total_loc"] = total_loc
@@ -1837,8 +1838,8 @@ class Skylos:
         for f in files:
             modmap[f] = self._module(root, f)
 
-        from skylos.implicit_refs import pattern_tracker
-        from skylos.implicit_refs import pattern_tracker as global_pattern_tracker
+        from skylos.analysis.implicit_refs import pattern_tracker
+        from skylos.analysis.implicit_refs import pattern_tracker as global_pattern_tracker
 
         global_pattern_tracker.known_refs.clear()
         global_pattern_tracker.known_qualified_refs.clear()
@@ -1856,7 +1857,7 @@ class Skylos:
         pyproject_entrypoint_modules = set()
 
         try:
-            from skylos.pyproject_entrypoints import extract_entrypoints
+            from skylos.analysis.pyproject_entrypoints import extract_entrypoints
 
             for qname in extract_entrypoints(project_root):
                 pyproject_entrypoint_qnames.add(qname)
@@ -2230,7 +2231,7 @@ class Skylos:
 
         if changed_files and enable_quality and "SKY-L021" not in project_ignore:
             from skylos.rules.quality.regression import detect_security_regressions
-            from skylos.security_contracts import resolve_diff_base_ref
+            from skylos.security.contracts import resolve_diff_base_ref
 
             try:
                 import subprocess
@@ -2274,7 +2275,7 @@ class Skylos:
                     logger.error("Security regression scan failed", exc_info=True)
 
         if changed_files and enable_danger and "SKY-SC001" not in project_ignore:
-            from skylos.security_contracts import detect_security_contract_regressions
+            from skylos.security.contracts import detect_security_contract_regressions
 
             try:
                 all_dangers.extend(
@@ -2411,6 +2412,22 @@ class Skylos:
                             for f in dep_findings
                             if f.get("rule_id") not in project_ignore
                         ]
+                        unsuppressed_dep_findings = []
+                        for finding in dep_findings:
+                            f_ignore = per_file_ignore_lines.get(
+                                str(finding.get("file", "")), set()
+                            )
+                            if finding.get("line") in f_ignore:
+                                all_suppressed.append(
+                                    {
+                                        **finding,
+                                        "category": "danger",
+                                        "reason": "inline ignore comment",
+                                    }
+                                )
+                                continue
+                            unsuppressed_dep_findings.append(finding)
+                        dep_findings = unsuppressed_dep_findings
                         all_dangers.extend(dep_findings)
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
@@ -2421,7 +2438,7 @@ class Skylos:
                 if progress_callback:
                     progress_callback(0, 1, Path("PHASE: prompt injection scan"))
                 try:
-                    from skylos.injection_scanner import (
+                    from skylos.security.injection_scanner import (
                         SCANNABLE_EXTENSIONS,
                         scan_file as _injection_scan_file,
                     )
@@ -2832,7 +2849,7 @@ def proc_file(
                 "category": "DEAD_CODE",
             }
 
-        from skylos.ast_mask import apply_body_mask, default_mask_spec_from_config
+        from skylos.analysis.ast_mask import apply_body_mask, default_mask_spec_from_config
 
         mask = default_mask_spec_from_config(cfg)
         tree, masked = apply_body_mask(tree, mask)
@@ -2926,6 +2943,17 @@ def proc_file(
             if "SKY-L033" not in cfg["ignore"]:
                 q_rules.append(NoEffectStatementRule())
             # SKY-D260 (prompt injection) is now handled by injection_scanner..
+            if "SKY-Q502" not in cfg["ignore"]:
+                q_rules.append(
+                    GodFileRule(
+                        max_lines=cfg.get("god_file_max_lines", 500),
+                        max_definitions=cfg.get("god_file_max_definitions", 40),
+                        max_top_level_definitions=cfg.get(
+                            "god_file_max_top_level_definitions",
+                            25,
+                        ),
+                    )
+                )
             if "SKY-Q501" not in cfg["ignore"]:
                 q_rules.append(GodClassRule())
             if "SKY-Q701" not in cfg["ignore"]:
@@ -2982,6 +3010,7 @@ def proc_file(
 
             _set_linter_node_types(q_rules)
             linter_q = LinterVisitor(q_rules, str(file))
+            linter_q.context["source"] = source
             linter_q.visit(tree)
             quality_findings = [
                 f for f in linter_q.findings if f.get("rule_id") not in cfg["ignore"]
@@ -3076,7 +3105,7 @@ def proc_file(
                 else:
                     architecture_tree = tree
 
-                from skylos.architecture import _compute_abstractness, _has_main_guard
+                from skylos.analysis.architecture import _compute_abstractness, _has_main_guard
 
                 architecture_metrics = {
                     "abstractness": _compute_abstractness(architecture_tree),

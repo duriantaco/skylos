@@ -7,7 +7,7 @@ from typing import Any
 
 from skylos.debt.result import DebtSignal, DebtSnapshot
 from skylos.debt.scoring import build_hotspots, compute_debt_score
-from skylos.file_discovery import find_git_root
+from skylos.core.file_discovery import find_git_root
 
 DEBT_VERSION = "1.0"
 
@@ -18,6 +18,7 @@ _QUALITY_DIMENSION_MAP: dict[str, str] = {
     "SKY-C303": "complexity",
     "SKY-C304": "complexity",
     "SKY-Q501": "modularity",
+    "SKY-Q502": "modularity",
     "SKY-Q701": "modularity",
     "SKY-Q702": "modularity",
     "SKY-Q802": "architecture",

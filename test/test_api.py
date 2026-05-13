@@ -456,7 +456,7 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(payload["upload_client_session_id"], "cli-session-1")
         self.assertEqual(payload["cli_version"], "4.7.0")
 
-    @patch("skylos.provenance.analyze_provenance")
+    @patch("skylos.reporting.provenance.analyze_provenance")
     @patch("skylos.api._load_repo_link", return_value={"project_id": "proj-1"})
     @patch("skylos.api.detect_ai_code", return_value={"detected": False})
     @patch("skylos.api.SarifExporter")
@@ -497,7 +497,7 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(prepared.metadata["provenance"], {"agent_files": ["app.py"]})
         self.assertEqual(prepared.metadata["project_id"], "proj-1")
 
-    @patch("skylos.provenance.analyze_provenance")
+    @patch("skylos.reporting.provenance.analyze_provenance")
     @patch("skylos.api._load_repo_link", return_value={})
     @patch("skylos.api.detect_ai_code", return_value={"detected": False})
     @patch("skylos.api.SarifExporter")
@@ -572,7 +572,7 @@ class TestSkylosApi(unittest.TestCase):
         mock_detect_provenance.assert_not_called()
         self.assertIsNone(prepared.metadata["provenance"])
 
-    @patch("skylos.provenance.analyze_provenance")
+    @patch("skylos.reporting.provenance.analyze_provenance")
     @patch("skylos.api._load_repo_link", return_value={})
     @patch("skylos.api.detect_ai_code", return_value={"detected": False})
     @patch("skylos.api.SarifExporter")

@@ -2,7 +2,7 @@ import io
 
 from rich.console import Console
 
-from skylos.upload_manifest import (
+from skylos.cloud.upload_manifest import (
     build_code_scan_manifest,
     build_debt_manifest,
     print_upload_manifest,

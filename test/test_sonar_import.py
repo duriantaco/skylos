@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from skylos.sonar_import import (
+from skylos.integrations.sonar import (
     build_sonar_migration_plan,
     parse_sonar_properties,
     split_sonar_list,

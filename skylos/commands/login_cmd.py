@@ -1,6 +1,6 @@
 from rich.console import Console
 
-from skylos.login import run_login
+from skylos.cloud.login import run_login
 
 
 def run_login_command() -> int:

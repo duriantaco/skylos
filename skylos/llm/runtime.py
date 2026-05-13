@@ -1,7 +1,7 @@
 import os
 from urllib.parse import urlparse
 
-from skylos.credentials import get_key, save_key, PROVIDERS
+from skylos.cloud.credentials import get_key, save_key, PROVIDERS
 
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0"}

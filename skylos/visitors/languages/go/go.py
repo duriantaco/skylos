@@ -1,6 +1,6 @@
 from pathlib import Path
 from skylos.engines.go_runner import run_go_engine_for_module
-from skylos.visitor import Definition
+from skylos.visitors.base import Definition
 from skylos.visitors.languages.go.quality import scan_go_quality, GO_LANG
 
 try:

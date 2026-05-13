@@ -1,5 +1,5 @@
 import ast
-from skylos.architecture import (
+from skylos.analysis.architecture import (
     analyze_architecture,
     get_architecture_findings,
     get_layer_policy_findings,

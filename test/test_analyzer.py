@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from collections import defaultdict
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
-from skylos.penalties import apply_penalties
+from skylos.analysis.penalties import apply_penalties
 
 from skylos.analyzer import (
     Skylos,
@@ -1271,7 +1271,7 @@ class TestApplyPenalties:
             ("benchmarks/bench_api.py", "class", "benchmark entrypoint path"),
         ],
     )
-    @patch("skylos.penalties.detect_framework_usage")
+    @patch("skylos.analysis.penalties.detect_framework_usage")
     def test_non_library_paths_suppress_dead_code_callables(
         self,
         mock_detect_framework,
@@ -1300,7 +1300,7 @@ class TestApplyPenalties:
         assert mock_def.confidence == 0
         assert mock_def.skip_reason == expected_reason
 
-    @patch("skylos.penalties.detect_framework_usage")
+    @patch("skylos.analysis.penalties.detect_framework_usage")
     def test_private_name_penalty(
         self,
         mock_detect_framework,
@@ -1323,7 +1323,7 @@ class TestApplyPenalties:
         )
         assert mock_def.confidence < 100
 
-    @patch("skylos.penalties.detect_framework_usage")
+    @patch("skylos.analysis.penalties.detect_framework_usage")
     def test_magic_methods_confidence_zero(
         self,
         mock_detect_framework,
@@ -1343,7 +1343,7 @@ class TestApplyPenalties:
         )
         assert mock_def.confidence == 0
 
-    @patch("skylos.penalties.detect_framework_usage")
+    @patch("skylos.analysis.penalties.detect_framework_usage")
     def test_self_cls_parameters_confidence_zero(
         self,
         mock_detect_framework,
@@ -1378,7 +1378,7 @@ class TestApplyPenalties:
         assert mock_self.confidence == 0
         assert mock_cls.confidence == 0
 
-    @patch("skylos.penalties.detect_framework_usage")
+    @patch("skylos.analysis.penalties.detect_framework_usage")
     def test_conditional_import_penalty_reduces_confidence(
         self,
         mock_detect_framework,
@@ -1404,7 +1404,7 @@ class TestApplyPenalties:
         assert mock_def.confidence == 40
         assert "conditional_import_fallback" in mock_def.why_confidence_reduced
 
-    @patch("skylos.penalties.detect_framework_usage")
+    @patch("skylos.analysis.penalties.detect_framework_usage")
     def test_test_methods_confidence_zero(
         self, mock_detect_framework, mock_definition, mock_framework_aware_visitor
     ):
@@ -1427,7 +1427,7 @@ class TestApplyPenalties:
         apply_penalties(skylos, mock_def, test_visitor, mock_framework_aware_visitor)
         assert mock_def.confidence == 0
 
-    @patch("skylos.penalties.detect_framework_usage")
+    @patch("skylos.analysis.penalties.detect_framework_usage")
     def test_underscore_variable_confidence_zero(
         self,
         mock_detect_framework,
@@ -2195,7 +2195,7 @@ ignore = []
                 ],
             ),
             patch(
-                "skylos.injection_scanner.scan_file",
+                "skylos.security.injection_scanner.scan_file",
                 return_value=[
                     {
                         "rule_id": "SKY-D260",

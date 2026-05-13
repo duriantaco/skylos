@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from skylos.corpus_ci import format_summary, run_manifest
+from skylos.benchmarks.corpus_ci import format_summary, run_manifest
 
 
 def main() -> int:

@@ -12,7 +12,7 @@ from pathlib import Path
 from tree_sitter import Language, Parser
 import tree_sitter_typescript as tsts
 
-from skylos.file_discovery import should_exclude_path
+from skylos.core.file_discovery import should_exclude_path
 
 from .nextjs import (
     NEXTJS_CONVENTION_EXPORTS,

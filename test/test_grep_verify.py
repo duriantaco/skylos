@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
-from skylos.grep_cache import GrepCache
-from skylos.grep_verify import (
+from skylos.core.grep_cache import GrepCache
+from skylos.core.grep_verify import (
     GrepStrategy,
     detect_language,
     filter_grep_results,
@@ -309,7 +309,7 @@ class TestGrepVerifyFindings:
         cache = GrepCache()
 
         with patch(
-            "skylos.grep_verify.multi_strategy_search",
+            "skylos.core.grep_verify.multi_strategy_search",
             return_value={"references": ["main.py:1:helper()"]},
         ) as mock_search:
             first = grep_verify_findings(findings, str(tmp_path), cache=cache)
@@ -334,7 +334,7 @@ class TestGrepVerifyFindings:
             }
         ]
 
-        with patch("skylos.grep_verify.multi_strategy_search") as mock_search:
+        with patch("skylos.core.grep_verify.multi_strategy_search") as mock_search:
             verdicts = grep_verify_findings(findings, str(tmp_path))
 
         assert verdicts == {}
@@ -355,8 +355,8 @@ class TestGrepVerifyFindings:
         cache = GrepCache()
 
         with (
-            patch("skylos.grep_verify.multi_strategy_search") as mock_search,
-            patch("skylos.grep_verify._cached_group_results") as mock_cached_group,
+            patch("skylos.core.grep_verify.multi_strategy_search") as mock_search,
+            patch("skylos.core.grep_verify._cached_group_results") as mock_cached_group,
         ):
             verdicts = grep_verify_findings(findings, str(tmp_path), cache=cache)
 
@@ -379,7 +379,7 @@ class TestGrepVerifyFindings:
         cache = GrepCache()
 
         with patch(
-            "skylos.grep_verify._cached_group_results", return_value={}
+            "skylos.core.grep_verify._cached_group_results", return_value={}
         ) as mock_cached_group:
             grep_verify_findings([finding], str(tmp_path), cache=cache)
 
@@ -512,7 +512,7 @@ result = PublicClass.used_method()
 class TestAnalyzerGrepVerifyOrdering:
     def test_candidates_are_sorted_by_rescue_priority(self, tmp_path):
         from skylos.analyzer import Skylos
-        from skylos.visitor import Definition
+        from skylos.visitors.base import Definition
 
         source = tmp_path / "mod.py"
         source.write_text("pass\n")
@@ -535,7 +535,7 @@ class TestAnalyzerGrepVerifyOrdering:
             analyzer.defs[name] = definition
 
         with patch(
-            "skylos.grep_verify.grep_verify_findings", return_value={}
+            "skylos.core.grep_verify.grep_verify_findings", return_value={}
         ) as mock_grep:
             analyzer._grep_verify()
 
@@ -554,7 +554,7 @@ class TestAnalyzerGrepVerifyOrdering:
 class TestAnalyzerGrepVerifyCache:
     def test_grep_verify_loads_and_saves_cache(self, tmp_path):
         from skylos.analyzer import Skylos
-        from skylos.visitor import Definition
+        from skylos.visitors.base import Definition
 
         project_root = tmp_path / "repo"
         project_root.mkdir()
@@ -572,9 +572,9 @@ class TestAnalyzerGrepVerifyCache:
             patch(
                 "skylos.analyzer.find_git_root", return_value=project_root
             ) as mock_root,
-            patch("skylos.grep_cache.GrepCache") as mock_cache_cls,
+            patch("skylos.core.grep_cache.GrepCache") as mock_cache_cls,
             patch(
-                "skylos.grep_verify.grep_verify_findings", return_value={}
+                "skylos.core.grep_verify.grep_verify_findings", return_value={}
             ) as mock_grep,
         ):
             cache = mock_cache_cls.return_value
@@ -865,10 +865,10 @@ class TestParallelMultiStrategySearch:
 
         with (
             patch(
-                "skylos.grep_verify._cached_group_results",
+                "skylos.core.grep_verify._cached_group_results",
                 side_effect=RuntimeError("boom"),
             ),
-            patch("skylos.grep_verify.logger.debug") as mock_debug,
+            patch("skylos.core.grep_verify.logger.debug") as mock_debug,
         ):
             results = parallel_multi_strategy_search(
                 finding, str(tmp_path), max_workers=2
@@ -889,7 +889,7 @@ class TestParallelMultiStrategySearch:
         cache = GrepCache()
 
         with patch(
-            "skylos.grep_verify._cached_group_results", return_value={}
+            "skylos.core.grep_verify._cached_group_results", return_value={}
         ) as mock_cached_group:
             parallel_multi_strategy_search(
                 finding, str(tmp_path), max_workers=2, cache=cache

@@ -67,7 +67,7 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
         patch("skylos.cli.load_config", return_value={}),
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
-        patch("skylos.baseline.load_baseline", return_value=None),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with patch("skylos.cli.run_analyze") as mock_analyze:
             def fake_analyze(*args, **kwargs):
@@ -145,7 +145,7 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.cli.run_analyze") as mock_analyze,
         patch("skylos.rules.secrets.scan_ctx", side_effect=fake_scan_ctx),
-        patch("skylos.baseline.load_baseline", return_value=None),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
@@ -236,7 +236,7 @@ def test_agent_pre_commit_uses_staged_snapshot_for_untracked_source_changes(tmp_
         patch("skylos.cli.tempfile.TemporaryDirectory", return_value=FakeTempDir(snapshot_root)),
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
-        patch("skylos.baseline.load_baseline", return_value=None),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
@@ -301,7 +301,7 @@ def test_agent_pre_commit_reports_skipped_unsupported_staged_files(tmp_path):
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
-        patch("skylos.baseline.load_baseline", return_value=None),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
@@ -380,7 +380,7 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_only(tmp_path):
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.rules.secrets.scan_ctx", side_effect=fake_scan_ctx),
-        patch("skylos.baseline.load_baseline", return_value=None),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
@@ -449,7 +449,7 @@ def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.rules.secrets.scan_ctx", side_effect=fake_scan_ctx),
-        patch("skylos.baseline.load_baseline", return_value=None),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
@@ -536,7 +536,7 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_alongside_source(t
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
         patch("skylos.rules.secrets.scan_ctx", side_effect=fake_scan_ctx),
-        patch("skylos.baseline.load_baseline", return_value=None),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
@@ -619,7 +619,7 @@ def test_agent_pre_commit_filters_non_regression_findings_to_changed_lines(tmp_p
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
-        patch("skylos.baseline.load_baseline", return_value=None),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
@@ -694,7 +694,7 @@ def test_agent_pre_commit_deletion_only_diffs_drop_whole_file_noise(tmp_path):
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
-        patch("skylos.baseline.load_baseline", return_value=None),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
@@ -767,7 +767,7 @@ def test_agent_pre_commit_suppresses_structural_quality_noise_locally(tmp_path):
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
-        patch("skylos.baseline.load_baseline", return_value=None),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with pytest.raises(SystemExit) as exc_info:
             cli.main()

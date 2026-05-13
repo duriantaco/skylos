@@ -2,9 +2,9 @@ import json
 import subprocess
 from pathlib import Path
 
-import skylos.dead_code_benchmark as benchmark
+import skylos.benchmarks.dead_code as benchmark
 from skylos.analyzer import analyze
-from skylos.dead_code_benchmark import (
+from skylos.benchmarks.dead_code import (
     DEAD_CODE_TAXONOMY,
     format_summary,
     load_external_targets,

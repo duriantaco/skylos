@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 import skylos.cli as cli
-from skylos.audit_store import AuditStore
-from skylos.audit_types import (
+from skylos.audit.store import AuditStore
+from skylos.audit.types import (
     AuditCIGateSummary,
     AuditCandidate,
     AuditProcessSummary,
@@ -47,7 +47,7 @@ def test_agent_audit_deep_scan_only_runs_without_llm_support(
         )
 
     monkeypatch.setattr(
-        "skylos.audit_candidates.scan_deep_audit_candidates",
+        "skylos.audit.candidates.scan_deep_audit_candidates",
         fake_scan,
     )
 
@@ -135,10 +135,10 @@ def test_agent_audit_scan_only_runs_ci_gate(tmp_path: Path, monkeypatch):
         )
 
     monkeypatch.setattr(
-        "skylos.audit_candidates.scan_deep_audit_candidates",
+        "skylos.audit.candidates.scan_deep_audit_candidates",
         fake_scan,
     )
-    monkeypatch.setattr("skylos.audit_ci.evaluate_deep_audit_ci_gate", fake_gate)
+    monkeypatch.setattr("skylos.audit.ci.evaluate_deep_audit_ci_gate", fake_gate)
     monkeypatch.setattr(
         cli.sys,
         "argv",
@@ -214,7 +214,7 @@ def test_agent_audit_scan_only_writes_sarif_export_from_persisted_state(
         raise AssertionError("LLM support should not be checked")
 
     monkeypatch.setattr(
-        "skylos.audit_candidates.scan_deep_audit_candidates",
+        "skylos.audit.candidates.scan_deep_audit_candidates",
         fake_scan,
     )
     monkeypatch.setattr(cli, "_ensure_llm_support", fail_if_llm_checked)
@@ -278,7 +278,7 @@ def test_agent_audit_excludes_repo_local_output_from_scan(
         )
 
     monkeypatch.setattr(
-        "skylos.audit_candidates.scan_deep_audit_candidates",
+        "skylos.audit.candidates.scan_deep_audit_candidates",
         fake_scan,
     )
     monkeypatch.setattr(
@@ -404,11 +404,11 @@ def test_agent_audit_deep_processing_runs_after_scan(tmp_path: Path, monkeypatch
             self.config = config
 
     monkeypatch.setattr(
-        "skylos.audit_candidates.scan_deep_audit_candidates",
+        "skylos.audit.candidates.scan_deep_audit_candidates",
         fake_scan,
     )
     monkeypatch.setattr(
-        "skylos.audit_processor.process_deep_audit_records",
+        "skylos.audit.processor.process_deep_audit_records",
         fake_process,
     )
     monkeypatch.setattr(cli, "_ensure_llm_support", lambda: True)
@@ -501,11 +501,11 @@ def test_agent_audit_changed_processing_scopes_scan_and_processing(
 
     monkeypatch.setattr(cli, "get_git_changed_files", lambda *a, **k: [changed])
     monkeypatch.setattr(
-        "skylos.audit_candidates.scan_deep_audit_candidates",
+        "skylos.audit.candidates.scan_deep_audit_candidates",
         fake_scan,
     )
     monkeypatch.setattr(
-        "skylos.audit_processor.process_deep_audit_records",
+        "skylos.audit.processor.process_deep_audit_records",
         fake_process,
     )
     monkeypatch.setattr(cli, "_ensure_llm_support", lambda: True)
@@ -544,7 +544,7 @@ def test_agent_audit_invalid_base_ref_exits_without_full_scan(
 
     monkeypatch.setattr(cli, "get_git_changed_files", fake_changed)
     monkeypatch.setattr(
-        "skylos.audit_candidates.scan_deep_audit_candidates",
+        "skylos.audit.candidates.scan_deep_audit_candidates",
         fail_scan,
     )
     monkeypatch.setattr(
@@ -580,7 +580,7 @@ def test_agent_audit_changed_no_files_writes_empty_json_artifact(
 
     monkeypatch.setattr(cli, "get_git_changed_files", lambda *a, **k: [])
     monkeypatch.setattr(
-        "skylos.audit_candidates.scan_deep_audit_candidates",
+        "skylos.audit.candidates.scan_deep_audit_candidates",
         fail_scan,
     )
     monkeypatch.setattr(
@@ -705,11 +705,11 @@ def test_agent_audit_revalidate_runs_after_scan(tmp_path: Path, monkeypatch):
             self.config = config
 
     monkeypatch.setattr(
-        "skylos.audit_candidates.scan_deep_audit_candidates",
+        "skylos.audit.candidates.scan_deep_audit_candidates",
         fake_scan,
     )
     monkeypatch.setattr(
-        "skylos.audit_revalidator.revalidate_deep_audit_findings",
+        "skylos.audit.revalidator.revalidate_deep_audit_findings",
         fake_revalidate,
     )
     monkeypatch.setattr(cli, "_ensure_llm_support", lambda: True)

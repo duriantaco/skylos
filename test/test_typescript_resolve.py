@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from skylos.visitor import Definition
+from skylos.visitors.base import Definition
 from skylos.visitors.languages.typescript.analysis import build_ts_import_graph
 from skylos.visitors.languages.typescript.resolve import MonorepoResolver
 

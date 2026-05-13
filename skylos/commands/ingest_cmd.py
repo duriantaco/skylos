@@ -51,7 +51,7 @@ def run_ingest_command(
     ingest_args = ingest_parser.parse_args(argv)
 
     if ingest_args.ingest_cmd == "claude-security":
-        from skylos.ingest import ingest_claude_security
+        from skylos.integrations.ingest import ingest_claude_security
 
         result = ingest_claude_security(
             ingest_args.input_file,

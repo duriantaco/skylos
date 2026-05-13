@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from skylos.file_discovery import should_exclude_path
+from skylos.core.file_discovery import should_exclude_path
 
 
 def test_should_exclude_path_honors_sonar_style_globs(tmp_path: Path):

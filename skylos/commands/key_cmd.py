@@ -5,7 +5,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-from skylos.credentials import PROVIDERS, get_key, save_key, delete_key
+from skylos.cloud.credentials import PROVIDERS, get_key, save_key, delete_key
 
 
 def run_key_command(argv):

@@ -6,8 +6,8 @@ import warnings
 from pathlib import Path
 import tempfile
 
-import skylos.visitor as visitor_mod
-from skylos.visitor import Visitor, Definition, PYTHON_BUILTINS, DYNAMIC_PATTERNS
+import skylos.visitors.base as visitor_mod
+from skylos.visitors.base import Visitor, Definition, PYTHON_BUILTINS, DYNAMIC_PATTERNS
 
 
 class TestDefinition(unittest.TestCase):

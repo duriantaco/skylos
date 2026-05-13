@@ -5,7 +5,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 
-from skylos.codemods import (
+from skylos.remediation.codemods import (
     comment_out_unused_function_cst,
     comment_out_unused_import_cst,
     remove_unused_function_cst,

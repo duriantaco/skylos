@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from skylos import audit_candidates
-from skylos.audit_store import AuditStore
-from skylos.audit_types import AuditFileRecord, sha256_file
+from skylos.audit import candidates as audit_candidates
+from skylos.audit.store import AuditStore
+from skylos.audit.types import AuditFileRecord, sha256_file
 
 
 def _fake_github_token() -> str:

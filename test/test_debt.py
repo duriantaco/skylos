@@ -129,6 +129,39 @@ def test_collect_debt_signals_maps_dimensions_and_dead_code():
     assert ("SKY-U001", "dead_code") in dimensions
 
 
+def test_god_file_signal_becomes_modularity_debt_hotspot():
+    result = {
+        "analysis_summary": {"total_files": 1, "total_loc": 700},
+        "quality": [
+            {
+                "rule_id": "SKY-Q502",
+                "severity": "HIGH",
+                "file": "/repo/app/api.py",
+                "line": 1,
+                "name": "app.api",
+                "message": "File 'api.py' is a god file candidate",
+                "value": 700,
+                "threshold": 500,
+            }
+        ],
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+    }
+
+    snapshot = build_debt_snapshot(result, project_root="/repo")
+
+    assert snapshot.summary["dimensions"]["modularity"] == 1
+    assert len(snapshot.hotspots) == 1
+    hotspot = snapshot.hotspots[0]
+    assert hotspot.file == "app/api.py"
+    assert hotspot.primary_dimension == "modularity"
+    assert hotspot.signals[0].rule_id == "SKY-Q502"
+    assert hotspot.signals[0].dimension == "modularity"
+
+
 def test_collect_debt_signals_filters_to_changed_files():
     signals = collect_debt_signals(
         SAMPLE_RESULT,

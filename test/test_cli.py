@@ -756,7 +756,7 @@ def test_main_whitelist_subcommand_calls_run_whitelist_and_exits(monkeypatch):
 
 def test_main_sync_subcommand_calls_sync_main_and_exits(monkeypatch):
     fake_sync = types.SimpleNamespace(main=Mock())
-    monkeypatch.setitem(sys.modules, "skylos.sync", fake_sync)
+    monkeypatch.setitem(sys.modules, "skylos.cloud.sync", fake_sync)
 
     monkeypatch.setattr(cli.sys, "argv", ["skylos", "sync", "--pull"])
     with pytest.raises(SystemExit) as e:

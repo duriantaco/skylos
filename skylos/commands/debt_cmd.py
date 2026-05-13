@@ -324,7 +324,7 @@ def run_debt_command(
     upload_failed = False
     if debt_args.upload:
         if not debt_args.output_json:
-            from skylos.upload_manifest import (
+            from skylos.cloud.upload_manifest import (
                 build_debt_manifest,
                 print_upload_manifest,
             )
