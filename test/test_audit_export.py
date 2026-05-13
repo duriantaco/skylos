@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from skylos.audit_export import (
+from skylos.audit.export import (
     build_deep_audit_export,
     render_deep_audit_export,
     write_deep_audit_export,
 )
-from skylos.audit_store import AuditStore
-from skylos.audit_types import (
+from skylos.audit.store import AuditStore
+from skylos.audit.types import (
     STATUS_ANALYZED,
     STATUS_DELETED,
     STATUS_NOT_ANALYZED,

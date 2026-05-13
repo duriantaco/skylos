@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-import skylos.quality_benchmark as benchmark
-from skylos.quality_benchmark import (
+import skylos.benchmarks.quality as benchmark
+from skylos.benchmarks.quality import (
     QUALITY_TAXONOMY,
     format_summary,
     load_manifest,

@@ -20,11 +20,11 @@ class TestRunCommand:
             seen["port"] = os.environ.get("SKYLOS_PORT")
             seen["kwargs"] = kwargs
 
-        fake_server = types.ModuleType("skylos.server")
+        fake_server = types.ModuleType("skylos.web.server")
         fake_server.start_server = capture_start_server
 
         with patch.dict(os.environ, {"SKYLOS_PORT": "6123"}, clear=False):
-            with patch.dict(sys.modules, {"skylos.server": fake_server}):
+            with patch.dict(sys.modules, {"skylos.web.server": fake_server}):
                 with patch.object(sys, "argv", ["skylos", "run", "--port", "5111"]):
                     main()
 

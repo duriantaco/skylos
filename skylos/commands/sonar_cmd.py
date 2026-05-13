@@ -43,7 +43,7 @@ def run_sonar_command(argv: list[str], *, console_factory) -> int:
         parser.print_help()
         return 2
 
-    from skylos.sonar_import import (
+    from skylos.integrations.sonar import (
         build_sonar_migration_plan,
         format_migration_plan_json,
         parse_sonar_properties,

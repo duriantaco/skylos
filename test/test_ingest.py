@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch
 
-from skylos.ingest import (
+from skylos.integrations.ingest import (
     is_claude_security_report,
     normalize_claude_security,
     ingest_claude_security,

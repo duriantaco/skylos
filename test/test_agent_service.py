@@ -5,8 +5,8 @@ import http.client
 import json
 import threading
 
-from skylos.agent_center import rebuild_agent_state_from_existing, save_agent_state
-from skylos.agent_service import (
+from skylos.agents.center import rebuild_agent_state_from_existing, save_agent_state
+from skylos.agents.service import (
     AgentServiceController,
     _default_allowed_origins,
     create_agent_service,

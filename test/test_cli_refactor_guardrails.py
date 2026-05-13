@@ -61,7 +61,7 @@ def test_cli_guardrail_overview_dispatch_exits_zero(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["skylos"])
 
     with (
-        patch("skylos.help.print_command_overview") as mock_overview,
+        patch("skylos.ui.help.print_command_overview") as mock_overview,
         patch("skylos.cli.Console", return_value=Mock()),
         pytest.raises(SystemExit) as exc,
     ):
@@ -75,7 +75,7 @@ def test_cli_guardrail_commands_dispatch_exits_zero(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["skylos", "commands"])
 
     with (
-        patch("skylos.help.print_flat_commands") as mock_commands,
+        patch("skylos.ui.help.print_flat_commands") as mock_commands,
         patch("skylos.cli.Console", return_value=Mock()),
         pytest.raises(SystemExit) as exc,
     ):
@@ -89,7 +89,7 @@ def test_cli_guardrail_tour_dispatch_exits_zero(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["skylos", "tour"])
 
     with (
-        patch("skylos.tour.run_tour") as mock_tour,
+        patch("skylos.ui.tour.run_tour") as mock_tour,
         patch("skylos.cli.Console", return_value=Mock()),
         pytest.raises(SystemExit) as exc,
     ):
@@ -724,7 +724,7 @@ def test_ingest_command_json_output_prints_normalized_result():
 
     with (
         patch(
-            "skylos.ingest.ingest_claude_security", return_value=result
+            "skylos.integrations.ingest.ingest_claude_security", return_value=result
         ) as mock_ingest,
         patch("builtins.print") as mock_print,
     ):
@@ -754,7 +754,7 @@ def test_provenance_command_json_output_prints_report(tmp_path):
 
     with (
         patch(
-            "skylos.provenance.analyze_provenance", return_value=report
+            "skylos.reporting.provenance.analyze_provenance", return_value=report
         ) as mock_analyze,
         patch("builtins.print") as mock_print,
     ):
@@ -945,7 +945,7 @@ def test_cli_guardrail_agent_watch_forwards_learn_flag(monkeypatch):
 
     with (
         patch(
-            "skylos.agent_center.watch_project", return_value={"summary": {}}
+            "skylos.agents.center.watch_project", return_value={"summary": {}}
         ) as mock_watch,
         patch("builtins.print") as mock_print,
         pytest.raises(SystemExit) as exc,

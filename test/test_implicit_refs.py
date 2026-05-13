@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import sqlite3
 
-from skylos.implicit_refs import ImplicitRefTracker
+from skylos.analysis.implicit_refs import ImplicitRefTracker
 
 
 class MockDefinition:
@@ -223,6 +223,6 @@ class TestImplicitRefTracker:
 
 class TestPatternTracker:
     def test_singleton_exists(self):
-        from skylos.implicit_refs import pattern_tracker
+        from skylos.analysis.implicit_refs import pattern_tracker
 
         assert isinstance(pattern_tracker, ImplicitRefTracker)

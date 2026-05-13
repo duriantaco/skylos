@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from skylos.module_reachability import (
+from skylos.analysis.module_reachability import (
     ModuleReachabilityAnalyzer,
     find_unreachable_modules,
 )

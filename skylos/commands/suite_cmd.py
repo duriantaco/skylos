@@ -5,7 +5,7 @@ import json
 import uuid
 from pathlib import Path
 
-from skylos.suite import format_suite_json, format_suite_table, run_suite
+from skylos.core.suite import format_suite_json, format_suite_table, run_suite
 
 _VALID_UPLOAD_FAMILIES = ("static", "defense", "debt")
 _VALID_STATIC_UPLOAD_CATEGORIES = (
@@ -239,7 +239,7 @@ def run_suite_command(
     )
 
     if not suite_args.output_json:
-        from skylos.upload_manifest import (
+        from skylos.cloud.upload_manifest import (
             build_code_scan_manifest,
             build_defense_manifest,
             build_debt_manifest,

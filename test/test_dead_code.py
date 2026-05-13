@@ -1,4 +1,4 @@
-from skylos.dead_code import DEAD_CODE_RESULT_KEYS, collect_dead_code_findings
+from skylos.deadcode.collect import DEAD_CODE_RESULT_KEYS, collect_dead_code_findings
 
 
 def test_collect_dead_code_findings_includes_parameters():

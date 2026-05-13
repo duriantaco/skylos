@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from skylos.grader import (
+from skylos.reporting.grader import (
     score_to_letter,
     compute_grade,
     score_security,

@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from skylos.agent_center import (
+from skylos.agents.center import (
     clear_action_triage,
     build_headline,
     build_ranked_actions,
@@ -352,7 +352,7 @@ def test_refresh_agent_state_with_only_debt_baseline_does_not_mark_quality_new(
         ]
     }
 
-    with patch("skylos.agent_center.run_analyze", return_value=json.dumps(result)):
+    with patch("skylos.agents.center.run_analyze", return_value=json.dumps(result)):
         state, updated = refresh_agent_state(project_root, force=True)
 
     assert updated is True
@@ -409,7 +409,7 @@ def test_refresh_agent_state_rebuilds_when_only_triage_normalization_changes(
     save_agent_state(project_root, state)
 
     with patch(
-        "skylos.agent_center.run_analyze",
+        "skylos.agents.center.run_analyze",
         side_effect=AssertionError("run_analyze should not be called"),
     ) as run_analyze_mock:
         rebuilt, updated = refresh_agent_state(project_root)
@@ -559,9 +559,9 @@ def test_watch_project_tracks_lifecycle_events_and_cache_saves(tmp_path):
     fake_cache = FakeCache()
 
     with (
-        patch("skylos.agent_center.refresh_agent_state", side_effect=fake_refresh),
+        patch("skylos.agents.center.refresh_agent_state", side_effect=fake_refresh),
         patch(
-            "skylos.grep_cache.GrepCache",
+            "skylos.core.grep_cache.GrepCache",
             return_value=fake_cache,
         ),
         patch("time.sleep", return_value=None),

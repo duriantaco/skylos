@@ -1,7 +1,7 @@
 import os
 import time
 from .base import BaseAdapter
-from skylos.credentials import get_key, PROVIDERS
+from skylos.cloud.credentials import get_key, PROVIDERS
 
 
 class LiteLLMAdapter(BaseAdapter):

@@ -18,7 +18,7 @@ sys.modules["skylos.constants"] = mock_constants
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from skylos.server import app, start_server, _get_server_port, _get_default_cors_origins
+from skylos.web.server import app, start_server, _get_server_port, _get_default_cors_origins
 
 if _original_constants is not None:
     sys.modules["skylos.constants"] = _original_constants
@@ -123,9 +123,9 @@ class TestSkylosWebApp(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
         self.assertIn(b"Parsing error", response.data)
 
-    @patch("skylos.server.webbrowser.open")
-    @patch("skylos.server.Timer")
-    @patch("skylos.server.app.run")
+    @patch("skylos.web.server.webbrowser.open")
+    @patch("skylos.web.server.Timer")
+    @patch("skylos.web.server.app.run")
     def test_start_server(self, mock_run, mock_timer, mock_browser):
         start_server(exclude_folders=["custom_folder"])
 
@@ -136,9 +136,9 @@ class TestSkylosWebApp(unittest.TestCase):
             mock_timer.assert_called()
 
     @patch.dict(os.environ, {"SKYLOS_PORT": "5111"}, clear=False)
-    @patch("skylos.server.webbrowser.open")
-    @patch("skylos.server.Timer")
-    @patch("skylos.server.app.run")
+    @patch("skylos.web.server.webbrowser.open")
+    @patch("skylos.web.server.Timer")
+    @patch("skylos.web.server.app.run")
     def test_start_server_uses_env_port(self, mock_run, mock_timer, mock_browser):
         start_server(exclude_folders=["custom_folder"])
 

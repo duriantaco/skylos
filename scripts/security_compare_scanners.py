@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from skylos.security_benchmark import run_manifest  # noqa: E402
+from skylos.benchmarks.security import run_manifest  # noqa: E402
 
 
 DEFAULT_SCANNERS = ("skylos", "bandit")

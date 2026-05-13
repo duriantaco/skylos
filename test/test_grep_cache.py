@@ -5,7 +5,7 @@ import threading
 import time
 from pathlib import Path
 
-from skylos.grep_cache import (
+from skylos.core.grep_cache import (
     CACHE_DIR,
     CACHE_FILE,
     MAX_ENTRIES,

@@ -2,7 +2,7 @@ import unittest
 import ast
 import textwrap
 
-from skylos.ast_mask import MaskSpec, apply_body_mask
+from skylos.analysis.ast_mask import MaskSpec, apply_body_mask
 
 
 class TestBodyMasker(unittest.TestCase):

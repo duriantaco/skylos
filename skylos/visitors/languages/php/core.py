@@ -8,7 +8,7 @@ try:
 except ImportError:
     tsphp = None
 
-from skylos.visitor import Definition
+from skylos.visitors.base import Definition
 
 try:
     PHP_LANG: Language | None = (

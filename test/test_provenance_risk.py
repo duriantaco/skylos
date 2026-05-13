@@ -1,6 +1,6 @@
 from unittest.mock import patch, MagicMock
 
-from skylos.provenance import (
+from skylos.reporting.provenance import (
     FileProvenance,
     ProvenanceReport,
     RiskIntersection,

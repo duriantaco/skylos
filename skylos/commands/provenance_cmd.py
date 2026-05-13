@@ -39,7 +39,7 @@ def run_provenance_command(
     prov_args = prov_parser.parse_args(argv)
     console = console_factory()
 
-    from skylos.provenance import analyze_provenance
+    from skylos.reporting.provenance import analyze_provenance
 
     target = Path(prov_args.path).resolve()
     git_root = get_git_root_func() or str(target)
@@ -56,7 +56,7 @@ def run_provenance_command(
 
     risk_data = None
     if prov_args.with_risk:
-        from skylos.provenance import compute_risk_intersections
+        from skylos.reporting.provenance import compute_risk_intersections
 
         with progress_factory(
             SpinnerColumn(),

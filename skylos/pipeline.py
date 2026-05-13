@@ -7,7 +7,7 @@ from pathlib import Path
 from concurrent.futures import as_completed
 
 from skylos.config import load_config
-from skylos.file_discovery import discover_source_files
+from skylos.core.file_discovery import discover_source_files
 from skylos.llm.repo_activation import build_repo_activation_index
 from skylos.llm.security_verifier import (
     SecurityVerifier,
@@ -285,7 +285,7 @@ def run_static_on_files(
         return _norm(item_path)
 
     try:
-        from skylos.sync import get_custom_rules
+        from skylos.cloud.sync import get_custom_rules
 
         custom_rules_data = get_custom_rules()
         if custom_rules_data:

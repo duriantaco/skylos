@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from skylos.audit_store import AuditStore
-from skylos.audit_types import (
+from skylos.audit.store import AuditStore
+from skylos.audit.types import (
     STATUS_ANALYZED,
     STATUS_DELETED,
     STATUS_PENDING,

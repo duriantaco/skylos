@@ -9,7 +9,7 @@ try:
 except ImportError:
     tsrust = None
 
-from skylos.visitor import Definition
+from skylos.visitors.base import Definition
 
 try:
     RUST_LANG: Language | None = (

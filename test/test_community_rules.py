@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from skylos.rules.custom import YAMLRule, load_custom_rules, load_community_rules
-from skylos.linter import LinterVisitor
+from skylos.core.linter import LinterVisitor
 
 
 def _make_taint_rule(sources=None, sinks=None, sanitizers=None, rule_id="TEST-001"):

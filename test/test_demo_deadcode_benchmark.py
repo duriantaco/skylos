@@ -1,4 +1,4 @@
-from skylos.demo_deadcode_benchmark import (
+from skylos.benchmarks.demo_deadcode import (
     DemoDeadCodeCase,
     case_key,
     hard_cases,

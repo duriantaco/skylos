@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from skylos.triage_learner import (
+from skylos.agents.triage_learner import (
     MIN_CONFIDENCE_AUTO,
     MIN_CONFIDENCE_SUGGEST,
     MIN_OBSERVATIONS_AUTO,

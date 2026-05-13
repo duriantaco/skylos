@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from skylos.corpus_ci import (
+from skylos.benchmarks.corpus_ci import (
     format_summary,
     run_manifest,
     validate_manifest,

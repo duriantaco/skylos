@@ -10,7 +10,7 @@ try:
 except ImportError:
     tsdart = None
 
-from skylos.visitor import Definition
+from skylos.visitors.base import Definition
 
 try:
     DART_LANG: Language | None = (

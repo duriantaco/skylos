@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, Mock
 
-from skylos.tui import (
+from skylos.ui.tui import (
     _shorten,
     _loc,
     prepare_category_data,
@@ -375,7 +375,7 @@ class TestSkylosAppInit:
 class TestRunTui:
     def test_run_tui_creates_and_runs_app(self):
         result = {"analysis_summary": {"total_files": 0}}
-        with patch("skylos.tui.SkylosApp") as MockApp:
+        with patch("skylos.ui.tui.SkylosApp") as MockApp:
             mock_instance = Mock()
             MockApp.return_value = mock_instance
             run_tui(result, root_path="/tmp")

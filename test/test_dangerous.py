@@ -1,6 +1,6 @@
 import ast
 from pathlib import Path
-from skylos.linter import LinterVisitor
+from skylos.core.linter import LinterVisitor
 from skylos.rules.danger.danger import scan_ctx
 from skylos.rules.danger.calls import DangerousCallsRule
 

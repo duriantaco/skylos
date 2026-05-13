@@ -2,7 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 
-import skylos.login as loginmod
+import skylos.cloud.login as loginmod
 
 
 def test_parse_callback_request_rejects_state_mismatch():

@@ -1,5 +1,5 @@
 import textwrap
-from skylos.codemods import (
+from skylos.remediation.codemods import (
     remove_unused_import_cst,
     remove_unused_function_cst,
     comment_out_unused_import_cst,

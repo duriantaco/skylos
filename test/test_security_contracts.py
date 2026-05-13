@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from skylos.security_contracts import (
+from skylos.security.contracts import (
     detect_security_contract_regressions,
     load_security_contracts,
 )
@@ -119,7 +119,7 @@ def list_users():
         assert cmd[:2] == ["git", "show"]
         return Result()
 
-    monkeypatch.setattr("skylos.security_contracts.subprocess.run", fake_run)
+    monkeypatch.setattr("skylos.security.contracts.subprocess.run", fake_run)
     monkeypatch.setenv("SKYLOS_DIFF_BASE", "origin/main")
 
     findings = detect_security_contract_regressions(
@@ -186,7 +186,7 @@ def get_audit_log():
 
         return Result()
 
-    monkeypatch.setattr("skylos.security_contracts.subprocess.run", fake_run)
+    monkeypatch.setattr("skylos.security.contracts.subprocess.run", fake_run)
 
     findings = detect_security_contract_regressions(
         tmp_path,
@@ -235,7 +235,7 @@ def list_users():
 
         return Result()
 
-    monkeypatch.setattr("skylos.security_contracts.subprocess.run", fake_run)
+    monkeypatch.setattr("skylos.security.contracts.subprocess.run", fake_run)
 
     findings = detect_security_contract_regressions(
         tmp_path,

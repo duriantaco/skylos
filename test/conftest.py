@@ -2,7 +2,7 @@ import pytest
 import tempfile
 from pathlib import Path
 from textwrap import dedent
-from skylos.tracer import CallTracer
+from skylos.core.tracer import CallTracer
 
 
 @pytest.fixture(scope="session")

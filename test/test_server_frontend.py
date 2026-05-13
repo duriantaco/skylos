@@ -1,4 +1,4 @@
-from skylos.server_frontend import render_frontend_html
+from skylos.web.frontend import render_frontend_html
 
 
 def test_render_frontend_html_contains_expected_markup():

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from skylos.visitor import Definition
+from skylos.visitors.base import Definition
 from skylos.visitors.languages.typescript import scan_typescript_file
 from skylos.visitors.languages.typescript.workspace import (
     discover_workspace_inventory,

@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 import pytest
 
-from skylos.control_flow import (
+from skylos.analysis.control_flow import (
     evaluate_static_condition,
     extract_constant_string,
     _is_sys_version_info_node,

@@ -925,7 +925,7 @@ def _register_tools(mcp):
                 validate_patches,
                 generate_fix_summary,
             )
-            from skylos.grep_verify import grep_verify_findings
+            from skylos.core.grep_verify import grep_verify_findings
 
             target = os.path.abspath(path)
             raw = run_static(

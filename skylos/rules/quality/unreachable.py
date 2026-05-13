@@ -1,6 +1,6 @@
 import ast
 from skylos.rules.base import SkylosRule
-from skylos.control_flow import evaluate_static_condition
+from skylos.analysis.control_flow import evaluate_static_condition
 
 
 _BODY_NODE_TYPES = (

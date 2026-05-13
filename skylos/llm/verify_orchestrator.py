@@ -19,7 +19,7 @@ from .dead_code_verifier import (
     _parse_int,
 )
 
-from skylos.grep_verify import (
+from skylos.core.grep_verify import (
     _run_grep,
     multi_strategy_search as _multi_strategy_search,
     parallel_multi_strategy_search as _parallel_multi_strategy_search,
@@ -3351,7 +3351,7 @@ def run_verification(
 ) -> dict[str, Any]:
     from skylos.llm.agents import AgentConfig
 
-    from skylos.grep_cache import GrepCache
+    from skylos.core.grep_cache import GrepCache
 
     start_time = time.time()
     project_root = Path(project_root)

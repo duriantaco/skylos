@@ -1,7 +1,7 @@
 import subprocess
 from unittest.mock import patch
 
-from skylos.provenance import (
+from skylos.reporting.provenance import (
     FileProvenance,
     ProvenanceReport,
     RiskIntersection,

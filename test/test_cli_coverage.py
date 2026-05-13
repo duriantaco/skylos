@@ -146,7 +146,7 @@ class TestCoverageFlag:
 
 
 class TestCoverageIntegration:
-    @patch("skylos.implicit_refs.pattern_tracker")
+    @patch("skylos.analysis.implicit_refs.pattern_tracker")
     @patch("skylos.cli.subprocess.run")
     @patch("skylos.cli.run_analyze")
     def test_coverage_data_loaded_before_analysis(

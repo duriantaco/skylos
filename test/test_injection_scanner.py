@@ -3,13 +3,13 @@ import tempfile
 import os
 from pathlib import Path
 
-from skylos.canonicalize import (
+from skylos.security.canonicalize import (
     normalize,
     strip_zero_width,
     decode_base64_blobs,
     detect_homoglyphs,
 )
-from skylos.injection_scanner import scan_file, scan_directory
+from skylos.security.injection_scanner import scan_file, scan_directory
 
 
 class TestNormalize:

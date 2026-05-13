@@ -7,7 +7,7 @@ from typing import Any
 
 from skylos.debt.result import DebtSignal, DebtSnapshot
 from skylos.debt.scoring import build_hotspots, compute_debt_score
-from skylos.file_discovery import find_git_root
+from skylos.core.file_discovery import find_git_root
 
 DEBT_VERSION = "1.0"
 

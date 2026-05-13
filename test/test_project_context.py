@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from skylos.project_context import normalize_repo_subpath, repo_subpath_for_project
+from skylos.cloud.project_context import normalize_repo_subpath, repo_subpath_for_project
 
 
 def test_normalize_repo_subpath():

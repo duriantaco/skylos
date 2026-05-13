@@ -125,7 +125,7 @@ def _llm_finding(
 
 P_ANALYZE = "skylos.analyzer.analyze"
 P_EXCLUDE = "skylos.constants.parse_exclude_folders"
-P_CUSTOM = "skylos.sync.get_custom_rules"
+P_CUSTOM = "skylos.cloud.sync.get_custom_rules"
 P_LLM = "skylos.llm.analyzer.SkylosLLM"
 P_LLM_CONF = "skylos.llm.analyzer.AnalyzerConfig"
 P_CONF = "skylos.llm.schemas.Confidence"

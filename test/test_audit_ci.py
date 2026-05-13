@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from skylos.audit_ci import evaluate_deep_audit_ci_gate
-from skylos.audit_store import AuditStore
-from skylos.audit_types import AuditCandidate, AuditProcessSummary, sha256_file
+from skylos.audit.ci import evaluate_deep_audit_ci_gate
+from skylos.audit.store import AuditStore
+from skylos.audit.types import AuditCandidate, AuditProcessSummary, sha256_file
 
 
 def _candidate(candidate_id: str, *, severity: str = "high") -> AuditCandidate:

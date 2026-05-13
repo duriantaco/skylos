@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from skylos.audit_redaction import REDACTION
-from skylos.audit_revalidator import revalidate_deep_audit_findings
-from skylos.audit_store import AuditStore
-from skylos.audit_types import AuditCandidate, sha256_file
+from skylos.audit.redaction import REDACTION
+from skylos.audit.revalidator import revalidate_deep_audit_findings
+from skylos.audit.store import AuditStore
+from skylos.audit.types import AuditCandidate, sha256_file
 
 
 def _fake_github_token() -> str:

@@ -1,7 +1,7 @@
 import ast
 import pytest
-from skylos.architecture import get_architecture_findings
-from skylos.circular_deps import (
+from skylos.analysis.architecture import get_architecture_findings
+from skylos.analysis.circular_deps import (
     CircularDependencyAnalyzer,
     CircularDependencyRule,
     DependencyGraphBuilder,

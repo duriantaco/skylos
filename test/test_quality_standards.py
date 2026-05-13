@@ -17,7 +17,7 @@ from skylos.rules.quality.logic import (
     BooleanTrapRule,
     NoEffectStatementRule,
 )
-from skylos.sarif_exporter import SarifExporter
+from skylos.reporting.sarif import SarifExporter
 
 
 # ---------------------------------------------------------------------------

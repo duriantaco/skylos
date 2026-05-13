@@ -2,8 +2,8 @@ import json
 import subprocess
 from pathlib import Path
 
-import skylos.security_benchmark as benchmark
-from skylos.security_benchmark import (
+import skylos.benchmarks.security as benchmark
+from skylos.benchmarks.security import (
     SECURITY_TAXONOMY,
     format_summary,
     load_manifest,
