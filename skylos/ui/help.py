@@ -121,7 +121,12 @@ COMMANDS = [
     {"name": "skylos doctor", "desc": "Check installation health", "group": "Utility"},
     {
         "name": "skylos clean",
-        "desc": "Remove cache and state files",
+        "desc": "Interactively remove dead code",
+        "group": "Utility",
+    },
+    {
+        "name": "skylos cache clear [path]",
+        "desc": "Clear cached run data",
         "group": "Utility",
     },
     {
