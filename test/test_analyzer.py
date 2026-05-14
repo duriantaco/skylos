@@ -173,6 +173,41 @@ class TestSkylos:
 
         assert not skylos._should_exclude_file(file_path, root, None)
 
+    def test_trace_file_false_ignores_existing_project_root_trace(self, tmp_path):
+        module = tmp_path / "app.py"
+        module.write_text(
+            "def root_traced():\n"
+            "    return 1\n"
+            "\n"
+            "def unused():\n"
+            "    return 2\n",
+            encoding="utf-8",
+        )
+        (tmp_path / ".skylos_trace").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "calls": [
+                        {
+                            "file": str(module),
+                            "function": "root_traced",
+                            "line": 1,
+                            "count": 1,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(str(tmp_path), conf=0, grep_verify=False, trace_file=False)
+        )
+        names = {item.get("name") for item in result.get("unused_functions", [])}
+
+        assert "root_traced" in names
+        assert "unused" in names
+
     @patch("skylos.analyzer.Path")
     def test_get_python_files_single_file(self, mock_path, skylos):
         mock_file = Mock()

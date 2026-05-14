@@ -1757,6 +1757,7 @@ class Skylos:
         changed_files=None,
         grep_verify=True,
         enable_sca=False,
+        trace_file=None,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -1878,9 +1879,16 @@ class Skylos:
         root = project_root
         self._project_root = project_root
 
-        trace_path = project_root / ".skylos_trace"
-        if trace_path.exists():
-            pattern_tracker.load_trace(str(trace_path))
+        if trace_file is not False:
+            trace_path = (
+                project_root / ".skylos_trace"
+                if trace_file is None
+                else Path(trace_file)
+            )
+            if not trace_path.is_absolute():
+                trace_path = project_root / trace_path
+            if trace_path.exists():
+                pattern_tracker.load_trace(str(trace_path))
 
         all_secrets = []
         all_dangers = []
@@ -3214,6 +3222,7 @@ def analyze(
     changed_files=None,
     grep_verify=True,
     enable_sca=False,
+    trace_file=None,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -3228,6 +3237,7 @@ def analyze(
         changed_files,
         grep_verify=grep_verify,
         enable_sca=enable_sca,
+        trace_file=trace_file,
     )
 
 

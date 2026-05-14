@@ -16,6 +16,13 @@ from skylos.constants import (
 )
 from skylos.config import load_config
 from skylos.cloud.credentials import PROVIDERS
+from skylos.core.result_cache import (
+    build_trace_cache_key,
+    load_trace_cache,
+    read_trace_payload,
+    save_trace_cache,
+    write_trace_payload,
+)
 
 from pathlib import Path
 import pathlib
@@ -2309,6 +2316,12 @@ def _run_clean_command(argv):
     return run_clean_command(argv)
 
 
+def _run_cache_command(argv):
+    from skylos.commands.cache_cmd import run_cache_command
+
+    return run_cache_command(argv, console_factory=Console)
+
+
 def run_debt_command(argv):
     from skylos.commands.debt_cmd import run_debt_command as run_debt_command_impl
     from skylos.api import upload_debt_report
@@ -2556,6 +2569,7 @@ EARLY_COMMAND_HANDLERS = {
     "badge": "_run_badge_command",
     "whitelist": "_run_whitelist_command",
     "clean": "_run_clean_command",
+    "cache": "_run_cache_command",
     "doctor": "_run_doctor_command",
     "whoami": "_run_whoami_command",
     "login": "_run_login_command",
@@ -2657,6 +2671,21 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         "--trace",
         action="store_true",
         help="Run tests with call tracing to capture dynamic dispatch (e.g., visitor patterns)",
+    )
+    parser.add_argument(
+        "--cache",
+        action="store_true",
+        help="Cache successful --trace pytest call-tracing runs.",
+    )
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Rerun --trace and overwrite its cache entry.",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable trace cache even when --cache is set.",
     )
     parser.add_argument(
         "--coverage",
@@ -3181,8 +3210,19 @@ def _print_main_scan_banner(args, console, final_exclude_folders):
     return False
 
 
+def _trace_cache_requested(args) -> bool:
+    if not getattr(args, "trace", False):
+        return False
+    if getattr(args, "no_cache", False):
+        return False
+    if getattr(args, "pytest_fixtures", False):
+        return False
+    return bool(getattr(args, "cache", False) or getattr(args, "refresh_cache", False))
+
+
 def _run_pre_analysis_steps(args, project_root, console):
     pytest_fixtures_ok = None
+    trace_file_for_analysis = None
     quiet_output = _is_main_machine_output(args)
 
     if args.coverage:
@@ -3221,7 +3261,40 @@ def _run_pre_analysis_steps(args, project_root, console):
         if not quiet_output:
             console.print("[brand]Running tests with call tracing...[/brand]")
 
-        trace_script = textwrap.dedent(f"""\
+        trace_file = project_root / ".skylos_trace"
+        trace_cache_enabled = _trace_cache_requested(args)
+        trace_cache_key = None
+        trace_cache_fingerprint = None
+        trace_cache_hit = False
+
+        if trace_cache_enabled:
+            trace_cache_key, trace_cache_fingerprint = build_trace_cache_key(
+                project_root,
+                args.path,
+                pytest_args=["-q"],
+                pytest_fixtures=bool(args.pytest_fixtures),
+                return_fingerprint=True,
+            )
+            if not getattr(args, "refresh_cache", False):
+                cached_entry = load_trace_cache(project_root, trace_cache_key)
+                if cached_entry is not None:
+                    write_trace_payload(trace_file, cached_entry["trace"])
+                    trace_file_for_analysis = trace_file
+                    trace_cache_hit = True
+                    if not quiet_output:
+                        console.print(
+                            "[brand]Trace cache hit:[/brand] reusing cached pytest call trace."
+                        )
+
+        if not trace_cache_hit:
+            try:
+                trace_file.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+
+            trace_script = textwrap.dedent(f"""\
 import os
 import sys
 sys.path.insert(0, {str(project_root)!r})
@@ -3249,28 +3322,50 @@ sys.exit(ret)
 
 """)
 
-        trace_result = subprocess.run(
-            [sys.executable, "-c", trace_script],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-        )
+            trace_result = subprocess.run(
+                [sys.executable, "-c", trace_script],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+            )
 
-        trace_file = project_root / ".skylos_trace"
-
-        if trace_result.returncode != 0 and not quiet_output:
-            if trace_file.exists() and trace_file.stat().st_size > 0:
-                console.print(
-                    "[warn]Tests had failures, but trace data was collected.[/warn]"
-                )
+            trace_payload = read_trace_payload(trace_file)
+            if trace_payload is not None:
+                trace_file_for_analysis = trace_file
             else:
+                trace_file_for_analysis = False
+
+            if trace_result.returncode != 0 and not quiet_output:
+                if trace_payload is not None:
+                    console.print(
+                        "[warn]Tests had failures, but trace data was collected.[/warn]"
+                    )
+                else:
+                    console.print(
+                        "[warn]Trace run failed; continuing without trace.[/warn]"
+                    )
+                    if trace_result.stderr:
+                        console.print(trace_result.stderr)
+            elif trace_payload is None and not quiet_output:
                 console.print(
-                    "[warn]Trace run failed; continuing without trace.[/warn]"
+                    "[warn]Trace run completed but no usable trace was produced.[/warn]"
                 )
-                if trace_result.stderr:
-                    console.print(trace_result.stderr)
-        elif not quiet_output:
-            console.print("[good]Trace data collected[/good]")
+            elif not quiet_output:
+                console.print("[good]Trace data collected[/good]")
+
+            if (
+                trace_cache_enabled
+                and trace_cache_key is not None
+                and trace_payload is not None
+                and trace_result.returncode == 0
+            ):
+                save_trace_cache(
+                    project_root,
+                    trace_cache_key,
+                    trace_payload,
+                    pytest_returncode=trace_result.returncode,
+                    fingerprint_summary=trace_cache_fingerprint,
+                )
 
     if args.pytest_fixtures and (not args.coverage) and (not args.trace):
         if not quiet_output:
@@ -3355,6 +3450,7 @@ sys.exit(ret)
         pytest_fixtures_ok=pytest_fixtures_ok,
         custom_rules_data=custom_rules_data,
         changed_files=changed_files,
+        trace_file=trace_file_for_analysis,
     )
 
 
@@ -5508,6 +5604,7 @@ def main() -> None:
     pytest_fixtures_ok = pre_analysis.pytest_fixtures_ok
     custom_rules_data = pre_analysis.custom_rules_data
     changed_files = pre_analysis.changed_files
+    trace_file = pre_analysis.trace_file
 
     try:
         scan_path = args.path if len(args.path) > 1 else args.path[0]
@@ -5525,6 +5622,7 @@ def main() -> None:
                 changed_files=changed_files,
                 grep_verify=not getattr(args, "no_grep_verify", False),
                 enable_sca=bool(args.sca),
+                trace_file=trace_file,
             )
 
         if machine_output:
