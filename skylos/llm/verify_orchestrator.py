@@ -2945,8 +2945,12 @@ def run_verification(
     stats.elapsed_seconds = round(time.time() - start_time, 1)
 
     try:
-        usage = getattr(agent.get_adapter(), "total_usage", {}) or {}
-    except (AttributeError, RuntimeError, TypeError):
+        usage = (
+            getattr(agent.get_adapter(), "total_usage", {}) or {}
+            if stats.llm_calls
+            else {}
+        )
+    except (AttributeError, ImportError, RuntimeError, TypeError):
         usage = {}
     stats.prompt_tokens = int(usage.get("prompt_tokens") or 0)
     stats.completion_tokens = int(usage.get("completion_tokens") or 0)

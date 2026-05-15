@@ -1571,15 +1571,19 @@ def test_run_verification_reclassifies_local_on_emit_listener_without_emit(tmp_p
         },
     }
 
-    result = run_verification(
-        findings=[],
-        defs_map=defs_map,
-        project_root=str(proj),
-        model="test",
-        api_key="test",
-        quiet=True,
-        enable_entry_discovery=False,
-    )
+    with patch(
+        "skylos.llm.dead_code_verifier.DeadCodeVerifierAgent.get_adapter",
+        side_effect=ImportError("LiteLLM is required for this feature."),
+    ):
+        result = run_verification(
+            findings=[],
+            defs_map=defs_map,
+            project_root=str(proj),
+            model="test",
+            api_key="test",
+            quiet=True,
+            enable_entry_discovery=False,
+        )
 
     new_dead = result["new_dead_code"]
     assert len(new_dead) == 1
