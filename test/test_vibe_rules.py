@@ -96,7 +96,7 @@ class TestEmptyErrorHandlerFindings:
                 def foo():
                     try:
                         x = 1
-                    except ValueError:
+                    except Exception:
                         return
                 """,
                 "HIGH",
@@ -107,7 +107,7 @@ class TestEmptyErrorHandlerFindings:
                 def foo():
                     try:
                         x = 1
-                    except ValueError:
+                    except Exception:
                         return None
                 """,
                 "HIGH",
@@ -218,6 +218,35 @@ class TestEmptyErrorHandlerSafeCases:
                     os.remove("tmp.txt")
                 """,
                 id="specific-suppress",
+            ),
+            pytest.param(
+                """
+                def parse(raw):
+                    try:
+                        return int(raw)
+                    except ValueError:
+                        return None
+                """,
+                id="narrow-return-none-fallback",
+            ),
+            pytest.param(
+                """
+                for raw in rows:
+                    try:
+                        values.append(int(raw))
+                    except ValueError:
+                        continue
+                """,
+                id="narrow-continue-fallback",
+            ),
+            pytest.param(
+                """
+                try:
+                    import optional_plugin
+                except ImportError:
+                    pass
+                """,
+                id="narrow-pass-fallback",
             ),
         ],
     )

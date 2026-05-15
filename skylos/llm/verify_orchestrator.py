@@ -344,7 +344,7 @@ def _read_context_around_match(grep_line: str, context_lines: int = 8) -> str | 
             context_parts.append(f"{i + 1:4d}{marker}{all_lines[i].rstrip()}")
 
         return "\n".join(context_parts)
-    except Exception:
+    except (OSError, ValueError, IndexError):
         return None
 
 
@@ -660,8 +660,10 @@ def _find_parent_class_info(
                             info += f"\n  CONFIRMED (via importlib): Parent `{module_path}.{base_name}` defines `{simple_name}`"
                             found_in_parent = True
                             break
-                    except Exception:
-                        pass
+                    except (OSError, _sp.SubprocessError) as exc:
+                        logger.debug(
+                            "Failed to inspect parent method via import: %s", exc
+                        )
 
             if not found_in_parent:
                 import sys
@@ -765,8 +767,8 @@ def _find_string_dispatch(
             for line in result.stdout.strip().splitlines():
                 if "__pycache__" not in line and line not in results:
                     results.append(line)
-        except Exception:
-            pass
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.debug("String dispatch grep failed: %s", exc)
 
     return results[:max_results]
 
@@ -2200,8 +2202,8 @@ def _build_source_cache(
     for fp in files_needed:
         try:
             cache[fp] = Path(fp).read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("Skipping unreadable verification source file %s: %s", fp, exc)
 
     return cache
 
@@ -2943,8 +2945,12 @@ def run_verification(
     stats.elapsed_seconds = round(time.time() - start_time, 1)
 
     try:
-        usage = getattr(agent.get_adapter(), "total_usage", {}) or {}
-    except Exception:
+        usage = (
+            getattr(agent.get_adapter(), "total_usage", {}) or {}
+            if stats.llm_calls
+            else {}
+        )
+    except (AttributeError, ImportError, RuntimeError, TypeError):
         usage = {}
     stats.prompt_tokens = int(usage.get("prompt_tokens") or 0)
     stats.completion_tokens = int(usage.get("completion_tokens") or 0)

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import site
+import sys
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -18,6 +20,7 @@ from pathlib import Path
 
 _IMPORT_TO_DIST_MAPPING: dict[str, str] | None = None
 _MAPPING_FILENAME = "pipreqs_import_mapping.txt"
+logger = logging.getLogger(__name__)
 
 
 def _load_import_to_dist_mapping() -> dict[str, str]:
@@ -43,8 +46,8 @@ def _load_import_to_dist_mapping() -> dict[str, str]:
                 dist_name = dist_name.strip()
                 if import_name and dist_name:
                     mapping[import_name] = dist_name
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("Failed to load import mapping from %s: %s", mapping_path, exc)
 
     _SUPPLEMENT = {
         "cv2": "opencv-python",
@@ -98,14 +101,9 @@ def _normalize_name(name):
 
 
 def _get_stdlib_modules():
-    try:
-        import sys
-
-        std = getattr(sys, "stdlib_module_names", None)
-        if std:
-            return set(std)
-    except Exception:
-        pass
+    std = getattr(sys, "stdlib_module_names", None)
+    if std:
+        return set(std)
 
     return {
         "os",
@@ -152,24 +150,24 @@ def _build_installed_module_mapping():
                 mapping[module] = set()
             for d in dists:
                 mapping[module].add(_normalize_name(d))
-    except ImportError:
-        pass
-    except Exception:
-        pass
+    except ImportError as exc:
+        logger.debug("importlib.metadata unavailable: %s", exc)
+    except (RuntimeError, ValueError) as exc:
+        logger.debug("Failed to inspect installed package metadata: %s", exc)
 
     site_packages_dirs = []
 
     try:
         site_packages_dirs.extend(site.getsitepackages())
-    except Exception:
-        pass
+    except (AttributeError, OSError) as exc:
+        logger.debug("Failed to inspect site-packages directories: %s", exc)
 
     try:
         user_site = site.getusersitepackages()
         if user_site:
             site_packages_dirs.append(user_site)
-    except Exception:
-        pass
+    except (AttributeError, OSError) as exc:
+        logger.debug("Failed to inspect user site-packages directory: %s", exc)
 
     try:
         import sys
@@ -178,8 +176,8 @@ def _build_installed_module_mapping():
             venv_site = Path(sys.prefix) / "lib"
             for pydir in venv_site.glob("python*/site-packages"):
                 site_packages_dirs.append(str(pydir))
-    except Exception:
-        pass
+    except OSError as exc:
+        logger.debug("Failed to inspect virtualenv site-packages directory: %s", exc)
 
     for sp_dir in site_packages_dirs:
         sp_path = Path(sp_dir)
@@ -197,8 +195,10 @@ def _build_installed_module_mapping():
                         if line.startswith("Name:"):
                             dist_name = line.split(":", 1)[1].strip()
                             break
-                except Exception:
-                    pass
+                except OSError as exc:
+                    logger.debug(
+                        "Failed to read package metadata %s: %s", metadata_file, exc
+                    )
 
             if not dist_name:
                 base_name = dist_info.name.replace(".dist-info", "")
@@ -228,8 +228,10 @@ def _build_installed_module_mapping():
                             if module not in mapping:
                                 mapping[module] = set()
                             mapping[module].add(normalized_dist)
-                except Exception:
-                    pass
+                except OSError as exc:
+                    logger.debug(
+                        "Failed to read top-level metadata %s: %s", top_level_file, exc
+                    )
                 continue
 
             record_file = dist_info / "RECORD"
@@ -263,8 +265,10 @@ def _build_installed_module_mapping():
                         if module not in mapping:
                             mapping[module] = set()
                         mapping[module].add(normalized_dist)
-                except Exception:
-                    pass
+                except OSError as exc:
+                    logger.debug(
+                        "Failed to read package record %s: %s", record_file, exc
+                    )
 
     return mapping
 
@@ -319,8 +323,8 @@ def _collect_local_modules(repo_root):
                 if init_file.exists():
                     local.add(p.name)
 
-    except Exception:
-        pass
+    except OSError as exc:
+        logger.debug("Failed to collect local modules from %s: %s", repo_root, exc)
 
     return local
 
@@ -330,7 +334,7 @@ def _parse_requirements_txt(path):
 
     try:
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except Exception:
+    except OSError:
         return deps
 
     for line in lines:
@@ -402,7 +406,7 @@ def _parse_pyproject_toml(path):
 
     try:
         txt = path.read_text(encoding="utf-8", errors="ignore")
-    except Exception:
+    except OSError:
         return deps, project_name
 
     name_match = re.search(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']', txt)
@@ -497,7 +501,7 @@ def _parse_setup_py(path):
 
     try:
         txt = path.read_text(encoding="utf-8", errors="ignore")
-    except Exception:
+    except OSError:
         return deps, project_name
 
     name_match = re.search(r"""name\s*=\s*['"]([^'"]+)['"]""", txt)
@@ -555,7 +559,7 @@ def _has_dependency_manifest_context(repo_root):
                 for req_file in req_dir.glob("*.txt"):
                     if req_file.exists():
                         return True
-        except Exception:
+        except OSError:
             return False
 
         parent = current.parent
@@ -615,7 +619,7 @@ def _find_import_line(src, mod):
 
     try:
         lines = src.splitlines()
-    except Exception:
+    except AttributeError:
         return 1
 
     pattern = r"^\s*(import|from)\s+{}(\.|\s|$)".format(re.escape(mod))
@@ -651,8 +655,8 @@ def _load_pypi_cache(cache_path):
         if cache_path.exists():
             txt = cache_path.read_text(encoding="utf-8")
             cache = json.loads(txt)
-    except Exception:
-        pass
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        logger.debug("Ignoring invalid PyPI cache %s: %s", cache_path, exc)
     return cache
 
 
@@ -660,8 +664,8 @@ def _save_pypi_cache(cache_path, cache):
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+    except (OSError, TypeError) as exc:
+        logger.debug("Failed to save PyPI cache %s: %s", cache_path, exc)
 
 
 def _check_pypi_status(package_name, cache):
@@ -696,7 +700,7 @@ def _check_pypi_status(package_name, cache):
             cache[normalized] = "unknown"
             return "unknown"
 
-        except Exception:
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             cache[normalized] = "unknown"
             return "unknown"
 
@@ -741,7 +745,7 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
     for file_path in py_files:
         try:
             src = file_path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+        except OSError:
             continue
 
         imported = _extract_imports(src)

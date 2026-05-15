@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
 
+import requests
 from rich.console import Console
 
 from skylos.cicd.evidence import (
@@ -22,6 +24,7 @@ from skylos.cicd.risk_passport import (
 from skylos.rules.quality.regression import detect_security_regressions
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 def run_pr_review(
@@ -119,7 +122,8 @@ def _resolve_review_provenance(results: dict, *, diff_base: str) -> dict | None:
         from skylos.reporting.provenance import analyze_provenance
 
         return analyze_provenance(project_root, base_ref=diff_base).to_dict()
-    except Exception:
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        logger.debug("Failed to resolve review provenance: %s", exc)
         return None
 
 
@@ -552,8 +556,8 @@ def _to_relative_path(filepath: str) -> str:
             root = result.stdout.strip()
             if filepath.startswith(root):
                 return filepath[len(root) :].lstrip("/")
-    except Exception:
-        pass
+    except OSError as exc:
+        logger.debug("Failed to resolve git root for review path: %s", exc)
     return filepath
 
 
@@ -809,8 +813,7 @@ def _post_summary_comment(
 
 def _fetch_previous_grade(repo: str, base_branch: str = "origin/main") -> dict | None:
     try:
-        from skylos.api import get_project_token, BASE_URL
-        import requests
+        from skylos.api import BASE_URL, get_project_token
 
         token = get_project_token()
         if not token:
@@ -825,8 +828,13 @@ def _fetch_previous_grade(repo: str, base_branch: str = "origin/main") -> dict |
         )
         if resp.status_code == 200:
             return resp.json().get("grade")
-    except Exception:
-        pass
+    except (
+        ImportError,
+        OSError,
+        ValueError,
+        requests.exceptions.RequestException,
+    ) as exc:
+        logger.debug("Failed to fetch previous grade: %s", exc)
     return None
 
 

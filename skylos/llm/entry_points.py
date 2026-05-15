@@ -125,8 +125,8 @@ def _gather_config_files(project_root: Path) -> dict[str, str]:
                     if len(text) > 10_000:
                         text = text[:10_000] + "\n... (truncated)"
                     configs[str(p.relative_to(project_root))] = text
-                except Exception:
-                    pass
+                except OSError as exc:
+                    logger.debug("Skipping unreadable config file %s: %s", p, exc)
         else:
             p = project_root / pattern
             if p.exists():
@@ -135,8 +135,8 @@ def _gather_config_files(project_root: Path) -> dict[str, str]:
                     if len(text) > 10_000:
                         text = text[:10_000] + "\n... (truncated)"
                     configs[pattern] = text
-                except Exception:
-                    pass
+                except OSError as exc:
+                    logger.debug("Skipping unreadable config file %s: %s", p, exc)
 
     return configs
 
@@ -212,8 +212,8 @@ def _build_repo_facts(
                 facts.pytest_class_patterns = class_patterns
             if function_patterns:
                 facts.pytest_function_patterns = function_patterns
-        except Exception:
-            pass
+        except (OSError, tomllib.TOMLDecodeError, AttributeError, TypeError) as exc:
+            logger.debug("Failed to read pytest settings from pyproject.toml: %s", exc)
 
     parser = configparser.ConfigParser()
     for cfg_name, section in (
@@ -238,7 +238,8 @@ def _build_repo_facts(
                 facts.pytest_class_patterns = class_patterns
             if function_patterns:
                 facts.pytest_function_patterns = function_patterns
-        except Exception:
+        except (OSError, configparser.Error) as exc:
+            logger.debug("Failed to read pytest settings from %s: %s", cfg_path, exc)
             continue
 
     facts.mkdocs_hook_files = _parse_mkdocs_hook_files(configs)
@@ -295,8 +296,14 @@ def discover_entry_points(
                     for ep in cached.get("entry_points", [])
                     if ep.get("name") and ep["name"] not in known_entry_points
                 ]
-        except Exception:
-            pass
+        except (
+            OSError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            AttributeError,
+        ) as exc:
+            logger.debug("Ignoring invalid entry point cache %s: %s", cache_path, exc)
 
     config_text = []
     for name, content in configs.items():
@@ -353,11 +360,17 @@ def discover_entry_points(
                     {"hash": current_hash, "entry_points": all_discovered}, indent=2
                 )
             )
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("Failed to write entry point cache %s: %s", cache_path, exc)
 
         return results
 
-    except (json.JSONDecodeError, Exception) as e:
+    except (
+        json.JSONDecodeError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        AttributeError,
+    ) as e:
         (log or logger).warning(f"Entry point discovery failed: {e}")
         return []

@@ -309,7 +309,7 @@ class TestRunStaticOnFiles:
 
     @patch(P_CUSTOM, return_value=None)
     @patch(P_EXCLUDE, return_value=set())
-    @patch(P_ANALYZE, side_effect=Exception("boom"))
+    @patch(P_ANALYZE, side_effect=RuntimeError("boom"))
     def test_returns_empty_on_analyze_failure(self, _a, _e, _c):
         result = run_static_on_files(["/proj/a.py"], project_root=pathlib.Path("/proj"))
         assert result == _empty_result()

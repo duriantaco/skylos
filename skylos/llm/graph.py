@@ -1,5 +1,9 @@
 import ast
+import logging
+
 import networkx as nx
+
+logger = logging.getLogger(__name__)
 
 
 class CodeGraph:
@@ -110,8 +114,8 @@ class CodeGraph:
                         self.call_graph, target_name, d
                     )
                     relevant.update(descendants)
-            except Exception:
-                pass
+            except nx.NetworkXException as exc:
+                logger.debug("Failed to collect call graph descendants: %s", exc)
 
         output = []
         for name in relevant:
@@ -188,8 +192,8 @@ class CodeGraph:
                 try:
                     reachable = nx.descendants(self.data_flow, source)
                     all_tainted.update(reachable)
-                except Exception:
-                    pass
+                except nx.NetworkXException as exc:
+                    logger.debug("Failed to collect taint descendants: %s", exc)
 
         for node in all_tainted:
             if not isinstance(node, str):
@@ -214,8 +218,8 @@ class CodeGraph:
                                             "sink_type": sink,
                                         }
                                     )
-                            except Exception:
-                                pass
+                            except nx.NetworkXException as exc:
+                                logger.debug("Failed to resolve taint path: %s", exc)
 
         return paths
 

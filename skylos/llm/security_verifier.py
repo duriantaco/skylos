@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,8 @@ UNDECIDED_COUNT = "undecided"
 REFUTED_FINDINGS_KEY = "refuted_findings"
 REVIEW_MODE = "review"
 CHALLENGE_MODE = "challenge"
+
+logger = logging.getLogger(__name__)
 
 REVIEW_DECISION_SCHEMA = {
     "type": "object",
@@ -194,7 +197,8 @@ def _iter_batches(
 def _read_source(file_path: str) -> str | None:
     try:
         return Path(file_path).read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
+        logger.debug("Failed to read security review source %s: %s", file_path, exc)
         return None
 
 
@@ -416,7 +420,8 @@ class SecurityVerifier:
                 user,
                 response_format=REVIEW_DECISION_FORMAT,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("Security verifier %s request failed: %s", mode, exc)
             return None
 
     def _system_prompt(self, mode: str) -> str:
@@ -460,18 +465,32 @@ Respond with JSON only."""
             return None
         try:
             payload = json.loads(normalize_json_response_text(response))
-        except Exception:
+        except json.JSONDecodeError as exc:
+            logger.warning("Security verifier returned invalid JSON: %s", exc)
             return None
 
-        reviews = payload.get(REVIEWS_KEY) if isinstance(payload, dict) else None
-        return reviews if isinstance(reviews, list) else None
+        if not isinstance(payload, dict):
+            logger.warning("Security verifier JSON response was not an object")
+            return None
+
+        reviews = payload.get(REVIEWS_KEY)
+        if not isinstance(reviews, list):
+            logger.warning(
+                "Security verifier JSON response missing %r list", REVIEWS_KEY
+            )
+            return None
+        return reviews
 
     def _review_map(self, reviews: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
-        return {
-            int(review.get(ID_KEY)): review
-            for review in reviews
-            if isinstance(review, dict) and isinstance(review.get(ID_KEY), int)
-        }
+        review_map: dict[int, dict[str, Any]] = {}
+        for review in reviews:
+            if not isinstance(review, dict):
+                continue
+            review_id = review.get(ID_KEY)
+            if not isinstance(review_id, int):
+                continue
+            review_map[review_id] = review
+        return review_map
 
     def _normalized_decision(
         self,

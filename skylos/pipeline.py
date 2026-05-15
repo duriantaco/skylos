@@ -105,7 +105,10 @@ def _enrich_with_llm_suggestions(
                 source = pathlib.Path(filepath).read_text(
                     encoding="utf-8", errors="ignore"
                 )
-            except Exception:
+            except OSError as exc:
+                logger.debug(
+                    "Skipping unreadable source for suggestions %s: %s", filepath, exc
+                )
                 continue
 
         findings_text = "\n".join(
@@ -286,12 +289,12 @@ def run_static_on_files(
 
     try:
         from skylos.cloud.sync import get_custom_rules
-
+    except ImportError as exc:
+        logger.debug("Custom rules sync unavailable: %s", exc)
+    else:
         custom_rules_data = get_custom_rules()
         if custom_rules_data:
             os.environ["SKYLOS_CUSTOM_RULES"] = json.dumps(custom_rules_data)
-    except Exception:
-        pass
 
     try:
         from skylos.constants import parse_exclude_folders
@@ -311,7 +314,8 @@ def run_static_on_files(
             changed_files=sorted(target_files),
         )
         full_result = json.loads(result_json)
-    except Exception:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        logger.debug("Static analysis failed for changed files: %s", exc)
         return _empty_result()
 
     filtered = {
@@ -495,8 +499,8 @@ def run_pipeline(
             source_cache[_norm(f)] = pathlib.Path(f).read_text(
                 encoding="utf-8", errors="ignore"
             )
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("Skipping unreadable pipeline source file %s: %s", f, exc)
 
     dead_code_findings = static_findings.get("dead_code", [])
     review_index = build_repo_activation_index(

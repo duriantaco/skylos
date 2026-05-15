@@ -1,7 +1,9 @@
+import logging
 from unittest.mock import patch
 
 import skylos.api as api
 from skylos.cli import review_security_scan_result
+from skylos.llm.security_verifier import ID_KEY, REVIEW_MODE, SecurityVerifier
 from skylos.llm.schemas import (
     AnalysisResult,
     CodeLocation,
@@ -21,6 +23,65 @@ def _security_finding(*, line=3, severity=Severity.HIGH):
         location=CodeLocation(file="app.py", line=line),
         confidence=Confidence.HIGH,
     )
+
+
+def _security_verifier():
+    return SecurityVerifier.__new__(SecurityVerifier)
+
+
+def _let_caplog_capture_skylos_logs(monkeypatch):
+    monkeypatch.setattr(logging.getLogger("skylos"), "propagate", True)
+
+
+def test_parse_reviews_logs_invalid_json(caplog, monkeypatch):
+    _let_caplog_capture_skylos_logs(monkeypatch)
+    verifier = _security_verifier()
+
+    with caplog.at_level(logging.WARNING, logger="skylos.llm.security_verifier"):
+        reviews = verifier._parse_reviews("not json")
+
+    assert reviews is None
+    assert "invalid JSON" in caplog.text
+
+
+def test_parse_reviews_logs_missing_reviews_list(caplog, monkeypatch):
+    _let_caplog_capture_skylos_logs(monkeypatch)
+    verifier = _security_verifier()
+
+    with caplog.at_level(logging.WARNING, logger="skylos.llm.security_verifier"):
+        reviews = verifier._parse_reviews('{"reviews": {"id": 1}}')
+
+    assert reviews is None
+    assert "missing 'reviews' list" in caplog.text
+
+
+def test_parse_reviews_accepts_reviews_list():
+    verifier = _security_verifier()
+
+    reviews = verifier._parse_reviews(
+        '{"reviews": [{"id": 1, "verdict": "SUPPORTED", "reason": "ok"}]}'
+    )
+
+    assert reviews == [{ID_KEY: 1, "verdict": "SUPPORTED", "reason": "ok"}]
+
+
+def test_request_review_logs_adapter_failure(caplog, monkeypatch):
+    _let_caplog_capture_skylos_logs(monkeypatch)
+
+    class BrokenVerifier(SecurityVerifier):
+        def get_adapter(self):
+            raise RuntimeError("provider down")
+
+    verifier = BrokenVerifier(
+        model="gpt-4.1",
+        api_key="k",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="skylos.llm.security_verifier"):
+        response = verifier._request_review("review this", mode=REVIEW_MODE)
+
+    assert response is None
+    assert "request failed" in caplog.text
 
 
 def test_review_security_scan_result_marks_findings_review_only():
