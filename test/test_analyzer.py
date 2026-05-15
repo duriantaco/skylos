@@ -416,6 +416,141 @@ class TestAnalyze:
         assert _architecture_iad_strict({"enforce_iad": True}) is True
         assert _architecture_iad_strict({"strict_iad": True}) is True
 
+    def test_package_subdir_scan_keeps_absolute_imports_live(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        package = tmp_path / "pkg"
+        package.mkdir()
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "api.py").write_text(
+            "from pkg.payload import action as _action\n\n"
+            "def action():\n"
+            "    return _action()\n",
+            encoding="utf-8",
+        )
+        (package / "payload.py").write_text(
+            "def action():\n"
+            "    return 'ok'\n",
+            encoding="utf-8",
+        )
+        (package / "consumer.py").write_text(
+            "from pkg.api import action\n\n"
+            "def run():\n"
+            "    return action()\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(package), conf=0, grep_verify=False))
+        unused = {
+            (Path(item["file"]).name, item["simple_name"])
+            for item in result.get("unused_functions", [])
+        }
+
+        assert ("api.py", "action") not in unused
+        assert ("payload.py", "action") not in unused
+
+    def test_package_scan_resolves_relative_and_module_import_styles(self, tmp_path):
+        package = tmp_path / "pkg"
+        package.mkdir()
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "api.py").write_text(
+            "from .payload import action as _action\n\n"
+            "def action():\n"
+            "    return _action()\n",
+            encoding="utf-8",
+        )
+        (package / "payload.py").write_text(
+            "def action():\n"
+            "    return 'ok'\n\n"
+            "def side():\n"
+            "    return 'side'\n\n"
+            "def unused():\n"
+            "    return 'dead'\n",
+            encoding="utf-8",
+        )
+        (package / "consumer.py").write_text(
+            "import pkg.api as api\n"
+            "from pkg import payload\n\n"
+            "def run():\n"
+            "    return api.action(), payload.side()\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(package), conf=0, grep_verify=False))
+        unused = {
+            (Path(item["file"]).name, item["simple_name"])
+            for item in result.get("unused_functions", [])
+        }
+
+        assert ("api.py", "action") not in unused
+        assert ("payload.py", "action") not in unused
+        assert ("payload.py", "side") not in unused
+        assert ("payload.py", "unused") in unused
+
+    def test_project_scan_strips_common_python_source_root(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        package = tmp_path / "lib" / "pkg"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "api.py").write_text(
+            "from pkg.payload import action as _action\n\n"
+            "def action():\n"
+            "    return _action()\n",
+            encoding="utf-8",
+        )
+        (package / "payload.py").write_text(
+            "def action():\n"
+            "    return 'ok'\n",
+            encoding="utf-8",
+        )
+        (package / "consumer.py").write_text(
+            "from pkg.api import action\n\n"
+            "def run():\n"
+            "    return action()\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused = {
+            (Path(item["file"]).name, item["simple_name"])
+            for item in result.get("unused_functions", [])
+        }
+
+        assert ("api.py", "action") not in unused
+        assert ("payload.py", "action") not in unused
+
+    def test_package_scan_without_project_root_matches_package_import_prefix(
+        self, tmp_path
+    ):
+        package = tmp_path / "pkg"
+        package.mkdir()
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "api.py").write_text(
+            "from pkg.payload import action as _action\n\n"
+            "def action():\n"
+            "    return _action()\n",
+            encoding="utf-8",
+        )
+        (package / "payload.py").write_text(
+            "def action():\n"
+            "    return 'ok'\n",
+            encoding="utf-8",
+        )
+        (package / "consumer.py").write_text(
+            "from pkg.api import action\n\n"
+            "def run():\n"
+            "    return action()\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(package), conf=0, grep_verify=False))
+        unused = {
+            (Path(item["file"]).name, item["simple_name"])
+            for item in result.get("unused_functions", [])
+        }
+
+        assert ("api.py", "action") not in unused
+        assert ("payload.py", "action") not in unused
+
     @patch("skylos.analyzer.proc_file")
     def test_analyze_basic(self, mock_proc_file, temp_python_project):
         mock_def = Mock()
