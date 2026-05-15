@@ -681,6 +681,32 @@ def test_render_results_unused_table_includes_confidence_column_and_formats():
     assert conf_cells[2] == "[dim]50%[/dim]"
 
 
+def test_render_results_shows_grep_verify_summary():
+    console = Mock()
+    result = {
+        "analysis_summary": {
+            "total_files": 1,
+            "grep_verify": {"enabled": True, "rescued_count": 3},
+        },
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_parameters": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "quality": [],
+        "danger": [],
+        "secrets": [],
+    }
+
+    cli.render_results(console, result, tree=False, root_path="/root")
+
+    printed = "\n".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "Grep verify: on" in printed
+    assert "rescued 3" in printed
+
+
 def test_render_results_tree_mode_groups_by_file_and_sorts_by_line():
     console = Mock()
 

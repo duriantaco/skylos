@@ -1580,6 +1580,16 @@ def _results_pill(label, n, ok_style="good", bad_style="bad"):
     return f"[{style}]{label}: {n}[/{style}]"
 
 
+def _grep_verify_pill(summary):
+    grep_verify = summary.get("grep_verify")
+    if not isinstance(grep_verify, dict):
+        return None
+    if not grep_verify.get("enabled"):
+        return "[muted]Grep verify: off[/muted]"
+    rescued_count = int(grep_verify.get("rescued_count") or 0)
+    return f"[brand]Grep verify: on[/brand] [muted](rescued {rescued_count})[/muted]"
+
+
 def _display_cap(items, limit):
     cap = limit or len(items)
     return items[:cap], max(0, len(items) - cap)
@@ -2211,7 +2221,8 @@ def render_results(
 
     console.print(
         " ".join(
-            [
+            part
+            for part in [
                 _results_pill(
                     "Unused functions", len(result.get("unused_functions", []))
                 ),
@@ -2235,7 +2246,9 @@ def render_results(
                     ok_style="muted",
                     bad_style="muted",
                 ),
+                _grep_verify_pill(summ),
             ]
+            if part
         )
     )
     console.print()

@@ -470,6 +470,14 @@ class TestAnalyzerIntegration:
         }
 
         assert len(unused_names_on) <= len(unused_names_off)
+        assert result_on["analysis_summary"]["grep_verify"]["enabled"] is True
+        assert isinstance(
+            result_on["analysis_summary"]["grep_verify"]["rescued_count"], int
+        )
+        assert result_off["analysis_summary"]["grep_verify"] == {
+            "enabled": False,
+            "rescued_count": 0,
+        }
 
     def test_grep_verify_keeps_same_name_wrapper_dead(self, tmp_path):
         (tmp_path / "app.py").write_text(
