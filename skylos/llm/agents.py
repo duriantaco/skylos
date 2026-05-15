@@ -116,8 +116,8 @@ class AgentConfig:
         self.enable_cache = enable_cache
         self.prompt_templates = prompt_templates or {}
         self.prompt_template_root = prompt_template_root
-        self.provider = None
-        self.base_url = None
+        self.provider: str | None = None
+        self.base_url: str | None = None
 
     def is_rate_limited_model(self):
         m = (self.model or "").strip().lower()
