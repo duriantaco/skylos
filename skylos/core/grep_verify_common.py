@@ -179,7 +179,13 @@ def repo_relative_path(file_path: str, project_root: str | Path) -> str:
     try:
         rel = Path(file_path).resolve().relative_to(Path(project_root).resolve())
         return rel.as_posix()
-    except Exception:
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.debug(
+            "Failed to compute repo-relative path for %s under %s: %s",
+            file_path,
+            project_root,
+            exc,
+        )
         return Path(file_path).as_posix()
 
 
