@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from rich.console import Console
 
 import skylos.cli as cli
 from skylos.debt.result import DebtHotspot, DebtScore, DebtSnapshot
@@ -55,6 +56,31 @@ def _progress_ctx():
     cm.__enter__ = Mock(return_value=Mock(add_task=Mock(return_value="t")))
     cm.__exit__ = Mock(return_value=False)
     return cm
+
+
+def test_cli_grade_render_only_shows_scanned_categories():
+    console = Console(record=True, width=120, theme=cli._skylos_console_theme())
+    grade_data = {
+        "overall": {"score": 85, "letter": "B"},
+        "scanned_categories": ["dead_code"],
+        "categories": {
+            "dead_code": {
+                "score": 85,
+                "letter": "B",
+                "weight": 1.0,
+                "key_issue": "10 dead symbols (5.0/1K LOC)",
+            }
+        },
+        "total_loc": 2000,
+    }
+
+    cli._render_grade(console, grade_data, copy_badge=False)
+
+    rendered = console.export_text()
+    assert "Dead Code" in rendered
+    assert "100%" in rendered
+    assert "Security" not in rendered
+    assert "Quality" not in rendered
 
 
 def test_cli_guardrail_overview_dispatch_exits_zero(monkeypatch):
