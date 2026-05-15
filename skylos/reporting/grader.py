@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import quote
 
@@ -28,6 +29,7 @@ CATEGORY_WEIGHTS: dict[str, float] = {
     "dependencies": 0.10,
     "secrets": 0.10,
 }
+CATEGORY_ORDER: tuple[str, ...] = tuple(CATEGORY_WEIGHTS)
 
 SEVERITY_CAPS: dict[str, int] = {
     "CRITICAL": 55,
@@ -206,7 +208,35 @@ def score_secrets(findings: list[dict]) -> tuple[int, str]:
     return score, key_issue
 
 
-def compute_grade(result: dict, total_loc: int) -> dict:
+def _included_categories(categories: Iterable[str] | None) -> list[str]:
+    if categories is None:
+        return list(CATEGORY_ORDER)
+
+    included: list[str] = []
+    for category in categories:
+        if category in CATEGORY_WEIGHTS and category not in included:
+            included.append(category)
+
+    return included or list(CATEGORY_ORDER)
+
+
+def _renormalized_weights(categories: list[str]) -> dict[str, float]:
+    total = sum(CATEGORY_WEIGHTS[category] for category in categories)
+    if total <= 0:
+        even_weight = 1.0 / len(categories)
+        return {category: even_weight for category in categories}
+    return {category: CATEGORY_WEIGHTS[category] / total for category in categories}
+
+
+def compute_grade(
+    result: dict,
+    total_loc: int,
+    *,
+    included_categories: Iterable[str] | None = None,
+) -> dict:
+    active_categories = _included_categories(included_categories)
+    active_weights = _renormalized_weights(active_categories)
+
     sec_score, sec_issue = score_security(result.get("danger") or [])
     qual_score, qual_issue = score_quality(result.get("quality") or [], total_loc)
     dc_score, dc_issue = score_dead_code(result, total_loc)
@@ -215,15 +245,22 @@ def compute_grade(result: dict, total_loc: int) -> dict:
     )
     secrets_score, secrets_issue = score_secrets(result.get("secrets") or [])
 
+    category_scores = {
+        "security": (sec_score, sec_issue),
+        "quality": (qual_score, qual_issue),
+        "dead_code": (dc_score, dc_issue),
+        "dependencies": (dep_score, dep_issue),
+        "secrets": (secrets_score, secrets_issue),
+    }
+
     overall_numeric = round(
-        sec_score * CATEGORY_WEIGHTS["security"]
-        + qual_score * CATEGORY_WEIGHTS["quality"]
-        + dc_score * CATEGORY_WEIGHTS["dead_code"]
-        + dep_score * CATEGORY_WEIGHTS["dependencies"]
-        + secrets_score * CATEGORY_WEIGHTS["secrets"]
+        sum(
+            category_scores[category][0] * active_weights[category]
+            for category in active_categories
+        )
     )
 
-    has_critical_security = any(
+    has_critical_security = "security" in active_categories and any(
         (f.get("severity") or "").upper() == "CRITICAL"
         for f in (result.get("danger") or [])
     )
@@ -233,17 +270,13 @@ def compute_grade(result: dict, total_loc: int) -> dict:
     overall_numeric = max(0, min(100, overall_numeric))
 
     categories = {}
-    for cat_name, score_val, issue in [
-        ("security", sec_score, sec_issue),
-        ("quality", qual_score, qual_issue),
-        ("dead_code", dc_score, dc_issue),
-        ("dependencies", dep_score, dep_issue),
-        ("secrets", secrets_score, secrets_issue),
-    ]:
+    for cat_name in active_categories:
+        score_val, issue = category_scores[cat_name]
         categories[cat_name] = {
             "score": score_val,
             "letter": score_to_letter(score_val),
-            "weight": CATEGORY_WEIGHTS[cat_name],
+            "weight": active_weights[cat_name],
+            "base_weight": CATEGORY_WEIGHTS[cat_name],
             "key_issue": issue,
         }
 
@@ -253,6 +286,7 @@ def compute_grade(result: dict, total_loc: int) -> dict:
             "letter": score_to_letter(overall_numeric),
         },
         "categories": categories,
+        "scanned_categories": active_categories,
         "total_loc": total_loc,
     }
 

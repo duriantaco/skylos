@@ -1627,7 +1627,18 @@ def _render_grade(console: Console, grade_data, *, copy_badge: bool = True):
     grade_table.add_column("Weight", style="muted", width=8)
     grade_table.add_column("Key Issue", overflow="fold")
 
-    for cat_name in ("security", "quality", "dead_code", "dependencies", "secrets"):
+    default_category_order = (
+        "security",
+        "quality",
+        "dead_code",
+        "dependencies",
+        "secrets",
+    )
+    category_order = grade_data.get("scanned_categories") or default_category_order
+
+    for cat_name in category_order:
+        if cat_name not in cats:
+            continue
         cat = cats[cat_name]
         display_name = cat_name.replace("_", " ").title()
         s_val = cat["score"]

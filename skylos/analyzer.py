@@ -1800,8 +1800,23 @@ class Skylos:
             from skylos.reporting.grader import count_lines_of_code, compute_grade
 
             total_loc = count_lines_of_code(files)
+            grade_categories = []
+            if enable_danger:
+                grade_categories.append("security")
+            if enable_quality:
+                grade_categories.append("quality")
+            grade_categories.append("dead_code")
+            if enable_sca:
+                grade_categories.append("dependencies")
+            if enable_secrets:
+                grade_categories.append("secrets")
             result["analysis_summary"]["total_loc"] = total_loc
-            result["grade"] = compute_grade(result, total_loc)
+            result["analysis_summary"]["grade_categories"] = grade_categories
+            result["grade"] = compute_grade(
+                result,
+                total_loc,
+                included_categories=grade_categories,
+            )
         except Exception:
             if os.getenv("SKYLOS_DEBUG"):
                 traceback.print_exc()
