@@ -35,6 +35,11 @@ class TestCleanFormatter:
 
 
 class TestSetupLogger:
+    def teardown_method(self):
+        logger = logging.getLogger("skylos")
+        logger.handlers.clear()
+        logger.propagate = True
+
     @patch("skylos.cli.logging.FileHandler")
     @patch("skylos.cli.RichHandler")
     def test_setup_logger_console_only(self, mock_rich_handler, mock_file_handler):
@@ -44,6 +49,7 @@ class TestSetupLogger:
 
         logger = setup_logger()
 
+        assert logger.name == "skylos"
         mock_rich_handler.assert_called_once()
         mock_file_handler.assert_not_called()
 
@@ -56,6 +62,7 @@ class TestSetupLogger:
 
         logger = setup_logger("output.log")
 
+        assert logger.name == "skylos"
         mock_rich_handler.assert_called_once()
         mock_file_handler.assert_called_once_with("output.log")
 
@@ -594,6 +601,25 @@ def test_generate_llm_report_formats_findings_and_defaults_dead_code(tmp_path):
     assert "Unused function 'unused' is never used (no refs)" in report
     assert result["unused_functions"][0]["rule_id"] == "SKY-DC001"
     assert result["unused_functions"][0]["severity"] == "MEDIUM"
+
+
+def test_llm_report_code_block_returns_empty_for_invalid_line(tmp_path):
+    src = tmp_path / "app.py"
+    src.write_text("print('ok')\n", encoding="utf-8")
+
+    assert cli._llm_report_code_block(str(src), "bad", tmp_path, {}) == ""
+
+
+def test_llm_report_code_block_handles_unreadable_file(tmp_path, monkeypatch):
+    src = tmp_path / "app.py"
+    src.write_text("print('ok')\n", encoding="utf-8")
+
+    def fail_read_text(self, *args, **kwargs):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(cli.pathlib.Path, "read_text", fail_read_text)
+
+    assert cli._llm_report_code_block(str(src), 1, tmp_path, {}) == ""
 
 
 def test_render_results_unused_table_includes_confidence_column_and_formats():

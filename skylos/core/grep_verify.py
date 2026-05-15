@@ -152,14 +152,14 @@ def _cached_group_results(
     if cached is not None:
         try:
             return _json.loads(cached[0]) if cached else {}
-        except Exception:
-            pass
+        except (_json.JSONDecodeError, TypeError, ValueError) as exc:
+            logger.debug("Ignoring invalid grep verification cache entry: %s", exc)
 
     results = search_fn()
     try:
         cache.put(cache_key, [_json.dumps(results)])
-    except Exception:
-        pass
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        logger.debug("Failed to write grep verification cache entry: %s", exc)
     return results
 
 

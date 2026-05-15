@@ -48,6 +48,8 @@ try:
 except ImportError:
     INTERACTIVE_AVAILABLE = False
 
+logger = logging.getLogger(__name__)
+
 SarifExporter = None
 SkylosLLM = None
 AnalyzerConfig = None
@@ -1285,30 +1287,44 @@ def _llm_report_sort_key(finding_with_label):
 def _llm_report_code_block(
     file_path: str, line: int, project_root: pathlib.Path, file_cache: dict
 ) -> str:
+    if not file_path:
+        return ""
     try:
-        abs_path = pathlib.Path(file_path)
-        if not abs_path.is_absolute():
-            abs_path = project_root / file_path
-        cache_key = str(abs_path)
-        if cache_key not in file_cache:
+        line_number = int(line)
+    except (TypeError, ValueError):
+        return ""
+    if line_number < 1:
+        return ""
+
+    abs_path = pathlib.Path(file_path)
+    if not abs_path.is_absolute():
+        abs_path = project_root / abs_path
+    cache_key = str(abs_path)
+
+    if cache_key not in file_cache:
+        try:
             if abs_path.is_file():
                 file_cache[cache_key] = abs_path.read_text(
                     encoding="utf-8", errors="replace"
                 ).splitlines()
             else:
                 file_cache[cache_key] = None
-        src_lines = file_cache[cache_key]
-        if src_lines is not None:
-            start = max(0, line - 3)
-            end = min(len(src_lines), line + 4)
-            context_lines = []
-            for i in range(start, end):
-                marker = ">>>" if i == line - 1 else "   "
-                context_lines.append(f"{marker} {i + 1:4d} | {src_lines[i]}")
-            if context_lines:
-                return "\n```\n" + "\n".join(context_lines) + "\n```\n"
-    except Exception:
-        pass
+        except (OSError, ValueError) as exc:
+            logging.getLogger(__name__).debug(
+                "Failed to read LLM report context from %s: %s", abs_path, exc
+            )
+            file_cache[cache_key] = None
+
+    src_lines = file_cache[cache_key]
+    if src_lines is not None:
+        start = max(0, line_number - 3)
+        end = min(len(src_lines), line_number + 4)
+        context_lines = []
+        for i in range(start, end):
+            marker = ">>>" if i == line_number - 1 else "   "
+            context_lines.append(f"{marker} {i + 1:4d} | {src_lines[i]}")
+        if context_lines:
+            return "\n```\n" + "\n".join(context_lines) + "\n```\n"
     return ""
 
 
@@ -1638,8 +1654,8 @@ def _render_grade(console: Console, grade_data):
         console.print(
             "[muted]Install pyperclip for auto-copy: pip install pyperclip[/muted]"
         )
-    except Exception:
-        pass
+    except (pyperclip.PyperclipException, OSError) as exc:
+        logger.debug("Failed to copy badge markdown to clipboard: %s", exc)
 
     console.print()
 
@@ -2543,8 +2559,31 @@ def _attach_upload_project_context(result: dict, project_root: pathlib.Path) -> 
         result.setdefault("analysis_summary", {})["project_root"] = upload_context[
             "project_root"
         ]
-    except Exception:
-        pass
+    except (ImportError, OSError, ValueError, TypeError, AttributeError) as exc:
+        logger.debug("Failed to attach upload project context: %s", exc)
+
+
+def _upload_agent_run_best_effort(
+    command: str,
+    summary: dict,
+    *,
+    model: str | None = None,
+    provider: str | None = None,
+    duration_seconds: float | None = None,
+) -> None:
+    try:
+        from skylos.api import upload_agent_run
+    except ImportError as exc:
+        logger.debug("Agent run telemetry unavailable: %s", exc)
+        return
+
+    upload_agent_run(
+        command,
+        summary,
+        model=model,
+        provider=provider,
+        duration_seconds=duration_seconds,
+    )
 
 
 def _run_removed_city_command(_argv):
@@ -5113,23 +5152,18 @@ def main() -> None:
                     analysis_mode="hybrid",
                 )
 
-            try:
-                from skylos.api import upload_agent_run
-
-                upload_agent_run(
-                    "scan",
-                    {
-                        "total": len(merged_findings),
-                        "static_only": static_only,
-                        "llm_only": llm_only,
-                        "both": both,
-                    },
-                    model=model,
-                    provider=provider,
-                    duration_seconds=round(_time.time() - _scan_start, 1),
-                )
-            except Exception:
-                pass
+            _upload_agent_run_best_effort(
+                "scan",
+                {
+                    "total": len(merged_findings),
+                    "static_only": static_only,
+                    "llm_only": llm_only,
+                    "both": both,
+                },
+                model=model,
+                provider=provider,
+                duration_seconds=round(_time.time() - _scan_start, 1),
+            )
 
             if merged_findings and getattr(agent_args, "strict", False):
                 sys.exit(1)
@@ -5394,25 +5428,20 @@ def main() -> None:
                 else:
                     console.print("\n[dim]No confirmed dead code to fix[/dim]")
 
-            try:
-                from skylos.api import upload_agent_run
-
-                upload_agent_run(
-                    "verify",
-                    {
-                        "total_findings": stats["total_findings"],
-                        "verified_true_positive": stats["verified_true_positive"],
-                        "verified_false_positive": stats["verified_false_positive"],
-                        "entry_points_discovered": stats["entry_points_discovered"],
-                        "llm_calls": stats["llm_calls"],
-                        "elapsed_seconds": stats["elapsed_seconds"],
-                    },
-                    model=model,
-                    provider=provider,
-                    duration_seconds=stats.get("elapsed_seconds"),
-                )
-            except Exception:
-                pass
+            _upload_agent_run_best_effort(
+                "verify",
+                {
+                    "total_findings": stats["total_findings"],
+                    "verified_true_positive": stats["verified_true_positive"],
+                    "verified_false_positive": stats["verified_false_positive"],
+                    "entry_points_discovered": stats["entry_points_discovered"],
+                    "llm_calls": stats["llm_calls"],
+                    "elapsed_seconds": stats["elapsed_seconds"],
+                },
+                model=model,
+                provider=provider,
+                duration_seconds=stats.get("elapsed_seconds"),
+            )
 
             sys.exit(0)
 
@@ -5447,26 +5476,19 @@ def main() -> None:
 
                     print(_json_mod.dumps(summary, indent=2))
 
-                try:
-                    from skylos.api import upload_agent_run
-
-                    upload_agent_run(
-                        "cleanup",
-                        {
-                            "total_items": summary.get("total_items", 0),
-                            "applied": summary.get("applied", 0),
-                            "reverted": summary.get("reverted", 0),
-                            "skipped": summary.get("skipped", 0),
-                            "total_analyzed_files": summary.get(
-                                "total_analyzed_files", 0
-                            ),
-                        },
-                        model=model,
-                        provider=provider,
-                        duration_seconds=summary.get("elapsed_seconds"),
-                    )
-                except Exception:
-                    pass
+                _upload_agent_run_best_effort(
+                    "cleanup",
+                    {
+                        "total_items": summary.get("total_items", 0),
+                        "applied": summary.get("applied", 0),
+                        "reverted": summary.get("reverted", 0),
+                        "skipped": summary.get("skipped", 0),
+                        "total_analyzed_files": summary.get("total_analyzed_files", 0),
+                    },
+                    model=model,
+                    provider=provider,
+                    duration_seconds=summary.get("elapsed_seconds"),
+                )
 
                 sys.exit(
                     0
@@ -5500,24 +5522,19 @@ def main() -> None:
 
                     print(_json_mod.dumps(summary, indent=2))
 
-                try:
-                    from skylos.api import upload_agent_run
-
-                    upload_agent_run(
-                        "remediate",
-                        {
-                            "total_findings": summary.get("total_findings", 0),
-                            "fixed": summary.get("fixed", 0),
-                            "failed": summary.get("failed", 0),
-                            "skipped": summary.get("skipped", 0),
-                            "pr_url": summary.get("pr_url"),
-                        },
-                        model=model,
-                        provider=provider,
-                        duration_seconds=summary.get("elapsed_seconds"),
-                    )
-                except Exception:
-                    pass
+                _upload_agent_run_best_effort(
+                    "remediate",
+                    {
+                        "total_findings": summary.get("total_findings", 0),
+                        "fixed": summary.get("fixed", 0),
+                        "failed": summary.get("failed", 0),
+                        "skipped": summary.get("skipped", 0),
+                        "pr_url": summary.get("pr_url"),
+                    },
+                    model=model,
+                    provider=provider,
+                    duration_seconds=summary.get("elapsed_seconds"),
+                )
 
                 sys.exit(
                     0
@@ -5676,8 +5693,8 @@ def main() -> None:
                         sca_findings = enrich_with_reachability(
                             sca_findings, project_root
                         )
-                    except Exception:
-                        pass
+                    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+                        logger.debug("SCA reachability enrichment failed: %s", exc)
                     result["dependency_vulnerabilities"] = sca_findings
                     result.setdefault("analysis_summary", {})["sca_count"] = len(
                         sca_findings
