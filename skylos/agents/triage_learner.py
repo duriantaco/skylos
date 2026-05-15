@@ -153,7 +153,9 @@ class TriageLearner:
         if not path.exists():
             return
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))  # skylos: ignore[SKY-D215] project-local triage state
+            data = json.loads(
+                path.read_text(encoding="utf-8")
+            )  # skylos: ignore[SKY-D215] project-local triage state
             for entry in data.get("patterns", []):
                 pattern = TriagePattern.from_dict(entry)
                 key = _pattern_key(pattern)
@@ -171,7 +173,9 @@ class TriageLearner:
             "patterns": [p.to_dict() for p in self._patterns.values()],
         }
         try:
-            path.write_text(json.dumps(data, indent=2), encoding="utf-8")  # skylos: ignore[SKY-D215] project-local triage state
+            path.write_text(
+                json.dumps(data, indent=2), encoding="utf-8"
+            )  # skylos: ignore[SKY-D215] project-local triage state
         except Exception as e:
             logger.debug("Failed to save triage patterns: %s", e)
 

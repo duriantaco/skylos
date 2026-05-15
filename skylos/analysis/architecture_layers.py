@@ -145,9 +145,7 @@ def get_layer_policy_findings(
             if normalized["strict"] and (
                 from_layer == "unknown" or to_layer == "unknown"
             ):
-                violation_reason = (
-                    "Dependency involves module(s) outside configured architecture layers"
-                )
+                violation_reason = "Dependency involves module(s) outside configured architecture layers"
                 severity = "MEDIUM"
             elif rule is None:
                 continue
@@ -159,9 +157,7 @@ def get_layer_policy_findings(
                 severity = rule["severity"]
             elif rule["allow"] and to_layer not in set(rule["allow"]):
                 allowed = ", ".join(rule["allow"])
-                violation_reason = (
-                    f"Layer '{from_layer}' may only depend on: {allowed}"
-                )
+                violation_reason = f"Layer '{from_layer}' may only depend on: {allowed}"
                 severity = rule["severity"]
             else:
                 continue

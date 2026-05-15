@@ -324,7 +324,9 @@ def _load_file_lines(
         return file_cache[abs_path]
     try:
         file_cache[abs_path] = (
-            Path(abs_path).read_text(encoding=TEXT_ENCODING).splitlines()  # skylos: ignore[SKY-D215] validated finding source path
+            Path(abs_path)
+            .read_text(encoding=TEXT_ENCODING)
+            .splitlines()  # skylos: ignore[SKY-D215] validated finding source path
         )
     except (OSError, UnicodeDecodeError):
         return None

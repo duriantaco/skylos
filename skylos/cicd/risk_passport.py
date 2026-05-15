@@ -59,9 +59,7 @@ def build_risk_passport(
             if file_label:
                 high_risk_ai_files.add(file_label)
             severity = str(finding.get("severity") or "HIGH").upper()
-            reasons.append(
-                f"AI-authored {card.label} {severity} security finding"
-            )
+            reasons.append(f"AI-authored {card.label} {severity} security finding")
             continue
 
         if severity_score >= _SEVERITY_SCORE["HIGH"] and card.label == "speculative":

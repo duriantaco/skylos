@@ -218,4 +218,6 @@ def scan(tree: ast.AST, file_path, findings, *, source: str | None = None) -> No
         checker = _WebhookSignatureChecker(file_path, findings, source)
         checker.visit(tree)
     except Exception as e:
-        print(f"Webhook signature analysis failed for {file_path}: {e}", file=sys.stderr)
+        print(
+            f"Webhook signature analysis failed for {file_path}: {e}", file=sys.stderr
+        )

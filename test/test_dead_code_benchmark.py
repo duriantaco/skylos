@@ -83,9 +83,7 @@ def test_runner_reports_false_positive_and_false_negative(tmp_path, monkeypatch)
                     "unused": [
                         {"kind": "function", "file": "app.py", "symbol": "missing"}
                     ],
-                    "used": [
-                        {"kind": "function", "file": "app.py", "symbol": "used"}
-                    ],
+                    "used": [{"kind": "function", "file": "app.py", "symbol": "used"}],
                 },
             }
         ],
@@ -168,7 +166,10 @@ def test_format_summary_includes_dead_code_metrics():
 
     assert "Dead-code benchmark counts: TP=1 FP=0 FN=0 TN=1" in rendered
     assert "Dead-code benchmark metrics: precision=1.0 recall=1.0 f1=1.0" in rendered
-    assert "basic_detection: cases=1 score=100.0 failures=0 TP=1 FP=0 FN=0 TN=1" in rendered
+    assert (
+        "basic_detection: cases=1 score=100.0 failures=0 TP=1 FP=0 FN=0 TN=1"
+        in rendered
+    )
 
 
 def test_vulture_scanner_scores_against_manifest(tmp_path, monkeypatch):
@@ -242,7 +243,9 @@ def test_vulture_scanner_scores_against_manifest(tmp_path, monkeypatch):
     }
 
 
-def test_strict_labels_count_unlabeled_findings_as_false_positives(tmp_path, monkeypatch):
+def test_strict_labels_count_unlabeled_findings_as_false_positives(
+    tmp_path, monkeypatch
+):
     case_dir = tmp_path / "case"
     case_dir.mkdir()
     (case_dir / "app.py").write_text("def extra():\n    return 1\n", encoding="utf-8")
@@ -263,9 +266,7 @@ def test_strict_labels_count_unlabeled_findings_as_false_positives(tmp_path, mon
                 },
                 "expect": {
                     "unused": [],
-                    "used": [
-                        {"kind": "function", "file": "app.py", "symbol": "safe"}
-                    ],
+                    "used": [{"kind": "function", "file": "app.py", "symbol": "safe"}],
                 },
             }
         ],
@@ -310,9 +311,7 @@ def test_ruff_scanner_scores_import_findings(tmp_path, monkeypatch):
                     "notes": "Test-only fixture.",
                 },
                 "expect": {
-                    "unused": [
-                        {"kind": "import", "file": "app.py", "symbol": "json"}
-                    ],
+                    "unused": [{"kind": "import", "file": "app.py", "symbol": "json"}],
                     "used": [],
                 },
             }
@@ -394,14 +393,14 @@ def test_python_only_scanners_skip_non_python_cases(tmp_path, monkeypatch):
     assert summary["skipped_cases"][0]["id"] == "go-case"
 
 
-def test_same_external_import_in_another_file_does_not_rescue_unused_local_import(tmp_path):
+def test_same_external_import_in_another_file_does_not_rescue_unused_local_import(
+    tmp_path,
+):
     (tmp_path / "unused_import.py").write_text(
         "from datetime import datetime\n", encoding="utf-8"
     )
     (tmp_path / "used_import.py").write_text(
-        "from datetime import datetime\n"
-        "def now():\n"
-        "    return datetime.utcnow()\n",
+        "from datetime import datetime\ndef now():\n    return datetime.utcnow()\n",
         encoding="utf-8",
     )
 

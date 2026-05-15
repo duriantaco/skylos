@@ -85,7 +85,9 @@ class ImplicitRefTracker:
             return False
 
         try:
-            data = json.loads(path.read_text())  # skylos: ignore[SKY-D215] local trace file
+            data = json.loads(
+                path.read_text()
+            )  # skylos: ignore[SKY-D215] local trace file
 
             for item in data.get("calls", []):
                 filename = item["file"]

@@ -1,2 +1,1 @@
 """Core scanner infrastructure helpers."""
-

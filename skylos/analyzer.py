@@ -15,7 +15,10 @@ except ImportError:
 
 from skylos.visitors.base import Visitor
 
-from skylos.analysis.circular_deps import CircularDependencyRule, _resolve_from_import_targets
+from skylos.analysis.circular_deps import (
+    CircularDependencyRule,
+    _resolve_from_import_targets,
+)
 
 from skylos.constants import AUTO_CALLED, MARKREFS_TICK_DEFAULT
 
@@ -209,9 +212,7 @@ def _find_package_boundary_modules(
                 known_modules,
             )
             for target in targets:
-                if target != package_module and target.startswith(
-                    package_module + "."
-                ):
+                if target != package_module and target.startswith(package_module + "."):
                     modules.add(target)
 
     return modules
@@ -1129,7 +1130,11 @@ class Skylos:
                     continue
                 if defn.type == "method" and defn.simple_name.startswith("_"):
                     defn_mod, defn_cls = _definition_module_and_class(defn)
-                    if (defn_mod, defn_cls, defn.simple_name) in same_class_private_attr_uses:
+                    if (
+                        defn_mod,
+                        defn_cls,
+                        defn.simple_name,
+                    ) in same_class_private_attr_uses:
                         continue
                 if defn.simple_name in used_attr_names:
                     defn.references += 1
@@ -1548,9 +1553,7 @@ class Skylos:
 
         liveness_report = getattr(self, "_dead_code_liveness_report", None)
         if liveness_report is not None:
-            result["analysis_summary"]["dead_code_liveness"] = (
-                liveness_report.to_dict()
-            )
+            result["analysis_summary"]["dead_code_liveness"] = liveness_report.to_dict()
 
         if workspace_inventory is not None:
             project_root = (
@@ -1654,7 +1657,9 @@ class Skylos:
 
                 if enable_quality:
                     try:
-                        from skylos.analysis.architecture import get_architecture_findings
+                        from skylos.analysis.architecture import (
+                            get_architecture_findings,
+                        )
 
                         dep_graph = dict(
                             circular_rule._analyzer.architecture_dependencies
@@ -1827,7 +1832,9 @@ class Skylos:
                         result["danger"] = enrich_findings_with_compliance(
                             config_findings
                         )
-                        result["analysis_summary"]["danger_count"] = len(config_findings)
+                        result["analysis_summary"]["danger_count"] = len(
+                            config_findings
+                        )
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("Config scan failed", exc_info=True)
@@ -1840,7 +1847,9 @@ class Skylos:
             modmap[f] = self._module(root, f)
 
         from skylos.analysis.implicit_refs import pattern_tracker
-        from skylos.analysis.implicit_refs import pattern_tracker as global_pattern_tracker
+        from skylos.analysis.implicit_refs import (
+            pattern_tracker as global_pattern_tracker,
+        )
 
         global_pattern_tracker.known_refs.clear()
         global_pattern_tracker.known_qualified_refs.clear()
@@ -2857,7 +2866,10 @@ def proc_file(
                 "category": "DEAD_CODE",
             }
 
-        from skylos.analysis.ast_mask import apply_body_mask, default_mask_spec_from_config
+        from skylos.analysis.ast_mask import (
+            apply_body_mask,
+            default_mask_spec_from_config,
+        )
 
         mask = default_mask_spec_from_config(cfg)
         tree, masked = apply_body_mask(tree, mask)
@@ -2915,9 +2927,7 @@ def proc_file(
             if "SKY-L014" not in cfg["ignore"]:
                 q_rules.append(HardcodedCredentialRule(vibe_dictionary=vibe_dictionary))
             if "SKY-L032" not in cfg["ignore"]:
-                q_rules.append(
-                    MockPlaceholderDataRule(vibe_dictionary=vibe_dictionary)
-                )
+                q_rules.append(MockPlaceholderDataRule(vibe_dictionary=vibe_dictionary))
             if "SKY-L017" not in cfg["ignore"]:
                 q_rules.append(ErrorDisclosureRule())
             if "SKY-L020" not in cfg["ignore"]:
@@ -3113,7 +3123,10 @@ def proc_file(
                 else:
                     architecture_tree = tree
 
-                from skylos.analysis.architecture import _compute_abstractness, _has_main_guard
+                from skylos.analysis.architecture import (
+                    _compute_abstractness,
+                    _has_main_guard,
+                )
 
                 architecture_metrics = {
                     "abstractness": _compute_abstractness(architecture_tree),

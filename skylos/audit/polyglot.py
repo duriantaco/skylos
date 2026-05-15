@@ -136,7 +136,9 @@ _JAVA_RULES = (
         pattern_id="java-process",
         severity="high",
         reason="Runtime or ProcessBuilder execution needs command injection review.",
-        regex=re.compile(r"\b(?:Runtime\.getRuntime\(\)\.exec|new\s+ProcessBuilder)\s*\("),
+        regex=re.compile(
+            r"\b(?:Runtime\.getRuntime\(\)\.exec|new\s+ProcessBuilder)\s*\("
+        ),
     ),
     PolyglotSignalRule(
         rule_id="SKY-D211",
@@ -237,7 +239,9 @@ _RUST_RULES = (
         pattern_id="rust-file-path",
         severity="medium",
         reason="File access with dynamic paths should be reviewed.",
-        regex=re.compile(r"\bfs::(?:read|read_to_string|File::open)\s*\([^;\n]*(?:path|req|param)"),
+        regex=re.compile(
+            r"\bfs::(?:read|read_to_string|File::open)\s*\([^;\n]*(?:path|req|param)"
+        ),
     ),
 )
 
@@ -254,7 +258,9 @@ _DART_RULES = (
         pattern_id="dart-http-client",
         severity="high",
         reason="Outbound HTTP calls with dynamic URLs should be reviewed for SSRF.",
-        regex=re.compile(r"\bhttp\.(?:get|post|put|delete)\s*\([^;\n]*(?:Uri\.parse|url)"),
+        regex=re.compile(
+            r"\bhttp\.(?:get|post|put|delete)\s*\([^;\n]*(?:Uri\.parse|url)"
+        ),
     ),
     PolyglotSignalRule(
         rule_id="SKY-D230",

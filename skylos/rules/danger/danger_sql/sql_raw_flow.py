@@ -48,9 +48,11 @@ def _is_static_string_expr(n: ast.AST) -> bool:
         and isinstance(n.func, ast.Attribute)
         and n.func.attr == "format"
     ):
-        return _is_static_string_expr(n.func.value) and all(
-            _is_static_string_expr(arg) for arg in n.args
-        ) and all(_is_static_string_expr(k.value) for k in n.keywords)
+        return (
+            _is_static_string_expr(n.func.value)
+            and all(_is_static_string_expr(arg) for arg in n.args)
+            and all(_is_static_string_expr(k.value) for k in n.keywords)
+        )
     return False
 
 

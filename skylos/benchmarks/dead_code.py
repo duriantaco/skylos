@@ -149,7 +149,9 @@ def _validate_expectation(
     item: Any,
 ) -> None:
     if not isinstance(item, dict):
-        raise ValueError(f"dead-code case {case_id} {mode} expectations must be objects")
+        raise ValueError(
+            f"dead-code case {case_id} {mode} expectations must be objects"
+        )
 
     kind = item.get("kind")
     if kind not in KIND_TO_CATEGORY:
@@ -309,7 +311,9 @@ def validate_manifest(
 
     cases = manifest.get("cases")
     if not isinstance(cases, list) or not cases:
-        raise ValueError("dead-code benchmark manifest must define a non-empty cases list")
+        raise ValueError(
+            "dead-code benchmark manifest must define a non-empty cases list"
+        )
 
     seen_ids: set[str] = set()
     root = manifest_file.parent
@@ -372,7 +376,9 @@ def _scanner_supports_case(scanner: str, case: dict[str, Any]) -> bool:
     supported = SCANNER_LANGUAGE_SUPPORT.get(scanner)
     if supported is None:
         allowed = ", ".join(sorted(SUPPORTED_SCANNERS))
-        raise ValueError(f"unsupported dead-code benchmark scanner '{scanner}': {allowed}")
+        raise ValueError(
+            f"unsupported dead-code benchmark scanner '{scanner}': {allowed}"
+        )
     return set(_case_languages(case)).issubset(supported)
 
 
@@ -808,7 +814,7 @@ def run_case(
 
 
 def _aggregate_scores(
-    case_results: list[dict[str, Any]]
+    case_results: list[dict[str, Any]],
 ) -> tuple[dict[str, float], dict[str, int]]:
     totals = {
         "true_positives": 0,
@@ -957,7 +963,9 @@ def _select_external_targets(
     if not selected_targets:
         return targets
 
-    normalized_selections = {str(Path(item).expanduser().resolve()) for item in selected_targets}
+    normalized_selections = {
+        str(Path(item).expanduser().resolve()) for item in selected_targets
+    }
     matched = []
     for target in targets:
         target_path = str(Path(target["path"]).expanduser().resolve())

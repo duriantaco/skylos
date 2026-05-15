@@ -36,7 +36,8 @@ def _quality_summary(
     failures = failures or {}
     taxonomy = taxonomy or {"precision_guard": 100.0, "maintainability": 100.0}
     return {
-        "failure_count": failure_count or sum(len(items) for items in failures.values()),
+        "failure_count": failure_count
+        or sum(len(items) for items in failures.values()),
         "scores": {"overall_score": overall_score},
         "taxonomy": {
             label: {"weighted_score": score} for label, score in taxonomy.items()
@@ -61,9 +62,7 @@ def _quality_summary(
 
 
 def test_corpus_no_change_passes():
-    summary = _corpus_summary(
-        {"known-case": [("quality", "present", "SKY-Q301")]}
-    )
+    summary = _corpus_summary({"known-case": [("quality", "present", "SKY-Q301")]})
 
     passed, lines = compare("corpus", summary, summary)
 
@@ -73,9 +72,7 @@ def test_corpus_no_change_passes():
 
 def test_corpus_new_failure_fails():
     base = _corpus_summary()
-    head = _corpus_summary(
-        {"new-case": [("unused_functions", "absent", "handler")]}
-    )
+    head = _corpus_summary({"new-case": [("unused_functions", "absent", "handler")]})
 
     passed, lines = compare("corpus", base, head)
 
@@ -85,9 +82,7 @@ def test_corpus_new_failure_fails():
 
 
 def test_corpus_removed_failure_passes():
-    base = _corpus_summary(
-        {"known-case": [("unused_functions", "absent", "handler")]}
-    )
+    base = _corpus_summary({"known-case": [("unused_functions", "absent", "handler")]})
     head = _corpus_summary()
 
     passed, lines = compare("corpus", base, head)
@@ -99,9 +94,7 @@ def test_corpus_removed_failure_passes():
 def test_quality_failure_count_increase_fails():
     base = _quality_summary(failure_count=0)
     head = _quality_summary(
-        failures={
-            "quality-case": [("expectation", "quality", "present", "SKY-L006")]
-        }
+        failures={"quality-case": [("expectation", "quality", "present", "SKY-L006")]}
     )
 
     passed, lines = compare("quality", base, head)
@@ -132,12 +125,8 @@ def test_quality_taxonomy_score_drop_fails():
 
 
 def test_quality_score_improvement_passes():
-    base = _quality_summary(
-        overall_score=95.0, taxonomy={"precision_guard": 95.0}
-    )
-    head = _quality_summary(
-        overall_score=100.0, taxonomy={"precision_guard": 100.0}
-    )
+    base = _quality_summary(overall_score=95.0, taxonomy={"precision_guard": 95.0})
+    head = _quality_summary(overall_score=100.0, taxonomy={"precision_guard": 100.0})
 
     passed, lines = compare("quality", base, head)
 

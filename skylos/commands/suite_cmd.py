@@ -146,8 +146,7 @@ def run_suite_command(
         "--families",
         default="static,defense,debt",
         help=(
-            "Comma-separated upload families for --upload. "
-            "Choices: static,defense,debt"
+            "Comma-separated upload families for --upload. Choices: static,defense,debt"
         ),
     )
     suite_parser.add_argument(
@@ -234,9 +233,7 @@ def run_suite_command(
         return 0
 
     upload_failures = 0
-    scan_bundle_id = (
-        str(uuid.uuid4()) if len(selected_families) > 1 else None
-    )
+    scan_bundle_id = str(uuid.uuid4()) if len(selected_families) > 1 else None
 
     if not suite_args.output_json:
         from skylos.cloud.upload_manifest import (

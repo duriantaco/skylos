@@ -297,9 +297,7 @@ class RustCore:
         current = Path(self.file_path)
         stem = current.stem
         base_dir = (
-            current.parent
-            if stem in {"lib", "main", "mod"}
-            else current.parent / stem
+            current.parent if stem in {"lib", "main", "mod"} else current.parent / stem
         )
         candidate_paths = [
             base_dir / f"{mod_name}.rs",

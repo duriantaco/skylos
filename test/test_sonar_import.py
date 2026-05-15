@@ -44,10 +44,12 @@ def test_build_sonar_migration_plan_maps_sources_and_exclusions():
     )
 
     assert plan["sonar"]["project_key"] == "acme-api"
-    assert plan["skylos"]["recommended_command"] == "skylos apps/api --danger --quality --upload"
+    assert (
+        plan["skylos"]["recommended_command"]
+        == "skylos apps/api --danger --quality --upload"
+    )
     assert plan["skylos"]["suite_command"] == "skylos suite apps/api --upload"
     assert plan["skylos"]["config"]["exclude"] == [
         "**/generated/**",
         "**/migrations/**",
     ]
-

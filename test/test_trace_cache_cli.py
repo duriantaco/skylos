@@ -102,8 +102,7 @@ def test_trace_cache_hit_skips_trace_subprocess_and_writes_trace(tmp_path):
     assert not mock_run.called
     assert result.trace_file == tmp_path / ".skylos_trace"
     assert (
-        json.loads((tmp_path / ".skylos_trace").read_text(encoding="utf-8"))
-        == payload
+        json.loads((tmp_path / ".skylos_trace").read_text(encoding="utf-8")) == payload
     )
 
 

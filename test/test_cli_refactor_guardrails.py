@@ -172,9 +172,7 @@ def test_cli_guardrail_init_dispatch_exits_zero(monkeypatch):
 
 
 @pytest.mark.parametrize("help_flag", ["--help", "-h"])
-def test_cli_guardrail_init_help_has_no_side_effects(
-    tmp_path, monkeypatch, help_flag
-):
+def test_cli_guardrail_init_help_has_no_side_effects(tmp_path, monkeypatch, help_flag):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["skylos", "init", help_flag])
 

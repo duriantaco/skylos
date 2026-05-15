@@ -401,7 +401,9 @@ def _is_release_like_job(
     if "release" in job or "id_tokens" in job or "identity" in job:
         return True
 
-    return any(RELEASE_COMMAND_RE.search(command) for command in _iter_commands(data, job))
+    return any(
+        RELEASE_COMMAND_RE.search(command) for command in _iter_commands(data, job)
+    )
 
 
 def _cache_enabled(value: Any) -> bool:
@@ -464,7 +466,9 @@ def _scan_images(
     ]
     for job_id, job in _iter_jobs(data):
         if "image" in job:
-            candidates.append((f"job {job_id} image", "image", job.get("image"), "image"))
+            candidates.append(
+                (f"job {job_id} image", "image", job.get("image"), "image")
+            )
         if "services" in job:
             candidates.append(
                 (f"job {job_id} services", "services", job.get("services"), "service")
@@ -472,7 +476,9 @@ def _scan_images(
 
     seen: set[tuple[str, str]] = set()
     for location, key, value, kind in candidates:
-        images = [_image_name(value)] if kind == "image" else list(_service_images(value))
+        images = (
+            [_image_name(value)] if kind == "image" else list(_service_images(value))
+        )
         for image in images:
             if image is None or not _is_mutable_image(image):
                 continue
@@ -565,8 +571,7 @@ def _scan_external_includes(
                     rule_id=rule_id,
                     name="gitlab-ci-unpinned-remote-include",
                     message=(
-                        f"Remote GitLab CI include {remote} has no integrity "
-                        "checksum."
+                        f"Remote GitLab CI include {remote} has no integrity checksum."
                     ),
                     file=path,
                     line=_line_for_contains(lines, remote),
@@ -668,7 +673,9 @@ def _scan_dind_without_tls(
         return
 
     for job_id, job in _iter_jobs(data):
-        service_images = list(_service_images(_effective_job_value(data, job, "services")))
+        service_images = list(
+            _service_images(_effective_job_value(data, job, "services"))
+        )
         if not any(_is_dind_image(image) for image in service_images):
             continue
 
@@ -676,10 +683,9 @@ def _scan_dind_without_tls(
         tls_certdir = variables.get("DOCKER_TLS_CERTDIR")
         docker_host = variables.get("DOCKER_HOST")
         tls_disabled = isinstance(tls_certdir, str) and tls_certdir.strip() == ""
-        plain_host = (
-            isinstance(docker_host, str)
-            and docker_host.strip().lower().startswith("tcp://docker:2375")
-        )
+        plain_host = isinstance(
+            docker_host, str
+        ) and docker_host.strip().lower().startswith("tcp://docker:2375")
         if not tls_disabled and not plain_host:
             continue
 

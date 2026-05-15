@@ -177,7 +177,9 @@ def run_debt_command(
 
         if debt_args.output_file:
             try:
-                Path(debt_args.output_file).write_text(output, encoding="utf-8")  # skylos: ignore[SKY-D215]
+                Path(debt_args.output_file).write_text(
+                    output, encoding="utf-8"
+                )  # skylos: ignore[SKY-D215]
             except OSError as e:
                 console.print(f"[red]Error writing output file: {e}[/red]")
                 return 1

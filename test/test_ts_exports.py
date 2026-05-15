@@ -637,8 +637,12 @@ export default defineConfig({
         helper_file = tmp_path / "src" / "helper.ts"
 
         helper_file.parent.mkdir(parents=True, exist_ok=True)
-        app_file.write_text("async function load() { await import('./feature'); }\n", encoding="utf-8")
-        feature_file.write_text("import './helper';\nexport const feature = true;\n", encoding="utf-8")
+        app_file.write_text(
+            "async function load() { await import('./feature'); }\n", encoding="utf-8"
+        )
+        feature_file.write_text(
+            "import './helper';\nexport const feature = true;\n", encoding="utf-8"
+        )
         helper_file.write_text("export const helper = true;\n", encoding="utf-8")
 
         _, wildcard_edges, importers_of = build_ts_import_graph(
@@ -659,7 +663,9 @@ export default defineConfig({
         feature_file = tmp_path / "src" / "feature.ts"
 
         feature_file.parent.mkdir(parents=True, exist_ok=True)
-        app_file.write_text("const target = require.resolve('./feature');\n", encoding="utf-8")
+        app_file.write_text(
+            "const target = require.resolve('./feature');\n", encoding="utf-8"
+        )
         feature_file.write_text("export const feature = true;\n", encoding="utf-8")
 
         _, wildcard_edges, importers_of = build_ts_import_graph(
@@ -680,7 +686,9 @@ export default defineConfig({
         feature_file = tmp_path / "src" / "feature.ts"
 
         feature_file.parent.mkdir(parents=True, exist_ok=True)
-        app_file.write_text("const target = import.meta.resolve('./feature');\n", encoding="utf-8")
+        app_file.write_text(
+            "const target = import.meta.resolve('./feature');\n", encoding="utf-8"
+        )
         feature_file.write_text("export const feature = true;\n", encoding="utf-8")
 
         _, wildcard_edges, importers_of = build_ts_import_graph(
@@ -702,8 +710,12 @@ export default defineConfig({
         helper_file = tmp_path / "src" / "routes" / "helper.ts"
 
         route_file.parent.mkdir(parents=True, exist_ok=True)
-        app_file.write_text("const routes = import.meta.glob('./routes/**/*.ts');\n", encoding="utf-8")
-        route_file.write_text("import './helper';\nexport const route = true;\n", encoding="utf-8")
+        app_file.write_text(
+            "const routes = import.meta.glob('./routes/**/*.ts');\n", encoding="utf-8"
+        )
+        route_file.write_text(
+            "import './helper';\nexport const route = true;\n", encoding="utf-8"
+        )
         helper_file.write_text("export const helper = true;\n", encoding="utf-8")
 
         _, wildcard_edges, importers_of = build_ts_import_graph(
@@ -759,7 +771,9 @@ class TestTypeScriptUnusedExports:
             encoding="utf-8",
         )
         cli_file.parent.mkdir(parents=True, exist_ok=True)
-        cli_file.write_text("export function run() { return true; }\n", encoding="utf-8")
+        cli_file.write_text(
+            "export function run() { return true; }\n", encoding="utf-8"
+        )
 
         inventory = discover_workspace_inventory(tmp_path)
         defn = _make_def("run", "function", str(cli_file), exported=True)
@@ -905,9 +919,7 @@ export default defineConfig({
         )
 
         inventory = discover_workspace_inventory(tmp_path)
-        defn = _make_def(
-            "runBrowserTest", "function", str(test_file), exported=True
-        )
+        defn = _make_def("runBrowserTest", "function", str(test_file), exported=True)
         defn.references = 1
         defn.is_exported = False
 
@@ -922,13 +934,19 @@ export default defineConfig({
         assert len(findings) == 1
         assert findings[0]["name"] == "runBrowserTest"
 
-    def test_dynamic_import_consumes_all_exports_for_unused_export_detection(self, tmp_path):
+    def test_dynamic_import_consumes_all_exports_for_unused_export_detection(
+        self, tmp_path
+    ):
         app_file = tmp_path / "src" / "main.ts"
         feature_file = tmp_path / "src" / "feature.ts"
 
         feature_file.parent.mkdir(parents=True, exist_ok=True)
-        app_file.write_text("async function load() { await import('./feature'); }\n", encoding="utf-8")
-        feature_file.write_text("export function renderFeature() { return true; }\n", encoding="utf-8")
+        app_file.write_text(
+            "async function load() { await import('./feature'); }\n", encoding="utf-8"
+        )
+        feature_file.write_text(
+            "export function renderFeature() { return true; }\n", encoding="utf-8"
+        )
 
         defn = _make_def("renderFeature", "function", str(feature_file), exported=True)
         defs = {f"{feature_file}:renderFeature": defn}

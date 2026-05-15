@@ -18,7 +18,9 @@ def _count_code_lines_from_file(filename: str) -> int | None:
         return None
 
     try:
-        lines = Path(filename).read_text(encoding="utf-8", errors="ignore").splitlines()  # skylos: ignore[SKY-D215] analyzer reads discovered source files
+        lines = (
+            Path(filename).read_text(encoding="utf-8", errors="ignore").splitlines()
+        )  # skylos: ignore[SKY-D215] analyzer reads discovered source files
     except OSError:
         return None
 

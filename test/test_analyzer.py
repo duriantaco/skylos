@@ -176,11 +176,7 @@ class TestSkylos:
     def test_trace_file_false_ignores_existing_project_root_trace(self, tmp_path):
         module = tmp_path / "app.py"
         module.write_text(
-            "def root_traced():\n"
-            "    return 1\n"
-            "\n"
-            "def unused():\n"
-            "    return 2\n",
+            "def root_traced():\n    return 1\n\ndef unused():\n    return 2\n",
             encoding="utf-8",
         )
         (tmp_path / ".skylos_trace").write_text(
@@ -649,9 +645,7 @@ class TestAnalyze:
             (root / "package_b").mkdir()
             (root / "package_a" / "__init__.py").write_text("", encoding="utf-8")
             (root / "package_a" / "cli.py").write_text(
-                "import sync_common\n"
-                "def main():\n"
-                "    return sync_common.VALUE\n",
+                "import sync_common\ndef main():\n    return sync_common.VALUE\n",
                 encoding="utf-8",
             )
             (root / "package_b" / "__init__.py").write_text("", encoding="utf-8")
@@ -682,8 +676,7 @@ class TestAnalyze:
                 "", encoding="utf-8"
             )
             (root / "app" / "package_a" / "cli.py").write_text(
-                "def main():\n"
-                "    return 1\n",
+                "def main():\n    return 1\n",
                 encoding="utf-8",
             )
             (root / "app" / "package_b" / "__init__.py").write_text(
@@ -725,9 +718,7 @@ class TestAnalyze:
             (root / "app" / "domain").mkdir(parents=True)
             (root / "app" / "__init__.py").write_text("", encoding="utf-8")
             (root / "app" / "api" / "__init__.py").write_text("", encoding="utf-8")
-            (root / "app" / "domain" / "__init__.py").write_text(
-                "", encoding="utf-8"
-            )
+            (root / "app" / "domain" / "__init__.py").write_text("", encoding="utf-8")
             (root / "app" / "api" / "routes.py").write_text(
                 "API_VALUE = 1\n",
                 encoding="utf-8",
@@ -764,8 +755,7 @@ class TestAnalyze:
                 encoding="utf-8",
             )
             (pkg / "__init__.py").write_text(
-                "from .cli import main\n"
-                '__all__ = ["main"]\n',
+                'from .cli import main\n__all__ = ["main"]\n',
                 encoding="utf-8",
             )
             (pkg / "cli.py").write_text(
@@ -825,8 +815,7 @@ class TestAnalyze:
             )
             (pkg / "__init__.py").write_text("", encoding="utf-8")
             (pkg / "gui.py").write_text(
-                "def launch():\n"
-                '    print("hello")\n',
+                'def launch():\n    print("hello")\n',
                 encoding="utf-8",
             )
 
@@ -859,8 +848,7 @@ class TestAnalyze:
                 encoding="utf-8",
             )
             (pkg / "_banner.py").write_text(
-                "def print_banner():\n"
-                '    print("hello")\n',
+                'def print_banner():\n    print("hello")\n',
                 encoding="utf-8",
             )
 
@@ -885,9 +873,7 @@ class TestAnalyze:
             pkg = root / "mypkg"
             pkg.mkdir()
             (root / "pyproject.toml").write_text(
-                "[project]\n"
-                'name = "disconnected-package-repro"\n'
-                'version = "0.1.0"\n',
+                '[project]\nname = "disconnected-package-repro"\nversion = "0.1.0"\n',
                 encoding="utf-8",
             )
             (pkg / "__init__.py").write_text("", encoding="utf-8")
@@ -1625,9 +1611,7 @@ class PlainChild(Base):
         result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
         result = json.loads(result_json)
 
-        unused_parameters = {
-            item["full_name"] for item in result["unused_parameters"]
-        }
+        unused_parameters = {item["full_name"] for item in result["unused_parameters"]}
 
         assert "models.TypedChild.render.compat" not in unused_parameters
         assert "models.ExtensionChild.render.compat_ext" not in unused_parameters
@@ -1820,9 +1804,7 @@ def stale_path():
         assert "LegacyHandler.handle" in unreachable
         assert "stale_path" in unreachable
 
-    def test_analyze_explicit_protocol_implementer_method_can_be_dead(
-        self, tmp_path
-    ):
+    def test_analyze_explicit_protocol_implementer_method_can_be_dead(self, tmp_path):
         src = tmp_path / "service.py"
         src.write_text(
             """
@@ -2593,9 +2575,7 @@ def handler(request):
         assert "dependency_vulnerabilities" not in result
         assert "sca_count" not in result.get("analysis_summary", {})
 
-    def test_enable_sca_runs_dependency_vulnerability_scan(
-        self, tmp_path, monkeypatch
-    ):
+    def test_enable_sca_runs_dependency_vulnerability_scan(self, tmp_path, monkeypatch):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
         (tmp_path / "app.py").write_text("def handler():\n    return 1\n")
 

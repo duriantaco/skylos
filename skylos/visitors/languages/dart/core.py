@@ -248,7 +248,11 @@ class DartCore:
                 source_name = Path(source).stem
             if source_name and source_name not in {".", ""}:
                 names.append(source_name)
-                line = prefix_node.start_point[0] + 1 if prefix_node else node.start_point[0] + 1
+                line = (
+                    prefix_node.start_point[0] + 1
+                    if prefix_node
+                    else node.start_point[0] + 1
+                )
                 d = Definition(source_name, "import", self.file_path, line)
                 self.defs.append(d)
 
@@ -267,16 +271,21 @@ class DartCore:
             if base_node is name_node:
                 continue
             parent = base_node.parent
-            if parent is not None and parent.type in {"superclass", "interfaces", "mixins"}:
+            if parent is not None and parent.type in {
+                "superclass",
+                "interfaces",
+                "mixins",
+            }:
                 base_name = self._node_name_text(base_node)
                 bases.append(base_name)
                 self._add_ref(base_name, base_node.start_byte, current_callable=None)
 
-        d = Definition(class_name, "class", self.file_path, name_node.start_point[0] + 1)
+        d = Definition(
+            class_name, "class", self.file_path, name_node.start_point[0] + 1
+        )
         d.base_classes = bases
-        d.is_exported = (
-            not _is_private_name(class_name)
-            and any(base in _FLUTTER_BASES for base in bases)
+        d.is_exported = not _is_private_name(class_name) and any(
+            base in _FLUTTER_BASES for base in bases
         )
         self.defs.append(d)
 
@@ -329,9 +338,13 @@ class DartCore:
             d.is_exported = not _is_private_name(constructor_name)
             self.defs.append(d)
 
-            params = self._first_descendant_of_type(constructor, "formal_parameter_list")
+            params = self._first_descendant_of_type(
+                constructor, "formal_parameter_list"
+            )
             if params is not None:
-                for param in self._descendants_of_type(params, "super_formal_parameter"):
+                for param in self._descendants_of_type(
+                    params, "super_formal_parameter"
+                ):
                     ident = self._child_by_type(param, "identifier")
                     if ident is not None:
                         self._add_ref(
@@ -391,7 +404,9 @@ class DartCore:
             return
 
         qualified = f"{current_class}.{method_name}"
-        d = Definition(qualified, "method", self.file_path, name_node.start_point[0] + 1)
+        d = Definition(
+            qualified, "method", self.file_path, name_node.start_point[0] + 1
+        )
         implicit = self._is_implicit_method(method_name, class_bases, node)
         d.is_exported = implicit or not _is_private_name(method_name)
         if implicit:
@@ -418,7 +433,9 @@ class DartCore:
         func_name = self._node_name_text(name_node)
         if not func_name:
             return
-        d = Definition(func_name, "function", self.file_path, name_node.start_point[0] + 1)
+        d = Definition(
+            func_name, "function", self.file_path, name_node.start_point[0] + 1
+        )
         d.is_exported = (
             func_name == "main"
             or (self.is_test_file and func_name in _TEST_ENTRYPOINTS)

@@ -943,7 +943,9 @@ class TestPipelinePhase2b:
             patch(P_SECURITY_VERIFIER) as mock_verifier,
         ):
             mock_llm.return_value.analyze_files.return_value = llm_result
-            mock_verifier.return_value.review_findings.side_effect = RuntimeError("down")
+            mock_verifier.return_value.review_findings.side_effect = RuntimeError(
+                "down"
+            )
 
             findings = run_pipeline(
                 path=str(proj),

@@ -86,7 +86,9 @@ def _parse_requires_python(
             return (None, None)
 
     try:
-        with open(pyproject_path, "rb") as f:  # skylos: ignore[SKY-D215] analyzer reads discovered pyproject files
+        with open(
+            pyproject_path, "rb"
+        ) as f:  # skylos: ignore[SKY-D215] analyzer reads discovered pyproject files
             data = tomllib.load(f)
 
         requires_python = data.get("project", {}).get("requires-python", "")

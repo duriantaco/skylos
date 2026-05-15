@@ -408,7 +408,9 @@ class TestMainFunction:
 
             assert mock_analyze.call_args.kwargs["enable_danger"] is True
 
-    def test_main_uses_policy_enabled_categories_when_no_flags(self, mock_skylos_result):
+    def test_main_uses_policy_enabled_categories_when_no_flags(
+        self, mock_skylos_result
+    ):
         test_args = ["cli.py", "test_path", "--json", "--no-provenance"]
 
         with (
@@ -1148,9 +1150,7 @@ def test_main_strict_failure_renders_results_then_exits_nonzero(monkeypatch):
 
 
 @pytest.mark.parametrize("llm_args", (["--llm"], ["--format", "llm"]))
-def test_main_llm_output_is_quiet_and_gate_failure_exits_nonzero(
-    monkeypatch, llm_args
-):
+def test_main_llm_output_is_quiet_and_gate_failure_exits_nonzero(monkeypatch, llm_args):
     result = {
         "analysis_summary": {"total_files": 1},
         "unused_functions": [],

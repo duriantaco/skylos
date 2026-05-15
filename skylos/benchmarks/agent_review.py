@@ -135,7 +135,9 @@ def validate_manifest(
             )
 
         security_classes = case.get("security_classes", [])
-        if security_classes not in (None, []) and not isinstance(security_classes, list):
+        if security_classes not in (None, []) and not isinstance(
+            security_classes, list
+        ):
             raise ValueError(
                 f"agent review benchmark case {case_id} security_classes must be a list when provided"
             )
@@ -346,9 +348,9 @@ def _evaluate_expectations(case: dict[str, Any], symbols: set[str], finding_coun
     expect = case.get("expect", {})
     present = expect.get("present", {}) or {}
     absent = expect.get("absent", {}) or {}
-    is_clean_precision_guard = "precision_guard" in (case.get("taxonomy") or []) and not (
-        present
-    )
+    is_clean_precision_guard = "precision_guard" in (
+        case.get("taxonomy") or []
+    ) and not (present)
 
     failures: list[AgentReviewBenchmarkFailure] = []
     present_total = _count_expectations(present)

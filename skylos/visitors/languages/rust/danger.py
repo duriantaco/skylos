@@ -186,12 +186,8 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
         ):
             return False
         shell_switch = r'(?:"-c"|"/C"|"-Command")'
-        has_single_switch = re.search(
-            rf"\.arg\(\s*{shell_switch}\s*\)", call_text
-        )
-        has_args_switch = re.search(
-            rf"\.args\([^)]*{shell_switch}", call_text, re.S
-        )
+        has_single_switch = re.search(rf"\.arg\(\s*{shell_switch}\s*\)", call_text)
+        has_args_switch = re.search(rf"\.args\([^)]*{shell_switch}", call_text, re.S)
         if not has_single_switch and not has_args_switch:
             return False
         return is_tainted_expr(call_node, tainted_vars)

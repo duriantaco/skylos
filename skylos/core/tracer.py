@@ -95,7 +95,9 @@ class CallTracer:
             ],
         }
 
-        Path(filepath).write_text(json.dumps(data, indent=2))  # skylos: ignore[SKY-D215] caller-selected trace output
+        Path(filepath).write_text(
+            json.dumps(data, indent=2)
+        )  # skylos: ignore[SKY-D215] caller-selected trace output
         print(f"Saved {len(self.called_functions)} traced function calls to {filepath}")
 
     @classmethod
@@ -105,7 +107,9 @@ class CallTracer:
             return None
 
         try:
-            data = json.loads(path.read_text())  # skylos: ignore[SKY-D215] caller-selected trace input
+            data = json.loads(
+                path.read_text()
+            )  # skylos: ignore[SKY-D215] caller-selected trace input
             calls = set()
             for item in data.get("calls", []):
                 calls.add((item["file"], item["function"], item["line"]))

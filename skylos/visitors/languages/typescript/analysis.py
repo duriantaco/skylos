@@ -620,7 +620,9 @@ def _find_config_root_objects(source: bytes, root_node) -> list:
     return top_level_objects
 
 
-def _find_object_path_values(source: bytes, objects: list, path: tuple[str, ...]) -> list:
+def _find_object_path_values(
+    source: bytes, objects: list, path: tuple[str, ...]
+) -> list:
     current = list(objects)
     for index, segment in enumerate(path):
         next_nodes = []
@@ -655,7 +657,9 @@ def _collect_string_literals(source: bytes, node) -> list[str]:
     return values
 
 
-def _resolve_relative_entry_file(base_dir: str, candidate: str, ts_files: set[str]) -> str | None:
+def _resolve_relative_entry_file(
+    base_dir: str, candidate: str, ts_files: set[str]
+) -> str | None:
     resolved = _resolve_path_target(base_dir, candidate)
     if not resolved:
         return None
@@ -665,7 +669,9 @@ def _resolve_relative_entry_file(base_dir: str, candidate: str, ts_files: set[st
     return None
 
 
-def _expand_relative_entry_glob(base_dir: str, pattern: str, ts_files: set[str]) -> set[str]:
+def _expand_relative_entry_glob(
+    base_dir: str, pattern: str, ts_files: set[str]
+) -> set[str]:
     matches: set[str] = set()
     for candidate in glob.glob(os.path.join(base_dir, pattern), recursive=True):
         real_path = os.path.realpath(candidate)
@@ -674,7 +680,9 @@ def _expand_relative_entry_glob(base_dir: str, pattern: str, ts_files: set[str])
     return matches
 
 
-def _resolve_config_root_base(source: bytes, objects: list, default_base_dir: str) -> str:
+def _resolve_config_root_base(
+    source: bytes, objects: list, default_base_dir: str
+) -> str:
     root_values = _find_object_path_values(source, objects, ("root",))
     for node in root_values:
         for value in _collect_string_literals(source, node):
@@ -730,7 +738,9 @@ def _discover_vite_config_entries(
     matches.update(
         _literal_entries_from_nodes(
             source,
-            _find_object_path_values(source, objects, ("build", "rollupOptions", "input")),
+            _find_object_path_values(
+                source, objects, ("build", "rollupOptions", "input")
+            ),
             base_dir,
             ts_files,
         )
@@ -789,7 +799,9 @@ def _discover_vitest_config_entries(
     return matches
 
 
-def _discover_playwright_config_entries(config_path: str, ts_files: set[str]) -> set[str]:
+def _discover_playwright_config_entries(
+    config_path: str, ts_files: set[str]
+) -> set[str]:
     source, root_node = _load_entry_config_ast(config_path)
     if source is None or root_node is None:
         return set()
@@ -810,7 +822,8 @@ def _discover_playwright_config_entries(config_path: str, ts_files: set[str]) ->
     matches: set[str] = {
         real_path
         for real_path in ts_files
-        if os.path.commonpath([real_path, os.path.realpath(test_dir)]) == os.path.realpath(test_dir)
+        if os.path.commonpath([real_path, os.path.realpath(test_dir)])
+        == os.path.realpath(test_dir)
     }
 
     pattern_values = _find_object_path_values(source, objects, ("testMatch",))
@@ -820,8 +833,14 @@ def _discover_playwright_config_entries(config_path: str, ts_files: set[str]) ->
         for node in pattern_values:
             patterns.extend(_collect_string_literals(source, node))
         for real_path in matches:
-            relative = os.path.relpath(real_path, os.path.realpath(test_dir)).replace(os.sep, "/")
-            if any(fnmatch.fnmatch(relative, pattern) or fnmatch.fnmatch(os.path.basename(relative), pattern) for pattern in patterns):
+            relative = os.path.relpath(real_path, os.path.realpath(test_dir)).replace(
+                os.sep, "/"
+            )
+            if any(
+                fnmatch.fnmatch(relative, pattern)
+                or fnmatch.fnmatch(os.path.basename(relative), pattern)
+                for pattern in patterns
+            ):
                 filtered.add(real_path)
         matches = filtered
 
@@ -970,7 +989,9 @@ def _iter_entry_discoveries(
                     )
                 )
 
-        script_entries, script_configs = _discover_script_entry_candidates(str(package_root))
+        script_entries, script_configs = _discover_script_entry_candidates(
+            str(package_root)
+        )
         for entry_file in script_entries:
             if entry_file in ts_files:
                 reason = "package-script"
@@ -992,7 +1013,9 @@ def _iter_entry_discoveries(
                 default_configs[os.path.realpath(candidate)] = (
                     "playwright"
                     if os.path.basename(candidate) in _PLAYWRIGHT_CONFIG_FILES
-                    else ("vitest" if "vitest" in os.path.basename(candidate) else "vite"),
+                    else (
+                        "vitest" if "vitest" in os.path.basename(candidate) else "vite"
+                    ),
                     str(package_root),
                 )
 
@@ -1015,9 +1038,7 @@ def _iter_entry_discoveries(
         elif tool == "playwright":
             entry_files = _discover_playwright_config_entries(config_path, ts_files)
         else:
-            entry_files = _discover_vite_config_entries(
-                config_path, ts_files, base_dir
-            )
+            entry_files = _discover_vite_config_entries(config_path, ts_files, base_dir)
         for entry_file in sorted(entry_files):
             reason = f"{tool}-derived-root"
             discoveries.append(

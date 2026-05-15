@@ -315,9 +315,7 @@ def test_process_deep_audit_records_marks_unsupported_languages(tmp_path: Path):
     record = store.read_file_record(app)
     assert record.status == "not_analyzed"
     assert [
-        item.get("stage")
-        for item in record.analysis_history
-        if isinstance(item, dict)
+        item.get("stage") for item in record.analysis_history if isinstance(item, dict)
     ] == ["unsupported_agent_language"]
 
     rerun_summary = process_deep_audit_records(

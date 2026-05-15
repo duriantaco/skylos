@@ -53,7 +53,7 @@ def build_fixture(root: Path, *, per_language: int) -> int:
             }
         ),
     )
-    _write(root / "Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n")
+    _write(root / "Cargo.toml", '[workspace]\nmembers = ["crates/*"]\n')
 
     for i in range(per_language):
         _write(

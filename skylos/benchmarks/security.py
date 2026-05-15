@@ -107,7 +107,9 @@ def validate_manifest(
 
     cases = manifest.get("cases")
     if not isinstance(cases, list) or not cases:
-        raise ValueError("security benchmark manifest must define a non-empty cases list")
+        raise ValueError(
+            "security benchmark manifest must define a non-empty cases list"
+        )
 
     seen_ids: set[str] = set()
     root = manifest_file.parent
@@ -255,7 +257,9 @@ def _scanner_supports_case(scanner: str, case: dict[str, Any]) -> bool:
     supported = SCANNER_LANGUAGE_SUPPORT.get(scanner)
     if supported is None:
         allowed = ", ".join(sorted(SUPPORTED_SCANNERS))
-        raise ValueError(f"unsupported security benchmark scanner '{scanner}': {allowed}")
+        raise ValueError(
+            f"unsupported security benchmark scanner '{scanner}': {allowed}"
+        )
     return set(_case_languages(case)).issubset(supported)
 
 
@@ -302,7 +306,9 @@ def _scan_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str,
     return json.loads(raw)
 
 
-def _scan_bandit_case(case_path: Path, scan: dict[str, Any] | None = None) -> dict[str, Any]:
+def _scan_bandit_case(
+    case_path: Path, scan: dict[str, Any] | None = None
+) -> dict[str, Any]:
     bandit = shutil.which("bandit")
     if not bandit:
         raise RuntimeError(
@@ -326,7 +332,9 @@ def _scan_bandit_case(case_path: Path, scan: dict[str, Any] | None = None) -> di
     try:
         payload = json.loads(completed.stdout or "{}")
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f"bandit benchmark scan emitted invalid JSON: {exc}") from exc
+        raise RuntimeError(
+            f"bandit benchmark scan emitted invalid JSON: {exc}"
+        ) from exc
 
     danger = []
     for finding in payload.get("results", []) or []:
@@ -444,7 +452,11 @@ def _score_counts(
         1.0 if precision_denominator == 0 else true_positives / precision_denominator
     )
     recall = 1.0 if recall_denominator == 0 else true_positives / recall_denominator
-    f1 = 1.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+    f1 = (
+        1.0
+        if precision + recall == 0
+        else 2 * precision * recall / (precision + recall)
+    )
 
     absence_denominator = true_negatives + false_positives
     absence_guard = (
@@ -537,7 +549,7 @@ def run_case(
 
 
 def _aggregate_scores(
-    case_results: list[dict[str, Any]]
+    case_results: list[dict[str, Any]],
 ) -> tuple[dict[str, float], dict[str, int]]:
     totals = {
         "true_positives": 0,

@@ -16,7 +16,9 @@ _DEAD_CODE_CATEGORIES = (
     "unused_parameters",
 )
 
-_DEFENSE_NOTE = "AI defense currently scans Python and TypeScript direct SDK integrations."
+_DEFENSE_NOTE = (
+    "AI defense currently scans Python and TypeScript direct SDK integrations."
+)
 
 
 def _empty_defense_payload(project_path: str) -> dict[str, Any]:

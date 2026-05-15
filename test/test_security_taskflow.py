@@ -78,10 +78,15 @@ def test_run_security_taskflow_builds_repo_context_and_entry_points(tmp_path):
     app_key = str(app.resolve())
     assert analyzer.seen_issue_types == ["security_audit"]
     assert app_key in analyzer.config.repo_context_map
-    assert "conventional entry file `app.py`" in analyzer.config.repo_context_map[app_key]
+    assert (
+        "conventional entry file `app.py`" in analyzer.config.repo_context_map[app_key]
+    )
     assert "network boundary" in analyzer.config.repo_context_map[app_key]
     assert "framework: flask" in analyzer.config.repo_context_map[app_key]
-    assert "user-controlled sources: request.args.get" in analyzer.config.repo_context_map[app_key]
+    assert (
+        "user-controlled sources: request.args.get"
+        in analyzer.config.repo_context_map[app_key]
+    )
     assert "dangerous sinks: requests.get" in analyzer.config.repo_context_map[app_key]
     assert any(item.path == app_key for item in run.entry_points)
     assert any(item.path == app_key for item in run.trust_boundaries)
@@ -158,10 +163,14 @@ def test_run_security_taskflow_records_review_counts_and_filters_refuted_finding
     assert len(run.candidate_ledger) == 2
 
     supported = next(
-        candidate for candidate in run.candidate_ledger if candidate.rule_id == "SKY-L001"
+        candidate
+        for candidate in run.candidate_ledger
+        if candidate.rule_id == "SKY-L001"
     )
     refuted = next(
-        candidate for candidate in run.candidate_ledger if candidate.rule_id == "SKY-L002"
+        candidate
+        for candidate in run.candidate_ledger
+        if candidate.rule_id == "SKY-L002"
     )
     assert supported.state == "review_supported"
     assert supported.evidence == "review_supported"
@@ -309,7 +318,10 @@ def test_run_security_taskflow_writes_run_artifacts(tmp_path):
     assert verified_payload["run_id"] == "run-test-123"
     assert verified_payload["supported_count"] == 1
     assert verified_payload["final_finding_count"] == 1
-    assert verified_payload["result"]["findings"][0]["metadata"]["review_verdict"] == "SUPPORTED"
+    assert (
+        verified_payload["result"]["findings"][0]["metadata"]["review_verdict"]
+        == "SUPPORTED"
+    )
 
     assert summary_payload["run_id"] == "run-test-123"
     assert summary_payload["artifacts_dir"] == str(artifacts_dir)

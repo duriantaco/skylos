@@ -114,7 +114,9 @@ class _DangerousCallsChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node):
-        name = qualified_name_from_call(node, self.aliases, self.assigned_calls_stack[-1])
+        name = qualified_name_from_call(
+            node, self.aliases, self.assigned_calls_stack[-1]
+        )
         if name:
             for rule_key, tup in DANGEROUS_CALLS.items():
                 rule_id, severity, message = tup[0], tup[1], tup[2]

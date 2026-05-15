@@ -109,7 +109,6 @@ _GREP_EXCLUDE_DIRS = (
 )
 
 
-
 def detect_language(file_path: str) -> str:
     ext = Path(file_path).suffix.lower()
     if ext in _PYTHON_EXTS:
@@ -529,9 +528,7 @@ def _is_other_owner_same_method_call(grep_line: str, finding: dict) -> bool:
     return False
 
 
-def _filter_other_owner_same_method_calls(
-    lines: list[str], finding: dict
-) -> list[str]:
+def _filter_other_owner_same_method_calls(lines: list[str], finding: dict) -> list[str]:
     return [
         line for line in lines if not _is_other_owner_same_method_call(line, finding)
     ]

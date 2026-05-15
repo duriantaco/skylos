@@ -385,7 +385,11 @@ class TypeScriptCore:
                                 break
                     return parameters, body
                 return None, None
-            if declaration.type in {"program", "class_declaration", "method_definition"}:
+            if declaration.type in {
+                "program",
+                "class_declaration",
+                "method_definition",
+            }:
                 return None, None
             declaration = declaration.parent
         return None, None
@@ -632,9 +636,7 @@ class TypeScriptCore:
 
             if function_node.type == "import":
                 for source_path in self._string_sources_from_node(first_arg):
-                    self._append_raw_import(
-                        source_path, line, consume_all_exports=True
-                    )
+                    self._append_raw_import(source_path, line, consume_all_exports=True)
                 continue
 
             if function_node.type != "member_expression":
@@ -653,9 +655,7 @@ class TypeScriptCore:
                 and property_name == "resolve"
             ):
                 for source_path in self._string_sources_from_node(first_arg):
-                    self._append_raw_import(
-                        source_path, line, consume_all_exports=True
-                    )
+                    self._append_raw_import(source_path, line, consume_all_exports=True)
                 continue
 
             if object_node.type != "meta_property":
@@ -665,16 +665,12 @@ class TypeScriptCore:
 
             if property_name == "resolve":
                 for source_path in self._string_sources_from_node(first_arg):
-                    self._append_raw_import(
-                        source_path, line, consume_all_exports=True
-                    )
+                    self._append_raw_import(source_path, line, consume_all_exports=True)
                 continue
 
             if property_name in _DYNAMIC_GLOB_METHODS:
                 for source_path in self._glob_import_sources(first_arg):
-                    self._append_raw_import(
-                        source_path, line, consume_all_exports=True
-                    )
+                    self._append_raw_import(source_path, line, consume_all_exports=True)
 
     def _build_call_graph(self) -> None:
         self.call_pairs: list[tuple[str, str]] = []

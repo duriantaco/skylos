@@ -275,7 +275,9 @@ def ingest_claude_security(
         return {"success": False, "error": f"File not found: {input_path}"}
 
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))  # skylos: ignore[SKY-D215] user-selected import file
+        raw = json.loads(
+            path.read_text(encoding="utf-8")
+        )  # skylos: ignore[SKY-D215] user-selected import file
     except json.JSONDecodeError as e:
         return {"success": False, "error": f"Invalid JSON: {e}"}
 
@@ -302,7 +304,9 @@ def ingest_claude_security(
                 "error": f"Skylos results not found: {cross_reference_path}",
             }
         try:
-            skylos_data = json.loads(xref_path.read_text(encoding="utf-8"))  # skylos: ignore[SKY-D215] user-selected cross-reference file
+            skylos_data = json.loads(
+                xref_path.read_text(encoding="utf-8")
+            )  # skylos: ignore[SKY-D215] user-selected cross-reference file
         except json.JSONDecodeError as e:
             return {"success": False, "error": f"Invalid Skylos JSON: {e}"}
 

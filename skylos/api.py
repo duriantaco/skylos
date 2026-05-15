@@ -1,28 +1,66 @@
 import os
-import ipaddress
 import logging
 import requests
 import subprocess
-import contextlib
-import gzip
-import hashlib
-import io
 from skylos.cloud.credentials import get_key
 from skylos.reporting.sarif import SarifExporter
 import sys
-import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 import json
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
+
+from skylos.api_artifacts import (
+    UPLOAD_PROTOCOL_VERSION as UPLOAD_PROTOCOL_VERSION,
+    PreparedReportUpload,
+    UploadArtifact as UploadArtifact,
+    _append_skipped_artifact,
+    _build_report_artifacts,
+    _build_report_complete_payload,
+    _build_report_init_idempotency_key as _build_report_init_idempotency_key,
+    _build_report_init_payload,
+    _build_uploaded_artifact_record,
+    _missing_artifact_instruction_result,
+    _sha256_file as _sha256_file,
+    _write_gzip_json_artifact as _write_gzip_json_artifact,
+    upload_artifact,
+)
+from skylos.api_findings import (
+    UPLOAD_FINDING_SPECS,
+    VERIFY_FINDING_SPECS,
+    _normalize_findings as _normalize_findings,
+    _normalize_result_sections,
+)
+from skylos.api_payloads import (
+    _build_legacy_payload,
+    _build_report_scan_summary,
+    _coerce_debt_snapshot_dict,
+    _compact_finding_metadata as _compact_finding_metadata,
+    _compact_upload_finding,
+    _extract_workspace_upload_metadata,
+    _infer_upload_project_root,
+    _int_upload_value as _int_upload_value,
+    _json_size_bytes,
+    _truncate_upload_text as _truncate_upload_text,
+)
+from skylos.api_snippets import (
+    _resolve_snippet_path as _resolve_snippet_path,
+    extract_snippet as extract_snippet,
+)
+from skylos.api_urls import (
+    _append_query_param,
+    _host_is_private_or_metadata as _host_is_private_or_metadata,
+    _normalize_http_url as _normalize_http_url,
+    _validate_api_request_url,
+    _validate_artifact_upload_url as _validate_artifact_upload_url,
+    _validate_github_oidc_request_url,
+)
 
 from skylos.constants import (
     NETWORK_TIMEOUT_SHORT,
     NETWORK_TIMEOUT_DEFAULT,
     NETWORK_TIMEOUT_LONG,
-    SNIPPET_CONTEXT_LINES,
+    SNIPPET_CONTEXT_LINES as SNIPPET_CONTEXT_LINES,
     SUBPROCESS_TIMEOUT,
     UPLOAD_TIMEOUT,
 )
@@ -31,6 +69,96 @@ logger = logging.getLogger(__name__)
 
 LINK_FILE = ".skylos/link.json"
 GLOBAL_CREDS_FILE = Path.home() / ".skylos" / "credentials.json"
+
+__all__ = [
+    "BASE_URL",
+    "REPORT_URL",
+    "REPORT_INIT_URL",
+    "REPORT_COMPLETE_URL",
+    "WHOAMI_URL",
+    "VERIFY_URL",
+    "AGENT_RUNS_URL",
+    "UPLOAD_PROTOCOL_VERSION",
+    "LINK_FILE",
+    "GLOBAL_CREDS_FILE",
+    "_detect_ci",
+    "_extract_pr_number",
+    "_normalize_branch",
+    "_read_json",
+    "_get_repo_root_for_link",
+    "_normalize_http_url",
+    "_host_is_private_or_metadata",
+    "_validate_api_request_url",
+    "_validate_artifact_upload_url",
+    "_validate_github_oidc_request_url",
+    "_append_query_param",
+    "_try_github_oidc_token",
+    "get_project_token",
+    "get_project_info",
+    "get_credit_balance",
+    "print_credit_status",
+    "get_git_root",
+    "_resolve_repo_link_path",
+    "_load_repo_link",
+    "_current_repo_subpath",
+    "_linked_project_id_for_current_path",
+    "get_git_info",
+    "_resolve_snippet_path",
+    "extract_snippet",
+    "_build_auth_headers",
+    "_truthy_env",
+    "_legacy_inline_upload_limit_bytes",
+    "_json_size_bytes",
+    "_cli_version",
+    "_new_upload_client_session_id",
+    "_sha256_file",
+    "UploadArtifact",
+    "PreparedReportUpload",
+    "_write_gzip_json_artifact",
+    "detect_ai_code",
+    "_get_blame_map",
+    "_normalize_findings",
+    "_normalize_result_sections",
+    "_prepare_report_upload",
+    "_coerce_debt_snapshot_dict",
+    "_prepare_debt_upload",
+    "_annotate_findings_with_blame",
+    "_detect_report_provenance_data",
+    "_infer_upload_project_root",
+    "_extract_workspace_upload_metadata",
+    "_build_report_metadata",
+    "_truncate_upload_text",
+    "_compact_finding_metadata",
+    "_int_upload_value",
+    "_compact_upload_finding",
+    "_build_compatibility_inline_payload",
+    "_build_legacy_payload",
+    "_build_report_scan_summary",
+    "_build_report_init_idempotency_key",
+    "_build_report_artifacts",
+    "_build_report_init_payload",
+    "_finalize_report_upload",
+    "_post_json_with_retries",
+    "_post_report_payload",
+    "_looks_like_server_error",
+    "_build_large_upload_protocol_error",
+    "_build_compatibility_upload_too_large_error",
+    "upload_artifact",
+    "upload_report_legacy",
+    "upload_report_compatibility",
+    "_missing_artifact_instruction_result",
+    "_append_skipped_artifact",
+    "_build_uploaded_artifact_record",
+    "_build_report_complete_payload",
+    "upload_report_v2",
+    "upload_report",
+    "upload_debt_report",
+    "_should_use_legacy_inline_report_upload",
+    "_should_retry_with_degraded_large_upload",
+    "upload_defense_report",
+    "upload_agent_run",
+    "verify_report",
+]
 
 
 def _detect_ci():
@@ -172,105 +300,6 @@ if BASE_URL.endswith("/api"):
 else:
     VERIFY_URL = f"{BASE_URL}/api/verify"
     AGENT_RUNS_URL = f"{BASE_URL}/api/agent-runs"
-
-
-UPLOAD_PROTOCOL_VERSION = 1
-
-
-def _normalize_http_url(
-    url: Any,
-    *,
-    allowed_schemes: frozenset[str],
-    allow_fragment: bool = False,
-) -> str:
-    if not isinstance(url, str):
-        raise ValueError("URL must be a string")
-    stripped = url.strip()
-    parsed = urlsplit(stripped)
-    scheme = parsed.scheme.lower()
-    if scheme not in allowed_schemes:
-        raise ValueError("URL scheme is not allowed")
-    if not parsed.hostname:
-        raise ValueError("URL host is required")
-    if parsed.username or parsed.password:
-        raise ValueError("URL credentials are not allowed")
-    if parsed.fragment and not allow_fragment:
-        raise ValueError("URL fragment is not allowed")
-    return urlunsplit(
-        (
-            scheme,
-            parsed.netloc.lower(),
-            parsed.path,
-            parsed.query,
-            parsed.fragment,
-        )
-    )
-
-
-def _host_is_private_or_metadata(hostname: str | None) -> bool:
-    if not hostname:
-        return True
-    host = hostname.strip("[]").rstrip(".").lower()
-    if host in {
-        "localhost",
-        "localhost.localdomain",
-        "metadata.google.internal",
-    }:
-        return True
-    if host.endswith(".localhost") or host.endswith(".local"):
-        return True
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return (
-        ip.is_loopback
-        or ip.is_private
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
-
-
-def _validate_api_request_url(url: Any) -> str:
-    return _normalize_http_url(
-        url,
-        allowed_schemes=frozenset({"http", "https"}),
-    )
-
-
-def _validate_artifact_upload_url(url: Any) -> str:
-    safe_url = _normalize_http_url(url, allowed_schemes=frozenset({"https"}))
-    parsed = urlsplit(safe_url)
-    if _host_is_private_or_metadata(parsed.hostname):
-        raise ValueError("upload URL host is not allowed")
-    return safe_url
-
-
-def _validate_github_oidc_request_url(url: Any) -> str:
-    safe_url = _normalize_http_url(url, allowed_schemes=frozenset({"https"}))
-    host = (urlsplit(safe_url).hostname or "").rstrip(".").lower()
-    if host != "actions.githubusercontent.com" and not host.endswith(
-        ".actions.githubusercontent.com"
-    ):
-        raise ValueError("GitHub OIDC URL host is not allowed")
-    return safe_url
-
-
-def _append_query_param(url: str, key: str, value: str) -> str:
-    parsed = urlsplit(url)
-    query = parse_qsl(parsed.query, keep_blank_values=True)
-    query.append((key, value))
-    return urlunsplit(
-        (
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            urlencode(query),
-            parsed.fragment,
-        )
-    )
 
 
 def _try_github_oidc_token():
@@ -521,42 +550,6 @@ def get_git_info() -> tuple[str, str, str, dict]:
     return commit, branch, actor, ci
 
 
-def _resolve_snippet_path(file_abs, repo_root=None) -> Path | None:
-    if not file_abs:
-        return None
-    try:
-        candidate = Path(file_abs).resolve()
-        if repo_root:
-            root = Path(repo_root).resolve()
-            try:
-                candidate.relative_to(root)
-            except ValueError:
-                return None
-        if not candidate.is_file():
-            return None
-        return candidate
-    except OSError:
-        return None
-
-
-def extract_snippet(
-    file_abs,
-    line_number,
-    context=SNIPPET_CONTEXT_LINES,
-    repo_root=None,
-) -> str | None:
-    safe_path = _resolve_snippet_path(file_abs, repo_root)
-    if safe_path is None:
-        return None
-    try:
-        lines = safe_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-        start = max(0, line_number - 1 - context)
-        end = min(len(lines), line_number + context)
-        return "\n".join(lines[start:end])
-    except (OSError, UnicodeDecodeError):
-        return None
-
-
 def _build_auth_headers(token):
     if token and token.startswith("oidc:"):
         return {
@@ -579,10 +572,6 @@ def _legacy_inline_upload_limit_bytes() -> int:
     return max(value, 1)
 
 
-def _json_size_bytes(payload: Any) -> int:
-    return len(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
-
-
 def _cli_version() -> str | None:
     try:
         from skylos import __version__
@@ -597,88 +586,6 @@ def _new_upload_client_session_id() -> str:
     if override:
         return override
     return f"cli-{uuid4()}"
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-@dataclass
-class UploadArtifact:
-    name: str
-    file_path: Path
-    filename: str
-    required: bool
-    content_type: str
-    content_encoding: str
-    size_bytes: int
-    sha256: str
-
-    def to_manifest(self) -> dict[str, Any]:
-        return {
-            "required": self.required,
-            "filename": self.filename,
-            "content_type": self.content_type,
-            "content_encoding": self.content_encoding,
-            "size_bytes": self.size_bytes,
-            "sha256": self.sha256,
-        }
-
-    def cleanup(self) -> None:
-        with contextlib.suppress(OSError):
-            self.file_path.unlink()
-
-
-@dataclass
-class PreparedReportUpload:
-    legacy_payload: dict[str, Any]
-    core_payload: dict[str, Any]
-    compatibility_payload: dict[str, Any]
-    definitions_payload: dict[str, Any] | None
-    metadata: dict[str, Any]
-    scan_summary: dict[str, Any]
-    grade_data: dict[str, Any] | None
-    legacy_payload_size_bytes: int
-    compatibility_payload_size_bytes: int
-
-
-def _write_gzip_json_artifact(
-    name: str,
-    payload: dict[str, Any],
-    *,
-    required: bool,
-) -> UploadArtifact:
-    fd, path_str = tempfile.mkstemp(prefix=f"skylos-upload-{name}-", suffix=".json.gz")
-    os.close(fd)
-    path = Path(path_str)
-    try:
-        with path.open("wb") as raw_handle:
-            with gzip.GzipFile(
-                filename="",
-                mode="wb",
-                fileobj=raw_handle,
-                mtime=0,
-            ) as gzip_handle:
-                with io.TextIOWrapper(gzip_handle, encoding="utf-8") as handle:
-                    json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
-        return UploadArtifact(
-            name=name,
-            file_path=path,
-            filename=f"{name}.json.gz",
-            required=required,
-            content_type="application/json",
-            content_encoding="gzip",
-            size_bytes=path.stat().st_size,
-            sha256=_sha256_file(path),
-        )
-    except Exception:
-        with contextlib.suppress(OSError):
-            path.unlink()
-        raise
 
 
 def detect_ai_code(git_root=None) -> dict:
@@ -883,161 +790,6 @@ def _get_blame_map(findings: list, git_root: str | None) -> dict:
     return blame_map
 
 
-def _normalize_findings(
-    items,
-    category,
-    git_root,
-    default_rule_id=None,
-    default_severity=None,
-    extract_metadata=False,
-    generate_finding_id=False,
-) -> list[dict]:
-    """Unified finding normalization used by upload and verify paths."""
-    if not isinstance(category, str):
-        raise ValueError(f"category must be a string, got {type(category).__name__}")
-    processed = []
-    for item in items or []:
-        finding = dict(item)
-
-        rid = (
-            finding.get("rule_id")
-            or finding.get("rule")
-            or finding.get("code")
-            or finding.get("id")
-            or default_rule_id
-            or "UNKNOWN"
-        )
-        finding["rule_id"] = str(rid)
-
-        raw_path = finding.get("file_path") or finding.get("file") or ""
-        file_abs = os.path.abspath(raw_path) if raw_path else ""
-
-        line_raw = finding.get("line_number") or finding.get("line") or 1
-        try:
-            line = int(line_raw)
-        except (TypeError, ValueError):
-            line = 1
-        if line < 1:
-            line = 1
-        finding["line_number"] = line
-
-        if git_root and file_abs:
-            try:
-                finding["file_path"] = os.path.relpath(file_abs, git_root).replace(
-                    "\\", "/"
-                )
-            except (ValueError, OSError):
-                finding["file_path"] = (
-                    raw_path.replace("\\", "/") if raw_path else "unknown"
-                )
-        else:
-            finding["file_path"] = (
-                raw_path.replace("\\", "/") if raw_path else "unknown"
-            )
-
-        finding["category"] = category
-
-        if default_severity:
-            finding["severity"] = finding.get("severity") or default_severity
-
-        if not finding.get("message"):
-            name = (
-                finding.get("name")
-                or finding.get("symbol")
-                or finding.get("function")
-                or ""
-            )
-            if category == "DEAD_CODE" and name:
-                finding["message"] = f"Dead code: {name}"
-            else:
-                finding["message"] = (
-                    finding.get("detail") or finding.get("msg") or "Issue"
-                )
-
-        if file_abs and line:
-            finding["snippet"] = (
-                finding.get("snippet")
-                or extract_snippet(file_abs, line, repo_root=git_root)
-                or None
-            )
-
-        if extract_metadata:
-            existing_metadata = finding.get("metadata")
-            metadata = (
-                dict(existing_metadata)
-                if isinstance(existing_metadata, dict)
-                else {}
-            )
-            for meta_key in (
-                "_source",
-                "_confidence",
-                "_llm_verdict",
-                "_llm_rationale",
-                "_llm_challenged",
-                "_needs_review",
-                "_llm_uncertain",
-                "_ci_blocking",
-                "_security_evidence",
-                "_review_verdict",
-                "_review_reason",
-            ):
-                val = finding.pop(meta_key, None)
-                if val is not None:
-                    metadata[meta_key.lstrip("_")] = val
-            if metadata:
-                finding["metadata"] = metadata
-
-        if generate_finding_id:
-            finding_id = f"{finding['rule_id']}::{finding['file_path']}::{finding['line_number']}"
-            finding["finding_id"] = finding_id
-
-        processed.append(finding)
-
-    return processed
-
-
-UPLOAD_FINDING_SPECS = (
-    ("danger", "SECURITY", "SKY-D000"),
-    ("quality", "QUALITY", "SKY-Q000"),
-    ("secrets", "SECRET", "SKY-S000"),
-    ("unused_functions", "DEAD_CODE", "SKY-U001"),
-    ("unused_imports", "DEAD_CODE", "SKY-U002"),
-    ("unused_variables", "DEAD_CODE", "SKY-U003"),
-    ("unused_classes", "DEAD_CODE", "SKY-U004"),
-    ("dependency_vulnerabilities", "DEPENDENCY", "SKY-SCA-000"),
-)
-
-VERIFY_FINDING_SPECS = (
-    ("danger", "SECURITY", "SKY-D000"),
-    ("secrets", "SECRET", "SKY-S000"),
-)
-
-
-def _normalize_result_sections(
-    result_json,
-    section_specs,
-    git_root,
-    *,
-    default_severity=None,
-    extract_metadata=False,
-    generate_finding_id=False,
-) -> list[dict]:
-    findings: list[dict] = []
-    for section_name, category, default_rule_id in section_specs:
-        findings.extend(
-            _normalize_findings(
-                result_json.get(section_name, []),
-                category,
-                git_root,
-                default_rule_id=default_rule_id,
-                default_severity=default_severity,
-                extract_metadata=extract_metadata,
-                generate_finding_id=generate_finding_id,
-            )
-        )
-    return findings
-
-
 def _prepare_report_upload(
     result_json,
     *,
@@ -1108,17 +860,6 @@ def _prepare_report_upload(
         legacy_payload_size_bytes=_json_size_bytes(legacy_payload),
         compatibility_payload_size_bytes=_json_size_bytes(compatibility_payload),
     )
-
-
-def _coerce_debt_snapshot_dict(debt_report) -> dict[str, Any]:
-    if isinstance(debt_report, dict):
-        return dict(debt_report)
-    to_dict = getattr(debt_report, "to_dict", None)
-    if callable(to_dict):
-        payload = to_dict()
-        if isinstance(payload, dict):
-            return dict(payload)
-    raise TypeError("Debt report must be a dict or expose to_dict().")
 
 
 def _prepare_debt_upload(
@@ -1210,113 +951,6 @@ def _detect_report_provenance_data(git_root):
     return provenance_data
 
 
-def _infer_upload_project_root(payload, git_root) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-
-    candidates = []
-    for key in ("project_root", "repo_subpath"):
-        if key in payload:
-            candidates.append(payload.get(key))
-    summary = payload.get("analysis_summary")
-    if isinstance(summary, dict) and "project_root" in summary:
-        candidates.append(summary.get("project_root"))
-    if "project" in payload:
-        candidates.append(payload.get("project"))
-
-    try:
-        from skylos.cloud.project_context import (
-            normalize_repo_subpath,
-            repo_subpath_for_project,
-        )
-    except Exception:
-        return None
-
-    for candidate in candidates:
-        if candidate is None:
-            continue
-        if isinstance(candidate, str):
-            if candidate.strip() == "":
-                return ""
-            if Path(candidate).is_absolute():
-                return repo_subpath_for_project(candidate, git_root)
-            normalized = normalize_repo_subpath(candidate)
-            if normalized is not None:
-                return normalized
-    return None
-
-
-def _extract_workspace_upload_metadata(payload) -> dict[str, Any] | None:
-    if not isinstance(payload, dict):
-        return None
-    workspace_data = payload.get("workspaces")
-    if not isinstance(workspace_data, dict):
-        return None
-    has_workspace_report = bool(
-        workspace_data.get("root_package")
-        or workspace_data.get("packages")
-        or workspace_data.get("diagnostics")
-    )
-    if not has_workspace_report:
-        return None
-
-    def compact_package(pkg) -> dict[str, Any] | None:
-        if not isinstance(pkg, dict):
-            return None
-        out = {
-            "name": pkg.get("name"),
-            "relative_path": pkg.get("relative_path"),
-            "is_root": bool(pkg.get("is_root")),
-            "is_internal_dependency": bool(pkg.get("is_internal_dependency")),
-            "has_package_json": bool(pkg.get("has_package_json", True)),
-        }
-        sources = pkg.get("discovered_from")
-        if isinstance(sources, list):
-            out["discovered_from"] = [str(item) for item in sources]
-        return out
-
-    root_package = compact_package(workspace_data.get("root_package"))
-    packages = [
-        pkg
-        for pkg in (
-            compact_package(item) for item in workspace_data.get("packages", [])
-        )
-        if pkg is not None
-    ]
-    diagnostics = []
-    for diag in workspace_data.get("diagnostics", []):
-        if not isinstance(diag, dict):
-            continue
-        diagnostics.append(
-            {
-                "kind": diag.get("kind"),
-                "relative_path": diag.get("relative_path"),
-                "message": diag.get("message"),
-            }
-        )
-
-    return {
-        "is_monorepo": bool(workspace_data.get("is_monorepo")),
-        "package_count": int(workspace_data.get("package_count") or len(packages)),
-        "total_packages": int(
-            workspace_data.get("total_packages")
-            or len(packages) + (1 if root_package else 0)
-        ),
-        "diagnostic_count": int(
-            workspace_data.get("diagnostic_count") or len(diagnostics)
-        ),
-        "root_package": root_package,
-        "packages": packages,
-        "diagnostics": diagnostics[:20],
-        "declared_patterns": [
-            str(item) for item in workspace_data.get("declared_patterns", [])
-        ],
-        "tsconfig_references": [
-            str(item) for item in workspace_data.get("tsconfig_references", [])
-        ],
-    }
-
-
 def _build_report_metadata(
     *,
     commit_hash,
@@ -1361,75 +995,6 @@ def _build_report_metadata(
     return metadata
 
 
-def _truncate_upload_text(value: Any, max_len: int) -> str | None:
-    if value is None:
-        return None
-    text = str(value)
-    return text if len(text) <= max_len else text[:max_len] + "..."
-
-
-def _compact_finding_metadata(metadata: Any) -> dict[str, Any] | None:
-    if not isinstance(metadata, dict):
-        return None
-
-    keep_keys = {
-        "source",
-        "confidence",
-        "llm_verdict",
-        "llm_challenged",
-        "needs_review",
-        "blame_email",
-        "package_name",
-        "package_version",
-        "ecosystem",
-        "vuln_id",
-        "display_id",
-        "affected_range",
-        "fixed_version",
-        "cvss_score",
-    }
-    compact = {key: metadata[key] for key in keep_keys if key in metadata}
-    aliases = metadata.get("aliases")
-    if isinstance(aliases, list):
-        compact["aliases"] = aliases[:5]
-    return compact or None
-
-
-def _int_upload_value(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _compact_upload_finding(
-    finding: dict[str, Any],
-    *,
-    include_snippet: bool,
-) -> dict[str, Any]:
-    compact = {
-        "rule_id": str(finding.get("rule_id") or "UNKNOWN")[:100],
-        "file_path": str(finding.get("file_path") or finding.get("file") or "unknown"),
-        "line_number": _int_upload_value(
-            finding.get("line_number") or finding.get("line") or 0
-        ),
-        "message": _truncate_upload_text(finding.get("message"), 500),
-        "severity": str(finding.get("severity") or "MEDIUM").upper(),
-        "category": str(finding.get("category") or "QUALITY").upper(),
-    }
-    tool_rule_id = finding.get("tool_rule_id")
-    if tool_rule_id:
-        compact["tool_rule_id"] = str(tool_rule_id)[:100]
-    if include_snippet:
-        snippet = _truncate_upload_text(finding.get("snippet"), 240)
-        if snippet:
-            compact["snippet"] = snippet
-    metadata = _compact_finding_metadata(finding.get("metadata"))
-    if metadata:
-        compact["metadata"] = metadata
-    return compact
-
-
 def _build_compatibility_inline_payload(
     all_findings: list[dict[str, Any]],
     result_json: Any,
@@ -1458,69 +1023,6 @@ def _build_compatibility_inline_payload(
         for finding in all_findings
     ]
     return payload
-
-
-def _build_legacy_payload(core_payload, definitions) -> dict[str, Any]:
-    legacy_payload = dict(core_payload)
-    legacy_payload["definitions"] = definitions
-    return legacy_payload
-
-
-def _build_report_scan_summary(
-    all_findings: list[dict], core_payload: dict[str, Any], definitions
-) -> dict[str, int]:
-    runs = core_payload.get("runs") or []
-    return {
-        "finding_count": len(all_findings),
-        "sarif_result_count": sum(len(run.get("results") or []) for run in runs),
-        "sarif_rule_count": sum(
-            len((run.get("tool") or {}).get("driver", {}).get("rules") or [])
-            for run in runs
-        ),
-        "definitions_count": len(definitions or {}),
-    }
-
-
-def _build_report_init_idempotency_key(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    return f"report-upload:{digest}"
-
-
-def _build_report_artifacts(
-    prepared: PreparedReportUpload,
-) -> dict[str, UploadArtifact]:
-    artifacts = {
-        "scan_report": _write_gzip_json_artifact(
-            "scan-report", prepared.core_payload, required=True
-        )
-    }
-    if prepared.definitions_payload:
-        artifacts["definitions"] = _write_gzip_json_artifact(
-            "definitions", prepared.definitions_payload, required=False
-        )
-    return artifacts
-
-
-def _build_report_init_payload(
-    prepared: PreparedReportUpload,
-    artifacts: dict[str, UploadArtifact],
-) -> dict[str, Any]:
-    init_payload = dict(prepared.metadata)
-    init_payload.update(
-        {
-            "upload_protocol_version": UPLOAD_PROTOCOL_VERSION,
-            "summary": {
-                **prepared.scan_summary,
-                "legacy_payload_size_bytes": prepared.legacy_payload_size_bytes,
-            },
-            "artifacts": {
-                name: artifact.to_manifest() for name, artifact in artifacts.items()
-            },
-        }
-    )
-    init_payload["idempotency_key"] = _build_report_init_idempotency_key(init_payload)
-    return init_payload
 
 
 def _finalize_report_upload(
@@ -1701,75 +1203,6 @@ def _build_compatibility_upload_too_large_error(
     }
 
 
-def upload_artifact(
-    artifact: UploadArtifact, instruction: dict[str, Any]
-) -> dict[str, Any]:
-    method = str(instruction.get("method") or "PUT").upper()
-    url = instruction.get("url")
-    if not url:
-        return {"success": False, "error": f"Missing upload URL for {artifact.name}."}
-    try:
-        safe_url = _validate_artifact_upload_url(url)
-    except ValueError as exc:
-        return {
-            "success": False,
-            "error": f"Unsafe upload URL for {artifact.name}: {exc}",
-        }
-
-    headers = dict(instruction.get("headers") or {})
-    accepted_statuses = tuple(instruction.get("accepted_statuses") or (200, 201, 204))
-    timeout = instruction.get("timeout_seconds") or UPLOAD_TIMEOUT
-    last_err = None
-
-    for _attempt in range(3):
-        try:
-            with artifact.file_path.open("rb") as handle:
-                if method == "PUT":
-                    req_headers = {
-                        "Content-Type": artifact.content_type,
-                        "Content-Encoding": artifact.content_encoding,
-                        **headers,
-                    }
-                    response = requests.put(
-                        safe_url,
-                        data=handle,
-                        headers=req_headers,
-                        timeout=timeout,
-                    )
-                elif method == "POST":
-                    file_field = instruction.get("file_field") or "file"
-                    fields = dict(instruction.get("fields") or {})
-                    response = requests.post(
-                        safe_url,
-                        data=fields,
-                        files={
-                            file_field: (
-                                artifact.filename,
-                                handle,
-                                artifact.content_type,
-                            )
-                        },
-                        headers=headers,
-                        timeout=timeout,
-                    )
-                else:
-                    return {
-                        "success": False,
-                        "error": f"Unsupported upload method for {artifact.name}: {method}",
-                    }
-
-            if response.status_code in accepted_statuses:
-                return {
-                    "success": True,
-                    "etag": response.headers.get("ETag"),
-                }
-            last_err = f"Upload Error {response.status_code}: {response.text}"
-        except Exception as e:
-            last_err = f"Upload connection error: {e}"
-
-    return {"success": False, "error": last_err or "Unknown artifact upload error"}
-
-
 def upload_report_legacy(
     token,
     payload,
@@ -1778,7 +1211,7 @@ def upload_report_legacy(
     quiet=False,
     strict=False,
     is_forced=False,
-    initial_message="Uploading scan results...",
+    initial_message: str | None = "Uploading scan results...",
 ) -> dict:
     response, last_err = _post_report_payload(
         token,
@@ -1806,10 +1239,7 @@ def upload_report_compatibility(
     is_forced=False,
     initial_message=None,
 ) -> dict:
-    if (
-        prepared.compatibility_payload_size_bytes
-        > _legacy_inline_upload_limit_bytes()
-    ):
+    if prepared.compatibility_payload_size_bytes > _legacy_inline_upload_limit_bytes():
         return _build_compatibility_upload_too_large_error(prepared)
     return upload_report_legacy(
         token,
@@ -1820,67 +1250,6 @@ def upload_report_compatibility(
         is_forced=is_forced,
         initial_message=initial_message,
     )
-
-
-def _missing_artifact_instruction_result(
-    artifact_name: str, artifact: UploadArtifact
-) -> dict[str, Any]:
-    if artifact.required:
-        return {
-            "success": False,
-            "error": f"Large-upload response omitted required artifact instructions for {artifact_name}.",
-        }
-    return {"name": artifact_name, "reason": "not_requested"}
-
-
-def _append_skipped_artifact(
-    skipped_artifacts: list[dict[str, Any]],
-    artifact_name: str,
-    reason: str,
-    error: str | None = None,
-) -> None:
-    record = {"name": artifact_name, "reason": reason}
-    if error is not None:
-        record["error"] = error
-    skipped_artifacts.append(record)
-
-
-def _build_uploaded_artifact_record(
-    artifact: UploadArtifact,
-    artifact_info: dict[str, Any],
-    upload_result: dict[str, Any],
-) -> dict[str, Any]:
-    record = {
-        "artifact_id": artifact_info.get("artifact_id") or artifact_info.get("id"),
-        "key": artifact_info.get("key") or artifact_info.get("artifact_key"),
-        "filename": artifact.filename,
-        "size_bytes": artifact.size_bytes,
-        "sha256": artifact.sha256,
-        "content_type": artifact.content_type,
-        "content_encoding": artifact.content_encoding,
-    }
-    if upload_result.get("etag"):
-        record["etag"] = upload_result["etag"]
-    return record
-
-
-def _build_report_complete_payload(
-    init_data: dict[str, Any],
-    uploaded_artifacts: dict[str, dict[str, Any]],
-    skipped_artifacts: list[dict[str, Any]],
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    payload = {
-        "upload_protocol_version": UPLOAD_PROTOCOL_VERSION,
-        "scan_id": init_data.get("scan_id") or init_data.get("scanId"),
-        "upload_id": init_data.get("upload_id") or init_data.get("uploadId"),
-        "artifacts": uploaded_artifacts,
-    }
-    if metadata and "project_root" in metadata:
-        payload["project_root"] = metadata["project_root"]
-    if skipped_artifacts:
-        payload["skipped_artifacts"] = skipped_artifacts
-    return payload
 
 
 def upload_report_v2(
@@ -2136,10 +1505,9 @@ def _should_use_legacy_inline_report_upload(
 
 
 def _should_retry_with_degraded_large_upload(upload_result: dict[str, Any]) -> bool:
-    return (
-        (not upload_result.get("success"))
-        and upload_result.get("code") == "UPLOAD_PROTOCOL_UNSUPPORTED"
-    )
+    return (not upload_result.get("success")) and upload_result.get(
+        "code"
+    ) == "UPLOAD_PROTOCOL_UNSUPPORTED"
 
 
 def upload_defense_report(defense_json_str, quiet=False, scan_bundle_id=None) -> dict:

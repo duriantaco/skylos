@@ -32,9 +32,7 @@ SECRET_PATTERNS = (
     re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"\bSK[0-9a-fA-F]{32}\b"),
     re.compile(r"-----BEGIN (?:RSA|DSA|EC|OPENSSH|PGP) PRIVATE KEY-----"),
-    re.compile(
-        r"(?i)AWS_SECRET_ACCESS_KEY\s*[:=]\s*[A-Za-z0-9/+=]{40}"
-    ),
+    re.compile(r"(?i)AWS_SECRET_ACCESS_KEY\s*[:=]\s*[A-Za-z0-9/+=]{40}"),
     re.compile(
         r"(?i)\b(?:token|api[_-]?key|secret|password|passwd|pwd|auth[_-]?token)"
         r"\s*[:=]\s*['\"][^'\"]{12,}['\"]"

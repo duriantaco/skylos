@@ -183,6 +183,8 @@ def test_repo_policy_accepts_configured_type_checker(tmp_path):
         encoding="utf-8",
     )
     (tmp_path / ".pre-commit-config.yaml").write_text("repos: []\n", encoding="utf-8")
-    (tmp_path / "app.py").write_text("def f() -> int:\n    return 1\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text(
+        "def f() -> int:\n    return 1\n", encoding="utf-8"
+    )
 
     assert analyze_repo_policy(tmp_path, {}) == []

@@ -175,14 +175,22 @@ def _has_main_guard(tree: ast.AST) -> bool:
             continue
 
         test = node.test
-        if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
+        if (
+            isinstance(test, ast.Compare)
+            and len(test.ops) == 1
+            and len(test.comparators) == 1
+        ):
             left = test.left
             right = test.comparators[0]
             if isinstance(test.ops[0], ast.Eq):
                 left_is_name = isinstance(left, ast.Name) and left.id == "__name__"
-                right_is_main = isinstance(right, ast.Constant) and right.value == "__main__"
+                right_is_main = (
+                    isinstance(right, ast.Constant) and right.value == "__main__"
+                )
                 right_is_name = isinstance(right, ast.Name) and right.id == "__name__"
-                left_is_main = isinstance(left, ast.Constant) and left.value == "__main__"
+                left_is_main = (
+                    isinstance(left, ast.Constant) and left.value == "__main__"
+                )
                 if (left_is_name and right_is_main) or (right_is_name and left_is_main):
                     return True
 
@@ -253,7 +261,9 @@ def analyze_architecture(
             metrics.loc = module_loc[module_name]
         elif file_path:
             try:
-                text = Path(file_path).read_text(errors="replace")  # skylos: ignore[SKY-D215] analyzer reads discovered source files
+                text = Path(file_path).read_text(
+                    errors="replace"
+                )  # skylos: ignore[SKY-D215] analyzer reads discovered source files
                 metrics.loc = sum(
                     1
                     for line in text.splitlines()
@@ -390,9 +400,7 @@ def analyze_architecture(
                 "zone_of_uselessness": sum(
                     1 for m in all_metrics if m.zone == "zone_of_uselessness"
                 ),
-                "disconnected": sum(
-                    1 for m in all_metrics if m.zone == "disconnected"
-                ),
+                "disconnected": sum(1 for m in all_metrics if m.zone == "disconnected"),
             },
         }
     else:

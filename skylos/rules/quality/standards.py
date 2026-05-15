@@ -132,7 +132,9 @@ CWE_MAP: dict[str, list[dict[str, str]]] = {
     "SKY-P402": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
     "SKY-P403": [{"id": "CWE-407", "name": "Inefficient Algorithmic Complexity"}],
     "SKY-Q402": [{"id": "CWE-400", "name": "Uncontrolled Resource Consumption"}],
-    "SKY-U005": [{"id": "CWE-1104", "name": "Use of Unmaintained Third Party Components"}],
+    "SKY-U005": [
+        {"id": "CWE-1104", "name": "Use of Unmaintained Third Party Components"}
+    ],
     # Unreachable
     "SKY-UC001": [{"id": "CWE-561", "name": "Dead Code"}],
     "SKY-UC002": [{"id": "CWE-561", "name": "Dead Code"}],

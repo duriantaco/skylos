@@ -179,7 +179,9 @@ def _python_files(root: Path, files: Iterable[str | Path] | None) -> list[Path]:
     if not root.exists():
         return []
     ignored = {".git", ".venv", "venv", "__pycache__"}
-    return [path for path in root.rglob("*.py") if not any(p in ignored for p in path.parts)]
+    return [
+        path for path in root.rglob("*.py") if not any(p in ignored for p in path.parts)
+    ]
 
 
 def _read_public_docs(root: Path) -> str:
@@ -314,10 +316,9 @@ def _rescue_registration_methods(
                 str(deco).rsplit(".", 1)[-1].lower()
                 for deco in getattr(method, "decorators", [])
             }
-            looks_registered = (
-                any(word in name.lower() for word in REGISTRATION_WORDS)
-                or bool(decorators & {"setupmethod", "route", "command", "receiver"})
-            )
+            looks_registered = any(
+                word in name.lower() for word in REGISTRATION_WORDS
+            ) or bool(decorators & {"setupmethod", "route", "command", "receiver"})
             if looks_registered and _stores_and_returns_callable(method):
                 _mark(method, "registration_api", report)
 
@@ -343,7 +344,10 @@ def _stores_and_returns_callable(method: Any) -> bool:
                 and isinstance(func.value, ast.Attribute)
                 and isinstance(func.value.value, ast.Name)
                 and func.value.value.id in {"self", "cls"}
-                and any(isinstance(arg, ast.Name) and arg.id == first_param for arg in child.args)
+                and any(
+                    isinstance(arg, ast.Name) and arg.id == first_param
+                    for arg in child.args
+                )
             ):
                 stores_param = True
         elif isinstance(child, ast.Return):
@@ -368,7 +372,9 @@ def _rescue_documented_public_methods(
             if _is_support_file(method):
                 continue
             name = getattr(method, "simple_name", "")
-            if _is_public_name(name) and _docs_reference_method(docs_text, class_name, name):
+            if _is_public_name(name) and _docs_reference_method(
+                docs_text, class_name, name
+            ):
                 _mark(method, "documented_public_api", report)
 
 
@@ -413,7 +419,10 @@ def _rescue_unique_external_attr_calls(
     for method_name, owner_methods in method_by_simple.items():
         if len(owner_methods) != 1:
             continue
-        if method_name in COMMON_UNTYPED_ATTR_CALLS or call_count.get(method_name, 0) == 0:
+        if (
+            method_name in COMMON_UNTYPED_ATTR_CALLS
+            or call_count.get(method_name, 0) == 0
+        ):
             continue
         _owner, method = owner_methods[0]
         method_file = Path(getattr(method, "filename", "")).resolve()
@@ -425,4 +434,3 @@ def _rescue_unique_external_attr_calls(
         ]
         if external_calls:
             _mark(method, "unique_external_attr_call", report)
-

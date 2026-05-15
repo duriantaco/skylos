@@ -192,7 +192,9 @@ def _route_has_auth_guard(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     for arg in args:
         if _has_auth_marker(arg.arg):
             return True
-        if arg.annotation is not None and _has_auth_marker(_dotted_name(arg.annotation)):
+        if arg.annotation is not None and _has_auth_marker(
+            _dotted_name(arg.annotation)
+        ):
             return True
     return any(_call_uses_auth(default) for default in defaults)
 
@@ -344,12 +346,9 @@ class FrameworkPracticeRule(SkylosRule):
                 continue
 
             if any(_is_fastapi_route(decorator) for decorator in route_decorators):
-                has_response_contract = (
-                    function.returns is not None
-                    or any(
-                        _decorator_has_response_contract(decorator)
-                        for decorator in route_decorators
-                    )
+                has_response_contract = function.returns is not None or any(
+                    _decorator_has_response_contract(decorator)
+                    for decorator in route_decorators
                 )
                 if not has_response_contract:
                     findings.append(

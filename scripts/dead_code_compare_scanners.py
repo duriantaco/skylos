@@ -131,7 +131,9 @@ def main() -> int:
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        print(f"Dead-code scanner comparison (strict_labels={payload['strict_labels']})")
+        print(
+            f"Dead-code scanner comparison (strict_labels={payload['strict_labels']})"
+        )
         print(_format_table(payload["rows"]))
         for error in errors:
             print(f"SKIP {error['scanner']}: {error['error']}")

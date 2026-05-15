@@ -78,4 +78,3 @@ def run_sonar_command(argv: list[str], *, console_factory) -> int:
         console.print(f"[green]Skylos config written:[/green] {config_path}")
 
     return 0
-

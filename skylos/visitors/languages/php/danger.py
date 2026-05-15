@@ -49,13 +49,19 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
         return None
 
     def is_superglobal_var(node) -> bool:
-        return node is not None and node.type == "variable_name" and text(node).strip() in _SUPERGLOBALS
+        return (
+            node is not None
+            and node.type == "variable_name"
+            and text(node).strip() in _SUPERGLOBALS
+        )
 
     def is_filter_input_source(node) -> bool:
         if node is None or node.type != "function_call_expression":
             return False
         name_node = child_by_type(node, "name")
-        call_name = text(name_node).strip().lstrip("\\") if name_node else ""  # skylos: ignore[SKY-D211]
+        call_name = (
+            text(name_node).strip().lstrip("\\") if name_node else ""
+        )  # skylos: ignore[SKY-D211]
         if call_name != "filter_input":
             return False
         args = child_by_type(node, "arguments")
@@ -141,14 +147,22 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
                             first_arg = arg_child
                             break
 
-                if call_name == "unserialize" and first_arg is not None and is_tainted_expr(first_arg, tainted_vars):
+                if (
+                    call_name == "unserialize"
+                    and first_arg is not None
+                    and is_tainted_expr(first_arg, tainted_vars)
+                ):
                     add_finding(
                         "SKY-D204",
                         "unserialize on user-controlled data is unsafe and can lead to code execution.",
                         child,
                     )
 
-                if call_name in _FILE_SINKS and first_arg is not None and is_tainted_expr(first_arg, tainted_vars):
+                if (
+                    call_name in _FILE_SINKS
+                    and first_arg is not None
+                    and is_tainted_expr(first_arg, tainted_vars)
+                ):
                     add_finding(
                         "SKY-D215",
                         "Request-controlled path reaches a filesystem sink without path validation.",
@@ -158,7 +172,12 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
             if child.type in _IMPORT_EXPR_TYPES:
                 expr = None
                 for expr_child in child.children:
-                    if expr_child.type not in {"include", "include_once", "require", "require_once"}:
+                    if expr_child.type not in {
+                        "include",
+                        "include_once",
+                        "require",
+                        "require_once",
+                    }:
                         expr = expr_child
                         break
                 if expr is not None and is_tainted_expr(expr, tainted_vars):

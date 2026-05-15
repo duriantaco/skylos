@@ -977,7 +977,10 @@ def _selected_main_upload_static_categories(args) -> list[str]:
 
 
 def _print_main_upload_manifest(console: Console, args, result) -> None:
-    from skylos.cloud.upload_manifest import build_code_scan_manifest, print_upload_manifest
+    from skylos.cloud.upload_manifest import (
+        build_code_scan_manifest,
+        print_upload_manifest,
+    )
 
     print_upload_manifest(
         console,
@@ -2294,7 +2297,9 @@ def get_git_changed_files(
     strict_base=False,
     include_deleted=False,
 ):
-    from skylos.core.cli_shared import get_git_changed_files as get_git_changed_files_impl
+    from skylos.core.cli_shared import (
+        get_git_changed_files as get_git_changed_files_impl,
+    )
 
     return get_git_changed_files_impl(
         root_path,
@@ -3385,7 +3390,13 @@ sys.exit(ret)
                 pytest_targets = [str(path)]
 
         fixture_result = subprocess.run(
-            ["pytest", "-q", *pytest_targets, "-p", "skylos.plugins.pytest_unused_fixtures"],
+            [
+                "pytest",
+                "-q",
+                *pytest_targets,
+                "-p",
+                "skylos.plugins.pytest_unused_fixtures",
+            ],
             cwd=project_root,
             capture_output=True,
             text=True,

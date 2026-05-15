@@ -31,9 +31,11 @@ def _lazy_constants():
 logger = logging.getLogger("skylos-mcp")
 
 
-RESULTS_DIR = Path(
-    os.getenv("SKYLOS_MCP_RESULTS_DIR", Path.home() / ".skylos" / "mcp_results")
-).expanduser().resolve()
+RESULTS_DIR = (
+    Path(os.getenv("SKYLOS_MCP_RESULTS_DIR", Path.home() / ".skylos" / "mcp_results"))
+    .expanduser()
+    .resolve()
+)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 _results_cache: dict[str, dict[str, Any]] = {}

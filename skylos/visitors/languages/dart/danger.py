@@ -80,7 +80,9 @@ def scan_danger(root_node, file_path: str, source: bytes) -> list[dict]:
             return set()
         names: set[str] = set()
         for param in descendants(params, "formal_parameter"):
-            identifiers = [node_text(i).strip() for i in descendants(param, "identifier")]
+            identifiers = [
+                node_text(i).strip() for i in descendants(param, "identifier")
+            ]
             if not identifiers:
                 continue
             name = identifiers[-1]

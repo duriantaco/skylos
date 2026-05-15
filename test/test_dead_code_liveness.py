@@ -136,4 +136,3 @@ def test_framework_proxy_attr_call_is_live(tmp_path):
     result = json.loads(analyze(str(tmp_path), grep_verify=False))
 
     assert "app.App.make_shell_context" not in _unused_function_names(result)
-

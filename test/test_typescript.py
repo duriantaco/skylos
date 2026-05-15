@@ -40,6 +40,7 @@ function simpleFunction(x) {
 runUnsafe("test");
 """
 
+
 @pytest.mark.parametrize(
     ("filename", "code"),
     [("app.ts", TS_CODE), ("app.js", JS_CODE)],

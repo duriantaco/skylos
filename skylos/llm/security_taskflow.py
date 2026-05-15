@@ -91,11 +91,18 @@ class SecurityFileFacts:
         if self.framework:
             lines.append(f"- framework: {self.framework}")
         if self.sources:
-            lines.append("- user-controlled sources: " + ", ".join(self.sources[:MAX_SECURITY_FACTS]))
+            lines.append(
+                "- user-controlled sources: "
+                + ", ".join(self.sources[:MAX_SECURITY_FACTS])
+            )
         if self.sinks:
-            lines.append("- dangerous sinks: " + ", ".join(self.sinks[:MAX_SECURITY_FACTS]))
+            lines.append(
+                "- dangerous sinks: " + ", ".join(self.sinks[:MAX_SECURITY_FACTS])
+            )
         if self.guards:
-            lines.append("- guards/sanitizers: " + ", ".join(self.guards[:MAX_SECURITY_FACTS]))
+            lines.append(
+                "- guards/sanitizers: " + ", ".join(self.guards[:MAX_SECURITY_FACTS])
+            )
         return lines
 
 
@@ -348,8 +355,16 @@ def _names_from_tree(tree: ast.AST) -> tuple[str | None, set[str], set[str], set
             "urllib.request.urlopen",
         }:
             sinks.add(call_name)
-        elif call_name in {"subprocess.run", "subprocess.check_output", "subprocess.Popen"}:
-            sinks.add(f"{call_name}(shell=True)" if _is_shell_enabled_call(node) else call_name)
+        elif call_name in {
+            "subprocess.run",
+            "subprocess.check_output",
+            "subprocess.Popen",
+        }:
+            sinks.add(
+                f"{call_name}(shell=True)"
+                if _is_shell_enabled_call(node)
+                else call_name
+            )
         elif call_name.endswith(".execute") or call_name.endswith(".executemany"):
             sinks.add(call_name)
         elif call_name in {"open", "Path.read_text", "Path.write_text", "Path.open"}:
@@ -591,7 +606,9 @@ def _build_repo_map(
         if reasons:
             entry_points.append(SecurityEntrypoint(path=meta.path, reasons=reasons))
         for reason in meta.security_hints:
-            trust_boundaries.append(SecurityTrustBoundary(path=meta.path, reason=reason))
+            trust_boundaries.append(
+                SecurityTrustBoundary(path=meta.path, reason=reason)
+            )
 
     entry_points.sort(key=lambda item: item.path)
     trust_boundaries.sort(key=lambda item: (item.path, item.reason))
@@ -682,12 +699,16 @@ def _candidate_ledger_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
     return {
         "run_id": run.run_id,
         "candidate_count": run.candidate_count,
-        "candidates": [_candidate_dict(candidate) for candidate in run.candidate_ledger],
+        "candidates": [
+            _candidate_dict(candidate) for candidate in run.candidate_ledger
+        ],
     }
 
 
 def _verified_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
-    result_payload = run.result.to_dict() if run.result is not None else AnalysisResult().to_dict()
+    result_payload = (
+        run.result.to_dict() if run.result is not None else AnalysisResult().to_dict()
+    )
     return {
         "run_id": run.run_id,
         "supported_count": run.supported_count,
@@ -715,7 +736,9 @@ def _summary_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
     }
 
 
-def _record_artifact_error(run: SecurityTaskflowRun, filename: str, exc: OSError) -> None:
+def _record_artifact_error(
+    run: SecurityTaskflowRun, filename: str, exc: OSError
+) -> None:
     message = f"{filename}: {exc}"
     if run.artifact_write_error:
         run.artifact_write_error = f"{run.artifact_write_error}; {message}"
@@ -852,7 +875,9 @@ def _apply_review_to_run(run: SecurityTaskflowRun, review: dict[str, Any]) -> No
     )
 
 
-def _apply_challenge_to_run(run: SecurityTaskflowRun, challenge: dict[str, Any]) -> None:
+def _apply_challenge_to_run(
+    run: SecurityTaskflowRun, challenge: dict[str, Any]
+) -> None:
     challenged = challenge[REVIEWED_CANDIDATES_KEY]
     if challenged:
         run.result = challenge[REVIEW_RESULT_KEY]

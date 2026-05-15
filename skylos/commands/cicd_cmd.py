@@ -272,9 +272,7 @@ def run_cicd_command(
                     label="--defense-input",
                 )
             except Exception as e:
-                console.print(
-                    f"[yellow]Could not read defense results: {e}[/yellow]"
-                )
+                console.print(f"[yellow]Could not read defense results: {e}[/yellow]")
 
         run_pr_review(
             results,
