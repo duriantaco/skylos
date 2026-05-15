@@ -908,13 +908,13 @@ class Skylos:
                 candidate_defs[d.get("full_name", d.get("name", ""))] = defn
 
         if not candidates:
-            return
+            return 0
 
         candidates.sort(key=_grep_verify_rescue_priority)
 
         project_root = str(getattr(self, "_project_root", ""))
         if not project_root:
-            return
+            return 0
 
         grep_root = find_git_root(project_root) or Path(project_root)
         grep_cache = GrepCache()
@@ -944,6 +944,7 @@ class Skylos:
 
         if rescued:
             logger.info(f"Grep verify: rescued {rescued} findings from dead code")
+        return rescued
 
     def _apply_dead_code_liveness(self, files):
         try:
@@ -1609,6 +1610,10 @@ class Skylos:
         liveness_report = getattr(self, "_dead_code_liveness_report", None)
         if liveness_report is not None:
             result["analysis_summary"]["dead_code_liveness"] = liveness_report.to_dict()
+
+        grep_verify_report = getattr(self, "_grep_verify_report", None)
+        if grep_verify_report is not None:
+            result["analysis_summary"]["grep_verify"] = dict(grep_verify_report)
 
         if workspace_inventory is not None:
             project_root = (
@@ -2714,10 +2719,12 @@ class Skylos:
         self._propagate_transitive_dead()
         self._suppress_standalone_orm_models()
 
+        grep_verify_report = {"enabled": bool(grep_verify), "rescued_count": 0}
         if grep_verify:
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: grep verify"))
-            self._grep_verify()
+            grep_verify_report["rescued_count"] = self._grep_verify()
+        self._grep_verify_report = grep_verify_report
 
         dead_ts_files = self._find_dead_ts_files(
             files, exclude_folders, workspace_inventory=workspace_inventory
