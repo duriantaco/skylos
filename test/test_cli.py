@@ -1102,6 +1102,46 @@ def test_main_concise_clean_output_prints_nothing(monkeypatch):
     progress.assert_not_called()
 
 
+def test_main_rich_output_writes_report_file(monkeypatch, tmp_path):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [{"name": "dead", "file": "app.py", "line": 1}],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+    output_path = tmp_path / "skylos.txt"
+
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            ".",
+            "--output",
+            str(output_path),
+            "--no-provenance",
+            "--no-upload",
+        ],
+    )
+
+    with (
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+    ):
+        cli.main()
+
+    output = output_path.read_text(encoding="utf-8")
+    assert "Python Static Analysis Results" in output
+    assert "Unused Functions" in output
+    assert "dead" in output
+
+
 def test_main_json_strict_failure_exits_nonzero(monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1},
