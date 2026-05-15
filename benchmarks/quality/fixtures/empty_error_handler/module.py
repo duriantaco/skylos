@@ -1,7 +1,7 @@
 def parse_payload(payload):
     try:
         return int(payload)
-    except ValueError:
+    except Exception:
         pass
 
     return 0

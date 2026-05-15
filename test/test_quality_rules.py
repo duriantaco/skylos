@@ -169,6 +169,29 @@ except Exception as e:
         findings = check_code(rule, code)
         assert not any(f["rule_id"] == "SKY-L007" for f in findings)
 
+    def test_narrow_return_fallback_not_flagged(self):
+        code = """
+def parse(value):
+    try:
+        return int(value)
+    except ValueError:
+        return None
+"""
+        rule = EmptyErrorHandlerRule()
+        findings = check_code(rule, code)
+        assert not any(f["rule_id"] == "SKY-L007" for f in findings)
+
+    def test_narrow_pass_fallback_not_flagged(self):
+        code = """
+try:
+    x = 1
+except ValueError:
+    pass
+"""
+        rule = EmptyErrorHandlerRule()
+        findings = check_code(rule, code)
+        assert not any(f["rule_id"] == "SKY-L007" for f in findings)
+
 
 # --- SKY-L008: Missing Resource Cleanup ---
 

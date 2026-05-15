@@ -620,6 +620,7 @@ class ReturnConsistencyRule(SkylosRule):
 
 _LOGGING_NAMES = {"logger", "logging", "log"}
 _INTENTIONAL_EXCEPTIONS = {"KeyboardInterrupt", "SystemExit"}
+_BROAD_EXCEPTION_TYPES = {"Exception", "BaseException"}
 
 
 def _is_logging_call(node):
@@ -701,6 +702,15 @@ def _exception_type_names(exc_type):
     return []
 
 
+def _handler_is_narrow_trivial_fallback(node):
+    exc_names = _exception_type_names(node.type)
+    if not exc_names:
+        return False
+    if any(exc_name in _BROAD_EXCEPTION_TYPES for exc_name in exc_names):
+        return False
+    return _handler_body_is_trivial(node.body)
+
+
 class EmptyErrorHandlerRule(SkylosRule):
     rule_id = "SKY-L007"
     name = "Empty Error Handler"
@@ -731,6 +741,9 @@ class EmptyErrorHandlerRule(SkylosRule):
             return self._make_finding(node, context, "MEDIUM", "empty")
 
         if _handler_has_real_work(node.body):
+            return None
+
+        if _handler_is_narrow_trivial_fallback(node):
             return None
 
         if _handler_body_is_trivial(node.body):
