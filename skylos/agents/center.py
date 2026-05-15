@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +31,8 @@ from skylos.agents.payload import (
     render_status_table as _render_status_table,
     severity_score as _severity_score,
 )
+
+logger = logging.getLogger(__name__)
 
 STATE_DIR = ".skylos"
 STATE_FILE = "agent_state.json"
@@ -102,7 +104,8 @@ def load_agent_state(
         return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug("Failed to load agent state from %s: %s", path, exc)
         return None
 
 
@@ -136,7 +139,8 @@ def snapshot_file_signatures(
     for path in discover_source_files(root, SUPPORTED_EXTENSIONS, excluded):
         try:
             stat = path.stat()
-        except OSError:
+        except OSError as exc:
+            logger.debug("Skipping unreadable source file %s: %s", path, exc)
             continue
         rel = str(path.relative_to(root)).replace("\\", "/")
         signatures[rel] = {
@@ -579,7 +583,8 @@ def refresh_agent_state(
 def _load_optional_grep_cache(project_root: Path) -> Any | None:
     try:
         from skylos.core.grep_cache import GrepCache
-    except ImportError:
+    except ImportError as exc:
+        logger.debug("Grep cache unavailable: %s", exc)
         return None
 
     grep_cache = GrepCache()
@@ -596,7 +601,8 @@ def _load_optional_triage_learner(
         return None
     try:
         from skylos.agents.triage_learner import TriageLearner
-    except ImportError:
+    except ImportError as exc:
+        logger.debug("Triage learner unavailable: %s", exc)
         return None
 
     learner = TriageLearner()
@@ -640,8 +646,8 @@ def _save_grep_cache(grep_cache: Any | None, project_root: Path) -> None:
         return
     try:
         grep_cache.save(str(project_root))
-    except Exception:
-        pass
+    except AttributeError as exc:
+        logger.debug("Grep cache object does not support save: %s", exc)
 
 
 def watch_project(
@@ -997,7 +1003,7 @@ def relative_path(file_path: str, project_root: Path) -> str:
         return str(Path(file_path).resolve().relative_to(project_root)).replace(
             "\\", "/"
         )
-    except Exception:
+    except (OSError, ValueError):
         return str(file_path).replace("\\", "/")
 
 
@@ -1049,7 +1055,8 @@ def parse_utc_timestamp(value: Any) -> datetime | None:
         if normalized.endswith("Z"):
             normalized = normalized[:-1] + "+00:00"
         parsed = datetime.fromisoformat(normalized)
-    except Exception:
+    except (TypeError, ValueError) as exc:
+        logger.debug("Failed to parse UTC timestamp %r: %s", value, exc)
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)

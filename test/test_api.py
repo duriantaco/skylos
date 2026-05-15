@@ -1,12 +1,14 @@
 import os
 import json
 import importlib
+import builtins
 import subprocess
 import gzip
 import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
+import skylos
 import skylos.api as api
 from skylos.api import (
     upload_report,
@@ -21,6 +23,33 @@ from skylos.api import (
 
 
 class TestSkylosApi(unittest.TestCase):
+    def test_cli_version_returns_package_version(self):
+        self.assertEqual(api._cli_version(), str(skylos.__version__))
+
+    def test_cli_version_returns_none_when_version_missing(self):
+        had_version = hasattr(skylos, "__version__")
+        original_version = getattr(skylos, "__version__", None)
+        try:
+            if had_version:
+                delattr(skylos, "__version__")
+
+            self.assertIsNone(api._cli_version())
+        finally:
+            if had_version:
+                skylos.__version__ = original_version
+
+    def test_cli_version_does_not_swallow_unexpected_import_error(self):
+        real_import = builtins.__import__
+
+        def broken_import(name, *args, **kwargs):
+            if name == "skylos":
+                raise RuntimeError("broken package init")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=broken_import):
+            with self.assertRaises(RuntimeError):
+                api._cli_version()
+
     @patch("skylos.api.get_git_root", return_value="/mock/git/root")
     @patch(
         "skylos.api.get_git_info",
@@ -1189,6 +1218,7 @@ class TestSkylosApi(unittest.TestCase):
         )
 
         self.assertIsNone(response)
+        assert error is not None
         self.assertIn("Unsafe API URL", error)
         mock_post.assert_not_called()
 
@@ -1365,6 +1395,14 @@ class TestExtractPRNumber(unittest.TestCase):
         result = _extract_pr_number("jenkins", {})
 
         self.assertIsNone(result)
+
+    def test_skylos_pr_number_invalid_falls_back_to_provider(self):
+        os.environ["SKYLOS_PR_NUMBER"] = "not-a-number"
+        meta = {"change_id": "123"}
+
+        result = _extract_pr_number("jenkins", meta)
+
+        self.assertEqual(result, 123)
 
     def test_github_actions_pr_from_ref(self):
         os.environ["GITHUB_REF"] = "refs/pull/42/merge"

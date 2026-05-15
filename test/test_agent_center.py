@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from skylos.agents.center import (
+    _save_grep_cache,
     clear_action_triage,
     build_headline,
     build_ranked_actions,
@@ -14,8 +15,10 @@ from skylos.agents.center import (
     normalize_findings,
     refresh_agent_state,
     rebuild_agent_state_from_existing,
+    relative_path,
     save_agent_state,
     snapshot_file_signatures,
+    parse_utc_timestamp,
     update_action_triage,
     watch_project,
 )
@@ -433,6 +436,36 @@ def test_agent_state_round_trip(tmp_path):
     loaded = load_agent_state(project_root)
 
     assert loaded == state
+
+
+def test_load_agent_state_returns_none_for_invalid_json(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    state_dir = project_root / ".skylos"
+    state_dir.mkdir()
+    (state_dir / "agent_state.json").write_text("{not-json", encoding="utf-8")
+
+    assert load_agent_state(project_root) is None
+
+
+def test_save_grep_cache_does_not_swallow_unexpected_errors(tmp_path):
+    class BrokenCache:
+        def save(self, _project_root):
+            raise RuntimeError("cache write failed")
+
+    with pytest.raises(RuntimeError):
+        _save_grep_cache(BrokenCache(), tmp_path)
+
+
+def test_relative_path_falls_back_for_outside_path(tmp_path):
+    project_root = tmp_path / "repo"
+    outside = tmp_path / "outside.py"
+
+    assert relative_path(str(outside), project_root).endswith("outside.py")
+
+
+def test_parse_utc_timestamp_returns_none_for_invalid_value():
+    assert parse_utc_timestamp("not-a-date") is None
 
 
 def test_rebuild_agent_state_filters_dismissed_and_snoozed_actions():

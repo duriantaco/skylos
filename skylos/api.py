@@ -208,45 +208,46 @@ def _detect_ci():
     return None, {}
 
 
+def _parse_optional_int(value: Any) -> int | None:
+    if not value:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _extract_pr_number(provider, meta):
-    env_pr = os.getenv("SKYLOS_PR_NUMBER")
-    if env_pr:
-        try:
-            return int(env_pr)
-        except ValueError:
-            pass
+    env_pr = _parse_optional_int(os.getenv("SKYLOS_PR_NUMBER"))
+    if env_pr is not None:
+        return env_pr
 
     if provider == "github_actions":
         ref = os.getenv("GITHUB_REF", "")
         if ref.startswith("refs/pull/"):
-            try:
-                return int(ref.split("/")[2])
-            except (IndexError, ValueError):
-                pass
+            parts = ref.split("/")
+            pr_number = _parse_optional_int(parts[2] if len(parts) > 2 else None)
+            if pr_number is not None:
+                return pr_number
 
     if provider == "jenkins":
-        change_id = meta.get("change_id")
-        if change_id:
-            try:
-                return int(change_id)
-            except ValueError:
-                pass
+        pr_number = _parse_optional_int(meta.get("change_id"))
+        if pr_number is not None:
+            return pr_number
 
     if provider == "circleci":
         pr_url = meta.get("pr_url") or ""
         if "/pull/" in pr_url:
-            try:
-                return int(pr_url.split("/pull/")[-1].strip().rstrip("/"))
-            except ValueError:
-                pass
+            pr_number = _parse_optional_int(
+                pr_url.split("/pull/")[-1].strip().rstrip("/")
+            )
+            if pr_number is not None:
+                return pr_number
 
     if provider == "gitlab":
-        mr_iid = meta.get("merge_request_iid")
-        if mr_iid:
-            try:
-                return int(mr_iid)
-            except ValueError:
-                pass
+        pr_number = _parse_optional_int(meta.get("merge_request_iid"))
+        if pr_number is not None:
+            return pr_number
 
     return None
 
@@ -456,7 +457,8 @@ def _current_repo_subpath(git_root) -> str:
         from skylos.cloud.project_context import repo_subpath_for_project
 
         return repo_subpath_for_project(Path.cwd(), git_root)
-    except Exception:
+    except (ImportError, OSError, ValueError) as exc:
+        logger.debug("Failed to resolve current repo subpath: %s", exc)
         return ""
 
 
@@ -577,7 +579,8 @@ def _cli_version() -> str | None:
         from skylos import __version__
 
         return str(__version__)
-    except Exception:
+    except (ImportError, AttributeError) as exc:
+        logger.debug("Failed to read Skylos package version: %s", exc)
         return None
 
 
@@ -1146,7 +1149,7 @@ def _post_json_with_retries(
             if not quiet and response.status_code >= 400:
                 print(" failed.")
             last_err = f"Server Error {response.status_code}: {response.text}"
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             last_err = f"Connection Error: {str(e)}"
 
     return None, last_err or "Unknown error"
@@ -1644,8 +1647,8 @@ def upload_agent_run(
             headers=_build_auth_headers(token),
             timeout=NETWORK_TIMEOUT_SHORT,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to upload agent run telemetry: %s", exc)
 
 
 def verify_report(result_json, quiet=False) -> dict:
@@ -1693,7 +1696,7 @@ def verify_report(result_json, quiet=False) -> dict:
             headers={"Authorization": f"Bearer {token}"},
             timeout=UPLOAD_TIMEOUT,
         )
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         return {"success": False, "error": f"Verification connection failed: {e}"}
 
     if resp.status_code in (401, 403):
