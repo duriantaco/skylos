@@ -28,6 +28,7 @@ from pathlib import Path
 import pathlib
 import skylos
 from collections import defaultdict
+from io import StringIO
 import subprocess
 import textwrap
 
@@ -638,8 +639,8 @@ class CleanFormatter(logging.Formatter):
         return record.getMessage()
 
 
-def setup_logger(output_file=None):
-    theme = Theme(
+def _skylos_console_theme():
+    return Theme(
         {
             "good": "bold green",
             "warn": "bold yellow",
@@ -648,7 +649,10 @@ def setup_logger(output_file=None):
             "brand": "bold cyan",
         }
     )
-    console = Console(theme=theme)
+
+
+def setup_logger(output_file=None):
+    console = Console(theme=_skylos_console_theme())
 
     logger = logging.getLogger("skylos")
     logger.setLevel(logging.INFO)
@@ -1591,7 +1595,7 @@ def _score_style(score):
     return "bad"
 
 
-def _render_grade(console: Console, grade_data):
+def _render_grade(console: Console, grade_data, *, copy_badge: bool = True):
     from skylos.reporting.grader import generate_badge_url
 
     overall = grade_data["overall"]
@@ -1645,17 +1649,18 @@ def _render_grade(console: Console, grade_data):
         )
     )
 
-    try:
-        import pyperclip
+    if copy_badge:
+        try:
+            import pyperclip
 
-        pyperclip.copy(badge_markdown)
-        console.print("[good]Copied to clipboard![/good]")
-    except ImportError:
-        console.print(
-            "[muted]Install pyperclip for auto-copy: pip install pyperclip[/muted]"
-        )
-    except (pyperclip.PyperclipException, OSError) as exc:
-        logger.debug("Failed to copy badge markdown to clipboard: %s", exc)
+            pyperclip.copy(badge_markdown)
+            console.print("[good]Copied to clipboard![/good]")
+        except ImportError:
+            console.print(
+                "[muted]Install pyperclip for auto-copy: pip install pyperclip[/muted]"
+            )
+        except (pyperclip.PyperclipException, OSError) as exc:
+            logger.debug("Failed to copy badge markdown to clipboard: %s", exc)
 
     console.print()
 
@@ -2187,7 +2192,15 @@ def _render_sca(console: Console, limit, items):
     )
 
 
-def render_results(console: Console, result, tree=False, root_path=None, limit=None):
+def render_results(
+    console: Console,
+    result,
+    tree=False,
+    root_path=None,
+    limit=None,
+    *,
+    copy_badge: bool = True,
+):
     summ = result.get("analysis_summary", {})
     console.print(
         Panel.fit(
@@ -2229,7 +2242,7 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
 
     grade_data = result.get("grade")
     if grade_data:
-        _render_grade(console, grade_data)
+        _render_grade(console, grade_data, copy_badge=copy_badge)
 
     if tree:
         _render_result_tree(console, result, root_path=root_path)
@@ -2292,6 +2305,31 @@ def render_results(console: Console, result, tree=False, root_path=None, limit=N
             console, root_path, limit, result.get("custom_rules", []) or []
         )
         _render_sca(console, limit, result.get("dependency_vulnerabilities", []) or [])
+
+
+def _write_rich_report_output(
+    output_file: str,
+    result: dict,
+    *,
+    tree: bool = False,
+    root_path=None,
+    limit=None,
+):
+    buffer = StringIO()
+    file_console = Console(
+        theme=_skylos_console_theme(),
+        file=buffer,
+        force_terminal=False,
+    )
+    render_results(
+        file_console,
+        result,
+        tree=tree,
+        root_path=root_path,
+        limit=limit,
+        copy_badge=False,
+    )
+    pathlib.Path(output_file).write_text(buffer.getvalue(), encoding="utf-8")
 
 
 def run_init():
@@ -3048,7 +3086,7 @@ def _build_main_scan_context(args):
         args.sca = True
 
     project_root = _resolve_main_project_root(args.path)
-    logger = setup_logger(args.output)
+    logger = setup_logger()
     console = logger.console
 
     if args.verbose:
@@ -6234,6 +6272,14 @@ def main() -> None:
             root_path=project_root,
             limit=_cli_limit,
         )
+        if args.output:
+            _write_rich_report_output(
+                args.output,
+                display_result,
+                tree=args.tree,
+                root_path=project_root,
+                limit=_cli_limit,
+            )
 
     unused_total = sum(
         len(result.get(k, []))
