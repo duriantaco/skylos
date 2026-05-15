@@ -2,6 +2,70 @@ import argparse
 from pathlib import Path
 
 
+def _resolve_gate_settings(debt_args, policy) -> tuple[int | None, str | None]:
+    min_score = debt_args.min_score
+    if policy and policy.gate_min_score is not None and min_score is None:
+        min_score = policy.gate_min_score
+
+    fail_on_status = debt_args.fail_on_status
+    if policy and policy.gate_fail_on_status and not fail_on_status:
+        fail_on_status = policy.gate_fail_on_status
+
+    return min_score, fail_on_status
+
+
+def _baseline_status_counts(snapshot) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for hotspot in snapshot.hotspots:
+        status = hotspot.baseline_status
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _gate_failures(snapshot, *, min_score, fail_on_status) -> list[str]:
+    failures: list[str] = []
+    if min_score is not None and snapshot.score.score_pct < min_score:
+        failures.append(
+            f"score {snapshot.score.score_pct}% is below min_score {min_score}%"
+        )
+
+    if fail_on_status:
+        counts = _baseline_status_counts(snapshot)
+        if fail_on_status == "new_or_worsened":
+            count = counts.get("new", 0) + counts.get("worsened", 0)
+            if count:
+                failures.append(
+                    f"{count} hotspot(s) are new or worsened versus baseline"
+                )
+        else:
+            count = counts.get(fail_on_status, 0)
+            if count:
+                failures.append(
+                    f"{count} hotspot(s) have baseline status {fail_on_status}"
+                )
+
+    return failures
+
+
+def _record_gate_summary(snapshot, *, min_score, fail_on_status) -> list[str]:
+    if min_score is None and not fail_on_status:
+        return []
+
+    failures = _gate_failures(
+        snapshot,
+        min_score=min_score,
+        fail_on_status=fail_on_status,
+    )
+    snapshot.summary["gate"] = {
+        "passed": not failures,
+        "min_score": min_score,
+        "fail_on_status": fail_on_status,
+        "failures": failures,
+        "status_counts": _baseline_status_counts(snapshot),
+    }
+    return failures
+
+
 def run_debt_command(
     argv: list[str],
     *,
@@ -301,6 +365,13 @@ def run_debt_command(
         history_path = append_debt_history(snapshot.project, snapshot)
         console.print(f"[dim]Debt history appended to {history_path}[/dim]")
 
+    min_score, fail_on_status = _resolve_gate_settings(debt_args, policy)
+    gate_failures = _record_gate_summary(
+        snapshot,
+        min_score=min_score,
+        fail_on_status=fail_on_status,
+    )
+
     if debt_args.output_json:
         output = format_debt_json(snapshot)
     else:
@@ -344,22 +415,4 @@ def run_debt_command(
                     f"[red]Upload failed: {upload_result.get('error', 'Unknown')}[/red]"
                 )
 
-    exit_code = 1 if upload_failed else 0
-    min_score = debt_args.min_score
-    if policy and policy.gate_min_score is not None and min_score is None:
-        min_score = policy.gate_min_score
-    if min_score is not None and snapshot.score.score_pct < min_score:
-        exit_code = 1
-
-    fail_on_status = debt_args.fail_on_status
-    if policy and policy.gate_fail_on_status and not fail_on_status:
-        fail_on_status = policy.gate_fail_on_status
-    if fail_on_status:
-        statuses = {hotspot.baseline_status for hotspot in snapshot.hotspots}
-        if fail_on_status == "new_or_worsened":
-            if {"new", "worsened"} & statuses:
-                exit_code = 1
-        elif fail_on_status in statuses:
-            exit_code = 1
-
-    return exit_code
+    return 1 if upload_failed or gate_failures else 0

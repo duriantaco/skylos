@@ -184,6 +184,14 @@ def test_run_debt_analysis_builds_snapshot():
     assert snapshot.total_loc == 500
     assert snapshot.score.hotspot_count == len(snapshot.hotspots)
     assert snapshot.summary["dimensions"]["complexity"] == 1
+    assert snapshot.summary["score_breakdown"]["dimensions"][0]["dimension"] == (
+        "complexity"
+    )
+    assert snapshot.summary["score_breakdown"]["top_rules"][0]["rule_id"] == "SKY-Q301"
+    assert snapshot.summary["score_model"]["included_sources"] == [
+        "quality",
+        "dead_code",
+    ]
 
 
 def test_run_debt_analysis_changed_mode_keeps_project_score_and_filters_hotspots():
@@ -212,6 +220,10 @@ def test_build_debt_snapshot_reuses_static_result():
     assert snapshot.total_loc == 500
     assert snapshot.score.hotspot_count == len(snapshot.hotspots)
     assert snapshot.summary["dimensions"]["complexity"] == 1
+    assert snapshot.summary["score_breakdown"]["signal_points"] == 41.15
+    assert snapshot.summary["score_model"]["signal_formula"] == (
+        "severity_weight * dimension_weight * magnitude"
+    )
 
 
 def test_build_hotspots_changed_files_raise_priority_not_structural_score():
@@ -537,6 +549,14 @@ def test_format_debt_table_renders_hotspot_advisory_and_delta():
         "1. app/services.py | score=14.00 | priority=16.50 | "
         "signals=1 | dimensions=complexity | worsened (+1.25)"
     ) in rendered
+    assert (
+        "why: primary=complexity, strongest=HIGH, breadth_bonus=0.00, "
+        "priority_bonus=2.50"
+    ) in rendered
+    assert (
+        "SKY-Q301 | HIGH | complexity | app/services.py:20 | "
+        "Cyclomatic complexity is 18 (threshold: 10) (points=14.00)"
+    ) in rendered
     assert "advisor: Split summary and detail formatting into helpers." in rendered
     assert "step: Extract summary line builders." in rendered
     assert "step: Move hotspot rendering into a helper." in rendered
@@ -575,6 +595,24 @@ def test_format_debt_table_orders_by_priority_and_applies_top_limit():
 
     assert "1. app/core.py | score=9.00 | priority=18.00" in rendered
     assert "app/services.py" not in rendered
+
+
+def test_format_debt_table_explains_score_breakdown_and_model():
+    snapshot = build_debt_snapshot(SAMPLE_RESULT, project_root="/repo")
+
+    rendered = format_debt_table(snapshot)
+
+    assert "Score Breakdown:" in rendered
+    assert "complexity: 21.60 pts" in rendered
+    assert "Top rules: SKY-Q301 21.60 pts" in rendered
+    assert "How Score Is Calculated:" in rendered
+    assert "severity weight * dimension weight * magnitude" in rendered
+    assert "included sources: quality, dead_code" in rendered
+    assert (
+        "SKY-Q301 | HIGH | complexity | app/services.py:20 | "
+        "Cyclomatic complexity is 18 (threshold: 10) "
+        "(metric=18 threshold=10 points=21.60)"
+    ) in rendered
 
 
 def test_format_debt_history_table_renders_deltas_and_limit():
@@ -755,6 +793,30 @@ def test_cli_debt_fail_on_status_uses_baseline_comparison(tmp_path, monkeypatch)
         cli.main()
 
     assert exc.value.code == 1
+
+
+def test_cli_debt_json_min_score_includes_gate_failure(tmp_path, monkeypatch):
+    snapshot = _snapshot(str(tmp_path))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "debt", str(tmp_path), "--json", "--min-score", "95"],
+    )
+
+    with (
+        patch("skylos.debt.run_debt_analysis", return_value=snapshot),
+        patch("builtins.print") as mock_print,
+        patch("skylos.cli.Console", return_value=Mock()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 1
+    payload = json.loads(mock_print.call_args.args[0])
+    assert payload["summary"]["gate"]["passed"] is False
+    assert payload["summary"]["gate"]["failures"] == [
+        "score 93% is below min_score 95%"
+    ]
 
 
 def test_cli_debt_uses_project_policy_for_report_top(tmp_path, monkeypatch):

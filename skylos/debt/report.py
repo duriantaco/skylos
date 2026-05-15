@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from skylos.debt.result import DebtSnapshot
+from skylos.debt.scoring import DIMENSION_WEIGHTS, SEVERITY_WEIGHTS
 
 
 def _ordered_hotspots(snapshot: DebtSnapshot, top: int | None) -> list:
@@ -68,11 +69,151 @@ def _hotspot_status(hotspot) -> str:
     return status
 
 
+def _score_breakdown_lines(snapshot: DebtSnapshot) -> list[str]:
+    breakdown = (snapshot.summary or {}).get("score_breakdown") or {}
+    dimensions = breakdown.get("dimensions") or []
+    if not dimensions:
+        return []
+
+    lines = ["", "Score Breakdown:"]
+    for item in dimensions[:5]:
+        dimension = item.get("dimension") or "unknown"
+        points = float(item.get("points") or 0.0)
+        share_pct = float(item.get("share_pct") or 0.0)
+        signal_count = int(item.get("signal_count") or 0)
+        weight = float(item.get("weight") or DIMENSION_WEIGHTS.get(dimension, 1.0))
+        lines.append(
+            f"  {dimension}: {points:.2f} pts ({share_pct:.1f}%) from "
+            f"{signal_count} signal(s), weight={weight:.2f}"
+        )
+
+    top_rules = breakdown.get("top_rules") or []
+    if top_rules:
+        rendered_rules = ", ".join(
+            f"{rule.get('rule_id')} {float(rule.get('points') or 0.0):.2f} pts"
+            for rule in top_rules[:5]
+        )
+        lines.append(f"  Top rules: {rendered_rules}")
+    return lines
+
+
+def _score_model_lines(snapshot: DebtSnapshot) -> list[str]:
+    model = (snapshot.summary or {}).get("score_model") or {}
+    breakdown = (snapshot.summary or {}).get("score_breakdown") or {}
+    if not model and not breakdown:
+        return []
+
+    severity_bits = " ".join(
+        f"{severity}={weight}" for severity, weight in SEVERITY_WEIGHTS.items()
+    )
+    dimension_bits = " ".join(
+        f"{dimension}={weight:.2f}"
+        for dimension, weight in DIMENSION_WEIGHTS.items()
+    )
+    lines = ["", "How Score Is Calculated:"]
+    lines.append(
+        "  score_pct = clamp(round(100 - "
+        f"{snapshot.score.total_points:.2f}/{snapshot.score.normalizer:.2f}), 0, 100) "
+        f"= {snapshot.score.score_pct}%"
+    )
+    lines.append(
+        "  signal points = severity weight * dimension weight * magnitude; "
+        "metrics above threshold can scale up to 3.0x"
+    )
+    lines.append(
+        f"  weights: severity {severity_bits}; dimension {dimension_bits}"
+    )
+    lines.append(
+        "  hotspot score = signal points + 2 pts for each extra debt dimension "
+        "in the same file"
+    )
+    included_sources = model.get("included_sources") or []
+    if included_sources:
+        lines.append(f"  included sources: {', '.join(included_sources)}")
+    if breakdown.get("breadth_bonus_points"):
+        lines.append(
+            "  breadth bonus total: "
+            f"{float(breakdown.get('breadth_bonus_points') or 0.0):.2f} pts"
+        )
+    return lines
+
+
+def _gate_lines(summary: dict) -> list[str]:
+    gate = summary.get("gate") or {}
+    if not gate:
+        return []
+
+    status = "passed" if gate.get("passed", True) else "failed"
+    lines = ["", f"Gate: {status}"]
+    min_score = gate.get("min_score")
+    fail_on_status = gate.get("fail_on_status")
+    if min_score is not None:
+        lines.append(f"  min_score={min_score}")
+    if fail_on_status:
+        lines.append(f"  fail_on_status={fail_on_status}")
+    for failure in gate.get("failures") or []:
+        lines.append(f"  - {failure}")
+    return lines
+
+
+def _signal_location(signal) -> str:
+    if signal.file and signal.line:
+        return f"{signal.file}:{signal.line}"
+    if signal.file:
+        return signal.file
+    return "-"
+
+
+def _metric_detail(signal) -> str:
+    parts = []
+    if signal.metric_value is not None:
+        parts.append(f"metric={signal.metric_value}")
+    if signal.threshold is not None:
+        parts.append(f"threshold={signal.threshold}")
+    return " ".join(parts)
+
+
+def _signal_detail(signal) -> str:
+    detail = _metric_detail(signal)
+    if detail:
+        return f"{detail} points={signal.points:.2f}"
+    return f"points={signal.points:.2f}"
+
+
 def _signal_lines(hotspot) -> list[str]:
     return [
-        f"    - [{signal.rule_id}] {signal.message} (points={signal.points:.2f})"
+        (
+            f"    - {signal.rule_id} | {str(signal.severity).upper()} | "
+            f"{signal.dimension} | {_signal_location(signal)} | "
+            f"{signal.message} ({_signal_detail(signal)})"
+        )
         for signal in hotspot.signals[:3]
     ]
+
+
+def _strongest_severity(hotspot) -> str:
+    if not hotspot.signals:
+        return "LOW"
+    return max(
+        (str(signal.severity).upper() for signal in hotspot.signals),
+        key=lambda severity: SEVERITY_WEIGHTS.get(severity, 1),
+    )
+
+
+def _hotspot_explanation_line(hotspot) -> str:
+    breadth_bonus = max(0, int(hotspot.dimension_count) - 1) * 2
+    priority_bonus = round(
+        float(getattr(hotspot, "priority_score", hotspot.score))
+        - float(hotspot.score),
+        2,
+    )
+    return (
+        "    why: "
+        f"primary={hotspot.primary_dimension}, "
+        f"strongest={_strongest_severity(hotspot)}, "
+        f"breadth_bonus={breadth_bonus:.2f}, "
+        f"priority_bonus={priority_bonus:.2f}"
+    )
 
 
 def _advisory_lines(hotspot) -> list[str]:
@@ -94,6 +235,7 @@ def _hotspot_lines(index: int, hotspot) -> list[str]:
             f"{_hotspot_status(hotspot)}"
         )
     ]
+    lines.append(_hotspot_explanation_line(hotspot))
     lines.extend(_signal_lines(hotspot))
     lines.extend(_advisory_lines(hotspot))
     return lines
@@ -119,6 +261,9 @@ def format_debt_table(snapshot: DebtSnapshot, *, top: int | None = None) -> str:
     )
     if baseline:
         lines.append(_baseline_line(baseline))
+    lines.extend(_gate_lines(summary))
+    lines.extend(_score_breakdown_lines(snapshot))
+    lines.extend(_score_model_lines(snapshot))
 
     if not hotspots:
         lines.append("")

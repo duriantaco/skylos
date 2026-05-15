@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Any
 
 from skylos.debt.result import DebtHotspot, DebtScore, DebtSignal
 
@@ -192,3 +193,108 @@ def compute_debt_score(
         signal_count=signal_count,
         scope="project",
     )
+
+
+def _share_pct(points: float, total: float) -> float:
+    if total <= 0:
+        return 0.0
+    return round((points / total) * 100, 1)
+
+
+def _score_normalizer_description(total_loc: int) -> str:
+    if total_loc > 0:
+        return "total_loc / 250"
+    return "hotspot_count"
+
+
+def build_score_breakdown(
+    hotspots: list[DebtHotspot],
+    *,
+    score: DebtScore,
+    total_loc: int = 0,
+    top_rules: int = 10,
+) -> dict[str, Any]:
+    dimension_stats: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"signal_count": 0, "points": 0.0}
+    )
+    rule_stats: dict[tuple[str, str], dict[str, Any]] = defaultdict(
+        lambda: {"signal_count": 0, "points": 0.0}
+    )
+
+    for hotspot in hotspots:
+        for signal in hotspot.signals:
+            dimension = signal.dimension or "unknown"
+            rule_id = signal.rule_id or "UNKNOWN"
+            dimension_stats[dimension]["signal_count"] += 1
+            dimension_stats[dimension]["points"] += float(signal.points or 0.0)
+            rule_key = (dimension, rule_id)
+            rule_stats[rule_key]["dimension"] = dimension
+            rule_stats[rule_key]["rule_id"] = rule_id
+            rule_stats[rule_key]["signal_count"] += 1
+            rule_stats[rule_key]["points"] += float(signal.points or 0.0)
+
+    signal_points = round(
+        sum(
+            float(signal.points or 0.0)
+            for hotspot in hotspots
+            for signal in hotspot.signals
+        ),
+        2,
+    )
+    breadth_bonus_points = round(
+        sum(max(0, int(hotspot.dimension_count) - 1) * 2 for hotspot in hotspots),
+        2,
+    )
+
+    dimensions = [
+        {
+            "dimension": dimension,
+            "signal_count": int(stats["signal_count"]),
+            "points": round(float(stats["points"]), 2),
+            "share_pct": _share_pct(float(stats["points"]), signal_points),
+            "weight": DIMENSION_WEIGHTS.get(dimension, 1.0),
+        }
+        for dimension, stats in dimension_stats.items()
+    ]
+    dimensions.sort(key=lambda item: (-item["points"], item["dimension"]))
+
+    rules = [
+        {
+            "rule_id": str(stats["rule_id"]),
+            "dimension": str(stats["dimension"]),
+            "signal_count": int(stats["signal_count"]),
+            "points": round(float(stats["points"]), 2),
+            "share_pct": _share_pct(float(stats["points"]), signal_points),
+        }
+        for stats in rule_stats.values()
+    ]
+    rules.sort(key=lambda item: (-item["points"], item["rule_id"]))
+
+    return {
+        "signal_points": signal_points,
+        "breadth_bonus_points": breadth_bonus_points,
+        "dimensions": dimensions,
+        "top_rules": rules[:top_rules],
+        "formula": "score_pct = clamp(round(100 - total_points / normalizer), 0, 100)",
+        "total_points": score.total_points,
+        "normalizer": score.normalizer,
+        "normalizer_source": _score_normalizer_description(total_loc),
+    }
+
+
+def score_model_metadata() -> dict[str, Any]:
+    return {
+        "included_sources": ["quality", "dead_code"],
+        "signal_formula": "severity_weight * dimension_weight * magnitude",
+        "severity_weights": dict(SEVERITY_WEIGHTS),
+        "dimension_weights": dict(DIMENSION_WEIGHTS),
+        "magnitude": (
+            "1.0 by default; when metric_value exceeds threshold, "
+            "adds min((metric_value - threshold) / threshold, 2.0)"
+        ),
+        "magnitude_cap": 3.0,
+        "hotspot_formula": "sum(signal_points) + 2 points for each extra dimension in the file",
+        "priority_formula": (
+            "hotspot score plus changed-file, baseline-status, and strongest-severity bonuses"
+        ),
+    }
