@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from skylos.debt.result import DebtSignal, DebtSnapshot
-from skylos.debt.scoring import build_hotspots, compute_debt_score
+from skylos.debt.scoring import (
+    build_hotspots,
+    build_score_breakdown,
+    compute_debt_score,
+    score_model_metadata,
+)
 from skylos.core.file_discovery import find_git_root
 
 DEBT_VERSION = "1.0"
@@ -246,6 +251,12 @@ def build_debt_snapshot(
         },
         "project_hotspot_count": len(all_hotspots),
         "visible_hotspot_count": len(hotspots),
+        "score_breakdown": build_score_breakdown(
+            all_hotspots,
+            score=score,
+            total_loc=total_loc,
+        ),
+        "score_model": score_model_metadata(),
     }
 
     return DebtSnapshot(
