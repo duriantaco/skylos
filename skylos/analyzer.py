@@ -139,6 +139,7 @@ _TS_JS_SOURCE_EXTS = (
 _PHP_SOURCE_EXTS = (".php",)
 _RUST_SOURCE_EXTS = (".rs",)
 _DART_SOURCE_EXTS = (".dart",)
+_PYTHON_SOURCE_ROOT_NAMES = {"src", "lib", "python"}
 
 _TRY_NODE_TYPES = (ast.Try, getattr(ast, "TryStar", ast.Try))
 
@@ -389,17 +390,65 @@ class Skylos:
     def _module(self, root, f):
         p = list(f.relative_to(root).parts)
 
-        if "src" in p:
-            src_idx = p.index("src")
-            src_path = root / "/".join(p[: src_idx + 1])
-            if not (src_path / "__init__.py").exists():
-                p = p[src_idx + 1 :]
+        for source_root_name in _PYTHON_SOURCE_ROOT_NAMES:
+            if source_root_name not in p:
+                continue
+            source_root_idx = p.index(source_root_name)
+            source_root_path = root / "/".join(p[: source_root_idx + 1])
+            if not (source_root_path / "__init__.py").exists():
+                p = p[source_root_idx + 1 :]
+                break
 
         if p[-1].endswith(".py"):
             p[-1] = p[-1][:-3]
         if p[-1] == "__init__":
             p.pop()
         return ".".join(p)
+
+    def _topmost_package_dir(self, path: Path) -> Path | None:
+        current = Path(path).resolve()
+        if not current.is_dir():
+            current = current.parent
+        if not (current / "__init__.py").exists():
+            return None
+
+        top = current
+        while (top.parent / "__init__.py").exists():
+            top = top.parent
+        return top
+
+    def _module_root(self, scan_root: Path, project_root: Path) -> Path:
+        scan_root = Path(scan_root).resolve()
+        project_root = Path(project_root).resolve()
+
+        topmost_package = self._topmost_package_dir(scan_root)
+        if topmost_package is not None:
+            return topmost_package.parent
+
+        try:
+            scan_root.relative_to(project_root)
+        except ValueError:
+            return scan_root
+
+        if scan_root == project_root:
+            return scan_root
+
+        if scan_root.name in _PYTHON_SOURCE_ROOT_NAMES:
+            return scan_root
+
+        return scan_root
+
+    def _module_alias_prefixes(self, scan_root: Path) -> tuple[str, ...]:
+        scan_root = Path(scan_root).resolve()
+        if self._topmost_package_dir(scan_root) is not None:
+            return ()
+        if scan_root.name in _PYTHON_SOURCE_ROOT_NAMES:
+            return ()
+        if (scan_root / "pyproject.toml").exists() or (scan_root / ".git").exists():
+            return ()
+        if scan_root.is_dir():
+            return (scan_root.name,)
+        return ()
 
     def _should_exclude_file(self, file_path, root_path, exclude_folders):
         return should_exclude_path(file_path, root_path, exclude_folders)
@@ -948,6 +997,12 @@ class Skylos:
 
             if target_fqn in non_import_defs:
                 return target_fqn
+
+            for prefix in getattr(self, "_module_alias_prefixes", ()):
+                if target_fqn.startswith(prefix + "."):
+                    stripped_target = target_fqn[len(prefix) + 1 :]
+                    if stripped_target in non_import_defs:
+                        return stripped_target
 
             simple = target_fqn.split(".")[-1]
             cands = simple_to_keys.get(simple, [])
@@ -1842,9 +1897,12 @@ class Skylos:
 
         logger.info(f"Analyzing {len(files)} files...")
 
+        module_root = self._module_root(root, project_root)
+        self._module_root_path = module_root
+        self._module_alias_prefixes = self._module_alias_prefixes(root)
         modmap = {}
         for f in files:
-            modmap[f] = self._module(root, f)
+            modmap[f] = self._module(module_root, f)
 
         from skylos.analysis.implicit_refs import pattern_tracker
         from skylos.analysis.implicit_refs import (
