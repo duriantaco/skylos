@@ -176,9 +176,7 @@ def detect_security_contract_regressions(
 def _normalize_rel_path(root: Path, file_path: str) -> str | None:
     candidate = Path(file_path)
     resolved = (
-        candidate.resolve()
-        if candidate.is_absolute()
-        else (root / candidate).resolve()
+        candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
     )
     try:
         return resolved.relative_to(root).as_posix()

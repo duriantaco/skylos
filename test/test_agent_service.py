@@ -571,10 +571,7 @@ def test_agent_service_cors_custom_allowed_origins_override_defaults(tmp_path):
         )
         assert status == 200
         assert json.loads(raw)["ok"] is True
-        assert (
-            headers["access-control-allow-origin"]
-            == "https://dashboard.example.com"
-        )
+        assert headers["access-control-allow-origin"] == "https://dashboard.example.com"
 
         status, headers, _raw = request_http(
             server,

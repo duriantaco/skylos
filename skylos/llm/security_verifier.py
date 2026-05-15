@@ -127,7 +127,9 @@ def annotate_security_finding(
 
 def is_security_finding(finding: Finding | dict[str, Any]) -> bool:
     if isinstance(finding, dict):
-        category = str(finding.get("_category") or finding.get("category") or "").lower()
+        category = str(
+            finding.get("_category") or finding.get("category") or ""
+        ).lower()
         issue_type = str(finding.get("issue_type") or "").lower()
         return category == SECURITY_CATEGORY or issue_type == SECURITY_CATEGORY
     return finding.issue_type == IssueType.SECURITY

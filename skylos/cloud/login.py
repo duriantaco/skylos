@@ -16,7 +16,9 @@ TIMEOUT_SECONDS = 300
 
 
 class LoginResult:
-    def __init__(self, token, project_id, project_name, org_name, plan, repo_subpath=""):
+    def __init__(
+        self, token, project_id, project_name, org_name, plan, repo_subpath=""
+    ):
         self.token = token
         self.project_id = project_id
         self.project_name = project_name
@@ -218,9 +220,7 @@ def browser_login(console=None, base_url=None):
                 "[red]Could not verify login with server. No credentials were saved.[/red]"
             )
         else:
-            print(
-                "Could not verify login with server. No credentials were saved."
-            )
+            print("Could not verify login with server. No credentials were saved.")
         return None
     return verified
 

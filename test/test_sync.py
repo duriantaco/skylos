@@ -615,7 +615,7 @@ def test_create_precommit_config_limits_gate_to_pre_commit(tmp_path, monkeypatch
     assert '- "libcst>=1.8.2"' in content
     assert '- "tree-sitter-php>=0.24.1"' in content
     assert '- "tree-sitter-rust>=0.24.2"' in content
-    assert '- "tomli>=2.0.1; python_version < \'3.11\'"' in content
+    assert "- \"tomli>=2.0.1; python_version < '3.11'\"" in content
     assert 'args: ["agent", "pre-commit", "."]' in content
     assert "--gate" not in content
 
@@ -683,20 +683,12 @@ def _run_generated_pre_push_hook(
     ("stdin", "blocked_ref"),
     [
         pytest.param(
-            "refs/heads/main "
-            + "1" * 40
-            + " refs/heads/main "
-            + "2" * 40
-            + "\n",
+            "refs/heads/main " + "1" * 40 + " refs/heads/main " + "2" * 40 + "\n",
             "refs/heads/main",
             id="local-main-to-remote-main",
         ),
         pytest.param(
-            "refs/heads/topic "
-            + "1" * 40
-            + " refs/heads/main "
-            + "2" * 40
-            + "\n",
+            "refs/heads/topic " + "1" * 40 + " refs/heads/main " + "2" * 40 + "\n",
             "refs/heads/main",
             id="topic-to-remote-main",
         ),
@@ -706,19 +698,13 @@ def _run_generated_pre_push_hook(
             id="delete-main",
         ),
         pytest.param(
-            "refs/heads/master "
-            + "1" * 40
-            + " refs/heads/master "
-            + "2" * 40
-            + "\n",
+            "refs/heads/master " + "1" * 40 + " refs/heads/master " + "2" * 40 + "\n",
             "refs/heads/master",
             id="master",
         ),
     ],
 )
-def test_pre_push_hook_blocks_protected_branch_updates(
-    tmp_path, stdin, blocked_ref
-):
+def test_pre_push_hook_blocks_protected_branch_updates(tmp_path, stdin, blocked_ref):
     result = _run_generated_pre_push_hook(tmp_path, stdin)
 
     assert result.returncode == 1
@@ -732,11 +718,7 @@ def test_pre_push_hook_blocks_protected_branch_updates(
         "",
         "refs/heads/topic " + "1" * 40 + " refs/heads/topic " + "2" * 40 + "\n",
         "refs/tags/v1.0.0 " + "1" * 40 + " refs/tags/v1.0.0 " + "0" * 40 + "\n",
-        "refs/heads/main-fix "
-        + "1" * 40
-        + " refs/heads/main-fix "
-        + "2" * 40
-        + "\n",
+        "refs/heads/main-fix " + "1" * 40 + " refs/heads/main-fix " + "2" * 40 + "\n",
     ],
 )
 def test_pre_push_hook_allows_non_protected_refs(tmp_path, stdin):

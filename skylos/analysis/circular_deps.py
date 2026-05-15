@@ -5,7 +5,9 @@ from typing import Dict, List, Set, Tuple, Any
 from collections import defaultdict
 
 try:
-    from skylos_fast import find_cycles as _fast_find_cycles  # skylos: ignore[SKY-D222] optional native extension
+    from skylos_fast import (
+        find_cycles as _fast_find_cycles,
+    )  # skylos: ignore[SKY-D222] optional native extension
 except ImportError:
     _fast_find_cycles = None
 

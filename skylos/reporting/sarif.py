@@ -69,7 +69,9 @@ class SarifExporter:
         return sarif_log
 
     def write(self, path):
-        with open(path, "w", encoding="utf-8") as f:  # skylos: ignore[SKY-D215] user-selected SARIF output path
+        with open(
+            path, "w", encoding="utf-8"
+        ) as f:  # skylos: ignore[SKY-D215] user-selected SARIF output path
             json.dump(self.generate(), f, indent=2)
 
     def _get_unique_rules(self):

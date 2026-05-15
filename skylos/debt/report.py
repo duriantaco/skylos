@@ -80,9 +80,7 @@ def _advisory_lines(hotspot) -> list[str]:
         return []
 
     lines = [f"    advisor: {hotspot.advisory.summary}"]
-    lines.extend(
-        f"      step: {step}" for step in hotspot.advisory.refactor_steps[:2]
-    )
+    lines.extend(f"      step: {step}" for step in hotspot.advisory.refactor_steps[:2])
     return lines
 
 

@@ -784,10 +784,7 @@ def run_pipeline(
         else:
             all_findings.append(llm_f)
             llm_only_count += 1
-            if (
-                llm_f.get("_source") == "llm"
-                and llm_f.get("_category") == "security"
-            ):
+            if llm_f.get("_source") == "llm" and llm_f.get("_category") == "security":
                 llm_security_only.append(llm_f)
 
     if llm_security_only:
@@ -810,7 +807,9 @@ def run_pipeline(
             refuted_ids = {id(finding) for finding in review["refuted_findings"]}
             if refuted_ids:
                 all_findings = [
-                    finding for finding in all_findings if id(finding) not in refuted_ids
+                    finding
+                    for finding in all_findings
+                    if id(finding) not in refuted_ids
                 ]
             console.print(
                 f"[good]✓ Security re-review:[/good] "

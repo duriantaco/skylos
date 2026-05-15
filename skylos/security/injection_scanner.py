@@ -98,7 +98,9 @@ _PROMPT_KEYS_RE = re.compile(
 )
 
 
-def scan_file(filepath: str | Path, *, scan_path: str | Path | None = None) -> list[dict]:
+def scan_file(
+    filepath: str | Path, *, scan_path: str | Path | None = None
+) -> list[dict]:
     filepath = Path(filepath)
     if not filepath.is_file():
         return []
@@ -112,7 +114,9 @@ def scan_file(filepath: str | Path, *, scan_path: str | Path | None = None) -> l
         return []
 
     try:
-        source = filepath.read_text(errors="replace")  # skylos: ignore[SKY-D215] scanner reads discovered source files
+        source = filepath.read_text(
+            errors="replace"
+        )  # skylos: ignore[SKY-D215] scanner reads discovered source files
     except OSError:
         return []
 

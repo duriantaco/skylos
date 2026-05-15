@@ -1511,12 +1511,10 @@ def chat(msg):
     def test_owasp_registry_has_supported_versions(self):
         assert get_owasp_mapping("llm", "2024")["LLM10"]["name"] == "Model Theft"
         assert (
-            get_owasp_mapping("llm", "2025")["LLM10"]["name"]
-            == "Unbounded Consumption"
+            get_owasp_mapping("llm", "2025")["LLM10"]["name"] == "Unbounded Consumption"
         )
         assert (
-            get_owasp_mapping("agentic", "2026")["ASI01"]["name"]
-            == "Agent Goal Hijack"
+            get_owasp_mapping("agentic", "2026")["ASI01"]["name"] == "Agent Goal Hijack"
         )
 
     def test_policy_accepts_phase3_plugins(self):

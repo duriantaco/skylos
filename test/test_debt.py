@@ -379,11 +379,7 @@ def test_augment_hotspots_with_advisories_sets_advisory(tmp_path):
 def test_safe_excerpt_returns_context_and_missing_file_is_empty(tmp_path):
     services = tmp_path / "app.py"
     services.write_text(
-        "line 1\n"
-        "line 2\n"
-        "line 3\n"
-        "line 4\n"
-        "line 5\n",
+        "line 1\nline 2\nline 3\nline 4\nline 5\n",
         encoding="utf-8",
     )
 
@@ -395,9 +391,7 @@ def test_safe_excerpt_returns_context_and_missing_file_is_empty(tmp_path):
 
 def test_parse_json_object_handles_plain_fenced_and_invalid_payloads():
     assert _parse_json_object('{"summary":"ok"}') == {"summary": "ok"}
-    assert _parse_json_object('```json\n{"summary":"ok"}\n```') == {
-        "summary": "ok"
-    }
+    assert _parse_json_object('```json\n{"summary":"ok"}\n```') == {"summary": "ok"}
     assert _parse_json_object("not json") is None
     assert _parse_json_object("") is None
 
@@ -514,7 +508,10 @@ def test_format_debt_table_renders_changed_scope_empty_state_and_baseline():
     assert "Skylos Technical Debt Report" in rendered
     assert "Hotspots: 0 shown (3 project total)" in rendered
     assert "View: changed files only" in rendered
-    assert "Baseline: 1 new | 2 worsened | 0 improved | 4 unchanged | 1 resolved" in rendered
+    assert (
+        "Baseline: 1 new | 2 worsened | 0 improved | 4 unchanged | 1 resolved"
+        in rendered
+    )
     assert "No debt hotspots found in changed files." in rendered
 
 
@@ -669,7 +666,9 @@ def test_cli_debt_json_upload_uses_quiet_mode(tmp_path, monkeypatch):
 
     with (
         patch("skylos.debt.run_debt_analysis", return_value=snapshot),
-        patch("skylos.api.upload_debt_report", return_value={"success": True}) as mock_upload,
+        patch(
+            "skylos.api.upload_debt_report", return_value={"success": True}
+        ) as mock_upload,
         patch("builtins.print") as mock_print,
         patch("skylos.cli.Console", return_value=Mock()),
         pytest.raises(SystemExit) as exc,

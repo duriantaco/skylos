@@ -345,7 +345,9 @@ def _iter_strings(value: Any) -> Iterator[str]:
             yield from _iter_strings(child)
 
 
-def _iter_env_blocks(data: dict[str, Any], *, is_workflow: bool) -> Iterator[dict[str, Any]]:
+def _iter_env_blocks(
+    data: dict[str, Any], *, is_workflow: bool
+) -> Iterator[dict[str, Any]]:
     env = data.get("env")
     if isinstance(env, dict):
         yield env
@@ -720,9 +722,8 @@ def _scan_uses(
                 ),
             )
 
-        if (
-            "SKY-D293" not in ignore
-            and uses_value.lower().startswith("actions/checkout@")
+        if "SKY-D293" not in ignore and uses_value.lower().startswith(
+            "actions/checkout@"
         ):
             with_config = step.get("with") if isinstance(step.get("with"), dict) else {}
             if not _is_false(with_config.get("persist-credentials")):
@@ -1082,7 +1083,9 @@ def _scan_container_images(
         if not isinstance(run_body, str):
             continue
         for match in DOCKER_CMD_RE.finditer(run_body):
-            image = _docker_image_from_command(match.group(1).lower(), match.group("args"))
+            image = _docker_image_from_command(
+                match.group(1).lower(), match.group("args")
+            )
             _scan_image_value(
                 image=image,
                 rule_id=rule_id,
@@ -1193,7 +1196,12 @@ def _scan_secrets_outside_env(
 def _run_line_writes_env_unsafely(line: str) -> bool:
     if not GITHUB_ENV_DEST_RE.search(line):
         return False
-    if ">>" not in line and ">" not in line and "tee" not in line.lower() and "|" not in line:
+    if (
+        ">>" not in line
+        and ">" not in line
+        and "tee" not in line.lower()
+        and "|" not in line
+    ):
         return False
     before = re.split(
         r">>|>|\|\s*tee|\|\s*out-file|\|\s*add-content",
@@ -1432,7 +1440,10 @@ def _scan_conditions(
             indent = len(match.group("indent"))
             block = []
             for next_line in lines[lineno:]:
-                if next_line.strip() and len(next_line) - len(next_line.lstrip()) <= indent:
+                if (
+                    next_line.strip()
+                    and len(next_line) - len(next_line.lstrip()) <= indent
+                ):
                     break
                 block.append(next_line)
             if any("${{" in block_line for block_line in block):
@@ -1512,7 +1523,11 @@ def _cache_action_enabled(uses_value: str, with_config: dict[str, Any]) -> bool:
     repo = _uses_repo(uses_value)
     if repo not in CACHE_AWARE_ACTIONS:
         return False
-    if repo in {"actions/cache", "mozilla-actions/sccache-action", "nix-community/cache-nix-action"}:
+    if repo in {
+        "actions/cache",
+        "mozilla-actions/sccache-action",
+        "nix-community/cache-nix-action",
+    }:
         return True
     for key in (
         "cache",
@@ -1748,9 +1763,9 @@ def _scan_privileged_job_timeouts(
 
     trigger = _on_value(data)
     workflow_permissions = data.get("permissions")
-    workflow_privileged = _is_release_like_workflow(trigger) or _workflow_has_dangerous_trigger(
+    workflow_privileged = _is_release_like_workflow(
         trigger
-    )
+    ) or _workflow_has_dangerous_trigger(trigger)
     for job_id, job in _jobs(data):
         if _is_reusable_job(job) or "timeout-minutes" in job:
             continue
@@ -1851,5 +1866,7 @@ def scan_github_actions(
     root_path = Path(root).resolve()
     findings: list[dict[str, Any]] = []
     for file_path in _discover_action_files(root_path, changed_files):
-        findings.extend(scan_github_actions_file(file_path, root=root_path, ignore=ignore))
+        findings.extend(
+            scan_github_actions_file(file_path, root=root_path, ignore=ignore)
+        )
     return findings

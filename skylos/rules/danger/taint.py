@@ -120,9 +120,11 @@ class TaintVisitor(ast.NodeVisitor):
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "format"
         ):
-            return self.is_tainted(node.func.value) or any(
-                self.is_tainted(arg) for arg in node.args
-            ) or any(self.is_tainted(k.value) for k in node.keywords)
+            return (
+                self.is_tainted(node.func.value)
+                or any(self.is_tainted(arg) for arg in node.args)
+                or any(self.is_tainted(k.value) for k in node.keywords)
+            )
 
         if (
             isinstance(node, ast.Call)

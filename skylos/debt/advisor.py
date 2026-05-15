@@ -148,7 +148,7 @@ Respond with:
 - root_cause: one short paragraph grounded in the evidence
 - refactor_steps: 2-5 ordered steps
 - remediation_notes: 1-4 cautions or validation notes
-- confidence: {'|'.join(_CONFIDENCE_LEVELS)}
+- confidence: {"|".join(_CONFIDENCE_LEVELS)}
 """
 
 

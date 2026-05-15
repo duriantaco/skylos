@@ -80,7 +80,9 @@ def _taxonomy_scores(summary: dict[str, Any]) -> dict[str, float]:
     }
 
 
-def compare_corpus(base: dict[str, Any], head: dict[str, Any]) -> tuple[bool, list[str]]:
+def compare_corpus(
+    base: dict[str, Any], head: dict[str, Any]
+) -> tuple[bool, list[str]]:
     lines = [
         "# Corpus Guard Regression Delta",
         "",
@@ -111,7 +113,9 @@ def compare_corpus(base: dict[str, Any], head: dict[str, Any]) -> tuple[bool, li
     return not failed, lines
 
 
-def compare_quality(base: dict[str, Any], head: dict[str, Any]) -> tuple[bool, list[str]]:
+def compare_quality(
+    base: dict[str, Any], head: dict[str, Any]
+) -> tuple[bool, list[str]]:
     base_score = _score(base, "overall_score")
     head_score = _score(head, "overall_score")
     lines = [

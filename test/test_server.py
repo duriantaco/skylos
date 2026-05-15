@@ -18,7 +18,12 @@ sys.modules["skylos.constants"] = mock_constants
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from skylos.web.server import app, start_server, _get_server_port, _get_default_cors_origins
+from skylos.web.server import (
+    app,
+    start_server,
+    _get_server_port,
+    _get_default_cors_origins,
+)
 
 if _original_constants is not None:
     sys.modules["skylos.constants"] = _original_constants

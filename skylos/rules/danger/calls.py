@@ -209,11 +209,7 @@ def _identifier_tokens(name: str | None) -> set[str]:
     if not raw:
         return set()
     snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", raw)
-    return {
-        part.lower()
-        for part in re.split(r"[^A-Za-z0-9]+|_", snake)
-        if part
-    }
+    return {part.lower() for part in re.split(r"[^A-Za-z0-9]+|_", snake) if part}
 
 
 def _name_looks_security_sensitive(name: str | None) -> bool:
@@ -231,7 +227,9 @@ def _target_looks_security_sensitive(target: ast.AST) -> bool:
     if isinstance(target, ast.Attribute):
         return _name_looks_security_sensitive(target.attr)
     if isinstance(target, ast.Subscript):
-        if isinstance(target.slice, ast.Constant) and isinstance(target.slice.value, str):
+        if isinstance(target.slice, ast.Constant) and isinstance(
+            target.slice.value, str
+        ):
             return _name_looks_security_sensitive(target.slice.value)
         return _target_looks_security_sensitive(target.value)
     return False
@@ -347,9 +345,7 @@ class DangerousCallsRule(SkylosRule):
         if not isinstance(node.value, ast.Call):
             return
         assigned_calls = self._assigned_calls_for(node)
-        call_name = _qualified_name_from_call(
-            node.value, self.aliases, assigned_calls
-        )
+        call_name = _qualified_name_from_call(node.value, self.aliases, assigned_calls)
         if not call_name:
             return
         for target in node.targets:

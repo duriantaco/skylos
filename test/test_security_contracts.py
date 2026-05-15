@@ -71,7 +71,9 @@ def test_load_security_contracts_normalizes_invalid_severity(tmp_path):
     assert contracts[0].severity == "HIGH"
 
 
-def test_detect_security_contract_regression_for_removed_depends_guard(tmp_path, monkeypatch):
+def test_detect_security_contract_regression_for_removed_depends_guard(
+    tmp_path, monkeypatch
+):
     before_source = """
 from fastapi import APIRouter, Depends
 
@@ -140,7 +142,9 @@ def list_users():
     assert evidence["after"]["guards"] == []
 
 
-def test_detect_security_contract_regression_for_removed_route_dependencies(tmp_path, monkeypatch):
+def test_detect_security_contract_regression_for_removed_route_dependencies(
+    tmp_path, monkeypatch
+):
     before_source = """
 from fastapi import APIRouter, Depends
 

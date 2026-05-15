@@ -191,25 +191,39 @@ class JavaFlowState:
             if right.object_types.get(name) == value
         }
         self.map_entries = self._merge_map_entries(left.map_entries, right.map_entries)
-        self.list_entries = self._merge_list_entries(left.list_entries, right.list_entries)
+        self.list_entries = self._merge_list_entries(
+            left.list_entries, right.list_entries
+        )
         self.tainted_collections = left.tainted_collections | right.tainted_collections
         self.tainted_process_builders = (
             left.tainted_process_builders | right.tainted_process_builders
         )
         self.cookie_vars = left.cookie_vars | right.cookie_vars
-        self.insecure_cookie_vars = left.insecure_cookie_vars | right.insecure_cookie_vars
-        self.normalized_path_vars = left.normalized_path_vars | right.normalized_path_vars
+        self.insecure_cookie_vars = (
+            left.insecure_cookie_vars | right.insecure_cookie_vars
+        )
+        self.normalized_path_vars = (
+            left.normalized_path_vars | right.normalized_path_vars
+        )
         self.guarded_path_vars = left.guarded_path_vars & right.guarded_path_vars
-        self.canonical_string_vars = left.canonical_string_vars | right.canonical_string_vars
-        self.slash_terminated_vars = left.slash_terminated_vars | right.slash_terminated_vars
+        self.canonical_string_vars = (
+            left.canonical_string_vars | right.canonical_string_vars
+        )
+        self.slash_terminated_vars = (
+            left.slash_terminated_vars | right.slash_terminated_vars
+        )
         self.canonical_path_sources = {
             **left.canonical_path_sources,
             **right.canonical_path_sources,
         }
         self.pending_path_objects = {
             name: min(
-                left.pending_path_objects.get(name, right.pending_path_objects.get(name, 0)),
-                right.pending_path_objects.get(name, left.pending_path_objects.get(name, 0)),
+                left.pending_path_objects.get(
+                    name, right.pending_path_objects.get(name, 0)
+                ),
+                right.pending_path_objects.get(
+                    name, left.pending_path_objects.get(name, 0)
+                ),
             )
             for name in set(left.pending_path_objects) | set(right.pending_path_objects)
         }
@@ -225,7 +239,9 @@ class JavaFlowState:
     ) -> dict[tuple[str, str], JavaTaint]:
         merged = {}
         for key in set(left) | set(right):
-            values = [value for value in (left.get(key), right.get(key)) if value is not None]
+            values = [
+                value for value in (left.get(key), right.get(key)) if value is not None
+            ]
             merged[key] = JavaTaint.combine(values)
         return merged
 
@@ -268,9 +284,7 @@ class JavaSecurityFlowAnalyzer:
         self.source = source_bytes
         self.findings: list[dict] = []
         self.seen: set[tuple[str, int, str]] = set()
-        self.helper_summaries: dict[
-            tuple[str | None, str, int], JavaHelperSummary
-        ] = {}
+        self.helper_summaries: dict[tuple[str | None, str, int], JavaHelperSummary] = {}
 
     def scan(self) -> list[dict]:
         self.helper_summaries = self._collect_helper_summaries()
@@ -314,7 +328,9 @@ class JavaSecurityFlowAnalyzer:
             name = self._method_name(method)
             if not name:
                 continue
-            params = [self._param_name(param) for param in self._formal_parameters(method)]
+            params = [
+                self._param_name(param) for param in self._formal_parameters(method)
+            ]
             param_names = [param for param in params if param]
             class_name = self._class_name_for_node(method)
             class_request_fields = request_fields.get(class_name, set())
@@ -337,7 +353,9 @@ class JavaSecurityFlowAnalyzer:
             if self._simple_name(self._text(type_node)) not in REQUEST_TYPES:
                 continue
             class_name = self._class_name_for_node(declaration)
-            for declarator in self._children_of_type(declaration, "variable_declarator"):
+            for declarator in self._children_of_type(
+                declaration, "variable_declarator"
+            ):
                 name_node = declarator.child_by_field_name("name")
                 if name_node is not None:
                     fields.setdefault(class_name, set()).add(self._text(name_node))
@@ -437,9 +455,7 @@ class JavaSecurityFlowAnalyzer:
             return
 
         if statement.type in {"switch_expression", "switch_statement"}:
-            self._process_switch(
-                statement, state, collect_findings=collect_findings
-            )
+            self._process_switch(statement, state, collect_findings=collect_findings)
             return
 
         if statement.type == "enhanced_for_statement":
@@ -560,7 +576,9 @@ class JavaSecurityFlowAnalyzer:
             state.normalized_path_vars.add(name)
             if self._expr_has_canonical_path(value_node):
                 state.canonical_string_vars.add(name)
-                source_name = self._first_receiver_for_call(value_node, "getCanonicalPath")
+                source_name = self._first_receiver_for_call(
+                    value_node, "getCanonicalPath"
+                )
                 if source_name:
                     state.canonical_path_sources[name] = {source_name}
                 if self._expr_is_slash_terminated_base(value_node):
@@ -637,12 +655,16 @@ class JavaSecurityFlowAnalyzer:
             return
 
         groups = [
-            child for child in body.children if child.type == "switch_block_statement_group"
+            child
+            for child in body.children
+            if child.type == "switch_block_statement_group"
         ]
         if not groups:
             return
 
-        condition_value = self._eval_constant(node.child_by_field_name("condition"), state)
+        condition_value = self._eval_constant(
+            node.child_by_field_name("condition"), state
+        )
         if condition_value is not None:
             selected_index = self._select_switch_group_index(
                 groups, condition_value, state
@@ -656,7 +678,11 @@ class JavaSecurityFlowAnalyzer:
                         self._process_statement(
                             child, state, collect_findings=collect_findings
                         )
-                        if child.type in {"break_statement", "return_statement", "throw_statement"}:
+                        if child.type in {
+                            "break_statement",
+                            "return_statement",
+                            "throw_statement",
+                        }:
                             stop = True
                             break
                     if stop:
@@ -687,7 +713,9 @@ class JavaSecurityFlowAnalyzer:
     ) -> int | None:
         default_index = None
         for index, group in enumerate(groups):
-            for label in [child for child in group.children if child.type == "switch_label"]:
+            for label in [
+                child for child in group.children if child.type == "switch_label"
+            ]:
                 if self._text(label).lstrip().startswith("default"):
                     default_index = index
                     continue
@@ -793,7 +821,9 @@ class JavaSecurityFlowAnalyzer:
                 cwe="CWE-78",
             )
 
-        if method in SQL_SINKS and self._sink_args_tainted(args, SQL_SINKS[method], state):
+        if method in SQL_SINKS and self._sink_args_tainted(
+            args, SQL_SINKS[method], state
+        ):
             self._add_finding(
                 "SKY-D211",
                 "CRITICAL",
@@ -829,7 +859,11 @@ class JavaSecurityFlowAnalyzer:
         if (
             method in XSS_WRITER_METHODS
             and self._receiver_chain_has_call(call, "getWriter")
-            and any(self._expr_facts(arg, state).tainted and not self._expr_facts(arg, state).xss_safe for arg in args)
+            and any(
+                self._expr_facts(arg, state).tainted
+                and not self._expr_facts(arg, state).xss_safe
+                for arg in args
+            )
         ):
             self._add_finding(
                 "SKY-D226",
@@ -878,9 +912,9 @@ class JavaSecurityFlowAnalyzer:
             if method in HTTP_REQUEST_BUILDER_METHODS
             else ()
         )
-        if self._is_http_request_builder_sink(call, state) and self._url_sink_args_tainted(
-            args, builder_url_arg_positions, state
-        ):
+        if self._is_http_request_builder_sink(
+            call, state
+        ) and self._url_sink_args_tainted(args, builder_url_arg_positions, state):
             self._add_finding(
                 "SKY-D216",
                 "CRITICAL",
@@ -1003,9 +1037,7 @@ class JavaSecurityFlowAnalyzer:
             args = self._object_creation_args(node)
             if self._args_mention_names(args, state.tainted_collections):
                 return JavaTaint(tainted=True)
-            return JavaTaint.combine(
-                [self._expr_facts(arg, state) for arg in args]
-            )
+            return JavaTaint.combine([self._expr_facts(arg, state) for arg in args])
 
         if node.type == "array_access":
             values = [self._expr_facts(child, state) for child in node.children]
@@ -1064,7 +1096,10 @@ class JavaSecurityFlowAnalyzer:
             receiver_class = state.object_types.get(receiver)
         if receiver_class is None:
             object_node = call.child_by_field_name("object")
-            if object_node is not None and object_node.type == "object_creation_expression":
+            if (
+                object_node is not None
+                and object_node.type == "object_creation_expression"
+            ):
                 receiver_class = self._object_creation_type(object_node)
         if receiver_class is None and call.child_by_field_name("object") is None:
             receiver_class = self._class_name_for_node(call)
@@ -1104,7 +1139,11 @@ class JavaSecurityFlowAnalyzer:
         while current is not None:
             if current.type == "if_statement":
                 guarded = self._positive_path_guard_names(current, state)
-                if names and names <= guarded and self._is_in_consequence(sink_node, current):
+                if (
+                    names
+                    and names <= guarded
+                    and self._is_in_consequence(sink_node, current)
+                ):
                     return True
             current = current.parent
         return False
@@ -1199,7 +1238,10 @@ class JavaSecurityFlowAnalyzer:
         if receiver:
             return state.object_types.get(receiver)
         receiver_node = call.child_by_field_name("object")
-        if receiver_node is not None and receiver_node.type == "object_creation_expression":
+        if (
+            receiver_node is not None
+            and receiver_node.type == "object_creation_expression"
+        ):
             return self._object_creation_type(receiver_node)
         return None
 
@@ -1233,7 +1275,9 @@ class JavaSecurityFlowAnalyzer:
         if not self._statement_always_exits(consequence, state):
             return set()
         guards = self._url_host_rejection_guard_names(condition, state)
-        if alternative is not None and self._statement_assigns_names(alternative, guards):
+        if alternative is not None and self._statement_assigns_names(
+            alternative, guards
+        ):
             return set()
         return guards
 
@@ -1246,7 +1290,9 @@ class JavaSecurityFlowAnalyzer:
         if not self._statement_always_exits(consequence, state):
             return set()
         guards = self._relative_redirect_guard_names(condition, state)
-        if alternative is not None and self._statement_assigns_names(alternative, guards):
+        if alternative is not None and self._statement_assigns_names(
+            alternative, guards
+        ):
             return set()
         return guards
 
@@ -1285,9 +1331,7 @@ class JavaSecurityFlowAnalyzer:
                 return arg_name in state.slash_terminated_vars
         return True
 
-    def _url_host_rejection_guard_names(
-        self, node, state: JavaFlowState
-    ) -> set[str]:
+    def _url_host_rejection_guard_names(self, node, state: JavaFlowState) -> set[str]:
         node = self._strip_parentheses(node)
         if node is None or node.type != "unary_expression":
             return set()
@@ -1323,9 +1367,7 @@ class JavaSecurityFlowAnalyzer:
         receiver_node = node.child_by_field_name("object")
         return self._tainted_identifiers(receiver_node, state)
 
-    def _relative_redirect_guard_names(
-        self, node, state: JavaFlowState
-    ) -> set[str]:
+    def _relative_redirect_guard_names(self, node, state: JavaFlowState) -> set[str]:
         node = self._strip_parentheses(node)
         if node is None or node.type != "binary_expression":
             return set()
@@ -1376,7 +1418,9 @@ class JavaSecurityFlowAnalyzer:
         return receiver
 
     def _flush_pending_path_objects(self, state: JavaFlowState) -> None:
-        for name, line in sorted(state.pending_path_objects.items(), key=lambda item: item[1]):
+        for name, line in sorted(
+            state.pending_path_objects.items(), key=lambda item: item[1]
+        ):
             if name in state.guarded_path_vars:
                 continue
             self._add_finding(
@@ -1423,7 +1467,10 @@ class JavaSecurityFlowAnalyzer:
     def _expr_has_canonical_path(self, node) -> bool:
         if node is None:
             return False
-        return any(self._call_name(call) == "getCanonicalPath" for call in self._method_calls(node))
+        return any(
+            self._call_name(call) == "getCanonicalPath"
+            for call in self._method_calls(node)
+        )
 
     def _expr_is_slash_terminated_base(self, node) -> bool:
         text = self._text(node)
@@ -1453,13 +1500,18 @@ class JavaSecurityFlowAnalyzer:
         for node in self._iter_nodes(method_node):
             if node.type == "identifier":
                 name = self._text(node)
-                if any(token in name.lower() for token in ("token", "session", "remember")):
+                if any(
+                    token in name.lower() for token in ("token", "session", "remember")
+                ):
                     return True
             elif node.type == "string_literal":
                 value = self._text(node).lower()
                 if any(token in value for token in ("token", "session", "rememberme")):
                     return True
-            elif node.type == "method_invocation" and self._call_name(node) == "getSession":
+            elif (
+                node.type == "method_invocation"
+                and self._call_name(node) == "getSession"
+            ):
                 return True
         return False
 
@@ -1565,7 +1617,11 @@ class JavaSecurityFlowAnalyzer:
 
     def _is_simple_startswith_guard_condition(self, node) -> bool:
         text = self._text(node)
-        return "&&" not in text and "||" not in text and len(self._calls_named(node, "startsWith")) == 1
+        return (
+            "&&" not in text
+            and "||" not in text
+            and len(self._calls_named(node, "startsWith")) == 1
+        )
 
     def _statement_always_exits(self, node, state: JavaFlowState) -> bool:
         if node.type in CONTROL_FLOW_STMTS:
@@ -1647,7 +1703,11 @@ class JavaSecurityFlowAnalyzer:
     def _method_calls(self, node) -> list:
         if node is None:
             return []
-        return [child for child in self._iter_nodes(node) if child.type == "method_invocation"]
+        return [
+            child
+            for child in self._iter_nodes(node)
+            if child.type == "method_invocation"
+        ]
 
     def _identifier_names(self, node) -> set[str]:
         if node is None:
@@ -1877,7 +1937,9 @@ class JavaSecurityFlowAnalyzer:
         self.findings.append(finding)
 
 
-def scan_java_security_flows(root_node, file_path: str, source_bytes: bytes) -> list[dict]:
+def scan_java_security_flows(
+    root_node, file_path: str, source_bytes: bytes
+) -> list[dict]:
     if root_node is None:
         return []
     return JavaSecurityFlowAnalyzer(root_node, file_path, source_bytes).scan()

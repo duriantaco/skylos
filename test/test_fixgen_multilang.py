@@ -146,7 +146,9 @@ class TestValidateFileToolFallbacks:
         assert _validate_file("file.rs", "fn main() {}\n") == []
 
     def test_js_ts_subprocess_error_is_swallowed(self, monkeypatch):
-        monkeypatch.setattr("skylos.remediation.fixgen.shutil.which", lambda tool: "/usr/bin/node")
+        monkeypatch.setattr(
+            "skylos.remediation.fixgen.shutil.which", lambda tool: "/usr/bin/node"
+        )
 
         def boom(*args, **kwargs):
             raise subprocess.SubprocessError("boom")
@@ -155,7 +157,9 @@ class TestValidateFileToolFallbacks:
         assert _validate_file("file.ts", "const x = 1;\n") == []
 
     def test_go_subprocess_error_is_swallowed(self, monkeypatch):
-        monkeypatch.setattr("skylos.remediation.fixgen.shutil.which", lambda tool: "/usr/bin/gofmt")
+        monkeypatch.setattr(
+            "skylos.remediation.fixgen.shutil.which", lambda tool: "/usr/bin/gofmt"
+        )
 
         def boom(*args, **kwargs):
             raise subprocess.SubprocessError("boom")

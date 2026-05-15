@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from skylos.cloud.project_context import normalize_repo_subpath, repo_subpath_for_project
+from skylos.cloud.project_context import (
+    normalize_repo_subpath,
+    repo_subpath_for_project,
+)
 
 
 def test_normalize_repo_subpath():
@@ -17,4 +20,3 @@ def test_repo_subpath_for_project_returns_repo_relative_path(tmp_path: Path):
 
     assert repo_subpath_for_project(service, repo) == "apps/api"
     assert repo_subpath_for_project(repo, repo) == ""
-

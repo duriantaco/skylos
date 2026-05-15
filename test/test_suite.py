@@ -179,7 +179,9 @@ def test_suite_json_upload_passes_quiet_and_selected_categories(tmp_path, capsys
 
     with (
         static_upload,
-        patch("skylos.commands.suite_cmd.format_suite_json", return_value='{"ok":true}'),
+        patch(
+            "skylos.commands.suite_cmd.format_suite_json", return_value='{"ok":true}'
+        ),
     ):
         uploaded = {}
 

@@ -52,4 +52,3 @@ def repo_subpath_for_project(project_path, git_root=None) -> str:
 
 def project_context_for_upload(project_path, git_root=None) -> dict[str, str]:
     return {"project_root": repo_subpath_for_project(project_path, git_root)}
-

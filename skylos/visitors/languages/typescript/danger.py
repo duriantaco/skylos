@@ -358,8 +358,7 @@ def _has_dynamic_url_part(node) -> bool:
         return any(child.type == "template_substitution" for child in node.children)
     if node.type == "binary_expression":
         return any(
-            child.type != "+"
-            and _has_dynamic_url_part(child)
+            child.type != "+" and _has_dynamic_url_part(child)
             for child in node.children
         )
     if node.type == "parenthesized_expression":
@@ -825,7 +824,9 @@ def scan_danger(
     _check_nextjs_client_secrets(source_bytes, file_path, findings)
     _check_nextjs_server_action_sqli(source_bytes, file_path, findings)
     _check_unverified_webhook_handler(source_bytes, file_path, findings)
-    _check_archive_extraction_path_traversal(root_node, source_bytes, file_path, findings)
+    _check_archive_extraction_path_traversal(
+        root_node, source_bytes, file_path, findings
+    )
 
     return findings
 
@@ -898,7 +899,12 @@ _ARCHIVE_GUARD_TOKENS = (
 )
 
 _ARCHIVE_SCOPE_NODE_TYPES = frozenset(
-    {"function_declaration", "function_expression", "arrow_function", "method_definition"}
+    {
+        "function_declaration",
+        "function_expression",
+        "arrow_function",
+        "method_definition",
+    }
 )
 
 _ARCHIVE_CONTROL_FLOW_HINTS = ("return", "continue", "throw", "break")
@@ -1016,7 +1022,10 @@ def _has_mutating_pages_api_handler(source_text: str) -> bool:
             return True
 
     if re.search(r"\[(?:[^\]]+)\]\.includes\(\s*req\.method\s*\)", source_text):
-        return any(f"'{method}'" in source_text or f'"{method}"' in source_text for method in _MUTATING_METHODS)
+        return any(
+            f"'{method}'" in source_text or f'"{method}"' in source_text
+            for method in _MUTATING_METHODS
+        )
 
     return False
 
@@ -1148,12 +1157,16 @@ def _iter_archive_scopes(root_node, source_text: str) -> list[tuple[list[str], i
     all_lines = source_text.splitlines()
     scopes = [root_node]
     scopes.extend(
-        node for node in _iter_nodes(root_node) if node.type in _ARCHIVE_SCOPE_NODE_TYPES
+        node
+        for node in _iter_nodes(root_node)
+        if node.type in _ARCHIVE_SCOPE_NODE_TYPES
     )
     return [_scope_lines_without_nested_scopes(scope, all_lines) for scope in scopes]
 
 
-def _archive_guard_block_contains_sink(lines: list[str], guard_idx: int, sink_idx: int) -> bool:
+def _archive_guard_block_contains_sink(
+    lines: list[str], guard_idx: int, sink_idx: int
+) -> bool:
     depth = 0
     opened = False
 
@@ -1273,9 +1286,7 @@ def _archive_sink_tainted_names(
     for arg in args:
         if direct_entry and _ARCHIVE_ENTRY_PROPERTY_PATTERN.search(arg):
             return {"__direct__"}
-        matched = {
-            name for name in names if re.search(rf"\b{re.escape(name)}\b", arg)
-        }
+        matched = {name for name in names if re.search(rf"\b{re.escape(name)}\b", arg)}
         if matched:
             return matched
     return set()
@@ -1293,7 +1304,9 @@ def _nearest_archive_child_scopes(node) -> list:
     return scopes
 
 
-def _scope_lines_without_nested_scopes(node, all_lines: list[str]) -> tuple[list[str], int]:
+def _scope_lines_without_nested_scopes(
+    node, all_lines: list[str]
+) -> tuple[list[str], int]:
     start = node.start_point[0]
     end = node.end_point[0]
     scope_lines = list(all_lines[start : end + 1])
@@ -1323,9 +1336,7 @@ def _iter_archive_sink_calls(text: str) -> list[tuple[int, list[str]]]:
             seen_offsets.add(idx)
 
             args = _extract_call_args(text[idx:], token)
-            selected_args = [
-                args[pos] for pos in positions if pos < len(args)
-            ]
+            selected_args = [args[pos] for pos in positions if pos < len(args)]
             calls.append((text[:idx].count("\n"), selected_args))
             search_from = idx + 1
 

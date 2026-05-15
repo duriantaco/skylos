@@ -85,9 +85,11 @@ def _is_static_string_expr(node: ast.AST) -> bool:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "format"
     ):
-        return _is_static_string_expr(node.func.value) and all(
-            _is_static_string_expr(arg) for arg in node.args
-        ) and all(_is_static_string_expr(k.value) for k in node.keywords)
+        return (
+            _is_static_string_expr(node.func.value)
+            and all(_is_static_string_expr(arg) for arg in node.args)
+            and all(_is_static_string_expr(k.value) for k in node.keywords)
+        )
 
     return False
 

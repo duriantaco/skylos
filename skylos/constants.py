@@ -163,14 +163,12 @@ def _non_library_dir_kind_from_parts(
 
 
 @lru_cache(maxsize=65536)
-def _cached_non_library_dir_kind(
-    path_text: str, project_root_text: str
-) -> str | None:
+def _cached_non_library_dir_kind(path_text: str, project_root_text: str) -> str | None:
     parts = None
     if project_root_text:
         try:
-            rel = Path(path_text).resolve().relative_to(
-                Path(project_root_text).resolve()
+            rel = (
+                Path(path_text).resolve().relative_to(Path(project_root_text).resolve())
             )
             parts = rel.parts
         except (TypeError, ValueError, OSError):

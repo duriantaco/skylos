@@ -5,7 +5,10 @@ import re
 import sys
 from pathlib import Path
 from collections import defaultdict
-from skylos.analysis.control_flow import evaluate_static_condition, extract_constant_string
+from skylos.analysis.control_flow import (
+    evaluate_static_condition,
+    extract_constant_string,
+)
 from skylos.analysis.implicit_refs import pattern_tracker
 from typing import Any, Optional, Union
 
@@ -843,9 +846,11 @@ class Visitor(ast.NodeVisitor):
         all_args.extend(node.args.args)
         all_args.extend(node.args.kwonlyargs)
 
-        skip_params = self._in_protocol_class or getattr(
-            self, "_in_abstract_or_overload", False
-        ) or is_explicit_override
+        skip_params = (
+            self._in_protocol_class
+            or getattr(self, "_in_abstract_or_overload", False)
+            or is_explicit_override
+        )
 
         for arg in all_args:
             param_name = f"{qualified_name}.{arg.arg}"

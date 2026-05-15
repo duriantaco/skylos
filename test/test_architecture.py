@@ -639,9 +639,7 @@ class Base2(ABC):
             },
         )
 
-        iad_findings = [
-            f for f in findings if f["rule_id"] in {"SKY-Q802", "SKY-Q803"}
-        ]
+        iad_findings = [f for f in findings if f["rule_id"] in {"SKY-Q802", "SKY-Q803"}]
 
         assert {f["rule_id"] for f in iad_findings} == {"SKY-Q802", "SKY-Q803"}
         assert all(f["advisory"] is True for f in iad_findings)
@@ -676,9 +674,7 @@ class Base2(ABC):
             iad_findings_advisory=False,
         )
 
-        iad_findings = [
-            f for f in findings if f["rule_id"] in {"SKY-Q802", "SKY-Q803"}
-        ]
+        iad_findings = [f for f in findings if f["rule_id"] in {"SKY-Q802", "SKY-Q803"}]
 
         assert {f["rule_id"] for f in iad_findings} == {"SKY-Q802", "SKY-Q803"}
         assert all(f["advisory"] is False for f in iad_findings)

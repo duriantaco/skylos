@@ -152,7 +152,9 @@ def load_trace_cache(project_root: str | Path, key: str) -> dict[str, Any] | Non
     path = _trace_cache_path(project_root, key)
     try:
         entry = json.loads(
-            path.read_text(encoding="utf-8")  # skylos: ignore[SKY-D215] project-local trace cache
+            path.read_text(
+                encoding="utf-8"
+            )  # skylos: ignore[SKY-D215] project-local trace cache
         )
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
@@ -213,7 +215,9 @@ def clear_run_cache(project_root: str | Path) -> bool:
         return False
     if not path.exists():
         return False
-    shutil.rmtree(path)  # skylos: ignore[SKY-D215] guarded project-local cache directory
+    shutil.rmtree(
+        path
+    )  # skylos: ignore[SKY-D215] guarded project-local cache directory
     return True
 
 
@@ -221,7 +225,9 @@ def read_trace_payload(trace_file: str | Path) -> dict[str, Any] | None:
     path = Path(trace_file)
     try:
         payload = json.loads(
-            path.read_text(encoding="utf-8")  # skylos: ignore[SKY-D215] local trace file
+            path.read_text(
+                encoding="utf-8"
+            )  # skylos: ignore[SKY-D215] local trace file
         )
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
@@ -412,9 +418,9 @@ def _content_digest(path: Path) -> dict[str, Any] | None:
 
     h = hashlib.sha256()
     try:
-        with path.open(
-            "rb"
-        ) as handle:  # skylos: ignore[SKY-D215] hashing project files for trace cache key
+        with (
+            path.open("rb") as handle
+        ):  # skylos: ignore[SKY-D215] hashing project files for trace cache key
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 h.update(chunk)
     except OSError:

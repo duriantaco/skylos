@@ -170,11 +170,15 @@ _JAVA_COOKIE_CREATION_RE = re.compile(
 )
 _JAVA_LIST_ADD_RE = re.compile(r"\b(?P<var>[A-Za-z_]\w*)\.add\s*\((?P<expr>.*)\)\s*;")
 _JAVA_LIST_GET_RE = re.compile(r"\b(?P<var>[A-Za-z_]\w*)\.get\s*\((?P<index>\d+)\)")
-_JAVA_LIST_REMOVE_RE = re.compile(r"\b(?P<var>[A-Za-z_]\w*)\.remove\s*\((?P<index>\d+)\)")
+_JAVA_LIST_REMOVE_RE = re.compile(
+    r"\b(?P<var>[A-Za-z_]\w*)\.remove\s*\((?P<index>\d+)\)"
+)
 _JAVA_MAP_PUT_RE = re.compile(
     r"\b(?P<var>[A-Za-z_]\w*)\.put\s*\(\s*\"(?P<key>[^\"]+)\"\s*,\s*(?P<expr>.*)\)\s*;"
 )
-_JAVA_MAP_GET_RE = re.compile(r"\b(?P<var>[A-Za-z_]\w*)\.get\s*\(\s*\"(?P<key>[^\"]+)\"\s*\)")
+_JAVA_MAP_GET_RE = re.compile(
+    r"\b(?P<var>[A-Za-z_]\w*)\.get\s*\(\s*\"(?P<key>[^\"]+)\"\s*\)"
+)
 _JAVA_METHOD_CALL_RE = re.compile(
     r"\b(?P<receiver>[A-Za-z_]\w*)\.(?P<method>[A-Za-z_]\w*)\s*\((?P<args>.*)\)\s*;"
 )
@@ -301,9 +305,7 @@ def _iter_nodes(root_node):
 
 
 def _names_in_line(line: str, names: set[str]) -> set[str]:
-    return {
-        name for name in names if re.search(rf"\b{re.escape(name)}\b", line)
-    }
+    return {name for name in names if re.search(rf"\b{re.escape(name)}\b", line)}
 
 
 def _line_mentions_names(line: str, names: set[str]) -> bool:
@@ -753,7 +755,9 @@ def _java_method_call_summary_taint(
     receiver = match.group("receiver")
     new_class = _java_class_base(match.group("new_class"))
     receiver_class = object_types.get(receiver or "") if receiver else new_class
-    summary = helper_summaries.get((receiver_class, method, _java_arg_count(match.group("args"))))
+    summary = helper_summaries.get(
+        (receiver_class, method, _java_arg_count(match.group("args")))
+    )
 
     if summary is not None:
         returns_request_source, returns_arg_taint = summary
@@ -788,7 +792,9 @@ def _java_expr_taint_with_collections(
 ) -> bool:
     map_get_match = _JAVA_MAP_GET_RE.search(expr)
     if map_get_match:
-        entry = map_entries.get((map_get_match.group("var"), map_get_match.group("key")))
+        entry = map_entries.get(
+            (map_get_match.group("var"), map_get_match.group("key"))
+        )
         if entry is not None:
             return entry[0]
     list_get_match = _JAVA_LIST_GET_RE.search(expr)
@@ -848,7 +854,10 @@ def _java_method_returns_tainted_param(method_text: str, params: list[str]) -> b
             r"\belse\s+(?P<var>[A-Za-z_]\w*)\s*=\s*(?P<expr>[^;]+);",
             stripped,
         )
-        if inline_else_match and inline_else_match.group("var") in skip_else_assignments:
+        if (
+            inline_else_match
+            and inline_else_match.group("var") in skip_else_assignments
+        ):
             skip_else_assignments.discard(inline_else_match.group("var"))
             continue
         if (
@@ -1007,7 +1016,9 @@ def _sink_tainted_names(
     return set()
 
 
-def _scan_archive_extraction(root_node, file_path: str, source_bytes: bytes) -> list[dict]:
+def _scan_archive_extraction(
+    root_node, file_path: str, source_bytes: bytes
+) -> list[dict]:
     findings: list[dict] = []
     seen_lines: set[int] = set()
 
@@ -1089,7 +1100,9 @@ def _scan_archive_extraction(root_node, file_path: str, source_bytes: bytes) -> 
     return findings
 
 
-def _scan_request_path_traversal(root_node, file_path: str, source_bytes: bytes) -> list[dict]:
+def _scan_request_path_traversal(
+    root_node, file_path: str, source_bytes: bytes
+) -> list[dict]:
     findings: list[dict] = []
     seen_lines: set[int] = set()
 
@@ -1099,11 +1112,10 @@ def _scan_request_path_traversal(root_node, file_path: str, source_bytes: bytes)
 
         method_text = _get_text(source_bytes, node)
         tainted_vars: set[str] = {
-            match.group("var") for match in _REQUEST_SOURCE_PATTERNS[1].finditer(method_text)
+            match.group("var")
+            for match in _REQUEST_SOURCE_PATTERNS[1].finditer(method_text)
         }
-        latest_assignment: dict[str, int] = {
-            name: 0 for name in tainted_vars
-        }
+        latest_assignment: dict[str, int] = {name: 0 for name in tainted_vars}
 
         if not tainted_vars and not _REQUEST_INLINE_SOURCE_PATTERN.search(method_text):
             continue
@@ -1141,7 +1153,11 @@ def _scan_request_path_traversal(root_node, file_path: str, source_bytes: bytes)
                 continue
 
             guard_start = max(
-                (latest_assignment.get(name, 0) for name in used_names if name != "__direct__"),
+                (
+                    latest_assignment.get(name, 0)
+                    for name in used_names
+                    if name != "__direct__"
+                ),
                 default=0,
             )
             if used_names and _has_named_path_guard(
@@ -1293,7 +1309,10 @@ def _scan_servlet_security_flows(
                 r"\belse\s+(?P<var>[A-Za-z_]\w*)\s*=\s*(?P<expr>[^;]+);",
                 stripped,
             )
-            if inline_else_match and inline_else_match.group("var") in skip_else_assignments:
+            if (
+                inline_else_match
+                and inline_else_match.group("var") in skip_else_assignments
+            ):
                 skip_else_assignments.discard(inline_else_match.group("var"))
                 continue
             if (
@@ -1317,7 +1336,9 @@ def _scan_servlet_security_flows(
                         insecure_cookie_vars.add(receiver)
                     elif "true" in args.lower():
                         insecure_cookie_vars.discard(receiver)
-                elif method == "addCookie" and _expr_uses_taint(args, insecure_cookie_vars):
+                elif method == "addCookie" and _expr_uses_taint(
+                    args, insecure_cookie_vars
+                ):
                     _add_java_flow_finding(
                         findings,
                         seen,
@@ -1330,8 +1351,7 @@ def _scan_servlet_security_flows(
                         cwe="CWE-614",
                     )
                 elif method == "command" and (
-                    expr_tainted(args)
-                    or _expr_uses_taint(args, tainted_collections)
+                    expr_tainted(args) or _expr_uses_taint(args, tainted_collections)
                 ):
                     tainted_process_builders.add(receiver)
                 elif method == "start" and receiver in tainted_process_builders:
@@ -1362,9 +1382,12 @@ def _scan_servlet_security_flows(
                 list_tainted = expr_tainted(list_expr)
                 list_xss_safe = _expr_has_xss_sanitizer(list_expr) or (
                     _first_tainted_names(list_expr, tainted_vars)
-                    and _first_tainted_names(list_expr, tainted_vars) <= xss_sanitized_vars
+                    and _first_tainted_names(list_expr, tainted_vars)
+                    <= xss_sanitized_vars
                 )
-                list_entries.setdefault(list_var, []).append((list_tainted, list_xss_safe))
+                list_entries.setdefault(list_var, []).append(
+                    (list_tainted, list_xss_safe)
+                )
                 if list_tainted:
                     tainted_collections.add(list_var)
 
@@ -1384,9 +1407,12 @@ def _scan_servlet_security_flows(
                 map_tainted = expr_tainted(map_expr)
                 map_xss_safe = _expr_has_xss_sanitizer(map_expr) or (
                     _first_tainted_names(map_expr, tainted_vars)
-                    and _first_tainted_names(map_expr, tainted_vars) <= xss_sanitized_vars
+                    and _first_tainted_names(map_expr, tainted_vars)
+                    <= xss_sanitized_vars
                 )
-                map_entries[(map_put_match.group("var"), map_put_match.group("key"))] = (
+                map_entries[
+                    (map_put_match.group("var"), map_put_match.group("key"))
+                ] = (
                     map_tainted,
                     map_xss_safe,
                 )
@@ -1447,13 +1473,17 @@ def _scan_servlet_security_flows(
                             helper_summaries,
                         )
                     is_tainted = (
-                        summary_taint if summary_taint is not None else expr_tainted(expr)
+                        summary_taint
+                        if summary_taint is not None
+                        else expr_tainted(expr)
                     )
                 if is_tainted:
                     tainted_names = _first_tainted_names(expr, tainted_vars)
                     tainted_vars.add(var)
-                    if collection_xss_safe or _expr_has_xss_sanitizer(expr) or (
-                        tainted_names and tainted_names <= xss_sanitized_vars
+                    if (
+                        collection_xss_safe
+                        or _expr_has_xss_sanitizer(expr)
+                        or (tainted_names and tainted_names <= xss_sanitized_vars)
                     ):
                         xss_sanitized_vars.add(var)
                     else:
@@ -1464,18 +1494,15 @@ def _scan_servlet_security_flows(
                     tainted_collections.discard(var)
                     tainted_process_builders.discard(var)
 
-                if (
-                    is_tainted
-                    and (
-                        ".prepareCall(" in expr
-                        or ".prepareStatement(" in expr
-                        or ".executeQuery(" in expr
-                        or ".executeUpdate(" in expr
-                        or ".execute(" in expr
-                        or ".queryForObject(" in expr
-                        or ".queryForRowSet(" in expr
-                        or ".query(" in expr
-                    )
+                if is_tainted and (
+                    ".prepareCall(" in expr
+                    or ".prepareStatement(" in expr
+                    or ".executeQuery(" in expr
+                    or ".executeUpdate(" in expr
+                    or ".execute(" in expr
+                    or ".queryForObject(" in expr
+                    or ".queryForRowSet(" in expr
+                    or ".query(" in expr
                 ):
                     _add_java_flow_finding(
                         findings,
@@ -1489,9 +1516,16 @@ def _scan_servlet_security_flows(
                     )
 
             if (
-                ("Math.random()" in stripped or "new java.util.Random().next" in stripped or "new Random().next" in stripped)
+                (
+                    "Math.random()" in stripped
+                    or "new java.util.Random().next" in stripped
+                    or "new Random().next" in stripped
+                )
                 and "SecureRandom" not in stripped
-                and any(token in method_text for token in ("rememberMe", "getSession()", "new Cookie("))
+                and any(
+                    token in method_text
+                    for token in ("rememberMe", "getSession()", "new Cookie(")
+                )
             ):
                 _add_java_flow_finding(
                     findings,
@@ -1591,9 +1625,8 @@ def _scan_servlet_security_flows(
                     cwe="CWE-90",
                 )
 
-            if (
-                (".evaluate(" in stripped or ".compile(" in stripped)
-                and expr_tainted(stripped)
+            if (".evaluate(" in stripped or ".compile(" in stripped) and expr_tainted(
+                stripped
             ):
                 _add_java_flow_finding(
                     findings,

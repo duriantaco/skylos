@@ -23,7 +23,9 @@ def file_content_hash(file_path: str | Path) -> str:
         size = stat.st_size
         h = hashlib.sha256()
         h.update(str(size).encode())
-        with open(path, "rb") as f:  # skylos: ignore[SKY-D215] analyzer hashes discovered files
+        with open(
+            path, "rb"
+        ) as f:  # skylos: ignore[SKY-D215] analyzer hashes discovered files
             h.update(f.read(HASH_BYTES))
         return h.hexdigest()[:16]
     except (OSError, IOError):
@@ -100,7 +102,9 @@ class GrepCache:
         if not path.exists():
             return
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))  # skylos: ignore[SKY-D215] project-local cache file
+            data = json.loads(
+                path.read_text(encoding="utf-8")
+            )  # skylos: ignore[SKY-D215] project-local cache file
             with self._lock:
                 self._entries = data.get("entries", {})
                 self._dirty = False
@@ -118,7 +122,9 @@ class GrepCache:
         path = Path(project_root) / CACHE_DIR / CACHE_FILE
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(data), encoding="utf-8")  # skylos: ignore[SKY-D215] project-local cache file
+            path.write_text(
+                json.dumps(data), encoding="utf-8"
+            )  # skylos: ignore[SKY-D215] project-local cache file
             logger.debug("Saved %d grep cache entries", len(data["entries"]))
         except Exception as e:
             logger.debug("Failed to save grep cache: %s", e)

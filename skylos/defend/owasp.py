@@ -192,7 +192,9 @@ def supported_owasp_frameworks() -> list[str]:
 
 def supported_owasp_versions(framework: str) -> list[str]:
     framework = normalize_owasp_framework(framework)
-    return sorted(version for candidate, version in OWASP_REGISTRY if candidate == framework)
+    return sorted(
+        version for candidate, version in OWASP_REGISTRY if candidate == framework
+    )
 
 
 def normalize_owasp_framework(framework: str | None = None) -> str:

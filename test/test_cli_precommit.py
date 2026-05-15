@@ -17,10 +17,7 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
     staged = Mock(stdout="app.py\nnotes.txt\n", returncode=0)
     cached_diff = Mock(
         stdout=(
-            "diff --git a/app.py b/app.py\n"
-            "--- a/app.py\n"
-            "+++ b/app.py\n"
-            "@@ -3 +3 @@\n"
+            "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -3 +3 @@\n"
         ),
         returncode=0,
     )
@@ -70,6 +67,7 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
         patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with patch("skylos.cli.run_analyze") as mock_analyze:
+
             def fake_analyze(*args, **kwargs):
                 kwargs["progress_callback"](1, 1, Path(repo / "app.py"))
                 return json.dumps(result)
@@ -111,12 +109,7 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
     console = Mock()
     staged = Mock(stdout=".env\n", returncode=0)
     cached_diff = Mock(
-        stdout=(
-            "diff --git a/.env b/.env\n"
-            "--- a/.env\n"
-            "+++ b/.env\n"
-            "@@ -1 +1 @@\n"
-        ),
+        stdout=("diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n@@ -1 +1 @@\n"),
         returncode=0,
     )
     staged_blob = Mock(stdout="API_KEY=test\n", returncode=0)
@@ -174,10 +167,7 @@ def test_agent_pre_commit_uses_staged_snapshot_for_untracked_source_changes(tmp_
     staged = Mock(stdout="app.py\n", returncode=0)
     cached_diff = Mock(
         stdout=(
-            "diff --git a/app.py b/app.py\n"
-            "--- a/app.py\n"
-            "+++ b/app.py\n"
-            "@@ -3 +3 @@\n"
+            "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -3 +3 @@\n"
         ),
         returncode=0,
     )
@@ -233,9 +223,14 @@ def test_agent_pre_commit_uses_staged_snapshot_for_untracked_source_changes(tmp_
         patch("skylos.cli.find_project_root", return_value=repo),
         patch("skylos.cli.load_config", return_value={}),
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
-        patch("skylos.cli.tempfile.TemporaryDirectory", return_value=FakeTempDir(snapshot_root)),
+        patch(
+            "skylos.cli.tempfile.TemporaryDirectory",
+            return_value=FakeTempDir(snapshot_root),
+        ),
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
-        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
+        patch(
+            "skylos.cli.run_analyze", return_value=json.dumps(result)
+        ) as mock_analyze,
         patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
         with pytest.raises(SystemExit) as exc_info:
@@ -265,10 +260,7 @@ def test_agent_pre_commit_reports_skipped_unsupported_staged_files(tmp_path):
     staged = Mock(stdout="app.py\nlogo.png\n", returncode=0)
     cached_diff = Mock(
         stdout=(
-            "diff --git a/app.py b/app.py\n"
-            "--- a/app.py\n"
-            "+++ b/app.py\n"
-            "@@ -1 +1 @@\n"
+            "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n"
         ),
         returncode=0,
     )
@@ -342,7 +334,9 @@ def test_agent_pre_commit_handles_only_unsupported_staged_files(tmp_path):
 def test_agent_pre_commit_scans_staged_test_files_for_secrets_only(tmp_path):
     repo = tmp_path / "repo"
     (repo / "test").mkdir(parents=True)
-    (repo / "test" / "test_rules.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+    (repo / "test" / "test_rules.py").write_text(
+        "def test_ok():\n    pass\n", encoding="utf-8"
+    )
 
     console = Mock()
     staged = Mock(stdout="test/test_rules.py\n", returncode=0)
@@ -399,13 +393,7 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_only(tmp_path):
 def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path):
     repo = tmp_path / "repo"
     (repo / "benchmarks/agent_review" / "fixtures").mkdir(parents=True)
-    bench_file = (
-        repo
-        / "benchmarks/agent_review"
-        / "fixtures"
-        / "demo"
-        / "app.py"
-    )
+    bench_file = repo / "benchmarks/agent_review" / "fixtures" / "demo" / "app.py"
     bench_file.parent.mkdir(parents=True)
     bench_file.write_text("def demo():\n    pass\n", encoding="utf-8")
 
@@ -465,7 +453,9 @@ def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path
     assert "No staged security, secrets, or quality issues" in printed
 
 
-def test_agent_pre_commit_scans_staged_test_files_for_secrets_alongside_source(tmp_path):
+def test_agent_pre_commit_scans_staged_test_files_for_secrets_alongside_source(
+    tmp_path,
+):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "app.py").write_text("print('hi')\n", encoding="utf-8")
@@ -534,7 +524,9 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_alongside_source(t
         patch("skylos.cli.load_config", return_value={}),
         patch("skylos.cli.parse_exclude_folders", return_value=set()),
         patch("skylos.cli.subprocess.run", side_effect=fake_run),
-        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
+        patch(
+            "skylos.cli.run_analyze", return_value=json.dumps(result)
+        ) as mock_analyze,
         patch("skylos.rules.secrets.scan_ctx", side_effect=fake_scan_ctx),
         patch("skylos.core.baseline.load_baseline", return_value=None),
     ):
@@ -560,10 +552,7 @@ def test_agent_pre_commit_filters_non_regression_findings_to_changed_lines(tmp_p
     staged = Mock(stdout="app.py\n", returncode=0)
     cached_diff = Mock(
         stdout=(
-            "diff --git a/app.py b/app.py\n"
-            "--- a/app.py\n"
-            "+++ b/app.py\n"
-            "@@ -3 +3 @@\n"
+            "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -3 +3 @@\n"
         ),
         returncode=0,
     )

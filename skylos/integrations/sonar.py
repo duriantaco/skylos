@@ -15,13 +15,17 @@ EXCLUSION_KEYS = (
 
 def parse_sonar_properties(path: str | Path) -> dict[str, str]:
     props_path = Path(path)
-    lines = props_path.read_text(encoding="utf-8").splitlines()  # skylos: ignore[SKY-D215] user-selected Sonar properties file
+    lines = props_path.read_text(
+        encoding="utf-8"
+    ).splitlines()  # skylos: ignore[SKY-D215] user-selected Sonar properties file
     logical_lines: list[str] = []
     pending = ""
 
     for raw in lines:
         stripped = raw.strip()
-        if not pending and (not stripped or stripped.startswith("#") or stripped.startswith("!")):
+        if not pending and (
+            not stripped or stripped.startswith("#") or stripped.startswith("!")
+        ):
             continue
 
         continued = stripped.endswith("\\") and not stripped.endswith("\\\\")
@@ -111,7 +115,9 @@ def build_sonar_migration_plan(properties: dict[str, str]) -> dict[str, Any]:
         "Coverage thresholds are not imported into Skylos gates in this first migration slice.",
     ]
     if test_paths:
-        notes.append("Sonar test paths are preserved in the report for review, not scanned as a separate Skylos family.")
+        notes.append(
+            "Sonar test paths are preserved in the report for review, not scanned as a separate Skylos family."
+        )
 
     return {
         "sonar": {

@@ -94,8 +94,7 @@ class _DeterministicSecurityAuditAgent:
                 "request.args" in line
                 or "request.GET" in line
                 or any(
-                    re.search(rf"\b{re.escape(name)}\b", line)
-                    for name in tainted_vars
+                    re.search(rf"\b{re.escape(name)}\b", line) for name in tainted_vars
                 )
             ):
                 findings.append(
@@ -108,13 +107,17 @@ class _DeterministicSecurityAuditAgent:
                         confidence=Confidence.HIGH,
                     )
                 )
-            if "render_template_string(" in line and (
-                any(
-                    re.search(rf"\b{re.escape(name)}\b", line)
-                    for name in tainted_vars
+            if (
+                "render_template_string(" in line
+                and (
+                    any(
+                        re.search(rf"\b{re.escape(name)}\b", line)
+                        for name in tainted_vars
+                    )
+                    or "request.args" in line
                 )
-                or "request.args" in line
-            ) and "{{" not in line:
+                and "{{" not in line
+            ):
                 findings.append(
                     Finding(
                         rule_id="SKY-D228",
@@ -134,8 +137,7 @@ class _DeterministicSecurityAuditAgent:
             ) and (
                 "request.args" in line
                 or any(
-                    re.search(rf"\b{re.escape(name)}\b", line)
-                    for name in tainted_vars
+                    re.search(rf"\b{re.escape(name)}\b", line) for name in tainted_vars
                 )
             ):
                 findings.append(
@@ -168,8 +170,7 @@ class _DeterministicSecurityAuditAgent:
             if ("open(" in line or ".read_text(" in line) and (
                 "request.args" in line
                 or any(
-                    re.search(rf"\b{re.escape(name)}\b", line)
-                    for name in tainted_vars
+                    re.search(rf"\b{re.escape(name)}\b", line) for name in tainted_vars
                 )
             ):
                 findings.append(
@@ -183,9 +184,7 @@ class _DeterministicSecurityAuditAgent:
                     )
                 )
             if lhs and (
-                "os.path.basename(" in rhs
-                or ".name" in rhs
-                or ".resolve()" in rhs
+                "os.path.basename(" in rhs or ".name" in rhs or ".resolve()" in rhs
             ):
                 tainted_vars.discard(lhs)
             if (
@@ -480,7 +479,9 @@ def test_security_audit_uses_security_taskflow_runner(tmp_path):
         patch("skylos.cli._is_tty", return_value=False),
         patch("skylos.cli.llm_estimate_cost", return_value=(1, 0.01)),
         patch("skylos.cli.SkylosLLM", return_value=fake_llm),
-        patch("skylos.cli.run_security_taskflow", return_value=fake_taskflow) as mock_run,
+        patch(
+            "skylos.cli.run_security_taskflow", return_value=fake_taskflow
+        ) as mock_run,
         patch(
             "sys.argv",
             ["skylos", "agent", "scan", str(tmp_path), "--security"],
@@ -805,7 +806,7 @@ def test_security_audit_json_output_reports_vulnerable_repo_and_skips_safe_file(
         "@app.get('/user')\n"
         "def user():\n"
         "    user_id = request.args.get('id')\n"
-        "    query = \"SELECT * FROM users WHERE id = %s\" % user_id\n"
+        '    query = "SELECT * FROM users WHERE id = %s" % user_id\n'
         "    return query\n\n"
         "@app.get('/ls')\n"
         "def ls():\n"
@@ -822,7 +823,7 @@ def test_security_audit_json_output_reports_vulnerable_repo_and_skips_safe_file(
         "def safe():\n"
         "    user_id = request.args.get('id')\n"
         "    conn = sqlite3.connect(':memory:')\n"
-        "    return conn.execute(\"SELECT * FROM users WHERE id = ?\", (user_id,)).fetchall()\n",
+        '    return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchall()\n',
         encoding="utf-8",
     )
     output = tmp_path / "security.json"
@@ -870,8 +871,12 @@ def test_security_audit_json_output_reports_vulnerable_repo_and_skips_safe_file(
     assert len(findings) == 2
     by_rule = {finding["rule_id"]: finding for finding in findings}
     assert set(by_rule) == {"SKY-S001", "SKY-C011"}
-    assert all(Path(item["location"]["file"]).name == "vuln_app.py" for item in findings)
-    assert all(item["metadata"]["security_evidence"] == "review_supported" for item in findings)
+    assert all(
+        Path(item["location"]["file"]).name == "vuln_app.py" for item in findings
+    )
+    assert all(
+        item["metadata"]["security_evidence"] == "review_supported" for item in findings
+    )
     assert all(item["metadata"]["review_verdict"] == "SUPPORTED" for item in findings)
 
 

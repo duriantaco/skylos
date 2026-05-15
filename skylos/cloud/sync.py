@@ -261,7 +261,12 @@ def get_token():
 
 
 def save_token(
-    token, project_id=None, project_name=None, org_name=None, plan=None, repo_subpath=None
+    token,
+    project_id=None,
+    project_name=None,
+    org_name=None,
+    plan=None,
+    repo_subpath=None,
 ):
     data = _load_creds()
     now = _utc_now_iso()
@@ -825,7 +830,9 @@ def cmd_setup(token_arg=None):
 
     try:
         response = (
-            input("  Install optional pre-push parity hook? (fast push safeguard) [Y/n]: ")
+            input(
+                "  Install optional pre-push parity hook? (fast push safeguard) [Y/n]: "
+            )
             .strip()
             .lower()
         )
@@ -949,7 +956,9 @@ jobs:
             else:
                 step_num = "1"
             print(f"{step_num}. Bind this GitHub repo to the Skylos Cloud project.")
-            print("   The workflow uses GitHub OIDC by default; no SKYLOS_TOKEN secret is required.")
+            print(
+                "   The workflow uses GitHub OIDC by default; no SKYLOS_TOKEN secret is required."
+            )
             print("   Keep SKYLOS_TOKEN only as a legacy fallback for non-GitHub CI.\n")
 
         final_step = (
@@ -1054,7 +1063,9 @@ jobs:
     print("\n FINAL STEP: Bind GitHub repo to Skylos Cloud\n")
     print("1. Confirm this repo is linked to the Skylos Cloud project")
     print("2. Commit the generated workflow")
-    print("3. GitHub OIDC will authenticate workflow runs without a SKYLOS_TOKEN secret\n")
+    print(
+        "3. GitHub OIDC will authenticate workflow runs without a SKYLOS_TOKEN secret\n"
+    )
     print("=" * 60 + "\n")
     print("✅ Upgrade complete!")
 

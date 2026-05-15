@@ -350,6 +350,4 @@ use crate::handlers::*;
     )
 
     assert {d.type for d in defs} == set()
-    assert raw_imports == [
-        {"source": "crate::handlers::*", "names": ["*"], "line": 2}
-    ]
+    assert raw_imports == [{"source": "crate::handlers::*", "names": ["*"], "line": 2}]

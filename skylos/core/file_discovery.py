@@ -32,7 +32,9 @@ def should_exclude_path(
                 patterns.add(exclude_normalized[3:])
             if exclude_normalized.endswith("/**"):
                 patterns.add(exclude_normalized[:-3])
-            if exclude_normalized.startswith("**/") and exclude_normalized.endswith("/**"):
+            if exclude_normalized.startswith("**/") and exclude_normalized.endswith(
+                "/**"
+            ):
                 patterns.add(exclude_normalized[3:-3])
 
             for pattern in patterns:
@@ -40,7 +42,9 @@ def should_exclude_path(
                     return True
                 if pattern.endswith("/**"):
                     directory = pattern[:-3]
-                    if rel_path_str == directory or rel_path_str.startswith(directory + "/"):
+                    if rel_path_str == directory or rel_path_str.startswith(
+                        directory + "/"
+                    ):
                         return True
 
             suffix = exclude_normalized.replace("*", "")

@@ -108,14 +108,12 @@ class TestSkylosApi(unittest.TestCase):
             cwd = os.getcwd()
             try:
                 os.chdir(api_dir)
-                with patch.dict(os.environ, {"SKYLOS_TOKEN": ""}, clear=False), patch(
-                    "skylos.api._try_github_oidc_token", return_value=None
-                ), patch(
-                    "skylos.api._get_repo_root_for_link", return_value=repo
-                ), patch(
-                    "skylos.api.GLOBAL_CREDS_FILE", creds
-                ), patch(
-                    "skylos.api.get_key", return_value=None
+                with (
+                    patch.dict(os.environ, {"SKYLOS_TOKEN": ""}, clear=False),
+                    patch("skylos.api._try_github_oidc_token", return_value=None),
+                    patch("skylos.api._get_repo_root_for_link", return_value=repo),
+                    patch("skylos.api.GLOBAL_CREDS_FILE", creds),
+                    patch("skylos.api.get_key", return_value=None),
                 ):
                     self.assertEqual(api.get_project_token(), "TOK_API")
             finally:
@@ -1027,7 +1025,7 @@ class TestSkylosApi(unittest.TestCase):
                     "definitions": {"app.func": {"file": "app.py", "line": 5}},
                 },
                 quiet=True,
-        )
+            )
 
         self.assertFalse(result["success"])
         self.assertEqual(result["code"], "UPLOAD_COMPATIBILITY_PAYLOAD_TOO_LARGE")

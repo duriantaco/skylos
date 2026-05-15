@@ -97,9 +97,7 @@ def _has_type_checker_config(root: Path, pyproject: dict[str, Any]) -> bool:
         or (root / "mypy.ini").exists()
         or (root / "pyrightconfig.json").exists()
         or (root / "setup.cfg").exists()
-        and "mypy" in (root / "setup.cfg").read_text(
-            encoding="utf-8", errors="ignore"
-        )
+        and "mypy" in (root / "setup.cfg").read_text(encoding="utf-8", errors="ignore")
     )
 
 
@@ -204,9 +202,7 @@ def analyze_repo_policy(
             pyproject.get("tool") if isinstance(pyproject.get("tool"), dict) else {}
         )
         skylos_cfg = (
-            tool_cfg.get("skylos")
-            if isinstance(tool_cfg.get("skylos"), dict)
-            else {}
+            tool_cfg.get("skylos") if isinstance(tool_cfg.get("skylos"), dict) else {}
         )
         if not isinstance(skylos_cfg.get("gate"), dict):
             findings.append(
@@ -239,9 +235,9 @@ def analyze_repo_policy(
     if "SKY-R105" not in ignore:
         for package_json in _iter_package_json_files(root_path):
             package_root = package_json.parent
-            if (package_root / "tsconfig.json").exists() and not _package_scripts_run_tsc(
-                package_json
-            ):
+            if (
+                package_root / "tsconfig.json"
+            ).exists() and not _package_scripts_run_tsc(package_json):
                 findings.append(
                     _finding(
                         rule_id="SKY-R105",
