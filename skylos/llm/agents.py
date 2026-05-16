@@ -712,6 +712,8 @@ class CleanupAgent:
         *,
         standards_path=None,
         test_cmd=None,
+        allow_test_execution=False,
+        auto_detect_tests=False,
         max_fixes=20,
         dry_run=False,
         quiet=False,
@@ -724,6 +726,8 @@ class CleanupAgent:
             provider=getattr(self.config, "provider", None),
             base_url=getattr(self.config, "base_url", None),
             test_cmd=test_cmd,
+            allow_test_execution=allow_test_execution,
+            auto_detect_tests=auto_detect_tests,
             standards_path=standards_path,
         )
         return orchestrator.run(path, max_fixes=max_fixes, dry_run=dry_run, quiet=quiet)

@@ -269,6 +269,8 @@ class CleanupOrchestrator:
         provider: str | None = None,
         base_url: str | None = None,
         test_cmd: str | None = None,
+        allow_test_execution: bool = False,
+        auto_detect_tests: bool = False,
         standards_path: str | Path | None = None,
     ):
         self.config = AgentConfig(model=model, api_key=api_key)
@@ -277,6 +279,8 @@ class CleanupOrchestrator:
         if base_url:
             self.config.base_url = base_url
         self.test_cmd = test_cmd
+        self.allow_test_execution = allow_test_execution
+        self.auto_detect_tests = auto_detect_tests
         self.standards_text = _load_standards(standards_path)
         self._adapter = None
 
@@ -359,7 +363,10 @@ class CleanupOrchestrator:
         else:
             project_root = target.parent
         executor = RemediationExecutor(
-            test_cmd=self.test_cmd, project_root=project_root
+            test_cmd=self.test_cmd,
+            project_root=project_root,
+            allow_test_execution=self.allow_test_execution,
+            auto_detect_tests=self.auto_detect_tests,
         )
 
         for idx, item in enumerate(all_items, 1):

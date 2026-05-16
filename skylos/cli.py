@@ -3409,7 +3409,7 @@ def _build_agent_parser():
 
     p_remediate = agent_sub.add_parser(
         "remediate",
-        help="Scan, fix, test, and create PR for security/quality issues",
+        help="Scan, fix, optionally test, and create PR for security/quality issues",
     )
     p_remediate.add_argument("path", nargs="?", default=".")
     _add_agent_model_arg(p_remediate)
@@ -3435,7 +3435,12 @@ def _build_agent_parser():
     p_remediate.add_argument(
         "--test-cmd",
         default=None,
-        help="Custom test command (default: auto-detect)",
+        help="Trusted custom test command to run without a shell",
+    )
+    p_remediate.add_argument(
+        "--auto-test",
+        action="store_true",
+        help="Opt in to auto-detected project tests after applying fixes",
     )
     p_remediate.add_argument(
         "--severity",
@@ -5159,12 +5164,16 @@ def main() -> None:
 
                 from skylos.llm.cleanup_orchestrator import CleanupOrchestrator
 
+                test_cmd = getattr(agent_args, "test_cmd", None)
+                auto_test = getattr(agent_args, "auto_test", False)
                 orchestrator = CleanupOrchestrator(
                     model=model,
                     api_key=api_key,
                     provider=provider,
                     base_url=base_url,
-                    test_cmd=getattr(agent_args, "test_cmd", None),
+                    test_cmd=test_cmd,
+                    allow_test_execution=bool(test_cmd) or auto_test,
+                    auto_detect_tests=auto_test,
                     standards_path=standards_path,
                 )
 
@@ -5203,13 +5212,17 @@ def main() -> None:
             else:
                 from skylos.llm.orchestrator import RemediationAgent
 
+                test_cmd = getattr(agent_args, "test_cmd", None)
+                auto_test = getattr(agent_args, "auto_test", False)
                 agent = RemediationAgent(
                     model=model,
                     api_key=api_key,
-                    test_cmd=getattr(agent_args, "test_cmd", None),
+                    test_cmd=test_cmd,
                     severity_filter=getattr(agent_args, "severity", None),
                     provider=provider,
                     base_url=base_url,
+                    allow_test_execution=bool(test_cmd) or auto_test,
+                    auto_detect_tests=auto_test,
                 )
 
                 summary = agent.run(

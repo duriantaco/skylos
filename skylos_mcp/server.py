@@ -817,13 +817,25 @@ def _register_tools(mcp):
         if gate_err:
             return gate_err
 
+        if test_cmd:
+            return json.dumps(
+                {
+                    "error": (
+                        "MCP remediate does not accept test_cmd. "
+                        "Run trusted validation outside MCP after reviewing fixes."
+                    )
+                }
+            )
+
         try:
             from skylos.llm.orchestrator import RemediationAgent
 
             agent = RemediationAgent(
                 model=model,
-                test_cmd=test_cmd,
+                test_cmd=None,
                 severity_filter=severity,
+                allow_test_execution=False,
+                auto_detect_tests=False,
             )
             summary = agent.run(
                 path,
