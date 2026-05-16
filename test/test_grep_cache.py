@@ -9,6 +9,7 @@ from skylos.core.grep_cache import (
     CACHE_DIR,
     CACHE_FILE,
     MAX_ENTRIES,
+    MAX_CACHE_BYTES,
     GrepCache,
     _make_key,
     file_content_hash,
@@ -252,6 +253,99 @@ class TestLoadSave:
         cache2.load(tmp_path)
         assert cache2._dirty is False
 
+    def test_save_rejects_symlinked_cache_file(self, tmp_path: Path) -> None:
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        target = outside / "target.txt"
+        target.write_text("DO_NOT_CLOBBER", encoding="utf-8")
+        cache_path = tmp_path / CACHE_DIR / CACHE_FILE
+        cache_path.parent.mkdir(parents=True)
+        try:
+            cache_path.symlink_to(target)
+        except OSError:
+            import pytest
+
+            pytest.skip("filesystem does not allow symlink creation")
+
+        cache = GrepCache()
+        cache.put("k", ["v"])
+        cache.save(tmp_path)
+
+        assert target.read_text(encoding="utf-8") == "DO_NOT_CLOBBER"
+        assert cache_path.is_symlink()
+
+    def test_save_rejects_symlinked_cache_directory(self, tmp_path: Path) -> None:
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        cache_dir = tmp_path / ".skylos" / "cache"
+        cache_dir.parent.mkdir()
+        try:
+            cache_dir.symlink_to(outside, target_is_directory=True)
+        except OSError:
+            import pytest
+
+            pytest.skip("filesystem does not allow symlink creation")
+
+        cache = GrepCache()
+        cache.put("k", ["v"])
+        cache.save(tmp_path)
+
+        assert not (outside / CACHE_FILE).exists()
+
+    def test_load_rejects_symlinked_cache_file(self, tmp_path: Path) -> None:
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        target = outside / "grep_results.json"
+        target.write_text(
+            json.dumps({"version": 1, "entries": {"k": {"results": ["v"]}}}),
+            encoding="utf-8",
+        )
+        cache_path = tmp_path / CACHE_DIR / CACHE_FILE
+        cache_path.parent.mkdir(parents=True)
+        try:
+            cache_path.symlink_to(target)
+        except OSError:
+            import pytest
+
+            pytest.skip("filesystem does not allow symlink creation")
+
+        cache = GrepCache()
+        cache.load(tmp_path)
+
+        assert cache.size == 0
+
+    def test_load_rejects_oversized_cache_file(self, tmp_path: Path) -> None:
+        cache_path = tmp_path / CACHE_DIR / CACHE_FILE
+        cache_path.parent.mkdir(parents=True)
+        cache_path.write_text(" " * (MAX_CACHE_BYTES + 1), encoding="utf-8")
+
+        cache = GrepCache()
+        cache.load(tmp_path)
+
+        assert cache.size == 0
+
+    def test_load_ignores_invalid_entry_schema(self, tmp_path: Path) -> None:
+        cache_path = tmp_path / CACHE_DIR / CACHE_FILE
+        cache_path.parent.mkdir(parents=True)
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "entries": {
+                        "bad": {"results": [1, 2]},
+                        "ok": {"results": ["match"], "last_access": "bad"},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        cache = GrepCache()
+        cache.load(tmp_path)
+
+        assert cache.size == 1
+        assert cache.get("ok") == ["match"]
+
 
 class TestCachedSearch:
     def _finding(
@@ -310,7 +404,7 @@ class TestCachedSearch:
     def test_uses_name_fallback(self) -> None:
         cache = GrepCache()
         finding = {"name": "fallback_name", "full_name": "m.f", "type": "class"}
-        result = cache.cached_search("strat", finding, "h", lambda: ["ok"])
+        cache.cached_search("strat", finding, "h", lambda: ["ok"])
         key = _make_key("strat", "fallback_name", "m.f", "class", "h")
         assert cache.get(key) == ["ok"]
 
