@@ -218,6 +218,23 @@ def _project_root(path: str | Path) -> Path:
     return target.parent if target.is_file() else target
 
 
+def _resolve_audit_file(path: Path, project_root: Path) -> Path | None:
+    candidate = Path(path)
+    if candidate.is_symlink():
+        return None
+    if not _is_audit_file(candidate):
+        return None
+    try:
+        root = project_root.resolve(strict=True)
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
 def _discover_audit_files(
     path: str | Path,
     *,
@@ -239,8 +256,9 @@ def _discover_audit_files(
                 continue
             if _is_excluded_output_path(candidate, project_root, excluded_paths):
                 continue
-            if _is_audit_file(candidate) and candidate.exists():
-                files.append(candidate.resolve())
+            resolved = _resolve_audit_file(candidate, project_root)
+            if resolved is not None:
+                files.append(resolved)
         return sorted(set(files))
 
     discovered = discover_source_files(
@@ -251,25 +269,27 @@ def _discover_audit_files(
     target = Path(path).resolve()
     root = target.parent if target.is_file() else target
     if target.is_file():
+        resolved_target = _resolve_audit_file(target, project_root)
         if (
-            _is_audit_file(target)
+            resolved_target is not None
             and not should_exclude_path(target, root, exclude_folders)
             and not _is_excluded_output_path(target, project_root, excluded_paths)
         ):
-            discovered.append(target)
+            discovered.append(resolved_target)
     else:
         for env_file in target.rglob(".env*"):
-            if not _is_audit_file(env_file):
-                continue
             if should_exclude_path(env_file, target, exclude_folders):
                 continue
             if _is_excluded_output_path(env_file, project_root, excluded_paths):
                 continue
-            discovered.append(env_file.resolve())
+            resolved_env = _resolve_audit_file(env_file, project_root)
+            if resolved_env is not None:
+                discovered.append(resolved_env)
     return sorted(
         {
-            file_path.resolve()
+            resolved
             for file_path in discovered
+            if (resolved := _resolve_audit_file(file_path, project_root)) is not None
             if not _is_excluded_output_path(file_path, project_root, excluded_paths)
         }
     )

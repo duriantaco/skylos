@@ -100,6 +100,71 @@ def test_scan_deep_audit_candidates_detects_env_variant_secret(tmp_path: Path):
     assert any(candidate.rule_id == "SKY-S101" for candidate in record.candidates)
 
 
+def test_scan_deep_audit_candidates_skips_symlinked_audit_files(
+    tmp_path: Path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    py_secret = outside / "py_secret"
+    env_secret = outside / "env_secret"
+    py_secret.write_text("PY_OUTSIDE\n", encoding="utf-8")
+    env_secret.write_text("AWS_SECRET_ACCESS_KEY=ENV_OUTSIDE\n", encoding="utf-8")
+    try:
+        (repo / "leak.py").symlink_to(py_secret)
+        (repo / ".env").symlink_to(env_secret)
+    except OSError:
+        pytest.skip("symlinks are not supported on this filesystem")
+
+    seen = {}
+
+    def fake_static(files, **kwargs):
+        seen["files"] = list(files)
+        return {"danger": [], "secrets": []}
+
+    monkeypatch.setattr(audit_candidates, "run_static_on_files", fake_static)
+
+    summary, store = audit_candidates.scan_deep_audit_candidates(repo)
+
+    assert summary.files_scanned == 0
+    assert seen["files"] == []
+    assert store.iter_file_records() == []
+
+
+def test_scan_deep_audit_candidates_changed_files_skip_symlinked_audit_files(
+    tmp_path: Path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    env_secret = outside / "env_secret"
+    env_secret.write_text("AWS_SECRET_ACCESS_KEY=ENV_CHANGED_OUTSIDE\n", encoding="utf-8")
+    link = repo / ".env"
+    try:
+        link.symlink_to(env_secret)
+    except OSError:
+        pytest.skip("symlinks are not supported on this filesystem")
+
+    seen = {}
+
+    def fake_static(files, **kwargs):
+        seen["files"] = list(files)
+        return {"danger": [], "secrets": []}
+
+    monkeypatch.setattr(audit_candidates, "run_static_on_files", fake_static)
+
+    summary, store = audit_candidates.scan_deep_audit_candidates(
+        repo,
+        changed_files=[link],
+    )
+
+    assert summary.files_scanned == 0
+    assert seen["files"] == []
+    assert store.iter_file_records() == []
+
+
 def test_scan_deep_audit_candidates_is_stable_across_reruns(
     tmp_path: Path, monkeypatch
 ):
