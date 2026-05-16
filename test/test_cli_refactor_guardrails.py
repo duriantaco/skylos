@@ -1,5 +1,6 @@
 import json
 import sys
+import tomllib
 import types
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -8,6 +9,10 @@ import pytest
 from rich.console import Console
 
 import skylos.cli as cli
+from skylos.cli_core.dispatch import EARLY_COMMAND_HANDLERS
+from skylos.cli_core.main_parser import build_main_parser
+from skylos.commands.run_cmd import run_run_command
+from skylos.commands.scan_cmd import run_scan_command
 from skylos.debt.result import DebtHotspot, DebtScore, DebtSnapshot
 
 
@@ -56,6 +61,18 @@ def _progress_ctx():
     cm.__enter__ = Mock(return_value=Mock(add_task=Mock(return_value="t")))
     cm.__exit__ = Mock(return_value=False)
     return cm
+
+
+def test_cli_public_entrypoint_stays_compatibility_facade():
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    metadata = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+
+    assert metadata["project"]["scripts"]["skylos"] == "skylos.cli:main"
+    assert callable(cli.main)
+    assert cli.EARLY_COMMAND_HANDLERS is EARLY_COMMAND_HANDLERS
+    assert build_main_parser.__module__ == "skylos.cli_core.main_parser"
+    assert run_run_command.__module__ == "skylos.commands.run_cmd"
+    assert run_scan_command.__module__ == "skylos.commands.scan_cmd"
 
 
 def test_cli_grade_render_only_shows_scanned_categories():
