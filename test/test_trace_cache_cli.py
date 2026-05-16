@@ -77,6 +77,56 @@ def test_trace_cache_miss_runs_trace_subprocess(tmp_path):
     assert result.trace_file == tmp_path / ".skylos_trace"
 
 
+def test_trace_subprocess_command_passes_paths_as_argv(tmp_path):
+    crafted = tmp_path / 'bad"\nopen("pwned", "w").write("1")'
+    trace_file = crafted / ".skylos_trace"
+
+    cmd = cli._trace_subprocess_command(
+        crafted,
+        trace_file,
+        pytest_fixtures=False,
+    )
+
+    assert cmd[0] == sys.executable
+    assert cmd[1] == "-c"
+    assert str(crafted) not in cmd[2]
+    assert str(trace_file) not in cmd[2]
+    assert str(crafted) == cmd[3]
+    assert str(trace_file) == cmd[4]
+
+
+def test_trace_subprocess_does_not_import_repo_local_tracer(tmp_path):
+    marker = tmp_path / "HIJACKED"
+    package_dir = tmp_path / "skylos" / "core"
+    package_dir.mkdir(parents=True)
+    (tmp_path / "skylos" / "__init__.py").write_text("", encoding="utf-8")
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (package_dir / "tracer.py").write_text(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                f"Path({str(marker)!r}).write_text('hit', encoding='utf-8')",
+                "class CallTracer:",
+                "    def __init__(self, *args, **kwargs): pass",
+                "    def start(self): pass",
+                "    def stop(self): pass",
+                "    def save(self, path): Path(path).write_text('{}', encoding='utf-8')",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cli._run_pre_analysis_steps(
+        _args(tmp_path, cache=False, no_cache=True),
+        tmp_path,
+        _console(),
+    )
+
+    assert not marker.exists()
+    assert (tmp_path / ".skylos_trace").exists()
+
+
 def test_trace_cache_hit_skips_trace_subprocess_and_writes_trace(tmp_path):
     _write_minimal_project(tmp_path)
     key, fingerprint = build_trace_cache_key(

@@ -2968,6 +2968,111 @@ def _trace_cache_requested(args) -> bool:
     return bool(getattr(args, "cache", False) or getattr(args, "refresh_cache", False))
 
 
+def _trusted_module_file(module_name: str) -> Path:
+    module = importlib.import_module(module_name)
+    module_file = getattr(module, "__file__", None)
+    if not module_file:
+        raise RuntimeError(f"Could not resolve trusted module path: {module_name}")
+    return Path(module_file).resolve()
+
+
+def _trace_subprocess_script() -> str:
+    return textwrap.dedent("""\
+import importlib.util
+import os
+import sys
+
+project_root = os.path.realpath(sys.argv[1])
+trace_output = os.path.realpath(sys.argv[2])
+tracer_module_path = os.path.realpath(sys.argv[3])
+fixtures_output = os.path.realpath(sys.argv[4])
+fixtures_plugin_path = os.path.realpath(sys.argv[5]) if sys.argv[5] else ""
+use_fixtures = sys.argv[6] == "1"
+
+
+def _entry_realpath(entry):
+    if not entry:
+        entry = os.getcwd()
+    if not os.path.isabs(entry):
+        entry = os.path.join(os.getcwd(), entry)
+    try:
+        return os.path.realpath(entry)
+    except OSError:
+        return None
+
+
+sys.path[:] = [
+    entry for entry in sys.path if _entry_realpath(entry) != project_root
+]
+
+
+def _load_trusted_module(name, module_path):
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load trusted module: {name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+tracer_module = _load_trusted_module("_skylos_trusted_tracer", tracer_module_path)
+CallTracer = tracer_module.CallTracer
+if use_fixtures:
+    _load_trusted_module(
+        "skylos.plugins.pytest_unused_fixtures",
+        fixtures_plugin_path,
+    )
+
+import pytest
+
+sys.path.insert(0, project_root)
+
+tracer = CallTracer(exclude_patterns=["site-packages", "venv", ".venv", "pytest", "_pytest"])
+tracer.start()
+
+ret = 0
+try:
+    pytest_args = ["-q"]
+    if use_fixtures:
+        os.environ["SKYLOS_UNUSED_FIXTURES_OUT"] = fixtures_output
+        pytest_args += ["-p", "skylos.plugins.pytest_unused_fixtures"]
+
+    ret = pytest.main(pytest_args)
+
+finally:
+    tracer.stop()
+    tracer.save(trace_output)
+
+sys.exit(ret)
+""")
+
+
+def _trace_subprocess_command(
+    project_root: Path,
+    trace_file: Path,
+    *,
+    pytest_fixtures: bool,
+) -> list[str]:
+    tracer_module_path = _trusted_module_file("skylos.core.tracer")
+    fixtures_plugin_path = (
+        _trusted_module_file("skylos.plugins.pytest_unused_fixtures")
+        if pytest_fixtures
+        else ""
+    )
+    return [
+        sys.executable,
+        "-c",
+        _trace_subprocess_script(),
+        str(project_root),
+        str(trace_file),
+        str(tracer_module_path),
+        str(project_root / ".skylos_unused_fixtures.json"),
+        str(fixtures_plugin_path),
+        "1" if pytest_fixtures else "0",
+    ]
+
+
 def _run_pre_analysis_steps(args, project_root, console):
     pytest_fixtures_ok = None
     trace_file_for_analysis = None
@@ -3042,36 +3147,12 @@ def _run_pre_analysis_steps(args, project_root, console):
             except OSError:
                 pass
 
-            trace_script = textwrap.dedent(f"""\
-import os
-import sys
-sys.path.insert(0, {str(project_root)!r})
-from skylos.core.tracer import CallTracer
-
-tracer = CallTracer(exclude_patterns=["site-packages", "venv", ".venv", "pytest", "_pytest"])
-tracer.start()
-
-ret = 0
-try:
-    import pytest
-
-    pytest_args = ["-q"]
-    if {bool(args.pytest_fixtures)!r}:
-        os.environ["SKYLOS_UNUSED_FIXTURES_OUT"] = {str(project_root / ".skylos_unused_fixtures.json")!r}
-        pytest_args += ["-p", "skylos.plugins.pytest_unused_fixtures"]
-
-    ret = pytest.main(pytest_args)
-
-finally:
-    tracer.stop()
-    tracer.save({str(project_root / ".skylos_trace")!r})
-
-sys.exit(ret)
-
-""")
-
             trace_result = subprocess.run(
-                [sys.executable, "-c", trace_script],
+                _trace_subprocess_command(
+                    project_root,
+                    trace_file,
+                    pytest_fixtures=bool(args.pytest_fixtures),
+                ),
                 cwd=project_root,
                 capture_output=True,
                 text=True,
