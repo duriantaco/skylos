@@ -536,6 +536,133 @@ def _find_parent_class_info_ts(
     return info
 
 
+def _python_base_names(class_node: ast.ClassDef) -> list[tuple[str, str]]:
+    bases: list[tuple[str, str]] = []
+    for base in class_node.bases:
+        display = ast.unparse(base) if hasattr(ast, "unparse") else _base_name(base)
+        base_name = _base_name(base)
+        if display and base_name:
+            bases.append((display, base_name))
+    return bases
+
+
+def _python_class_bases(source: str, class_name: str) -> list[tuple[str, str]]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return _python_base_names(node)
+    return []
+
+
+def _python_imported_class_modules(source: str) -> dict[str, tuple[str, int, str]]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {}
+
+    imported: dict[str, tuple[str, int, str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        module = node.module or ""
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            local_name = alias.asname or alias.name
+            imported[local_name] = (module, node.level, alias.name)
+    return imported
+
+
+def _local_module_path_candidates(
+    module_path: str,
+    import_level: int,
+    current_file: str,
+    project_root: str,
+) -> list[Path]:
+    if not project_root:
+        return []
+
+    root = Path(project_root).resolve()
+    current = Path(current_file)
+    if not current.is_absolute():
+        current = root / current
+
+    if import_level:
+        base_dir = current.parent
+        for _ in range(max(import_level - 1, 0)):
+            base_dir = base_dir.parent
+    else:
+        base_dir = root
+
+    module_parts = [part for part in module_path.split(".") if part]
+    module_base = base_dir.joinpath(*module_parts)
+    candidates = [module_base.with_suffix(".py"), module_base / "__init__.py"]
+
+    safe_candidates: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+            resolved.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        safe_candidates.append(resolved)
+    return safe_candidates
+
+
+def _read_cached_or_local_source(
+    path: Path,
+    source_cache: dict[str, str],
+) -> str:
+    path_str = str(path)
+    if path_str in source_cache:
+        return source_cache[path_str]
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _static_parent_method_refs_in_local_module(
+    base_name: str,
+    simple_name: str,
+    module_path: str,
+    import_level: int,
+    current_file: str,
+    project_root: str,
+    source_cache: dict[str, str],
+) -> list[str]:
+    refs: list[str] = []
+    for candidate in _local_module_path_candidates(
+        module_path,
+        import_level,
+        current_file,
+        project_root,
+    ):
+        source = _read_cached_or_local_source(candidate, source_cache)
+        if not source:
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or node.name != base_name:
+                continue
+            for stmt in node.body:
+                if (
+                    isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and stmt.name == simple_name
+                ):
+                    refs.append(f"{candidate}:{stmt.lineno}: def {simple_name}(...)")
+            if refs:
+                return refs
+    return refs
+
+
 def _find_parent_class_info(
     finding: dict,
     source_cache: dict[str, str],
@@ -565,18 +692,16 @@ def _find_parent_class_info(
     if not source:
         return None
 
-    class_pattern = re.compile(rf"class\s+{re.escape(class_name)}\s*\(([^)]+)\)")
-    match = class_pattern.search(source)
-    if not match:
+    base_pairs = _python_class_bases(source, class_name)
+    if not base_pairs:
         return None
 
-    bases = [b.strip() for b in match.group(1).split(",")]
+    bases = [display for display, _base_name_value in base_pairs]
     info = f"Class `{class_name}` inherits from: {', '.join(bases)}."
 
     if project_root:
         found_in_parent = False
-        for base in bases:
-            base_name = base.split(".")[-1].strip()
+        for _base_display, base_name in base_pairs:
             if base_name in ("object", "ABC", "Protocol"):
                 continue
             parent_method_refs = _run_grep(
@@ -605,65 +730,29 @@ def _find_parent_class_info(
                 break
 
         if not found_in_parent:
-            import subprocess as _sp
-
-            for base in bases:
-                base_name = base.split(".")[-1].strip()
+            imported_modules = _python_imported_class_modules(source)
+            for _base_display, base_name in base_pairs:
                 if base_name in ("object", "ABC", "Protocol"):
                     continue
-                import_match = re.search(
-                    rf"from\s+([\w.]+)\s+import\s+\([^)]*\b{re.escape(base_name)}\b[^)]*\)",
-                    source,
-                    re.DOTALL,
-                ) or re.search(
-                    rf"from\s+([\w.]+)\s+import\s+[^(\n]*\b{re.escape(base_name)}\b",
-                    source,
+                imported = imported_modules.get(base_name)
+                if not imported:
+                    continue
+                module_path, import_level, imported_class_name = imported
+                method_refs = _static_parent_method_refs_in_local_module(
+                    imported_class_name,
+                    simple_name,
+                    module_path,
+                    import_level,
+                    file_path,
+                    project_root,
+                    source_cache,
                 )
-                if import_match:
-                    module_path = import_match.group(1)
-                    try:
-                        python_cmd = "python3"
-                        _root = Path(project_root)
-                        _candidates = [
-                            _root / ".venv" / "bin" / "python3",
-                            _root / "venv" / "bin" / "python3",
-                            _root / ".tox" / "dev" / "bin" / "python3",
-                            _root / ".tox" / "py" / "bin" / "python3",
-                            _root / ".nox" / "default" / "bin" / "python3",
-                        ]
-                        tox_dir = _root / ".tox"
-                        if tox_dir.is_dir():
-                            for sub in tox_dir.iterdir():
-                                if sub.is_dir():
-                                    p = sub / "bin" / "python3"
-                                    if p not in _candidates:
-                                        _candidates.append(p)
-                        for _cand in _candidates:
-                            if _cand.exists():
-                                python_cmd = str(_cand)
-                                break
-
-                        result = _sp.run(
-                            [
-                                python_cmd,
-                                "-c",
-                                f"import {module_path}; import inspect; "
-                                f"cls = getattr({module_path}, '{base_name}', None); "
-                                f"print('HAS_METHOD' if cls and hasattr(cls, '{simple_name}') else 'NO_METHOD')",
-                            ],
-                            capture_output=True,
-                            text=True,
-                            timeout=10,
-                            cwd=project_root,
-                        )
-                        if "HAS_METHOD" in result.stdout:
-                            info += f"\n  CONFIRMED (via importlib): Parent `{module_path}.{base_name}` defines `{simple_name}`"
-                            found_in_parent = True
-                            break
-                    except (OSError, _sp.SubprocessError) as exc:
-                        logger.debug(
-                            "Failed to inspect parent method via import: %s", exc
-                        )
+                if method_refs:
+                    info += f"\n  CONFIRMED (static local module): Parent `{module_path}.{imported_class_name}` defines `{simple_name}`:"
+                    for mr in method_refs[:2]:
+                        info += f"\n    {mr}"
+                    found_in_parent = True
+                    break
 
             if not found_in_parent:
                 import sys
@@ -671,8 +760,7 @@ def _find_parent_class_info(
                 for site_dir in sys.path:
                     if "site-packages" not in site_dir:
                         continue
-                    for base in bases:
-                        base_name = base.split(".")[-1].strip()
+                    for _base_display, base_name in base_pairs:
                         if base_name in ("object", "ABC", "Protocol"):
                             continue
                         parent_method_refs = _run_grep(
