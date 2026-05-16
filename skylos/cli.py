@@ -3073,42 +3073,53 @@ def _trace_subprocess_command(
     ]
 
 
+def _coverage_execution_allowed(args) -> bool:
+    return bool(getattr(args, "allow_coverage_execution", False))
+
+
 def _run_pre_analysis_steps(args, project_root, console):
     pytest_fixtures_ok = None
     trace_file_for_analysis = None
     quiet_output = _is_main_machine_output(args)
 
     if args.coverage:
-        if not quiet_output:
-            console.print("[brand]Running tests with coverage...[/brand]")
-
-        cmd = ["coverage", "run", "-m", "pytest", "-q"]
-        env = os.environ.copy()
-
-        if args.pytest_fixtures:
-            env["SKYLOS_UNUSED_FIXTURES_OUT"] = str(
-                project_root / ".skylos_unused_fixtures.json"
-            )
-            cmd += ["-p", "skylos.plugins.pytest_unused_fixtures"]
-
-        pytest_result = subprocess.run(
-            cmd,
-            cwd=project_root,
-            capture_output=True,
-            env=env,
-        )
-
-        if pytest_result.returncode != 0:
+        if not _coverage_execution_allowed(args):
             if not quiet_output:
-                console.print("[warn]pytest failed, trying unittest...[/warn]")
-            subprocess.run(
-                ["coverage", "run", "-m", "unittest", "discover"],
+                console.print(
+                    "[warn]Skipping --coverage test execution. "
+                    "Re-run with --allow-coverage-execution only for trusted repositories.[/warn]"
+                )
+        else:
+            if not quiet_output:
+                console.print("[brand]Running tests with coverage...[/brand]")
+
+            cmd = ["coverage", "run", "-m", "pytest", "-q"]
+            env = os.environ.copy()
+
+            if args.pytest_fixtures:
+                env["SKYLOS_UNUSED_FIXTURES_OUT"] = str(
+                    project_root / ".skylos_unused_fixtures.json"
+                )
+                cmd += ["-p", "skylos.plugins.pytest_unused_fixtures"]
+
+            pytest_result = subprocess.run(
+                cmd,
                 cwd=project_root,
                 capture_output=True,
+                env=env,
             )
 
-        if not quiet_output:
-            console.print("[good]Coverage data collected[/good]")
+            if pytest_result.returncode != 0:
+                if not quiet_output:
+                    console.print("[warn]pytest failed, trying unittest...[/warn]")
+                subprocess.run(
+                    ["coverage", "run", "-m", "unittest", "discover"],
+                    cwd=project_root,
+                    capture_output=True,
+                )
+
+            if not quiet_output:
+                console.print("[good]Coverage data collected[/good]")
 
     if args.trace:
         if not quiet_output:

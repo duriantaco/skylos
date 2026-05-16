@@ -56,7 +56,18 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     parser.add_argument(
         "--coverage",
         action="store_true",
-        help="Run tests with coverage before analysis",
+        help=(
+            "Use coverage data during analysis. Does not execute project tests unless "
+            "--allow-coverage-execution is also set."
+        ),
+    )
+    parser.add_argument(
+        "--allow-coverage-execution",
+        action="store_true",
+        help=(
+            "Allow --coverage to execute pytest/unittest in the target project. "
+            "Only use for trusted repositories."
+        ),
     )
     parser.add_argument(
         "--pytest-fixtures",

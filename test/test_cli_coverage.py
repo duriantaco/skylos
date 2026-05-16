@@ -13,7 +13,16 @@ class TestCoverageFlag:
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'
 
         with patch.object(
-            sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]
+            sys,
+            "argv",
+            [
+                "skylos",
+                ".",
+                "--coverage",
+                "--allow-coverage-execution",
+                "--json",
+                "--no-provenance",
+            ],
         ):
             try:
                 main()
@@ -22,6 +31,30 @@ class TestCoverageFlag:
 
         calls = mock_run.call_args_list
         assert any("coverage" in str(call) and "pytest" in str(call) for call in calls)
+
+    @patch("skylos.cli.subprocess.run")
+    @patch("skylos.cli.run_analyze")
+    def test_coverage_skips_test_execution_without_trust_flag(
+        self, mock_analyze, mock_run
+    ):
+        """--coverage must not execute project tests unless the repo is trusted."""
+        from skylos.cli import main
+
+        mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'
+
+        with patch.object(
+            sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]
+        ):
+            try:
+                main()
+            except SystemExit:
+                pass
+
+        coverage_calls = [
+            call for call in mock_run.call_args_list if "coverage" in str(call)
+        ]
+        assert coverage_calls == []
+        mock_analyze.assert_called_once()
 
     @patch("skylos.cli.subprocess.run")
     @patch("skylos.cli.run_analyze")
@@ -35,7 +68,16 @@ class TestCoverageFlag:
         mock_analyze.return_value = '{"unused_functions": [], "unused_imports": [], "unused_classes": [], "unused_variables": [], "unused_parameters": [], "analysis_summary": {"total_files": 1}}'
 
         with patch.object(
-            sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]
+            sys,
+            "argv",
+            [
+                "skylos",
+                ".",
+                "--coverage",
+                "--allow-coverage-execution",
+                "--json",
+                "--no-provenance",
+            ],
         ):
             try:
                 main()
@@ -68,7 +110,16 @@ class TestCoverageFlag:
         mock_analyze.side_effect = track_analyze
 
         with patch.object(
-            sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]
+            sys,
+            "argv",
+            [
+                "skylos",
+                ".",
+                "--coverage",
+                "--allow-coverage-execution",
+                "--json",
+                "--no-provenance",
+            ],
         ):
             try:
                 main()
@@ -89,7 +140,14 @@ class TestCoverageFlag:
         with patch.object(
             sys,
             "argv",
-            ["skylos", "/some/project", "--coverage", "--json", "--no-provenance"],
+            [
+                "skylos",
+                "/some/project",
+                "--coverage",
+                "--allow-coverage-execution",
+                "--json",
+                "--no-provenance",
+            ],
         ):
             try:
                 main()
@@ -132,7 +190,15 @@ class TestCoverageFlag:
         with patch.object(
             sys,
             "argv",
-            ["skylos", ".", "--coverage", "--danger", "--json", "--no-provenance"],
+            [
+                "skylos",
+                ".",
+                "--coverage",
+                "--allow-coverage-execution",
+                "--danger",
+                "--json",
+                "--no-provenance",
+            ],
         ):
             try:
                 main()
@@ -161,7 +227,16 @@ class TestCoverageIntegration:
 
         with patch.object(Path, "exists", return_value=True):
             with patch.object(
-                sys, "argv", ["skylos", ".", "--coverage", "--json", "--no-provenance"]
+                sys,
+                "argv",
+                [
+                    "skylos",
+                    ".",
+                    "--coverage",
+                    "--allow-coverage-execution",
+                    "--json",
+                    "--no-provenance",
+                ],
             ):
                 try:
                     main()

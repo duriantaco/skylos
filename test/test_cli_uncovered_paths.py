@@ -463,7 +463,7 @@ def test_main_writes_sarif_and_prints_json(tmp_path, monkeypatch):
         patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
         patch("skylos.cli.SarifExporter") as SarifExporter,
         patch("builtins.print") as p,
-        patch("builtins.open", create=True) as mock_open,
+        patch("builtins.open", create=True),
     ):
         exp = Mock()
         exp.generate = Mock(return_value={"runs": [{}]})
@@ -490,7 +490,13 @@ def test_shorten_path_returns_absolute_when_outside_cwd(tmp_path, monkeypatch):
 
 
 def test_main_coverage_runs_pytest_then_unittest_on_failure(tmp_path, monkeypatch):
-    test_args = ["skylos", str(tmp_path), "--coverage", "--json"]
+    test_args = [
+        "skylos",
+        str(tmp_path),
+        "--coverage",
+        "--allow-coverage-execution",
+        "--json",
+    ]
     monkeypatch.setattr(sys, "argv", test_args)
 
     result = {
