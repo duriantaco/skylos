@@ -303,6 +303,23 @@ def _is_secret_config_candidate(path: Path) -> bool:
     return path.suffix.lower() in _SECRET_CONFIG_SUFFIXES
 
 
+def _resolve_secret_config_candidate(path: Path, root: Path) -> Path | None:
+    candidate = Path(path)
+    if candidate.is_symlink():
+        return None
+    if not _is_secret_config_candidate(candidate):
+        return None
+    try:
+        resolved_root = Path(root).resolve(strict=True)
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(resolved_root)
+    except (OSError, ValueError):
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
 _GREP_VERIFY_TYPE_PRIORITY = {
     "method": 0,
     "function": 1,
@@ -2205,27 +2222,24 @@ class Skylos:
                     for raw_path in changed_files:
                         cfg_file = Path(raw_path)
                         if not cfg_file.is_absolute():
-                            cfg_file = (root / cfg_file).resolve()
-                        else:
-                            cfg_file = cfg_file.resolve()
+                            cfg_file = root / cfg_file
                         cfg_candidates.append(cfg_file)
                 else:
                     cfg_candidates = root.rglob("*")
 
                 for cfg_file in cfg_candidates:
                     cfg_file = Path(cfg_file)
-                    if not cfg_file.is_file():
+                    resolved_cfg = _resolve_secret_config_candidate(cfg_file, root)
+                    if resolved_cfg is None:
                         continue
-                    if not _is_secret_config_candidate(cfg_file):
-                        continue
-                    if str(cfg_file.resolve()) in scanned:
-                        continue
-                    if any(ex in cfg_file.parts for ex in (exclude_folders or [])):
+                    if str(resolved_cfg) in scanned:
                         continue
                     try:
-                        src = cfg_file.read_text(encoding="utf-8", errors="ignore")
+                        rel = str(resolved_cfg.relative_to(root))
+                        if any(ex in Path(rel).parts for ex in (exclude_folders or [])):
+                            continue
+                        src = resolved_cfg.read_text(encoding="utf-8", errors="ignore")
                         src_lines = src.splitlines(True)
-                        rel = str(cfg_file.relative_to(root))
                         ctx = {"relpath": rel, "lines": src_lines, "tree": None}
                         findings = list(_secrets_scan_ctx(ctx))
                         if findings:
