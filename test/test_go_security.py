@@ -45,6 +45,30 @@ def _rule_ids(findings: list[dict]) -> set[str]:
     return {finding["rule_id"] for finding in findings}
 
 
+def test_go_symlinked_file_outside_scan_root_not_scanned(tmp_path):
+    (tmp_path / "go.mod").write_text(
+        "module example.com/demo\n\ngo 1.22\n",
+        encoding="utf-8",
+    )
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    target = outside / "secret.go"
+    target.write_text(
+        'package main\n\nconst token = "password=supersecretvalue"\n\nfunc main(){ println(token) }\n',
+        encoding="utf-8",
+    )
+    link = tmp_path / "leak.go"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("filesystem does not allow symlink creation")
+
+    clear_go_cache()
+    findings = scan_go_file(str(link), {})[7]
+
+    assert findings == []
+
+
 def test_math_rand_remapped_to_shared_rule(tmp_path):
     findings = _scan_go(
         tmp_path,

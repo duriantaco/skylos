@@ -92,6 +92,9 @@ def scan_go_file(file_path, cfg):
     if not module_root:
         module_root = file_path.parent
 
+    if not _is_safe_go_file(file_path, module_root):
+        return _empty_go_scan_result(cfg)
+
     result = _get_module_result(module_root)
 
     findings = result.get("findings", [])
@@ -144,6 +147,36 @@ def scan_go_file(file_path, cfg):
         cfg,  # 11: config
         [],  # 12: raw_imports
     )
+
+
+def _empty_go_scan_result(cfg):
+    return (
+        [],  # 0: definitions
+        [],  # 1: references
+        set(),  # 2: dynamic refs
+        set(),  # 3: exports
+        _GoDummyVisitor(),  # 4: test_flags
+        _GoDummyVisitor(),  # 5: framework_flags
+        [],  # 6: quality findings
+        [],  # 7: danger/security findings
+        [],  # 8: pro_finds
+        None,  # 9: pattern_tracker
+        None,  # 10: empty_file_finding
+        cfg,  # 11: config
+        [],  # 12: raw_imports
+    )
+
+
+def _is_safe_go_file(file_path, module_root):
+    try:
+        if file_path.is_symlink():
+            return False
+        resolved_file = file_path.resolve()
+        resolved_root = Path(module_root).resolve()
+        resolved_file.relative_to(resolved_root)
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def _find_module_root(file_path):
