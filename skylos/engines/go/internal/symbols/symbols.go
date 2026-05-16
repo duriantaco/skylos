@@ -63,6 +63,11 @@ var defaultSkipDirs = map[string]bool{
 func Extract(root string) (*Result, error) {
 	fset := token.NewFileSet()
 	result := &Result{}
+	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
+	if rootErr != nil {
+		return nil, rootErr
+	}
+	root = resolvedRoot
 
 	modulePath := readModulePath(root)
 
@@ -102,13 +107,22 @@ func Extract(root string) (*Result, error) {
 		if !strings.HasSuffix(path, ".go") {
 			return nil
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
 
 		isTest := strings.HasSuffix(path, "_test.go")
 
-		file, parseErr := parser.ParseFile(fset, path, nil, 0)
+		resolvedPath, resolveErr := filepath.EvalSymlinks(path)
+		if resolveErr != nil || !isPathWithinRoot(resolvedRoot, resolvedPath) {
+			return nil
+		}
+
+		file, parseErr := parser.ParseFile(fset, resolvedPath, nil, 0)
 		if parseErr != nil {
 			return nil
 		}
+		path = resolvedPath
 
 		importMap := map[string]string{}
 		for _, imp := range file.Imports {
@@ -352,6 +366,14 @@ func Extract(root string) (*Result, error) {
 	})
 
 	return result, err
+}
+
+func isPathWithinRoot(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 func readModulePath(root string) string {

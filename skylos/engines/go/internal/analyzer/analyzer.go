@@ -59,6 +59,12 @@ func New() *Analyzer {
 }
 
 func (a *Analyzer) AnalyzeDir(root string) ([]output.Finding, error) {
+	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
+	if rootErr != nil {
+		return nil, rootErr
+	}
+	root = resolvedRoot
+
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -72,15 +78,32 @@ func (a *Analyzer) AnalyzeDir(root string) ([]output.Finding, error) {
 			return nil
 		}
 
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 
-		a.analyzeFile(path)
+		resolvedPath, err := filepath.EvalSymlinks(path)
+		if err != nil || !isPathWithinRoot(resolvedRoot, resolvedPath) {
+			return nil
+		}
+
+		a.analyzeFile(resolvedPath)
 		return nil
 	})
 
 	return a.findings, err
+}
+
+func isPathWithinRoot(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 func (a *Analyzer) analyzeFile(path string) {
