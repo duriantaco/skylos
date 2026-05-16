@@ -1043,6 +1043,97 @@ class TestPipelinePhase2b:
         analyze_files_args = mock_llm.return_value.analyze_files.call_args[0][0]
         assert [str(f) for f in analyze_files_args] == [str(py_file)]
 
+    @patch(P_STATIC_FN, return_value=_empty_result())
+    @patch(P_PROGRESS)
+    @patch(P_LLM)
+    def test_changed_scan_skips_symlinked_python_files(
+        self, mock_llm, _prog, _static, tmp_path
+    ):
+        proj = tmp_path / "proj"
+        outside = tmp_path / "outside"
+        proj.mkdir()
+        outside.mkdir()
+        (proj / "pyproject.toml").write_text("[project]\nname='demo'\n")
+        outside_secret = outside / "secret.py"
+        outside_secret.write_text("CANARY_OUTSIDE_SECRET\n", encoding="utf-8")
+        link = proj / "auth.py"
+        try:
+            link.symlink_to(outside_secret)
+        except OSError:
+            import pytest
+
+            pytest.skip("filesystem does not allow symlink creation")
+
+        mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+        run_pipeline(
+            path=str(proj),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(skip_verification=True),
+            console=_console(),
+            changed_files=[str(link)],
+        )
+
+        mock_llm.return_value.analyze_files.assert_not_called()
+
+    @patch(P_STATIC_FN, return_value=_empty_result())
+    @patch(P_PROGRESS)
+    @patch(P_LLM)
+    def test_changed_scan_skips_paths_outside_project_root(
+        self, mock_llm, _prog, _static, tmp_path
+    ):
+        proj = tmp_path / "proj"
+        outside = tmp_path / "outside"
+        proj.mkdir()
+        outside.mkdir()
+        outside_file = outside / "auth.py"
+        outside_file.write_text("CANARY_OUTSIDE_SECRET\n", encoding="utf-8")
+        mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+        run_pipeline(
+            path=str(proj),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(skip_verification=True),
+            console=_console(),
+            changed_files=[str(outside_file)],
+        )
+
+        mock_llm.return_value.analyze_files.assert_not_called()
+
+    @patch(P_ANALYZE)
+    @patch(P_PROGRESS)
+    @patch(P_LLM)
+    def test_single_file_scan_skips_symlinked_python_file(
+        self, mock_llm, _prog, mock_analyze, tmp_path
+    ):
+        proj = tmp_path / "proj"
+        outside = tmp_path / "outside"
+        proj.mkdir()
+        outside.mkdir()
+        outside_secret = outside / "secret.py"
+        outside_secret.write_text("CANARY_OUTSIDE_SECRET\n", encoding="utf-8")
+        link = proj / "review.py"
+        try:
+            link.symlink_to(outside_secret)
+        except OSError:
+            import pytest
+
+            pytest.skip("filesystem does not allow symlink creation")
+
+        findings = run_pipeline(
+            path=str(link),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(skip_verification=True),
+            console=_console(),
+        )
+
+        assert findings == []
+        mock_analyze.assert_not_called()
+        mock_llm.assert_not_called()
+
     @patch(P_ANALYZE)
     @patch(P_PROGRESS)
     @patch(P_LLM)
