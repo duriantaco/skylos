@@ -5,14 +5,19 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
     name: Release Please
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4.4.0 (pin SHA to avoid supply chain attacks))
         id: release
@@ -21,3 +26,16 @@ jobs:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN != '' && secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: tools/release/release-please-config.json
           manifest-file: tools/release/.release-please-manifest.json
+
+  publish-release:
+    name: Publish release artifacts
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/publish.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      ref: ${{ needs.release-please.outputs.tag_name }}
+    secrets:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
