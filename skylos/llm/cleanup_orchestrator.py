@@ -260,6 +260,19 @@ Produce the corrected file. Fix ONLY this violation.\
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
+def _resolved_contained_file(path: Path, root: Path) -> Path | None:
+    if path.is_symlink():
+        return None
+    try:
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
 class CleanupOrchestrator:
     def __init__(
         self,
@@ -305,7 +318,7 @@ class CleanupOrchestrator:
         log = console.print if not quiet else (lambda *a, **kw: None)
 
         result = CleanupResult()
-        target = Path(path).resolve()
+        target = Path(path)
 
         files = self._collect_files(target, include_patterns, exclude_patterns)
         log(f"[bold]Phase 1:[/bold] Collected {len(files)} files to analyze")
@@ -402,14 +415,24 @@ class CleanupOrchestrator:
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
     ) -> list[Path]:
+        try:
+            scan_root = (
+                path.parent.resolve(strict=True)
+                if path.is_file()
+                else path.resolve(strict=True)
+            )
+        except OSError:
+            return []
+
         if path.is_file():
             if path.suffix in CODE_EXTENSIONS:
-                return [path]
+                resolved = _resolved_contained_file(path, scan_root)
+                return [resolved] if resolved is not None else []
             return []
 
         files = []
         for fp in sorted(path.rglob("*")):
-            if not fp.is_file():
+            if fp.is_symlink() or not fp.is_file():
                 continue
             if fp.suffix not in CODE_EXTENSIONS:
                 continue
@@ -418,16 +441,23 @@ class CleanupOrchestrator:
                 continue
             if any(p.endswith(".egg-info") for p in fp.relative_to(path).parts):
                 continue
+            resolved = _resolved_contained_file(fp, scan_root)
+            if resolved is None:
+                continue
             try:
-                if fp.stat().st_size > MAX_FILE_SIZE:
+                if resolved.stat().st_size > MAX_FILE_SIZE:
                     continue
             except OSError:
                 continue
-            files.append(fp)
+            files.append(resolved)
 
         return files
 
     def _analyze_file(self, file_path: Path, log) -> list[CleanupItem]:
+        if file_path.is_symlink():
+            log(f"  [dim]Skipping symlinked file {file_path}[/dim]")
+            return []
+
         source = file_path.read_text(encoding="utf-8", errors="replace")
         lines = source.splitlines()
         if len(lines) > MAX_FILE_LINES:
@@ -475,6 +505,10 @@ class CleanupOrchestrator:
         if not fp.exists():
             item.status = "skipped"
             item.skip_reason = "file not found"
+            return
+        if not executor.is_safe_file_path(str(fp)):
+            item.status = "skipped"
+            item.skip_reason = "file outside project root or symlink"
             return
 
         source = fp.read_text(encoding="utf-8", errors="replace")

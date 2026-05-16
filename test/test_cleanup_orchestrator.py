@@ -15,6 +15,7 @@ from skylos.llm.cleanup_orchestrator import (
     _build_fix_system_prompt,
     _build_fix_user_prompt,
 )
+from skylos.llm.executor import RemediationExecutor
 
 
 class TestLoadStandards:
@@ -159,6 +160,23 @@ class TestFileCollection:
         assert "small.py" in names
         assert "big.py" not in names
 
+    def test_skips_symlinked_php_file_outside_root(self, tmp_path):
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        target = outside / "secret.php"
+        target.write_text("<?php $token = 'external-secret';\n", encoding="utf-8")
+        link = tmp_path / "leak.php"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            pytest.skip("filesystem does not allow symlink creation")
+
+        orch = self._make_orchestrator()
+        files = orch._collect_files(tmp_path)
+
+        assert link not in files
+        assert target.resolve() not in files
+
 
 class TestAnalysis:
     def _make_orchestrator(self):
@@ -224,6 +242,25 @@ class TestAnalysis:
         orch._adapter = MagicMock()
 
         items = orch._analyze_file(f, lambda *a, **kw: None)
+        assert items == []
+        orch._adapter.complete.assert_not_called()
+
+    def test_analyze_file_rejects_symlink_before_llm_prompt(self, tmp_path):
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        target = outside / "secret.php"
+        target.write_text("<?php $token = 'external-secret';\n", encoding="utf-8")
+        link = tmp_path / "leak.php"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            pytest.skip("filesystem does not allow symlink creation")
+
+        orch = self._make_orchestrator()
+        orch._adapter = MagicMock()
+
+        items = orch._analyze_file(link, lambda *a, **kw: None)
+
         assert items == []
         orch._adapter.complete.assert_not_called()
 
@@ -374,6 +411,35 @@ class TestFixApplication:
         orch._apply_single_fix(item, mock_executor, lambda *a, **kw: None)
         assert item.status == "skipped"
         assert "file not found" in item.skip_reason
+
+    def test_apply_fix_rejects_symlink_before_fix_prompt(self, tmp_path):
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        target = outside / "secret.php"
+        target.write_text("<?php echo 'secret';\n", encoding="utf-8")
+        link = tmp_path / "leak.php"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            pytest.skip("filesystem does not allow symlink creation")
+
+        item = CleanupItem(
+            file=str(link),
+            line=1,
+            category="c",
+            description="d",
+            suggestion="s",
+        )
+        orch = self._make_orchestrator()
+        orch._adapter = MagicMock()
+        executor = RemediationExecutor(project_root=tmp_path)
+
+        orch._apply_single_fix(item, executor, lambda *a, **kw: None)
+
+        assert item.status == "skipped"
+        assert "outside project root" in item.skip_reason
+        assert target.read_text(encoding="utf-8") == "<?php echo 'secret';\n"
+        orch._adapter.complete.assert_not_called()
 
 
 class TestOrchestration:
