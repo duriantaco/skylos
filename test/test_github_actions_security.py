@@ -1,4 +1,7 @@
 import json
+from pathlib import Path
+
+import yaml
 
 from skylos.analyzer import analyze
 from skylos.rules.config import scan_config_files
@@ -7,6 +10,10 @@ from skylos.rules.config.cicd.github_actions import scan_github_actions
 
 def _rule_ids(findings):
     return {finding["rule_id"] for finding in findings}
+
+
+def _publish_workflow():
+    return yaml.safe_load(Path(".github/workflows/publish.yml").read_text())
 
 
 def _write_risky_workflow(path):
@@ -280,6 +287,28 @@ jobs:
         "SKY-D312",
         "SKY-D313",
     }.issubset(_rule_ids(findings))
+
+
+def test_publish_workflow_keeps_pypi_token_out_of_tool_install():
+    workflow = _publish_workflow()
+    publish_steps = workflow["jobs"]["publish"]["steps"]
+    install_step = next(s for s in publish_steps if s.get("name") == "Install publish tools")
+    upload_step = next(s for s in publish_steps if s.get("name") == "Publish to PyPI")
+
+    assert "TWINE_PASSWORD" not in install_step.get("env", {})
+    assert "pip install" in install_step["run"]
+    assert upload_step["env"]["TWINE_PASSWORD"] == "${{ secrets.PYPI_TOKEN }}"
+    assert "pip install" not in upload_step["run"]
+    assert "twine upload" in upload_step["run"]
+
+
+def test_publish_workflow_validates_strict_semver_release_tags():
+    workflow = _publish_workflow()
+    build_steps = workflow["jobs"]["build"]["steps"]
+    resolve_step = next(s for s in build_steps if s.get("name") == "Resolve release tag input")
+
+    assert "semver_re=" in resolve_step["run"]
+    assert "(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)" in resolve_step["run"]
 
 
 def test_analyzer_reports_github_actions_dangers_without_source_files(tmp_path):

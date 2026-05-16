@@ -54,7 +54,8 @@ jobs:
               exit 1
               ;;
           esac
-          if [[ ! "$tag" =~ ^v[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          semver_re='^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)([.](0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?([+]([0-9A-Za-z-]+([.][0-9A-Za-z-]+)*))?$'
+          if [[ ! "$tag" =~ $semver_re ]]; then
             echo "Expected a semantic release tag like v4.2.1, got: $tag" >&2
             exit 1
           fi
@@ -156,13 +157,21 @@ jobs:
           name: dist
           path: dist
 
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install publish tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "packaging>=24.2" "twine>=6.1.0"
+
       - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install "packaging>=24.2" "twine>=6.1.0"
           python -m twine upload --skip-existing dist/*
 
   container:
