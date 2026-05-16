@@ -4,7 +4,6 @@ import fnmatch
 import glob
 import json
 import os
-import re
 import shlex
 from collections import defaultdict
 from dataclasses import dataclass
