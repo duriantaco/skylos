@@ -1,41 +1,117 @@
 name: Build and publish
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
+    inputs:
+      ref:
+        description: "Release tag to build and publish (for example v4.2.1)"
+        required: true
+        type: string
+    secrets:
+      PYPI_TOKEN:
+        required: true
   workflow_dispatch:
     inputs:
       ref:
         description: "Release tag to build and publish (for example v4.2.1)"
         required: true
+        type: string
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: publish-${{ inputs.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      release_tag: ${{ steps.release_ref.outputs.tag }}
 
     steps:
-      - name: Validate release tag input
+      - name: Resolve release tag input
+        id: release_ref
+        shell: bash
+        env:
+          RELEASE_REF: ${{ inputs.ref }}
         run: |
+          set -euo pipefail
           ref="${RELEASE_REF}"
           case "$ref" in
-            refs/tags/*|v[0-9]*)
+            refs/tags/v[0-9]*)
+              tag="${ref#refs/tags/}"
+              ;;
+            v[0-9]*)
+              tag="$ref"
               ;;
             *)
               echo "Expected a release tag like v4.2.1, got: $ref" >&2
               exit 1
               ;;
           esac
+          if [[ ! "$tag" =~ ^v[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Expected a semantic release tag like v4.2.1, got: $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: refs/tags/${{ steps.release_ref.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release_ref.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+
+          tag_commit="$(git rev-list -n 1 "refs/tags/${RELEASE_TAG}")"
+          checkout_commit="$(git rev-parse HEAD)"
+          if [[ "$tag_commit" != "$checkout_commit" ]]; then
+            echo "Checked-out commit does not match ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "${RELEASE_TAG} does not point to a commit reachable from origin/main" >&2
+            exit 1
+          fi
+
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+
+          version="${RELEASE_TAG#v}"
+          python - "$version" <<'PY'
+          import json
+          import pathlib
+          import sys
+          import tomllib
+
+          expected = sys.argv[1]
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))
+          actual = pyproject["project"]["version"]
+          if actual != expected:
+              raise SystemExit(f"pyproject version {actual!r} does not match release tag {expected!r}")
+
+          manifest = json.loads(
+              pathlib.Path("tools/release/.release-please-manifest.json").read_text(encoding="utf-8")
+          )
+          manifest_version = manifest.get(".")
+          if manifest_version != expected:
+              raise SystemExit(
+                  f"release-please manifest version {manifest_version!r} does not match release tag {expected!r}"
+              )
+          PY
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -61,10 +137,17 @@ jobs:
         with:
           name: dist
           path: dist
+          if-no-files-found: error
 
   publish:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    environment:
+      name: pypi
+      url: https://pypi.org/project/skylos/
 
     steps:
       - name: Download dist artifacts
@@ -85,21 +168,25 @@ jobs:
   container:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
     env:
       IMAGE_NAME: ghcr.io/duriantaco/skylos
-      RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
+      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
       - name: Derive image metadata
         id: meta
         shell: bash
         run: |
-          ref="${RELEASE_REF#refs/tags/}"
-          version="${ref#v}"
+          version="${RELEASE_TAG#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [[ "$version" == *-* ]]; then
             echo "stable=false" >> "$GITHUB_OUTPUT"
@@ -111,29 +198,25 @@ jobs:
           fi
 
       - name: Build smoke image
-        run: docker build -t skylos:smoke .
+        run: docker build -t skylos:smoke . # skylos: ignore[SKY-D296] local smoke-test image
 
       - name: Smoke test CLI entrypoint
-        run: docker run --rm skylos:smoke --version
+        run: docker run --rm skylos:smoke --version # skylos: ignore[SKY-D296] local smoke-test image
 
       - name: Smoke test real scan
         run: |
-          docker run --rm \
-            -v "$PWD/benchmarks/quality/fixtures/argument_overload:/work" \
-            -w /work \
-            skylos:smoke \
-            . --json --no-provenance > /tmp/skylos-smoke.json
+          docker run --rm -v "$PWD/benchmarks/quality/fixtures/argument_overload:/work" -w /work skylos:smoke . --json --no-provenance > /tmp/skylos-smoke.json # skylos: ignore[SKY-D296] local smoke-test image
           grep -q '"unused_functions"' /tmp/skylos-smoke.json
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ github.token }}
 
       - name: Build and push multi-arch image
         shell: bash
