@@ -84,3 +84,58 @@ def test_parent_class_resolution_does_not_install_analyzed_project_dependency(
         and call.args[0][:2] == ["pip3", "install"]
     ]
     assert pip_installs == []
+
+
+def test_parent_class_resolution_does_not_execute_imported_local_module(tmp_path):
+    from skylos.llm.verify_orchestrator import _find_parent_class_info
+
+    marker = tmp_path / "executed.txt"
+    parent_file = tmp_path / "parent.py"
+    parent_file.write_text(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')",
+                "",
+                "class DangerousParent:",
+                "    def handle(self):",
+                "        return 'parent'",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    child_file = tmp_path / "child.py"
+    child_file.write_text(
+        "\n".join(
+            [
+                "from parent import DangerousParent as Parent",
+                "",
+                "class Child(Parent):",
+                "    def handle(self):",
+                "        return 'child'",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    finding = {
+        "name": "handle",
+        "full_name": "child.Child.handle",
+        "simple_name": "handle",
+        "type": "method",
+        "file": str(child_file),
+        "line": 4,
+    }
+
+    info = _find_parent_class_info(
+        finding,
+        {str(child_file): child_file.read_text(encoding="utf-8")},
+        project_root=str(tmp_path),
+    )
+
+    assert marker.exists() is False
+    assert info is not None
+    assert "CONFIRMED" in info
+    assert "DangerousParent" in info
+    assert "overrides are NOT dead code" in info
