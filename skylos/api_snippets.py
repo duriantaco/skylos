@@ -10,7 +10,10 @@ def _resolve_snippet_path(file_abs, repo_root=None) -> Path | None:
     if not file_abs:
         return None
     try:
-        candidate = Path(file_abs).resolve()
+        raw_candidate = Path(file_abs)
+        if raw_candidate.is_symlink():
+            return None
+        candidate = raw_candidate.resolve()
         if repo_root:
             root = Path(repo_root).resolve()
             try:

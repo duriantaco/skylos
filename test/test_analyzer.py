@@ -2433,6 +2433,58 @@ def test_changed_files_scans_dotenv_for_secrets(tmp_path):
     assert ".env" in scanned
 
 
+def test_config_secret_scan_skips_symlink_targets_outside_root(tmp_path):
+    (tmp_path / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    outside_secret = tmp_path.parent / "outside_secret"
+    outside_secret.write_text("AWS_SECRET_ACCESS_KEY=OUTSIDE\n", encoding="utf-8")
+    link = tmp_path / "config.yaml"
+    try:
+        link.symlink_to(outside_secret)
+    except OSError:
+        pytest.skip("symlinks are not supported on this filesystem")
+
+    scanned = []
+
+    def fake_secret_scan(ctx):
+        scanned.append((ctx["relpath"], "".join(ctx["lines"])))
+        return []
+
+    with patch("skylos.analyzer._secrets_scan_ctx", side_effect=fake_secret_scan):
+        json.loads(analyze(str(tmp_path), enable_secrets=True, grep_verify=False))
+
+    assert all(rel != "config.yaml" for rel, _ in scanned)
+    assert all("OUTSIDE" not in text for _, text in scanned)
+
+
+def test_changed_files_secret_scan_skips_symlink_targets_outside_root(tmp_path):
+    (tmp_path / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    outside_secret = tmp_path.parent / "outside_changed_secret"
+    outside_secret.write_text("AWS_SECRET_ACCESS_KEY=OUTSIDE_CHANGED\n", encoding="utf-8")
+    link = tmp_path / "config.yaml"
+    try:
+        link.symlink_to(outside_secret)
+    except OSError:
+        pytest.skip("symlinks are not supported on this filesystem")
+
+    scanned = []
+
+    def fake_secret_scan(ctx):
+        scanned.append((ctx["relpath"], "".join(ctx["lines"])))
+        return []
+
+    with patch("skylos.analyzer._secrets_scan_ctx", side_effect=fake_secret_scan):
+        json.loads(
+            analyze(
+                str(tmp_path),
+                enable_secrets=True,
+                changed_files={str(link)},
+                grep_verify=False,
+            )
+        )
+
+    assert scanned == []
+
+
 class TestRepoPhantomReferences:
     def test_resolve_analysis_root_ignores_home_git_root_without_project_marker(
         self, tmp_path, monkeypatch

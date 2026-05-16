@@ -352,6 +352,23 @@ class TestSkylosApi(unittest.TestCase):
                 extract_snippet(str(outside), 1, context=0, repo_root=str(repo))
             )
 
+    def test_extract_snippet_rejects_symlink_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = api.Path(td) / "repo"
+            outside = api.Path(td) / "outside.txt"
+            link = repo / "link.txt"
+            repo.mkdir()
+            outside.write_text("outside-secret\n", encoding="utf-8")
+            try:
+                link.symlink_to(outside)
+            except OSError:
+                self.skipTest("symlinks are not supported on this filesystem")
+
+            self.assertIsNone(extract_snippet(str(link), 1, context=0))
+            self.assertIsNone(
+                extract_snippet(str(link), 1, context=0, repo_root=str(repo))
+            )
+
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
     @patch("skylos.api.get_git_root", return_value=None)
