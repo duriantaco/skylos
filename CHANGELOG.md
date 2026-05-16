@@ -1,5 +1,26 @@
 ## Changelog
 
+## [4.15.0](https://github.com/duriantaco/skylos/compare/v4.14.0...v4.15.0) (2026-05-16)
+
+
+### Features
+
+* **cache:** add opt-in trace phase cache ([#355](https://github.com/duriantaco/skylos/issues/355)) ([9c35cbb](https://github.com/duriantaco/skylos/commit/9c35cbbd565642781ec2043f0b5ab632490474e2))
+* **cli:** show grep verification summary ([#362](https://github.com/duriantaco/skylos/issues/362)) ([f53dbb2](https://github.com/duriantaco/skylos/commit/f53dbb225e105303b6c4e58c8798cd5e7248f823))
+* **config:** add GitLab CI scanner ([#350](https://github.com/duriantaco/skylos/issues/350)) ([b8ed22b](https://github.com/duriantaco/skylos/commit/b8ed22b2cd06000a123cfabc7188bae580333f5f))
+* **debt:** explain score breakdown ([#364](https://github.com/duriantaco/skylos/issues/364)) ([a6fd980](https://github.com/duriantaco/skylos/commit/a6fd980b85da5770b545c35c7d08acac5d4997b9))
+* **security:** scan GitHub Actions workflows ([#348](https://github.com/duriantaco/skylos/issues/348)) ([c05e242](https://github.com/duriantaco/skylos/commit/c05e242026772d39931e0cb32580d761d0b9e476))
+
+
+### Bug Fixes
+
+* **cli:** scope grades to scanned categories ([#363](https://github.com/duriantaco/skylos/issues/363)) ([5b57a77](https://github.com/duriantaco/skylos/commit/5b57a77fbb3d514f01bf76863bfee77d7559566e))
+* **cli:** write rich output reports to file ([#360](https://github.com/duriantaco/skylos/issues/360)) ([baef30e](https://github.com/duriantaco/skylos/commit/baef30ed80d484abc9d4b7dd2e0441516de1ab09))
+* **core:** tighten exception handling and split grep verifier ([#359](https://github.com/duriantaco/skylos/issues/359)) ([511d71a](https://github.com/duriantaco/skylos/commit/511d71a2c01846b9ce9299a7fd789828ba0ddfcd))
+* **dead-code:** resolve package-root imports ([#361](https://github.com/duriantaco/skylos/issues/361)) ([ffb82c9](https://github.com/duriantaco/skylos/commit/ffb82c962c6c4b44a18c31555f7ed2157797061d))
+* **security:** harden VS Code webview surfaces ([#345](https://github.com/duriantaco/skylos/issues/345)) ([b15e29b](https://github.com/duriantaco/skylos/commit/b15e29b9cee41b350b6ccdcd601af7653ed6de46))
+* **upload:** harden Cloud report uploads ([#352](https://github.com/duriantaco/skylos/issues/352)) ([39cd7fc](https://github.com/duriantaco/skylos/commit/39cd7fc54adee6f3487908ce60fcc645eeaefd63))
+
 ## [4.14.0](https://github.com/duriantaco/skylos/compare/v4.13.1...v4.14.0) (2026-05-11)
 
 
