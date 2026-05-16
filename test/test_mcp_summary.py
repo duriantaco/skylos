@@ -5,6 +5,7 @@ from skylos_mcp.server import (
     _architecture_payload,
     _health_score_payload,
     _make_summary,
+    _register_tools,
 )
 
 
@@ -102,3 +103,30 @@ def test_load_result_rejects_path_traversal_run_id(monkeypatch, tmp_path):
 
     assert mcp_server._load_result("../latest") is None
     assert mcp_server._load_result("latest/../../secret") is None
+
+
+def test_mcp_remediate_rejects_test_cmd(monkeypatch):
+    class FakeMCP:
+        def __init__(self):
+            self.tools = {}
+
+        def tool(self):
+            def decorate(fn):
+                self.tools[fn.__name__] = fn
+                return fn
+
+            return decorate
+
+        def resource(self, *_args, **_kwargs):
+            def decorate(fn):
+                return fn
+
+            return decorate
+
+    fake = FakeMCP()
+    _register_tools(fake)
+    monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+
+    result = fake.tools["remediate"](".", test_cmd="true; touch /tmp/marker")
+
+    assert "does not accept test_cmd" in result

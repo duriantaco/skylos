@@ -294,17 +294,64 @@ class TestRemediationExecutor:
         executor = RemediationExecutor(project_root=tmp_path)
         result = executor.run_tests()
         assert result.passed is True
-        assert "No test suite" in result.output
+        assert "Test execution disabled" in result.output
 
     def test_run_tests_with_custom_cmd(self, tmp_path):
-        executor = RemediationExecutor(test_cmd="echo ok", project_root=tmp_path)
+        executor = RemediationExecutor(
+            test_cmd="echo ok",
+            project_root=tmp_path,
+            allow_test_execution=True,
+        )
         result = executor.run_tests()
         assert result.passed is True
 
     def test_run_tests_failure(self, tmp_path):
-        executor = RemediationExecutor(test_cmd="exit 1", project_root=tmp_path)
+        executor = RemediationExecutor(
+            test_cmd="false",
+            project_root=tmp_path,
+            allow_test_execution=True,
+        )
         result = executor.run_tests()
         assert result.passed is False
+
+    def test_run_tests_rejects_shell_metacharacters(self, tmp_path):
+        marker = tmp_path / "marker.txt"
+        executor = RemediationExecutor(
+            test_cmd=f"true; touch {marker}",
+            project_root=tmp_path,
+            allow_test_execution=True,
+        )
+
+        result = executor.run_tests()
+
+        assert result.passed is False
+        assert "Rejected test command" in result.output
+        assert not marker.exists()
+
+    def test_run_tests_does_not_auto_execute_makefile_by_default(self, tmp_path):
+        marker = tmp_path / "make-marker.txt"
+        (tmp_path / "Makefile").write_text(f"test:\n\ttouch {marker}\n")
+
+        executor = RemediationExecutor(project_root=tmp_path)
+        result = executor.run_tests()
+
+        assert result.passed is True
+        assert "Test execution disabled" in result.output
+        assert not marker.exists()
+
+    def test_run_tests_auto_detect_requires_explicit_opt_in(self, tmp_path):
+        marker = tmp_path / "make-marker.txt"
+        (tmp_path / "Makefile").write_text(f"test:\n\ttouch {marker}\n")
+
+        executor = RemediationExecutor(
+            project_root=tmp_path,
+            allow_test_execution=True,
+            auto_detect_tests=True,
+        )
+        result = executor.run_tests()
+
+        assert result.passed is True
+        assert marker.exists()
 
     def test_verify_fix(self, tmp_path):
         f = tmp_path / "test_verify.py"

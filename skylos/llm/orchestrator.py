@@ -18,6 +18,8 @@ class RemediationAgent:
         severity_filter: str | None = None,
         provider: str | None = None,
         base_url: str | None = None,
+        allow_test_execution: bool = False,
+        auto_detect_tests: bool = False,
     ):
         self.model = model
         self.api_key = api_key
@@ -25,6 +27,8 @@ class RemediationAgent:
         self.severity_filter = severity_filter
         self.provider = provider
         self.base_url = base_url
+        self.allow_test_execution = allow_test_execution
+        self.auto_detect_tests = auto_detect_tests
         self.planner = RemediationPlanner(severity_filter=severity_filter)
 
     def run(
@@ -85,6 +89,8 @@ class RemediationAgent:
         executor = RemediationExecutor(
             test_cmd=self.test_cmd,
             project_root=path if path.is_dir() else path.parent,
+            allow_test_execution=self.allow_test_execution,
+            auto_detect_tests=self.auto_detect_tests,
         )
 
         fixer = self._create_fixer()
