@@ -620,7 +620,7 @@ def test_create_precommit_config_limits_gate_to_pre_commit(tmp_path, monkeypatch
     assert "--gate" not in content
 
 
-def test_cmd_setup_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, capsys):
+def test_cmd_setup_installs_shell_only_pre_push_hook(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".git").mkdir()
 
@@ -649,32 +649,26 @@ def test_cmd_setup_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, cap
     assert "skylos ." not in hook
     assert "direct pushes to $remote_ref are not allowed" in hook
     assert "refs/heads/main|refs/heads/master" in hook
-    assert "Rust/Python parity check" in hook
-    assert "test/test_fast_parity.py" in hook
+    assert "skylos_fast" not in hook
+    assert "python3" not in hook
+    assert "pytest" not in hook
+    assert "test/test_fast_parity.py" not in hook
 
 
 def _run_generated_pre_push_hook(
-    tmp_path: Path, stdin: str
+    tmp_path: Path, stdin: str, *, cwd: Path | None = None
 ) -> subprocess.CompletedProcess:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    python_stub = bin_dir / "python3"
-    python_stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    python_stub.chmod(0o755)
-
     hook = tmp_path / "pre-push"
     hook.write_text(syncmod._build_pre_push_hook(), encoding="utf-8")
     hook.chmod(0o755)
 
-    env = os.environ.copy()
-    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     return subprocess.run(
         [str(hook)],
         input=stdin,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        env=env,
+        cwd=str(cwd or tmp_path),
         check=False,
     )
 
@@ -726,6 +720,32 @@ def test_pre_push_hook_allows_non_protected_refs(tmp_path, stdin):
 
     assert result.returncode == 0
     assert "direct pushes" not in result.stdout
+
+
+def test_pre_push_hook_does_not_execute_repository_python(tmp_path):
+    (tmp_path / "skylos_fast.py").write_text(
+        "from pathlib import Path\n"
+        "Path('import-marker').write_text('imported', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    test_dir = tmp_path / "test"
+    test_dir.mkdir()
+    (test_dir / "test_fast_parity.py").write_text(
+        "from pathlib import Path\n"
+        "Path('pytest-marker').write_text('collected', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    result = _run_generated_pre_push_hook(
+        tmp_path,
+        "refs/heads/topic " + "1" * 40 + " refs/heads/topic " + "2" * 40 + "\n",
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0
+    assert not (tmp_path / "import-marker").exists()
+    assert not (tmp_path / "pytest-marker").exists()
+    assert "parity" not in result.stdout.lower()
 
 
 def test_cmd_setup_accepts_project_project_id(monkeypatch, tmp_path, capsys):
@@ -799,7 +819,7 @@ def test_cmd_setup_writes_workflow_that_syncs_cloud_policy(
     assert "SKYLOS_TOKEN" not in workflow
 
 
-def test_cmd_upgrade_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, capsys):
+def test_cmd_upgrade_installs_shell_only_pre_push_hook(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".git").mkdir()
 
@@ -816,8 +836,10 @@ def test_cmd_upgrade_installs_parity_only_pre_push_hook(monkeypatch, tmp_path, c
     assert "skylos ." not in hook
     assert "direct pushes to $remote_ref are not allowed" in hook
     assert "refs/heads/main|refs/heads/master" in hook
-    assert "Rust/Python parity check" in hook
-    assert "test/test_fast_parity.py" in hook
+    assert "skylos_fast" not in hook
+    assert "python3" not in hook
+    assert "pytest" not in hook
+    assert "test/test_fast_parity.py" not in hook
     workflow = (tmp_path / ".github" / "workflows" / "skylos.yml").read_text(
         encoding="utf-8"
     )
