@@ -1,4 +1,5 @@
 import json
+import asyncio
 import time
 from unittest.mock import patch, MagicMock
 
@@ -6,10 +7,13 @@ import pytest
 
 mcp = pytest.importorskip("mcp", reason="mcp not installed")
 
-from skylos_mcp.auth import (
+from skylos_mcp.auth import (  # noqa: E402
     AuthSession,
+    MCP_AUTH_SCOPE,
     TOOL_CREDIT_MAP,
     UNAUTH_DAILY_LIMIT,
+    build_mcp_network_auth,
+    check_mcp_client_context,
     check_tool_access,
     deduct_credits,
     initialize_auth,
@@ -371,6 +375,107 @@ class TestInitializeAuth:
             assert session.rate_limit_per_hour == 5000
 
 
+class TestMCPNetworkClientAuth:
+    def test_client_context_not_required_for_stdio(self):
+        allowed, err = check_mcp_client_context(required=False)
+
+        assert allowed is True
+        assert err == ""
+
+    def test_client_context_required_blocks_without_authenticated_request(self):
+        allowed, err = check_mcp_client_context(required=True)
+
+        assert allowed is False
+        assert "MCP client authentication is required" in err
+
+    def test_stdio_transport_does_not_require_client_token(self):
+        with patch.dict("os.environ", {"SKYLOS_MCP_TOKEN": ""}):
+            auth_config = build_mcp_network_auth("stdio", host="127.0.0.1", port=8080)
+
+        assert auth_config is None
+
+    def test_network_transport_requires_client_token_even_with_server_key(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "SKYLOS_API_KEY": "server-cloud-key",
+                "SKYLOS_MCP_TOKEN": "",
+            },
+        ):
+            with pytest.raises(RuntimeError, match="requires SKYLOS_MCP_TOKEN"):
+                build_mcp_network_auth("sse", host="0.0.0.0", port=8080)
+
+    def test_network_transport_rejects_weak_client_token(self):
+        with patch.dict("os.environ", {"SKYLOS_MCP_TOKEN": "short"}):
+            with pytest.raises(RuntimeError, match="at least 16 characters"):
+                build_mcp_network_auth("streamable-http", host="127.0.0.1", port=8080)
+
+    def test_network_verifier_accepts_client_token_not_server_key(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "SKYLOS_API_KEY": "server-cloud-key",
+                "SKYLOS_MCP_TOKEN": "client-token-123456",
+            },
+        ):
+            auth_config = build_mcp_network_auth(
+                "streamable-http",
+                host="127.0.0.1",
+                port=8080,
+            )
+
+        assert auth_config is not None
+        assert auth_config.auth.required_scopes == [MCP_AUTH_SCOPE]
+
+        accepted = asyncio.run(
+            auth_config.token_verifier.verify_token("client-token-123456")
+        )
+        rejected = asyncio.run(
+            auth_config.token_verifier.verify_token("server-cloud-key")
+        )
+
+        assert accepted is not None
+        assert accepted.client_id == "skylos-mcp-client"
+        assert accepted.scopes == [MCP_AUTH_SCOPE]
+        assert rejected is None
+
+    def test_streamable_http_rejects_missing_or_server_key_bearer(self):
+        from mcp.server.fastmcp import FastMCP
+        from starlette.testclient import TestClient
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SKYLOS_API_KEY": "server-cloud-key",
+                "SKYLOS_MCP_TOKEN": "client-token-123456",
+            },
+        ):
+            auth_config = build_mcp_network_auth(
+                "streamable-http",
+                host="127.0.0.1",
+                port=8080,
+            )
+
+        assert auth_config is not None
+        app = FastMCP(
+            name="skylos",
+            host="127.0.0.1",
+            port=8080,
+            auth=auth_config.auth,
+            token_verifier=auth_config.token_verifier,
+        ).streamable_http_app()
+        client = TestClient(app)
+
+        assert client.get("/mcp").status_code == 401
+        assert (
+            client.get(
+                "/mcp",
+                headers={"Authorization": "Bearer server-cloud-key"},
+            ).status_code
+            == 401
+        )
+
+
 class TestGateIntegration:
     def _set_session(self, **kwargs):
         import skylos_mcp.auth as auth_mod
@@ -414,6 +519,30 @@ class TestGateIntegration:
         with patch.dict("sys.modules", {"requests": mock_req}):
             result = _gate("security_scan")
         assert result is None
+
+    def test_gate_network_context_blocks_server_key_without_client_context(self):
+        import skylos_mcp.server as server_mod
+        from skylos_mcp.server import _gate
+
+        self._set_session(
+            authenticated=True,
+            plan="enterprise",
+            api_key="server-cloud-key",
+            credits=0,
+            rate_limit_per_hour=5000,
+            validated_at=time.time(),
+        )
+
+        previous = server_mod._REQUIRE_MCP_CLIENT_AUTH_CONTEXT
+        server_mod._REQUIRE_MCP_CLIENT_AUTH_CONTEXT = True
+        try:
+            result = _gate("secrets_scan")
+        finally:
+            server_mod._REQUIRE_MCP_CLIENT_AUTH_CONTEXT = previous
+
+        assert result is not None
+        error = json.loads(result)
+        assert "MCP client authentication is required" in error["error"]
 
     def test_gate_authenticated_no_credits_blocked(self):
         from skylos_mcp.server import _gate

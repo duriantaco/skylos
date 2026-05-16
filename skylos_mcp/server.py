@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from skylos_mcp.auth import (
+    build_mcp_network_auth,
+    check_mcp_client_context,
     initialize_auth,
     check_tool_access,
     deduct_credits,
@@ -40,6 +42,7 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 _results_cache: dict[str, dict[str, Any]] = {}
 _RUN_ID_RE = re.compile(r"^[a-f0-9]{12}$")
+_REQUIRE_MCP_CLIENT_AUTH_CONTEXT = False
 
 
 def _make_run_id(tool: str, path: str, ts: str) -> str:
@@ -646,6 +649,12 @@ def _health_score_payload(result: dict) -> dict:
 
 
 def _gate(tool_name: str) -> str | None:
+    client_allowed, client_err = check_mcp_client_context(
+        _REQUIRE_MCP_CLIENT_AUTH_CONTEXT
+    )
+    if not client_allowed:
+        return json.dumps({"error": client_err})
+
     allowed, err = check_tool_access(tool_name)
     if not allowed:
         return json.dumps({"error": err})
@@ -1080,17 +1089,27 @@ def _register_tools(mcp):
 
 
 def main():
+    global _REQUIRE_MCP_CLIENT_AUTH_CONTEXT
+
     try:
         from mcp.server.fastmcp import FastMCP
 
         initialize_auth()
 
         transport = os.getenv("MCP_TRANSPORT", "stdio")
+        _REQUIRE_MCP_CLIENT_AUTH_CONTEXT = transport in ("sse", "streamable-http")
 
         if transport in ("sse", "streamable-http"):
             host = os.getenv("MCP_BIND", "127.0.0.1")
             port = int(os.getenv("PORT", "8080"))
-            mcp_server = FastMCP(name="skylos", host=host, port=port)
+            network_auth = build_mcp_network_auth(transport, host=host, port=port)
+            mcp_server = FastMCP(
+                name="skylos",
+                host=host,
+                port=port,
+                auth=network_auth.auth,
+                token_verifier=network_auth.token_verifier,
+            )
         else:
             mcp_server = FastMCP(name="skylos")
 

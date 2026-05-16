@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import hmac
 import os
 import time
 from dataclasses import dataclass, field
@@ -27,6 +28,10 @@ UNAUTHENTICATED_TOOLS = {"analyze"}
 
 UNAUTH_DAILY_LIMIT = 5
 UNAUTH_WINDOW_SECONDS = 86400
+MCP_CLIENT_TOKEN_ENV = "SKYLOS_MCP_TOKEN"
+MCP_AUTH_SCOPE = "skylos:mcp"
+MCP_NETWORK_TRANSPORTS = {"sse", "streamable-http"}
+MCP_CLIENT_TOKEN_MIN_LENGTH = 16
 
 
 @dataclass
@@ -76,11 +81,94 @@ class AuthSession:
         self._unauth_calls.append(time.time())
 
 
+@dataclass(frozen=True)
+class MCPNetworkAuth:
+    auth: Any
+    token_verifier: Any
+
+
+class StaticMCPTokenVerifier:
+    def __init__(self, expected_token: str):
+        self._expected_token = expected_token
+
+    async def verify_token(self, token: str) -> Any | None:
+        if not hmac.compare_digest(token, self._expected_token):
+            return None
+
+        from mcp.server.auth.provider import AccessToken
+
+        return AccessToken(
+            token=token,
+            client_id="skylos-mcp-client",
+            scopes=[MCP_AUTH_SCOPE],
+        )
+
+
 _session = AuthSession()
 
 
 def get_session() -> AuthSession:
     return _session
+
+
+def _network_auth_base_url(host: str, port: int) -> str:
+    public_url = os.getenv("SKYLOS_MCP_PUBLIC_URL", "").strip().rstrip("/")
+    if public_url:
+        return public_url
+
+    normalized_host = host.strip() or "127.0.0.1"
+    if normalized_host in {"0.0.0.0", "::"}:
+        normalized_host = "127.0.0.1"
+    elif ":" in normalized_host and not normalized_host.startswith("["):
+        normalized_host = f"[{normalized_host}]"
+
+    return f"http://{normalized_host}:{port}"
+
+
+def build_mcp_network_auth(transport: str, *, host: str, port: int) -> MCPNetworkAuth | None:
+    if transport not in MCP_NETWORK_TRANSPORTS:
+        return None
+
+    token = os.getenv(MCP_CLIENT_TOKEN_ENV, "").strip()
+    if not token:
+        raise RuntimeError(
+            f"{transport} MCP transport requires {MCP_CLIENT_TOKEN_ENV}. "
+            "SKYLOS_API_KEY only authenticates this server to Skylos Cloud; "
+            "clients must send their own bearer token."
+        )
+    if len(token) < MCP_CLIENT_TOKEN_MIN_LENGTH:
+        raise RuntimeError(
+            f"{MCP_CLIENT_TOKEN_ENV} must be at least "
+            f"{MCP_CLIENT_TOKEN_MIN_LENGTH} characters."
+        )
+
+    from mcp.server.auth.settings import AuthSettings
+
+    base_url = _network_auth_base_url(host, port)
+    return MCPNetworkAuth(
+        auth=AuthSettings(
+            issuer_url=base_url,
+            resource_server_url=base_url,
+            required_scopes=[MCP_AUTH_SCOPE],
+        ),
+        token_verifier=StaticMCPTokenVerifier(token),
+    )
+
+
+def check_mcp_client_context(required: bool) -> tuple[bool, str]:
+    if not required:
+        return (True, "")
+
+    try:
+        from mcp.server.auth.middleware.auth_context import get_access_token
+    except Exception:
+        return (False, "MCP client authentication is required for network transports.")
+
+    access_token = get_access_token()
+    if access_token is None or MCP_AUTH_SCOPE not in access_token.scopes:
+        return (False, "MCP client authentication is required for network transports.")
+
+    return (True, "")
 
 
 def _validate_with_cloud(api_key: str) -> dict[str, Any] | None:
