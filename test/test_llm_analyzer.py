@@ -71,6 +71,68 @@ def test_analyze_file_returns_empty_if_missing(tmp_path):
     assert out == []
 
 
+def test_analyze_file_rejects_symlink_before_read(tmp_path, monkeypatch):
+    import pytest
+
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    target = outside / "secret.py"
+    target.write_text("def exposed():\n    return 'outside-secret'\n", encoding="utf-8")
+    link = tmp_path / "leak.py"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("filesystem does not allow symlink creation")
+
+    cfg = AnalyzerConfig(quiet=True, full_file_review=True)
+    s = SkylosLLM(cfg)
+    calls = []
+
+    def fake_analyze_whole(
+        source, file_path, defs_map=None, chunk_start_line=1, **kwargs
+    ):
+        calls.append((source, file_path))
+        return []
+
+    monkeypatch.setattr(s, "_analyze_whole_file", fake_analyze_whole)
+
+    out = s.analyze_file(link)
+
+    assert out == []
+    assert calls == []
+
+
+def test_analyze_project_skips_symlinked_python_outside_root(tmp_path, monkeypatch):
+    import pytest
+
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    target = outside / "secret.py"
+    target.write_text("def exposed():\n    return 'outside-secret'\n", encoding="utf-8")
+    link = tmp_path / "leak.py"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("filesystem does not allow symlink creation")
+
+    cfg = AnalyzerConfig(quiet=True, full_file_review=True)
+    s = SkylosLLM(cfg)
+    calls = []
+
+    def fake_analyze_whole(
+        source, file_path, defs_map=None, chunk_start_line=1, **kwargs
+    ):
+        calls.append((source, file_path))
+        return []
+
+    monkeypatch.setattr(s, "_analyze_whole_file", fake_analyze_whole)
+
+    result = s.analyze_project(tmp_path)
+
+    assert result.files_analyzed == 0
+    assert calls == []
+
+
 def test_analyze_file_small_uses_whole_file_path(tmp_path, monkeypatch):
     fp = tmp_path / "a.py"
     fp.write_text("print('hi')\n", encoding="utf-8")
@@ -125,8 +187,6 @@ def test_analyze_file_large_chunks_and_offsets_lines(tmp_path, monkeypatch):
         def analyze(self, source, file_path, defs_map=None, context=None):
             self.calls.append((file_path, context))
             return [mk_finding(file=file_path, line=2, severity=Severity.MEDIUM)]
-
-    agent = FreshAuditAgent()
 
     def fake_analyze_whole_file(
         source,
