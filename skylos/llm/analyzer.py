@@ -23,6 +23,18 @@ def _norm_path(path) -> str:
         return str(path)
 
 
+def _safe_llm_file(path: Path) -> Path | None:
+    if path.is_symlink():
+        return None
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError:
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
 class AnalyzerConfig:
     def __init__(
         self,
@@ -488,9 +500,11 @@ class SkylosLLM:
         issue_types=None,
     ):
         file_path = Path(file_path)
+        safe_path = _safe_llm_file(file_path)
 
-        if not file_path.exists():
+        if safe_path is None:
             return []
+        file_path = safe_path
 
         try:
             source = file_path.read_text(encoding="utf-8")
@@ -634,7 +648,10 @@ class SkylosLLM:
 
     def _count_lines(self, file_path):
         try:
-            return len(Path(file_path).read_text(encoding="utf-8").splitlines())
+            safe_path = _safe_llm_file(Path(file_path))
+            if safe_path is None:
+                return 0
+            return len(safe_path.read_text(encoding="utf-8").splitlines())
         except Exception:
             return 0
 
@@ -793,8 +810,10 @@ class SkylosLLM:
 
     def fix_issue(self, file_path, issue_line, issue_message, defs_map=None):
         file_path = Path(file_path)
-        if not file_path.exists():
+        safe_path = _safe_llm_file(file_path)
+        if safe_path is None:
             return None
+        file_path = safe_path
 
         try:
             source = file_path.read_text(encoding="utf-8")

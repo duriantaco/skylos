@@ -152,6 +152,19 @@ def list_git_visible_files(path: str | Path) -> list[Path] | None:
     return files
 
 
+def _resolve_contained_source_file(file_path: Path, root_path: Path) -> Path | None:
+    if file_path.is_symlink():
+        return None
+    try:
+        resolved = file_path.resolve(strict=True)
+        resolved.relative_to(root_path)
+    except (OSError, ValueError):
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
 def discover_source_files(
     path: str | Path,
     extensions: Iterable[str],
@@ -159,16 +172,21 @@ def discover_source_files(
     include_folders: Sequence[str] | None = None,
     respect_gitignore: bool = True,
 ) -> list[Path]:
-    target = Path(path).resolve()
+    raw_target = Path(path)
+    try:
+        target = raw_target.resolve(strict=True)
+    except OSError:
+        return []
     ext_set = {
         ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in extensions
     }
 
-    if target.is_file():
+    if raw_target.is_file():
         if should_exclude_path(target, target.parent, exclude_folders):
             return []
         if target.suffix.lower() in ext_set:
-            return [target]
+            contained = _resolve_contained_source_file(raw_target, target.parent)
+            return [contained] if contained is not None else []
         return []
 
     if respect_gitignore:
@@ -182,7 +200,9 @@ def discover_source_files(
             for file_path in [*git_files, *forced_includes]:
                 if file_path.suffix.lower() not in ext_set:
                     continue
-                resolved = file_path.resolve()
+                resolved = _resolve_contained_source_file(file_path, target)
+                if resolved is None:
+                    continue
                 if resolved in seen:
                     continue
                 seen.add(resolved)
@@ -227,15 +247,21 @@ def discover_source_files(
                 file_path = base / filename
                 if file_path.suffix.lower() not in ext_set:
                     continue
+                resolved = _resolve_contained_source_file(file_path, target)
+                if resolved is None:
+                    continue
                 if should_include_path(file_path, target, include_folders):
-                    files.append(file_path)
+                    files.append(resolved)
                     continue
                 if should_exclude_path(file_path, target, exclude_folders):
                     continue
-                files.append(file_path)
+                files.append(resolved)
     except (OSError, PermissionError, TypeError):
         for ext in ext_set:
-            files.extend(target.glob(f"**/*{ext}"))
+            for file_path in target.glob(f"**/*{ext}"):
+                resolved = _resolve_contained_source_file(file_path, target)
+                if resolved is not None:
+                    files.append(resolved)
 
     files.sort()
     return files
@@ -253,25 +279,30 @@ def _collect_forced_included_files(
     seen = set()
     for pattern in include_folders:
         for match in _iter_include_matches(target, pattern):
+            if match.is_symlink():
+                continue
             try:
                 resolved = match.resolve()
+                resolved.relative_to(target)
             except OSError:
+                continue
+            except ValueError:
                 continue
             if resolved in seen:
                 continue
             seen.add(resolved)
             if match.is_dir():
                 for file_path in match.rglob("*"):
-                    try:
-                        if (
-                            file_path.is_file()
-                            and file_path.suffix.lower() in extensions
-                        ):
-                            files.append(file_path.resolve())
-                    except OSError:
+                    if file_path.suffix.lower() not in extensions:
                         continue
+                    contained = _resolve_contained_source_file(file_path, target)
+                    if contained is None:
+                        continue
+                    files.append(contained)
             elif match.is_file() and match.suffix.lower() in extensions:
-                files.append(resolved)
+                contained = _resolve_contained_source_file(match, target)
+                if contained is not None:
+                    files.append(contained)
     return files
 
 
