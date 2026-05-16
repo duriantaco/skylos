@@ -258,6 +258,42 @@ class TestRemediationExecutor:
         executor = RemediationExecutor(project_root=tmp_path)
         assert executor.apply_fix("/nonexistent", "content") is False
 
+    def test_apply_rejects_symlinked_file(self, tmp_path):
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        target = outside / "target.py"
+        target.write_text("original")
+        link = tmp_path / "link.py"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            import pytest
+
+            pytest.skip("filesystem does not allow symlink creation")
+
+        executor = RemediationExecutor(project_root=tmp_path)
+
+        assert executor.apply_fix(str(link), "changed") is False
+        assert target.read_text() == "original"
+
+    def test_apply_rejects_file_under_symlinked_parent(self, tmp_path):
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        target = outside / "target.py"
+        target.write_text("original")
+        link_dir = tmp_path / "linked-dir"
+        try:
+            link_dir.symlink_to(outside, target_is_directory=True)
+        except OSError:
+            import pytest
+
+            pytest.skip("filesystem does not allow symlink creation")
+
+        executor = RemediationExecutor(project_root=tmp_path)
+
+        assert executor.apply_fix(str(link_dir / "target.py"), "changed") is False
+        assert target.read_text() == "original"
+
     def test_revert_all(self, tmp_path):
         f1 = tmp_path / "a.py"
         f2 = tmp_path / "b.py"

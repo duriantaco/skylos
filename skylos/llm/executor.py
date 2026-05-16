@@ -43,9 +43,25 @@ class RemediationExecutor:
         self.auto_detect_tests = auto_detect_tests
         self._backups: dict[str, str] = {}
 
-    def apply_fix(self, file_path: str, fixed_code: str) -> bool:
+    def _safe_file_path(self, file_path: str) -> Path | None:
         p = Path(file_path)
-        if not p.exists():
+        if p.is_symlink():
+            return None
+        try:
+            resolved = p.resolve(strict=True)
+            resolved.relative_to(self.project_root)
+        except (OSError, ValueError):
+            return None
+        if not resolved.is_file():
+            return None
+        return resolved
+
+    def is_safe_file_path(self, file_path: str) -> bool:
+        return self._safe_file_path(file_path) is not None
+
+    def apply_fix(self, file_path: str, fixed_code: str) -> bool:
+        p = self._safe_file_path(file_path)
+        if p is None:
             return False
         try:
             original = p.read_text(encoding="utf-8")
@@ -56,12 +72,15 @@ class RemediationExecutor:
             return False
 
     def revert_fix(self, file_path: str) -> bool:
-        key = str(Path(file_path))
+        p = self._safe_file_path(file_path)
+        if p is None:
+            return False
+        key = str(p)
         original = self._backups.pop(key, None)
         if original is None:
             return False
         try:
-            Path(file_path).write_text(original, encoding="utf-8")
+            p.write_text(original, encoding="utf-8")
             return True
         except OSError:
             return False
