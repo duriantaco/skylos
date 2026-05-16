@@ -201,6 +201,51 @@ def _infer_root(path) -> Path:
     return Path.cwd().resolve()
 
 
+def _resolve_pipeline_file(
+    file_path,
+    project_root: Path,
+    *,
+    require_python: bool = False,
+) -> Path | None:
+    candidate = Path(file_path)
+    if not candidate.is_absolute():
+        candidate = Path(project_root) / candidate
+    if candidate.is_symlink():
+        return None
+    if require_python and candidate.suffix.lower() != ".py":
+        return None
+    try:
+        root = Path(project_root).resolve(strict=True)
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
+def _resolve_pipeline_files(
+    file_paths,
+    project_root: Path,
+    *,
+    require_python: bool = False,
+) -> list[Path]:
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for file_path in file_paths or []:
+        resolved = _resolve_pipeline_file(
+            file_path,
+            project_root,
+            require_python=require_python,
+        )
+        if resolved is None or resolved in seen:
+            continue
+        seen.add(resolved)
+        files.append(resolved)
+    return files
+
+
 def _is_high_signal_python_file(file_path: Path) -> bool:
     normalized = str(file_path).lower().replace("\\", "/")
     basename = file_path.name.lower()
@@ -279,7 +324,14 @@ def run_static_on_files(
         project_root = _infer_root(files[0])
 
     project_root_path = pathlib.Path(project_root).resolve()
-    target_files = {_norm(f) for f in files}
+    safe_files = (
+        _resolve_pipeline_files(files, project_root_path)
+        if project_root_path.exists()
+        else [Path(f) for f in files]
+    )
+    if not safe_files:
+        return _empty_result()
+    target_files = {_norm(f) for f in safe_files}
 
     def _norm_static_item_file(item_file):
         item_path = pathlib.Path(item_file or "")
@@ -368,7 +420,13 @@ def run_pipeline(
     if not path.exists():
         console.print(f"[bad]Path not found: {path}[/bad]")
         sys.exit(1)
-    root = _infer_root(path)
+    if path.is_symlink():
+        console.print(f"[warn]Skipping symlinked pipeline path: {path}[/warn]")
+        return []
+    root = path.resolve() if path.is_dir() else path.parent.resolve()
+    safe_changed_files = (
+        _resolve_pipeline_files(changed_files, root) if changed_files else None
+    )
 
     all_findings = []
     defs_map = {}
@@ -401,10 +459,10 @@ def run_pipeline(
             ) as progress:
                 task = progress.add_task("static analysis...", total=None)
 
-                if changed_files:
+                if safe_changed_files is not None:
                     static_result = run_static_on_files(
-                        changed_files,
-                        project_root=path if path.is_dir() else path.parent,
+                        [str(file_path) for file_path in safe_changed_files],
+                        project_root=root,
                         conf=10,
                         enable_secrets=True,
                         enable_danger=True,
@@ -479,20 +537,25 @@ def run_pipeline(
             console.print(f"[warn]Static analysis failed: {e}[/warn]")
 
     if path.is_file():
-        files = [path] if path.suffix.lower() == ".py" else []
-        source_cache_files = [path]
+        safe_path = _resolve_pipeline_file(path, root)
+        files = [safe_path] if safe_path and safe_path.suffix.lower() == ".py" else []
+        source_cache_files = [safe_path] if safe_path else []
     else:
         _exc = (
             set(exclude_folders)
             if exclude_folders
             else {"__pycache__", ".git", "venv", ".venv"}
         )
-        files = discover_source_files(path, [".py"], exclude_folders=_exc)
+        files = _resolve_pipeline_files(
+            discover_source_files(path, [".py"], exclude_folders=_exc),
+            root,
+            require_python=True,
+        )
         source_cache_files = files
 
-    if changed_files:
-        source_cache_files = changed_files
-        files = [f for f in changed_files if pathlib.Path(f).suffix.lower() == ".py"]
+    if safe_changed_files is not None:
+        source_cache_files = safe_changed_files
+        files = [f for f in safe_changed_files if f.suffix.lower() == ".py"]
 
     for f in source_cache_files:
         try:
@@ -511,7 +574,7 @@ def run_pipeline(
     phase_2b_files = _select_phase_2b_files(
         files,
         static_findings,
-        changed_files=changed_files,
+        changed_files=safe_changed_files,
         force_include_files=path.is_file(),
         review_index=review_index,
     )
@@ -674,8 +737,8 @@ def run_pipeline(
             ),
             parallel=True,
             max_workers=_max_workers,
-            smart_filter=not (path.is_file() or bool(changed_files)),
-            full_file_review=path.is_file() or bool(changed_files),
+            smart_filter=not (path.is_file() or bool(safe_changed_files)),
+            full_file_review=path.is_file() or bool(safe_changed_files),
             repo_context_map=phase_2b_repo_context,
             force_full_file_paths=force_full_file_paths,
         )
@@ -867,7 +930,7 @@ def run_pipeline(
                 "llm_audit_selected_files": len(phase_2b_files),
                 "llm_audit_total_python_files": len(files),
                 "llm_audit_skipped_files": max(0, len(files) - len(phase_2b_files)),
-                "changed_files_count": len(changed_files or []),
+                "changed_files_count": len(safe_changed_files or []),
                 "with_fixes": bool(getattr(agent_args, "with_fixes", False)),
                 "verification_mode": getattr(
                     agent_args, "verification_mode", "production"
