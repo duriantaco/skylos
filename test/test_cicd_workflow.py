@@ -1,3 +1,4 @@
+import pytest
 import yaml
 from skylos.cicd.workflow import generate_workflow
 
@@ -149,6 +150,18 @@ def test_workflow_scan_path_is_monorepo_aware():
 def test_workflow_prefixes_leading_dash_scan_path():
     content = generate_workflow(scan_path="-service")
     assert "skylos ./-service" in content
+
+
+@pytest.mark.parametrize("control_char", ["\n", "\r", "\t", "\x7f"])
+def test_workflow_rejects_scan_path_control_characters(control_char):
+    payload = f"apps/api{control_char}      - name: Injected Step"
+
+    with pytest.raises(ValueError, match="scan_path"):
+        generate_workflow(
+            scan_path=payload,
+            use_llm=True,
+            use_defend=True,
+        )
 
 
 def test_workflow_pins_installed_skylos_version():

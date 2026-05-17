@@ -913,6 +913,30 @@ def test_cicd_gate_command_reads_input_and_returns_gate_exit(tmp_path):
     assert mock_gate.call_args.kwargs["result"]["project_root"] == str(tmp_path)
 
 
+def test_cicd_init_rejects_control_characters_in_scan_path(tmp_path):
+    from skylos.commands.cicd_cmd import run_cicd_command
+
+    console = Mock()
+    output = tmp_path / "skylos.yml"
+    exit_code = run_cicd_command(
+        [
+            "init",
+            "--scan-path",
+            "apps/api\n      - name: Injected",
+            "--output",
+            str(output),
+        ],
+        console_factory=lambda: console,
+        load_config_func=lambda path: {},
+        run_gate_interaction_func=Mock(),
+        emit_github_annotations_func=Mock(),
+    )
+
+    assert exit_code == 1
+    assert not output.exists()
+    assert "Invalid workflow option" in console.print.call_args.args[0]
+
+
 def test_cicd_review_command_passes_evidence_cards_flag(tmp_path, monkeypatch):
     results_path = tmp_path / "results.json"
     results_path.write_text(json.dumps({"project_root": str(tmp_path), "danger": []}))

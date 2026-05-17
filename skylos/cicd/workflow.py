@@ -34,7 +34,10 @@ def _skylos_install_command(version: str | None = None) -> str:
 
 
 def _shell_path(path: str | Path | None) -> str:
-    raw = str(path or ".").strip() or "."
+    raw = str(path or ".")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        raise ValueError("scan_path must not contain control characters")
+    raw = raw.strip() or "."
     if raw.startswith("-"):
         raw = f"./{raw}"
     return shlex.quote(raw)

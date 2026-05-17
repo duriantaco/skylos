@@ -188,18 +188,22 @@ def run_cicd_command(
     if cicd_args.cicd_cmd == "init":
         from skylos.cicd.workflow import generate_workflow, write_workflow
 
-        yaml_content = generate_workflow(
-            triggers=cicd_args.triggers,
-            analysis_types=cicd_args.analysis,
-            python_version=cicd_args.python_version,
-            use_baseline=not cicd_args.no_baseline,
-            use_llm=cicd_args.llm,
-            model=cicd_args.model,
-            use_claude_security=cicd_args.claude_security,
-            use_upload=cicd_args.upload,
-            use_defend=cicd_args.defend,
-            scan_path=cicd_args.scan_path,
-        )
+        try:
+            yaml_content = generate_workflow(
+                triggers=cicd_args.triggers,
+                analysis_types=cicd_args.analysis,
+                python_version=cicd_args.python_version,
+                use_baseline=not cicd_args.no_baseline,
+                use_llm=cicd_args.llm,
+                model=cicd_args.model,
+                use_claude_security=cicd_args.claude_security,
+                use_upload=cicd_args.upload,
+                use_defend=cicd_args.defend,
+                scan_path=cicd_args.scan_path,
+            )
+        except ValueError as e:
+            console.print(f"[bold red]Invalid workflow option: {e}[/bold red]")
+            return 1
         write_workflow(yaml_content, cicd_args.output or _default_workflow_output())
         return 0
 
