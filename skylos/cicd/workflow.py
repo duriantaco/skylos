@@ -77,17 +77,16 @@ def generate_workflow(
     if analysis_flags:
         analysis_flags = " " + analysis_flags
     baseline_flag = " --baseline" if use_baseline else ""
-    pr_base_ref = "origin/${{ github.base_ref || 'main' }}"
-
     upload_flag = ""
     if use_upload:
         upload_flag = " --upload"
     analysis_run = "\n".join(
         [
             '          if [ "${{ github.event_name }}" = "pull_request" ]; then',
+            '            pr_base_ref="origin/${GITHUB_BASE_REF:-main}"',
             (
                 f"            skylos {scan_target}{analysis_flags}{baseline_flag}{upload_flag} "
-                f"--diff-base {pr_base_ref} --diff {pr_base_ref} "
+                '--diff-base "$pr_base_ref" --diff "$pr_base_ref" '
                 "--json -o skylos-results.json"
             ),
             "          else",
@@ -135,8 +134,14 @@ def generate_workflow(
         review_args.append("--llm-input skylos-llm-results.json")
     if use_defend:
         review_args.append("--defense-input defense-results.json")
-    review_args.extend([f"--diff-base {pr_base_ref}", "--evidence-cards"])
+    review_args.extend(['--diff-base "$pr_base_ref"', "--evidence-cards"])
     review_command = "skylos cicd review " + " ".join(review_args)
+    review_run = "\n".join(
+        [
+            '          pr_base_ref="origin/${GITHUB_BASE_REF:-main}"',
+            f"          {review_command}",
+        ]
+    )
 
     permissions_block = """permissions:
   contents: read
@@ -191,7 +196,8 @@ jobs:
 
       - name: PR Review Comments
         if: github.event_name == 'pull_request' && always()
-        run: {review_command}
+        run: |
+{review_run}
         env:
           GH_TOKEN: ${{{{ github.token }}}}
 {
