@@ -101,30 +101,18 @@ def _get_func_nodes(root_node, lang: Language) -> list:
 
 def _max_nesting(node, depth: int = 0) -> int:
     max_depth = depth
-    cursor = node.walk()
-    visited = False
-    while True:
-        if visited:
-            if cursor.node.id == node.id:
-                break
-            if cursor.goto_next_sibling():
-                visited = False
-            elif cursor.goto_parent():
-                visited = True
-            else:
-                break
-        else:
-            current = cursor.node
-            if current.id != node.id and current.type in NESTING_NODES:
-                child_max = _max_nesting(current, depth + 1)
-                if child_max > max_depth:
-                    max_depth = child_max
-                visited = True
-                continue
-            if cursor.goto_first_child():
-                visited = False
-            else:
-                visited = True
+    stack = [(node, depth)]
+
+    while stack:
+        current, current_depth = stack.pop()
+        for child in current.children:
+            child_depth = (
+                current_depth + 1 if child.type in NESTING_NODES else current_depth
+            )
+            if child_depth > max_depth:
+                max_depth = child_depth
+            stack.append((child, child_depth))
+
     return max_depth
 
 

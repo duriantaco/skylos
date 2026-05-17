@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -233,6 +234,25 @@ class TestTSQualityRules:
         _, _, quality, _ = _scan_ts(tmp_path, code)
         nesting = [f for f in quality if f["rule_id"] == "SKY-Q302"]
         assert len(nesting) > 0
+
+    def test_deep_nesting_does_not_exceed_python_recursion(self, tmp_path):
+        old_limit = sys.getrecursionlimit()
+        sys.setrecursionlimit(200)
+        depth = 250
+        lines = ["function deep(x: number) {"]
+        lines.extend(f"if (x > {i}) {{" for i in range(depth))
+        lines.append("return x;")
+        lines.extend("}" for _ in range(depth))
+        lines.append("}")
+
+        try:
+            _, _, quality, _ = _scan_ts(tmp_path, "\n".join(lines))
+        finally:
+            sys.setrecursionlimit(old_limit)
+
+        nesting = [f for f in quality if f["rule_id"] == "SKY-Q302"]
+        assert nesting
+        assert f"nesting depth {depth}" in nesting[0]["message"]
 
     def test_too_many_params(self, tmp_path):
         code = (
