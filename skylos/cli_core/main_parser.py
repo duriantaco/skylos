@@ -332,17 +332,17 @@ def parse_main_cli_args(
     *,
     addopts_loader: Callable[[], list[str]],
 ) -> argparse.Namespace:
-    effective_argv = list(argv)
-    addopts = addopts_loader()
-    if addopts:
-        effective_argv = addopts + effective_argv
+    user_argv = list(argv)
+    addopts = list(addopts_loader() or [])
+    if "--" in addopts:
+        addopts = addopts[: addopts.index("--")]
 
-    if "--" in effective_argv:
-        split = effective_argv.index("--")
-        main_argv = effective_argv[:split]
-        cmd_argv = effective_argv[split + 1 :]
+    if "--" in user_argv:
+        split = user_argv.index("--")
+        main_argv = addopts + user_argv[:split]
+        cmd_argv = user_argv[split + 1 :]
     else:
-        main_argv = effective_argv
+        main_argv = addopts + user_argv
         cmd_argv = []
 
     if cmd_argv:
