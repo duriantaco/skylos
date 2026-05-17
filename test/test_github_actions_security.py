@@ -247,6 +247,52 @@ runs:
     assert {"SKY-D296", "SKY-D307"}.issubset(_rule_ids(findings))
 
 
+def test_github_actions_scanner_rejects_recursive_yaml_alias(tmp_path):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    workflow = workflows / "ci.yml"
+    workflow.write_text(
+        """
+name: CI
+on: pull_request
+jobs:
+  test: &test
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
+    self: *test
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    assert scan_github_actions(tmp_path) == []
+
+
+def test_github_actions_scanner_handles_shared_yaml_alias_once(tmp_path):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    workflow = workflows / "ci.yml"
+    workflow.write_text(
+        """
+name: CI
+on: pull_request
+x-secret-step: &secret-step
+  run: echo "${{ secrets.PROD_TOKEN }}"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - *secret-step
+      - *secret-step
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    findings = scan_github_actions(tmp_path)
+
+    assert "SKY-D299" in _rule_ids(findings)
+
+
 def test_github_actions_scanner_detects_issue_derived_hardening_gaps(tmp_path):
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
