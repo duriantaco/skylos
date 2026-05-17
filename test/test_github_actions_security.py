@@ -16,6 +16,10 @@ def _publish_workflow():
     return yaml.safe_load(Path(".github/workflows/publish.yml").read_text())
 
 
+def _composite_action():
+    return yaml.safe_load(Path("action.yml").read_text())
+
+
 def _write_risky_workflow(path):
     path.write_text(
         """
@@ -309,6 +313,18 @@ def test_publish_workflow_validates_strict_semver_release_tags():
 
     assert "semver_re=" in resolve_step["run"]
     assert "(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)" in resolve_step["run"]
+
+
+def test_composite_action_validates_and_quotes_max_comments_input():
+    action = _composite_action()
+    steps = action["runs"]["steps"]
+    review_step = next(s for s in steps if s.get("name") == "Post PR Review Comments")
+    run = review_step["run"]
+
+    assert review_step["env"]["SKYLOS_MAX_COMMENTS"] == "${{ inputs.max-comments }}"
+    assert "${{ inputs.max-comments }}" not in run
+    assert '"$SKYLOS_MAX_COMMENTS"' in run
+    assert "=~ ^[0-9]+$" in run
 
 
 def test_analyzer_reports_github_actions_dangers_without_source_files(tmp_path):
