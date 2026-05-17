@@ -18,6 +18,14 @@ test("executable configuration is not workspace-scoped", () => {
   assert.equal(pathConfig.scope, "machine");
 });
 
+test("scan-on-open is opt-in and not workspace-scoped", () => {
+  const pkg = readPackageJson();
+  const scanOnOpenConfig = pkg.contributes.configuration.properties["skylos.scanOnOpen"];
+
+  assert.equal(scanOnOpenConfig.scope, "machine");
+  assert.equal(scanOnOpenConfig.default, false);
+});
+
 test("workspace trust limits automatic scan execution", () => {
   const pkg = readPackageJson();
   const trust = pkg.capabilities.untrustedWorkspaces;
@@ -33,7 +41,9 @@ test("runtime ignores workspace executable settings", () => {
   const source = readConfigSource();
 
   assert.match(source, /inspect<string>\("path"\)/);
+  assert.match(source, /inspect<boolean>\("scanOnOpen"\)/);
   assert.doesNotMatch(source, /get<string>\("path",\s*"skylos"\)/);
+  assert.doesNotMatch(source, /get<boolean>\("scanOnOpen",\s*true\)/);
   assert.match(source, /vscode\.workspace\.isTrusted/);
 });
 

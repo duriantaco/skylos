@@ -61,7 +61,7 @@ function isRunOnSave() {
     return (0, configCore_1.shouldRunWorkspaceAutomation)(vscode.workspace.isTrusted, cfg().get("runOnSave", true));
 }
 function isScanOnOpen() {
-    return (0, configCore_1.shouldRunWorkspaceAutomation)(vscode.workspace.isTrusted, cfg().get("scanOnOpen", true));
+    return (0, configCore_1.shouldRunWorkspaceAutomation)(vscode.workspace.isTrusted, (0, configCore_1.trustedConfigBoolean)(cfg().inspect("scanOnOpen"), false));
 }
 function isRealtimeAIEnabled() {
     return vscode.workspace.isTrusted && (0, configCore_1.trustedConfigBoolean)(cfg().inspect("enableRealtimeAI"), false);

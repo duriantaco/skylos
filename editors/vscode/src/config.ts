@@ -46,7 +46,7 @@ export function isRunOnSave(): boolean {
 export function isScanOnOpen(): boolean {
   return shouldRunWorkspaceAutomation(
     vscode.workspace.isTrusted,
-    cfg().get<boolean>("scanOnOpen", true),
+    trustedConfigBoolean(cfg().inspect<boolean>("scanOnOpen"), false),
   );
 }
 
