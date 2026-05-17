@@ -369,6 +369,41 @@ class TestSkylosApi(unittest.TestCase):
                 extract_snippet(str(link), 1, context=0, repo_root=str(repo))
             )
 
+    def test_secret_findings_do_not_upload_snippets(self):
+        raw_secret = 'token = "ghp_FULL_SECRET_TOKEN_ABCD"'
+        findings = api._normalize_result_sections(
+            {
+                "secrets": [
+                    {
+                        "file": "secret.py",
+                        "line": 1,
+                        "message": "masked preview ghp_...ABCD",
+                        "snippet": raw_secret,
+                    }
+                ]
+            },
+            api.UPLOAD_FINDING_SPECS,
+            None,
+            extract_metadata=True,
+        )
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["category"], "SECRET")
+        self.assertNotIn("snippet", findings[0])
+
+        sarif = api.SarifExporter(findings).generate()
+        region = sarif["runs"][0]["results"][0]["locations"][0][
+            "physicalLocation"
+        ]["region"]
+        self.assertNotIn("snippet", region)
+
+        compatibility_payload = api._build_compatibility_inline_payload(
+            findings,
+            {"secrets": []},
+            {"commit_hash": "c", "branch": "b", "actor": "a"},
+        )
+        self.assertNotIn("snippet", compatibility_payload["findings"][0])
+
     @patch("skylos.api.get_project_token")
     @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
     @patch("skylos.api.get_git_root", return_value=None)

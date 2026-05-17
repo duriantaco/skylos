@@ -198,7 +198,7 @@ def _compact_upload_finding(
     tool_rule_id = finding.get("tool_rule_id")
     if tool_rule_id:
         compact["tool_rule_id"] = str(tool_rule_id)[:100]
-    if include_snippet:
+    if include_snippet and compact["category"] != "SECRET":
         snippet = _truncate_upload_text(finding.get("snippet"), 240)
         if snippet:
             compact["snippet"] = snippet
