@@ -552,6 +552,28 @@ class TestPolicy:
             finally:
                 os.chdir(orig)
 
+    def test_load_policy_does_not_discover_repo_local_file_by_default(self):
+        pytest.importorskip("yaml")
+
+        with tempfile.TemporaryDirectory() as d:
+            import os
+
+            policy_path = Path(d) / "skylos-defend.yaml"
+            policy_path.write_text(
+                "rules:\n  no-dangerous-sink:\n    enabled: false\n",
+                encoding="utf-8",
+            )
+
+            orig = os.getcwd()
+            os.chdir(d)
+            try:
+                assert load_policy() is None
+                explicit = load_policy(policy_path)
+                assert explicit is not None
+                assert explicit.rules["no-dangerous-sink"]["enabled"] is False
+            finally:
+                os.chdir(orig)
+
 
 class TestOWASPCoverage:
     def test_coverage_all_passing(self):

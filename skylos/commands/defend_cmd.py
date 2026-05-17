@@ -169,7 +169,8 @@ def run_defend_command(
 
     policy = None
     try:
-        policy = load_policy(def_args.policy_file)
+        if def_args.policy_file:
+            policy = load_policy(def_args.policy_file)
     except (FileNotFoundError, ValueError, ImportError) as e:
         console.print(f"[bold red]Policy error: {e}[/bold red]")
         return 1
