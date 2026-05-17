@@ -106,6 +106,28 @@ def test_run_security_taskflow_builds_repo_context_and_entry_points(tmp_path):
     assert run.candidate_ledger == []
 
 
+def test_run_security_taskflow_tolerates_non_utf8_python_file(tmp_path):
+    malformed = tmp_path / "malformed.py"
+    malformed.write_bytes(b"def handler():\n    return b'\\xff' + \xff\n")
+
+    analyzer = _FakeAnalyzer(AnalysisResult(findings=[], files_analyzed=1))
+    run = run_security_taskflow(
+        path=tmp_path,
+        files=[malformed],
+        analyzer=analyzer,
+        model="gpt-4.1",
+        api_key="k",
+    )
+
+    malformed_key = str(malformed.resolve())
+    repo_node = next(item for item in run.repo_map if item.path == malformed_key)
+    assert analyzer.seen_files == [malformed]
+    assert repo_node.framework is None
+    assert repo_node.sources == ()
+    assert repo_node.sinks == ()
+    assert repo_node.guards == ()
+
+
 def test_run_security_taskflow_records_review_counts_and_filters_refuted_findings(
     tmp_path,
 ):
@@ -241,7 +263,7 @@ def test_run_security_taskflow_extracts_fastapi_facts_and_guards(tmp_path):
     )
 
     analyzer = _FakeAnalyzer(AnalysisResult(findings=[], files_analyzed=1))
-    run = run_security_taskflow(
+    run_security_taskflow(
         path=tmp_path,
         files=[app],
         analyzer=analyzer,
