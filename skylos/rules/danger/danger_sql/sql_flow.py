@@ -196,11 +196,11 @@ class _SQLFlowChecker(TaintVisitor):
         super().__init__(file_path, findings)
         self.passthrough_functions: set[str] = set()
         self.db_names: set[str] = set()
-        self.static_string_stack: list[set[str]] = [set()]
+        self.static_string_stack: list[dict[str, bool]] = [{}]
 
     def _push(self):
         super()._push()
-        self.static_string_stack.append(set())
+        self.static_string_stack.append({})
 
     def _pop(self):
         if len(self.static_string_stack) > 1:
@@ -209,14 +209,14 @@ class _SQLFlowChecker(TaintVisitor):
 
     def _set_static_string(self, name: str, is_static: bool) -> None:
         if not self.static_string_stack:
-            self.static_string_stack.append(set())
-        if is_static:
-            self.static_string_stack[-1].add(name)
-        else:
-            self.static_string_stack[-1].discard(name)
+            self.static_string_stack.append({})
+        self.static_string_stack[-1][name] = bool(is_static)
 
     def _is_static_string_name(self, name: str) -> bool:
-        return any(name in scope for scope in reversed(self.static_string_stack))
+        for scope in reversed(self.static_string_stack):
+            if name in scope:
+                return scope[name]
+        return False
 
     def _is_static_query_expr(self, node: ast.AST) -> bool:
         if _is_static_string_expr(node):
@@ -287,6 +287,18 @@ class _SQLFlowChecker(TaintVisitor):
                 self._is_static_query_expr(node.value),
             )
         super().visit_AnnAssign(node)
+
+    def visit_AugAssign(self, node):
+        if isinstance(node.target, ast.Name):
+            target_name = node.target.id
+            remains_static = (
+                isinstance(node.op, ast.Add)
+                and self._is_static_string_name(target_name)
+                and self._is_static_query_expr(node.value)
+            )
+            self._set_static_string(target_name, remains_static)
+            self._set(target_name, self._get(target_name) or self.is_tainted(node.value))
+        self.generic_visit(node)
 
     def visit_Call(self, node):
         qual_name = _qualified_name_from_call(node)
