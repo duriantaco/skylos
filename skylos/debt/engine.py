@@ -58,12 +58,15 @@ def _project_root(path: Path) -> Path:
 def _relative_path(file_path: str, project_root: Path) -> str:
     if not file_path:
         return ""
+    root = project_root.resolve()
+    candidate = Path(file_path)
+    if not candidate.is_absolute():
+        candidate = root / candidate
     try:
-        return str(Path(file_path).resolve().relative_to(project_root)).replace(
-            "\\", "/"
-        )
-    except Exception:
-        return str(file_path).replace("\\", "/")
+        resolved = candidate.resolve()
+        return str(resolved.relative_to(root)).replace("\\", "/")
+    except (OSError, ValueError):
+        return ""
 
 
 def _normalize_changed_files(
@@ -72,7 +75,9 @@ def _normalize_changed_files(
 ) -> set[str]:
     normalized: set[str] = set()
     for file_path in changed_files or []:
-        normalized.add(_relative_path(str(file_path), project_root))
+        rel = _relative_path(str(file_path), project_root)
+        if rel:
+            normalized.add(rel)
     return normalized
 
 
@@ -186,10 +191,12 @@ def collect_debt_signals(
 ) -> list[DebtSignal]:
     signals: list[DebtSignal] = []
     changed = _normalize_changed_files(changed_files, project_root)
-    changed_only = bool(changed)
+    changed_only = bool(changed_files)
 
     for finding in result.get("quality", []) or []:
         file_path = _relative_path(str(finding.get("file") or ""), project_root)
+        if not file_path:
+            continue
         if changed_only and file_path not in changed:
             continue
         signals.append(_build_quality_signal(finding, file_path=file_path))
@@ -197,6 +204,8 @@ def collect_debt_signals(
     for category, rule_id in _DEAD_CODE_RULE_IDS.items():
         for item in result.get(category, []) or []:
             file_path = _relative_path(str(item.get("file") or ""), project_root)
+            if not file_path:
+                continue
             if changed_only and file_path not in changed:
                 continue
             signals.append(

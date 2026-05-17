@@ -129,6 +129,42 @@ def test_collect_debt_signals_maps_dimensions_and_dead_code():
     assert ("SKY-U001", "dead_code") in dimensions
 
 
+def test_collect_debt_signals_skips_paths_outside_project_root(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("def outside():\n    return True\n", encoding="utf-8")
+    result = {
+        "analysis_summary": {"total_files": 1, "total_loc": 2},
+        "quality": [
+            {
+                "rule_id": "SKY-Q301",
+                "severity": "HIGH",
+                "file": str(outside),
+                "line": 1,
+                "name": "outside",
+                "message": "Outside-root finding",
+            }
+        ],
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+    }
+
+    assert collect_debt_signals(result, project_root=root) == []
+
+    link = root / "leak.py"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        return
+
+    result["quality"][0]["file"] = str(link)
+    assert collect_debt_signals(result, project_root=root) == []
+
+
 def test_god_file_signal_becomes_modularity_debt_hotspot():
     result = {
         "analysis_summary": {"total_files": 1, "total_loc": 700},
@@ -172,6 +208,19 @@ def test_collect_debt_signals_filters_to_changed_files():
     assert len(signals) == 1
     assert signals[0].file == "app/services.py"
     assert signals[0].dimension == "complexity"
+
+
+def test_collect_debt_signals_ignores_invalid_changed_files(tmp_path):
+    outside = tmp_path / "outside.py"
+    outside.write_text("def outside():\n    return True\n", encoding="utf-8")
+
+    signals = collect_debt_signals(
+        SAMPLE_RESULT,
+        project_root=cli.Path("/repo"),
+        changed_files=[outside],
+    )
+
+    assert signals == []
 
 
 def test_run_debt_analysis_builds_snapshot():
@@ -434,6 +483,64 @@ def test_user_prompt_includes_signals_architecture_and_excerpt(tmp_path):
     assert "Architecture context:" in prompt
     assert "- mean_distance=1.2" in prompt
     assert "[app/services.py:20]" in prompt
+
+
+def test_debt_advisor_skips_outside_root_signal_excerpts(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("OUTSIDE_DEBT_CANARY = True\n", encoding="utf-8")
+    signal = DebtSignal(
+        fingerprint="complexity:SKY-Q301:outside.py:1:outside",
+        dimension="complexity",
+        rule_id="SKY-Q301",
+        severity="HIGH",
+        file=str(outside),
+        line=1,
+        subject="outside",
+        message="Outside-root debt signal",
+        points=14.0,
+    )
+    hotspot = DebtHotspot(
+        fingerprint="hotspot:outside.py",
+        file=str(outside),
+        score=14.0,
+        signal_count=1,
+        dimension_count=1,
+        primary_dimension="complexity",
+        signals=[signal],
+    )
+    advisor = _stub_debt_advisor(
+        json.dumps(
+            {
+                "summary": "Summary.",
+                "root_cause": "Root cause.",
+                "refactor_steps": [],
+                "remediation_notes": [],
+                "confidence": "medium",
+            }
+        )
+    )
+
+    advisory = advisor.summarize_hotspot(hotspot, project_root=root)
+    user_prompt = advisor.adapter.complete.call_args.args[1]
+
+    assert advisory is not None
+    assert "OUTSIDE_DEBT_CANARY" not in user_prompt
+    assert "No code excerpts available." in user_prompt
+
+    link = root / "leak.py"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        return
+
+    signal.file = "leak.py"
+    hotspot.file = "leak.py"
+    advisor.summarize_hotspot(hotspot, project_root=root)
+    user_prompt = advisor.adapter.complete.call_args.args[1]
+    assert "OUTSIDE_DEBT_CANARY" not in user_prompt
+    assert "No code excerpts available." in user_prompt
 
 
 def _stub_debt_advisor(payload: str, *, model: str = "gpt-4.1") -> DebtAdvisor:
