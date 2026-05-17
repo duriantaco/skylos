@@ -14,9 +14,14 @@ on:
       - "skylos/**"
       - "test/test_fast_parity.py"
 
+permissions:
+  contents: read
+
 jobs:
   parity:
     runs-on: ubuntu-latest
+    env:
+      SK_PARITY_VENV: ${{ runner.temp }}/skylos-parity-venv
     steps:
       - uses: actions/checkout@v4
 
@@ -39,17 +44,16 @@ jobs:
 
       - name: Install skylos
         run: |
-          python -m venv .venv
-          . .venv/bin/activate
-          pip install -e ".[test]"
+          rm -rf "${SK_PARITY_VENV}"
+          python -m venv "${SK_PARITY_VENV}"
+          "${SK_PARITY_VENV}/bin/python" -m pip install -e ".[test]"
 
       - name: Install maturin and build skylos-fast
         run: |
-          . .venv/bin/activate
-          pip install maturin
-          cd rust && maturin develop --release
+          "${SK_PARITY_VENV}/bin/python" -m pip install maturin
+          cd rust
+          VIRTUAL_ENV="${SK_PARITY_VENV}" "${SK_PARITY_VENV}/bin/python" -m maturin develop --release
 
       - name: Run parity tests
         run: |
-          . .venv/bin/activate
-          pytest test/test_fast_parity.py -v --tb=short
+          "${SK_PARITY_VENV}/bin/python" -m pytest test/test_fast_parity.py -v --tb=short
