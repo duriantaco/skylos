@@ -1,5 +1,34 @@
 ## Changelog
 
+## [4.15.2](https://github.com/duriantaco/skylos/compare/v4.15.1...v4.15.2) (2026-05-17)
+
+
+### Bug Fixes
+
+* **actions:** bound yaml graph traversal ([#406](https://github.com/duriantaco/skylos/issues/406)) ([749f060](https://github.com/duriantaco/skylos/commit/749f060194e3ddeb6404c9326fe7da3fac79e970))
+* **action:** validate max comments input ([#403](https://github.com/duriantaco/skylos/issues/403)) ([52c8524](https://github.com/duriantaco/skylos/commit/52c8524fd098a386d19ce2205a8ba25eee239d4a))
+* **api:** redact secret upload snippets ([#387](https://github.com/duriantaco/skylos/issues/387)) ([d03562c](https://github.com/duriantaco/skylos/commit/d03562c9193916d68851464bd8b8f6762c6ebd50))
+* **api:** validate artifact upload destinations ([#385](https://github.com/duriantaco/skylos/issues/385)) ([fca964b](https://github.com/duriantaco/skylos/commit/fca964be5d7529fbcf59a225f2f6acb633a4fe65))
+* **cicd:** validate workflow scan path ([#407](https://github.com/duriantaco/skylos/issues/407)) ([f31e1bf](https://github.com/duriantaco/skylos/commit/f31e1bffee3555685cbaf1aa0af6a596858d6f4f))
+* **ci:** pin codecov action ([#404](https://github.com/duriantaco/skylos/issues/404)) ([4c933ec](https://github.com/duriantaco/skylos/commit/4c933ec89f5290bafd47e81d95491f83cedc8db8))
+* **cli:** sanitize pyproject addopts ([#394](https://github.com/duriantaco/skylos/issues/394)) ([e849a19](https://github.com/duriantaco/skylos/commit/e849a19a9630b14bf9a3e31a77de1e47767f88d9))
+* **debt:** contain advisor excerpts to project root ([#390](https://github.com/duriantaco/skylos/issues/390)) ([bbb4ec9](https://github.com/duriantaco/skylos/commit/bbb4ec90e6e33d8807c0f1012aac87e7564f2f25))
+* **defend:** require explicit policy files ([#389](https://github.com/duriantaco/skylos/issues/389)) ([b566e21](https://github.com/duriantaco/skylos/commit/b566e21dacf93ea08825084037c897f348bc58c7))
+* **go:** detect variable shell exec flags ([#401](https://github.com/duriantaco/skylos/issues/401)) ([3326276](https://github.com/duriantaco/skylos/commit/332627645d9cbdc14193dce44672cdf918cb3d8e))
+* **java:** bound flow constant folding ([#399](https://github.com/duriantaco/skylos/issues/399)) ([c18cc29](https://github.com/duriantaco/skylos/commit/c18cc2927aee68e52d3d2db6457ba9a138e063ab))
+* **llm:** require explicit prompt templates ([#409](https://github.com/duriantaco/skylos/issues/409)) ([f55ba96](https://github.com/duriantaco/skylos/commit/f55ba962be88977ab5b3f9f95eba7055e2d31ce1))
+* **llm:** require trust for repo prompt templates ([#408](https://github.com/duriantaco/skylos/issues/408)) ([1847471](https://github.com/duriantaco/skylos/commit/18474716b831c0b19ae30b249a542745e87b3236))
+* **login:** require callback state ([#386](https://github.com/duriantaco/skylos/issues/386)) ([4d80996](https://github.com/duriantaco/skylos/commit/4d80996192fd3d28773999ac0bc3bda45039e1f6))
+* **precommit:** avoid module shadowing ([#388](https://github.com/duriantaco/skylos/issues/388)) ([de6b137](https://github.com/duriantaco/skylos/commit/de6b137ba98dfcf9b320b77e5e09aa4a6637a4b1))
+* **quality:** redact duplicate secret literals ([#402](https://github.com/duriantaco/skylos/issues/402)) ([9dd309f](https://github.com/duriantaco/skylos/commit/9dd309fdb9b282ac1b5bea5b5e1f8ca6bd01479c))
+* **typescript:** avoid recursive nesting scan ([#405](https://github.com/duriantaco/skylos/issues/405)) ([d57c965](https://github.com/duriantaco/skylos/commit/d57c96589e8f71704871e49bf3a843cc14919bd4))
+* **vscode:** gate dead-code preview by workspace trust ([#397](https://github.com/duriantaco/skylos/issues/397)) ([a091330](https://github.com/duriantaco/skylos/commit/a0913300628607ccf86a365e4f85d5ec2d2ef071))
+* **vscode:** harden hover markdown ([#383](https://github.com/duriantaco/skylos/issues/383)) ([f7a593c](https://github.com/duriantaco/skylos/commit/f7a593cc7774e946398565c6681b00b928e28dd8))
+* **vscode:** make scan-on-open trusted opt-in ([#398](https://github.com/duriantaco/skylos/issues/398)) ([c32eaef](https://github.com/duriantaco/skylos/commit/c32eaefca92cc198a9f6a95b2872e89ce2dbeb67))
+* **vscode:** trust AI endpoint configuration ([#396](https://github.com/duriantaco/skylos/issues/396)) ([d16ae15](https://github.com/duriantaco/skylos/commit/d16ae157c396c786d22524544b660c90556cc6b6))
+* **vscode:** trust executable configuration ([#395](https://github.com/duriantaco/skylos/issues/395)) ([d403a95](https://github.com/duriantaco/skylos/commit/d403a95d5191b399aeafaf23a00576c4059d1bc9))
+* **webhook:** bound verification pattern scans ([#400](https://github.com/duriantaco/skylos/issues/400)) ([6783103](https://github.com/duriantaco/skylos/commit/6783103fed271377c93e4f6d1de46a125ba0778d))
+
 ## [4.15.1](https://github.com/duriantaco/skylos/compare/v4.15.0...v4.15.1) (2026-05-16)
 
 
