@@ -476,6 +476,26 @@ class TestOrchestration:
         assert summary["applied"] == 0
         assert summary["skipped"] == 1
 
+    def test_run_skips_symlinked_python_file_outside_root_before_llm(self, tmp_path):
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir()
+        target = outside / "secret.py"
+        target.write_text("TOKEN = 'external-secret'\n", encoding="utf-8")
+        link = tmp_path / "leak.py"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            pytest.skip("filesystem does not allow symlink creation")
+
+        orch = self._make_orchestrator()
+        orch._adapter = MagicMock()
+
+        summary = orch.run(str(tmp_path), dry_run=True, quiet=True)
+
+        assert summary["total_items"] == 0
+        assert summary["total_analyzed_files"] == 0
+        orch._adapter.complete.assert_not_called()
+
     def test_max_fixes_cap(self, tmp_path):
         f = tmp_path / "test.py"
         f.write_text("a = 1\nb = 2\nc = 3\n")
