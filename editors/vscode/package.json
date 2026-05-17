@@ -39,14 +39,24 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Skylos disables automatic workspace scan execution in untrusted workspaces and ignores workspace-controlled executable configuration.",
+      "description": "Skylos disables automatic execution in untrusted workspaces and ignores workspace-controlled executable and AI endpoint configuration.",
       "restrictedConfigurations": [
         "skylos.path",
         "skylos.runOnSave",
         "skylos.scanOnOpen",
         "skylos.commandCenterRefreshOnOpen",
         "skylos.commandCenterRefreshOnSave",
-        "skylos.postFixCommand"
+        "skylos.postFixCommand",
+        "skylos.aiProvider",
+        "skylos.enableRealtimeAI",
+        "skylos.openaiBaseUrl",
+        "skylos.openaiApiKey",
+        "skylos.openaiModel",
+        "skylos.localBaseUrl",
+        "skylos.localModel",
+        "skylos.anthropicApiKey",
+        "skylos.anthropicModel",
+        "skylos.streamingInline"
       ]
     }
   },
@@ -378,6 +388,7 @@
           "type": "string",
           "enum": ["openai", "anthropic", "local"],
           "default": "openai",
+          "scope": "machine",
           "enumDescriptions": [
             "OpenAI (cloud)",
             "Anthropic (cloud)",
@@ -388,46 +399,55 @@
         "skylos.enableRealtimeAI": {
           "type": "boolean",
           "default": false,
+          "scope": "machine",
           "description": "Run AI Assist automatically as you edit. Static scans, Review Queue, and engine-backed findings work with this off."
         },
         "skylos.openaiBaseUrl": {
           "type": "string",
           "default": "https://api.openai.com",
+          "scope": "machine",
           "description": "Base URL for OpenAI API (only used when aiProvider is 'openai')"
         },
         "skylos.openaiApiKey": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "OpenAI API key"
         },
         "skylos.openaiModel": {
           "type": "string",
           "default": "gpt-4o",
+          "scope": "machine",
           "description": "OpenAI model to use"
         },
         "skylos.localBaseUrl": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "URL of your local AI server (e.g. http://localhost:11434 for Ollama, http://localhost:1234 for LM Studio)"
         },
         "skylos.localModel": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Model name on your local server (e.g. llama3.1, deepseek-coder, kimi)"
         },
         "skylos.anthropicApiKey": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Anthropic API key for AI features"
         },
         "skylos.anthropicModel": {
           "type": "string",
           "default": "claude-sonnet-4-20250514",
+          "scope": "machine",
           "description": "Anthropic model to use"
         },
         "skylos.streamingInline": {
           "type": "boolean",
           "default": false,
+          "scope": "machine",
           "description": "Show streaming inline ghost text when optional real-time AI Assist is enabled"
         },
         "skylos.enableDeadCode": {

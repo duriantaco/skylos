@@ -64,7 +64,7 @@ function isScanOnOpen() {
     return (0, configCore_1.shouldRunWorkspaceAutomation)(vscode.workspace.isTrusted, cfg().get("scanOnOpen", true));
 }
 function isRealtimeAIEnabled() {
-    return cfg().get("enableRealtimeAI", false);
+    return vscode.workspace.isTrusted && (0, configCore_1.trustedConfigBoolean)(cfg().inspect("enableRealtimeAI"), false);
 }
 function getIdleMs() {
     return cfg().get("idleMs", 1000);
@@ -112,40 +112,44 @@ function getCommandCenterStateFile() {
     return cfg().get("commandCenterStateFile", "").trim();
 }
 function getAIProvider() {
-    return cfg().get("aiProvider", "openai");
+    return (0, configCore_1.trustedAIProvider)(cfg().inspect("aiProvider"));
 }
 function getOpenAIBaseUrl() {
     const provider = getAIProvider();
     if (provider === "local") {
         return getLocalBaseUrl();
     }
-    return cfg().get("openaiBaseUrl", "https://api.openai.com").replace(/\/+$/, "");
+    return (0, configCore_1.trustedOpenAIBaseUrl)(cfg().inspect("openaiBaseUrl"));
 }
 function getLocalBaseUrl() {
-    return (cfg().get("localBaseUrl", "") || "").replace(/\/+$/, "");
+    return (0, configCore_1.trustedLocalBaseUrl)(cfg().inspect("localBaseUrl"));
 }
 function isLocalProvider() {
     return getAIProvider() === "local";
 }
 function getAIApiKey() {
     const provider = getAIProvider();
-    if (provider === "anthropic")
-        return cfg().get("anthropicApiKey") || undefined;
+    if (provider === "anthropic") {
+        return (0, configCore_1.trustedConfigString)(cfg().inspect("anthropicApiKey")) || undefined;
+    }
     if (provider === "local") {
-        const baseUrl = cfg().get("localBaseUrl", "");
+        const baseUrl = getLocalBaseUrl();
         if (!baseUrl)
             return undefined;
-        return cfg().get("openaiApiKey") || "local";
+        return "local";
     }
-    return cfg().get("openaiApiKey") || undefined;
+    return (0, configCore_1.trustedConfigString)(cfg().inspect("openaiApiKey")) || undefined;
 }
 function getAIModel() {
     const provider = getAIProvider();
-    if (provider === "anthropic")
-        return cfg().get("anthropicModel", "claude-sonnet-4-20250514");
-    if (provider === "local")
-        return cfg().get("localModel", "") || cfg().get("openaiModel", "gpt-4o");
-    return cfg().get("openaiModel", "gpt-4o");
+    if (provider === "anthropic") {
+        return (0, configCore_1.trustedConfigString)(cfg().inspect("anthropicModel"), "claude-sonnet-4-20250514");
+    }
+    if (provider === "local") {
+        return ((0, configCore_1.trustedConfigString)(cfg().inspect("localModel"))
+            || (0, configCore_1.trustedConfigString)(cfg().inspect("openaiModel"), "gpt-4o"));
+    }
+    return (0, configCore_1.trustedConfigString)(cfg().inspect("openaiModel"), "gpt-4o");
 }
 function isLanguageSupported(langId) {
     return types_1.SUPPORTED_LANGUAGES.includes(langId);
