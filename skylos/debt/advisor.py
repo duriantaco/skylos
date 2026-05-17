@@ -79,6 +79,24 @@ def _safe_excerpt(path: Path, line: int, radius: int = 3, max_chars: int = 1200)
     return excerpt
 
 
+def _resolve_signal_path(project_root: Path, signal_file: str) -> Path | None:
+    if not signal_file:
+        return None
+
+    root = project_root.resolve()
+    candidate = Path(signal_file)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return None
+
+    return resolved
+
+
 def _signal_prompt_lines(hotspot: DebtHotspot) -> list[str]:
     lines = []
     for signal in hotspot.signals[:5]:
@@ -92,7 +110,9 @@ def _signal_prompt_lines(hotspot: DebtHotspot) -> list[str]:
 def _excerpt_sections(hotspot: DebtHotspot, *, project_root: Path) -> list[str]:
     sections = []
     for signal in hotspot.signals[:3]:
-        file_path = project_root / signal.file
+        file_path = _resolve_signal_path(project_root, signal.file)
+        if file_path is None:
+            continue
         excerpt = _safe_excerpt(file_path, signal.line)
         if excerpt:
             sections.append(f"[{signal.file}:{signal.line}]\n{excerpt}")
