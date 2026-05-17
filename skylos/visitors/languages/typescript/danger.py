@@ -212,6 +212,11 @@ _WEBHOOK_BODY_HINTS = (
     "raw_body",
 )
 
+_WEBHOOK_VERIFY_WINDOW_CHARS = 4096
+_WEBHOOK_VERIFY_MAX_CANDIDATES = 64
+_WEBHOOK_CONSTRUCTOR_PATTERN = re.compile(r"\bnew\s+Webhook\s*\(")
+_WEBHOOK_INSTANCE_VERIFY_PATTERN = re.compile(r"\.verify\s*\(")
+
 _WEBHOOK_VERIFY_PATTERNS = (
     re.compile(r"\bconstructEvent\s*\("),
     re.compile(r"\bconstruct_event\s*\(", re.I),
@@ -226,7 +231,6 @@ _WEBHOOK_VERIFY_PATTERNS = (
     re.compile(r"\bcrypto\.timingSafeEqual\s*\("),
     re.compile(r"\btimingSafeEqual\s*\("),
     re.compile(r"\bcreateHmac\s*\("),
-    re.compile(r"\bnew\s+Webhook\s*\([^)]*\).*?\.verify\s*\(", re.S),
     re.compile(r"\bWebhook\.verify\s*\("),
 )
 
@@ -932,8 +936,22 @@ def _has_webhook_body_use(source_text: str) -> bool:
     return any(hint in lower for hint in _WEBHOOK_BODY_HINTS)
 
 
+def _has_webhook_instance_verification(source_text: str) -> bool:
+    for index, match in enumerate(_WEBHOOK_CONSTRUCTOR_PATTERN.finditer(source_text)):
+        if index >= _WEBHOOK_VERIFY_MAX_CANDIDATES:
+            return False
+        window = source_text[
+            match.end() : match.end() + _WEBHOOK_VERIFY_WINDOW_CHARS
+        ]
+        if _WEBHOOK_INSTANCE_VERIFY_PATTERN.search(window):
+            return True
+    return False
+
+
 def _has_webhook_signature_verification(source_text: str) -> bool:
-    return any(pattern.search(source_text) for pattern in _WEBHOOK_VERIFY_PATTERNS)
+    return any(
+        pattern.search(source_text) for pattern in _WEBHOOK_VERIFY_PATTERNS
+    ) or _has_webhook_instance_verification(source_text)
 
 
 def _has_inbound_webhook_post(source_text: str) -> bool:

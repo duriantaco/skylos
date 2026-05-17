@@ -36,6 +36,11 @@ _REQUEST_BODY_HINTS = (
     "json.loads(request.body",
 )
 
+_WEBHOOK_VERIFY_WINDOW_CHARS = 4096
+_WEBHOOK_VERIFY_MAX_CANDIDATES = 64
+_WEBHOOK_CONSTRUCTOR_PATTERN = re.compile(r"\bWebhook\s*\(", re.I)
+_WEBHOOK_INSTANCE_VERIFY_PATTERN = re.compile(r"\.verify\s*\(", re.I)
+
 _VERIFY_PATTERNS = (
     re.compile(r"\bconstruct_event\s*\(", re.I),
     re.compile(r"\bconstructevent\s*\(", re.I),
@@ -49,7 +54,6 @@ _VERIFY_PATTERNS = (
     re.compile(r"\bvalidatewebhook\s*\(", re.I),
     re.compile(r"\bhmac\.compare_digest\s*\(", re.I),
     re.compile(r"\bhmac\.new\s*\(", re.I),
-    re.compile(r"\bWebhook\s*\([^)]*\).*?\.verify\s*\(", re.I | re.S),
     re.compile(r"\bWebhook\.verify\s*\(", re.I),
 )
 
@@ -138,8 +142,20 @@ def _uses_request_body(text: str) -> bool:
     return any(hint in lower for hint in _REQUEST_BODY_HINTS)
 
 
+def _has_webhook_instance_verification(text: str) -> bool:
+    for index, match in enumerate(_WEBHOOK_CONSTRUCTOR_PATTERN.finditer(text)):
+        if index >= _WEBHOOK_VERIFY_MAX_CANDIDATES:
+            return False
+        window = text[match.end() : match.end() + _WEBHOOK_VERIFY_WINDOW_CHARS]
+        if _WEBHOOK_INSTANCE_VERIFY_PATTERN.search(window):
+            return True
+    return False
+
+
 def _has_signature_verification(text: str) -> bool:
-    return any(pattern.search(text) for pattern in _VERIFY_PATTERNS)
+    return any(pattern.search(text) for pattern in _VERIFY_PATTERNS) or (
+        _has_webhook_instance_verification(text)
+    )
 
 
 class _WebhookSignatureChecker(ast.NodeVisitor):
