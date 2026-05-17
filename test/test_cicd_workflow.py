@@ -62,8 +62,20 @@ def test_workflow_omits_baseline_when_disabled():
 
 def test_workflow_pull_request_analysis_is_diff_aware():
     content = generate_workflow()
-    assert "--diff-base origin/${{ github.base_ref || 'main' }}" in content
-    assert "--diff origin/${{ github.base_ref || 'main' }}" in content
+    assert 'pr_base_ref="origin/${GITHUB_BASE_REF:-main}"' in content
+    assert '--diff-base "$pr_base_ref"' in content
+    assert '--diff "$pr_base_ref"' in content
+    assert "github.base_ref" not in content
+
+
+def test_workflow_quotes_base_ref_in_pr_review_step():
+    content = generate_workflow()
+    parsed = yaml.safe_load(content)
+    steps = parsed["jobs"]["skylos"]["steps"]
+    pr_review = next(s for s in steps if s.get("name") == "PR Review Comments")
+    assert 'pr_base_ref="origin/${GITHUB_BASE_REF:-main}"' in pr_review["run"]
+    assert '--diff-base "$pr_base_ref"' in pr_review["run"]
+    assert "github.base_ref" not in pr_review["run"]
 
 
 def test_workflow_no_llm_by_default():
