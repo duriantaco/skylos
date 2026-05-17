@@ -6,6 +6,125 @@ import shlex
 import subprocess
 from pathlib import Path
 
+_SAFE_ADDOPTS_FLAGS = frozenset(
+    {
+        "--json",
+        "--github",
+        "--summary",
+        "--tree",
+        "--verbose",
+        "-v",
+        "--strict",
+        "--no-default-excludes",
+        "--secrets",
+        "--danger",
+        "--quality",
+        "--sca",
+        "--all",
+        "-a",
+        "--no-grep-verify",
+        "--baseline",
+        "--provenance",
+        "--no-provenance",
+    }
+)
+
+_SAFE_ADDOPTS_VALUE_OPTIONS = frozenset(
+    {
+        "--format",
+        "--confidence",
+        "-c",
+        "--exclude-folder",
+        "--include-folder",
+        "--diff-base",
+        "--diff",
+        "--severity",
+        "--category",
+        "--file-filter",
+        "--limit",
+        "--provenance-base",
+    }
+)
+
+_SAFE_ADDOPTS_CHOICES = {
+    "--format": {"rich", "json", "llm", "github", "concise"},
+    "--severity": {"critical", "high", "medium", "low"},
+}
+
+
+def _coerce_addopts(addopts) -> list[str]:
+    if isinstance(addopts, str):
+        return shlex.split(addopts)
+    if isinstance(addopts, list):
+        return [str(item) for item in addopts]
+    return []
+
+
+def _is_safe_addopt_value(option: str, value: str) -> bool:
+    if value == "--":
+        return False
+
+    choices = _SAFE_ADDOPTS_CHOICES.get(option)
+    if choices is not None and value not in choices:
+        return False
+
+    if option in {"--confidence", "-c"}:
+        try:
+            confidence = int(value)
+        except ValueError:
+            return False
+        return 0 <= confidence <= 100
+
+    if option == "--limit":
+        try:
+            limit = int(value)
+        except ValueError:
+            return False
+        return limit >= 0
+
+    return True
+
+
+def sanitize_addopts(addopts) -> list[str]:
+    """Return pyproject addopts that cannot select paths or execution sinks."""
+
+    tokens = _coerce_addopts(addopts)
+    sanitized: list[str] = []
+    index = 0
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            break
+
+        if token in _SAFE_ADDOPTS_FLAGS:
+            sanitized.append(token)
+            index += 1
+            continue
+
+        if token in _SAFE_ADDOPTS_VALUE_OPTIONS:
+            if index + 1 >= len(tokens):
+                index += 1
+                continue
+            value = tokens[index + 1]
+            if _is_safe_addopt_value(token, value):
+                sanitized.extend([token, value])
+            index += 2
+            continue
+
+        if token.startswith("--") and "=" in token:
+            option, value = token.split("=", 1)
+            if option in _SAFE_ADDOPTS_VALUE_OPTIONS and _is_safe_addopt_value(
+                option, value
+            ):
+                sanitized.append(token)
+            index += 1
+            continue
+
+        index += 1
+
+    return sanitized
+
 
 def get_git_changed_files(
     root_path,
@@ -129,10 +248,7 @@ def load_addopts(start_path: Path | None = None):
                 with open(toml_path, "rb") as f:
                     data = tomllib.load(f)
                 addopts = data.get("tool", {}).get("skylos", {}).get("addopts", [])
-                if isinstance(addopts, str):
-                    return shlex.split(addopts)
-                if isinstance(addopts, list):
-                    return list(addopts)
+                return sanitize_addopts(addopts)
             except Exception:
                 pass
             break

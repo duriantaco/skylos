@@ -1383,6 +1383,57 @@ def test_main_command_exec_success_exits_zero(monkeypatch):
     assert len(echo_calls) == 1
 
 
+def test_main_ignores_pyproject_addopts_deployment_command(tmp_path, monkeypatch):
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[tool.skylos]
+addopts = [".", "--", "sh", "-c", "touch SHOULD_NOT_RUN"]
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", "."])
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.render_results"),
+        patch("skylos.cli.print_badge"),
+        patch(
+            "skylos.cli.upload_report",
+            return_value={"success": False, "error": "No token found"},
+        ),
+        patch("skylos.cli.subprocess.Popen") as popen,
+        patch("skylos.api.get_project_token", return_value=None),
+    ):
+        cli.main()
+
+    dangerous_calls = [
+        call
+        for call in popen.call_args_list
+        if call.args and call.args[0] == ["sh", "-c", "touch SHOULD_NOT_RUN"]
+    ]
+    assert dangerous_calls == []
+
+
 def test_main_command_exec_failure_exits_with_code(monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1},
