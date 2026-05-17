@@ -1,12 +1,13 @@
 import * as vscode from "vscode";
 import { SUPPORTED_LANGUAGES, type AIProvider } from "./types";
+import { resolveTrustedExecutablePath, shouldRunWorkspaceAutomation } from "./configCore";
 
 function cfg(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration("skylos");
 }
 
 export function getSkylosBin(): string {
-  return cfg().get<string>("path", "skylos");
+  return resolveTrustedExecutablePath(cfg().inspect<string>("path"), "skylos");
 }
 
 export function getConfidenceThreshold(): number {
@@ -28,11 +29,17 @@ export function isFeatureEnabled(feature: "secrets" | "danger" | "quality"): boo
 }
 
 export function isRunOnSave(): boolean {
-  return cfg().get<boolean>("runOnSave", true);
+  return shouldRunWorkspaceAutomation(
+    vscode.workspace.isTrusted,
+    cfg().get<boolean>("runOnSave", true),
+  );
 }
 
 export function isScanOnOpen(): boolean {
-  return cfg().get<boolean>("scanOnOpen", true);
+  return shouldRunWorkspaceAutomation(
+    vscode.workspace.isTrusted,
+    cfg().get<boolean>("scanOnOpen", true),
+  );
 }
 
 export function isRealtimeAIEnabled(): boolean {
@@ -88,11 +95,17 @@ export function getCommandCenterLimit(): number {
 }
 
 export function isCommandCenterRefreshOnOpen(): boolean {
-  return cfg().get<boolean>("commandCenterRefreshOnOpen", false);
+  return shouldRunWorkspaceAutomation(
+    vscode.workspace.isTrusted,
+    cfg().get<boolean>("commandCenterRefreshOnOpen", false),
+  );
 }
 
 export function isCommandCenterRefreshOnSave(): boolean {
-  return cfg().get<boolean>("commandCenterRefreshOnSave", false);
+  return shouldRunWorkspaceAutomation(
+    vscode.workspace.isTrusted,
+    cfg().get<boolean>("commandCenterRefreshOnSave", false),
+  );
 }
 
 export function getCommandCenterStateFile(): string {

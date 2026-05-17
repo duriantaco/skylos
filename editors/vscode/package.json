@@ -36,6 +36,20 @@
     "onCommand:skylos.doctor"
   ],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Skylos disables automatic workspace scan execution in untrusted workspaces and ignores workspace-controlled executable configuration.",
+      "restrictedConfigurations": [
+        "skylos.path",
+        "skylos.runOnSave",
+        "skylos.scanOnOpen",
+        "skylos.commandCenterRefreshOnOpen",
+        "skylos.commandCenterRefreshOnSave",
+        "skylos.postFixCommand"
+      ]
+    }
+  },
   "contributes": {
     "commands": [
       { "command": "skylos.scan", "title": "Skylos: Scan Workspace", "icon": "$(refresh)" },
@@ -208,6 +222,7 @@
         "skylos.path": {
           "type": "string",
           "default": "skylos",
+          "scope": "machine",
           "description": "Path to the skylos executable"
         },
         "skylos.confidence": {
@@ -445,6 +460,7 @@
         "skylos.postFixCommand": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Shell command to run after applying an AI Assist fix (e.g. 'npm test', 'pytest -x'). Leave empty to skip."
         }
       }
