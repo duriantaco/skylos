@@ -46,6 +46,7 @@ class AuditStore:
         self.files_dir = self.project_dir / "files"
         self.runs_dir = self.project_dir / "runs"
         self.exports_dir = self.project_dir / "exports"
+        self.current_scan_files: set[str] | None = None
 
     def init_project(self, *, config_hash: str) -> None:
         self.files_dir.mkdir(parents=True, exist_ok=True)
@@ -127,6 +128,26 @@ class AuditStore:
             if record is not None:
                 records.append(record)
         return records
+
+    def set_current_scan_files(self, files: list[str | Path]) -> None:
+        current: set[str] = set()
+        for file_path in files:
+            try:
+                current.add(normalize_relative_path(self.project_root, file_path))
+            except ValueError:
+                continue
+        self.current_scan_files = current
+
+    def processing_scope(
+        self,
+        allowed_files: list[str | Path] | set[str] | None = None,
+    ) -> set[str] | None:
+        requested = self._normalized_allowed_files(allowed_files)
+        if self.current_scan_files is None:
+            return requested if requested is not None else set()
+        if requested is None:
+            return set(self.current_scan_files)
+        return requested & self.current_scan_files
 
     def write_file_record(self, record: AuditFileRecord) -> None:
         if record.project_id != self.project_id:

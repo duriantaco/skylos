@@ -38,7 +38,7 @@ def process_deep_audit_records(
     run_id: str | None = None,
 ) -> AuditProcessSummary:
     run_id = run_id or f"process-{uuid4().hex[:12]}"
-    allowed = _normalized_allowed_files(store, allowed_files)
+    allowed = store.processing_scope(allowed_files)
     records = [
         record
         for record in store.iter_file_records()
@@ -144,7 +144,7 @@ def process_deep_audit_records(
         store,
         model=model,
         provider=provider,
-        allowed_files=allowed_files,
+        allowed_files=allowed,
     )
     remaining = state_counts["unresolved"]
     summary = AuditProcessSummary(
@@ -190,8 +190,10 @@ def _record_sort_key(record: AuditFileRecord) -> tuple[int, str]:
 
 def _normalized_allowed_files(
     store: AuditStore,
-    allowed_files: list[str | Path] | None,
+    allowed_files: list[str | Path] | set[str] | None,
 ) -> set[str] | None:
+    if isinstance(allowed_files, set):
+        return set(allowed_files)
     if allowed_files is None:
         return None
     allowed: set[str] = set()
@@ -443,7 +445,7 @@ def _audit_state_counts(
     *,
     model: str,
     provider: str | None,
-    allowed_files: list[str | Path] | None = None,
+    allowed_files: list[str | Path] | set[str] | None = None,
 ) -> dict[str, int]:
     allowed = _normalized_allowed_files(store, allowed_files)
     counts = {

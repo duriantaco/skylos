@@ -98,6 +98,7 @@ def _write_record(
     if status:
         record.status = status
         store.write_file_record(record)
+    store.set_current_scan_files([*(store.current_scan_files or ()), file_path])
     return record
 
 
@@ -176,6 +177,62 @@ def test_process_deep_audit_records_respects_allowed_file_scope(tmp_path: Path):
     assert summary.processed_files == 1
     assert summary.complete is True
     assert store.read_file_record(old).status == "pending"
+
+
+def test_process_deep_audit_records_defaults_to_current_scan_scope(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    hidden = repo / ".git" / "config"
+    hidden.parent.mkdir()
+    hidden.write_text(
+        "[remote]\n  url = https://token@example.invalid/repo\n",
+        encoding="utf-8",
+    )
+    app = repo / "app.py"
+    app.write_text("print('ok')\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, hidden, candidates=[_candidate("poison", priority=900)])
+    store.set_current_scan_files([app])
+
+    analyzer = FakeAnalyzer()
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-current-scope",
+    )
+
+    assert analyzer.calls == []
+    assert summary.considered_files == 0
+    assert summary.processed_files == 0
+    assert summary.complete is True
+    assert store.read_file_record(hidden).status == "pending"
+
+
+def test_process_deep_audit_records_without_scope_fails_closed(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text("eval(user_input)\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app, candidates=[_candidate("candidate", priority=900)])
+    store.current_scan_files = None
+
+    analyzer = FakeAnalyzer()
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-no-scope",
+    )
+
+    assert analyzer.calls == []
+    assert summary.considered_files == 0
+    assert summary.processed_files == 0
+    assert summary.complete is True
+    assert store.read_file_record(app).status == "pending"
 
 
 def test_process_deep_audit_records_skips_secret_candidates(tmp_path: Path):
