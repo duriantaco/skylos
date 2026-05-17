@@ -858,7 +858,10 @@ class SkylosLLM:
 
 
 def analyze(path, model="gpt-4.1", issue_types=None, **kwargs):
-    if "prompt_templates" not in kwargs:
+    trust_project_prompt_templates = bool(
+        kwargs.pop("trust_project_prompt_templates", False)
+    )
+    if trust_project_prompt_templates and "prompt_templates" not in kwargs:
         cfg = load_config(path)
         templates = cfg.get("templates") if isinstance(cfg, dict) else None
         if templates:
