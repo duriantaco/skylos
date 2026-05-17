@@ -1,16 +1,27 @@
 import ipaddress
+import os
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 __all__ = [
     "_append_query_param",
+    "_artifact_upload_host_allowed",
     "_host_is_private_or_metadata",
     "_normalize_http_url",
     "_validate_api_request_url",
     "_validate_artifact_upload_url",
     "_validate_github_oidc_request_url",
 ]
+
+
+_ARTIFACT_UPLOAD_HOST_ALLOWLIST_ENV = "SKYLOS_ARTIFACT_UPLOAD_HOST_ALLOWLIST"
+_DEFAULT_ARTIFACT_UPLOAD_HOST_ALLOWLIST = frozenset(
+    {
+        "skylos.dev",
+        "*.skylos.dev",
+    }
+)
 
 
 def _normalize_http_url(
@@ -41,6 +52,37 @@ def _normalize_http_url(
             parsed.fragment,
         )
     )
+
+
+def _artifact_upload_host_patterns() -> tuple[str, ...]:
+    patterns = list(sorted(_DEFAULT_ARTIFACT_UPLOAD_HOST_ALLOWLIST))
+    configured = os.getenv(_ARTIFACT_UPLOAD_HOST_ALLOWLIST_ENV, "").strip()
+    if not configured:
+        return tuple(patterns)
+    for item in configured.split(","):
+        pattern = item.strip().lower().rstrip(".")
+        if not pattern:
+            continue
+        if "://" in pattern:
+            pattern = (urlsplit(pattern).hostname or "").rstrip(".").lower()
+        if pattern:
+            patterns.append(pattern)
+    return tuple(patterns)
+
+
+def _artifact_upload_host_allowed(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    host = hostname.rstrip(".").lower()
+    for pattern in _artifact_upload_host_patterns():
+        if pattern.startswith("*."):
+            suffix = pattern[1:]
+            if host.endswith(suffix) and host != suffix.lstrip("."):
+                return True
+            continue
+        if pattern == host:
+            return True
+    return False
 
 
 def _host_is_private_or_metadata(hostname: str | None) -> bool:
@@ -81,6 +123,8 @@ def _validate_artifact_upload_url(url: Any) -> str:
     parsed = urlsplit(safe_url)
     if _host_is_private_or_metadata(parsed.hostname):
         raise ValueError("upload URL host is not allowed")
+    if not _artifact_upload_host_allowed(parsed.hostname):
+        raise ValueError("upload URL host is not in the artifact upload allowlist")
     return safe_url
 
 
