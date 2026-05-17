@@ -3,7 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from skylos.visitors.languages.java.core import JavaCore
-from skylos.visitors.languages.java.flow import scan_java_security_flows
+from skylos.visitors.languages.java.flow import (
+    MAX_CONSTANT_STRING_CHARS,
+    MAX_CONSTANT_STORE_CHARS,
+    JavaFlowState,
+    JavaSecurityFlowAnalyzer,
+    scan_java_security_flows,
+)
 from skylos.visitors.languages.java import scan_java_file
 
 
@@ -28,6 +34,36 @@ def _rule_ids(findings: list[dict]) -> set[str]:
 
 def _categories(findings: list[dict]) -> set[str]:
     return {finding.get("category", "") for finding in findings}
+
+
+def test_java_constant_folding_caps_string_concatenation():
+    analyzer = JavaSecurityFlowAnalyzer(None, "App.java", b"")
+
+    allowed = analyzer._eval_binary("A" * (MAX_CONSTANT_STRING_CHARS - 1), "+", "B")
+    assert isinstance(allowed, str)
+    assert len(allowed) == MAX_CONSTANT_STRING_CHARS
+
+    assert analyzer._eval_binary("A" * MAX_CONSTANT_STRING_CHARS, "+", "B") is None
+
+
+def test_java_constant_store_has_total_string_budget():
+    analyzer = JavaSecurityFlowAnalyzer(None, "App.java", b"")
+    state = JavaFlowState()
+    chunk = "A" * MAX_CONSTANT_STRING_CHARS
+
+    for index in range(MAX_CONSTANT_STORE_CHARS // MAX_CONSTANT_STRING_CHARS):
+        analyzer._store_constant(f"s{index}", chunk, state)
+
+    assert sum(
+        len(value) for value in state.constants.values() if isinstance(value, str)
+    ) == MAX_CONSTANT_STORE_CHARS
+
+    analyzer._store_constant("too_much", chunk, state)
+
+    assert "too_much" not in state.constants
+    assert sum(
+        len(value) for value in state.constants.values() if isinstance(value, str)
+    ) <= MAX_CONSTANT_STORE_CHARS
 
 
 def test_object_input_stream_flags(tmp_path):
