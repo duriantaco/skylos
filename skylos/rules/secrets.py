@@ -75,6 +75,19 @@ BARE_GENERIC_VALUE = re.compile(
     r"(?P<bare>(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-]))"
 )
 
+# Public compatibility pattern used by MCP diff validation. Keep this linear:
+# charset requirements for bare tokens are checked in Python by scan_ctx.
+GENERIC_VALUE = re.compile(
+    r"""(?ix)
+    (?:
+      (token|api[_-]?key|secret|password|passwd|pwd|bearer|auth[_-]?token|access[_-]?token)
+      \s*[:=]\s*(?P<q>['"])(?P<val>[^'"]{16,})(?P=q)
+    )
+    |
+    (?P<bare>(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-]))
+"""
+)
+
 SAFE_TEST_HINTS = {
     "example",
     "sample",
