@@ -18,17 +18,28 @@ class SkylosHoverProvider {
         const parts = [];
         for (const f of lineFindings) {
             const md = new vscode.MarkdownString();
-            md.supportHtml = true;
-            md.isTrusted = true;
+            md.supportHtml = false;
+            md.isTrusted = false;
             const sevEmoji = getSeverityEmoji(f.severity);
             const meta = (0, rules_1.getRuleMeta)(f.ruleId);
             const ruleName = meta?.name ?? f.ruleId;
-            md.appendMarkdown(`### ${sevEmoji} ${f.ruleId} — ${ruleName}\n\n`);
-            md.appendMarkdown(`**Severity:** \`${f.severity}\`\n\n`);
-            md.appendMarkdown(`**Source:** \`${(0, provenanceCore_1.provenanceLabel)(f)}\`\n\n`);
-            md.appendMarkdown(`${f.message}\n\n`);
+            md.appendMarkdown(`### ${sevEmoji} `);
+            md.appendText(f.ruleId);
+            md.appendMarkdown(" — ");
+            md.appendText(ruleName);
+            md.appendMarkdown("\n\n");
+            md.appendMarkdown("**Severity:** ");
+            md.appendText(f.severity);
+            md.appendMarkdown("\n\n");
+            md.appendMarkdown("**Source:** ");
+            md.appendText((0, provenanceCore_1.provenanceLabel)(f));
+            md.appendMarkdown("\n\n");
+            md.appendText(f.message);
+            md.appendMarkdown("\n\n");
             if (meta?.description) {
-                md.appendMarkdown(`*${meta.description}*\n\n`);
+                md.appendMarkdown("*");
+                md.appendText(meta.description);
+                md.appendMarkdown("*\n\n");
             }
             if (f.confidence !== undefined) {
                 md.appendMarkdown(`**Confidence:** ${f.confidence}%\n\n`);
@@ -41,10 +52,14 @@ class SkylosHoverProvider {
             if (meta?.pciDss)
                 refs.push(`PCI DSS ${meta.pciDss}`);
             if (refs.length > 0) {
-                md.appendMarkdown(`**References:** ${refs.join(" | ")}\n\n`);
+                md.appendMarkdown("**References:** ");
+                md.appendText(refs.join(" | "));
+                md.appendMarkdown("\n\n");
             }
             if (meta?.fix) {
-                md.appendMarkdown(`**Fix:** ${meta.fix}\n\n`);
+                md.appendMarkdown("**Fix:** ");
+                md.appendText(meta.fix);
+                md.appendMarkdown("\n\n");
             }
             md.appendMarkdown("---\n");
             parts.push(md);
