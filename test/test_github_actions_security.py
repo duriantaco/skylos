@@ -16,6 +16,10 @@ def _publish_workflow():
     return yaml.safe_load(Path(".github/workflows/publish.yml").read_text())
 
 
+def _tests_workflow():
+    return yaml.safe_load(Path(".github/workflows/tests.yaml").read_text())
+
+
 def _composite_action():
     return yaml.safe_load(Path("action.yml").read_text())
 
@@ -313,6 +317,19 @@ def test_publish_workflow_validates_strict_semver_release_tags():
 
     assert "semver_re=" in resolve_step["run"]
     assert "(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)" in resolve_step["run"]
+
+
+def test_tests_workflow_pins_codecov_and_limits_permissions():
+    workflow = _tests_workflow()
+    assert workflow["permissions"] == {"contents": "read"}
+
+    steps = workflow["jobs"]["test_matrix"]["steps"]
+    codecov_step = next(s for s in steps if s.get("name") == "Upload coverage to Codecov")
+    action_ref = codecov_step["uses"].split("@", 1)[1]
+
+    assert len(action_ref) == 40
+    assert all(c in "0123456789abcdef" for c in action_ref)
+    assert codecov_step["with"]["token"] == "${{ secrets.CODECOV_TOKEN }}"
 
 
 def test_composite_action_validates_and_quotes_max_comments_input():
