@@ -241,6 +241,40 @@ def f(cur, query, params):
     assert "SKY-D211" in _rule_ids(out)
 
 
+def test_sql_execute_query_mutated_after_static_assignment_flags(tmp_path):
+    code = """
+def f(cur, request):
+    query = "SELECT * FROM users WHERE id = "
+    query += request.args["id"]
+    cur.execute(query)
+"""
+    out = _scan_one(tmp_path, "sql_augassign_mutation.py", code)
+    assert "SKY-D211" in _rule_ids(out)
+
+
+def test_sql_execute_query_shadowing_outer_static_assignment_flags(tmp_path):
+    code = """
+query = "SELECT * FROM users"
+
+def f(cur, request):
+    query = request.args["query"]
+    cur.execute(query)
+"""
+    out = _scan_one(tmp_path, "sql_shadowed_query.py", code)
+    assert "SKY-D211" in _rule_ids(out)
+
+
+def test_sql_execute_query_static_augassign_ok(tmp_path):
+    code = """
+def f(cur):
+    query = "SELECT *"
+    query += " FROM users"
+    cur.execute(query)
+"""
+    out = _scan_one(tmp_path, "sql_static_augassign.py", code)
+    assert "SKY-D211" not in _rule_ids(out)
+
+
 def test_sql_constant_format_query_ok(tmp_path):
     code = """
 def f(cur):
