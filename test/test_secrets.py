@@ -1,4 +1,6 @@
 import ast
+import time
+
 import pytest
 from skylos.rules.secrets import scan_ctx
 
@@ -193,6 +195,29 @@ def test_normal_strings_ignored():
             generic_findings.append(f)
 
     assert len(generic_findings) == 0
+
+
+def test_bare_generic_token_still_detected():
+    token = "aB3dE5fG7hI9jK2lM4nO6pQ8rS0-tU1vW2xY3zZ"
+    src = f"LEAKED = {token}\n"
+    ctx = _ctx_from_source(src)
+
+    generic = [f for f in scan_ctx(ctx) if f["provider"] == "generic"]
+
+    assert len(generic) == 1
+    assert generic[0]["col"] == src.index(token)
+
+
+def test_generic_scan_handles_long_non_secret_token_without_quadratic_retry():
+    src = ("a" * 12_000) + "\n"
+    ctx = _ctx_from_source(src)
+
+    started_at = time.perf_counter()
+    findings = list(scan_ctx(ctx))
+    elapsed = time.perf_counter() - started_at
+
+    assert findings == []
+    assert elapsed < 1.0
 
 
 @pytest.mark.parametrize(
