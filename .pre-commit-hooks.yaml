@@ -1,6 +1,6 @@
 - id: skylos-scan
   name: skylos (report only)
-  entry: python -m skylos.cli
+  entry: skylos
   language: python
   types_or: [python]
   pass_filenames: false
@@ -9,9 +9,9 @@
 
 - id: skylos-defend
   name: skylos AI defense gate
-  entry: python -m skylos.cli defend
+  entry: skylos
   language: python
   types_or: [python]
   pass_filenames: false
   require_serial: true
-  args: [".", "--fail-on", "critical"]
+  args: ["defend", ".", "--fail-on", "critical"]
