@@ -43,6 +43,7 @@ def _normalize_findings(
     processed = []
     for item in items or []:
         finding = dict(item)
+        category_upper = category.upper()
 
         rid = (
             finding.get("rule_id")
@@ -99,7 +100,9 @@ def _normalize_findings(
                     finding.get("detail") or finding.get("msg") or "Issue"
                 )
 
-        if file_abs and line:
+        if category_upper == "SECRET":
+            finding.pop("snippet", None)
+        elif file_abs and line:
             finding["snippet"] = (
                 finding.get("snippet")
                 or extract_snippet(file_abs, line, repo_root=git_root)
