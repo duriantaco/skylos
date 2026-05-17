@@ -30,6 +30,9 @@ SKIP_DIR_NAMES = {
 
 ACTION_FILENAMES = {"action.yml", "action.yaml"}
 WORKFLOW_SUFFIXES = {".yml", ".yaml"}
+MAX_YAML_BYTES = 1_000_000
+MAX_YAML_GRAPH_DEPTH = 100
+MAX_YAML_GRAPH_NODES = 50_000
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 TEMPLATE_EXPR_RE = re.compile(
     r"\$\{\{\s*(github\.event(?:[.\[]|\s|\})|github\."
@@ -256,10 +259,76 @@ def _load_yaml(path: Path) -> dict[str, Any] | None:
     if yaml is None:
         return None
     try:
+        if path.stat().st_size > MAX_YAML_BYTES:
+            return None
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception:
         return None
-    return raw if isinstance(raw, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    if not _yaml_graph_is_safe(raw):
+        return None
+    return raw
+
+
+def _yaml_graph_is_safe(value: Any) -> bool:
+    active: set[int] = set()
+    visited: set[int] = set()
+    nodes_seen = 0
+    stack: list[tuple[Any, int, bool]] = [(value, 0, False)]
+
+    while stack:
+        current, depth, leaving = stack.pop()
+        if depth > MAX_YAML_GRAPH_DEPTH:
+            return False
+
+        if isinstance(current, dict):
+            current_id = id(current)
+            if leaving:
+                active.discard(current_id)
+                visited.add(current_id)
+                continue
+            if current_id in active:
+                return False
+            if current_id in visited:
+                continue
+
+            nodes_seen += 1
+            if nodes_seen > MAX_YAML_GRAPH_NODES:
+                return False
+
+            active.add(current_id)
+            stack.append((current, depth, True))
+            for child in reversed(tuple(current.values())):
+                stack.append((child, depth + 1, False))
+            continue
+
+        if isinstance(current, list):
+            current_id = id(current)
+            if leaving:
+                active.discard(current_id)
+                visited.add(current_id)
+                continue
+            if current_id in active:
+                return False
+            if current_id in visited:
+                continue
+
+            nodes_seen += 1
+            if nodes_seen > MAX_YAML_GRAPH_NODES:
+                return False
+
+            active.add(current_id)
+            stack.append((current, depth, True))
+            for child in reversed(tuple(current)):
+                stack.append((child, depth + 1, False))
+            continue
+
+        nodes_seen += 1
+        if nodes_seen > MAX_YAML_GRAPH_NODES:
+            return False
+
+    return True
 
 
 def _line_for_contains(lines: list[str], needle: str, *, start: int = 1) -> int:
@@ -335,14 +404,35 @@ def _is_reusable_job(job: dict[str, Any]) -> bool:
 
 
 def _iter_strings(value: Any) -> Iterator[str]:
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for child in value.values():
-            yield from _iter_strings(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _iter_strings(child)
+    visited: set[int] = set()
+    nodes_seen = 0
+    stack: list[tuple[Any, int]] = [(value, 0)]
+
+    while stack:
+        current, depth = stack.pop()
+        if depth > MAX_YAML_GRAPH_DEPTH:
+            return
+
+        nodes_seen += 1
+        if nodes_seen > MAX_YAML_GRAPH_NODES:
+            return
+
+        if isinstance(current, str):
+            yield current
+        elif isinstance(current, dict):
+            current_id = id(current)
+            if current_id in visited:
+                continue
+            visited.add(current_id)
+            for child in reversed(tuple(current.values())):
+                stack.append((child, depth + 1))
+        elif isinstance(current, list):
+            current_id = id(current)
+            if current_id in visited:
+                continue
+            visited.add(current_id)
+            for child in reversed(tuple(current)):
+                stack.append((child, depth + 1))
 
 
 def _iter_env_blocks(
