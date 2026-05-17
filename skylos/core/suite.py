@@ -198,7 +198,7 @@ def run_suite(
 
     from skylos.debt import build_debt_snapshot
     from skylos.defend.engine import run_defense_checks
-    from skylos.defend.policy import compute_owasp_coverage, load_policy
+    from skylos.defend.policy import compute_owasp_coverage
     from skylos.defend.report import format_defense_json
     from skylos.discover.detector import _collect_ai_files, detect_integrations
 
@@ -307,7 +307,7 @@ def run_suite(
         except Exception as exc:
             provenance_section["error"] = str(exc)
 
-    policy = load_policy(None)
+    policy = None
 
     with progress_factory(
         SpinnerColumn(),

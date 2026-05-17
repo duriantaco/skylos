@@ -64,23 +64,10 @@ class DefensePolicy:
 
 
 def load_policy(path: str | Path | None = None) -> Optional[DefensePolicy]:
-    if path is not None:
-        policy_path = Path(path)
-    else:
-        candidates = [
-            Path("skylos-defend.yaml"),
-            Path("skylos-defend.yml"),
-            Path(".skylos-defend.yaml"),
-            Path(".skylos-defend.yml"),
-        ]
-        policy_path = None
-        for candidate in candidates:
-            if candidate.exists():
-                policy_path = candidate
-                break
+    if path is None:
+        return None
 
-        if policy_path is None:
-            return None
+    policy_path = Path(path)
 
     if not policy_path.exists():
         raise FileNotFoundError(f"Policy file not found: {policy_path}")

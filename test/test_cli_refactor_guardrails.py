@@ -714,6 +714,86 @@ def test_defend_command_rejects_invalid_owasp_version(tmp_path):
     assert "Unsupported OWASP version" in console.print.call_args.args[0]
 
 
+def test_defend_command_ignores_repo_policy_without_explicit_flag(tmp_path, monkeypatch):
+    target = tmp_path / "repo"
+    target.mkdir()
+    (target / "app.py").write_text(
+        """
+import openai
+client = openai.OpenAI()
+
+def run():
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+    return eval(response.choices[0].message.content)
+""",
+        encoding="utf-8",
+    )
+    (target / "skylos-defend.yaml").write_text(
+        "rules:\n  no-dangerous-sink:\n    enabled: false\n",
+        encoding="utf-8",
+    )
+    console = Mock()
+    monkeypatch.chdir(target)
+
+    from skylos.commands.defend_cmd import run_defend_command
+
+    with patch("builtins.print"):
+        exit_code = run_defend_command(
+            [".", "--json", "--fail-on", "critical"],
+            console_factory=lambda: console,
+            progress_factory=lambda *args, **kwargs: _progress_ctx(),
+        )
+
+    assert exit_code == 1
+
+
+def test_defend_command_applies_policy_when_explicit(tmp_path, monkeypatch):
+    target = tmp_path / "repo"
+    target.mkdir()
+    (target / "app.py").write_text(
+        """
+import openai
+client = openai.OpenAI()
+
+def run():
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+    return eval(response.choices[0].message.content)
+""",
+        encoding="utf-8",
+    )
+    policy_path = target / "skylos-defend.yaml"
+    policy_path.write_text(
+        "rules:\n  no-dangerous-sink:\n    enabled: false\n",
+        encoding="utf-8",
+    )
+    console = Mock()
+    monkeypatch.chdir(target)
+
+    from skylos.commands.defend_cmd import run_defend_command
+
+    with patch("builtins.print"):
+        exit_code = run_defend_command(
+            [
+                ".",
+                "--json",
+                "--fail-on",
+                "critical",
+                "--policy",
+                str(policy_path),
+            ],
+            console_factory=lambda: console,
+            progress_factory=lambda *args, **kwargs: _progress_ctx(),
+        )
+
+    assert exit_code == 0
+
+
 def test_defend_command_json_upload_formats_once(tmp_path):
     target = tmp_path / "repo"
     target.mkdir()
