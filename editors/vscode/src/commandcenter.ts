@@ -290,7 +290,9 @@ export class SkylosCommandCenterProvider implements vscode.TreeDataProvider<Comm
       return nodes;
     }
 
-    nodes.push(new InfoNode("Preview dead code removal", "Run LLM-verified fix generation", "trash", "skylos.fixDeadCode"));
+    if (vscode.workspace.isTrusted) {
+      nodes.push(new InfoNode("Preview dead code removal", "Run LLM-verified fix generation", "trash", "skylos.fixDeadCode"));
+    }
     nodes.push(...actions.map((action) => new ActionNode(action)));
     return nodes;
   }

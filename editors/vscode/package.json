@@ -39,7 +39,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Skylos disables automatic execution in untrusted workspaces and ignores workspace-controlled executable and AI endpoint configuration.",
+      "description": "Skylos disables automatic and command-triggered workspace execution in untrusted workspaces and ignores workspace-controlled executable and AI endpoint configuration.",
       "restrictedConfigurations": [
         "skylos.path",
         "skylos.runOnSave",
@@ -89,7 +89,12 @@
       { "command": "skylos.commandCenterDismiss", "title": "Skylos: Dismiss Automation Action", "icon": "$(close)" },
       { "command": "skylos.commandCenterSnooze", "title": "Skylos: Snooze Automation Action", "icon": "$(clock)" },
       { "command": "skylos.commandCenterRestoreTriaged", "title": "Skylos: Restore Automation Action", "icon": "$(history)" },
-      { "command": "skylos.fixDeadCode", "title": "Skylos: Preview Dead Code Removal", "icon": "$(trash)" }
+      {
+        "command": "skylos.fixDeadCode",
+        "title": "Skylos: Preview Dead Code Removal",
+        "icon": "$(trash)",
+        "enablement": "isWorkspaceTrusted"
+      }
     ],
     "viewsContainers": {
       "activitybar": [
