@@ -64,20 +64,16 @@ PROVIDER_PATTERNS = [
     ),
 ]
 
-GENERIC_VALUE = re.compile(r"""(?ix)
-    (?:
-      (token|api[_-]?key|secret|password|passwd|pwd|bearer|auth[_-]?token|access[_-]?token)
-      \s*[:=]\s*(?P<q>['"])(?P<val>[^'"]{16,})(?P=q)
-    )
-    |
-    (?P<bare>
-      (?=[A-Za-z0-9_-]{32,}\b)
-      (?=.*[A-Z])
-      (?=.*[a-z])
-      (?=.*\d)
-      [A-Za-z0-9_-]+
-    )
-""")
+GENERIC_KEYED_VALUE = re.compile(
+    r"""(?ix)
+    (token|api[_-]?key|secret|password|passwd|pwd|bearer|auth[_-]?token|access[_-]?token)
+    \s*[:=]\s*(?P<q>['"])(?P<val>[^'"]{16,})(?P=q)
+"""
+)
+
+BARE_GENERIC_VALUE = re.compile(
+    r"(?P<bare>(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-]))"
+)
 
 SAFE_TEST_HINTS = {
     "example",
@@ -149,6 +145,35 @@ def _mask(tok):
 
 def _looks_like_identifier(s):
     return bool(_IDENTIFIER.fullmatch(s))
+
+
+def _has_bare_token_charset_mix(s):
+    has_upper = False
+    has_lower = False
+    has_digit = False
+    for char in s:
+        if char.isupper():
+            has_upper = True
+        elif char.islower():
+            has_lower = True
+        elif char.isdigit():
+            has_digit = True
+        if has_upper and has_lower and has_digit:
+            return True
+    return False
+
+
+def _find_generic_value(line_content):
+    keyed_match = GENERIC_KEYED_VALUE.search(line_content)
+    if keyed_match:
+        return keyed_match.group("val"), False, keyed_match.start("val")
+
+    for bare_match in BARE_GENERIC_VALUE.finditer(line_content):
+        bare_token = bare_match.group("bare")
+        if _has_bare_token_charset_mix(bare_token):
+            return bare_token, True, bare_match.start("bare")
+
+    return None
 
 
 def _docstring_lines(tree):
@@ -325,23 +350,12 @@ def scan_ctx(
         in_tests = bool(IS_TEST_PATH.search(rel_path.replace("\\", "/")))
 
         if in_tests or KNOWN_HASH_RE.search(line_content):
-            generic_match = None
+            generic_value = None
         else:
-            generic_match = GENERIC_VALUE.search(line_content)
+            generic_value = _find_generic_value(line_content)
 
-        if generic_match:
-            val_group = generic_match.group("val")
-            bare_group = generic_match.group("bare")
-
-            is_bare = False
-            if val_group:
-                extracted_token = val_group
-            elif bare_group:
-                extracted_token = bare_group
-                is_bare = True
-            else:
-                extracted_token = ""
-
+        if generic_value:
+            extracted_token, is_bare, col_pos = generic_value
             clean_token = extracted_token.strip()
 
             if clean_token:
@@ -360,8 +374,6 @@ def scan_ctx(
                     tok_entropy = _entropy(clean_token)
 
                     if tok_entropy >= min_entropy and len(clean_token) >= 20:
-                        col_pos = line_content.find(clean_token)
-
                         generic_finding = {
                             "rule_id": "SKY-S101",
                             "severity": "CRITICAL",
