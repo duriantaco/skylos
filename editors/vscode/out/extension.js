@@ -434,6 +434,10 @@ function activate(context) {
             vscode.window.showWarningMessage("Skylos: Open a folder first.");
             return;
         }
+        if (!vscode.workspace.isTrusted) {
+            vscode.window.showWarningMessage("Skylos: Trust this workspace before previewing dead code removal.");
+            return;
+        }
         const skylosBin = (0, config_1.getSkylosBin)();
         const { spawn: spawnProc } = await Promise.resolve().then(() => require("child_process"));
         await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Skylos: Generating dead code removal plan..." }, () => new Promise((resolve, reject) => {

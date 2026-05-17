@@ -241,7 +241,9 @@ class SkylosCommandCenterProvider {
             nodes.push(new EmptyNode("No ranked actions", "The repo agent did not surface anything urgent"));
             return nodes;
         }
-        nodes.push(new InfoNode("Preview dead code removal", "Run LLM-verified fix generation", "trash", "skylos.fixDeadCode"));
+        if (vscode.workspace.isTrusted) {
+            nodes.push(new InfoNode("Preview dead code removal", "Run LLM-verified fix generation", "trash", "skylos.fixDeadCode"));
+        }
         nodes.push(...actions.map((action) => new ActionNode(action)));
         return nodes;
     }

@@ -566,6 +566,10 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage("Skylos: Open a folder first.");
         return;
       }
+      if (!vscode.workspace.isTrusted) {
+        vscode.window.showWarningMessage("Skylos: Trust this workspace before previewing dead code removal.");
+        return;
+      }
 
       const skylosBin = getSkylosBin();
       const { spawn: spawnProc } = await import("child_process");
