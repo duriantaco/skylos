@@ -394,7 +394,7 @@ def _names_from_tree(tree: ast.AST) -> tuple[str | None, set[str], set[str], set
 def _extract_security_file_facts(file_path: Path) -> SecurityFileFacts:
     try:
         source = file_path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return SecurityFileFacts()
 
     try:
