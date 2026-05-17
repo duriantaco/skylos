@@ -137,10 +137,16 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        SKYLOS_MAX_COMMENTS: ${{ inputs.max-comments }}
       run: |
+        if ! [[ "$SKYLOS_MAX_COMMENTS" =~ ^[0-9]+$ ]]; then
+          echo "::error::max-comments must be a non-negative integer"
+          exit 1
+        fi
+
         python -m skylos.cli cicd review \
           --input skylos-report.json \
-          --max-comments ${{ inputs.max-comments }} || true
+          --max-comments "$SKYLOS_MAX_COMMENTS" || true
 
     - name: Quality Gate
       id: gate
