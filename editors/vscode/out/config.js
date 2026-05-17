@@ -38,11 +38,12 @@ exports.isFixPreviewFirst = isFixPreviewFirst;
 exports.getPostFixCommand = getPostFixCommand;
 const vscode = require("vscode");
 const types_1 = require("./types");
+const configCore_1 = require("./configCore");
 function cfg() {
     return vscode.workspace.getConfiguration("skylos");
 }
 function getSkylosBin() {
-    return cfg().get("path", "skylos");
+    return (0, configCore_1.resolveTrustedExecutablePath)(cfg().inspect("path"), "skylos");
 }
 function getConfidenceThreshold() {
     return cfg().get("confidence", 80);
@@ -57,10 +58,10 @@ function isFeatureEnabled(feature) {
     return cfg().get(key, true);
 }
 function isRunOnSave() {
-    return cfg().get("runOnSave", true);
+    return (0, configCore_1.shouldRunWorkspaceAutomation)(vscode.workspace.isTrusted, cfg().get("runOnSave", true));
 }
 function isScanOnOpen() {
-    return cfg().get("scanOnOpen", true);
+    return (0, configCore_1.shouldRunWorkspaceAutomation)(vscode.workspace.isTrusted, cfg().get("scanOnOpen", true));
 }
 function isRealtimeAIEnabled() {
     return cfg().get("enableRealtimeAI", false);
@@ -102,10 +103,10 @@ function getCommandCenterLimit() {
     return cfg().get("commandCenterLimit", 10);
 }
 function isCommandCenterRefreshOnOpen() {
-    return cfg().get("commandCenterRefreshOnOpen", false);
+    return (0, configCore_1.shouldRunWorkspaceAutomation)(vscode.workspace.isTrusted, cfg().get("commandCenterRefreshOnOpen", false));
 }
 function isCommandCenterRefreshOnSave() {
-    return cfg().get("commandCenterRefreshOnSave", false);
+    return (0, configCore_1.shouldRunWorkspaceAutomation)(vscode.workspace.isTrusted, cfg().get("commandCenterRefreshOnSave", false));
 }
 function getCommandCenterStateFile() {
     return cfg().get("commandCenterStateFile", "").trim();
