@@ -1,6 +1,8 @@
 import ast
+import math
 from pathlib import Path
 
+from skylos.audit.redaction import REDACTION, redact_text
 from skylos.rules.base import SkylosRule
 from skylos.rules.quality.logic_foundation import (
     _exception_type_names,
@@ -8,6 +10,57 @@ from skylos.rules.quality.logic_foundation import (
     _handler_has_real_work,
 )
 from skylos.rules.quality.logic_security import _qualified_call_name
+
+
+_SENSITIVE_LITERAL_KEYWORDS = (
+    "api_key",
+    "apikey",
+    "auth",
+    "bearer",
+    "credential",
+    "password",
+    "passwd",
+    "private_key",
+    "secret",
+    "token",
+)
+
+
+def _string_entropy(value: str) -> float:
+    if not value:
+        return 0.0
+    counts: dict[str, int] = {}
+    for char in value:
+        counts[char] = counts.get(char, 0) + 1
+    length = len(value)
+    return -sum((count / length) * math.log2(count / length) for count in counts.values())
+
+
+def _looks_sensitive_literal(value: str) -> bool:
+    if redact_text(value) != value:
+        return True
+
+    lowered = value.lower()
+    if any(keyword in lowered for keyword in _SENSITIVE_LITERAL_KEYWORDS):
+        return True
+
+    if len(value) < 24:
+        return False
+
+    has_upper = any(char.isupper() for char in value)
+    has_lower = any(char.islower() for char in value)
+    has_digit = any(char.isdigit() for char in value)
+    has_symbol = any(char in "_-./+=" for char in value)
+    return (
+        sum((has_upper, has_lower, has_digit, has_symbol)) >= 3
+        and _string_entropy(value) >= 3.5
+    )
+
+
+def _duplicate_string_display(value: str) -> str:
+    if _looks_sensitive_literal(value):
+        return REDACTION
+    return value if len(value) <= 40 else value[:37] + "..."
 
 
 class DuplicateStringLiteralRule(SkylosRule):
@@ -105,7 +158,7 @@ class DuplicateStringLiteralRule(SkylosRule):
             if count < self.threshold:
                 continue
             severity = "MEDIUM" if count >= 6 else "LOW"
-            display = value if len(value) <= 40 else value[:37] + "..."
+            display = _duplicate_string_display(value)
             findings.append(
                 {
                     "rule_id": self.rule_id,
