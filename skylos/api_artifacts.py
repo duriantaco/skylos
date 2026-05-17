@@ -193,6 +193,7 @@ def upload_artifact(
                         data=handle,
                         headers=req_headers,
                         timeout=timeout,
+                        allow_redirects=False,
                     )
                 elif method == "POST":
                     file_field = instruction.get("file_field") or "file"
@@ -209,6 +210,7 @@ def upload_artifact(
                         },
                         headers=headers,
                         timeout=timeout,
+                        allow_redirects=False,
                     )
                 else:
                     return {
