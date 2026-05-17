@@ -165,7 +165,7 @@ def browser_login(console=None, base_url=None):
 
     if console:
         console.print("\n[bold]Opening browser to connect to Skylos Cloud...[/bold]")
-        console.print(f"[dim]If the browser doesn't open, visit:[/dim]")
+        console.print("[dim]If the browser doesn't open, visit:[/dim]")
         console.print(f"  {connect_url}\n")
     else:
         print("\nOpening browser to connect to Skylos Cloud...")
@@ -321,26 +321,26 @@ def get_current_connection(base_url=None):
 
 def _print_connected_result(result, console=None):
     if console:
-        console.print(f"\n[good]Connected to Skylos Cloud![/good]")
+        console.print("\n[good]Connected to Skylos Cloud![/good]")
         console.print(f"  Project:      {result.project_name}")
         console.print(f"  Organization: {result.org_name}")
         console.print(f"  Plan:         {result.plan.capitalize()}")
         if result.repo_subpath:
             console.print(f"  Project root: {result.repo_subpath}")
-        console.print(f"\n  Scans will auto-upload on every run.")
-        console.print(f"  Use [bold]--no-upload[/bold] to skip.")
+        console.print("\n  Scans will auto-upload on every run.")
+        console.print("  Use [bold]--no-upload[/bold] to skip.")
         console.print(
             f"\n  [dim]For MCP/AI agents: export SKYLOS_API_KEY={result.token}[/dim]"
         )
     else:
-        print(f"\nConnected to Skylos Cloud!")
+        print("\nConnected to Skylos Cloud!")
         print(f"  Project:      {result.project_name}")
         print(f"  Organization: {result.org_name}")
         print(f"  Plan:         {result.plan.capitalize()}")
         if result.repo_subpath:
             print(f"  Project root: {result.repo_subpath}")
-        print(f"\n  Scans will auto-upload on every run.")
-        print(f"  Use --no-upload to skip.")
+        print("\n  Scans will auto-upload on every run.")
+        print("  Use --no-upload to skip.")
         print(f"\n  For MCP/AI agents: export SKYLOS_API_KEY={result.token}")
 
 
@@ -402,7 +402,7 @@ def _parse_callback_request(path: str, *, expected_state: str | None):
 
     params = parse_qs(parsed.query)
     provided_state = params.get("state", [None])[0]
-    if expected_state and provided_state and provided_state != expected_state:
+    if expected_state and provided_state != expected_state:
         return "invalid_state", None
 
     error = params.get("error", [None])[0]

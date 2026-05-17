@@ -1,13 +1,21 @@
 from unittest.mock import Mock
 
-import pytest
-
 import skylos.cloud.login as loginmod
 
 
 def test_parse_callback_request_rejects_state_mismatch():
     outcome, payload = loginmod._parse_callback_request(
         "/callback?token=abc&project_id=proj_1&state=wrong",
+        expected_state="expected",
+    )
+
+    assert outcome == "invalid_state"
+    assert payload is None
+
+
+def test_parse_callback_request_rejects_missing_state_when_expected():
+    outcome, payload = loginmod._parse_callback_request(
+        "/callback?token=abc&project_id=proj_1",
         expected_state="expected",
     )
 
