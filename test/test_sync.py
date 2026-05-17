@@ -608,16 +608,24 @@ def test_create_precommit_config_limits_gate_to_pre_commit(tmp_path, monkeypatch
     assert "Fast staged-only local hook." in content
     assert "Full repo and diff-aware enforcement runs in CI." in content
     assert "stages: [pre-commit]" in content
-    assert "entry: python -m skylos.cli" in content
-    assert "language: python" in content
-    assert "additional_dependencies:" in content
-    assert '- "rich>=14.0.0"' in content
-    assert '- "libcst>=1.8.2"' in content
-    assert '- "tree-sitter-php>=0.24.1"' in content
-    assert '- "tree-sitter-rust>=0.24.2"' in content
-    assert "- \"tomli>=2.0.1; python_version < '3.11'\"" in content
+    assert "entry: skylos" in content
+    assert "language: system" in content
+    assert "additional_dependencies:" not in content
+    assert "python -m skylos.cli" not in content
     assert 'args: ["agent", "pre-commit", "."]' in content
     assert "--gate" not in content
+
+
+def test_published_precommit_hooks_use_console_entrypoint():
+    content = Path(__file__).resolve().parents[1].joinpath(
+        ".pre-commit-hooks.yaml"
+    ).read_text(encoding="utf-8")
+    hooks = {hook["id"]: hook for hook in syncmod.yaml.safe_load(content)}
+
+    assert "python -m skylos.cli" not in content
+    assert hooks["skylos-scan"]["entry"] == "skylos"
+    assert hooks["skylos-defend"]["entry"] == "skylos"
+    assert hooks["skylos-defend"]["args"] == ["defend", ".", "--fail-on", "critical"]
 
 
 def test_cmd_setup_installs_shell_only_pre_push_hook(monkeypatch, tmp_path, capsys):
