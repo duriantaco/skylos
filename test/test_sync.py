@@ -127,6 +127,25 @@ def test_save_token_writes_file(isolated_creds):
         assert (creds_file.parent.stat().st_mode & 0o777) == 0o700
 
 
+def test_write_link_rejects_symlinked_link_file(tmp_path):
+    repo = tmp_path / "repo"
+    skylos_dir = repo / ".skylos"
+    skylos_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.json"
+    outside.write_text("keep-me", encoding="utf-8")
+    link_path = skylos_dir / "link.json"
+    try:
+        link_path.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks are not available on this platform")
+
+    with pytest.raises(syncmod.AuthError):
+        syncmod._write_link(repo, "proj_123")
+
+    assert outside.read_text(encoding="utf-8") == "keep-me"
+    assert link_path.is_symlink()
+
+
 def test_get_token_uses_repo_subpath_link(isolated_creds, monkeypatch, tmp_path):
     _, creds_file = isolated_creds
     repo = tmp_path / "repo"
@@ -367,6 +386,43 @@ def test_cmd_connect_with_token_arg_saves_creds(isolated_creds, monkeypatch, cap
     assert data["plan"] == "pro"
     assert data["tokens"]["proj_123"]["project_name"] == "Proj"
     assert data["tokens"]["proj_123"]["org_name"] == "Org"
+
+
+def test_cmd_connect_refuses_symlinked_link_file(
+    isolated_creds, monkeypatch, tmp_path, capsys
+):
+    _, creds_file = isolated_creds
+    repo = tmp_path / "repo"
+    skylos_dir = repo / ".skylos"
+    skylos_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.json"
+    outside.write_text("keep-me", encoding="utf-8")
+    link_path = skylos_dir / "link.json"
+    try:
+        link_path.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks are not available on this platform")
+
+    def fake_api_get(endpoint, token):
+        assert endpoint == "/api/sync/whoami"
+        assert token == "TOK_ARG"
+        return {
+            "project": {"id": "proj_123", "name": "Proj"},
+            "organization": {"name": "Org"},
+            "plan": "pro",
+        }
+
+    monkeypatch.setattr(syncmod, "api_get", fake_api_get)
+    monkeypatch.setattr(syncmod, "_find_repo_root", lambda: repo)
+
+    with pytest.raises(SystemExit) as exc:
+        syncmod.cmd_connect("TOK_ARG")
+
+    assert exc.value.code == 1
+    assert outside.read_text(encoding="utf-8") == "keep-me"
+    assert link_path.is_symlink()
+    assert not creds_file.exists()
+    assert "Refusing to use symlinked Skylos link file" in capsys.readouterr().out
 
 
 def test_cmd_connect_cancel_input(monkeypatch):

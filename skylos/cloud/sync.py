@@ -1,6 +1,8 @@
 import os
 import sys
 import json
+import stat
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 import subprocess
@@ -81,12 +83,8 @@ def _find_repo_root():
 
 
 def _linked_project_id(repo_root: Path):
-    p = repo_root / SKYLOS_DIR / LINK_FILE
-    if not p.exists():
-        return None
-    try:
-        data = json.loads(p.read_text() or "{}")
-    except Exception:
+    data = _read_link(repo_root)
+    if not data:
         return None
     repo_subpath = _current_repo_subpath(repo_root)
     subpath_entry = _project_entry_for_subpath(data, repo_subpath)
@@ -95,7 +93,10 @@ def _linked_project_id(repo_root: Path):
 
 
 def _read_link(repo_root: Path):
-    p = repo_root / SKYLOS_DIR / LINK_FILE
+    try:
+        p = _ensure_safe_link_path(repo_root, create_dir=False)
+    except AuthError:
+        return {}
     if not p.exists():
         return {}
     try:
@@ -132,6 +133,84 @@ def _project_entry_for_subpath(link: dict, repo_subpath: str) -> dict:
     return {}
 
 
+def _ensure_safe_link_path(repo_root: Path, *, create_dir: bool = False) -> Path:
+    repo_root = Path(repo_root)
+    try:
+        resolved_repo = repo_root.resolve(strict=True)
+    except OSError as exc:
+        raise AuthError(f"Repository root is not accessible: {repo_root}") from exc
+
+    skylos_dir = resolved_repo / SKYLOS_DIR
+    try:
+        dir_stat = skylos_dir.lstat()
+    except FileNotFoundError:
+        if not create_dir:
+            return skylos_dir / LINK_FILE
+        skylos_dir.mkdir(  # skylos: ignore[SKY-D215] fixed child under resolved repo root
+            parents=True,
+            exist_ok=False,
+        )
+        dir_stat = skylos_dir.lstat()
+
+    if stat.S_ISLNK(dir_stat.st_mode):
+        raise AuthError(f"Refusing to use symlinked Skylos directory: {skylos_dir}")
+    if not stat.S_ISDIR(dir_stat.st_mode):
+        raise AuthError(f"Skylos path is not a directory: {skylos_dir}")
+
+    try:
+        resolved_skylos_dir = skylos_dir.resolve(strict=True)
+        resolved_skylos_dir.relative_to(resolved_repo)
+    except (OSError, ValueError) as exc:
+        raise AuthError(
+            f"Skylos directory must stay inside the repository: {skylos_dir}"
+        ) from exc
+
+    link_path = skylos_dir / LINK_FILE
+    try:
+        link_stat = link_path.lstat()
+    except FileNotFoundError:
+        return link_path
+
+    if stat.S_ISLNK(link_stat.st_mode):
+        raise AuthError(f"Refusing to use symlinked Skylos link file: {link_path}")
+    if not stat.S_ISREG(link_stat.st_mode):
+        raise AuthError(f"Skylos link path is not a regular file: {link_path}")
+
+    try:
+        link_path.resolve(strict=True).relative_to(resolved_skylos_dir)
+    except (OSError, ValueError) as exc:
+        raise AuthError(f"Skylos link file must stay inside {skylos_dir}") from exc
+
+    return link_path
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    tmp_path = None
+    fd = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{LINK_FILE}.",
+            suffix=".tmp",
+            dir=str(path.parent),
+            text=True,
+        )
+        tmp_path = Path(tmp_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = None
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
 def _write_link(
     repo_root: Path,
     project_id,
@@ -142,10 +221,7 @@ def _write_link(
     *,
     base_url=None,
 ):
-    skylos_dir = repo_root / SKYLOS_DIR
-    skylos_dir.mkdir(parents=True, exist_ok=True)
-
-    link_path = skylos_dir / LINK_FILE
+    link_path = _ensure_safe_link_path(repo_root, create_dir=True)
     existing = _read_link(repo_root)
     normalized_subpath = _normalize_repo_subpath_value(repo_subpath)
     payload = {
@@ -173,12 +249,15 @@ def _write_link(
         "linked_at": payload["linked_at"],
     }
     payload["projects"] = projects
-    link_path.write_text(json.dumps(payload, indent=2))
+    _atomic_write_text(link_path, json.dumps(payload, indent=2))
     return str(link_path)
 
 
 def _delete_link(repo_root: Path):
-    p = repo_root / SKYLOS_DIR / LINK_FILE
+    try:
+        p = _ensure_safe_link_path(repo_root, create_dir=False)
+    except AuthError:
+        return None
     if not p.exists():
         return None
     p.unlink()
@@ -441,7 +520,11 @@ def cmd_connect(token_arg=None):
 
     repo_root = _find_repo_root()
 
-    link_path, creds_path = _save_repo_link_and_token(repo_root, token, context)
+    try:
+        link_path, creds_path = _save_repo_link_and_token(repo_root, token, context)
+    except AuthError as e:
+        print(f"\n✗ {e}")
+        sys.exit(1)
 
     print(f"\nLinked repo: {repo_root}")
     print(f"Link file:   {link_path}")
@@ -740,7 +823,11 @@ def cmd_setup(token_arg=None):
 
     repo_root = _find_repo_root()
 
-    _save_repo_link_and_token(repo_root, token, context)
+    try:
+        _save_repo_link_and_token(repo_root, token, context)
+    except AuthError as e:
+        print(f"\n✗ {e}")
+        return
 
     print("✓ Connected!\n")
     print(f"  Project: {project.get('name', 'Unknown')}")
