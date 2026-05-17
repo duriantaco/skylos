@@ -139,3 +139,73 @@ def test_parent_class_resolution_does_not_execute_imported_local_module(tmp_path
     assert "CONFIRMED" in info
     assert "DangerousParent" in info
     assert "overrides are NOT dead code" in info
+
+
+def test_graph_context_does_not_execute_project_python_or_imported_module(tmp_path):
+    from skylos.llm.verify_orchestrator import _build_graph_context
+
+    import_marker = tmp_path / "import_executed.txt"
+    interpreter_marker = tmp_path / "interpreter_executed.txt"
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    project_python = venv_bin / "python3"
+    project_python.write_text(
+        f"#!/bin/sh\nprintf interpreter > {str(interpreter_marker)!r}\nexit 0\n",
+        encoding="utf-8",
+    )
+    project_python.chmod(0o755)
+
+    parent_file = tmp_path / "parent.py"
+    parent_file.write_text(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                f"Path({str(import_marker)!r}).write_text('executed', encoding='utf-8')",
+                "",
+                "class DangerousParent:",
+                "    def handle(self):",
+                "        return 'parent'",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    child_file = tmp_path / "child.py"
+    child_file.write_text(
+        "\n".join(
+            [
+                "from parent import DangerousParent as Parent",
+                "",
+                "class Child(Parent):",
+                "    def handle(self):",
+                "        return 'child'",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    finding = {
+        "name": "handle",
+        "full_name": "child.Child.handle",
+        "simple_name": "handle",
+        "type": "method",
+        "file": str(child_file),
+        "line": 4,
+        "confidence": 75,
+        "references": 0,
+        "calls": [],
+        "called_by": [],
+    }
+
+    context = _build_graph_context(
+        finding,
+        {},
+        {str(child_file): child_file.read_text(encoding="utf-8")},
+        project_root=str(tmp_path),
+    )
+
+    assert import_marker.exists() is False
+    assert interpreter_marker.exists() is False
+    assert "Inheritance Context" in context
+    assert "CONFIRMED (static local module)" in context
+    assert "overrides are NOT dead code" in context
