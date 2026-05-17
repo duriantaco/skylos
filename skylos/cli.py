@@ -3329,6 +3329,17 @@ def _add_agent_base_url_arg(parser):
     )
 
 
+def _add_agent_trusted_prompt_templates_arg(parser):
+    parser.add_argument(
+        "--trust-prompt-templates",
+        action="store_true",
+        help=(
+            "Trust prompt templates from the scanned repository configuration. "
+            "Only use this for repositories whose configuration you trust."
+        ),
+    )
+
+
 def _build_agent_parser():
     agent_parser = argparse.ArgumentParser(prog="skylos agent")
     agent_sub = agent_parser.add_subparsers(dest="agent_cmd", required=True)
@@ -3351,6 +3362,7 @@ def _build_agent_parser():
     _add_agent_quiet_arg(p_scan)
     _add_agent_provider_arg(p_scan)
     _add_agent_base_url_arg(p_scan)
+    _add_agent_trusted_prompt_templates_arg(p_scan)
     p_scan.add_argument(
         "--upload",
         action="store_true",
@@ -3412,6 +3424,7 @@ def _build_agent_parser():
     _add_agent_model_arg(p_audit)
     _add_agent_provider_arg(p_audit)
     _add_agent_base_url_arg(p_audit)
+    _add_agent_trusted_prompt_templates_arg(p_audit)
     p_audit.add_argument(
         "--deep",
         action="store_true",
@@ -4498,7 +4511,10 @@ def main() -> None:
                         )
                         sys.exit(1)
 
-                project_cfg = load_config(audit_project_root)
+                prompt_templates = None
+                if getattr(agent_args, "trust_prompt_templates", False):
+                    project_cfg = load_config(audit_project_root)
+                    prompt_templates = project_cfg.get("templates")
                 config = _build_analyzer_config(
                     model=model,
                     api_key=api_key,
@@ -4507,8 +4523,10 @@ def main() -> None:
                     quiet=getattr(agent_args, "quiet", False),
                     enable_security=True,
                     enable_quality=False,
-                    prompt_templates=project_cfg.get("templates"),
-                    prompt_template_root=audit_project_root,
+                    prompt_templates=prompt_templates,
+                    prompt_template_root=(
+                        audit_project_root if prompt_templates else None
+                    ),
                 )
                 analyzer = SkylosLLM(config)
 
@@ -4802,14 +4820,23 @@ def main() -> None:
                 ):
                     sys.exit(0)
 
+                prompt_templates = (
+                    agent_project_cfg.get("templates")
+                    if getattr(agent_args, "trust_prompt_templates", False)
+                    else None
+                )
                 config = _build_analyzer_config(
                     model=model,
                     api_key=api_key,
                     provider=provider,
                     base_url=base_url,
                     quiet=getattr(agent_args, "quiet", False),
-                    prompt_templates=agent_project_cfg.get("templates"),
-                    prompt_template_root=path if path.is_dir() else path.parent,
+                    prompt_templates=prompt_templates,
+                    prompt_template_root=(
+                        path if path.is_dir() else path.parent
+                    )
+                    if prompt_templates
+                    else None,
                 )
                 analyzer = SkylosLLM(config)
                 taskflow = run_security_taskflow(
