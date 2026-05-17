@@ -521,6 +521,79 @@ func shellCommandArgIndex(shellName string, args []ast.Expr) (int, bool) {
 	return 0, false
 }
 
+func (a *Analyzer) hasVariablePotentialShellCommandArg(shellName string, args []ast.Expr) bool {
+	// A non-literal shell option can still be "-c", "/c", or "-Command";
+	// treat the following variable argument as a possible command string.
+	switch shellBaseName(shellName) {
+	case "sh", "bash", "dash", "zsh", "ksh":
+		for i := 1; i < len(args); i++ {
+			value, ok := stringLiteralValue(args[i])
+			if !ok {
+				if i+1 < len(args) && a.isVariable(args[i+1]) {
+					return true
+				}
+				continue
+			}
+			if value == "--" {
+				return false
+			}
+			if posixShellOptionTakesOperand(value) {
+				if i+1 >= len(args) {
+					return false
+				}
+				i++
+				continue
+			}
+			if strings.HasPrefix(value, "-") {
+				if !strings.HasPrefix(value, "--") && strings.Contains(value[1:], "c") {
+					return i+1 < len(args) && a.isVariable(args[i+1])
+				}
+				continue
+			}
+			return false
+		}
+	case "cmd":
+		for i := 1; i < len(args); i++ {
+			value, ok := stringLiteralValue(args[i])
+			if !ok {
+				if i+1 < len(args) && a.isVariable(args[i+1]) {
+					return true
+				}
+				continue
+			}
+			if strings.EqualFold(value, "/c") || strings.EqualFold(value, "/k") {
+				return i+1 < len(args) && a.isVariable(args[i+1])
+			}
+			if strings.HasPrefix(value, "/") {
+				continue
+			}
+			return false
+		}
+	case "powershell", "pwsh":
+		for i := 1; i < len(args); i++ {
+			value, ok := stringLiteralValue(args[i])
+			if !ok {
+				if i+1 < len(args) && a.isVariable(args[i+1]) {
+					return true
+				}
+				continue
+			}
+			normalized := strings.ToLower(value)
+			switch normalized {
+			case "-file", "/file", "-f", "/f":
+				return false
+			case "-command", "-c", "/command", "/c", "-encodedcommand", "-enc", "/encodedcommand", "/enc":
+				return i+1 < len(args) && a.isVariable(args[i+1])
+			}
+			if strings.HasPrefix(value, "-") || strings.HasPrefix(value, "/") {
+				continue
+			}
+			return false
+		}
+	}
+	return false
+}
+
 func (a *Analyzer) isUnsafeExecCommand(call *ast.CallExpr, funcName string) bool {
 	args := call.Args
 	if funcName == "CommandContext" {
@@ -542,7 +615,7 @@ func (a *Analyzer) isUnsafeExecCommand(call *ast.CallExpr, funcName string) bool
 	}
 	commandIndex, ok := shellCommandArgIndex(commandName, args)
 	if !ok {
-		return false
+		return a.hasVariablePotentialShellCommandArg(commandName, args)
 	}
 	return a.isVariable(args[commandIndex])
 }
