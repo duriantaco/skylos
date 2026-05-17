@@ -3329,15 +3329,69 @@ def _add_agent_base_url_arg(parser):
     )
 
 
-def _add_agent_trusted_prompt_templates_arg(parser):
+PROMPT_TEMPLATE_KINDS = {"security", "quality", "security_audit", "review"}
+
+
+def _add_agent_prompt_template_arg(parser):
     parser.add_argument(
-        "--trust-prompt-templates",
-        action="store_true",
+        "--prompt-template",
+        action="append",
+        default=None,
+        metavar="KIND=PATH",
         help=(
-            "Trust prompt templates from the scanned repository configuration. "
-            "Only use this for repositories whose configuration you trust."
+            "Trusted prompt template file to append. KIND must be one of "
+            "security, quality, security_audit, or review. Repeatable."
         ),
     )
+
+
+def _explicit_prompt_templates_from_args(agent_args, console):
+    values = list(getattr(agent_args, "prompt_template", None) or [])
+    if not values:
+        return None, None
+
+    templates = {}
+    for raw_value in values:
+        if "=" not in raw_value:
+            console.print(
+                "[bad]--prompt-template must use KIND=PATH, for example "
+                "security_audit=/trusted/templates/audit.md[/bad]"
+            )
+            sys.exit(2)
+
+        kind, raw_path = raw_value.split("=", 1)
+        kind = kind.strip()
+        raw_path = raw_path.strip()
+        if kind not in PROMPT_TEMPLATE_KINDS:
+            valid = ", ".join(sorted(PROMPT_TEMPLATE_KINDS))
+            console.print(
+                f"[bad]Unknown prompt template kind '{kind}'. Valid: {valid}[/bad]"
+            )
+            sys.exit(2)
+        if not raw_path:
+            console.print("[bad]--prompt-template path must not be empty[/bad]")
+            sys.exit(2)
+
+        path = pathlib.Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = pathlib.Path.cwd() / path
+        if path.is_symlink():
+            console.print(
+                f"[bad]Prompt template must not be a symlink: {raw_path}[/bad]"
+            )
+            sys.exit(2)
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError:
+            console.print(f"[bad]Prompt template not found: {raw_path}[/bad]")
+            sys.exit(2)
+        if not resolved.is_file():
+            console.print(f"[bad]Prompt template is not a file: {raw_path}[/bad]")
+            sys.exit(2)
+
+        templates[kind] = str(resolved)
+
+    return templates, pathlib.Path("/")
 
 
 def _build_agent_parser():
@@ -3362,7 +3416,7 @@ def _build_agent_parser():
     _add_agent_quiet_arg(p_scan)
     _add_agent_provider_arg(p_scan)
     _add_agent_base_url_arg(p_scan)
-    _add_agent_trusted_prompt_templates_arg(p_scan)
+    _add_agent_prompt_template_arg(p_scan)
     p_scan.add_argument(
         "--upload",
         action="store_true",
@@ -3424,7 +3478,7 @@ def _build_agent_parser():
     _add_agent_model_arg(p_audit)
     _add_agent_provider_arg(p_audit)
     _add_agent_base_url_arg(p_audit)
-    _add_agent_trusted_prompt_templates_arg(p_audit)
+    _add_agent_prompt_template_arg(p_audit)
     p_audit.add_argument(
         "--deep",
         action="store_true",
@@ -4511,10 +4565,10 @@ def main() -> None:
                         )
                         sys.exit(1)
 
-                prompt_templates = None
-                if getattr(agent_args, "trust_prompt_templates", False):
-                    project_cfg = load_config(audit_project_root)
-                    prompt_templates = project_cfg.get("templates")
+                (
+                    prompt_templates,
+                    prompt_template_root,
+                ) = _explicit_prompt_templates_from_args(agent_args, console)
                 config = _build_analyzer_config(
                     model=model,
                     api_key=api_key,
@@ -4524,9 +4578,7 @@ def main() -> None:
                     enable_security=True,
                     enable_quality=False,
                     prompt_templates=prompt_templates,
-                    prompt_template_root=(
-                        audit_project_root if prompt_templates else None
-                    ),
+                    prompt_template_root=prompt_template_root,
                 )
                 analyzer = SkylosLLM(config)
 
@@ -4820,11 +4872,10 @@ def main() -> None:
                 ):
                     sys.exit(0)
 
-                prompt_templates = (
-                    agent_project_cfg.get("templates")
-                    if getattr(agent_args, "trust_prompt_templates", False)
-                    else None
-                )
+                (
+                    prompt_templates,
+                    prompt_template_root,
+                ) = _explicit_prompt_templates_from_args(agent_args, console)
                 config = _build_analyzer_config(
                     model=model,
                     api_key=api_key,
@@ -4832,11 +4883,7 @@ def main() -> None:
                     base_url=base_url,
                     quiet=getattr(agent_args, "quiet", False),
                     prompt_templates=prompt_templates,
-                    prompt_template_root=(
-                        path if path.is_dir() else path.parent
-                    )
-                    if prompt_templates
-                    else None,
+                    prompt_template_root=prompt_template_root,
                 )
                 analyzer = SkylosLLM(config)
                 taskflow = run_security_taskflow(
