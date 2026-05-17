@@ -113,6 +113,11 @@ PATH_CONSTRUCTOR_TYPES = {
     "FileOutputStream": (0,),
 }
 
+MAX_CONSTANT_STRING_CHARS = 4096
+MAX_CONSTANT_STORE_CHARS = 16384
+MAX_CONSTANT_ENTRIES = 256
+MAX_CONSTANT_ABS_INT = (1 << 63) - 1
+
 
 @dataclass(frozen=True)
 class JavaTaint:
@@ -531,10 +536,7 @@ class JavaSecurityFlowAnalyzer:
         state.pending_path_objects.pop(name, None)
 
         const_value = self._eval_constant(value_node, state)
-        if const_value is not None:
-            state.constants[name] = const_value
-        else:
-            state.constants.pop(name, None)
+        self._store_constant(name, const_value, state)
 
         object_type = self._object_creation_type(value_node)
         builder_type = self._http_request_builder_type(value_node)
@@ -1526,15 +1528,15 @@ class JavaSecurityFlowAnalyzer:
             child = self._first_expression_child(node)
             return self._eval_constant(child, state)
         if node.type == "string_literal":
-            return self._string_literal_value(node)
+            return self._bounded_constant(self._string_literal_value(node))
         if node.type == "character_literal":
             text = self._text(node)
             if len(text) >= 3 and text[0] == "'" and text[-1] == "'":
-                return text[1:-1]
+                return self._bounded_constant(text[1:-1])
             return None
         if node.type == "decimal_integer_literal":
             try:
-                return int(self._text(node).replace("_", ""))
+                return self._bounded_constant(int(self._text(node).replace("_", "")))
             except ValueError:
                 return None
         if node.type == "true":
@@ -1550,7 +1552,7 @@ class JavaSecurityFlowAnalyzer:
             if text.startswith("!") and isinstance(value, bool):
                 return not value
             if text.startswith("-") and isinstance(value, int):
-                return -value
+                return self._bounded_constant(-value)
             return None
         if node.type == "binary_expression":
             left = self._eval_constant(node.child_by_field_name("left"), state)
@@ -1575,17 +1577,21 @@ class JavaSecurityFlowAnalyzer:
             return None
         try:
             if op == "+" and (isinstance(left, str) or isinstance(right, str)):
-                return str(left) + str(right)
+                left_text = str(left)
+                right_text = str(right)
+                if len(left_text) + len(right_text) > MAX_CONSTANT_STRING_CHARS:
+                    return None
+                return left_text + right_text
             if op == "+" and isinstance(left, int) and isinstance(right, int):
-                return left + right
+                return self._bounded_constant(left + right)
             if op == "-" and isinstance(left, int) and isinstance(right, int):
-                return left - right
+                return self._bounded_constant(left - right)
             if op == "*" and isinstance(left, int) and isinstance(right, int):
-                return left * right
+                return self._bounded_constant(left * right)
             if op == "/" and isinstance(left, int) and isinstance(right, int) and right:
-                return left // right
+                return self._bounded_constant(left // right)
             if op == "%" and isinstance(left, int) and isinstance(right, int) and right:
-                return left % right
+                return self._bounded_constant(left % right)
             if op == ">":
                 return left > right
             if op == ">=":
@@ -1605,6 +1611,51 @@ class JavaSecurityFlowAnalyzer:
         except Exception:
             return None
         return None
+
+    def _bounded_constant(
+        self, value: int | bool | str | None
+    ) -> int | bool | str | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            if abs(value) > MAX_CONSTANT_ABS_INT:
+                return None
+            return value
+        if isinstance(value, str):
+            if len(value) > MAX_CONSTANT_STRING_CHARS:
+                return None
+            return value
+        return None
+
+    def _store_constant(
+        self,
+        name: str,
+        value: int | bool | str | None,
+        state: JavaFlowState,
+    ) -> None:
+        bounded = self._bounded_constant(value)
+        if bounded is None:
+            state.constants.pop(name, None)
+            return
+
+        if name not in state.constants and len(state.constants) >= MAX_CONSTANT_ENTRIES:
+            state.constants.pop(name, None)
+            return
+
+        retained_chars = sum(
+            len(existing)
+            for key, existing in state.constants.items()
+            if key != name and isinstance(existing, str)
+        )
+        if isinstance(bounded, str):
+            retained_chars += len(bounded)
+        if retained_chars > MAX_CONSTANT_STORE_CHARS:
+            state.constants.pop(name, None)
+            return
+
+        state.constants[name] = bounded
 
     def _is_negative_guard_condition(self, node) -> bool:
         text = self._text(node)
