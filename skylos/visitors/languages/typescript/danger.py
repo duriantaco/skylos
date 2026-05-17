@@ -33,6 +33,8 @@ _SAFE_EXEC_OBJECTS: set[str] = {
     "connection",
 }
 
+_CHILD_PROCESS_MODULES = {"child_process", "node:child_process"}
+
 
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 
@@ -109,6 +111,20 @@ _COMPLEX_PATTERN = """
 (call_expression function: (member_expression property: (property_identifier) @cookie_set_prop (#eq? @cookie_set_prop "cookie")) arguments: (arguments) @cookie_set_args)
 (call_expression function: (member_expression object: (identifier) @ls_set_obj (#eq? @ls_set_obj "localStorage") property: (property_identifier) @ls_set_method (#eq? @ls_set_method "setItem")) arguments: (arguments) @ls_set_args)
 (call_expression function: (member_expression object: (identifier) @ss_set_obj (#eq? @ss_set_obj "sessionStorage") property: (property_identifier) @ss_set_method (#eq? @ss_set_method "setItem")) arguments: (arguments) @ss_set_args)
+"""
+
+_CHILD_PROCESS_ALIAS_PATTERN = """
+(import_statement
+  (import_clause (namespace_import (identifier) @import_alias))
+  (string) @import_module)
+(import_statement
+  (import_clause (identifier) @import_alias)
+  (string) @import_module)
+(variable_declarator
+  name: (identifier) @require_alias
+  value: (call_expression
+    function: (identifier) @require_fn (#eq? @require_fn "require")
+    arguments: (arguments (string) @require_module)))
 """
 
 _INTERNAL_URL_PREFIXES = (
@@ -292,6 +308,37 @@ def _string_literal_value(node, source_bytes: bytes) -> str:
     return text
 
 
+def _child_process_aliases(root_node, lang: Language, source_bytes: bytes) -> set[str]:
+    query = _get_query(lang, "danger_child_process_aliases", _CHILD_PROCESS_ALIAS_PATTERN)
+    if query is None:
+        return set()
+
+    aliases: set[str] = set()
+    try:
+        matches = QueryCursor(query).matches(root_node)
+    except Exception:
+        return aliases
+
+    for _, captures in matches:
+        alias_node = None
+        module_node = None
+        if captures.get("import_alias") and captures.get("import_module"):
+            alias_node = captures["import_alias"][0]
+            module_node = captures["import_module"][0]
+        elif captures.get("require_alias") and captures.get("require_module"):
+            alias_node = captures["require_alias"][0]
+            module_node = captures["require_module"][0]
+
+        if alias_node is None or module_node is None:
+            continue
+
+        module_name = _string_literal_value(module_node, source_bytes)
+        if module_name in _CHILD_PROCESS_MODULES:
+            aliases.add(_get_text(source_bytes, alias_node).lower())
+
+    return aliases
+
+
 def _template_prefix(node, source_bytes: bytes) -> str:
     text = _get_text(source_bytes, node)
     if text.startswith("`"):
@@ -453,6 +500,7 @@ def scan_danger(
     simple_captures = _run_batch(root_node, lang, "danger_simple", _SIMPLE_PATTERN)
     jsx_captures = _run_batch(root_node, lang, "danger_jsx", _JSX_PATTERN)
     complex_captures = _run_batch(root_node, lang, "danger_complex", _COMPLEX_PATTERN)
+    child_process_aliases = _child_process_aliases(root_node, lang, source_bytes)
 
     for k, v in jsx_captures.items():
         simple_captures.setdefault(k, []).extend(v)
@@ -478,7 +526,7 @@ def scan_danger(
         if obj_node is None:
             continue
         obj_name = _get_text(source_bytes, obj_node).lower()
-        if obj_name in _SAFE_EXEC_OBJECTS:
+        if obj_name in _SAFE_EXEC_OBJECTS and obj_name not in child_process_aliases:
             continue
         findings.append(
             {

@@ -103,6 +103,26 @@ class TestTSDangerRules:
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D212" in ids
 
+    def test_child_process_exec_safe_named_import_alias_flagged(self, tmp_path):
+        code = (
+            'import * as stmt from "child_process";\n'
+            "const cmd = req.query.cmd;\n"
+            "stmt.exec(cmd);\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D212" in ids
+
+    def test_child_process_exec_safe_named_require_alias_flagged(self, tmp_path):
+        code = (
+            'const db = require("child_process");\n'
+            "const cmd = req.query.cmd;\n"
+            "db.exec(cmd);\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D212" in ids
+
     def test_fetch_concatenated_host_flags_ssrf(self, tmp_path):
         code = (
             "export function fetchTenant(req: any) {\n"
