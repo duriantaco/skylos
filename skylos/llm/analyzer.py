@@ -858,18 +858,6 @@ class SkylosLLM:
 
 
 def analyze(path, model="gpt-4.1", issue_types=None, **kwargs):
-    trust_project_prompt_templates = bool(
-        kwargs.pop("trust_project_prompt_templates", False)
-    )
-    if trust_project_prompt_templates and "prompt_templates" not in kwargs:
-        cfg = load_config(path)
-        templates = cfg.get("templates") if isinstance(cfg, dict) else None
-        if templates:
-            kwargs["prompt_templates"] = templates
-            path_obj = Path(path)
-            kwargs["prompt_template_root"] = (
-                path_obj if path_obj.is_dir() else path_obj.parent
-            )
     config = AnalyzerConfig(model=model, **kwargs)
     analyzer = SkylosLLM(config)
 
