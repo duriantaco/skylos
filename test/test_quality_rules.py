@@ -530,7 +530,41 @@ def f():
 """
         rule = DuplicateStringLiteralRule()
         findings = check_code(rule, code)
-        assert any(f["rule_id"] == "SKY-L027" for f in findings)
+        finding = next(f for f in findings if f["rule_id"] == "SKY-L027")
+        assert finding["name"] == "repeated_magic_string"
+        assert "repeated_magic_string" in finding["message"]
+
+    def test_repeated_secret_like_string_is_redacted(self):
+        secret = "ghp_" + "1234567890" + "abcdefABCDEF1234567890abcd"
+        code = f'''
+def f():
+    a = "{secret}"
+    b = "{secret}"
+    c = "{secret}"
+'''
+        rule = DuplicateStringLiteralRule()
+        findings = check_code(rule, code)
+        finding = next(f for f in findings if f["rule_id"] == "SKY-L027")
+
+        assert finding["name"] == "[REDACTED_SECRET]"
+        assert finding["simple_name"] == "[REDACTED_SECRET]"
+        assert secret not in finding["message"]
+        assert secret not in repr(finding)
+
+    def test_repeated_password_like_string_is_redacted(self):
+        secret = "prod_password_value_2026"
+        code = f'''
+def f():
+    a = "{secret}"
+    b = "{secret}"
+    c = "{secret}"
+'''
+        rule = DuplicateStringLiteralRule()
+        findings = check_code(rule, code)
+        finding = next(f for f in findings if f["rule_id"] == "SKY-L027")
+
+        assert finding["name"] == "[REDACTED_SECRET]"
+        assert secret not in finding["message"]
 
     def test_unique_strings_ok(self):
         code = """
