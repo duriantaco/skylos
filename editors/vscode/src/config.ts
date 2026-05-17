@@ -1,6 +1,14 @@
 import * as vscode from "vscode";
 import { SUPPORTED_LANGUAGES, type AIProvider } from "./types";
-import { resolveTrustedExecutablePath, shouldRunWorkspaceAutomation } from "./configCore";
+import {
+  resolveTrustedExecutablePath,
+  shouldRunWorkspaceAutomation,
+  trustedAIProvider,
+  trustedConfigBoolean,
+  trustedConfigString,
+  trustedLocalBaseUrl,
+  trustedOpenAIBaseUrl,
+} from "./configCore";
 
 function cfg(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration("skylos");
@@ -43,7 +51,7 @@ export function isScanOnOpen(): boolean {
 }
 
 export function isRealtimeAIEnabled(): boolean {
-  return cfg().get<boolean>("enableRealtimeAI", false);
+  return vscode.workspace.isTrusted && trustedConfigBoolean(cfg().inspect<boolean>("enableRealtimeAI"), false);
 }
 
 export function getIdleMs(): number {
@@ -113,7 +121,7 @@ export function getCommandCenterStateFile(): string {
 }
 
 export function getAIProvider(): AIProvider {
-  return cfg().get<AIProvider>("aiProvider", "openai");
+  return trustedAIProvider(cfg().inspect<string>("aiProvider")) as AIProvider;
 }
 
 export function getOpenAIBaseUrl(): string {
@@ -121,11 +129,11 @@ export function getOpenAIBaseUrl(): string {
   if (provider === "local") {
     return getLocalBaseUrl();
   }
-  return cfg().get<string>("openaiBaseUrl", "https://api.openai.com").replace(/\/+$/, "");
+  return trustedOpenAIBaseUrl(cfg().inspect<string>("openaiBaseUrl"));
 }
 
 export function getLocalBaseUrl(): string {
-  return (cfg().get<string>("localBaseUrl", "") || "").replace(/\/+$/, "");
+  return trustedLocalBaseUrl(cfg().inspect<string>("localBaseUrl"));
 }
 
 export function isLocalProvider(): boolean {
@@ -134,20 +142,32 @@ export function isLocalProvider(): boolean {
 
 export function getAIApiKey(): string | undefined {
   const provider = getAIProvider();
-  if (provider === "anthropic") return cfg().get<string>("anthropicApiKey") || undefined;
-  if (provider === "local") {
-    const baseUrl = cfg().get<string>("localBaseUrl", "");
-    if (!baseUrl) return undefined;
-    return cfg().get<string>("openaiApiKey") || "local";
+  if (provider === "anthropic") {
+    return trustedConfigString(cfg().inspect<string>("anthropicApiKey")) || undefined;
   }
-  return cfg().get<string>("openaiApiKey") || undefined;
+  if (provider === "local") {
+    const baseUrl = getLocalBaseUrl();
+    if (!baseUrl) return undefined;
+    return "local";
+  }
+  return trustedConfigString(cfg().inspect<string>("openaiApiKey")) || undefined;
 }
 
 export function getAIModel(): string {
   const provider = getAIProvider();
-  if (provider === "anthropic") return cfg().get<string>("anthropicModel", "claude-sonnet-4-20250514");
-  if (provider === "local") return cfg().get<string>("localModel", "") || cfg().get<string>("openaiModel", "gpt-4o");
-  return cfg().get<string>("openaiModel", "gpt-4o");
+  if (provider === "anthropic") {
+    return trustedConfigString(
+      cfg().inspect<string>("anthropicModel"),
+      "claude-sonnet-4-20250514",
+    );
+  }
+  if (provider === "local") {
+    return (
+      trustedConfigString(cfg().inspect<string>("localModel"))
+      || trustedConfigString(cfg().inspect<string>("openaiModel"), "gpt-4o")
+    );
+  }
+  return trustedConfigString(cfg().inspect<string>("openaiModel"), "gpt-4o");
 }
 
 export function isLanguageSupported(langId: string): boolean {
