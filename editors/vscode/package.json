@@ -270,7 +270,8 @@
         },
         "skylos.scanOnOpen": {
           "type": "boolean",
-          "default": true,
+          "default": false,
+          "scope": "machine",
           "description": "Auto scan the first supported file you open in the session"
         },
         "skylos.showPopup": {
