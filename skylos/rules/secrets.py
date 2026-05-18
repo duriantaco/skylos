@@ -106,15 +106,18 @@ SAFE_TEST_HINTS = {
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-KNOWN_HASH_RE = re.compile(
+KNOWN_HASH_VALUE_RE = re.compile(
     r"(?i)"
-    r"(?:sha(?:1|224|256|384|512)[-:])"  # sha256-..., sha512:...
-    r"|(?:\b[0-9a-f]{40}\b)"  # git SHA-1 (exactly 40 hex)
-    r"|(?:\b[0-9a-f]{64}\b)"  # SHA-256 hex digest (exactly 64 hex)
-    r"|(?:\"integrity\"\s*:)"  # npm integrity field
-    r"|(?:\"hash\"\s*:\s*\")"  # generic hash field in JSON
-    r"|(?:\"checksum\"\s*:)"  # checksum field
-    r"|(?:\"resolved\"\s*:\s*\"https?://)"  # npm resolved URL
+    r"(?:sha(?:1|224|256|384|512)[-:].+)"
+    r"|(?:[0-9a-f]{40})"
+    r"|(?:[0-9a-f]{64})"
+)
+KNOWN_HASH_FIELD_PREFIX_RE = re.compile(
+    r"""(?ix)
+    (?:^|[\s,{])
+    ['"]?(?:integrity|hash|checksum|resolved)['"]?
+    \s*[:=]\s*['"]?$
+"""
 )
 
 IGNORE_DIRECTIVE = "skylos: ignore[SKY-S101]"
@@ -179,14 +182,30 @@ def _has_bare_token_charset_mix(s):
 def _find_generic_value(line_content):
     keyed_match = GENERIC_KEYED_VALUE.search(line_content)
     if keyed_match:
-        return keyed_match.group("val"), False, keyed_match.start("val")
+        keyed_token = keyed_match.group("val")
+        keyed_start = keyed_match.start("val")
+        if not _is_known_hash_candidate(keyed_token, line_content, keyed_start):
+            return keyed_token, False, keyed_start
 
     for bare_match in BARE_GENERIC_VALUE.finditer(line_content):
         bare_token = bare_match.group("bare")
-        if _has_bare_token_charset_mix(bare_token):
-            return bare_token, True, bare_match.start("bare")
+        bare_start = bare_match.start("bare")
+        if not _has_bare_token_charset_mix(bare_token):
+            continue
+        if _is_known_hash_candidate(bare_token, line_content, bare_start):
+            continue
+        return bare_token, True, bare_start
 
     return None
+
+
+def _is_known_hash_candidate(token: str, line_content: str, start: int) -> bool:
+    clean_token = token.strip()
+    if KNOWN_HASH_VALUE_RE.fullmatch(clean_token):
+        return True
+
+    prefix = line_content[:start]
+    return bool(KNOWN_HASH_FIELD_PREFIX_RE.search(prefix))
 
 
 def _docstring_lines(tree):
@@ -362,7 +381,7 @@ def scan_ctx(
 
         in_tests = bool(IS_TEST_PATH.search(rel_path.replace("\\", "/")))
 
-        if in_tests or KNOWN_HASH_RE.search(line_content):
+        if in_tests:
             generic_value = None
         else:
             generic_value = _find_generic_value(line_content)
