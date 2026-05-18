@@ -64,6 +64,59 @@ def test_pretty_renderer_uses_secret_preview_instead_of_source_line(tmp_path):
     assert "sk_live_real_secret_value" not in output
 
 
+def test_pretty_renderer_sanitizes_control_chars_from_finding_fields(tmp_path):
+    source = tmp_path / "src" / "app.py"
+    source.parent.mkdir()
+    source.write_text("def handler():\n    return None\n", encoding="utf-8")
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "danger": [
+            {
+                "rule_id": "SKY-D999",
+                "severity": "HIGH",
+                "message": "bad\x1b[2Jtitle",
+                "snippet": "payload\x1b]52;c;AAAA\x07tail",
+                "file": str(source),
+                "line": 2,
+            }
+        ],
+    }
+
+    console = _recording_console()
+    render_pretty_results(console, result, root_path=tmp_path)
+    output = console.export_text()
+
+    assert "\x1b" not in output
+    assert "\x07" not in output
+    assert "bad\\x1b[2Jtitle" in output
+    assert "payload\\x1b]52;c;AAAA\\x07tail" in output
+
+
+def test_pretty_renderer_sanitizes_control_chars_from_source_line(tmp_path):
+    source = tmp_path / "src" / "app.py"
+    source.parent.mkdir()
+    source.write_text("def handler():\n    eval(user)\x1b[2J\n", encoding="utf-8")
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "danger": [
+            {
+                "rule_id": "SKY-D200",
+                "severity": "HIGH",
+                "message": "Dangerous call",
+                "file": str(source),
+                "line": 2,
+            }
+        ],
+    }
+
+    console = _recording_console()
+    render_pretty_results(console, result, root_path=tmp_path)
+    output = console.export_text()
+
+    assert "\x1b" not in output
+    assert "eval(user)\\x1b[2J" in output
+
+
 def test_collect_pretty_findings_applies_per_category_limit(tmp_path):
     result = {
         "unused_functions": [
