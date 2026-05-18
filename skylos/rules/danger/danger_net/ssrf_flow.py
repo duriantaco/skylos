@@ -90,10 +90,6 @@ def _has_safe_base_url(node):
             if len(parts) > 1 and "/" in parts[1]:
                 return True
 
-    if isinstance(first, ast.FormattedValue):
-        if isinstance(first.value, ast.Name) and first.value.id.isupper():
-            return True
-
     return False
 
 

@@ -84,6 +84,16 @@ def test_requests_fixed_host_interpolated_path_ok(tmp_path):
     assert "SKY-D216" not in _rule_ids(out)
 
 
+def test_requests_uppercase_fstring_base_variable_flags(tmp_path):
+    code = (
+        "import requests\n"
+        "def f(BASE_URL):\n"
+        "    requests.get(f'{BASE_URL}/health', timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_uppercase_base.py", code)
+    assert "SKY-D216" in _rule_ids(out)
+
+
 def test_requests_fixed_host_urljoin_path_ok(tmp_path):
     code = (
         "from urllib.parse import urljoin\n"
