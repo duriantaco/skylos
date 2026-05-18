@@ -73,6 +73,41 @@ def test_clean_command_comment_out_function_uses_source_and_line(tmp_path):
     assert target.read_text(encoding="utf-8") == "# SKYLOS DEADCODE\npass\n"
 
 
+def test_clean_command_refuses_symlink_outside_scan_root(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("def unused():\n    return 1\n", encoding="utf-8")
+    link = repo / "link.py"
+    link.symlink_to(outside)
+    result = {
+        "unused_functions": [
+            {
+                "name": "unused",
+                "file": str(link),
+                "line": 1,
+                "confidence": 100,
+            }
+        ]
+    }
+    console = Mock()
+
+    with (
+        patch("skylos.commands.clean_cmd.Console", return_value=console),
+        patch("skylos.commands.clean_cmd.run_analyze", return_value=json.dumps(result)),
+        patch("builtins.input", side_effect=["c", "y"]),
+        patch(
+            "skylos.commands.clean_cmd.comment_out_unused_function_cst",
+            return_value=("# SKYLOS DEADCODE\npass\n", True),
+        ) as comment_out,
+    ):
+        exit_code = clean_cmd.run_clean_command([str(repo)])
+
+    assert exit_code == 0
+    comment_out.assert_not_called()
+    assert outside.read_text(encoding="utf-8") == "def unused():\n    return 1\n"
+
+
 def test_clean_command_skips_unsupported_findings_from_prompt(tmp_path):
     target = tmp_path / "sample.py"
     target.write_text(
