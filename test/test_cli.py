@@ -541,6 +541,32 @@ def test_comment_out_unused_function_handles_exception_and_returns_false():
     assert logerr.called
 
 
+def test_comment_out_unused_function_refuses_symlink_outside_root(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("def unused():\n    return 1\n", encoding="utf-8")
+    link = repo / "link.py"
+    link.symlink_to(outside)
+
+    ok = cli.comment_out_unused_function(link, "unused", 1, root_path=repo)
+
+    assert ok is False
+    assert outside.read_text(encoding="utf-8") == "def unused():\n    return 1\n"
+
+
+def test_remove_unused_import_refuses_file_outside_root(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("import os\n", encoding="utf-8")
+
+    ok = cli.remove_unused_import(outside, "os", 1, root_path=repo)
+
+    assert ok is False
+    assert outside.read_text(encoding="utf-8") == "import os\n"
+
+
 def test_generate_llm_report_formats_findings_and_defaults_dead_code(tmp_path):
     src = tmp_path / "app.py"
     src.write_text(

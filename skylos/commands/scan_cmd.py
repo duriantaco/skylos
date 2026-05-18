@@ -640,7 +640,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                         console.print("[warn]Applying changes…[/warn]")
                         for func in selected_functions:
                             ok = action_func_fn(
-                                func["file"], func["name"], func["line"]
+                                func["file"],
+                                func["name"],
+                                func["line"],
+                                root_path=project_root,
                             )
                             if ok:
                                 console.print(
@@ -652,7 +655,12 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                                 )
 
                         for imp in selected_imports:
-                            ok = action_func_imp(imp["file"], imp["name"], imp["line"])
+                            ok = action_func_imp(
+                                imp["file"],
+                                imp["name"],
+                                imp["line"],
+                                root_path=project_root,
+                            )
                             if ok:
                                 console.print(
                                     f"[good] ✓ {action_past} import:[/good] {imp['name']}"

@@ -11,6 +11,7 @@ from skylos.remediation.codemods import (
     remove_unused_function_cst,
     remove_unused_import_cst,
 )
+from skylos.remediation.safety import resolve_remediation_path
 
 SUPPORTED_FINDING_TYPES = {"function", "import"}
 
@@ -21,8 +22,10 @@ def run_analyze(*args, **kwargs):
     return run_analyze_impl(*args, **kwargs)
 
 
-def _apply_codemod(file_path, transform, *transform_args, **transform_kwargs):
-    path = Path(file_path)
+def _apply_codemod(
+    file_path, transform, *transform_args, root_path=None, **transform_kwargs
+):
+    path = resolve_remediation_path(file_path, root_path=root_path)
     src = path.read_text(encoding="utf-8")
     new_code, changed = transform(src, *transform_args, **transform_kwargs)
     if changed:
@@ -46,6 +49,9 @@ def _collect_findings(items, finding_type):
 def run_clean_command(argv: list[str]) -> int:
     console = Console()
     path = argv[0] if argv else "."
+    scan_root = Path(path).resolve()
+    if scan_root.is_file():
+        scan_root = scan_root.parent
 
     console.print(
         Panel(
@@ -176,7 +182,11 @@ def run_clean_command(argv: list[str]) -> int:
                     elif finding["type"] == "function":
                         transform = comment_out_unused_function_cst
                 if transform and _apply_codemod(
-                    finding["file"], transform, finding["name"], finding["line"]
+                    finding["file"],
+                    transform,
+                    finding["name"],
+                    finding["line"],
+                    root_path=scan_root,
                 ):
                     applied += 1
             except Exception as e:

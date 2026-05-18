@@ -34,6 +34,7 @@ from skylos.core.result_cache import (
     save_trace_cache,
     write_trace_payload,
 )
+from skylos.remediation.safety import resolve_remediation_path
 
 from pathlib import Path
 import pathlib
@@ -688,10 +689,9 @@ def setup_logger(output_file=None):
     return logger
 
 
-def remove_unused_import(file_path, import_name, line_number):
-    path = pathlib.Path(file_path)
-
+def remove_unused_import(file_path, import_name, line_number, *, root_path=None):
     try:
+        path = resolve_remediation_path(file_path, root_path=root_path)
         src = path.read_text(encoding="utf-8")
         new_code, changed = remove_unused_import_cst(src, import_name, line_number)
         if not changed:
@@ -704,10 +704,9 @@ def remove_unused_import(file_path, import_name, line_number):
         return False
 
 
-def remove_unused_function(file_path, function_name, line_number):
-    path = pathlib.Path(file_path)
-
+def remove_unused_function(file_path, function_name, line_number, *, root_path=None):
     try:
+        path = resolve_remediation_path(file_path, root_path=root_path)
         src = path.read_text(encoding="utf-8")
         new_code, changed = remove_unused_function_cst(src, function_name, line_number)
         if not changed:
@@ -723,11 +722,10 @@ def remove_unused_function(file_path, function_name, line_number):
 
 
 def comment_out_unused_import(
-    file_path, import_name, line_number, marker="SKYLOS DEADCODE"
+    file_path, import_name, line_number, marker="SKYLOS DEADCODE", *, root_path=None
 ):
-    path = pathlib.Path(file_path)
-
     try:
+        path = resolve_remediation_path(file_path, root_path=root_path)
         src = path.read_text(encoding="utf-8")
         new_code, changed = comment_out_unused_import_cst(
             src, import_name, line_number, marker=marker
@@ -745,11 +743,10 @@ def comment_out_unused_import(
 
 
 def comment_out_unused_function(
-    file_path, function_name, line_number, marker="SKYLOS DEADCODE"
+    file_path, function_name, line_number, marker="SKYLOS DEADCODE", *, root_path=None
 ):
-    path = pathlib.Path(file_path)
-
     try:
+        path = resolve_remediation_path(file_path, root_path=root_path)
         src = path.read_text(encoding="utf-8")
         new_code, changed = comment_out_unused_function_cst(
             src, function_name, line_number, marker=marker
