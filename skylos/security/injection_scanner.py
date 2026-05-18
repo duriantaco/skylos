@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 
 from skylos.security.canonicalize import (
+    MAX_BASE64_RESULTS,
+    MAX_ZERO_WIDTH_HITS,
     decode_base64_blobs,
     detect_homoglyphs,
     normalize,
@@ -12,6 +14,11 @@ from skylos.security.canonicalize import (
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
 
 RULE_ID = "SKY-D260"
+
+MAX_SCANNABLE_FILE_BYTES = 1_000_000
+MAX_FINDINGS_PER_FILE = 128
+MAX_SCAN_FILES = 512
+MAX_SCAN_FINDINGS = 1024
 
 _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"ignore\s+(all\s+)?previous\s+instructions?", re.I), "HIGH"),
@@ -114,6 +121,8 @@ def scan_file(
         return []
 
     try:
+        if filepath.stat().st_size > MAX_SCANNABLE_FILE_BYTES:
+            return []
         source = filepath.read_text(
             errors="replace"
         )  # skylos: ignore[SKY-D215] scanner reads discovered source files
@@ -126,7 +135,7 @@ def scan_file(
     if not source.strip():
         return findings
 
-    _, zero_width_hits = strip_zero_width(source)
+    _, zero_width_hits = strip_zero_width(source, max_hits=MAX_ZERO_WIDTH_HITS)
     for char_hex, line_no in zero_width_hits:
         findings.append(
             _make_finding(
@@ -141,8 +150,12 @@ def scan_file(
                 f"prompt injection payloads from human reviewers.",
             )
         )
+        if len(findings) >= MAX_FINDINGS_PER_FILE:
+            return findings
 
     _add_source_homoglyph_findings(findings, filepath, source)
+    if len(findings) >= MAX_FINDINGS_PER_FILE:
+        return findings
 
     segments = _extract_segments(source, ext, filepath)
 
@@ -185,9 +198,11 @@ def scan_file(
                         f"This may attempt to manipulate AI agents processing this content.",
                     )
                 )
+                if len(findings) >= MAX_FINDINGS_PER_FILE:
+                    return findings
                 break
 
-    decoded_blobs = decode_base64_blobs(source)
+    decoded_blobs = decode_base64_blobs(source, max_results=MAX_BASE64_RESULTS)
     for decoded_text, line_no in decoded_blobs:
         normalized = normalize(decoded_text)
         for pattern, base_severity in _PATTERNS:
@@ -206,6 +221,8 @@ def scan_file(
                         f"against AI agents.",
                     )
                 )
+                if len(findings) >= MAX_FINDINGS_PER_FILE:
+                    return findings
                 break
 
     return findings
@@ -218,7 +235,10 @@ def scan_directory(
     all_excludes = _DEFAULT_EXCLUDE_DIRS | (exclude_dirs or set())
     findings: list[dict] = []
 
+    files_scanned = 0
     for filepath in root.rglob("*"):
+        if files_scanned >= MAX_SCAN_FILES or len(findings) >= MAX_SCAN_FINDINGS:
+            break
         if not filepath.is_file():
             continue
         if filepath.suffix.lower() not in SCANNABLE_EXTENSIONS:
@@ -229,7 +249,9 @@ def scan_directory(
         if any(p in all_excludes or p.startswith(".") for p in parts[:-1]):
             continue
 
-        findings.extend(scan_file(filepath, scan_path=rel))
+        files_scanned += 1
+        remaining = MAX_SCAN_FINDINGS - len(findings)
+        findings.extend(scan_file(filepath, scan_path=rel)[:remaining])
 
     return findings
 
@@ -337,6 +359,8 @@ def _add_source_homoglyph_findings(
 ) -> None:
     seen_lines: set[int] = set()
     for char, ascii_like, line_no in detect_homoglyphs(source):
+        if len(findings) >= MAX_FINDINGS_PER_FILE:
+            return
         if line_no in seen_lines:
             continue
         seen_lines.add(line_no)

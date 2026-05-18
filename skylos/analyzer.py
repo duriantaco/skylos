@@ -2548,18 +2548,22 @@ class Skylos:
                     progress_callback(0, 1, Path("PHASE: prompt injection scan"))
                 try:
                     from skylos.security.injection_scanner import (
+                        MAX_SCAN_FILES as _INJECTION_MAX_SCAN_FILES,
+                        MAX_SCAN_FINDINGS as _INJECTION_MAX_SCAN_FINDINGS,
                         SCANNABLE_EXTENSIONS,
                         scan_file as _injection_scan_file,
                     )
 
-                    injection_candidates = list(files)
+                    injection_candidates = list(files)[:_INJECTION_MAX_SCAN_FILES]
                     injection_root = Path(
                         path[0] if isinstance(path, (list, tuple)) else path
                     ).resolve()
                     if injection_root.is_file():
                         injection_root = injection_root.parent
                     if changed_files is not None:
-                        injection_candidates = [Path(f) for f in changed_files]
+                        injection_candidates = [
+                            Path(f) for f in changed_files
+                        ][:_INJECTION_MAX_SCAN_FILES]
                     else:
                         seen_injection_files = {
                             str(Path(f).resolve()) for f in injection_candidates
@@ -2579,16 +2583,32 @@ class Skylos:
                                     fkey = str(fpath.resolve())
                                     if fkey in seen_injection_files:
                                         continue
+                                    if (
+                                        len(injection_candidates)
+                                        >= _INJECTION_MAX_SCAN_FILES
+                                    ):
+                                        break
                                     seen_injection_files.add(fkey)
                                     injection_candidates.append(fpath)
+                                if (
+                                    len(injection_candidates)
+                                    >= _INJECTION_MAX_SCAN_FILES
+                                ):
+                                    break
+                    injection_findings = 0
                     for f in injection_candidates:
+                        if injection_findings >= _INJECTION_MAX_SCAN_FINDINGS:
+                            break
                         try:
                             scan_path = Path(f).resolve().relative_to(injection_root)
                         except ValueError:
                             scan_path = None
                         inj_hits = _injection_scan_file(f, scan_path=scan_path)
                         if inj_hits:
-                            all_dangers.extend(inj_hits)
+                            remaining = _INJECTION_MAX_SCAN_FINDINGS - injection_findings
+                            bounded_hits = inj_hits[:remaining]
+                            all_dangers.extend(bounded_hits)
+                            injection_findings += len(bounded_hits)
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
