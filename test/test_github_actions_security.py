@@ -397,7 +397,14 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
         s for s in steps if s.get("name") == "Install trusted Skylos for pull requests"
     )
     assert pr_install_step["if"] == "github.event_name == 'pull_request'"
+    assert "uv " not in pr_install_step["run"]
     assert '"skylos>=4.7.0"' in pr_install_step["run"]
+    assert "python -m venv \"$SKYLOS_PR_VENV\"" in pr_install_step["run"]
+    assert "--isolated" in pr_install_step["run"]
+    assert "--index-url https://pypi.org/simple" in pr_install_step["run"]
+    assert "--only-binary=:all:" in pr_install_step["run"]
+    assert "echo \"SKYLOS_BIN=$SKYLOS_PR_VENV/bin/skylos\"" in pr_install_step["run"]
+    assert ".venv" not in pr_install_step["run"]
     assert "-e ." not in pr_install_step["run"]
 
     local_install_step = next(
@@ -405,10 +412,12 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
     )
     assert local_install_step["if"] == "github.event_name != 'pull_request'"
     assert "-e ." in local_install_step["run"]
+    assert "SKYLOS_BIN=.venv/bin/skylos" in local_install_step["run"]
 
     scan_step = next(s for s in steps if s.get("name") == "Run Skylos")
     assert "python -m skylos.cli" not in scan_step["run"]
-    assert ".venv/bin/skylos" in scan_step["run"]
+    assert '"$SKYLOS_BIN"' in scan_step["run"]
+    assert scan_step["env"]["PYTHONSAFEPATH"] == "1"
 
 
 def test_composite_action_validates_and_quotes_max_comments_input():

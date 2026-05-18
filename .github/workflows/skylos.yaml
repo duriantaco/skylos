@@ -38,15 +38,30 @@ jobs:
       - name: Install trusted Skylos for pull requests
         if: github.event_name == 'pull_request'
         run: |
-          uv venv --python 3.11
-          uv pip install --python .venv/bin/python "skylos>=4.7.0"
-          .venv/bin/skylos --version
+          SKYLOS_PR_VENV="${RUNNER_TEMP}/skylos-pr-scan-venv"
+          python -m venv "$SKYLOS_PR_VENV"
+          "$SKYLOS_PR_VENV/bin/python" -m pip install \
+            --isolated \
+            --no-input \
+            --disable-pip-version-check \
+            --index-url https://pypi.org/simple \
+            --upgrade pip
+          "$SKYLOS_PR_VENV/bin/python" -m pip install \
+            --isolated \
+            --no-input \
+            --disable-pip-version-check \
+            --index-url https://pypi.org/simple \
+            --only-binary=:all: \
+            "skylos>=4.7.0"
+          echo "SKYLOS_BIN=$SKYLOS_PR_VENV/bin/skylos" >> "$GITHUB_ENV"
+          "$SKYLOS_PR_VENV/bin/skylos" --version
 
       - name: Use repo Skylos on trusted refs
         if: github.event_name != 'pull_request'
         run: |
           uv venv --python 3.11
           uv pip install --python .venv/bin/python -e .
+          echo "SKYLOS_BIN=.venv/bin/skylos" >> "$GITHUB_ENV"
           .venv/bin/python -c "import skylos; print('skylos from:', skylos.__file__)"
           .venv/bin/python -c "import skylos.visitors.languages; print('languages OK')"
 
@@ -67,28 +82,31 @@ jobs:
         env:
           REPORT: skylos_${{ github.run_number }}_${{ github.sha }}.json
           DIFF_BASE: ${{ steps.diff.outputs.base }}
+          PYTHONSAFEPATH: "1"
         shell: bash
         run: |
           echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
           if [ -n "$DIFF_BASE" ]; then
-            .venv/bin/skylos . --quality --danger --secrets --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
+            "$SKYLOS_BIN" . --quality --danger --secrets --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
           else
-            .venv/bin/skylos . --quality --danger --secrets --baseline --json -o "$REPORT"
+            "$SKYLOS_BIN" . --quality --danger --secrets --baseline --json -o "$REPORT"
           fi
 
       - name: Report findings (advisory)
         if: always()
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
+          PYTHONSAFEPATH: "1"
         run: |
-          .venv/bin/skylos cicd gate --input "$REPORT" --summary --advisory
+          "$SKYLOS_BIN" cicd gate --input "$REPORT" --summary --advisory
 
       - name: GitHub annotations
         if: always()
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
+          PYTHONSAFEPATH: "1"
         run: |
-          .venv/bin/skylos cicd annotate --input "$REPORT"
+          "$SKYLOS_BIN" cicd annotate --input "$REPORT"
 
       - name: Upload report artifact
         if: always()
