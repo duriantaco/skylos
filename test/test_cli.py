@@ -629,6 +629,35 @@ def test_generate_llm_report_formats_findings_and_defaults_dead_code(tmp_path):
     assert result["unused_functions"][0]["severity"] == "MEDIUM"
 
 
+def test_generate_llm_report_uses_secret_preview_without_source_context(tmp_path):
+    raw_secret = "ghp_" + "1234567890" + "abcdefghijklmnop" + "qrstuvwxyzABCD"
+    src = tmp_path / "settings.py"
+    src.write_text(f'TOKEN = "{raw_secret}"\n', encoding="utf-8")
+    result = {
+        "danger": [],
+        "secrets": [
+            {
+                "rule_id": "SKY-S101",
+                "severity": "CRITICAL",
+                "provider": "github",
+                "message": "Potential github secret detected",
+                "file": str(src),
+                "line": 1,
+                "preview": "ghp_…ABCD",
+            }
+        ],
+        "quality": [],
+        "custom_rules": [],
+    }
+
+    report = cli._generate_llm_report(result, tmp_path)
+
+    assert "## 1. SKY-S101 | CRITICAL | Secrets" in report
+    assert "ghp_…ABCD" in report
+    assert raw_secret not in report
+    assert 'TOKEN = "' not in report
+
+
 def test_llm_report_code_block_returns_empty_for_invalid_line(tmp_path):
     src = tmp_path / "app.py"
     src.write_text("print('ok')\n", encoding="utf-8")

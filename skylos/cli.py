@@ -1342,6 +1342,11 @@ def _llm_report_code_block(
     return ""
 
 
+def _llm_report_secret_block(finding: dict) -> str:
+    preview = finding.get("preview") or "****"
+    return f"\n```\n>>> secret preview | {preview}\n```\n"
+
+
 def _format_llm_report_section(finding_num, finding, label, code_block):
     rule_id = finding.get("rule_id", "")
     severity = finding.get("severity", "INFO")
@@ -1376,7 +1381,11 @@ def _generate_llm_report(result: dict, project_root: pathlib.Path) -> str:
     for finding_num, (finding, label) in enumerate(all_findings, 1):
         file_path = finding.get("file", "")
         line = finding.get("line", 0)
-        code_block = _llm_report_code_block(file_path, line, project_root, file_cache)
+        code_block = (
+            _llm_report_secret_block(finding)
+            if label == "Secrets"
+            else _llm_report_code_block(file_path, line, project_root, file_cache)
+        )
         sections.append(
             _format_llm_report_section(finding_num, finding, label, code_block)
         )
