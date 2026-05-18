@@ -20,10 +20,11 @@ permissions:
 jobs:
   parity:
     runs-on: ubuntu-latest
-    env:
-      SK_PARITY_VENV: ${{ runner.temp }}/skylos-parity-venv
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure parity venv path
+        run: echo "SK_PARITY_VENV=${RUNNER_TEMP}/skylos-parity-venv" >> "$GITHUB_ENV"
 
       - name: Set up Python
         uses: actions/setup-python@v5
