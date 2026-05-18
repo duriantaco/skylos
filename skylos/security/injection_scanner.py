@@ -63,9 +63,6 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
 ]
 
 _HTML_COMMENT_RE = re.compile(r"<!--(.*?)-->", re.S)
-_FENCED_BLOCK_RE = re.compile(
-    r"^[ \t]*(`{3,}|~{3,}).*?\n.*?^[ \t]*\1[ \t]*$", re.M | re.S
-)
 _FRONT_MATTER_RE = re.compile(r"\A---\n.*?\n---\n", re.S)
 
 SCANNABLE_EXTENSIONS = {
@@ -278,15 +275,10 @@ def _extract_segments(
             segments.append((match.group(1), line_no, "string"))
 
     elif ext in (".md", ".rst", ".txt"):
-        fenced_lines: set[int] = set()
+        fenced_lines = _matched_fenced_block_lines(source)
 
         for match in _FRONT_MATTER_RE.finditer(source):
             start_line = 1
-            end_line = source[: match.end()].count("\n") + 1
-            fenced_lines.update(range(start_line, end_line + 1))
-
-        for match in _FENCED_BLOCK_RE.finditer(source):
-            start_line = source[: match.start()].count("\n") + 1
             end_line = source[: match.end()].count("\n") + 1
             fenced_lines.update(range(start_line, end_line + 1))
 
@@ -330,6 +322,53 @@ def _extract_segments(
                         segments.append((value, line_no, "env_value"))
 
     return segments
+
+
+def _markdown_fence_marker(line: str) -> tuple[str, int, str] | None:
+    stripped = line.lstrip(" \t")
+    if not stripped or stripped[0] not in ("`", "~"):
+        return None
+
+    marker = stripped[0]
+    marker_len = 0
+    for char in stripped:
+        if char != marker:
+            break
+        marker_len += 1
+
+    if marker_len < 3:
+        return None
+
+    return marker, marker_len, stripped[marker_len:]
+
+
+def _matched_fenced_block_lines(source: str) -> set[int]:
+    fenced_lines: set[int] = set()
+    open_marker: tuple[str, int] | None = None
+    open_line = 0
+
+    for line_no, line in enumerate(source.splitlines(), 1):
+        marker = _markdown_fence_marker(line)
+        if marker is None:
+            continue
+
+        marker_char, marker_len, rest = marker
+        if open_marker is None:
+            open_marker = (marker_char, marker_len)
+            open_line = line_no
+            continue
+
+        open_char, open_len = open_marker
+        if (
+            marker_char == open_char
+            and marker_len >= open_len
+            and not rest.strip(" \t")
+        ):
+            fenced_lines.update(range(open_line, line_no + 1))
+            open_marker = None
+            open_line = 0
+
+    return fenced_lines
 
 
 def _add_path_homoglyph_findings(
