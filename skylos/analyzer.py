@@ -2554,20 +2554,56 @@ class Skylos:
                         scan_file as _injection_scan_file,
                     )
 
-                    injection_candidates = list(files)[:_INJECTION_MAX_SCAN_FILES]
                     injection_root = Path(
                         path[0] if isinstance(path, (list, tuple)) else path
                     ).resolve()
                     if injection_root.is_file():
                         injection_root = injection_root.parent
+                    injection_candidates = []
+                    seen_injection_files = set()
+                    injection_doc_exts = SCANNABLE_EXTENSIONS - {".py"}
+                    high_priority_injection_names = {
+                        "readme.md",
+                        "readme.rst",
+                        "readme.txt",
+                        "security.md",
+                        "contributing.md",
+                        "contributing.rst",
+                        "prompt.md",
+                        "prompts.md",
+                        "prompts.yaml",
+                        "prompts.yml",
+                    }
+
+                    def _add_injection_candidate(candidate):
+                        candidate_path = Path(candidate)
+                        if candidate_path.suffix.lower() not in SCANNABLE_EXTENSIONS:
+                            return
+                        candidate_key = str(candidate_path.resolve())
+                        if candidate_key in seen_injection_files:
+                            return
+                        seen_injection_files.add(candidate_key)
+                        injection_candidates.append(candidate_path)
+
+                    def _injection_candidate_sort_key(candidate_path):
+                        suffix = candidate_path.suffix.lower()
+                        name = candidate_path.name.lower()
+                        if name in high_priority_injection_names or (
+                            suffix in injection_doc_exts and "prompt" in name
+                        ):
+                            priority = 0
+                        elif suffix in injection_doc_exts:
+                            priority = 1
+                        else:
+                            priority = 2
+                        return priority, str(candidate_path)
+
                     if changed_files is not None:
-                        injection_candidates = [
-                            Path(f) for f in changed_files
-                        ][:_INJECTION_MAX_SCAN_FILES]
+                        for changed_file in changed_files:
+                            _add_injection_candidate(changed_file)
                     else:
-                        seen_injection_files = {
-                            str(Path(f).resolve()) for f in injection_candidates
-                        }
+                        for source_file in files:
+                            _add_injection_candidate(source_file)
                         if injection_root.is_dir():
                             for dirpath, dirnames, filenames in os.walk(injection_root):
                                 dirnames[:] = [
@@ -2578,23 +2614,12 @@ class Skylos:
                                 ]
                                 for fname in filenames:
                                     fpath = Path(dirpath) / fname
-                                    if fpath.suffix.lower() not in SCANNABLE_EXTENSIONS:
-                                        continue
-                                    fkey = str(fpath.resolve())
-                                    if fkey in seen_injection_files:
-                                        continue
-                                    if (
-                                        len(injection_candidates)
-                                        >= _INJECTION_MAX_SCAN_FILES
-                                    ):
-                                        break
-                                    seen_injection_files.add(fkey)
-                                    injection_candidates.append(fpath)
-                                if (
-                                    len(injection_candidates)
-                                    >= _INJECTION_MAX_SCAN_FILES
-                                ):
-                                    break
+                                    _add_injection_candidate(fpath)
+
+                    injection_candidates.sort(key=_injection_candidate_sort_key)
+                    injection_candidates = injection_candidates[
+                        :_INJECTION_MAX_SCAN_FILES
+                    ]
                     injection_findings = 0
                     for f in injection_candidates:
                         if injection_findings >= _INJECTION_MAX_SCAN_FINDINGS:
