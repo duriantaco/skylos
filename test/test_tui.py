@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from unittest.mock import patch, Mock
 
@@ -7,6 +8,8 @@ from skylos.ui.tui import (
     prepare_category_data,
     CATEGORIES,
     DEAD_CODE_KEYS,
+    DetailPanel,
+    ListView,
     SEVERITY_COLORS,
     SkylosApp,
     run_tui,
@@ -370,6 +373,21 @@ class TestSkylosAppInit:
         assert app.active_category == "overview"
         assert app.severity_filter is None
         assert app.search_query == ""
+
+    def test_show_category_selects_first_row_and_syncs_detail(self, sample_result):
+        async def run():
+            app = SkylosApp(sample_result, root_path=".")
+            async with app.run_test() as pilot:
+                app._show_category("security")
+                await pilot.pause()
+                finding_list = app.query_one("#findings-list", ListView)
+                detail = app.query_one("#detail-panel", DetailPanel)
+
+                assert finding_list.index == 0
+                assert detail.has_class("visible")
+                assert "SKY-D211" in str(detail.render())
+
+        asyncio.run(run())
 
 
 class TestRunTui:
