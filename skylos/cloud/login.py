@@ -320,6 +320,11 @@ def get_current_connection(base_url=None):
 
 
 def _print_connected_result(result, console=None):
+    mcp_hint = (
+        "Token saved locally. For MCP/AI agents, set SKYLOS_API_KEY "
+        "through your private secret manager."
+    )
+
     if console:
         console.print("\n[good]Connected to Skylos Cloud![/good]")
         console.print(f"  Project:      {result.project_name}")
@@ -329,9 +334,7 @@ def _print_connected_result(result, console=None):
             console.print(f"  Project root: {result.repo_subpath}")
         console.print("\n  Scans will auto-upload on every run.")
         console.print("  Use [bold]--no-upload[/bold] to skip.")
-        console.print(
-            f"\n  [dim]For MCP/AI agents: export SKYLOS_API_KEY={result.token}[/dim]"
-        )
+        console.print(f"\n  [dim]{mcp_hint}[/dim]")
     else:
         print("\nConnected to Skylos Cloud!")
         print(f"  Project:      {result.project_name}")
@@ -341,7 +344,7 @@ def _print_connected_result(result, console=None):
             print(f"  Project root: {result.repo_subpath}")
         print("\n  Scans will auto-upload on every run.")
         print("  Use --no-upload to skip.")
-        print(f"\n  For MCP/AI agents: export SKYLOS_API_KEY={result.token}")
+        print(f"\n  {mcp_hint}")
 
 
 def run_login(console=None, base_url=None):

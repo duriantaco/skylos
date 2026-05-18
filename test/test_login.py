@@ -137,3 +137,47 @@ def test_run_login_existing_cancel_keeps_current(monkeypatch):
     assert result is existing
     manual.assert_not_called()
     save.assert_not_called()
+
+
+def test_print_connected_result_plain_output_omits_raw_token(capsys):
+    raw_token = "skylos_sensitive_login_token_1234567890"
+    result = loginmod.LoginResult(
+        token=raw_token,
+        project_id="proj_123",
+        project_name="Project",
+        org_name="Org",
+        plan="pro",
+    )
+
+    loginmod._print_connected_result(result)
+
+    output = capsys.readouterr().out
+    assert raw_token not in output
+    assert "export SKYLOS_API_KEY=" not in output
+    assert "Token saved locally" in output
+
+
+def test_print_connected_result_console_output_omits_raw_token():
+    raw_token = "skylos_sensitive_login_token_1234567890"
+    result = loginmod.LoginResult(
+        token=raw_token,
+        project_id="proj_123",
+        project_name="Project",
+        org_name="Org",
+        plan="pro",
+    )
+
+    class CaptureConsole:
+        def __init__(self):
+            self.messages = []
+
+        def print(self, message="", *args, **kwargs):
+            self.messages.append(str(message))
+
+    console = CaptureConsole()
+    loginmod._print_connected_result(result, console=console)
+
+    output = "\n".join(console.messages)
+    assert raw_token not in output
+    assert "export SKYLOS_API_KEY=" not in output
+    assert "Token saved locally" in output
