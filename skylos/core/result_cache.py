@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,7 @@ SCHEMA_VERSION = 1
 CACHE_KIND_TRACE = "trace"
 RUN_CACHE_DIR = Path(".skylos") / "cache" / "runs"
 TRACE_CACHE_DIR = RUN_CACHE_DIR / "v1" / "trace"
+MAX_CACHE_STAT_ENTRIES = 100_000
 
 TRACE_ENV_VARS = (
     "PYTHONPATH",
@@ -219,6 +221,100 @@ def clear_run_cache(project_root: str | Path) -> bool:
         path
     )  # skylos: ignore[SKY-D215] guarded project-local cache directory
     return True
+
+
+def run_cache_stats(project_root: str | Path) -> dict[str, Any]:
+    root = _normalize_root(project_root)
+    path = root / RUN_CACHE_DIR
+    stats = {
+        "path": str(path),
+        "exists": False,
+        "files": 0,
+        "directories": 0,
+        "symlinks": 0,
+        "other_entries": 0,
+        "bytes": 0,
+        "errors": 0,
+        "skipped": 0,
+        "truncated": False,
+        "max_entries": MAX_CACHE_STAT_ENTRIES,
+    }
+
+    try:
+        root_resolved = root.resolve(strict=True)
+        path.resolve(strict=False).relative_to(root_resolved)
+    except (OSError, ValueError):
+        stats["error"] = "cache path is outside the project root"
+        return stats
+
+    try:
+        root_stat = path.lstat()
+    except FileNotFoundError:
+        return stats
+    except OSError as exc:
+        stats["errors"] += 1
+        stats["error"] = str(exc)
+        return stats
+
+    stats["exists"] = True
+    if stat.S_ISLNK(root_stat.st_mode):
+        stats["symlinks"] += 1
+        stats["skipped"] += 1
+        stats["error"] = "cache path is a symlink"
+        return stats
+    if not stat.S_ISDIR(root_stat.st_mode):
+        if stat.S_ISREG(root_stat.st_mode):
+            stats["files"] += 1
+            stats["bytes"] += root_stat.st_size
+        else:
+            stats["other_entries"] += 1
+            stats["skipped"] += 1
+        return stats
+
+    seen_entries = 0
+
+    def visit(directory: Path) -> None:
+        nonlocal seen_entries
+        if stats["truncated"]:
+            return
+
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if seen_entries >= MAX_CACHE_STAT_ENTRIES:
+                        stats["truncated"] = True
+                        return
+                    seen_entries += 1
+
+                    try:
+                        entry_stat = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        stats["errors"] += 1
+                        stats["skipped"] += 1
+                        continue
+
+                    mode = entry_stat.st_mode
+                    if stat.S_ISLNK(mode):
+                        stats["symlinks"] += 1
+                        stats["skipped"] += 1
+                        continue
+                    if stat.S_ISDIR(mode):
+                        stats["directories"] += 1
+                        visit(Path(entry.path))
+                        continue
+                    if stat.S_ISREG(mode):
+                        stats["files"] += 1
+                        stats["bytes"] += entry_stat.st_size
+                        continue
+
+                    stats["other_entries"] += 1
+                    stats["skipped"] += 1
+        except OSError:
+            stats["errors"] += 1
+            stats["skipped"] += 1
+
+    visit(path)
+    return stats
 
 
 def read_trace_payload(trace_file: str | Path) -> dict[str, Any] | None:
