@@ -148,6 +148,7 @@ def scan_deep_audit_candidates(
 
     store = AuditStore(project_root, project_id=project_id, audit_root=audit_root)
     store.init_project(config_hash=config_hash)
+    store.set_current_scan_files(files)
     deleted_records = store.mark_deleted_records(allowed_files=changed_files)
 
     records_written = 0

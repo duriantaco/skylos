@@ -221,6 +221,7 @@ def test_scan_deep_audit_candidates_records_non_candidate_files(
     assert record is not None
     assert record.status == "not_analyzed"
     assert payload["candidates"] == []
+    assert store.current_scan_files == {"plain.py"}
 
 
 def test_scan_deep_audit_candidates_marks_deleted_records(tmp_path: Path, monkeypatch):

@@ -11,7 +11,6 @@ from skylos.audit.types import (
     STATUS_DELETED,
     AuditFileRecord,
     AuditRevalidationSummary,
-    normalize_relative_path,
     sha256_text,
     utc_now,
 )
@@ -33,7 +32,7 @@ def revalidate_deep_audit_findings(
     run_id: str | None = None,
 ) -> AuditRevalidationSummary:
     run_id = run_id or f"revalidate-{uuid4().hex[:12]}"
-    allowed = _normalized_allowed_files(store, allowed_files)
+    allowed = store.processing_scope(allowed_files)
     records = [
         record
         for record in store.iter_file_records()
@@ -142,21 +141,6 @@ def revalidate_deep_audit_findings(
         },
     )
     return summary
-
-
-def _normalized_allowed_files(
-    store: AuditStore,
-    allowed_files: list[str | Path] | None,
-) -> set[str] | None:
-    if allowed_files is None:
-        return None
-    allowed: set[str] = set()
-    for file_path in allowed_files:
-        try:
-            allowed.add(normalize_relative_path(store.project_root, file_path))
-        except ValueError:
-            continue
-    return allowed
 
 
 def _has_secret_candidate(record: AuditFileRecord) -> bool:

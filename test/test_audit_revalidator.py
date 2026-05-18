@@ -70,6 +70,7 @@ def _write_analyzed_record(
         }
     ]
     store.write_file_record(record)
+    store.set_current_scan_files([*(store.current_scan_files or ()), path])
     return record
 
 
@@ -237,6 +238,64 @@ def test_revalidate_deep_audit_findings_skips_secret_candidate_records(
     assert verifier.calls == []
     assert summary.skipped_findings == 1
     assert summary.complete is False
+
+
+def test_revalidate_deep_audit_findings_defaults_to_current_scan_scope(
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    hidden = repo / ".git" / "config"
+    hidden.parent.mkdir()
+    hidden.write_text(
+        "[remote]\n  url = https://token@example.invalid/repo\n",
+        encoding="utf-8",
+    )
+    app = repo / "app.py"
+    app.write_text("print('ok')\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_analyzed_record(store, hidden)
+    store.set_current_scan_files([app])
+
+    verifier = FakeVerifier("true_positive")
+    summary = revalidate_deep_audit_findings(
+        store=store,
+        verifier=verifier,
+        model="test-model",
+        run_id="run-current-scope",
+    )
+
+    assert verifier.calls == []
+    assert summary.considered_findings == 0
+    assert summary.revalidated_findings == 0
+    assert summary.complete is True
+
+
+def test_revalidate_deep_audit_findings_without_scope_fails_closed(
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text("eval(user_input)\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_analyzed_record(store, app)
+    store.current_scan_files = None
+
+    verifier = FakeVerifier("true_positive")
+    summary = revalidate_deep_audit_findings(
+        store=store,
+        verifier=verifier,
+        model="test-model",
+        run_id="run-no-scope",
+    )
+
+    assert verifier.calls == []
+    assert summary.considered_findings == 0
+    assert summary.revalidated_findings == 0
+    assert summary.complete is True
 
 
 def test_revalidate_deep_audit_findings_challenges_uncertain_verdicts(
