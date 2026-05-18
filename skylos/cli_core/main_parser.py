@@ -6,7 +6,10 @@ from collections.abc import Callable, Sequence
 
 def build_main_parser(*, version: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Find dead code, secrets, and risky flows in Python, JS/TS, Go, Java, PHP, and Rust",
+        description=(
+            "Find dead code, secrets, and risky flows in Python, JS/TS, Go, "
+            "Java, PHP, Rust, and Dart"
+        ),
         epilog="""
 Run 'skylos commands' for a full list of all available commands.
 Run 'skylos tour' for a guided walkthrough of capabilities.
@@ -117,9 +120,12 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     )
     parser.add_argument(
         "--format",
-        choices=("rich", "json", "llm", "github", "concise"),
+        choices=("rich", "pretty", "json", "llm", "github", "concise"),
         default="rich",
-        help="Output format. Use 'concise' for IDE-friendly file:line findings only.",
+        help=(
+            "Output format. Use 'pretty' for grouped human output or "
+            "'concise' for IDE-friendly file:line findings only."
+        ),
     )
     parser.set_defaults(concise=False)
     parser.add_argument(

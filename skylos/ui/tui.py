@@ -9,9 +9,6 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.widgets import (
-    DataTable,
-    Footer,
-    Header,
     Input,
     Label,
     ListItem,
@@ -21,10 +18,17 @@ from textual.widgets import (
 from rich.text import Text
 
 SEVERITY_COLORS = {
-    "CRITICAL": "red bold",
-    "HIGH": "#ff8800",
-    "MEDIUM": "yellow",
-    "LOW": "dim",
+    "CRITICAL": "#ffffff on #8232b4 bold",
+    "HIGH": "#ffffff on #b43128 bold",
+    "MEDIUM": "#1f170f on #d6b86f bold",
+    "LOW": "#ffffff on #346aa8 bold",
+}
+
+SEVERITY_FG = {
+    "CRITICAL": "#b47de0",
+    "HIGH": "#e07162",
+    "MEDIUM": "#d6b86f",
+    "LOW": "#7ba5d6",
 }
 
 CATEGORIES = [
@@ -184,6 +188,89 @@ class CategoryItem(ListItem):
         yield Label(f" {self._label}  [{style}]{self._count}[/{style}]")
 
 
+class FindingItem(ListItem):
+    def __init__(
+        self,
+        category: str,
+        row: tuple,
+        item: dict,
+        root_path=None,
+    ) -> None:
+        super().__init__()
+        self.category = category
+        self.row = row
+        self.item = item
+        self.root_path = root_path
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._render_row())
+
+    def _render_row(self) -> Text:
+        severity = _finding_severity(self.category, self.item, self.row)
+        style = SEVERITY_COLORS.get(severity, "dim")
+        accent = SEVERITY_FG.get(severity, "dim")
+        title = _finding_title(self.category, self.item, self.row)
+        rule = _finding_rule(self.category, self.item, self.row)
+        loc = _loc(self.item, self.root_path)
+        meta = self.category.replace("_", " ").title()
+
+        text = Text.assemble(
+            (" ", ""),
+            ("█", accent),
+            (" ", ""),
+            (f" {severity} ", style),
+            (" ", ""),
+            (rule, "cyan"),
+            ("  ", ""),
+            (title, "bold"),
+            "\n",
+            ("   ", ""),
+            (loc, "dim"),
+            ("  ·  ", "dim"),
+            (meta, "dim"),
+        )
+        return text
+
+
+def _finding_severity(category: str, item: dict, row: tuple) -> str:
+    raw = item.get("severity")
+    if raw:
+        return str(raw).upper()
+    if category in {"security", "secrets", "dependencies"}:
+        return "HIGH"
+    if category == "quality":
+        return "MEDIUM"
+    return "LOW"
+
+
+def _finding_rule(category: str, item: dict, row: tuple) -> str:
+    if category == "dead_code":
+        return f"dead-code/{str(row[0]).lower().replace(' ', '-')}"
+    if category == "security":
+        return str(row[0])
+    if category == "secrets":
+        return str(row[0])
+    if category == "dependencies":
+        return str(row[1])
+    if category == "quality":
+        return str(row[0])
+    return str(item.get("rule_id") or item.get("rule") or category)
+
+
+def _finding_title(category: str, item: dict, row: tuple) -> str:
+    if category == "dead_code":
+        return f"Unused {str(row[0]).lower()}: {row[1]}"
+    if category == "security":
+        return str(row[2])
+    if category == "secrets":
+        return str(row[1])
+    if category == "dependencies":
+        return f"{row[0]}  {row[3]}"
+    if category == "quality":
+        return f"{row[1]}  {row[2]}"
+    return str(item.get("message") or item.get("reason") or "Finding")
+
+
 class OverviewPanel(VerticalScroll):
     def __init__(self, result: dict, category_data: dict, **kw) -> None:
         super().__init__(**kw)
@@ -268,9 +355,7 @@ class OverviewPanel(VerticalScroll):
 class DetailPanel(Static):
     def show_detail(self, category: str, item: dict, root_path=None) -> None:
         lines: list[str] = []
-        file_path = item.get("file", "?")
-        line_no = item.get("line", "?")
-        lines.append(f"  [bold]File:[/bold]  {file_path}:{line_no}")
+        lines.append(f"  [bold]File:[/bold]  {_loc(item, root_path)}")
 
         if category == "dead_code":
             conf = item.get("confidence", "?")
@@ -353,11 +438,22 @@ class SkylosApp(App):
     TITLE = "Skylos"
 
     CSS = """
+    Screen {
+        background: #14110e;
+        color: #d8c7a3;
+    }
+    #topbar {
+        dock: top;
+        height: 3;
+        background: #2c251c;
+        color: #ddbf7a;
+        padding: 1 2;
+    }
     #sidebar {
-        width: 26;
+        width: 24;
         dock: left;
-        background: $surface;
-        border-right: solid $primary-background;
+        background: #221c15;
+        border-right: solid #4a3c2b;
     }
     #sidebar ListView {
         height: 1fr;
@@ -368,21 +464,32 @@ class SkylosApp(App):
     }
     #main-area {
         height: 1fr;
+        background: #14110e;
     }
     #overview-panel {
         height: 1fr;
         padding: 1 2;
+        background: #181410;
     }
-    #findings-table {
+    #findings-area {
         height: 1fr;
     }
+    #findings-list {
+        width: 42%;
+        height: 1fr;
+        background: #221c15;
+        border: solid #4a3c2b;
+    }
+    #findings-list ListItem {
+        height: 3;
+        padding: 0 1;
+    }
     #detail-panel {
-        height: auto;
-        max-height: 14;
-        background: $surface;
-        border-top: solid $primary-background;
-        padding: 1 0;
-        display: none;
+        width: 58%;
+        height: 1fr;
+        background: #181410;
+        border: solid #4a3c2b;
+        padding: 1 2;
     }
     #detail-panel.visible {
         display: block;
@@ -397,14 +504,16 @@ class SkylosApp(App):
     #status-bar {
         dock: bottom;
         height: 1;
-        background: $primary-background;
-        color: $text;
+        background: #3a2f22;
+        color: #ffffff;
         padding: 0 2;
     }
     """
 
     BINDINGS = [
         Binding("q", "quit", "Quit", priority=True),
+        Binding("j", "cursor_down", "Down", show=False, priority=True),
+        Binding("k", "cursor_up", "Up", show=False, priority=True),
         Binding("slash", "toggle_search", "Search", key_display="/", priority=True),
         Binding("f", "cycle_severity", "Severity Filter", priority=True),
         Binding("tab", "next_category", "Next Tab", priority=True),
@@ -446,7 +555,7 @@ class SkylosApp(App):
                 self.category_counts[cat_key] = len(rows)
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
+        yield Static("", id="topbar")
         with Horizontal():
             with Vertical(id="sidebar"):
                 yield ListView(
@@ -460,51 +569,55 @@ class SkylosApp(App):
                 yield OverviewPanel(
                     self.result, self.category_data, id="overview-panel"
                 )
-                yield DataTable(id="findings-table")
-                yield DetailPanel("", id="detail-panel")
+                with Horizontal(id="findings-area"):
+                    yield ListView(id="findings-list")
+                    yield DetailPanel("", id="detail-panel")
         yield Input(placeholder="Type to search...", id="search-input")
         yield Static("", id="status-bar")
-        yield Footer()
 
     def on_mount(self) -> None:
-        table = self.query_one("#findings-table", DataTable)
-        table.display = False
-        table.cursor_type = "row"
+        self.query_one("#findings-area", Horizontal).display = False
         self._update_status()
         self.query_one("#category-list", ListView).focus()
 
     def _show_category(self, cat_key: str) -> None:
         self.active_category = cat_key
         overview = self.query_one("#overview-panel", OverviewPanel)
-        table = self.query_one("#findings-table", DataTable)
+        findings_area = self.query_one("#findings-area", Horizontal)
         detail = self.query_one("#detail-panel", DetailPanel)
         detail.remove_class("visible")
 
         if cat_key == "overview":
             overview.display = True
-            table.display = False
+            findings_area.display = False
         else:
             overview.display = False
-            table.display = True
-            self._populate_table(cat_key)
+            findings_area.display = True
+            self._populate_findings(cat_key)
 
         self._update_status()
 
-    def _populate_table(self, cat_key: str) -> None:
-        table = self.query_one("#findings-table", DataTable)
-        table.clear(columns=True)
+    def _populate_findings(self, cat_key: str) -> None:
+        finding_list = self.query_one("#findings-list", ListView)
+        finding_list.clear()
 
         cols, rows, raw = self.category_data.get(cat_key, ([], [], []))
         if not cols:
+            self._sync_detail_panel()
             return
 
-        for col in cols:
-            table.add_column(col, key=col)
-
         filtered = self._filtered_rows(cat_key)
-        for i, (row, _) in enumerate(filtered):
-            styled = self._style_row(row)
-            table.add_row(*styled, key=str(i))
+        finding_list.extend(
+            [
+                FindingItem(cat_key, row, item, self.root_path)
+                for row, item in filtered
+            ]
+        )
+        if filtered:
+            finding_list.index = 0
+        else:
+            finding_list.index = None
+        self._sync_detail_panel()
 
     def _filtered_rows(self, cat_key: str) -> list[tuple[tuple, dict]]:
         _, rows, raw = self.category_data.get(cat_key, ([], [], []))
@@ -566,7 +679,7 @@ class SkylosApp(App):
             inp.value = ""
             self._focus_main()
             if self.active_category != "overview":
-                self._populate_table(self.active_category)
+                self._populate_findings(self.active_category)
 
     def action_cycle_severity(self) -> None:
         if self._search_active():
@@ -576,28 +689,30 @@ class SkylosApp(App):
         self.severity_filter = cycle[(idx + 1) % len(cycle)]
         self._update_status()
         if self.active_category != "overview":
-            self._populate_table(self.active_category)
+            self._populate_findings(self.active_category)
+
+    def action_cursor_down(self) -> None:
+        if self._search_active() or self.active_category == "overview":
+            return
+        self.query_one("#findings-list", ListView).action_cursor_down()
+        self._sync_detail_panel()
+
+    def action_cursor_up(self) -> None:
+        if self._search_active() or self.active_category == "overview":
+            return
+        self.query_one("#findings-list", ListView).action_cursor_up()
+        self._sync_detail_panel()
 
     def action_show_detail(self) -> None:
         if self.active_category == "overview":
             return
-        table = self.query_one("#findings-table", DataTable)
-        cursor = table.cursor_row
-        filtered = self._filtered_rows(self.active_category)
-        if 0 <= cursor < len(filtered):
-            _, item = filtered[cursor]
-            detail = self.query_one("#detail-panel", DetailPanel)
-            detail.show_detail(self.active_category, item, self.root_path)
-            detail.add_class("visible")
+        self._sync_detail_panel()
 
     def action_open_editor(self) -> None:
         if self._search_active() or self.active_category == "overview":
             return
-        table = self.query_one("#findings-table", DataTable)
-        cursor = table.cursor_row
-        filtered = self._filtered_rows(self.active_category)
-        if 0 <= cursor < len(filtered):
-            _, item = filtered[cursor]
+        item = self._selected_item()
+        if item is not None:
             file_path = item.get("file")
             line = item.get("line", 1)
             editor = os.environ.get("EDITOR", "vi")
@@ -606,39 +721,66 @@ class SkylosApp(App):
                     subprocess.call([editor, f"+{line}", file_path])
 
     def action_dismiss(self) -> None:
-        self.query_one("#detail-panel", DetailPanel).remove_class("visible")
         inp = self.query_one("#search-input", Input)
         if inp.has_class("visible"):
             inp.remove_class("visible")
             self.search_query = ""
             inp.value = ""
             if self.active_category != "overview":
-                self._populate_table(self.active_category)
+                self._populate_findings(self.active_category)
+        elif self.active_category == "overview":
+            self.query_one("#detail-panel", DetailPanel).remove_class("visible")
+        else:
+            self._sync_detail_panel()
         self._focus_main()
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         item = event.item
         if isinstance(item, CategoryItem):
             self._show_category(item.cat_key)
+        elif isinstance(item, FindingItem):
+            self._sync_detail_panel()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         item = event.item
         if isinstance(item, CategoryItem):
             self._show_category(item.cat_key)
             if item.cat_key != "overview":
-                self.query_one("#findings-table", DataTable).focus()
+                self.query_one("#findings-list", ListView).focus()
+        elif isinstance(item, FindingItem):
+            self._sync_detail_panel()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search-input":
             self.search_query = event.value
             if self.active_category != "overview":
-                self._populate_table(self.active_category)
+                self._populate_findings(self.active_category)
 
     def _focus_main(self) -> None:
         if self.active_category == "overview":
             self.query_one("#category-list", ListView).focus()
         else:
-            self.query_one("#findings-table", DataTable).focus()
+            self.query_one("#findings-list", ListView).focus()
+
+    def _selected_item(self) -> dict | None:
+        if self.active_category == "overview":
+            return None
+        finding_list = self.query_one("#findings-list", ListView)
+        filtered = self._filtered_rows(self.active_category)
+        index = finding_list.index
+        if index is not None and 0 <= index < len(filtered):
+            _, item = filtered[index]
+            return item
+        return None
+
+    def _sync_detail_panel(self) -> None:
+        detail = self.query_one("#detail-panel", DetailPanel)
+        item = self._selected_item()
+        if item is None:
+            detail.update("  [dim]No finding selected.[/dim]")
+            return
+        detail.show_detail(self.active_category, item, self.root_path)
+        detail.add_class("visible")
 
     def _update_status(self) -> None:
         total = sum(
@@ -646,8 +788,12 @@ class SkylosApp(App):
         )
         sev = self.severity_filter or "ALL"
         cat = self.active_category.replace("_", " ").title()
+        self.query_one("#topbar", Static).update(
+            f"[bold #ddbf7a]skylos tui[/bold #ddbf7a]  "
+            f"[dim]{self.root_path or '.'}[/dim]"
+        )
         bar = self.query_one("#status-bar", Static)
-        bar.update(f" Findings: {total}  │  Severity: {sev}  │  {cat}")
+        bar.update(f" findings {total}  |  severity {sev}  |  {cat}  |  j/k move  / search  o open  q quit")
 
 
 def run_tui(result: dict, root_path=None) -> None:

@@ -26,7 +26,7 @@
 
 ## Skylos 是什么？
 
-Skylos 是一款面向 Python、TypeScript、JavaScript、Java 和 Go 仓库的开源静态分析工具与 CI/CD PR 门控。它把死代码检测、安全扫描、密钥检测、代码质量检查和 AI 生成代码防护整合进一个本地优先的工作流。
+Skylos 是一款面向 Python、TypeScript、JavaScript、Java、Go、PHP、Rust 和 Dart 仓库的开源静态分析工具与 CI/CD PR 门控。它把死代码检测、安全扫描、密钥检测、代码质量检查和 AI 生成代码防护整合进一个本地优先的工作流。
 
 如果你使用 Vulture 检测死代码、Bandit 做安全检查，或使用 Semgrep、CodeQL、GitHub Advanced Security 做 CI 门控，Skylos 可以作为补充：它更关注框架感知的死代码检测、差异感知的回归检查，以及适合 PR 审查的反馈。
 
@@ -61,6 +61,8 @@ git push
 | 第一次死代码扫描 | `skylos .` | 发现未使用的函数、类、导入、文件和框架入口点问题 | [死代码文档](https://docs.skylos.dev/dead-code-detection) |
 | 安全与质量审计 | `skylos . -a` | 增加危险数据流、密钥、依赖和质量检查 | [安全文档](https://docs.skylos.dev/security-analysis) |
 | PR 门控 | `skylos cicd init` | 生成带注释和失败阈值的 GitHub Actions 工作流 | [CI/CD 指南](https://docs.skylos.dev/ci-cd) |
+| 更易读的终端报告 | `skylos . --format pretty` | 按文件分组展示发现，包含严重级别标记、代码片段和可复制的 `file:line` 位置 | [CLI Output Modes](./docs/cli-output.md) |
+| 可选择的终端界面 | `skylos . --tui` | 打开键盘驱动的分类列表、发现列表和详情面板 | [CLI Output Modes](./docs/cli-output.md) |
 | 只审查变更行 | `skylos . -a --diff origin/main` | 聚焦当前 PR，避免被历史债务淹没 | [质量门控](https://docs.skylos.dev/quality-gate) |
 | 运行时辅助死代码检测 | `skylos . --trace` | 用测试运行轨迹降低动态代码误报 | [Smart Tracing](https://docs.skylos.dev/smart-tracing) |
 | AI 辅助审查 | `skylos agent scan .` | 静态分析加可选 LLM 审查和修复建议 | [AI Features](https://docs.skylos.dev/ai-features) |
@@ -118,6 +120,9 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | TypeScript / JavaScript | 是 | 是 | 是 | Tree-sitter 解析、包图可达性、框架约定 |
 | Java | 是 | 是 | 是 | Tree-sitter 解析和结构化安全流分析 |
 | Go | 是 | 部分 | 部分 | 死代码和部分安全基准覆盖 |
+| PHP | 是 | 是 | 部分 | PHP parser 覆盖，加上污点式安全 sinks 和 sources |
+| Rust | 是 | 是 | 部分 | Rust parser 覆盖，加上安全 sinks 和 sources |
+| Dart | 是 | 是 | 部分 | Dart parser 覆盖，加上部分安全 sinks 和 sources |
 
 规则族和扫描范围请看 [Rules Reference](https://docs.skylos.dev/rules-reference)。
 
@@ -160,9 +165,11 @@ Skylos 有已提交的死代码、安全、质量和 Agent 审查回归基准。
 | 安装、源码安装和 Docker | [Installation](https://docs.skylos.dev/installation) |
 | 第一次扫描和核心工作流 | [Quick Start](https://docs.skylos.dev/quick-start) |
 | CLI 命令、flags 和示例 | [CLI Reference](https://docs.skylos.dev/cli-reference) |
+| CLI 输出模式、pretty 报告和 TUI 快捷键 | [CLI Output Modes](./docs/cli-output.md) |
 | CI 设置、PR 门控、注释和分支保护 | [CI/CD](https://docs.skylos.dev/ci-cd) |
 | 死代码行为和框架感知 | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | 安全扫描和污点分析 | [Security Analysis](https://docs.skylos.dev/security-analysis) |
+| Rule ID 前缀和产品术语 | [Rule Dictionary](./dictionary.md) |
 | Agent 扫描、验证、修复和模型设置 | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI 防御和 LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
 | MCP server 设置 | [MCP Server](https://docs.skylos.dev/mcp-server) |

@@ -118,8 +118,19 @@ def _snapshot(project: str) -> DebtSnapshot:
 
 
 def test_collect_debt_signals_maps_dimensions_and_dead_code():
+    result = {
+        **SAMPLE_RESULT,
+        "unused_parameters": [
+            {
+                "name": "unused_context",
+                "file": "/repo/app/services.py",
+                "line": 21,
+                "confidence": 80,
+            }
+        ],
+    }
     signals = collect_debt_signals(
-        SAMPLE_RESULT,
+        result,
         project_root=cli.Path("/repo"),
     )
 
@@ -127,6 +138,7 @@ def test_collect_debt_signals_maps_dimensions_and_dead_code():
     assert ("SKY-Q301", "complexity") in dimensions
     assert ("SKY-Q804", "architecture") in dimensions
     assert ("SKY-U001", "dead_code") in dimensions
+    assert ("SKY-U006", "dead_code") in dimensions
 
 
 def test_collect_debt_signals_skips_paths_outside_project_root(tmp_path):

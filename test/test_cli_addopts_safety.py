@@ -70,3 +70,15 @@ def test_parse_main_cli_args_still_accepts_user_command_separator():
     assert args.json is True
     assert args.path == ["."]
     assert args.command == ["echo", "ok"]
+
+
+def test_parse_main_cli_args_accepts_pretty_format():
+    parser = build_main_parser(version="test")
+
+    args = parse_main_cli_args(parser, [".", "--format", "pretty"], addopts_loader=list)
+
+    assert args.format == "pretty"
+    assert args.json is False
+    assert args.llm is False
+    assert args.github is False
+    assert args.concise is False

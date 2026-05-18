@@ -1,185 +1,365 @@
-# Skylos Rule Dictionary
+# Skylos Rule Dictionary and Product Glossary
 
-Rule IDs are unified across languages — same vulnerability, same ID.
+This file is the repo-local glossary for public Skylos terminology and emitted
+rule IDs. Keep it aligned with `README.md`, `README_CN.md`, `docs/*.md`, CLI
+help text, and rule implementations.
+
+Rule IDs use a stable public prefix:
+
+| Prefix | Meaning |
+|:---|:---|
+| `SKY-D` | Security and danger findings |
+| `SKY-S` | Secrets findings |
+| `SKY-SCA` | Software composition / dependency vulnerability findings |
+| `SKY-SC` | Security contract regression findings |
+| `SKY-L` | Logic, AI-code mistake, and resilience findings |
+| `SKY-Q` | Quality, complexity, coupling, and architecture findings |
+| `SKY-C` | Structure and clone findings |
+| `SKY-P` | Performance findings |
+| `SKY-U`, `SKY-DC`, `SKY-UC` | Dead-code, LLM dead-code report, and unreachable-code findings |
+| `SKY-T` | Typing practice findings |
+| `SKY-F` | Framework practice findings |
+| `SKY-R` | Repository policy findings |
+| `SKY-E` | Analyzer inventory / export findings |
+| `SKY-G` | Raw Go engine findings before remapping |
+| `SKY-CIRC` | Circular dependency finding |
+
+## Product Glossary
+
+| Term | Meaning |
+|:---|:---|
+| Skylos | Local-first static analysis and PR gate for dead code, security, secrets, quality, dependency, and AI-code issues. |
+| Local-first | Core static analysis runs on the developer machine or CI runner without requiring cloud upload or LLM calls. |
+| Core scan | `skylos .`; dead-code focused scan. |
+| Full audit | `skylos . -a`; enables security, secrets, dependency, and quality checks in addition to dead code. |
+| Dead code | Unused functions, classes, imports, variables, parameters, files, unnecessary exports, and unreachable code. |
+| Security / danger | Potentially exploitable code paths such as injection, SSRF, path traversal, weak crypto, unsafe deserialization, and CI/CD supply-chain risk. |
+| Secrets | Hardcoded credentials, tokens, API keys, and client-side exposure of server-only values. |
+| Quality | Maintainability, complexity, architecture, resilience, typing, framework practice, and repo policy issues. |
+| AI code mistakes | Hallucinated security calls, phantom decorators, unfinished stubs, disabled controls, placeholder data, stale mocks, and missing timeouts. |
+| LLM app defense | `skylos defend .`; checks LLM integrations for guardrails such as tool safety, output validation, rate limits, and prompt-injection exposure. |
+| Prompt templates | Maintainer-provided files under `[tool.skylos.templates]` that extend built-in LLM prompts without replacing safety and JSON-output contracts. |
+| Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, and timeout-required calls. |
+| Quality gate | A threshold-based pass/fail decision used locally or in CI. |
+| Diff-aware scan | `--diff <base>` limits reporting to changed work so old debt does not drown out the current PR. |
+| Baseline | A saved set of accepted existing findings so only new or changed findings fail a gate. |
+| Suppression | An inline or config-level exception for an intentional finding, usually using `skylos: ignore[SKY-...]`. |
+| Smart tracing | `--trace`; runtime-assisted dead-code verification used to reduce false positives in dynamic Python code. |
+| Technical debt | `skylos debt .`; ranks maintainability hotspots and debt trends. |
+| TUI | `--tui`; screen-only selectable terminal interface with category list, finding list, and detail pane. |
+| Pretty output | `--format pretty`; compact file-grouped terminal output with severity rails, snippets, and copyable `file:line` locations. |
+| Concise output | `--format concise`; plain `file:line` output for editors, scripts, and agents. |
+| Structured output | `--format json`, `--format llm`, or `--format github` for machines, LLM consumers, and GitHub annotations. |
+| Upload / Cloud workflow | Optional upload of scan results to Skylos Cloud; not required for local analysis. |
+| MCP server | Integration surface for AI agents and coding assistants. |
+| SCA | Software composition analysis for dependency vulnerability findings. |
+
+## CLI Output Modes
+
+| Mode | Command | Intended Use |
+|:---|:---|:---|
+| Rich/default | `skylos .` | Existing full terminal report. |
+| Pretty | `skylos . --format pretty` | Human terminal triage with grouped findings and copyable locations. |
+| Concise | `skylos . --format concise` | Editors, test scripts, and agents that need plain `file:line` findings. |
+| JSON | `skylos . --format json` or `skylos . --json` | Structured machine output. |
+| LLM | `skylos . --format llm` or `skylos . --llm` | LLM-oriented structured report with code context. |
+| GitHub | `skylos . --format github` or `skylos . --github` | GitHub annotation output. |
+| TUI | `skylos . --tui` | Screen-only selectable keyboard-driven terminal triage. |
+
+See [docs/cli-output.md](./docs/cli-output.md).
 
 ## Security / Danger (SKY-D)
 
-| ID | Severity | Name | Languages | CWE | OWASP |
-|----|----------|------|-----------|-----|-------|
-| D201 | HIGH | eval() usage | Python, TS | CWE-95 | A03:2021 |
-| D202 | HIGH | Dynamic code execution (exec, new Function, setTimeout string) | Python, TS | CWE-95 | A03:2021 |
-| D203 | CRITICAL | os.system() | Python | — | A03:2021 |
-| D204 | CRITICAL | pickle.load | Python | — | A08:2021 |
-| D205 | CRITICAL | pickle.loads | Python | — | A08:2021 |
-| D206 | HIGH | yaml.load without SafeLoader | Python | — | — |
-| D207 | MEDIUM | Weak hash (MD5) | Python, TS, Go | CWE-328 | — |
-| D208 | MEDIUM | Weak hash (SHA1) | Python, TS, Go | CWE-328 | — |
-| D209 | HIGH | subprocess shell=True | Python | — | A03:2021 |
-| D210 | HIGH | TLS verification disabled | Python, Go | — | A02:2021 |
-| D211 | CRITICAL | SQL injection | Python, TS, Go | CWE-89 | A03:2021 |
-| D212 | CRITICAL | Command injection | Python, TS, Go | CWE-78 | A03:2021 |
-| D214 | HIGH | Broken access control | Python | — | A01:2021 |
-| D215 | HIGH | Path traversal | Python, Go | CWE-22 | A01:2021 |
-| D216 | CRITICAL | SSRF | Python, TS, Go, Java | CWE-918 | A10:2021 |
-| D217 | CRITICAL | SQL injection (ORM — sqlalchemy.text, pandas.read_sql, Django .raw) | Python | CWE-89 | A03:2021 |
-| D222 | MEDIUM | Dependency hallucination | Python | — | — |
-| D223 | MEDIUM | Undeclared third-party dependency | Python | — | — |
-| D226 | CRITICAL | XSS (mark_safe, innerHTML, outerHTML, document.write, dangerouslySetInnerHTML) | Python, TS | CWE-79 | A03:2021 |
-| D227 | HIGH | XSS: unsafe template rendering | Python | CWE-79 | A03:2021 |
-| D228 | HIGH | XSS: unescaped HTML output | Python | CWE-79 | A03:2021 |
-| D230 | HIGH | Open redirect | Python, TS, Go, Java | CWE-601 | A01:2021 |
-| D231 | HIGH | CORS misconfiguration | Python | — | A05:2021 |
-| D232 | CRITICAL | JWT vulnerability (algorithms=none, verify=False) | Python | — | A02:2021 |
-| D233 | CRITICAL | Unsafe deserialization (marshal, shelve, jsonpickle, dill) | Python | — | A08:2021 |
-| D234 | HIGH | Mass assignment (Django Meta.fields='\_\_all\_\_') | Python | — | A01:2021 |
-| D245 | HIGH | Dynamic require() with variable argument | TS | CWE-94 | A03:2021 |
-| D246 | HIGH | JWT decode without verification | TS | CWE-347 | A02:2021 |
-| D247 | MEDIUM | CORS wildcard origin | TS | CWE-942 | A05:2021 |
-| D248 | MEDIUM | Hardcoded internal URL (localhost/127.0.0.1) | TS | CWE-798 | — |
-| D250 | MEDIUM | Insecure randomness (Math.random) | TS | CWE-330 | — |
-| D251 | HIGH | Sensitive data in logs | TS | CWE-532 | — |
-| D252 | MEDIUM | Insecure cookie (missing httpOnly/secure) | TS | CWE-614 | — |
-| D253 | MEDIUM | Timing-unsafe comparison | TS | CWE-208 | — |
-| D260 | HIGH–CRITICAL | Prompt injection (AI Supply Chain Security) | All text files | — | — |
-| D270 | MEDIUM | Sensitive data in localStorage/sessionStorage | TS | CWE-922 | — |
-| D271 | MEDIUM | Error info disclosure in HTTP response | TS | CWE-209 | — |
-| D510 | HIGH | Prototype pollution (\_\_proto\_\_) | TS | CWE-1321 | — |
+Rule IDs are unified across languages where the same vulnerability exists.
+
+| ID | Severity | Name | Languages / Scope | CWE / OWASP |
+|:---|:---|:---|:---|:---|
+| D200 | varies | Dangerous function call family | Python | wrapper for D201-D210, D233, D235, D250 |
+| D201 | HIGH-CRITICAL | Dynamic code execution: `eval` | Python, TS/JS, Java, audit | CWE-95 / A03 |
+| D202 | HIGH-CRITICAL | Dynamic code execution: `exec`, `new Function`, string timers | Python, TS/JS | CWE-95 / A03 |
+| D203 | CRITICAL | OS command execution: `os.system` / process sinks | Python, Java | CWE-78 / A03 |
+| D204 | CRITICAL | Unsafe deserialization: `pickle.load` and language equivalents | Python, Java, PHP, audit | A08 |
+| D205 | CRITICAL | Unsafe deserialization: `pickle.loads` | Python | A08 |
+| D206 | HIGH | `yaml.load` without SafeLoader | Python | A08 |
+| D207 | MEDIUM | Weak hash: MD5 | Python, TS/JS, Go, Java | CWE-328 |
+| D208 | MEDIUM | Weak hash: SHA1 | Python, TS/JS, Go, Java | CWE-328 |
+| D209 | HIGH | `subprocess` with `shell=True` | Python | CWE-78 / A03 |
+| D210 | HIGH | TLS verification disabled | Python, Go | A02 |
+| D211 | CRITICAL | SQL injection | Python, TS/JS, Go, Java, PHP, audit | CWE-89 / A03 |
+| D212 | CRITICAL | Command injection | Python, TS/JS, Go, Java, Rust, Dart, audit | CWE-78 / A03 |
+| D214 | HIGH | Broken access control | Python | A01 |
+| D215 | HIGH | Path traversal and archive extraction traversal | Python, TS/JS, Go, Java, PHP, Rust, Dart | CWE-22 / A01 |
+| D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Dart, audit | CWE-918 / A10 |
+| D217 | CRITICAL | Raw SQL / ORM SQL injection | Python | CWE-89 / A03 |
+| D220 | CRITICAL | SQL injection in added code / diff validation | MCP code-change validator | CWE-89 / A03 |
+| D222 | MEDIUM | Dependency hallucination | Python | AI supply-chain |
+| D223 | MEDIUM | Undeclared third-party dependency | Python | supply-chain |
+| D226 | CRITICAL | XSS: unsafe DOM or HTML rendering | Python, TS/JS, Java, audit | CWE-79 / A03 |
+| D227 | HIGH | XSS: unsafe template rendering | Python | CWE-79 / A03 |
+| D228 | HIGH | XSS: unescaped HTML output | Python | CWE-79 / A03 |
+| D230 | HIGH | Open redirect | Python, TS/JS, Go, Java, audit | CWE-601 / A01 |
+| D231 | HIGH | CORS misconfiguration | Python | A05 |
+| D232 | CRITICAL | JWT verification disabled or unsafe algorithm | Python | A02 |
+| D233 | HIGH-CRITICAL | Unsafe deserialization: marshal, shelve, jsonpickle, dill | Python | A08 |
+| D234 | HIGH | Mass assignment | Python | A01 |
+| D235 | HIGH | Remote command execution via `exec_command` | Python | CWE-78 |
+| D240 | CRITICAL | MCP tool description poisoning | Python, Java | A03 |
+| D241 | HIGH | MCP unauthenticated transport | Python, Java | A07 |
+| D242 | HIGH | MCP permissive URI / path traversal | Python | A01 |
+| D243 | CRITICAL | MCP server bound to `0.0.0.0` | Python | exposure |
+| D244 | CRITICAL | MCP hardcoded secrets in tool params | Python | CWE-798 |
+| D245 | HIGH | Dynamic `require()` with variable argument | TS/JS | CWE-94 / A03 |
+| D246 | HIGH | JWT decode without verification | TS/JS | CWE-347 / A02 |
+| D247 | MEDIUM | CORS wildcard origin | TS/JS | CWE-942 / A05 |
+| D248 | MEDIUM | Hardcoded internal URL | TS/JS | CWE-798 |
+| D250 | MEDIUM | Insecure randomness for security-sensitive values | Python, TS/JS, Go, Java | CWE-330 |
+| D251 | HIGH | Sensitive data in logs | TS/JS | CWE-532 |
+| D252 | MEDIUM | Insecure cookie flags | TS/JS, Go, Java | CWE-614 |
+| D253 | MEDIUM | Timing-unsafe comparison | TS/JS, Java | CWE-208 |
+| D260 | HIGH-CRITICAL | Prompt injection scanner | Text, config, prompt, and source files | AI supply-chain |
+| D270 | MEDIUM | Sensitive data in `localStorage` / `sessionStorage` | TS/JS | CWE-922 |
+| D271 | MEDIUM | Error information disclosure in HTTP responses | TS/JS | CWE-209 |
+| D280 | HIGH | Next.js mutating API route missing auth checks | TS/JS | A01 |
+| D281 | HIGH | SQL injection in server actions via template literals | TS/JS | CWE-89 |
+| D282 | HIGH | Webhook handler missing signature verification | Python, TS/JS | CWE-347 |
+| D510 | HIGH | Prototype pollution via `__proto__` | TS/JS | CWE-1321 |
 
 ### AI Supply Chain Security
 
 | ID | Severity | Name | File Types | Details |
-|----|----------|------|------------|---------|
-| D260 | HIGH–CRITICAL | Prompt Injection Scanner | .py, .md, .rst, .txt, .yaml, .yml, .json, .toml, .env | Multi-file scanner with text canonicalization |
+|:---|:---|:---|:---|:---|
+| D260 | HIGH-CRITICAL | Prompt injection scanner | `.py`, `.md`, `.rst`, `.txt`, `.yaml`, `.yml`, `.json`, `.toml`, `.env` | Multi-file scanner with text canonicalization |
 
 Finding types:
-- `literal_payload` — direct injection phrase (instruction override, role hijacking, suppression, exfiltration)
-- `hidden_char` — zero-width / invisible Unicode (U+200B–U+202E)
-- `obfuscated_payload` — base64-encoded string decodes to injection content
-- `mixed_script` — Cyrillic/Greek homoglyphs mixed with Latin text
-- `risky_placement` — injection in high-risk file (README) or prompt-related YAML/JSON field
+
+- `literal_payload`: direct instruction override, role hijacking, suppression, or exfiltration phrase.
+- `hidden_char`: zero-width or invisible Unicode.
+- `obfuscated_payload`: encoded string that decodes to injection content.
+- `mixed_script`: Cyrillic or Greek homoglyphs mixed with Latin text.
+- `risky_placement`: injection in a high-risk README, prompt field, YAML, or JSON field.
 
 ### MCP Server Security
 
-| ID | Severity | Name | Languages | OWASP |
-|----|----------|------|-----------|-------|
-| D240 | CRITICAL | MCP tool description poisoning | Python | A03:2021 |
-| D241 | HIGH | MCP unauthenticated transport | Python | A07:2021 |
-| D242 | HIGH | MCP permissive URI / path traversal | Python | — |
-| D243 | CRITICAL | MCP server bound to 0.0.0.0 | Python | — |
-| D244 | CRITICAL | MCP hardcoded secrets in tool params | Python | — |
+| ID | Severity | Name | Languages |
+|:---|:---|:---|:---|
+| D240 | CRITICAL | MCP tool description poisoning | Python, Java |
+| D241 | HIGH | MCP unauthenticated transport | Python, Java |
+| D242 | HIGH | MCP permissive URI / path traversal | Python |
+| D243 | CRITICAL | MCP server bound to `0.0.0.0` | Python |
+| D244 | CRITICAL | MCP hardcoded secrets in tool params | Python |
+
+### CI/CD Security
+
+| ID | Severity | Name | Provider |
+|:---|:---|:---|:---|
+| D290 | HIGH | Dangerous trigger (`pull_request_target`, `workflow_run`) | GitHub Actions |
+| D291 | MEDIUM-HIGH | Missing or excessive permissions | GitHub Actions |
+| D292 | MEDIUM | Unpinned action or reusable workflow | GitHub Actions |
+| D293 | MEDIUM | Checkout persists credentials | GitHub Actions |
+| D294 | HIGH | Template injection from untrusted context | GitHub Actions |
+| D295 | HIGH | Self-hosted runner exposure | GitHub Actions |
+| D296 | MEDIUM | Unpinned container image | GitHub Actions |
+| D297 | HIGH | Secrets inheritance into reusable workflow | GitHub Actions |
+| D298 | MEDIUM | Overprovisioned secrets | GitHub Actions |
+| D299 | HIGH | Secret used outside protected environment | GitHub Actions |
+| D300 | HIGH | Unsafe environment file write | GitHub Actions |
+| D301 | HIGH | Hardcoded container credentials | GitHub Actions |
+| D302 | HIGH | Broad GitHub App token permissions | GitHub Actions |
+| D303 | MEDIUM | Unsound `contains()` condition | GitHub Actions |
+| D304 | MEDIUM | Spoofable bot condition | GitHub Actions |
+| D305 | MEDIUM | Unsound multiline condition | GitHub Actions |
+| D306 | HIGH | Insecure commands enabled | GitHub Actions |
+| D307 | MEDIUM | Anonymous action/workflow definition | GitHub Actions |
+| D308 | HIGH | Cache poisoning risk | GitHub Actions |
+| D309 | HIGH | Broad secret environment exposure | GitHub Actions |
+| D310 | HIGH | OIDC token exposed to local build script | GitHub Actions |
+| D311 | MEDIUM | Lax artifact upload | GitHub Actions |
+| D312 | MEDIUM | JavaScript install scripts in CI | GitHub Actions |
+| D313 | MEDIUM | Privileged job missing timeout | GitHub Actions |
+| D314 | HIGH | Mutable container image | GitLab CI |
+| D315 | HIGH | Unpinned external include | GitLab CI |
+| D316 | HIGH | Literal secret variable | GitLab CI |
+| D317 | HIGH | Untrusted eval | GitLab CI |
+| D318 | HIGH | Docker-in-Docker TLS disabled | GitLab CI |
+| D319 | HIGH | OIDC local-script exposure | GitLab CI |
+| D320 | HIGH | Release cache poisoning risk | GitLab CI |
+| D321 | MEDIUM | Privileged job missing timeout | GitLab CI |
+| D322 | MEDIUM | Dynamic runner tag | GitLab CI |
+| D323 | MEDIUM | Ambiguous secret token | GitLab CI |
 
 ## Secrets (SKY-S)
 
-| ID | Severity | Name | Languages | CWE |
-|----|----------|------|-----------|-----|
-| S101 | CRITICAL | Hardcoded secret / API key (prefix match + Shannon entropy) | All | CWE-798 |
+| ID | Severity | Name | Languages / Scope | CWE |
+|:---|:---|:---|:---|:---|
+| S101 | CRITICAL | Hardcoded secret / API key | Python, TS/JS, Java, Go, config files | CWE-798 |
+| S102 | HIGH | Server-only environment variable exposed to client component | TS/JS, Next.js | CWE-200 |
 
-## Go-Specific (SKY-G)
+## Security Contracts (SKY-SC)
 
-These have no cross-language equivalent and keep their own IDs.
-Go rules that DO have equivalents (G211, G212, etc.) are remapped to their unified D-series IDs automatically.
+| ID | Severity | Name | Scope |
+|:---|:---|:---|:---|
+| SC001 | HIGH | Security contract regression | Diff-aware CI/CD review |
 
-| ID | Severity | Name | Details |
-|----|----------|------|---------|
-| G203 | HIGH | Defer in loop | Resource leak risk |
-| G206 | HIGH | Unsafe package usage | unsafe stdlib package |
-| G209 | MEDIUM | Weak RNG | math/rand instead of crypto/rand |
-| G221 | MEDIUM | Insecure cookie | Missing HttpOnly/Secure flags |
-| G260 | HIGH | Unclosed resource | os.Open/sql.Open without defer .Close() |
-| G280 | HIGH | Weak TLS version | TLS 1.0/1.1 configured |
+## Go-Specific Raw Rules (SKY-G)
 
-## Logic (SKY-L)
+The Go engine may emit `SKY-G` IDs. Cross-language equivalents are remapped to
+`SKY-D` before normal reporting where possible.
 
-| ID | Severity | Name | Languages | CWE |
-|----|----------|------|-----------|-----|
-| L001 | HIGH | Mutable default argument | Python | CWE-665 |
-| L002 | MEDIUM | Bare except block | Python | — |
-| L003 | LOW | Dangerous comparison (== True/False/None) | Python | — |
-| L004 | MEDIUM | Anti-pattern try block (too broad) | Python | — |
-| L005 | LOW | Unused exception variable | Python | — |
-| L006 | MEDIUM | Inconsistent return (some paths implicit None) | Python | — |
-| L007 | MEDIUM–HIGH | Empty error handler (except: pass, suppress(Exception)) | Python | — |
-| L008 | MEDIUM | Missing resource cleanup (no context manager) | Python | CWE-404 |
-| L009 | LOW–HIGH | Debug leftover (print, breakpoint, pdb.set_trace) | Python | — |
-| L010 | MEDIUM | Security TODO/FIXME marker left in code | Python | CWE-546 |
-| L011 | MEDIUM–HIGH | Disabled security control (verify=False, csrf_exempt, DEBUG=True) | Python | CWE-295 |
-| L012 | CRITICAL | Phantom function call (hallucinated security function) | Python | CWE-476 |
-| L013 | HIGH | Insecure randomness for security values (random.* for tokens/passwords) | Python | CWE-330 |
-| L014 | HIGH | Hardcoded credential (password="admin123", DSN with embedded creds) | Python | CWE-798 |
-| L017 | MEDIUM | Error information disclosure (str(e) in HTTP response) | Python | CWE-209 |
-| L016 | MEDIUM | Undefined config — `os.getenv("ENABLE_X")` feature flag never defined | Python | — |
-| L020 | HIGH | Overly broad file permissions (chmod 0o777, sensitive file perms) | Python | CWE-732 |
-| L023 | CRITICAL | Phantom decorator — `@require_auth`, `@rate_limit` never defined/imported | Python | CWE-476 |
-| L024 | HIGH | Stale mock — `mock.patch("mod.func")` targets function that no longer exists | Python | — |
-| L026 | MEDIUM | Unfinished generation — function body is only `pass`, `...`, or `raise NotImplementedError` | Python | — |
-| L031 | MEDIUM | Missing network timeout — `requests.*`, `httpx.*`, or `urlopen()` without `timeout=` | Python | CWE-400 |
-
-## Quality (SKY-Q, SKY-C, SKY-P)
-
-### Complexity & Structure
-
-| ID | Severity | Name | Languages | Threshold |
-|----|----------|------|-----------|-----------|
-| Q301 | WARN–CRITICAL | Cyclomatic complexity | All | >10 |
-| Q302 | MEDIUM | Deep nesting | All | >3 levels |
-| C303 | MEDIUM | Too many arguments | All | >5 required / >10 total |
-| C304 | MEDIUM | Function too long | All | >50 lines |
-| Q305 | MEDIUM | Duplicate condition in if-else-if chain | TS | — |
-| Q401 | HIGH | Async blocking call (time.sleep, requests in async) | Python | — |
-| Q402 | MEDIUM | Await in loop (prefer Promise.all) | TS | — |
-| Q501 | MEDIUM | God class | Python | >20 methods or >15 attrs |
-| Q502 | MEDIUM–HIGH | God file | Python | >500 code lines, >40 definitions, or >25 top-level definitions |
-| Q701 | MEDIUM | High coupling (CBO) | Python | — |
-| Q702 | MEDIUM | Low cohesion (LCOM) | Python | — |
-
-### Performance
-
-| ID | Severity | Name | Languages |
-|----|----------|------|-----------|
-| P401 | LOW | Memory risk: file.read() / readlines() | Python |
-| P402 | LOW | Memory risk: pandas.read_csv without chunksize | Python |
-| P403 | LOW | Nested loop O(N^2) | All |
-
-### Architecture
-
-| ID | Severity | Name | Languages |
-|----|----------|------|-----------|
-| Q801 | MEDIUM | High architectural instability | Python |
-| Q802 | MEDIUM | Distance from main sequence | Python |
-| Q803 | MEDIUM | Zone of Pain / Zone of Uselessness | Python |
-| Q804 | MEDIUM | Dependency Inversion Principle violation | Python |
-| CIRC | — | Circular dependency | Python |
-
-## Dead Code (SKY-U, SKY-UC)
-
-| ID | Severity | Name | Languages |
-|----|----------|------|-----------|
-| U001 | INFO | Unused import | Python |
-| U002 | INFO | Unused variable | Python |
-| U003 | INFO | Unused function | Python |
-| U004 | INFO | Unused class | Python |
-| UC001 | MEDIUM | Unreachable code (after return/raise/break) | Python |
-| UC002 | MEDIUM | Unreachable code (after return/throw/break/continue) | TS |
-
-## Other
-
-| ID | Severity | Name | Languages |
-|----|----------|------|-----------|
-| E002 | — | Empty/docstring-only file | Python |
-| C401 | — | Module reachability | Python |
-| SCA-* | varies | Software Composition Analysis (CVE scanning) | Python |
-
-## Go Rule Remap Table
-
-When the Go binary outputs these IDs, they are translated to unified IDs before reporting:
-
-| Go Binary Output | Unified ID | Vulnerability |
-|------------------|------------|---------------|
+| Go Output | Unified ID | Vulnerability |
+|:---|:---|:---|
+| SKY-G203 | SKY-G203 | Defer in loop / resource leak risk |
+| SKY-G206 | SKY-G206 | Unsafe package usage |
 | SKY-G207 | SKY-D207 | Weak MD5 |
 | SKY-G208 | SKY-D208 | Weak SHA1 |
-| SKY-G210 | SKY-D210 | TLS disabled |
+| SKY-G209 | SKY-D250 | Weak random source |
+| SKY-G210 | SKY-D210 | TLS verification disabled |
 | SKY-G211 | SKY-D211 | SQL injection |
 | SKY-G212 | SKY-D212 | Command injection |
 | SKY-G215 | SKY-D215 | Path traversal |
 | SKY-G216 | SKY-D216 | SSRF |
 | SKY-G220 | SKY-D230 | Open redirect |
+| SKY-G221 | SKY-D252 | Insecure cookie flags |
+| SKY-G260 | SKY-G260 | Unclosed resource |
+| SKY-G280 | SKY-G280 | Weak TLS version |
+| SKY-G305 | SKY-D215 | Archive extraction path traversal |
+
+## Logic and AI-Code Mistakes (SKY-L)
+
+| ID | Severity | Name | Languages |
+|:---|:---|:---|:---|
+| L001 | HIGH | Mutable default argument | Python |
+| L002 | MEDIUM | Bare `except` block | Python |
+| L003 | LOW | Dangerous comparison (`== True`, `== False`, `== None`) | Python |
+| L004 | MEDIUM | Anti-pattern try block / too broad scope | Python |
+| L005 | LOW | Unused exception variable | Python |
+| L006 | MEDIUM | Inconsistent return paths | Python |
+| L007 | MEDIUM-HIGH | Empty error handler | Python |
+| L008 | MEDIUM | Missing resource cleanup | Python |
+| L009 | LOW-HIGH | Debug leftover | Python |
+| L010 | MEDIUM | Security TODO/FIXME marker left in code | Python |
+| L011 | MEDIUM-HIGH | Disabled security control | Python |
+| L012 | CRITICAL | Phantom function call / hallucinated security function | Python |
+| L013 | HIGH | Insecure randomness for security values | Python |
+| L014 | HIGH | Hardcoded credential in code | Python |
+| L016 | MEDIUM | Undefined config / ghost feature flag | Python |
+| L017 | MEDIUM | Error information disclosure | Python |
+| L020 | HIGH | Overly broad file permissions | Python |
+| L021 | HIGH | Security control regression | Diff-aware review |
+| L023 | CRITICAL | Phantom decorator | Python |
+| L024 | HIGH | Stale mock target | Python |
+| L026 | MEDIUM | Unfinished generated function | Python |
+| L027 | LOW-MEDIUM | Duplicate string literal | Python |
+| L028 | MEDIUM | Too many return statements | Python |
+| L029 | MEDIUM | Boolean positional parameter trap | Python |
+| L030 | MEDIUM | Broad exception with trivial handler | Python |
+| L031 | MEDIUM | Missing network timeout | Python |
+| L032 | MEDIUM | Mock or placeholder production data | Python |
+| L033 | MEDIUM | No-effect statement | Python |
+
+## Quality, Structure, Architecture, and Performance
+
+| ID | Severity | Name | Languages / Scope | Threshold / Notes |
+|:---|:---|:---|:---|:---|
+| Q301 | WARN-CRITICAL | Cyclomatic complexity | Python, TS/JS, Java, Go | default >10 |
+| Q302 | MEDIUM | Deep nesting | Python, TS/JS, Java, Go | default >3 |
+| Q305 | MEDIUM | Duplicate condition / duplicate branch body | Python, TS/JS | control-flow correctness |
+| Q306 | MEDIUM | Cognitive complexity | Python | Sonar-style cognitive complexity |
+| Q401 | HIGH | Async blocking call | Python | blocking calls inside async code |
+| Q402 | MEDIUM | Await in loop | TS/JS | prefer batching |
+| Q501 | MEDIUM | God class | Python | excessive methods or attributes |
+| Q502 | MEDIUM-HIGH | God file | Python | excessive file size / definitions |
+| Q701 | MEDIUM | High coupling | Python | CBO-style signal |
+| Q702 | MEDIUM | Low cohesion | Python | LCOM-style signal |
+| Q801 | MEDIUM | High architectural instability | Python |
+| Q802 | MEDIUM | Distance from main sequence | Python |
+| Q803 | MEDIUM | Zone of Pain / Zone of Uselessness | Python |
+| Q804 | MEDIUM | Dependency Inversion Principle violation | Python |
+| Q805 | MEDIUM | Architecture layer policy violation | Python |
+| C303 | MEDIUM | Too many arguments | Python, TS/JS, Java, Go | default >5 required / >10 total |
+| C304 | MEDIUM | Function too long | Python, TS/JS, Java, Go | default >50 lines |
+| C401 | MEDIUM | Duplicated implementation fragments | Python |
+| P401 | LOW | Memory risk: `file.read()` / `readlines()` | Python |
+| P402 | LOW | Memory risk: `pandas.read_csv` without `chunksize` | Python |
+| P403 | LOW | Nested loop O(N^2) | Python / generic |
+| T101 | MEDIUM | Missing public parameter type annotation | Python |
+| T102 | MEDIUM | Missing public return type annotation | Python |
+| F101 | MEDIUM | FastAPI response model / return typing practice | Python |
+| F102 | HIGH | Framework endpoint missing object-level authorization guard | Python |
+| R101 | MEDIUM | Repository missing Python type-check command | Repo policy |
+| R102 | MEDIUM | Repository missing Python lint command | Repo policy |
+| R103 | MEDIUM | Repository missing Skylos quality gate | Repo policy |
+| R104 | MEDIUM | Repository missing pre-commit config | Repo policy |
+| R105 | MEDIUM | Repository missing TypeScript type-check command | Repo policy |
+| CIRC | varies | Circular dependency | Python |
+
+## Dead Code and Reachability
+
+| ID | Severity | Name | Scope |
+|:---|:---|:---|:---|
+| U001 | INFO | Unused function | Upload/API normalized dead-code category |
+| U002 | INFO | Unused import | Upload/API normalized dead-code category |
+| U003 | INFO | Unused variable | Upload/API normalized dead-code category |
+| U004 | INFO | Unused class | Upload/API normalized dead-code category |
+| U005 | MEDIUM | Declared dependency appears unused | Python dependencies |
+| U006 | INFO | Unused parameter | Debt normalized dead-code category |
+| DC001 | MEDIUM | Unused function | LLM report dead-code ID |
+| DC002 | LOW | Unused import | LLM report dead-code ID |
+| DC003 | MEDIUM | Unused class | LLM report dead-code ID |
+| DC004 | LOW | Unused variable | LLM report dead-code ID |
+| DC005 | LOW | Unused parameter | LLM report dead-code ID |
+| DC006 | LOW | Empty or unused file | LLM report dead-code ID |
+| UC001 | MEDIUM | Unreachable code after control-flow exit | Python |
+| UC002 | MEDIUM | Unreachable code after return/throw/break/continue | TS/JS, Java |
+| E002 | LOW | Empty or docstring-only file | Python |
+| E003 | LOW | Unused TypeScript/JavaScript file | TS/JS |
+| E004 | LOW | Unnecessary export | TS/JS |
+
+Pretty output and the TUI use short display labels such as
+`dead-code/function`, `dead-code/import`, `dead-code/class`,
+`dead-code/variable`, `dead-code/parameter`, and `dead-code/file`. Those labels
+are UI grouping text, not stable rule IDs; use the `SKY-*` IDs above for
+suppression, integrations, and public references.
+
+## Dependency Vulnerabilities
+
+| ID | Severity | Name | Scope |
+|:---|:---|:---|:---|
+| SCA-* | varies | Software composition analysis vulnerability | Dependency manifests / installed packages |
+
+## Aggregate, Alias, and Workflow IDs
+
+These IDs appear in API normalization, audit workflows, LLM schemas, prompts, or
+agent workflows. They are not always emitted as first-class static-analysis
+findings.
+
+| ID | Meaning |
+|:---|:---|
+| SKY-D000 | Generic security fallback ID for normalized external findings. |
+| SKY-Q000 | Generic quality fallback ID for normalized external findings. |
+| SKY-S000 | Generic secret fallback ID for normalized external findings. |
+| SKY-SCA-000 | Generic dependency fallback ID for normalized external findings. |
+| SKY-U000 | Generic dead-code fallback ID for agent workflows. |
+| SKY-D101 | Legacy compliance alias for code injection. |
+| SKY-D102 | Legacy compliance alias for code injection. |
+| SKY-D103 | Legacy compliance alias for insecure deserialization. |
+| SKY-AUDIT | Deep-audit candidate or artifact marker. |
+| SKY-AUDIT-ENTRYPOINT | Deep-audit entrypoint candidate marker. |
+| SKY-AUDIT-PATH | Deep-audit security-sensitive path candidate marker. |
+| SKY-DEAD | LLM dead-code verifier marker. |
+| SKY-DEAD-CHALLENGE | LLM dead-code challenge marker. |
+| SKY-DEBT | Agent command-center debt marker. |
+| SKY-FIX | Agent remediation / fix generation marker. |
+| SKY-L000 | Generic logic fallback ID for LLM schemas. |
+| SKY-C399 | Structure placeholder ID used in prompt examples. |
+| SKY-Q499 | Quality placeholder ID used in prompt examples. |
+| SKY-P499 | Performance placeholder ID used in prompt examples. |
+| SKY-S199 | Secret placeholder ID used in prompt examples. |
+
+Prompt text may also use range notation such as `SKY-D226-228`,
+`SKY-L001-004`, or `SKY-P401-403` to describe groups of concrete rule IDs.
+
+## Custom Rules
+
+Custom rule packs may emit project-defined IDs from `.skylos/rules/*.yml`.
+Prefer a stable project prefix, for example `ORG-SEC001`, to avoid colliding
+with Skylos-owned `SKY-*` IDs.

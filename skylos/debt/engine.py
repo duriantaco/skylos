@@ -36,7 +36,7 @@ _DEAD_CODE_RULE_IDS: dict[str, str] = {
     "unused_imports": "SKY-U002",
     "unused_variables": "SKY-U003",
     "unused_classes": "SKY-U004",
-    "unused_parameters": "SKY-U005",
+    "unused_parameters": "SKY-U006",
 }
 
 
