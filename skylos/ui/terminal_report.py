@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 from rich.console import Console
 from rich.text import Text
@@ -63,6 +64,8 @@ SUMMARY_CATEGORIES = (
     "dependency_vulnerabilities",
 )
 
+_TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
 
 @dataclass(frozen=True)
 class PrettyFinding:
@@ -114,7 +117,7 @@ def render_pretty_results(
             by_file[file_path],
             key=lambda f: (SEVERITY_RANK.get(f.severity, 99), f.line, f.rule),
         )
-        short_path = _shorten_path(file_path, root_path)
+        short_path = _sanitize_terminal_text(_shorten_path(file_path, root_path))
         count = len(file_findings)
         console.print(
             Text.assemble(
@@ -172,13 +175,17 @@ def _make_pretty_finding(
     root_path=None,
     source_cache: dict[str, list[str] | None],
 ) -> PrettyFinding:
-    file_path = str(item.get("file") or item.get("file_path") or "?")
+    file_path = _sanitize_terminal_text(
+        str(item.get("file") or item.get("file_path") or "?")
+    )
     line = _line_number(item)
     severity = _severity(item, category)
-    rule = _rule_id(item, category)
-    title = _title(item, category, fallback_label)
-    snippet = _snippet(item, category, root_path=root_path, source_cache=source_cache)
-    fix = _fix(item, category)
+    rule = _sanitize_terminal_text(_rule_id(item, category))
+    title = _sanitize_terminal_text(_title(item, category, fallback_label))
+    snippet = _sanitize_terminal_text(
+        _snippet(item, category, root_path=root_path, source_cache=source_cache)
+    )
+    fix = _sanitize_terminal_text(_fix(item, category))
     return PrettyFinding(
         category=category,
         category_label=category_label,
@@ -460,3 +467,10 @@ def _truncate(text: str, width: int) -> str:
     if len(text) <= width:
         return text
     return text[: max(0, width - 3)] + "..."
+
+
+def _sanitize_terminal_text(text: str) -> str:
+    return _TERMINAL_CONTROL_RE.sub(
+        lambda match: f"\\x{ord(match.group()):02x}",
+        str(text),
+    )
