@@ -1,0 +1,44 @@
+name: Rules docs parity
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/rules-docs-parity.yml"
+      - "scripts/check_rule_docs_parity.py"
+      - "skylos/rules/catalog.py"
+  pull_request:
+    paths:
+      - ".github/workflows/rules-docs-parity.yml"
+      - "scripts/check_rule_docs_parity.py"
+      - "skylos/rules/catalog.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rules-docs-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Skylos
+        uses: actions/checkout@v4
+        with:
+          path: skylos
+          persist-credentials: false
+
+      - name: Checkout Skylos docs
+        uses: actions/checkout@v4
+        with:
+          repository: duriantaco/skylos-docs
+          path: skylos-docs
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Check rules docs parity
+        run: |
+          python skylos/scripts/check_rule_docs_parity.py \
+            --rules-reference skylos-docs/docs/rules-reference.mdx
