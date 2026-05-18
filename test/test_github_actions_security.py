@@ -20,6 +20,10 @@ def _tests_workflow():
     return yaml.safe_load(Path(".github/workflows/tests.yaml").read_text())
 
 
+def _skylos_workflow():
+    return yaml.safe_load(Path(".github/workflows/skylos.yaml").read_text())
+
+
 def _composite_action():
     return yaml.safe_load(Path("action.yml").read_text())
 
@@ -376,6 +380,35 @@ def test_tests_workflow_pins_codecov_and_limits_permissions():
     assert len(action_ref) == 40
     assert all(c in "0123456789abcdef" for c in action_ref)
     assert codecov_step["with"]["token"] == "${{ secrets.CODECOV_TOKEN }}"
+
+
+def test_skylos_pr_workflow_uses_trusted_scanner_package():
+    workflow = _skylos_workflow()
+    assert workflow["permissions"] == {"contents": "read"}
+
+    steps = workflow["jobs"]["scan"]["steps"]
+    checkout_step = next(s for s in steps if s.get("uses") == "actions/checkout@v4")
+    assert checkout_step["with"]["persist-credentials"] is False
+
+    go_build_step = next(s for s in steps if s.get("name") == "Build repo Go engine")
+    assert go_build_step["if"] == "github.event_name != 'pull_request'"
+
+    pr_install_step = next(
+        s for s in steps if s.get("name") == "Install trusted Skylos for pull requests"
+    )
+    assert pr_install_step["if"] == "github.event_name == 'pull_request'"
+    assert '"skylos>=4.7.0"' in pr_install_step["run"]
+    assert "-e ." not in pr_install_step["run"]
+
+    local_install_step = next(
+        s for s in steps if s.get("name") == "Use repo Skylos on trusted refs"
+    )
+    assert local_install_step["if"] == "github.event_name != 'pull_request'"
+    assert "-e ." in local_install_step["run"]
+
+    scan_step = next(s for s in steps if s.get("name") == "Run Skylos")
+    assert "python -m skylos.cli" not in scan_step["run"]
+    assert ".venv/bin/skylos" in scan_step["run"]
 
 
 def test_composite_action_validates_and_quotes_max_comments_input():

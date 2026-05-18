@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           uv venv --python "$PYTHON_VERSION"
-          uv pip install --python .venv/bin/python -e .
+          # Keep this workflow from executing PR-controlled package/build code.
           uv pip install --python .venv/bin/python pre-commit ruff mypy
 
       - name: Validate pre-commit config
