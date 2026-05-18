@@ -575,7 +575,7 @@ def run_pipeline(
         files,
         static_findings,
         changed_files=safe_changed_files,
-        force_include_files=path.is_file(),
+        force_include_files=path.is_file() or getattr(agent_args, "llm_only", False),
         review_index=review_index,
     )
     phase_2b_repo_context = review_index.context_map_for(phase_2b_files)
