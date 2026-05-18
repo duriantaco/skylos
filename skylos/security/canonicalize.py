@@ -24,6 +24,12 @@ _zw_escaped = []
 for c in ZERO_WIDTH_CHARS:
     _zw_escaped.append(re.escape(c))
 _ZERO_WIDTH_RE = re.compile("[" + "".join(_zw_escaped) + "]")
+_ZERO_WIDTH_TRANSLATION = {ord(c): None for c in ZERO_WIDTH_CHARS}
+
+MAX_ZERO_WIDTH_HITS = 64
+MAX_BASE64_TOKENS = 64
+MAX_BASE64_TOKEN_CHARS = 8192
+MAX_BASE64_RESULTS = 16
 
 # common cyrillic/greek characters that look like latin ASCII
 _CONFUSABLES: dict[str, str] = {
@@ -77,23 +83,50 @@ def normalize(text: str) -> str:
     return text
 
 
-def strip_zero_width(text: str) -> tuple[str, list[tuple[str, int]]]:
+def strip_zero_width(
+    text: str, *, max_hits: int | None = MAX_ZERO_WIDTH_HITS
+) -> tuple[str, list[tuple[str, int]]]:
     found: list[tuple[str, int]] = []
+    line_no = 1
+    cursor = 0
     for match in _ZERO_WIDTH_RE.finditer(text):
-        pos = match.start()
-        line_no = text[:pos].count("\n") + 1
+        if max_hits is not None and len(found) >= max_hits:
+            break
+        start = match.start()
+        line_no += text.count("\n", cursor, start)
+        cursor = match.end()
         char_hex = f"U+{ord(match.group()):04X}"
         found.append((char_hex, line_no))
 
-    cleaned = _ZERO_WIDTH_RE.sub("", text)
+    cleaned = text.translate(_ZERO_WIDTH_TRANSLATION)
     return cleaned, found
 
 
-def decode_base64_blobs(text: str) -> list[tuple[str, int]]:
+def decode_base64_blobs(
+    text: str,
+    *,
+    max_tokens: int | None = MAX_BASE64_TOKENS,
+    max_token_chars: int | None = MAX_BASE64_TOKEN_CHARS,
+    max_results: int | None = MAX_BASE64_RESULTS,
+) -> list[tuple[str, int]]:
     results: list[tuple[str, int]] = []
+    tokens_seen = 0
+    line_no = 1
+    cursor = 0
     for match in _BASE64_TOKEN_RE.finditer(text):
+        if max_tokens is not None and tokens_seen >= max_tokens:
+            break
+        tokens_seen += 1
+
+        start = match.start()
+        end = match.end()
+        line_no += text.count("\n", cursor, start)
+        cursor = end
+
+        if max_token_chars is not None and end - start > max_token_chars:
+            continue
+
         token = match.group()
-        line_no = text[: match.start()].count("\n") + 1
 
         try:
             decoded_bytes = base64.b64decode(token, validate=True)
@@ -107,6 +140,8 @@ def decode_base64_blobs(text: str) -> list[tuple[str, int]]:
             and sum(1 for c in decoded if c.isprintable()) / len(decoded) > 0.8
         ):
             results.append((decoded, line_no))
+            if max_results is not None and len(results) >= max_results:
+                break
 
     return results
 

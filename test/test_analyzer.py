@@ -2887,6 +2887,46 @@ def handler(request):
         assert any(f.get("file") == str(app) for f in injection_findings)
         assert any(f.get("file") == str(prompt_doc) for f in injection_findings)
 
+    def test_prompt_injection_scan_caps_reported_findings(
+        self, tmp_path, monkeypatch
+    ):
+        from skylos.security import injection_scanner
+
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        app = tmp_path / "app.py"
+        app.write_text("print('ok')\n", encoding="utf-8")
+        injected = [
+            {
+                "rule_id": "SKY-D260",
+                "kind": "security",
+                "severity": "HIGH",
+                "type": "hidden_char",
+                "file": str(app),
+                "basename": app.name,
+                "line": idx + 1,
+                "message": "prompt injection",
+            }
+            for idx in range(injection_scanner.MAX_SCAN_FINDINGS + 5)
+        ]
+
+        monkeypatch.setattr(
+            injection_scanner, "scan_file", lambda *_args, **_kwargs: injected
+        )
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                enable_danger=True,
+                grep_verify=False,
+            )
+        )
+        injection_findings = [
+            f for f in result.get("danger", []) if f.get("rule_id") == "SKY-D260"
+        ]
+
+        assert len(injection_findings) == injection_scanner.MAX_SCAN_FINDINGS
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
