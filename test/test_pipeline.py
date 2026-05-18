@@ -436,6 +436,31 @@ class TestPipelinePhase1:
         mock_analyze.assert_not_called()
 
     @patch(P_LLM)
+    @patch(P_ANALYZE)
+    @patch(P_PROGRESS)
+    def test_llm_only_directory_scan_reviews_ordinary_python_files(
+        self, _prog, mock_analyze, mock_llm, tmp_path
+    ):
+        mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        ordinary = proj / "views.py"
+        ordinary.write_text("def render():\n    return 'ok'\n", encoding="utf-8")
+
+        run_pipeline(
+            path=str(proj),
+            model="t",
+            api_key="k",
+            agent_args=_agent_args(llm_only=True),
+            console=_console(),
+        )
+
+        mock_analyze.assert_not_called()
+        analyze_files_args = mock_llm.return_value.analyze_files.call_args[0][0]
+        assert [str(f) for f in analyze_files_args] == [str(ordinary)]
+
+    @patch(P_LLM)
     @patch(P_STATIC_FN, return_value=_fresh_static())
     @patch(P_PROGRESS)
     def test_generates_message_for_dead_code(self, _prog, _static, mock_llm, tmp_path):
