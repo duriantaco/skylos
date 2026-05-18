@@ -91,6 +91,19 @@ class TestImplicitRefTracker:
 
         assert found is False
 
+    def test_pattern_metacharacters_are_literal_except_wildcard(self):
+        tracker = ImplicitRefTracker()
+        tracker.add_pattern_ref("bad(*", 70)
+
+        found, confidence, reason = tracker.should_mark_as_used(
+            MockDefinition("bad(handler")
+        )
+
+        assert found is True
+        assert confidence == 70
+        assert "bad(*" in reason
+        assert tracker.should_mark_as_used(MockDefinition("badxhandler"))[0] is False
+
     def test_multiple_patterns_first_wins(self):
         tracker = ImplicitRefTracker()
         tracker.add_pattern_ref("handle_*", 70)
