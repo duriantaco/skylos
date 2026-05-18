@@ -47,9 +47,9 @@
 ## What Is Skylos?
 
 Skylos is an open-source static analysis tool and CI/CD PR gate for Python,
-TypeScript, JavaScript, Java, Go, PHP, and Rust repositories. It combines dead
-code detection, security scanning, secrets detection, code quality checks, and
-AI-generated code guardrails in one local-first workflow.
+TypeScript, JavaScript, Java, Go, PHP, Rust, and Dart repositories. It combines
+dead code detection, security scanning, secrets detection, code quality checks,
+and AI-generated code guardrails in one local-first workflow.
 
 If you use tools like Vulture, Bandit, Semgrep, CodeQL, or GitHub Advanced
 Security, Skylos is designed to complement that workflow with framework-aware
@@ -103,6 +103,8 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | First dead-code scan | `skylos .` | Finds unused functions, classes, imports, files, and framework entrypoint mistakes | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
 | Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, and quality checks | [Security docs](https://docs.skylos.dev/security-analysis) |
 | PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
+| Readable terminal report | `skylos . --format pretty` | Groups findings by file with severity badges, snippets, and copyable `file:line` locations | [CLI output modes](./docs/cli-output.md) |
+| Selectable terminal triage | `skylos . --tui` | Opens a keyboard-driven category list, finding list, and detail pane | [CLI output modes](./docs/cli-output.md) |
 | IDE/test-script output | `skylos --format concise src/test.py` | Prints only `file:line` findings and exits non-zero when findings exist | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | Changed-lines review | `skylos . -a --diff origin/main` | Keeps findings focused on active work instead of legacy debt | [Quality gate docs](https://docs.skylos.dev/quality-gate) |
 | Runtime-assisted dead-code check | `skylos . --trace` | Uses runtime traces to reduce dynamic-code false positives | [Smart tracing](https://docs.skylos.dev/smart-tracing) |
@@ -198,6 +200,7 @@ credential names, sensitive files, and network calls that must set timeouts.
 | Go | Yes | Partial | Partial | dead-code and selected security benchmark coverage |
 | PHP | Yes | Yes | Partial | PHP parser coverage plus taint-style security sinks and sources |
 | Rust | Yes | Yes | Partial | Rust parser coverage plus security sink/source checks |
+| Dart | Yes | Yes | Partial | Dart parser coverage plus selected security sinks and sources |
 
 See [Rules Reference](https://docs.skylos.dev/rules-reference) for rule families
 and scanner scope.
@@ -254,9 +257,11 @@ metadata, and supports monorepo subprojects through `--scan-path`.
 | Install options, source install, and Docker | [Installation](https://docs.skylos.dev/installation) |
 | First scan and core workflows | [Quick Start](https://docs.skylos.dev/quick-start) |
 | CLI commands, flags, and examples | [CLI Reference](https://docs.skylos.dev/cli-reference) |
+| CLI output modes, pretty reports, and TUI controls | [CLI Output Modes](./docs/cli-output.md) |
 | CI setup, PR gates, annotations, and branch protection | [CI/CD](https://docs.skylos.dev/ci-cd) |
 | Dead-code behavior and framework awareness | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | Security scanning and taint analysis | [Security Analysis](https://docs.skylos.dev/security-analysis) |
+| Rule ID prefixes and product terminology | [Rule Dictionary](./dictionary.md) |
 | Agent scan, verification, remediation, and model setup | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI defense checks and LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
 | MCP server setup | [MCP Server](https://docs.skylos.dev/mcp-server) |
