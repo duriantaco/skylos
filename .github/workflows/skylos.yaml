@@ -6,6 +6,9 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -13,6 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -25,17 +29,26 @@ jobs:
       - uses: astral-sh/setup-uv@v4
 
       - name: Build repo Go engine
+        if: github.event_name != 'pull_request'
         run: |
           mkdir -p /tmp/skylos-go-build /tmp/skylos-go-gopath
           cd skylos/engines/go
           GOCACHE=/tmp/skylos-go-build GOPATH=/tmp/skylos-go-gopath go build -o skylos-go ./cmd/skylos-go
 
-      - name: Use repo skylos (not PyPI)
+      - name: Install trusted Skylos for pull requests
+        if: github.event_name == 'pull_request'
+        run: |
+          uv venv --python 3.11
+          uv pip install --python .venv/bin/python "skylos>=4.7.0"
+          .venv/bin/skylos --version
+
+      - name: Use repo Skylos on trusted refs
+        if: github.event_name != 'pull_request'
         run: |
           uv venv --python 3.11
           uv pip install --python .venv/bin/python -e .
-          python -c "import skylos; print('skylos from:', skylos.__file__)"
-          python -c "import skylos.visitors.languages; print('languages OK')"
+          .venv/bin/python -c "import skylos; print('skylos from:', skylos.__file__)"
+          .venv/bin/python -c "import skylos.visitors.languages; print('languages OK')"
 
       - name: Resolve diff base
         id: diff
@@ -58,9 +71,9 @@ jobs:
         run: |
           echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
           if [ -n "$DIFF_BASE" ]; then
-            .venv/bin/python -m skylos.cli . --quality --danger --secrets --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
+            .venv/bin/skylos . --quality --danger --secrets --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
           else
-            .venv/bin/python -m skylos.cli . --quality --danger --secrets --baseline --json -o "$REPORT"
+            .venv/bin/skylos . --quality --danger --secrets --baseline --json -o "$REPORT"
           fi
 
       - name: Report findings (advisory)
@@ -68,14 +81,14 @@ jobs:
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
         run: |
-          .venv/bin/python -m skylos.cli cicd gate --input "$REPORT" --summary --advisory
+          .venv/bin/skylos cicd gate --input "$REPORT" --summary --advisory
 
       - name: GitHub annotations
         if: always()
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
         run: |
-          .venv/bin/python -m skylos.cli cicd annotate --input "$REPORT"
+          .venv/bin/skylos cicd annotate --input "$REPORT"
 
       - name: Upload report artifact
         if: always()
