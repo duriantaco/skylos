@@ -1335,6 +1335,24 @@ class TestClass:
             finally:
                 Path(f.name).unlink()
 
+    def test_proc_file_keeps_findings_when_dynamic_fstring_pattern_has_regex_chars(
+        self, tmp_path
+    ):
+        file_path = tmp_path / "dynamic_pattern.py"
+        file_path.write_text(
+            'def hidden(name, obj):\n'
+            '    eval("1+1")\n'
+            '    return getattr(obj, f"bad({name}", None)\n',
+            encoding="utf-8",
+        )
+
+        out = proc_file(str(file_path), "dynamic_pattern")
+        danger_findings = out[7]
+        pattern_tracker = out[9]
+
+        assert "SKY-D201" in {f.get("rule_id") for f in danger_findings}
+        assert pattern_tracker is not None
+
     def test_proc_file_with_tuple_args(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def test(): pass")

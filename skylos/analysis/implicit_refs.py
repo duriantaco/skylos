@@ -3,6 +3,11 @@ import json
 from pathlib import Path
 
 
+def _compile_pattern_ref(pattern):
+    escaped = re.escape(pattern).replace(r"\*", ".*")
+    return re.compile(f"^{escaped}$")
+
+
 class ImplicitRefTracker:
     def __init__(self):
         self.known_refs = set()
@@ -27,7 +32,7 @@ class ImplicitRefTracker:
 
     def add_pattern_ref(self, pattern, confidence, source_module=None):
         self.pattern_refs.append((pattern, confidence))
-        regex = re.compile("^" + pattern.replace("*", ".*") + "$")
+        regex = _compile_pattern_ref(pattern)
         self._compiled_patterns.append((regex, confidence, pattern, source_module))
 
     def should_mark_as_used(self, definition):
