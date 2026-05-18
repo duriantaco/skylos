@@ -33,6 +33,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     _render_upload_failure = cli_module._render_upload_failure
     _run_pre_analysis_steps = cli_module._run_pre_analysis_steps
     _strict_scan_exit_code = cli_module._strict_scan_exit_code
+    _write_pretty_report_output = cli_module._write_pretty_report_output
     _write_rich_report_output = cli_module._write_rich_report_output
     comment_out_unused_function = cli_module.comment_out_unused_function
     comment_out_unused_import = cli_module.comment_out_unused_import
@@ -45,6 +46,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     print_badge = cli_module.print_badge
     remove_unused_function = cli_module.remove_unused_function
     remove_unused_import = cli_module.remove_unused_import
+    render_pretty_results = cli_module.render_pretty_results
     render_results = cli_module.render_results
     run_analyze = cli_module.run_analyze
     run_gate_interaction = cli_module.run_gate_interaction
@@ -54,6 +56,13 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
     parser = _build_main_parser()
     args = _parse_main_cli_args(parser, argv)
+    if getattr(args, "tui", False):
+        if getattr(args, "output", None):
+            parser.error(
+                "--tui is screen-only; use --format pretty --output for a file report"
+            )
+        if not _is_tty():
+            parser.error("--tui requires an interactive terminal")
     args._explicit_upload_requested = bool(getattr(args, "upload", False))
     context = _build_main_scan_context(args)
     project_root = context.project_root
@@ -91,7 +100,11 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 trace_file=trace_file,
             )
 
-        if machine_output:
+        quiet_analysis_output = (
+            machine_output or getattr(args, "format", "rich") == "pretty"
+        )
+
+        if quiet_analysis_output:
             analyzer_logger = logging.getLogger("Skylos")
             analyzer_logger_level = analyzer_logger.level
             analyzer_logger.setLevel(logging.WARNING)
@@ -673,21 +686,36 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 category=_cli_category,
                 file_filter=_cli_file_filter,
             )
-        render_results(
-            console,
-            display_result,
-            tree=args.tree,
-            root_path=project_root,
-            limit=_cli_limit,
-        )
-        if args.output:
-            _write_rich_report_output(
-                args.output,
+        if getattr(args, "format", "rich") == "pretty":
+            render_pretty_results(
+                console,
+                display_result,
+                root_path=project_root,
+                limit=_cli_limit,
+            )
+            if args.output:
+                _write_pretty_report_output(
+                    args.output,
+                    display_result,
+                    root_path=project_root,
+                    limit=_cli_limit,
+                )
+        else:
+            render_results(
+                console,
                 display_result,
                 tree=args.tree,
                 root_path=project_root,
                 limit=_cli_limit,
             )
+            if args.output:
+                _write_rich_report_output(
+                    args.output,
+                    display_result,
+                    tree=args.tree,
+                    root_path=project_root,
+                    limit=_cli_limit,
+                )
 
     unused_total = sum(
         len(result.get(k, []))
@@ -701,20 +729,26 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     )
     danger_count = len(result.get("danger", []) or [])
     quality_count = len(result.get("quality", []) or [])
-    print_badge(
-        unused_total,
-        logging.getLogger("skylos"),
-        danger_enabled=bool(danger_count),
-        danger_count=danger_count,
-        quality_enabled=bool(quality_count),
-        quality_count=quality_count,
-    )
+    if getattr(args, "format", "rich") != "pretty":
+        print_badge(
+            unused_total,
+            logging.getLogger("skylos"),
+            danger_enabled=bool(danger_count),
+            danger_count=danger_count,
+            quality_enabled=bool(quality_count),
+            quality_count=quality_count,
+        )
 
     strict_exit_code = _strict_scan_exit_code(result, args)
     if strict_exit_code:
         raise SystemExit(strict_exit_code)
 
-    if (not args.json) and _is_tty() and (not args.upload):
+    if (
+        not args.json
+        and getattr(args, "format", "rich") != "pretty"
+        and _is_tty()
+        and (not args.upload)
+    ):
         total_findings = 0
         for k in (
             "unused_functions",

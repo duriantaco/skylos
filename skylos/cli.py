@@ -2344,6 +2344,18 @@ def render_results(
         _render_sca(console, limit, result.get("dependency_vulnerabilities", []) or [])
 
 
+def render_pretty_results(
+    console: Console,
+    result: dict,
+    *,
+    root_path=None,
+    limit=None,
+):
+    from skylos.ui.terminal_report import render_pretty_results as render_impl
+
+    return render_impl(console, result, root_path=root_path, limit=limit)
+
+
 def _write_rich_report_output(
     output_file: str,
     result: dict,
@@ -2365,6 +2377,28 @@ def _write_rich_report_output(
         root_path=root_path,
         limit=limit,
         copy_badge=False,
+    )
+    pathlib.Path(output_file).write_text(buffer.getvalue(), encoding="utf-8")
+
+
+def _write_pretty_report_output(
+    output_file: str,
+    result: dict,
+    *,
+    root_path=None,
+    limit=None,
+):
+    buffer = StringIO()
+    file_console = Console(
+        theme=_skylos_console_theme(),
+        file=buffer,
+        force_terminal=False,
+    )
+    render_pretty_results(
+        file_console,
+        result,
+        root_path=root_path,
+        limit=limit,
     )
     pathlib.Path(output_file).write_text(buffer.getvalue(), encoding="utf-8")
 
@@ -2932,6 +2966,16 @@ def _print_main_scan_banner(args, console, final_exclude_folders):
         return True
 
     if _is_main_machine_output(args):
+        return False
+
+    if getattr(args, "format", "rich") == "pretty":
+        console.print(
+            f"[brand]skylos[/brand] [muted]v{skylos.__version__} · scanning...[/muted]"
+        )
+        if final_exclude_folders and getattr(args, "verbose", False):
+            console.print(
+                f"[muted]excluding: {', '.join(sorted(final_exclude_folders))}[/muted]"
+            )
         return False
 
     banner = (
