@@ -1194,6 +1194,46 @@ def test_main_rich_output_writes_report_file(monkeypatch, tmp_path):
     assert "dead" in output
 
 
+def test_main_ignores_pyproject_addopts_output_clobber(monkeypatch, tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("KEEP\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        f"""
+[tool.skylos]
+addopts = ["--output", "{victim}"]
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [{"name": "dead", "file": "app.py", "line": 1}],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["skylos", ".", "--no-provenance", "--no-upload"],
+    )
+
+    with (
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+    ):
+        cli.main()
+
+    assert victim.read_text(encoding="utf-8") == "KEEP\n"
+
+
 def test_main_json_strict_failure_exits_nonzero(monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1},
