@@ -2027,57 +2027,9 @@ def _render_result_tree(console: Console, result, root_path=None):
 
 
 def _display_rule_name(rule_id):
-    RULE_TITLES = {
-        "SKY-D201": "Dynamic code execution (eval)",
-        "SKY-D202": "Dynamic code execution (exec)",
-        "SKY-D203": "OS command execution (os.system)",
-        "SKY-D204": "Unsafe deserialization (pickle.load)",
-        "SKY-D205": "Unsafe deserialization (pickle.loads)",
-        "SKY-D206": "Unsafe YAML load (no SafeLoader)",
-        "SKY-D207": "Weak hash (MD5)",
-        "SKY-D208": "Weak hash (SHA1)",
-        "SKY-D209": "Shell execution (subprocess shell=True)",
-        "SKY-D210": "TLS verification disabled (requests verify=False)",
-        "SKY-D211": "SQL injection (cursor)",
-        "SKY-D212": "Possible command injection (os.system): tainted input",
-        "SKY-D222": "Dependency hallucination",
-        "SKY-D223": "Undeclared third-party dependency",
-        "SKY-D290": "GitHub Actions dangerous trigger",
-        "SKY-D291": "GitHub Actions excessive permissions",
-        "SKY-D292": "GitHub Actions unpinned action",
-        "SKY-D293": "GitHub Actions persisted checkout credentials",
-        "SKY-D294": "GitHub Actions template injection",
-        "SKY-D295": "GitHub Actions self-hosted runner",
-        "SKY-D296": "GitHub Actions unpinned container image",
-        "SKY-D297": "GitHub Actions secrets inheritance",
-        "SKY-D298": "GitHub Actions overprovisioned secrets",
-        "SKY-D299": "GitHub Actions secret outside environment",
-        "SKY-D300": "GitHub Actions unsafe environment file write",
-        "SKY-D301": "GitHub Actions hardcoded container credential",
-        "SKY-D302": "GitHub Actions broad GitHub App token",
-        "SKY-D303": "GitHub Actions unsound contains condition",
-        "SKY-D304": "GitHub Actions spoofable bot condition",
-        "SKY-D305": "GitHub Actions unsound multiline condition",
-        "SKY-D306": "GitHub Actions insecure commands enabled",
-        "SKY-D307": "GitHub Actions anonymous definition",
-        "SKY-D308": "GitHub Actions cache poisoning risk",
-        "SKY-D309": "GitHub Actions broad secret environment",
-        "SKY-D310": "GitHub Actions OIDC build-script exposure",
-        "SKY-D311": "GitHub Actions lax artifact upload",
-        "SKY-D312": "GitHub Actions JavaScript install scripts",
-        "SKY-D313": "GitHub Actions privileged job missing timeout",
-        "SKY-D314": "GitLab CI mutable container image",
-        "SKY-D315": "GitLab CI unpinned external include",
-        "SKY-D316": "GitLab CI literal secret variable",
-        "SKY-D317": "GitLab CI untrusted eval",
-        "SKY-D318": "GitLab CI Docker-in-Docker TLS disabled",
-        "SKY-D319": "GitLab CI OIDC local-script exposure",
-        "SKY-D320": "GitLab CI release cache poisoning risk",
-        "SKY-D321": "GitLab CI privileged job missing timeout",
-        "SKY-D322": "GitLab CI dynamic runner tag",
-        "SKY-D323": "GitLab CI ambiguous secret token",
-    }
-    return RULE_TITLES.get(rule_id, "Security issue")
+    from skylos.rules.catalog import get_rule_name
+
+    return get_rule_name(rule_id)
 
 
 def _verification_proof(danger_finding):

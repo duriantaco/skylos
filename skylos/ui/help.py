@@ -130,6 +130,11 @@ COMMANDS = [
         "group": "Utility",
     },
     {
+        "name": "skylos cache stats [path]",
+        "desc": "Show cached run data size",
+        "group": "Utility",
+    },
+    {
         "name": "skylos sync",
         "desc": "Sync config with Skylos Cloud",
         "group": "Utility",

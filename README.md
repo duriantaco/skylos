@@ -83,6 +83,10 @@ Create a starter local rule pack:
 ```bash
 skylos rules init
 skylos rules validate .skylos/rules/local.yml
+skylos rules list --json
+skylos rules list cross --json
+skylos rules list --packs --json
+skylos cache stats
 ```
 
 Generate a GitHub Actions PR gate:

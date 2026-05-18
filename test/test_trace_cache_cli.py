@@ -8,6 +8,7 @@ from rich.console import Console
 
 import skylos.cli as cli
 from skylos.core.result_cache import (
+    RUN_CACHE_DIR,
     TRACE_CACHE_DIR,
     build_trace_cache_key,
     save_trace_cache,
@@ -297,3 +298,29 @@ def test_cache_clear_command_removes_run_cache(tmp_path):
 
     assert code == 0
     assert not (tmp_path / ".skylos" / "cache" / "runs").exists()
+
+
+def test_cache_stats_json_skips_symlink_targets(tmp_path):
+    run_cache = tmp_path / RUN_CACHE_DIR
+    run_cache.mkdir(parents=True)
+    (run_cache / "entry.json").write_text("12345", encoding="utf-8")
+    outside = tmp_path / "outside-cache-target.txt"
+    outside.write_text("outside-data-that-must-not-count", encoding="utf-8")
+    try:
+        (run_cache / "outside.json").symlink_to(outside)
+    except OSError:
+        return
+
+    buffer = io.StringIO()
+    code = run_cache_command(
+        ["stats", str(tmp_path), "--json"],
+        console_factory=lambda: Console(file=buffer, force_terminal=False),
+    )
+
+    assert code == 0
+    payload = json.loads(buffer.getvalue())
+    assert payload["exists"] is True
+    assert payload["files"] == 1
+    assert payload["symlinks"] == 1
+    assert payload["skipped"] == 1
+    assert payload["bytes"] == 5

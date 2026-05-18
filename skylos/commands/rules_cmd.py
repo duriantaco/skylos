@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import json
+import stat
 from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
+
+from skylos.rules.catalog import get_rule_catalog
+
+MAX_RULE_PACK_BYTES = 1_000_000
 
 
 def run_rules_command(argv, *, console_factory=Console) -> int:
@@ -19,7 +26,18 @@ def run_rules_command(argv, *, console_factory=Console) -> int:
     p_install = rules_sub.add_parser("install", help="Install a rule pack or YAML URL")
     p_install.add_argument("pack_or_url", help="Pack name or URL to a .yml/.yaml file")
 
-    rules_sub.add_parser("list", help="List installed community rules")
+    p_list = rules_sub.add_parser("list", help="List built-in rules")
+    p_list.add_argument(
+        "terms",
+        nargs="*",
+        help="Optional rule search text, or 'json' for JSON output.",
+    )
+    p_list.add_argument("--json", action="store_true", help="Print rules as JSON")
+    p_list.add_argument(
+        "--packs",
+        action="store_true",
+        help="List installed community rule packs instead of built-in rules.",
+    )
 
     p_remove = rules_sub.add_parser("remove", help="Remove an installed rule pack")
     p_remove.add_argument("name", help="Name of the rule pack to remove")
@@ -48,7 +66,20 @@ def run_rules_command(argv, *, console_factory=Console) -> int:
     if rules_args.rules_cmd == "install":
         return install_rules(console, rules_dir, rules_args.pack_or_url)
     if rules_args.rules_cmd == "list":
-        return list_rules(console, rules_dir)
+        list_terms = list(rules_args.terms or [])
+        json_alias = False
+        if not rules_args.json and list_terms and list_terms[-1].casefold() == "json":
+            json_alias = True
+            list_terms = list_terms[:-1]
+        json_output = bool(rules_args.json or json_alias)
+        query_terms = list_terms
+        return list_rules(
+            console,
+            rules_dir,
+            json_output=json_output,
+            query=" ".join(query_terms),
+            packs=bool(rules_args.packs),
+        )
     if rules_args.rules_cmd == "remove":
         return remove_rules(console, rules_dir, rules_args.name)
     if rules_args.rules_cmd == "validate":
@@ -186,20 +217,56 @@ def install_rules(console, rules_dir, pack_or_url):
     return 0
 
 
-def list_rules(console, rules_dir):
+def list_rules(console, rules_dir, *, json_output=False, query="", packs=False):
+    if packs:
+        return list_rule_packs(console, rules_dir, json_output=json_output)
+
+    payload = _collect_builtin_rule_metadata(query)
+    if json_output:
+        _write_json(console, payload)
+        return 0
+
+    rules = payload["rules"]
+    if not rules:
+        console.print("[dim]No built-in rules matched.[/dim]")
+        return 0
+
+    table = Table(title="Built-in Rules")
+    table.add_column("Rule", style="bold")
+    table.add_column("Name")
+    table.add_column("Category")
+    table.add_column("Severity")
+
+    for rule in rules:
+        table.add_row(
+            Text(_safe_terminal_text(rule.get("id", ""))),
+            Text(_safe_terminal_text(rule.get("name", ""))),
+            Text(_safe_terminal_text(rule.get("category", ""))),
+            Text(_safe_terminal_text(rule.get("severity") or "-")),
+        )
+
+    console.print(table)
+    return 0
+
+
+def list_rule_packs(console, rules_dir, *, json_output=False):
     try:
         import yaml
     except ImportError:
         console.print("[red]PyYAML is required. Install with: pip install pyyaml[/red]")
         return 1
 
+    payload = _collect_rule_pack_metadata(rules_dir, yaml)
+    if json_output:
+        _write_json(console, payload)
+        return 0
+
     if not rules_dir.exists():
         console.print("[dim]No community rules installed.[/dim]")
         console.print("Run [bold]skylos rules install <pack>[/bold] to get started.")
         return 0
 
-    yml_files = sorted(rules_dir.glob("*.yml"))
-    if not yml_files:
+    if not payload["packs"]:
         console.print("[dim]No community rules installed.[/dim]")
         console.print("Run [bold]skylos rules install <pack>[/bold] to get started.")
         return 0
@@ -207,18 +274,141 @@ def list_rules(console, rules_dir):
     table = Table(title="Installed Community Rules")
     table.add_column("Pack", style="bold")
     table.add_column("Rules", justify="right")
+    table.add_column("Status")
     table.add_column("Source")
 
-    for f in yml_files:
-        try:
-            data = yaml.safe_load(f.read_text())
-            rule_count = len(data.get("rules", [])) if data else 0
-            table.add_row(f.stem, str(rule_count), str(f))
-        except Exception:
-            table.add_row(f.stem, "?", str(f))
+    for pack in payload["packs"]:
+        rule_count = pack.get("rules")
+        table.add_row(
+            Text(_safe_terminal_text(pack.get("name", ""))),
+            Text("?" if rule_count is None else str(rule_count)),
+            Text(_safe_terminal_text(pack.get("status", ""))),
+            Text(_safe_terminal_text(pack.get("path", ""))),
+        )
 
     console.print(table)
     return 0
+
+
+def _collect_builtin_rule_metadata(query=""):
+    safe_query = _safe_query(query)
+    rules = get_rule_catalog(safe_query)
+    return {
+        "query": safe_query,
+        "rules": rules,
+        "source": "builtin",
+        "total_rules": len(rules),
+    }
+
+
+def _safe_query(query) -> str:
+    text = " ".join(str(query or "").split())
+    return text[:200]
+
+
+def _collect_rule_pack_metadata(rules_dir, yaml_module):
+    payload = {
+        "rules_dir": str(rules_dir),
+        "packs": [],
+        "total_packs": 0,
+        "total_rules": 0,
+    }
+    try:
+        root = Path(rules_dir).resolve(strict=True)
+    except FileNotFoundError:
+        return payload
+    except OSError as exc:
+        payload["error"] = str(exc)
+        return payload
+
+    try:
+        entries = sorted(root.iterdir(), key=lambda path: path.name)
+    except OSError as exc:
+        payload["error"] = str(exc)
+        return payload
+
+    for path in entries:
+        if path.suffix.lower() not in {".yml", ".yaml"}:
+            continue
+        pack = _inspect_rule_pack(path, root, yaml_module)
+        payload["packs"].append(pack)
+        if pack["status"] == "ok":
+            payload["total_packs"] += 1
+            payload["total_rules"] += int(pack.get("rules") or 0)
+
+    return payload
+
+
+def _inspect_rule_pack(path, rules_root, yaml_module):
+    pack = {
+        "name": path.stem,
+        "path": str(path),
+        "rules": None,
+        "status": "ok",
+    }
+
+    try:
+        file_stat = path.lstat()
+    except OSError as exc:
+        pack["status"] = "read_error"
+        pack["error"] = str(exc)
+        return pack
+
+    if path.is_symlink():
+        pack["status"] = "skipped_symlink"
+        return pack
+
+    try:
+        path.resolve(strict=True).relative_to(rules_root)
+    except (OSError, ValueError):
+        pack["status"] = "skipped_unsafe_path"
+        return pack
+
+    if not stat.S_ISREG(file_stat.st_mode):
+        pack["status"] = "skipped_non_file"
+        return pack
+
+    if file_stat.st_size > MAX_RULE_PACK_BYTES:
+        pack["status"] = "skipped_too_large"
+        pack["bytes"] = file_stat.st_size
+        return pack
+
+    try:
+        data = yaml_module.safe_load(path.read_text(encoding="utf-8"))
+    except yaml_module.YAMLError as exc:
+        pack["status"] = "invalid_yaml"
+        pack["error"] = str(exc)
+        return pack
+    except (OSError, UnicodeDecodeError) as exc:
+        pack["status"] = "read_error"
+        pack["error"] = str(exc)
+        return pack
+
+    rules = data.get("rules", []) if isinstance(data, dict) else []
+    if not isinstance(rules, list):
+        pack["status"] = "invalid_rules"
+        pack["error"] = "rules must be a list"
+        return pack
+
+    pack["rules"] = sum(1 for rule in rules if isinstance(rule, dict))
+    return pack
+
+
+def _write_json(console, payload):
+    output = json.dumps(payload, sort_keys=True) + "\n"
+    stream = getattr(console, "file", None)
+    if stream is not None and hasattr(stream, "write"):
+        stream.write(output)
+        stream.flush()
+    else:
+        console.print(output, markup=False, end="")
+
+
+def _safe_terminal_text(value) -> str:
+    text = str(value)
+    return "".join(
+        ch if (ch >= " " and ch != "\x7f") else f"\\x{ord(ch):02x}" for ch in text
+    )
 
 
 def remove_rules(console, rules_dir, name):
