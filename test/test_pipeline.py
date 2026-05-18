@@ -1188,7 +1188,7 @@ class TestPipelinePhase2b:
     @patch(P_PROGRESS)
     @patch(P_LLM)
     @patch(P_LLM_CONF)
-    def test_changed_scan_uses_full_file_review_and_repo_context(
+    def test_changed_scan_keeps_llm_context_minimized_and_repo_context(
         self, mock_conf, mock_llm, _prog, _static, tmp_path
     ):
         proj = tmp_path / "proj"
@@ -1201,18 +1201,31 @@ class TestPipelinePhase2b:
 
         mock_conf.side_effect = lambda **kwargs: SimpleNamespace(**kwargs)
         mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+        fake_review_index = MagicMock()
+        fake_review_index.context_map_for.return_value = {
+            str(py_file.resolve()): "review_score=80"
+        }
+        fake_review_index.force_full_file_paths_for.return_value = {
+            str(py_file.resolve())
+        }
 
-        run_pipeline(
-            path=str(proj),
-            model="t",
-            api_key="k",
-            agent_args=_agent_args(skip_verification=True),
-            console=_console(),
-            changed_files=[str(py_file)],
-        )
+        with patch(
+            "skylos.pipeline.build_repo_activation_index",
+            return_value=fake_review_index,
+        ):
+            run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(skip_verification=True),
+                console=_console(),
+                changed_files=[str(py_file)],
+            )
 
         conf_kwargs = mock_conf.call_args.kwargs
-        assert conf_kwargs["full_file_review"] is True
+        assert conf_kwargs["smart_filter"] is True
+        assert conf_kwargs["full_file_review"] is False
+        assert conf_kwargs["force_full_file_paths"] == set()
         repo_context_map = conf_kwargs["repo_context_map"]
         assert str(py_file.resolve()) in repo_context_map
         assert "review_score=" in repo_context_map[str(py_file.resolve())]
