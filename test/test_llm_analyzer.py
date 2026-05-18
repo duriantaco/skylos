@@ -336,6 +336,46 @@ def test_force_full_file_paths_uses_whole_file_review(tmp_path, monkeypatch):
     assert len(out) == 1
 
 
+def test_smart_filter_context_omits_unrelated_module_secret(tmp_path, monkeypatch):
+    fp = tmp_path / "review.py"
+    source = (
+        "TOP_SECRET = 'do-not-send'\n\n"
+        "def handler(user_input):\n"
+        "    return eval(user_input)\n"
+    )
+    fp.write_text(source, encoding="utf-8")
+
+    cfg = AnalyzerConfig(
+        quiet=True,
+        enable_security=True,
+        enable_quality=True,
+        full_file_review=False,
+        smart_filter=True,
+    )
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    seen_contexts = []
+
+    def fake_analyze_whole_file(
+        source,
+        file_path,
+        defs_map=None,
+        chunk_start_line=1,
+        issue_types=None,
+        **kwargs,
+    ):
+        seen_contexts.append(source)
+        return []
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_analyze_whole_file)
+
+    assert llm.analyze_file(fp) == []
+    assert seen_contexts
+    assert any("handler" in context for context in seen_contexts)
+    assert all("TOP_SECRET" not in context for context in seen_contexts)
+
+
 def test_quality_selector_flags_simple_but_long_review_function():
     cfg = AnalyzerConfig(quiet=True, enable_security=False, enable_quality=True)
     llm = SkylosLLM(cfg)
