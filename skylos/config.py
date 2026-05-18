@@ -56,6 +56,35 @@ DEFAULTS = {
 }
 
 
+_INT_CONFIG_KEYS = {
+    "complexity": 1,
+    "nesting": 1,
+    "max_args": 1,
+    "max_lines": 1,
+    "god_file_max_lines": 1,
+    "god_file_max_definitions": 1,
+    "god_file_max_top_level_definitions": 1,
+    "duplicate_strings": 1,
+    "max_circular_deps": -1,
+}
+_STRING_LIST_CONFIG_KEYS = {
+    "ignore",
+    "exclude",
+    "whitelist",
+    "lower_confidence",
+}
+_DICT_CONFIG_KEYS = {
+    "overrides",
+    "non_library_dirs",
+    "whitelist_documented",
+    "whitelist_temporary",
+}
+_BOOL_CONFIG_KEYS = {
+    "nudges",
+    "check_circular",
+}
+
+
 def load_config(start_path) -> dict:
     current = Path(start_path).resolve()
     if current.is_file():
@@ -179,7 +208,7 @@ def _load_synced_config(sync_config: Path) -> dict:
 
 def _merge_user_config(base_cfg: dict, user_cfg: dict | None) -> dict:
     if not isinstance(user_cfg, dict):
-        return copy.deepcopy(base_cfg)
+        return _sanitize_config(base_cfg)
 
     final_cfg = copy.deepcopy(base_cfg)
 
@@ -187,16 +216,21 @@ def _merge_user_config(base_cfg: dict, user_cfg: dict | None) -> dict:
         if key == "whitelist":
             continue
         if key == "masking":
-            merged_masking = copy.deepcopy(DEFAULTS["masking"])
-            merged_masking.update(final_cfg.get("masking", {}) or {})
-            merged_masking.update(value or {})
-            final_cfg["masking"] = merged_masking
+            if isinstance(value, dict):
+                merged_masking = copy.deepcopy(DEFAULTS["masking"])
+                current_masking = final_cfg.get("masking")
+                if isinstance(current_masking, dict):
+                    merged_masking.update(current_masking)
+                merged_masking.update(value)
+                final_cfg["masking"] = merged_masking
             continue
         if key in ("gate", "templates", "vibe", "architecture") and isinstance(
             value, dict
         ):
             merged_section = {}
-            merged_section.update(final_cfg.get(key, {}) or {})
+            current_section = final_cfg.get(key)
+            if isinstance(current_section, dict):
+                merged_section.update(current_section)
             merged_section.update(value)
             final_cfg[key] = merged_section
             continue
@@ -219,7 +253,105 @@ def _merge_user_config(base_cfg: dict, user_cfg: dict | None) -> dict:
     if "non_library_dirs" in user_cfg:
         final_cfg["non_library_dirs"] = user_cfg.get("non_library_dirs", {})
 
-    return final_cfg
+    return _sanitize_config(final_cfg)
+
+
+def _sanitize_config(cfg: dict) -> dict:
+    safe = copy.deepcopy(cfg) if isinstance(cfg, dict) else copy.deepcopy(DEFAULTS)
+
+    for key, minimum in _INT_CONFIG_KEYS.items():
+        safe[key] = _safe_int(safe.get(key), DEFAULTS[key], minimum=minimum)
+
+    for key in _STRING_LIST_CONFIG_KEYS:
+        safe[key] = _safe_string_list(safe.get(key), DEFAULTS[key])
+
+    for key in _DICT_CONFIG_KEYS:
+        safe[key] = _safe_dict(safe.get(key), DEFAULTS[key])
+
+    for key in _BOOL_CONFIG_KEYS:
+        safe[key] = _safe_bool(safe.get(key), DEFAULTS[key])
+
+    safe["security_contracts"] = _safe_dict_list(
+        safe.get("security_contracts"), DEFAULTS["security_contracts"]
+    )
+    safe["masking"] = _sanitize_masking_section(safe.get("masking"))
+    safe["templates"] = _sanitize_templates_section(safe.get("templates"))
+    safe["vibe"] = _sanitize_vibe_section(safe.get("vibe"))
+    safe["architecture"] = _sanitize_architecture_section(safe.get("architecture"))
+
+    if "gate" in safe and not isinstance(safe.get("gate"), dict):
+        safe["gate"] = {}
+
+    return safe
+
+
+def _safe_int(value, default, *, minimum: int | None = None):
+    if isinstance(value, bool) or not isinstance(value, int):
+        return default
+    if minimum is not None and value < minimum:
+        return default
+    return value
+
+
+def _safe_bool(value, default):
+    return value if isinstance(value, bool) else default
+
+
+def _safe_string_list(value, default):
+    if not isinstance(value, list):
+        return copy.deepcopy(default)
+    return [item for item in value if isinstance(item, str)]
+
+
+def _safe_dict(value, default):
+    return copy.deepcopy(value) if isinstance(value, dict) else copy.deepcopy(default)
+
+
+def _safe_dict_list(value, default):
+    if not isinstance(value, list):
+        return copy.deepcopy(default)
+    return [copy.deepcopy(item) for item in value if isinstance(item, dict)]
+
+
+def _sanitize_masking_section(value):
+    raw = value if isinstance(value, dict) else {}
+    safe = copy.deepcopy(DEFAULTS["masking"])
+    safe["names"] = _safe_string_list(raw.get("names"), safe["names"])
+    safe["decorators"] = _safe_string_list(raw.get("decorators"), safe["decorators"])
+    safe["bases"] = _safe_string_list(raw.get("bases"), safe["bases"])
+    safe["keep_docstring"] = _safe_bool(
+        raw.get("keep_docstring"), safe["keep_docstring"]
+    )
+    return safe
+
+
+def _sanitize_templates_section(value):
+    raw = value if isinstance(value, dict) else {}
+    safe = copy.deepcopy(DEFAULTS["templates"])
+    for key in list(safe):
+        candidate = raw.get(key)
+        if candidate is None or isinstance(candidate, str):
+            safe[key] = candidate
+    return safe
+
+
+def _sanitize_vibe_section(value):
+    raw = value if isinstance(value, dict) else {}
+    safe = copy.deepcopy(DEFAULTS["vibe"])
+    for key in list(safe):
+        safe[key] = _safe_string_list(raw.get(key), safe[key])
+    return safe
+
+
+def _sanitize_architecture_section(value):
+    raw = value if isinstance(value, dict) else {}
+    safe = copy.deepcopy(DEFAULTS["architecture"])
+    for key in ("strict", "enforce_iad", "strict_iad"):
+        if key in raw:
+            safe[key] = _safe_bool(raw.get(key), safe.get(key, False))
+    safe["layers"] = _safe_dict_list(raw.get("layers"), safe["layers"])
+    safe["rules"] = _safe_dict_list(raw.get("rules"), safe["rules"])
+    return safe
 
 
 def is_path_excluded(filepath, cfg) -> bool:

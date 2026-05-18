@@ -731,6 +731,33 @@ class TestAnalyze:
         }
         mock_log_info.assert_any_call("Analyzing 2 files...")
 
+    def test_analyze_malformed_pyproject_config_does_not_suppress_findings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "pyproject.toml").write_text(
+                """
+[tool.skylos]
+ignore = 1
+complexity = "boom"
+max_args = false
+""".strip(),
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                'def unused_func(a, b, c, d, e, f):\n'
+                '    return eval("1+1")\n',
+                encoding="utf-8",
+            )
+
+            result_json = analyze(
+                str(root), conf=0, enable_danger=True, grep_verify=False
+            )
+
+        result = json.loads(result_json)
+
+        assert result["unused_functions"]
+        assert "SKY-D201" in {f.get("rule_id") for f in result.get("danger", [])}
+
     @patch("skylos.analyzer.scan_typescript_file")
     def test_proc_file_dispatches_js_to_typescript_scanner(self, mock_scan):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
