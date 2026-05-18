@@ -140,6 +140,43 @@ strict = true
         config = load_config(self.root)
         self.assertEqual(config["complexity"], DEFAULTS["complexity"])
 
+    def test_load_config_ignores_malformed_value_types(self):
+        toml_path = self.root / "pyproject.toml"
+        toml_path.write_text(
+            """
+[tool.skylos]
+ignore = 1
+exclude = "build"
+complexity = "boom"
+max_args = false
+security_contracts = "not-a-list"
+
+[tool.skylos.masking]
+names = "SECRET_*"
+keep_docstring = "false"
+
+[tool.skylos.architecture]
+strict = "true"
+layers = ["api"]
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root)
+
+        self.assertEqual(config["ignore"], DEFAULTS["ignore"])
+        self.assertEqual(config["exclude"], DEFAULTS["exclude"])
+        self.assertEqual(config["complexity"], DEFAULTS["complexity"])
+        self.assertEqual(config["max_args"], DEFAULTS["max_args"])
+        self.assertEqual(config["security_contracts"], DEFAULTS["security_contracts"])
+        self.assertEqual(config["masking"]["names"], DEFAULTS["masking"]["names"])
+        self.assertEqual(
+            config["masking"]["keep_docstring"],
+            DEFAULTS["masking"]["keep_docstring"],
+        )
+        self.assertEqual(config["architecture"]["strict"], DEFAULTS["architecture"]["strict"])
+        self.assertEqual(config["architecture"]["layers"], DEFAULTS["architecture"]["layers"])
+
     def test_load_config_from_file_path(self):
         toml_path = self.root / "pyproject.toml"
         toml_path.write_text("[tool.skylos]\nmax_args = 2", encoding="utf-8")
