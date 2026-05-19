@@ -2818,12 +2818,32 @@ def _concise_scan_exit_code(
         )
 
     if not bool(getattr(args, "force", False)):
-        from skylos.core.gatekeeper import check_gate
-
-        passed, _reasons = check_gate(result, {}, strict=True)
-        return 0 if passed else 1
+        return 1 if _has_concise_findings(result) else 0
 
     return 0
+
+
+CONCISE_FINDING_CATEGORIES = (
+    ("unused_functions", "unused function"),
+    ("unused_imports", "unused import"),
+    ("unused_classes", "unused class"),
+    ("unused_variables", "unused variable"),
+    ("unused_parameters", "unused parameter"),
+    ("unused_files", "unused file"),
+    ("unused_fixtures", "unused fixture"),
+    ("danger", "security issue"),
+    ("quality", "quality issue"),
+    ("secrets", "secret"),
+    ("custom_rules", "custom rule"),
+    ("dependency_vulnerabilities", "dependency vulnerability"),
+)
+
+
+def _has_concise_findings(result: dict) -> bool:
+    for category, _label in CONCISE_FINDING_CATEGORIES:
+        if result.get(category):
+            return True
+    return False
 
 
 def _concise_line(item: dict, label: str, root_path=None) -> str:
@@ -2838,22 +2858,8 @@ def _concise_line(item: dict, label: str, root_path=None) -> str:
 
 def _format_concise_results(result: dict, *, root_path=None, limit=None) -> str:
     lines: list[str] = []
-    categories = (
-        ("unused_functions", "unused function"),
-        ("unused_imports", "unused import"),
-        ("unused_classes", "unused class"),
-        ("unused_variables", "unused variable"),
-        ("unused_parameters", "unused parameter"),
-        ("unused_files", "unused file"),
-        ("unused_fixtures", "unused fixture"),
-        ("danger", "security issue"),
-        ("quality", "quality issue"),
-        ("secrets", "secret"),
-        ("custom_rules", "custom rule"),
-        ("dependency_vulnerabilities", "dependency vulnerability"),
-    )
 
-    for category, fallback_label in categories:
+    for category, fallback_label in CONCISE_FINDING_CATEGORIES:
         items = list(result.get(category, []) or [])
         if limit is not None:
             items = items[:limit]
