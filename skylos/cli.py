@@ -565,6 +565,7 @@ def _filter_precommit_findings_to_changed_lines(
 
 
 LOCAL_PRECOMMIT_BLOCKING_QUALITY_RULE_IDS = {"SKY-L021"}
+LOCAL_PRECOMMIT_BLOCKING_QUALITY_SEVERITIES = {"CRITICAL", "HIGH"}
 
 
 def _precommit_blocks_finding(finding: dict) -> bool:
@@ -573,7 +574,13 @@ def _precommit_blocks_finding(finding: dict) -> bool:
         return True
     if category != "quality":
         return True
-    return str(finding.get("rule_id", "")) in LOCAL_PRECOMMIT_BLOCKING_QUALITY_RULE_IDS
+
+    rule_id = str(finding.get("rule_id", ""))
+    if rule_id in LOCAL_PRECOMMIT_BLOCKING_QUALITY_RULE_IDS:
+        return True
+
+    severity = str(finding.get("severity", "")).upper()
+    return severity in LOCAL_PRECOMMIT_BLOCKING_QUALITY_SEVERITIES
 
 
 def _apply_precommit_gate_policy(findings: list[dict]) -> tuple[list[dict], int]:
