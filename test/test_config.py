@@ -300,6 +300,76 @@ whitelist = ["special_*"]
         self.assertIn("src/*.py", config["overrides"])
         self.assertEqual(config["overrides"]["src/*.py"]["whitelist"], ["special_*"])
 
+    def test_load_config_rejects_scalar_temporary_whitelist_entries(self):
+        toml_path = self.root / "pyproject.toml"
+        toml_path.write_text(
+            """
+[tool.skylos.whitelist.temporary]
+"*" = "boom"
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root)
+        ok, reason, penalty = is_whitelisted("any_definition", "app.py", config)
+        expired = get_expired_whitelists(config)
+
+        self.assertEqual(config["whitelist_temporary"], {})
+        self.assertFalse(ok)
+        self.assertIsNone(reason)
+        self.assertEqual(penalty, 0)
+        self.assertEqual(expired, [])
+
+    def test_load_config_rejects_scalar_override_entries(self):
+        toml_path = self.root / "pyproject.toml"
+        toml_path.write_text(
+            """
+[tool.skylos.overrides]
+"src/*.py" = "boom"
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root)
+        ok, reason, penalty = is_whitelisted("special_case", "src/a.py", config)
+
+        self.assertEqual(config["overrides"], {})
+        self.assertFalse(ok)
+        self.assertIsNone(reason)
+        self.assertEqual(penalty, 0)
+
+    def test_load_config_rejects_malformed_whitelist_lists_and_maps(self):
+        toml_path = self.root / "pyproject.toml"
+        toml_path.write_text(
+            """
+[tool.skylos.whitelist]
+names = ["safe_*", 123]
+lower_confidence = "boom"
+
+[tool.skylos.whitelist.documented]
+"doc_*" = 123
+"kept_*" = "reason"
+
+[tool.skylos.whitelist.temporary]
+"legacy_*" = { reason = 123, expires = 456 }
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root)
+        ok, reason, penalty = is_whitelisted("kept_name", None, config)
+        legacy_ok, legacy_reason, _ = is_whitelisted("legacy_name", None, config)
+
+        self.assertEqual(config["whitelist"], ["safe_*"])
+        self.assertEqual(config["lower_confidence"], [])
+        self.assertEqual(config["whitelist_documented"], {"kept_*": "reason"})
+        self.assertEqual(config["whitelist_temporary"], {"legacy_*": {}})
+        self.assertTrue(ok)
+        self.assertEqual(reason, "reason")
+        self.assertEqual(penalty, 0)
+        self.assertTrue(legacy_ok)
+        self.assertIn("temporary whitelist", legacy_reason)
+
     def test_is_path_excluded_glob_path_match(self):
         cfg = {"exclude": ["src/**/gen_*.py"]}
         self.assertTrue(is_path_excluded("src/a/gen_file.py", cfg))

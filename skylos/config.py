@@ -74,10 +74,7 @@ _STRING_LIST_CONFIG_KEYS = {
     "lower_confidence",
 }
 _DICT_CONFIG_KEYS = {
-    "overrides",
     "non_library_dirs",
-    "whitelist_documented",
-    "whitelist_temporary",
 }
 _BOOL_CONFIG_KEYS = {
     "nudges",
@@ -268,6 +265,15 @@ def _sanitize_config(cfg: dict) -> dict:
     for key in _DICT_CONFIG_KEYS:
         safe[key] = _safe_dict(safe.get(key), DEFAULTS[key])
 
+    safe["whitelist_documented"] = _safe_string_map(
+        safe.get("whitelist_documented"),
+        DEFAULTS["whitelist_documented"],
+    )
+    safe["whitelist_temporary"] = _safe_temporary_whitelist(
+        safe.get("whitelist_temporary")
+    )
+    safe["overrides"] = _safe_overrides(safe.get("overrides"))
+
     for key in _BOOL_CONFIG_KEYS:
         safe[key] = _safe_bool(safe.get(key), DEFAULTS[key])
 
@@ -305,6 +311,55 @@ def _safe_string_list(value, default):
 
 def _safe_dict(value, default):
     return copy.deepcopy(value) if isinstance(value, dict) else copy.deepcopy(default)
+
+
+def _safe_string_map(value, default):
+    if not isinstance(value, dict):
+        return copy.deepcopy(default)
+
+    safe = {}
+    for key, item in value.items():
+        if isinstance(key, str) and isinstance(item, str):
+            safe[key] = item
+    return safe
+
+
+def _safe_temporary_whitelist(value):
+    if not isinstance(value, dict):
+        return {}
+
+    safe = {}
+    for pattern, config in value.items():
+        if not isinstance(pattern, str) or not isinstance(config, dict):
+            continue
+
+        entry = {}
+        reason = config.get("reason")
+        expires = config.get("expires")
+        if isinstance(reason, str):
+            entry["reason"] = reason
+        if isinstance(expires, str):
+            entry["expires"] = expires
+        safe[pattern] = entry
+    return safe
+
+
+def _safe_overrides(value):
+    if not isinstance(value, dict):
+        return {}
+
+    safe = {}
+    for path_pattern, rules in value.items():
+        if not isinstance(path_pattern, str) or not isinstance(rules, dict):
+            continue
+
+        safe_rules = {}
+        whitelist = _safe_string_list(rules.get("whitelist"), [])
+        if whitelist:
+            safe_rules["whitelist"] = whitelist
+        if safe_rules:
+            safe[path_pattern] = safe_rules
+    return safe
 
 
 def _safe_dict_list(value, default):
