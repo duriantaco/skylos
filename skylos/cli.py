@@ -3840,6 +3840,15 @@ def _build_agent_parser():
 
 
 def main() -> None:
+    """
+    Dispatch top-level skylos CLI command.
+
+    Calls: skylos/cli_core/dispatch.py _dispatch_early_command;
+        skylos/cli.py _build_agent_parser; skylos/cli.py _run_scan_command;
+        skylos/cli.py _run_web_server_command; skylos/cli.py run_pipeline.
+
+    Called from: pyproject.toml skylos; skylos/cli.py __main__.
+    """
     dispatch_result = _dispatch_early_command(sys.argv[1:])
     if dispatch_result is not None:
         sys.exit(dispatch_result)

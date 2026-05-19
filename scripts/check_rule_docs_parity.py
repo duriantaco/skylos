@@ -12,6 +12,14 @@ RULE_ID_RE = re.compile(r"SKY-CIRC|SKY-[A-Z]+[0-9]{3}")
 
 
 def main() -> int:
+    """
+    Check that documented rule IDs match the rule catalog.
+
+    Calls: scripts/check_rule_docs_parity.py _default_rules_reference_path;
+        skylos/rules/catalog.py get_rule_catalog.
+        
+    Called from: scripts/check_rule_docs_parity.py __main__.
+    """
     parser = argparse.ArgumentParser(
         description="Check Skylos rule catalog IDs against docs/rules-reference.mdx."
     )

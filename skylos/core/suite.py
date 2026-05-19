@@ -193,6 +193,16 @@ def run_suite(
     diff_base: str | None = None,
     get_git_root_func=None,
 ) -> dict[str, Any]:
+    """
+    Build the combined static, debt, defense, and provenance suite report.
+
+    Calls: skylos/debt/__init__.py build_debt_snapshot;
+        skylos/discover/detector.py detect_integrations;
+        skylos/defend/engine.py run_defense_checks;
+        skylos/reporting/provenance.py analyze_provenance.
+        
+    Called from: skylos/commands/suite_cmd.py run_suite_command.
+    """
     target_path = Path(target).resolve()
     exclude = set(exclude_folders or [])
 

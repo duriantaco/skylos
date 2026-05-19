@@ -14,6 +14,14 @@ from skylos.benchmarks.corpus_ci import format_summary, run_manifest
 
 
 def main() -> int:
+    """
+    Run curated corpus regression cases.
+
+    Calls: skylos/benchmarks/corpus_ci.py run_manifest;
+        skylos/benchmarks/corpus_ci.py format_summary.
+
+    Called from: scripts/corpus_ci.py __main__.
+    """
     parser = argparse.ArgumentParser(
         description="Run the curated upstream-pattern corpus guard."
     )
