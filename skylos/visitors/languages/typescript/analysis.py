@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import fnmatch
-import glob
 import json
 import os
 import shlex
@@ -26,6 +25,7 @@ from .resolve import (
     _parse_tsconfig_references,
     _resolve_path_target,
 )
+from .safe_glob import resolve_bounded_base, safe_glob_paths
 
 _NEXTJS_CONVENTION_EXPORTS = NEXTJS_CONVENTION_EXPORTS
 _NEXTJS_CONVENTION_FILES = NEXTJS_CONVENTION_FILES
@@ -672,8 +672,11 @@ def _expand_relative_entry_glob(
     base_dir: str, pattern: str, ts_files: set[str]
 ) -> set[str]:
     matches: set[str] = set()
-    for candidate in glob.glob(os.path.join(base_dir, pattern), recursive=True):
-        real_path = os.path.realpath(candidate)
+    for real_path in safe_glob_paths(
+        base_dir,
+        pattern,
+        allowed_suffixes=set(_ENTRY_FILE_SUFFIXES),
+    ):
         if real_path in ts_files:
             matches.add(real_path)
     return matches
@@ -685,10 +688,11 @@ def _resolve_config_root_base(
     root_values = _find_object_path_values(source, objects, ("root",))
     for node in root_values:
         for value in _collect_string_literals(source, node):
-            if os.path.isabs(value):
-                return os.path.normpath(value)
-            return os.path.normpath(os.path.join(default_base_dir, value))
-    return default_base_dir
+            bounded = resolve_bounded_base(default_base_dir, value)
+            if bounded:
+                return bounded
+            return os.path.realpath(default_base_dir)
+    return os.path.realpath(default_base_dir)
 
 
 def _literal_entries_from_nodes(
