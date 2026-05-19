@@ -12,6 +12,7 @@ from skylos.constants import (
     MIN_SECRET_LENGTH,
     get_non_library_dir_kind,
 )
+from skylos.visitors.languages.statement_scan import iter_semicolon_assignments
 
 try:
     TS_LANG: Language | None = Language(tsts.language_typescript())
@@ -929,10 +930,6 @@ _ARCHIVE_ENTRY_PROPERTY_PATTERN = re.compile(
     r"\b(?:(?:entry|header|[A-Za-z_$][A-Za-z0-9_$]*Entry)\.(?:path|fileName|name))\b"
 )
 
-_ARCHIVE_ALIAS_PATTERN = re.compile(
-    r"(?ms)^\s*(?:(?:const|let|var)\s+)?(?P<alias>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*[^=;]+)?\s*=\s*(?P<expr>.*?);"
-)
-
 _ARCHIVE_SINK_ARGS = {
     "fs.createWriteStream(": (0,),
     "createWriteStream(": (0,),
@@ -1157,12 +1154,8 @@ def _check_archive_extraction_path_traversal(
         latest_assignment: dict[str, int] = {}
         events: list[tuple[int, int, object]] = []
         events.extend(
-            (
-                scope_text[: match.start()].count("\n"),
-                0,
-                (match.group("alias"), match.group("expr")),
-            )
-            for match in _ARCHIVE_ALIAS_PATTERN.finditer(scope_text)
+            (line_offset, 0, (alias, expr))
+            for line_offset, alias, expr in iter_semicolon_assignments(scope_text)
         )
         events.extend(
             (line_offset, 1, args)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from time import perf_counter
 
 from skylos.visitors.languages.typescript import scan_typescript_file
 
@@ -408,3 +409,25 @@ function extract(entry: { fileName: string }) {
 """,
     )
     assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_semicolonless_archive_alias_storm_does_not_dos_scan(tmp_path):
+    aliases = "\n".join(
+        f"    const alias{index} = entry.path" for index in range(1500)
+    )
+    started = perf_counter()
+
+    findings = _scan_ts_file(
+        tmp_path,
+        "archive.js",
+        f"""const unzipper = require("unzipper");
+
+function extract(entry) {{
+{aliases}
+}}
+""",
+    )
+    elapsed = perf_counter() - started
+
+    assert "SKY-D215" not in _rule_ids(findings)
+    assert elapsed < 2.0

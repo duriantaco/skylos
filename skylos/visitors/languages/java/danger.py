@@ -12,6 +12,7 @@ from skylos.constants import (
     MIN_SECRET_LENGTH,
     get_non_library_dir_kind,
 )
+from skylos.visitors.languages.statement_scan import iter_semicolon_assignments
 from skylos.visitors.languages.java.flow import scan_java_security_flows
 
 try:
@@ -94,10 +95,6 @@ _ARCHIVE_GUARD_HINTS = (
     "toRealPath(",
     "getCanonicalPath(",
     "getCanonicalFile(",
-)
-
-_LOCAL_ALIAS_PATTERN = re.compile(
-    r"(?ms)^\s*(?:(?:final)\s+)*(?:[\w<>\[\],.?]+\s+)?(?P<var>[A-Za-z_]\w*)\s*=\s*(?P<expr>.*?);",
 )
 
 _REQUEST_SOURCE_PATTERNS = (
@@ -350,11 +347,10 @@ def _collect_canonical_string_vars(lines: list[str]) -> tuple[set[str], set[str]
     slash_terminated_vars: set[str] = set()
 
     for line in lines:
-        match = _LOCAL_ALIAS_PATTERN.match(line)
-        if not match:
+        assignments = iter_semicolon_assignments(line)
+        if not assignments:
             continue
-        var = match.group("var")
-        expr = match.group("expr")
+        _, var, expr = assignments[0]
         if "getCanonicalPath(" not in expr:
             continue
         canonical_vars.add(var)
@@ -484,10 +480,7 @@ def _extract_call_args(line: str, token: str) -> list[str]:
 
 
 def _iter_assignment_events(text: str) -> list[tuple[int, str, str]]:
-    return [
-        (text[: match.start()].count("\n"), match.group("var"), match.group("expr"))
-        for match in _LOCAL_ALIAS_PATTERN.finditer(text)
-    ]
+    return iter_semicolon_assignments(text)
 
 
 def _iter_sink_calls(
