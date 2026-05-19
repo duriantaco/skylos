@@ -201,6 +201,32 @@ class App {
     assert "SKY-D215" not in _rule_ids(findings)
 
 
+def test_archive_extraction_unrelated_canonical_guard_still_flags(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.io.*;
+import java.util.zip.*;
+
+class App {
+  void unzip(ZipInputStream zis, File destDir) throws Exception {
+    ZipEntry entry;
+    while ((entry = zis.getNextEntry()) != null) {
+      File file = new File(destDir, entry.getName());
+      String targetPath = file.getCanonicalPath();
+      String otherPath = new File("/tmp/other").getCanonicalPath();
+      String otherBase = new File("/tmp/base").getCanonicalPath() + File.separator;
+      if (!otherPath.startsWith(otherBase)) {
+        throw new IOException("bad unrelated path");
+      }
+      FileOutputStream fos = new FileOutputStream(file);
+    }
+  }
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
+
+
 def test_archive_extraction_mixed_safe_and_unsafe_still_flags(tmp_path):
     findings = _scan_java(
         tmp_path,
@@ -368,6 +394,30 @@ class App {
 """,
     )
     assert "SKY-D215" not in _rule_ids(findings)
+
+
+def test_request_path_unrelated_canonical_guard_still_flags(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """import java.io.*;
+import javax.servlet.http.HttpServletRequest;
+
+class App {
+  String read(HttpServletRequest request) throws Exception {
+    File base = new File("/srv/data");
+    File target = new File(base, request.getParameter("file"));
+    String targetPath = target.getCanonicalPath();
+    String otherPath = new File("/tmp/other").getCanonicalPath();
+    String otherBase = new File("/tmp/base").getCanonicalPath() + File.separator;
+    if (!otherPath.startsWith(otherBase)) {
+      throw new IllegalArgumentException("bad unrelated path");
+    }
+    return new BufferedReader(new FileReader(target)).readLine();
+  }
+}
+""",
+    )
+    assert "SKY-D215" in _rule_ids(findings)
 
 
 def test_request_path_normalize_and_startswith_noop_still_flags(tmp_path):
