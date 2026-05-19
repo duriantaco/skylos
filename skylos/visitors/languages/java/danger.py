@@ -360,6 +360,24 @@ def _collect_canonical_string_vars(lines: list[str]) -> tuple[set[str], set[str]
     return canonical_vars, slash_terminated_vars
 
 
+def _collect_canonical_string_vars_for_names(
+    lines: list[str], names: set[str]
+) -> set[str]:
+    canonical_vars: set[str] = set()
+
+    for line in lines:
+        assignments = iter_semicolon_assignments(line)
+        if not assignments:
+            continue
+        _, var, expr = assignments[0]
+        if "getCanonicalPath(" not in expr:
+            continue
+        if _line_mentions_names(expr, names | canonical_vars):
+            canonical_vars.add(var)
+
+    return canonical_vars
+
+
 def _expr_is_slash_terminated_base(expr: str) -> bool:
     return any(
         token in expr
@@ -399,7 +417,7 @@ def _has_named_path_guard(
 ) -> bool:
     has_normalize = False
     canonical_vars, slash_terminated_vars = _collect_canonical_string_vars(lines)
-    known_guard_vars = canonical_vars | slash_terminated_vars
+    sink_canonical_vars = _collect_canonical_string_vars_for_names(lines, names)
 
     for idx, line in enumerate(lines):
         mentioned = _names_in_line(line, names)
@@ -407,7 +425,7 @@ def _has_named_path_guard(
         if not mentioned and not (
             has_normalize
             and startswith_line
-            and _line_mentions_names(line, known_guard_vars)
+            and _line_mentions_names(line, sink_canonical_vars)
         ):
             continue
         if any(hint in line for hint in hints):
