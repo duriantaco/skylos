@@ -20,6 +20,19 @@ from skylos.web.frontend import render_frontend_html
 app = Flask(__name__)
 
 
+def _normalize_exclude_folders(exclude_folders=None):
+    if exclude_folders is None:
+        exclude_folders = DEFAULT_EXCLUDE_FOLDERS
+
+    if isinstance(exclude_folders, (set, frozenset)):
+        return sorted(str(item) for item in exclude_folders)
+
+    if isinstance(exclude_folders, (list, tuple)):
+        return [str(item) for item in exclude_folders]
+
+    return []
+
+
 def _get_server_port():
     raw = os.getenv("SKYLOS_PORT", "5090")
     try:
@@ -140,7 +153,9 @@ def analyze_project():
                 403,
             )
 
-        exclude_folders = app.config.get("EXCLUDE_FOLDERS", DEFAULT_EXCLUDE_FOLDERS)
+        exclude_folders = _normalize_exclude_folders(
+            app.config.get("EXCLUDE_FOLDERS", DEFAULT_EXCLUDE_FOLDERS)
+        )
 
         result_json = skylos.analyze(
             path, conf=confidence, exclude_folders=exclude_folders
@@ -154,11 +169,9 @@ def analyze_project():
 
 
 def start_server(exclude_folders=None):
-    if exclude_folders is None:
-        exclude_folders = DEFAULT_EXCLUDE_FOLDERS
     port = _get_server_port()
     local_url = f"http://localhost:{port}"
-    app.config["EXCLUDE_FOLDERS"] = exclude_folders
+    app.config["EXCLUDE_FOLDERS"] = _normalize_exclude_folders(exclude_folders)
     app.config["ALLOWED_SCAN_ROOTS"] = _get_allowed_scan_roots()
     app.config["WEB_API_TOKEN"] = os.getenv("SKYLOS_WEB_TOKEN") or secrets.token_hex(24)
 
