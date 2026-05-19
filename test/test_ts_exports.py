@@ -15,6 +15,7 @@ from skylos.visitors.languages.typescript.analysis import (
     find_dead_ts_files,
     _is_nextjs_convention_file,
     _NEXTJS_CONVENTION_EXPORTS,
+    _discover_vitest_config_entries,
 )
 
 
@@ -730,6 +731,68 @@ export default defineConfig({
         )
 
         assert dead_files == []
+
+    def test_import_meta_glob_ignores_absolute_outside_file_root(self, tmp_path):
+        app_file = tmp_path / "src" / "main.ts"
+        outside_file = tmp_path / "outside" / "leak.ts"
+
+        app_file.parent.mkdir(parents=True, exist_ok=True)
+        outside_file.parent.mkdir(parents=True, exist_ok=True)
+        outside_file.write_text("export const leak = true;\n", encoding="utf-8")
+        app_file.write_text(
+            f"const routes = import.meta.glob('{outside_file.parent}/**/*.ts');\n",
+            encoding="utf-8",
+        )
+
+        raw_imports = scan_typescript_file(str(app_file))[12]
+
+        assert raw_imports == []
+
+    def test_import_meta_glob_ignores_parent_traversal(self, tmp_path):
+        app_file = tmp_path / "src" / "main.ts"
+        outside_file = tmp_path / "outside" / "leak.ts"
+
+        app_file.parent.mkdir(parents=True, exist_ok=True)
+        outside_file.parent.mkdir(parents=True, exist_ok=True)
+        outside_file.write_text("export const leak = true;\n", encoding="utf-8")
+        app_file.write_text(
+            "const routes = import.meta.glob('../outside/**/*.ts');\n",
+            encoding="utf-8",
+        )
+
+        raw_imports = scan_typescript_file(str(app_file))[12]
+
+        assert raw_imports == []
+
+    def test_vitest_config_root_cannot_escape_project_root(self, tmp_path):
+        project_root = tmp_path / "project"
+        outside_file = tmp_path / "outside" / "checks" / "login.ts"
+        vitest_config = project_root / "vitest.config.ts"
+
+        project_root.mkdir(parents=True, exist_ok=True)
+        outside_file.parent.mkdir(parents=True, exist_ok=True)
+        outside_file.write_text("export const leak = true;\n", encoding="utf-8")
+        vitest_config.write_text(
+            f"""
+import {{ defineConfig }} from "vitest/config";
+
+export default defineConfig({{
+  root: "{outside_file.parent.parent}",
+  test: {{
+    include: ["**/*.ts"],
+  }},
+}});
+""",
+            encoding="utf-8",
+        )
+
+        entries = _discover_vitest_config_entries(
+            str(vitest_config),
+            {str(outside_file.resolve())},
+            str(project_root),
+        )
+
+        assert entries == set()
 
 
 class TestTypeScriptUnusedExports:

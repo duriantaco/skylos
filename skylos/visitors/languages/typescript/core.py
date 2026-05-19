@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import glob
 import os
 from pathlib import Path
 
 from tree_sitter import Language, Parser, Query, QueryCursor
 import tree_sitter_typescript as tsts
 from skylos.visitors.base import Definition
+from skylos.visitors.languages.typescript.safe_glob import safe_glob_paths
 
 try:
     TS_LANG: Language | None = Language(tsts.language_typescript())
@@ -602,15 +602,12 @@ class TypeScriptCore:
         for pattern in self._string_sources_from_node(node):
             if not pattern:
                 continue
-            if os.path.isabs(pattern):
-                full_pattern = pattern
-            else:
-                full_pattern = os.path.join(os.path.dirname(self.file_path), pattern)
-            for matched in glob.glob(full_pattern, recursive=True):
-                if not os.path.isfile(matched):
-                    continue
-                if Path(matched).suffix.lower() not in _RAW_IMPORT_FILE_EXTENSIONS:
-                    continue
+            base_dir = os.path.dirname(self.file_path)
+            for matched in safe_glob_paths(
+                base_dir,
+                pattern,
+                allowed_suffixes=_RAW_IMPORT_FILE_EXTENSIONS,
+            ):
                 matches.append(
                     self._relative_source_for_match(os.path.realpath(matched))
                 )
