@@ -1,5 +1,48 @@
 ## Changelog
 
+## [4.16.0](https://github.com/duriantaco/skylos/compare/v4.15.2...v4.16.0) (2026-05-19)
+
+
+### Features
+
+* **cli:** add cache stats and rules catalog JSON ([#438](https://github.com/duriantaco/skylos/issues/438)) ([cd1e5df](https://github.com/duriantaco/skylos/commit/cd1e5df5a03e73f4e65915b344a5c1b5f441101f))
+* **cli:** add cache stats and rules catalog JSON ([#439](https://github.com/duriantaco/skylos/issues/439)) ([03bd425](https://github.com/duriantaco/skylos/commit/03bd4250774b88017dfed5d79ea932c6e59dc665))
+* **cli:** improve terminal scan output ([#420](https://github.com/duriantaco/skylos/issues/420)) ([f9582d4](https://github.com/duriantaco/skylos/commit/f9582d4a364cb14d772c1ecf6cc8773a0dce03bf))
+
+
+### Bug Fixes
+
+* **analyzer:** escape dynamic reference patterns ([#435](https://github.com/duriantaco/skylos/issues/435)) ([e10916a](https://github.com/duriantaco/skylos/commit/e10916acbd7e3beb927ba6edd63bc02fd98a4de8))
+* **audit:** scope deep processing to current scan ([#419](https://github.com/duriantaco/skylos/issues/419)) ([b9df22e](https://github.com/duriantaco/skylos/commit/b9df22eff782772502a7922d6441b94966238b22))
+* **ci:** avoid PR-controlled scanner execution ([#428](https://github.com/duriantaco/skylos/issues/428)) ([13e2f87](https://github.com/duriantaco/skylos/commit/13e2f87f40c60d62f0d6ca14420c85e76042ef7a))
+* **cicd:** quote generated PR base refs ([#417](https://github.com/duriantaco/skylos/issues/417)) ([7d9e6b9](https://github.com/duriantaco/skylos/commit/7d9e6b9f9c7064cffe422c943007143f61fa98cf))
+* **ci:** configure parity venv path at runtime ([72b588a](https://github.com/duriantaco/skylos/commit/72b588a050270cb5553830eaa65c1f1f41b1e04d))
+* **ci:** keep parity venv outside checkout ([#415](https://github.com/duriantaco/skylos/issues/415)) ([6eedb7e](https://github.com/duriantaco/skylos/commit/6eedb7e3cdf668e199691f53b71edb64a8f57ba1))
+* **cli:** redact secrets in llm reports ([#433](https://github.com/duriantaco/skylos/issues/433)) ([af64e1f](https://github.com/duriantaco/skylos/commit/af64e1fa120b45f090c72cbf93a147af8d5382f2))
+* **cli:** sanitize pretty report text ([#427](https://github.com/duriantaco/skylos/issues/427)) ([176c0e2](https://github.com/duriantaco/skylos/commit/176c0e24ccf2300b15796c2cb22fc3587afc6923))
+* **config:** validate skylos project config ([#436](https://github.com/duriantaco/skylos/issues/436)) ([6e1d988](https://github.com/duriantaco/skylos/commit/6e1d98899f68b877f010b115e77b6e5aa6386c3e))
+* **llm:** minimize changed-file review context ([#432](https://github.com/duriantaco/skylos/issues/432)) ([056a072](https://github.com/duriantaco/skylos/commit/056a072b11b8c7ca291a6e5f11e9195dcb1c5bbc))
+* **login:** avoid printing saved api token ([#434](https://github.com/duriantaco/skylos/issues/434)) ([f000851](https://github.com/duriantaco/skylos/commit/f000851e87557eb07fdc6e7a1efe469bf76f1407))
+* **pipeline:** review ordinary files in llm-only scans ([e21696a](https://github.com/duriantaco/skylos/commit/e21696a1ec76044ee5fe9a5cd7be1786a6226d86))
+* **remediation:** reject edits outside scan root ([#424](https://github.com/duriantaco/skylos/issues/424)) ([c48a8b5](https://github.com/duriantaco/skylos/commit/c48a8b584fddb1be83a6ce6ea86828f1166fd2d0))
+* **secrets:** avoid quadratic generic scan ([#410](https://github.com/duriantaco/skylos/issues/410)) ([8dd05af](https://github.com/duriantaco/skylos/commit/8dd05af9c641c10296143f9e08c6195c6802e93c))
+* **secrets:** restore generic value export ([#412](https://github.com/duriantaco/skylos/issues/412)) ([08bd492](https://github.com/duriantaco/skylos/commit/08bd492dfc8fa77d9d0441022a8ad113b089c7f7))
+* **secrets:** scope hash suppression to candidates ([#437](https://github.com/duriantaco/skylos/issues/437)) ([2de8e2a](https://github.com/duriantaco/skylos/commit/2de8e2a6661da41138456b68f2127a3a53587f8b))
+* **security:** bound prompt injection candidate collection ([#429](https://github.com/duriantaco/skylos/issues/429)) ([5f41874](https://github.com/duriantaco/skylos/commit/5f418747f510f6bbf0188edc1c645bcfd9cab9fa))
+* **security:** bound prompt injection scans ([#423](https://github.com/duriantaco/skylos/issues/423)) ([aee6754](https://github.com/duriantaco/skylos/commit/aee6754bd428d5aa8738d6e1024896f76507b747))
+* **security:** parse markdown fences linearly ([#430](https://github.com/duriantaco/skylos/issues/430)) ([81525ee](https://github.com/duriantaco/skylos/commit/81525eef45c84ad373d78be6012d10c0899abab9))
+* **security:** prioritize prompt docs within scan cap ([#426](https://github.com/duriantaco/skylos/issues/426)) ([c22a004](https://github.com/duriantaco/skylos/commit/c22a004d19a102bb4debe5bfe196f33b25b872ab))
+* **security:** tolerate non-utf8 taskflow files ([#416](https://github.com/duriantaco/skylos/issues/416)) ([41e72d7](https://github.com/duriantaco/skylos/commit/41e72d7a8db93cdccdafc26f051553fdd26ad15b))
+* **sql:** invalidate mutated static queries ([#418](https://github.com/duriantaco/skylos/issues/418)) ([d9765bc](https://github.com/duriantaco/skylos/commit/d9765bc091bb0c71d88be2204907c2aa5ec5fce3))
+* **ssrf:** flag uppercase f-string URL bases ([#425](https://github.com/duriantaco/skylos/issues/425)) ([acf6ee3](https://github.com/duriantaco/skylos/commit/acf6ee3f8bfb8119a607ae927851c0b737d01aad))
+* **sync:** reject symlinked repo link ([#413](https://github.com/duriantaco/skylos/issues/413)) ([4b046c3](https://github.com/duriantaco/skylos/commit/4b046c3c5037934771a11292d935b5234b6b6407))
+* **typescript:** detect child_process exec aliases ([#414](https://github.com/duriantaco/skylos/issues/414)) ([221e783](https://github.com/duriantaco/skylos/commit/221e78393ad3fb9cedfaae436df8bd7c7cc232d4))
+
+
+### Documentation
+
+* **entrypoints:** add call maps ([#442](https://github.com/duriantaco/skylos/issues/442)) ([a407739](https://github.com/duriantaco/skylos/commit/a407739ab8e6681e12670be8ba55b3e5a04214a1))
+
 ## [4.15.2](https://github.com/duriantaco/skylos/compare/v4.15.1...v4.15.2) (2026-05-17)
 
 
