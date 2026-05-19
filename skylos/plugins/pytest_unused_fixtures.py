@@ -6,6 +6,10 @@ from pathlib import Path
 import pytest
 
 
+class UnsafeFixtureReportPath(ValueError):
+    pass
+
+
 class FixtureInfo:
     def __init__(self, name, file, line, scope):
         self.name = name
@@ -29,6 +33,64 @@ class UnusedFixturesPlugin:
     def _out_path(self):
         p = os.getenv("SKYLOS_UNUSED_FIXTURES_OUT", ".skylos_unused_fixtures.json")
         return (self.root / p) if not os.path.isabs(p) else Path(p)
+
+    def _safe_out_path(self) -> Path:
+        out = self._out_path()
+        try:
+            resolved_parent = out.parent.resolve(strict=False)
+            resolved_path = resolved_parent / out.name
+            resolved_path.relative_to(self.root)
+        except (OSError, ValueError) as exc:
+            raise UnsafeFixtureReportPath(
+                f"Refusing unsafe Skylos fixture report path: {out}"
+            ) from exc
+
+        current = out.parent
+        missing_parents = []
+        while not current.exists():
+            missing_parents.append(current)
+            current = current.parent
+
+        existing_parent = current
+        while True:
+            if existing_parent.is_symlink():
+                raise UnsafeFixtureReportPath(
+                    f"Refusing symlinked Skylos fixture report parent: {existing_parent}"
+                )
+            try:
+                if existing_parent.resolve(strict=True) == self.root:
+                    break
+            except OSError as exc:
+                raise UnsafeFixtureReportPath(
+                    f"Could not resolve Skylos fixture report parent: {existing_parent}"
+                ) from exc
+            existing_parent = existing_parent.parent
+
+        for parent in reversed(missing_parents):
+            parent.mkdir(mode=0o700)
+
+        if out.exists() and out.is_symlink():
+            raise UnsafeFixtureReportPath(
+                f"Refusing symlinked Skylos fixture report path: {out}"
+            )
+
+        return resolved_path
+
+    def _write_report_file(self, payload: str) -> None:
+        out = self._safe_out_path()
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+
+        try:
+            fd = os.open(out, flags, 0o600)
+        except OSError as exc:
+            raise UnsafeFixtureReportPath(
+                f"Could not open Skylos fixture report path safely: {out}"
+            ) from exc
+
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
 
     def pytest_collection_finish(self, session):
         if self._is_worker():
@@ -105,9 +167,7 @@ class UnusedFixturesPlugin:
                     }
                 )
 
-        out = self._out_path()
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(
+        self._write_report_file(
             json.dumps(
                 {
                     "unused_fixtures": unused,
