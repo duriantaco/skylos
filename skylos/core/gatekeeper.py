@@ -21,6 +21,15 @@ DEAD_CODE_RESULT_KEYS = (
     "unused_parameters",
 )
 AGENT_GATE_PREFIX = "Agent gate: "
+BASELINE_GATE_CONFIG = {
+    "fail_on_critical": True,
+    "max_critical": 0,
+    "max_high": 5,
+    "max_security": 10,
+    "max_quality": 10,
+    "max_secrets": 0,
+    "max_dead_code": None,
+}
 ADVISORY_QUALITY_RULE_IDS = {"SKY-Q802", "SKY-Q803"}
 
 
@@ -158,6 +167,38 @@ def _append_threshold_reason(reasons, *, count, limit, message_template):
         reasons.append(message_template.format(count=count, limit=limit))
         return False
     return True
+
+
+def _strictest_limit(value, baseline):
+    if baseline is None:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        return value
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return baseline
+    return min(value, baseline)
+
+
+def _effective_gate_config(config):
+    gate_config = config.get("gate", {}) if isinstance(config, dict) else {}
+    if not isinstance(gate_config, dict):
+        gate_config = {}
+
+    effective = dict(gate_config)
+    effective["fail_on_critical"] = True
+    for key in (
+        "max_critical",
+        "max_high",
+        "max_security",
+        "max_quality",
+        "max_secrets",
+        "max_dead_code",
+    ):
+        effective[key] = _strictest_limit(
+            gate_config.get(key),
+            BASELINE_GATE_CONFIG[key],
+        )
+    return effective
 
 
 def _agent_gate_reason(message):
@@ -410,7 +451,7 @@ def check_gate(results, config, strict=False, provenance=None):
     quality = results.get("quality", []) or []
     gate_quality = _gate_quality_findings(quality)
     secrets = results.get("secrets", []) or []
-    gate_config = config.get("gate", {}) if config else {}
+    gate_config = _effective_gate_config(config)
 
     if strict:
         return _check_strict_gate(

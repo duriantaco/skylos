@@ -141,6 +141,26 @@ def test_run_gate_interaction_legacy_typeerror_fallback(monkeypatch):
     assert calls == [({}, {})]
 
 
+def test_run_gate_interaction_relaxed_config_does_not_run_command(monkeypatch):
+    result = {
+        "danger": [{"severity": "critical", "file": "app.py"}],
+        "quality": [],
+        "secrets": [],
+    }
+    calls = []
+
+    monkeypatch.setattr(gk.subprocess, "run", lambda command: calls.append(command))
+
+    rc = gk.run_gate_interaction(
+        result=result,
+        config={"gate": {"fail_on_critical": False, "max_critical": 999}},
+        command_to_run=["deploy"],
+    )
+
+    assert rc == 1
+    assert calls == []
+
+
 class FakeProvenance:
     def __init__(self, agent_files):
         self.agent_files = agent_files
@@ -230,6 +250,54 @@ def test_check_gate_quality_threshold_ignores_advisory_iad_quality():
 
     assert passed is True
     assert reasons == []
+
+
+def test_check_gate_project_config_cannot_relax_builtin_thresholds():
+    danger = [{"severity": "critical", "file": "app.py"}]
+    for index in range(10):
+        danger.append({"severity": "medium", "file": f"app_{index}.py"})
+
+    quality = []
+    for index in range(11):
+        quality.append({"rule_id": f"SKY-Q{index}", "file": "app.py"})
+
+    results = {
+        "danger": danger,
+        "quality": quality,
+        "secrets": [{"rule_id": "SKY-S101", "file": "app.py"}],
+    }
+    config = {
+        "gate": {
+            "fail_on_critical": False,
+            "max_critical": 999,
+            "max_high": 999,
+            "max_security": 999,
+            "max_quality": 999,
+            "max_secrets": 999,
+        }
+    }
+
+    passed, reasons = gk.check_gate(results, config)
+
+    assert passed is False
+    assert "1 critical security issue(s)" in reasons
+    assert "11 total security issues (max: 10)" in reasons
+    assert "11 quality issues (max: 10)" in reasons
+    assert "1 secrets issues (max: 0)" in reasons
+
+
+def test_check_gate_project_config_can_make_thresholds_stricter():
+    results = {
+        "danger": [{"severity": "high", "file": "app.py"}],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {"gate": {"max_high": 0}}
+
+    passed, reasons = gk.check_gate(results, config)
+
+    assert passed is False
+    assert reasons == ["1 high severity issues (max: 0)"]
 
 
 def test_check_gate_agent_stricter_threshold():
@@ -360,7 +428,8 @@ def test_check_gate_agent_no_agent_config_skips():
     config = {"gate": {"fail_on_critical": False, "max_critical": 10}}
     prov = FakeProvenance(agent_files=["ai.py"])
     passed, reasons = gk.check_gate(results, config, provenance=prov)
-    assert passed is True
+    assert passed is False
+    assert reasons == ["1 critical security issue(s)"]
 
 
 def test_check_gate_agent_no_agent_files_skips():
