@@ -2,7 +2,10 @@ import argparse
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
+
+REVIEW_SIDECAR_MAX_BYTES = 2 * 1024 * 1024
 
 
 def _cicd_load_results(args, *, console_factory):
@@ -54,10 +57,63 @@ def _default_workflow_output() -> str:
 
 
 def _read_review_sidecar_json(raw_path: str, *, label: str) -> dict | list:
-    safe_name = Path(raw_path).name
-    if not safe_name or safe_name != str(raw_path):
+    path = _review_sidecar_path(raw_path, label=label)
+    mode = path.lstat().st_mode
+    if stat.S_ISLNK(mode):
+        raise ValueError(f"{label} must not be a symlink")
+    if not stat.S_ISREG(mode):
+        raise ValueError(f"{label} must be a regular file")
+
+    flags = os.O_RDONLY
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow:
+        flags |= nofollow
+
+    fd = os.open(  # skylos: ignore[SKY-D215] bounded sidecar path with no-follow checks
+        path, flags
+    )
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(f"{label} must be a regular file")
+        if st.st_size > REVIEW_SIDECAR_MAX_BYTES:
+            raise ValueError(f"{label} is too large")
+        with os.fdopen(fd, "rb") as fh:
+            fd = -1
+            data = fh.read(REVIEW_SIDECAR_MAX_BYTES + 1)
+        if len(data) > REVIEW_SIDECAR_MAX_BYTES:
+            raise ValueError(f"{label} is too large")
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+    return json.loads(data.decode("utf-8"))
+
+
+def _review_sidecar_path(raw_path: str, *, label: str) -> Path:
+    raw = str(raw_path or "")
+    if not raw or any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        raise ValueError(f"{label} must be a valid sidecar path")
+
+    path = Path(raw)
+    if not path.is_absolute():
+        if path.name != raw:
+            raise ValueError(
+                f"{label} must be a filename in the current directory"
+            )
+        return path
+
+    runner_temp = os.environ.get("RUNNER_TEMP")
+    if not runner_temp:
         raise ValueError(f"{label} must be a filename in the current directory")
-    return json.loads(Path(safe_name).read_text(encoding="utf-8"))
+
+    runner_root = Path(runner_temp).resolve()
+    resolved = path.resolve(strict=False)
+    try:
+        resolved.relative_to(runner_root)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be inside RUNNER_TEMP") from exc
+    return path
 
 
 def run_cicd_command(
@@ -168,8 +224,8 @@ def run_cicd_command(
     p_ci_rev.add_argument(
         "--defense-input",
         help=(
-            "AI defense sidecar JSON filename from `skylos defend` "
-            "(for example: defense-results.json)"
+            "AI defense sidecar JSON from `skylos defend` "
+            "(filename in the current directory or path under RUNNER_TEMP)"
         ),
     )
     p_ci_rev.add_argument(

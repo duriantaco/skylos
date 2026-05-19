@@ -15,6 +15,8 @@ ANALYSIS_FLAG_MAP: dict[str, str] = {
     "secrets": "--secrets",
 }
 
+SKYLOS_DEFENSE_RESULTS_SHELL_PATH = '"$RUNNER_TEMP/defense-results.json"'
+
 
 def _installed_skylos_version() -> str | None:
     try:
@@ -123,7 +125,7 @@ def generate_workflow(
         defend_parts = [
             "",
             "      - name: AI Defense Check",
-            f"        run: skylos defend {scan_target} --fail-on critical --min-score 70 --json -o defense-results.json{' --upload' if use_upload else ''}",
+            f"        run: skylos defend {scan_target} --fail-on critical --min-score 70 --json -o {SKYLOS_DEFENSE_RESULTS_SHELL_PATH}{' --upload' if use_upload else ''}",
         ]
         if use_upload:
             defend_parts.append(_upload_env_block())
@@ -133,7 +135,7 @@ def generate_workflow(
     if use_llm:
         review_args.append("--llm-input skylos-llm-results.json")
     if use_defend:
-        review_args.append("--defense-input defense-results.json")
+        review_args.append(f"--defense-input {SKYLOS_DEFENSE_RESULTS_SHELL_PATH}")
     review_args.extend(['--diff-base "$pr_base_ref"', "--evidence-cards"])
     review_command = "skylos cicd review " + " ".join(review_args)
     review_run = "\n".join(
