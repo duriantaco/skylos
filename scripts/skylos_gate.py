@@ -7,6 +7,13 @@ REPORT = Path("report.json")
 
 
 def main() -> int:
+    """
+    Check report.json and fail when findings are present.
+
+    Calls: none.
+    
+    Called from: scripts/skylos_gate.py __main__.
+    """
     if not REPORT.exists():
         print("[skylos] report.json missing (skipping gate)")
         return 0

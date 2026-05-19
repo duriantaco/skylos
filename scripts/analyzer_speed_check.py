@@ -210,6 +210,14 @@ def run_speed_check(
     iterations: int,
     max_seconds: float,
 ) -> dict[str, Any]:
+    """
+    Measure analyzer runtime on a generated fixture.
+
+    Calls: scripts/analyzer_speed_check.py build_fixture;
+        scripts/analyzer_speed_check.py run_once.
+        
+    Called from: scripts/analyzer_speed_check.py main.
+    """
     file_count = build_fixture(root, per_language=per_language)
 
     # Keep this deterministic enough for CI and avoid progress-log overhead.

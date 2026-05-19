@@ -408,6 +408,15 @@ def run_pipeline(
     exclude_folders=None,
     stats_out=None,
 ):
+    """
+    Run agent scan pipeline across static and LLM phases.
+
+    Calls: skylos/analyzer.py analyze; skylos/pipeline.py run_static_on_files;
+        skylos/llm/analyzer.py SkylosLLM.analyze_files;
+        skylos/llm/repo_activation.py build_repo_activation_index.
+        
+    Called from: skylos/cli.py main; skylos/cli.py run_pipeline.
+    """
     import sys
     import time
     from concurrent.futures import ThreadPoolExecutor

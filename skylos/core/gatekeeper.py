@@ -389,6 +389,18 @@ def _build_findings_lists(results, danger, quality, secrets):
 
 
 def check_gate(results, config, strict=False, provenance=None):
+    """
+    Evaluate scan results against gate thresholds.
+
+    Calls: skylos/core/gatekeeper.py _check_strict_gate;
+        skylos/core/gatekeeper.py _apply_gate_thresholds;
+        skylos/core/gatekeeper.py _check_agent_gate.
+
+    Called from: skylos/core/gatekeeper.py _resolve_gate_check;
+        skylos/cli.py _formatted_output_gate_exit_code;
+        skylos/cli.py _concise_scan_exit_code;
+        skylos/cli.py _strict_scan_exit_code.
+    """
     results = results or {}
     config = config or {}
 
@@ -587,6 +599,16 @@ def run_gate_interaction(
     provenance=None,
     advisory=False,
 ):
+    """
+    Runs the interactive or CI quality gate flow.
+
+    Calls: skylos/core/gatekeeper.py _resolve_gate_check;
+        skylos/core/gatekeeper.py build_summary_markdown;
+        skylos/core/gatekeeper.py write_github_summary.
+
+    Called from: skylos/commands/scan_cmd.py run_scan_command;
+        skylos/cli.py run_gate_interaction.
+    """
     console = Console()
 
     if results is None:
