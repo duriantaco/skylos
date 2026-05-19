@@ -1,6 +1,6 @@
 import io
 import json
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from rich.console import Console
 from rich.progress import Progress
@@ -123,6 +123,185 @@ def test_suite_rejects_file_paths(tmp_path):
     )
 
     assert exit_code == 1
+
+
+def test_suite_table_output_preserves_run_and_formatter_args(tmp_path):
+    report = {"summary": {"static": {}}, "static": {}, "debt": {}, "defense": {}}
+    console = Mock()
+    parse_exclude = Mock(return_value=[".git", "dist"])
+    load_config = Mock(return_value={"exclude": ["build"]})
+    run_analyze = Mock(return_value="{}")
+    get_git_root = Mock(return_value=None)
+
+    with (
+        patch("skylos.commands.suite_cmd.run_suite", return_value=report) as runner,
+        patch(
+            "skylos.commands.suite_cmd.format_suite_table",
+            return_value="suite table",
+        ) as formatter,
+    ):
+        exit_code = run_suite_command(
+            [
+                str(tmp_path),
+                "--confidence",
+                "77",
+                "--diff-base",
+                "origin/main",
+                "--no-provenance",
+                "--exclude",
+                "custom",
+            ],
+            console_factory=lambda: console,
+            progress_factory=Progress,
+            parse_exclude_folders_func=parse_exclude,
+            load_config_func=load_config,
+            run_analyze_func=run_analyze,
+            get_git_root_func=get_git_root,
+            upload_report_func=_noop_upload,
+            upload_defense_report_func=_noop_upload,
+            upload_debt_report_func=_noop_upload,
+        )
+
+    assert exit_code == 0
+    load_config.assert_called_once_with(tmp_path.resolve())
+    parse_exclude.assert_called_once_with(
+        use_defaults=True,
+        config_exclude_folders=["build"],
+    )
+    runner.assert_called_once_with(
+        tmp_path.resolve(),
+        conf=77,
+        exclude_folders=[".git", "custom", "dist"],
+        run_analyze_func=run_analyze,
+        progress_factory=Progress,
+        console=console,
+        output_json=False,
+        no_provenance=True,
+        diff_base="origin/main",
+        get_git_root_func=get_git_root,
+    )
+    formatter.assert_called_once_with(report)
+    console.print.assert_called_once_with("suite table")
+
+
+def test_suite_json_output_file_writes_formatted_output(tmp_path):
+    output_file = tmp_path / "suite.json"
+    console = Mock()
+    report = {"summary": {"static": {}}, "static": {}, "debt": {}, "defense": {}}
+
+    with (
+        patch("skylos.commands.suite_cmd.run_suite", return_value=report),
+        patch(
+            "skylos.commands.suite_cmd.format_suite_json",
+            return_value='{"suite":true}',
+        ),
+    ):
+        exit_code = run_suite_command(
+            [str(tmp_path), "--json", "--output", str(output_file)],
+            console_factory=lambda: console,
+            progress_factory=Progress,
+            parse_exclude_folders_func=lambda **kwargs: [],
+            load_config_func=lambda _path: {},
+            run_analyze_func=lambda *_args, **_kwargs: "{}",
+            get_git_root_func=lambda: None,
+            upload_report_func=_noop_upload,
+            upload_defense_report_func=_noop_upload,
+            upload_debt_report_func=_noop_upload,
+        )
+
+    assert exit_code == 0
+    assert output_file.read_text(encoding="utf-8") == '{"suite":true}'
+    console.print.assert_called_once_with(
+        f"[green]Output written to {output_file}[/green]"
+    )
+
+
+def test_suite_table_upload_preserves_bundle_and_payloads(tmp_path):
+    static_result = _static_result(str(tmp_path))
+    report = {
+        "static": {
+            **static_result,
+            "provenance": {"enabled": True},
+        },
+        "debt": {"score": {"score_pct": 82}, "hotspots": [{"file": "app.py"}]},
+        "defense": {"summary": {"score_pct": 100}},
+        "summary": {"static": {}},
+    }
+    console = Mock()
+    uploaded = {}
+
+    def _upload_static(payload, **kwargs):
+        uploaded["static_payload"] = payload
+        uploaded["static_kwargs"] = kwargs
+        return {"success": True}
+
+    def _upload_defense(payload, **kwargs):
+        uploaded["defense_payload"] = payload
+        uploaded["defense_kwargs"] = kwargs
+        return {"success": True}
+
+    def _upload_debt(payload, **kwargs):
+        uploaded["debt_payload"] = payload
+        uploaded["debt_kwargs"] = kwargs
+        return {"success": True}
+
+    with (
+        patch("skylos.commands.suite_cmd.run_suite", return_value=report),
+        patch("skylos.commands.suite_cmd.format_suite_table", return_value="suite"),
+        patch("skylos.commands.suite_cmd.uuid.uuid4", return_value="bundle-123"),
+        patch(
+            "skylos.cloud.upload_manifest.build_code_scan_manifest",
+            return_value="code-manifest",
+        ) as build_code,
+        patch(
+            "skylos.cloud.upload_manifest.build_defense_manifest",
+            return_value="defense-manifest",
+        ),
+        patch(
+            "skylos.cloud.upload_manifest.build_debt_manifest",
+            return_value="debt-manifest",
+        ),
+        patch("skylos.cloud.upload_manifest.print_upload_manifest") as print_manifest,
+    ):
+        exit_code = run_suite_command(
+            [str(tmp_path), "--upload"],
+            console_factory=lambda: console,
+            progress_factory=Progress,
+            parse_exclude_folders_func=lambda **kwargs: [],
+            load_config_func=lambda _path: {},
+            run_analyze_func=lambda *_args, **_kwargs: json.dumps(static_result),
+            get_git_root_func=lambda: None,
+            upload_report_func=_upload_static,
+            upload_defense_report_func=_upload_defense,
+            upload_debt_report_func=_upload_debt,
+        )
+
+    assert exit_code == 0
+    assert uploaded["static_kwargs"] == {
+        "quiet": False,
+        "scan_bundle_id": "bundle-123",
+    }
+    assert uploaded["defense_kwargs"] == {
+        "quiet": False,
+        "scan_bundle_id": "bundle-123",
+    }
+    assert uploaded["debt_kwargs"] == {
+        "quiet": False,
+        "scan_bundle_id": "bundle-123",
+    }
+    assert uploaded["defense_payload"] == json.dumps(report["defense"])
+    assert uploaded["debt_payload"] == report["debt"]
+    assert "danger" in uploaded["static_payload"]
+    build_code.assert_called_once_with(
+        ["danger", "quality", "secrets", "dead_code", "dependency"],
+        provenance_attached=True,
+    )
+    print_manifest.assert_called_once_with(
+        console,
+        ["code-manifest", "defense-manifest", "debt-manifest"],
+        bundle_id="bundle-123",
+    )
+    console.print.assert_called_once_with("suite")
 
 
 def test_main_suite_subcommand_calls_run_suite_and_exits(monkeypatch):
