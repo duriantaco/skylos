@@ -374,6 +374,58 @@ def test_load_history_returns_empty_for_missing_history(tmp_path):
     assert load_history(tmp_path) == []
 
 
+def test_load_history_rejects_symlinked_history_file(tmp_path):
+    history_dir = tmp_path / ".skylos"
+    history_dir.mkdir()
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text(
+        json.dumps({"token": "secret-outside-value"}) + "\n",
+        encoding="utf-8",
+    )
+    history_path = history_dir / "debt_history.jsonl"
+    try:
+        history_path.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="symlink"):
+        load_history(tmp_path)
+
+
+def test_load_history_rejects_history_resolved_outside_project(tmp_path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (outside_dir / "debt_history.jsonl").write_text(
+        json.dumps({"token": "secret-outside-value"}) + "\n",
+        encoding="utf-8",
+    )
+    history_dir = project / ".skylos"
+    try:
+        history_dir.symlink_to(outside_dir, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="inside project root"):
+        load_history(project)
+
+
+def test_load_history_rejects_oversized_history_file(tmp_path, monkeypatch):
+    history_dir = tmp_path / ".skylos"
+    history_dir.mkdir()
+    (history_dir / "debt_history.jsonl").write_text(
+        json.dumps({"score": {"score_pct": 93}}) + "\n",
+        encoding="utf-8",
+    )
+    from skylos.debt import baseline
+
+    monkeypatch.setattr(baseline, "HISTORY_MAX_BYTES", 4)
+
+    with pytest.raises(ValueError, match="too large"):
+        load_history(tmp_path)
+
+
 def test_parse_policy_accepts_gate_and_report():
     policy = _parse_policy(
         {
@@ -1123,3 +1175,42 @@ def test_cli_debt_show_history_json_outputs_saved_entries(tmp_path, monkeypatch)
     mock_scan.assert_not_called()
     payload = json.loads(mock_print.call_args.args[0])
     assert payload["history"][0]["score"]["score_pct"] == 93
+
+
+def test_cli_debt_show_history_json_rejects_symlink_history(
+    tmp_path, monkeypatch
+):
+    history_dir = tmp_path / ".skylos"
+    history_dir.mkdir()
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text(
+        json.dumps({"token": "secret-outside-value"}) + "\n",
+        encoding="utf-8",
+    )
+    history_path = history_dir / "debt_history.jsonl"
+    try:
+        history_path.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "debt", str(tmp_path), "--show-history", "--json"],
+    )
+    mock_console = Mock()
+
+    with (
+        patch("skylos.debt.run_debt_analysis") as mock_scan,
+        patch("builtins.print") as mock_print,
+        patch("skylos.cli.Console", return_value=mock_console),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 1
+    mock_scan.assert_not_called()
+    mock_print.assert_not_called()
+    message = mock_console.print.call_args.args[0]
+    assert "Error reading debt history" in message
+    assert "symlink" in message
+    assert "secret-outside-value" not in message
