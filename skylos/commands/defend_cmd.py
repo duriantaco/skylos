@@ -392,6 +392,16 @@ def run_defend_command(
     console_factory,
     progress_factory,
 ) -> int:
+    """
+    Run the AI defense command and render or upload defense findings.
+
+    Calls: skylos/commands/defend_cmd.py _discover_defend_inputs;
+        skylos/defend/engine.py run_defense_checks;
+        skylos/commands/defend_cmd.py _format_defend_output;
+        skylos/commands/defend_cmd.py _upload_defend_output.
+
+    Called from: skylos/cli.py run_defend_command.
+    """
     parser = _build_defend_parser()
     args = parser.parse_args(argv)
     console = console_factory()

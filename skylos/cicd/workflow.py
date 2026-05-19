@@ -65,6 +65,16 @@ def generate_workflow(
     scan_path: str = ".",
     skylos_version: str | None = None,
 ) -> str:
+    """
+    Generate the GitHub Actions workflow YAML for Skylos scans.
+
+    Calls: skylos/cicd/workflow.py _build_trigger_block;
+        skylos/cicd/workflow.py _skylos_install_command;
+        skylos/cicd/workflow.py _shell_path;
+        skylos/cicd/workflow.py _build_claude_security_jobs.
+
+    Called from: skylos/commands/cicd_cmd.py run_cicd_command.
+    """
     triggers = triggers or ["pull_request", "push"]
     analysis_types = analysis_types or ["dead-code", "security", "quality", "secrets"]
 

@@ -124,6 +124,15 @@ def run_cicd_command(
     run_gate_interaction_func,
     emit_github_annotations_func,
 ) -> int:
+    """
+    Run the CI/CD subcommands for workflow generation, gates, annotations, and reviews.
+
+    Calls: skylos/cicd/workflow.py generate_workflow;
+        skylos/core/gatekeeper.py run_gate_interaction;
+        skylos/cicd/review.py run_pr_review.
+
+    Called from: skylos/cli.py run_cicd_command.
+    """
     cicd_parser = argparse.ArgumentParser(
         prog="skylos cicd", description="CI/CD integration for Skylos"
     )
