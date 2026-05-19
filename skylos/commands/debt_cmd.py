@@ -76,6 +76,15 @@ def run_debt_command(
     load_config_func,
     upload_debt_report_func,
 ) -> int:
+    """
+    Run the technical debt command and render, gate, history, or upload results.
+
+    Calls: skylos/debt/__init__.py run_debt_analysis;
+        skylos/debt/__init__.py load_history; skylos/debt/__init__.py append_history;
+        skylos/api.py upload_debt_report.
+
+    Called from: skylos/cli.py run_debt_command.
+    """
     debt_parser = argparse.ArgumentParser(
         prog="skylos debt",
         description="Analyze technical debt hotspots in a codebase",

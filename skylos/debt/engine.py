@@ -288,6 +288,13 @@ def run_debt_analysis(
     changed_files: list[str] | list[Path] | None = None,
     conf: int = 80,
 ) -> DebtSnapshot:
+    """
+    Run a quality-focused static scan and convert it into a debt snapshot.
+
+    Calls: skylos/analyzer.py analyze; skylos/debt/engine.py build_debt_snapshot.
+
+    Called from: skylos/debt/__init__.py run_debt_analysis.
+    """
     target = Path(path).resolve()
     project_root = _project_root(target)
 
