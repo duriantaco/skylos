@@ -156,7 +156,36 @@ def test_workflow_scan_path_is_monorepo_aware():
     content = generate_workflow(scan_path="apps/api", use_upload=True, use_defend=True)
     assert "skylos apps/api" in content
     assert "skylos defend apps/api" in content
-    assert "--defense-input defense-results.json" in content
+    assert '--defense-input "$RUNNER_TEMP/defense-results.json"' in content
+
+
+def test_workflow_uses_runner_temp_for_generated_reports():
+    content = generate_workflow(
+        use_llm=True,
+        use_defend=True,
+        use_claude_security=True,
+    )
+    parsed = yaml.safe_load(content)
+
+    assert '--json -o "$RUNNER_TEMP/skylos-results.json"' in content
+    assert '-o "$RUNNER_TEMP/skylos-llm-results.json"' in content
+    assert '-o "$RUNNER_TEMP/defense-results.json"' in content
+    assert '--input "$RUNNER_TEMP/skylos-results.json"' in content
+    assert '--llm-input "$RUNNER_TEMP/skylos-llm-results.json"' in content
+    assert '--defense-input "$RUNNER_TEMP/defense-results.json"' in content
+    assert " --json -o skylos-results.json" not in content
+    assert " --input skylos-results.json" not in content
+    assert "path: skylos-results.json" not in content
+
+    skylos_steps = parsed["jobs"]["skylos"]["steps"]
+    upload_step = next(
+        s
+        for s in skylos_steps
+        if s.get("name") == "Upload Skylos Results for Cross-Reference"
+    )
+    assert upload_step["with"]["path"] == "${{ runner.temp }}/skylos-results.json"
+    ingest_step = parsed["jobs"]["upload-claude-findings"]["steps"][-1]
+    assert "$RUNNER_TEMP/skylos-results/skylos-results.json" in ingest_step["run"]
 
 
 def test_workflow_prefixes_leading_dash_scan_path():

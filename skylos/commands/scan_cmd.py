@@ -1,7 +1,40 @@
 from __future__ import annotations
 
+import os
+import pathlib
 from types import ModuleType
 from typing import Sequence
+
+
+def _relative_path_has_symlink_parent(path: pathlib.Path) -> bool:
+    if path.is_absolute():
+        return False
+
+    current = pathlib.Path(".")
+    for part in path.parent.parts:
+        if part in ("", "."):
+            continue
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def _write_json_output_file(output_path: str, result_json: str) -> None:
+    path = pathlib.Path(output_path)
+    if path.is_symlink() or _relative_path_has_symlink_parent(path):
+        raise OSError(f"Refusing to write JSON output through symlink: {path}")
+
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow:
+        flags |= nofollow
+
+    fd = os.open(  # skylos: ignore[SKY-D215] guarded user-selected CLI output path
+        path, flags, 0o600
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(result_json)
 
 
 def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
@@ -448,9 +481,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
         if args.json:
             if args.output:
-                pathlib.Path(args.output).write_text(  # skylos: ignore[SKY-D215] user-selected CLI output path
-                    result_json
-                )
+                _write_json_output_file(args.output, result_json)
             else:
                 print(result_json)
 

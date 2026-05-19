@@ -15,6 +15,12 @@ ANALYSIS_FLAG_MAP: dict[str, str] = {
     "secrets": "--secrets",
 }
 
+SKYLOS_RESULTS_SHELL_PATH = '"$RUNNER_TEMP/skylos-results.json"'
+SKYLOS_LLM_RESULTS_SHELL_PATH = '"$RUNNER_TEMP/skylos-llm-results.json"'
+SKYLOS_DEFENSE_RESULTS_SHELL_PATH = '"$RUNNER_TEMP/defense-results.json"'
+SKYLOS_RESULTS_ARTIFACT_PATH = "${{ runner.temp }}/skylos-results.json"
+CLAUDE_RESULTS_ARTIFACT_PATH = "${{ runner.temp }}/claude-security-results.json"
+
 
 def _installed_skylos_version() -> str | None:
     try:
@@ -87,10 +93,10 @@ def generate_workflow(
             (
                 f"            skylos {scan_target}{analysis_flags}{baseline_flag}{upload_flag} "
                 '--diff-base "$pr_base_ref" --diff "$pr_base_ref" '
-                "--json -o skylos-results.json"
+                f"--json -o {SKYLOS_RESULTS_SHELL_PATH}"
             ),
             "          else",
-            f"            skylos {scan_target}{analysis_flags}{baseline_flag}{upload_flag} --json -o skylos-results.json",
+            f"            skylos {scan_target}{analysis_flags}{baseline_flag}{upload_flag} --json -o {SKYLOS_RESULTS_SHELL_PATH}",
             "          fi",
         ]
     )
@@ -112,7 +118,7 @@ def generate_workflow(
                 (
                     f"        run: skylos agent scan {scan_target} "
                     f"--model {shlex.quote(model_str)} --changed --format json "
-                    "-o skylos-llm-results.json"
+                    f"-o {SKYLOS_LLM_RESULTS_SHELL_PATH}"
                 ),
                 "        env:",
                 "          SKYLOS_API_KEY: ${{ secrets.SKYLOS_API_KEY }}" + api_key_env,
@@ -123,17 +129,17 @@ def generate_workflow(
         defend_parts = [
             "",
             "      - name: AI Defense Check",
-            f"        run: skylos defend {scan_target} --fail-on critical --min-score 70 --json -o defense-results.json{' --upload' if use_upload else ''}",
+            f"        run: skylos defend {scan_target} --fail-on critical --min-score 70 --json -o {SKYLOS_DEFENSE_RESULTS_SHELL_PATH}{' --upload' if use_upload else ''}",
         ]
         if use_upload:
             defend_parts.append(_upload_env_block())
         defend_step = "\n".join(defend_parts)
 
-    review_args = ["--input skylos-results.json"]
+    review_args = [f"--input {SKYLOS_RESULTS_SHELL_PATH}"]
     if use_llm:
-        review_args.append("--llm-input skylos-llm-results.json")
+        review_args.append(f"--llm-input {SKYLOS_LLM_RESULTS_SHELL_PATH}")
     if use_defend:
-        review_args.append("--defense-input defense-results.json")
+        review_args.append(f"--defense-input {SKYLOS_DEFENSE_RESULTS_SHELL_PATH}")
     review_args.extend(['--diff-base "$pr_base_ref"', "--evidence-cards"])
     review_command = "skylos cicd review " + " ".join(review_args)
     review_run = "\n".join(
@@ -155,6 +161,16 @@ def generate_workflow(
       - name: Pull Skylos Cloud Policy
         run: |
           skylos sync pull || echo "No Skylos Cloud policy available through GitHub OIDC; continuing with local config."
+"""
+    skylos_results_upload_step = ""
+    if use_claude_security:
+        skylos_results_upload_step = f"""
+      - name: Upload Skylos Results for Cross-Reference
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skylos-results
+          path: {SKYLOS_RESULTS_ARTIFACT_PATH}
 """
 
     workflow = f"""name: Skylos Analysis
@@ -188,11 +204,11 @@ jobs:
 {llm_step}{defend_step}
       - name: Quality Gate
         if: always()
-        run: skylos cicd gate --input skylos-results.json --summary --advisory
+        run: skylos cicd gate --input {SKYLOS_RESULTS_SHELL_PATH} --summary --advisory
 
       - name: GitHub Annotations
         if: always()
-        run: skylos cicd annotate --input skylos-results.json
+        run: skylos cicd annotate --input {SKYLOS_RESULTS_SHELL_PATH}
 
       - name: PR Review Comments
         if: github.event_name == 'pull_request' && always()
@@ -200,18 +216,7 @@ jobs:
 {review_run}
         env:
           GH_TOKEN: ${{{{ github.token }}}}
-{
-        ""
-        if not use_claude_security
-        else '''
-      - name: Upload Skylos Results for Cross-Reference
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: skylos-results
-          path: skylos-results.json
-'''
-    }"""
+{skylos_results_upload_step}"""
 
     if use_claude_security:
         workflow += _build_claude_security_jobs(python_version, install_command)
@@ -233,14 +238,14 @@ def _build_claude_security_jobs(python_version: str, install_command: str) -> st
         uses: anthropics/claude-code-action@main
         with:
           anthropic_api_key: ${{{{ secrets.ANTHROPIC_API_KEY }}}}
-          direct_prompt: "/review --output-file claude-security-results.json"
+          direct_prompt: "/review --output-file {CLAUDE_RESULTS_ARTIFACT_PATH}"
 
       - name: Upload Claude Security Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: claude-security-results
-          path: claude-security-results.json
+          path: {CLAUDE_RESULTS_ARTIFACT_PATH}
 
   upload-claude-findings:
     if: always()
@@ -262,14 +267,16 @@ def _build_claude_security_jobs(python_version: str, install_command: str) -> st
         uses: actions/download-artifact@v4
         with:
           name: claude-security-results
+          path: ${{{{ runner.temp }}}}/claude-security
 
       - name: Download Skylos Results
         uses: actions/download-artifact@v4
         with:
           name: skylos-results
+          path: ${{{{ runner.temp }}}}/skylos-results
 
       - name: Ingest Claude Security Findings
-        run: skylos ingest claude-security --input claude-security-results.json --cross-reference skylos-results.json
+        run: skylos ingest claude-security --input "$RUNNER_TEMP/claude-security/claude-security-results.json" --cross-reference "$RUNNER_TEMP/skylos-results/skylos-results.json"
 """
 
 
