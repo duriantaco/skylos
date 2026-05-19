@@ -252,7 +252,7 @@ def test_check_gate_quality_threshold_ignores_advisory_iad_quality():
     assert reasons == []
 
 
-def test_check_gate_project_config_cannot_relax_builtin_thresholds():
+def test_check_gate_project_config_cannot_relax_critical_or_secrets():
     danger = [{"severity": "critical", "file": "app.py"}]
     for index in range(10):
         danger.append({"severity": "medium", "file": f"app_{index}.py"})
@@ -280,10 +280,70 @@ def test_check_gate_project_config_cannot_relax_builtin_thresholds():
     passed, reasons = gk.check_gate(results, config)
 
     assert passed is False
-    assert "1 critical security issue(s)" in reasons
-    assert "11 total security issues (max: 10)" in reasons
-    assert "11 quality issues (max: 10)" in reasons
-    assert "1 secrets issues (max: 0)" in reasons
+    assert reasons == [
+        "1 critical security issue(s)",
+        "1 secrets issues (max: 0)",
+    ]
+
+
+def test_check_gate_project_config_can_relax_non_critical_thresholds():
+    danger = []
+    for index in range(6):
+        danger.append({"severity": "high", "file": f"app_{index}.py"})
+
+    quality = []
+    for index in range(11):
+        quality.append({"rule_id": f"SKY-Q{index}", "file": "app.py"})
+
+    results = {
+        "danger": danger,
+        "quality": quality,
+        "secrets": [],
+    }
+    config = {
+        "gate": {
+            "max_high": 999,
+            "max_security": 999,
+            "max_quality": 999,
+        }
+    }
+
+    passed, reasons = gk.check_gate(results, config)
+
+    assert passed is True
+    assert reasons == []
+
+
+def test_check_gate_invalid_project_threshold_types_use_defaults():
+    danger = []
+    for index in range(11):
+        danger.append({"severity": "medium", "file": f"app_{index}.py"})
+
+    quality = []
+    for index in range(11):
+        quality.append({"rule_id": f"SKY-Q{index}", "file": "app.py"})
+
+    results = {
+        "danger": danger,
+        "quality": quality,
+        "secrets": [{"rule_id": "SKY-S101", "file": "app.py"}],
+    }
+    config = {
+        "gate": {
+            "max_security": "999",
+            "max_quality": True,
+            "max_secrets": "999",
+        }
+    }
+
+    passed, reasons = gk.check_gate(results, config)
+
+    assert passed is False
+    assert reasons == [
+        "11 total security issues (max: 10)",
+        "11 quality issues (max: 10)",
+        "1 secrets issues (max: 0)",
+    ]
 
 
 def test_check_gate_project_config_can_make_thresholds_stricter():

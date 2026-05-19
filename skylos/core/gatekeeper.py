@@ -169,14 +169,15 @@ def _append_threshold_reason(reasons, *, count, limit, message_template):
     return True
 
 
-def _strictest_limit(value, baseline):
-    if baseline is None:
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            return None
-        return value
+def _safe_gate_limit(value, default):
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return baseline
-    return min(value, baseline)
+        return default
+    return value
+
+
+def _non_relaxable_gate_limit(value, baseline):
+    safe_value = _safe_gate_limit(value, baseline)
+    return min(safe_value, baseline)
 
 
 def _effective_gate_config(config):
@@ -186,15 +187,13 @@ def _effective_gate_config(config):
 
     effective = dict(gate_config)
     effective["fail_on_critical"] = True
-    for key in (
-        "max_critical",
-        "max_high",
-        "max_security",
-        "max_quality",
-        "max_secrets",
-        "max_dead_code",
-    ):
-        effective[key] = _strictest_limit(
+    for key in ("max_critical", "max_secrets"):
+        effective[key] = _non_relaxable_gate_limit(
+            gate_config.get(key),
+            BASELINE_GATE_CONFIG[key],
+        )
+    for key in ("max_high", "max_security", "max_quality", "max_dead_code"):
+        effective[key] = _safe_gate_limit(
             gate_config.get(key),
             BASELINE_GATE_CONFIG[key],
         )
