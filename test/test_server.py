@@ -23,6 +23,7 @@ from skylos.web.server import (
     start_server,
     _get_server_port,
     _get_default_cors_origins,
+    _normalize_exclude_folders,
 )
 
 if _original_constants is not None:
@@ -111,6 +112,26 @@ class TestSkylosWebApp(unittest.TestCase):
         args, kwargs = mock_skylos_analyze.call_args
         self.assertEqual(args[0], "/real/path")
         self.assertEqual(kwargs["conf"], 80)
+        self.assertIsInstance(kwargs["exclude_folders"], list)
+
+    @patch("skylos.analyze")
+    @patch("os.path.exists")
+    def test_analyze_normalizes_set_excludes_before_analysis(
+        self, mock_exists, mock_skylos_analyze
+    ):
+        mock_exists.return_value = True
+        app.config["EXCLUDE_FOLDERS"] = {"node_modules", ".git"}
+        mock_skylos_analyze.return_value = json.dumps({"unused_functions": []})
+
+        response = self.app.post(
+            "/api/analyze",
+            data=json.dumps({"path": "/real/path"}),
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        _, kwargs = mock_skylos_analyze.call_args
+        self.assertEqual(kwargs["exclude_folders"], [".git", "node_modules"])
 
     @patch("skylos.analyze")
     @patch("os.path.exists")
@@ -139,6 +160,20 @@ class TestSkylosWebApp(unittest.TestCase):
                 debug=False, host="127.0.0.1", port=5090, use_reloader=False
             )
             mock_timer.assert_called()
+
+    @patch("skylos.web.server.webbrowser.open")
+    @patch("skylos.web.server.Timer")
+    @patch("skylos.web.server.app.run")
+    def test_start_server_normalizes_default_excludes(
+        self, mock_run, mock_timer, mock_browser
+    ):
+        start_server()
+
+        self.assertIsInstance(app.config["EXCLUDE_FOLDERS"], list)
+        self.assertEqual(
+            app.config["EXCLUDE_FOLDERS"],
+            _normalize_exclude_folders(app.config["EXCLUDE_FOLDERS"]),
+        )
 
     @patch.dict(os.environ, {"SKYLOS_PORT": "5111"}, clear=False)
     @patch("skylos.web.server.webbrowser.open")
