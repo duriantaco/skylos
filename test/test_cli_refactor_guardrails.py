@@ -839,6 +839,148 @@ def test_defend_command_json_upload_formats_once(tmp_path):
     mock_print.assert_called_once_with(json_payload)
 
 
+def test_defend_command_table_output_uses_formatter_arguments(tmp_path):
+    target = tmp_path / "repo"
+    target.mkdir()
+    console = Mock()
+    result = types.SimpleNamespace(category="defense", passed=True, severity="low")
+    score = types.SimpleNamespace(score_pct=92)
+    ops_score = types.SimpleNamespace(score_pct=100)
+    coverage = {"LLM01": {"passed": 1, "total": 1}}
+    integrations = [{"kind": "openai"}]
+    table_output = "TABLE OUTPUT"
+
+    with (
+        patch("skylos.defend.policy.load_policy", return_value=None),
+        patch(
+            "skylos.discover.detector._collect_ai_files",
+            return_value=[target / "app.py"],
+        ),
+        patch(
+            "skylos.discover.detector.detect_integrations",
+            return_value=(integrations, {"nodes": []}),
+        ),
+        patch(
+            "skylos.defend.engine.run_defense_checks",
+            return_value=([result], score, ops_score),
+        ),
+        patch(
+            "skylos.commands.defend_cmd.compute_owasp_coverage",
+            return_value=coverage,
+        ),
+        patch(
+            "skylos.defend.report.format_defense_table",
+            return_value=table_output,
+        ) as mock_table,
+    ):
+        from skylos.commands.defend_cmd import run_defend_command
+
+        exit_code = run_defend_command(
+            [str(target)],
+            console_factory=lambda: console,
+            progress_factory=lambda *args, **kwargs: _progress_ctx(),
+        )
+
+    assert exit_code == 0
+    mock_table.assert_called_once_with(
+        [result],
+        score,
+        len(integrations),
+        1,
+        coverage,
+        ops_score,
+        owasp_framework="llm",
+        owasp_version="2025",
+    )
+    console.print.assert_called_once_with(table_output)
+
+
+def test_defend_command_table_upload_failure_sets_exit_code(tmp_path):
+    target = tmp_path / "repo"
+    target.mkdir()
+    console = Mock()
+    score = types.SimpleNamespace(score_pct=100)
+    ops_score = types.SimpleNamespace(score_pct=100)
+    json_payload = '{"summary":{"score_pct":100}}'
+    table_output = "TABLE OUTPUT"
+
+    with (
+        patch("skylos.defend.policy.load_policy", return_value=None),
+        patch(
+            "skylos.discover.detector._collect_ai_files",
+            return_value=[target / "app.py"],
+        ),
+        patch(
+            "skylos.discover.detector.detect_integrations",
+            return_value=(["app.py"], {"nodes": []}),
+        ),
+        patch(
+            "skylos.defend.engine.run_defense_checks",
+            return_value=([], score, ops_score),
+        ),
+        patch("skylos.commands.defend_cmd.compute_owasp_coverage", return_value={}),
+        patch("skylos.defend.report.format_defense_json", return_value=json_payload),
+        patch("skylos.defend.report.format_defense_table", return_value=table_output),
+        patch("skylos.cloud.upload_manifest.build_defense_manifest", return_value={}),
+        patch("skylos.cloud.upload_manifest.print_upload_manifest"),
+        patch(
+            "skylos.api.upload_defense_report",
+            return_value={"success": False, "error": "boom"},
+        ) as mock_upload,
+    ):
+        from skylos.commands.defend_cmd import run_defend_command
+
+        exit_code = run_defend_command(
+            [str(target), "--upload"],
+            console_factory=lambda: console,
+            progress_factory=lambda *args, **kwargs: _progress_ctx(),
+        )
+
+    printed = [call.args[0] for call in console.print.call_args_list]
+    assert exit_code == 1
+    assert table_output in printed
+    assert "[red]Upload failed: boom[/red]" in printed
+    mock_upload.assert_called_once_with(json_payload, quiet=False)
+
+
+def test_defend_command_fail_on_threshold_sets_exit_code(tmp_path):
+    target = tmp_path / "repo"
+    target.mkdir()
+    console = Mock()
+    result = types.SimpleNamespace(category="defense", passed=False, severity="high")
+    score = types.SimpleNamespace(score_pct=100)
+    ops_score = types.SimpleNamespace(score_pct=100)
+    table_output = "TABLE OUTPUT"
+
+    with (
+        patch("skylos.defend.policy.load_policy", return_value=None),
+        patch(
+            "skylos.discover.detector._collect_ai_files",
+            return_value=[target / "app.py"],
+        ),
+        patch(
+            "skylos.discover.detector.detect_integrations",
+            return_value=(["app.py"], {"nodes": []}),
+        ),
+        patch(
+            "skylos.defend.engine.run_defense_checks",
+            return_value=([result], score, ops_score),
+        ),
+        patch("skylos.commands.defend_cmd.compute_owasp_coverage", return_value={}),
+        patch("skylos.defend.report.format_defense_table", return_value=table_output),
+    ):
+        from skylos.commands.defend_cmd import run_defend_command
+
+        exit_code = run_defend_command(
+            [str(target), "--fail-on", "high"],
+            console_factory=lambda: console,
+            progress_factory=lambda *args, **kwargs: _progress_ctx(),
+        )
+
+    assert exit_code == 1
+    console.print.assert_called_once_with(table_output)
+
+
 def test_ingest_command_json_output_prints_normalized_result():
     console = Mock()
     result = {"success": True, "result": {"danger": []}, "findings_count": 0}
