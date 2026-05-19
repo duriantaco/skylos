@@ -241,6 +241,28 @@ def f(cur, query, params):
     assert "SKY-D211" in _rule_ids(out)
 
 
+def test_sql_execute_neutral_connection_alias_flags(tmp_path):
+    code = """
+import sqlite3
+
+def f(name):
+    c = sqlite3.connect(":memory:")
+    c.execute(f"SELECT * FROM users WHERE name = '{name}'")
+"""
+    out = _scan_one(tmp_path, "sql_connection_alias.py", code)
+    assert "SKY-D211" in _rule_ids(out)
+
+
+def test_unrelated_execute_receiver_is_not_db(tmp_path):
+    code = """
+def f(name):
+    c = object()
+    c.execute(f"SELECT * FROM users WHERE name = '{name}'")
+"""
+    out = _scan_one(tmp_path, "sql_unrelated_execute.py", code)
+    assert "SKY-D211" not in _rule_ids(out)
+
+
 def test_sql_execute_query_mutated_after_static_assignment_flags(tmp_path):
     code = """
 def f(cur, request):
