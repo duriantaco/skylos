@@ -1,5 +1,20 @@
 ## Changelog
 
+## [4.16.2](https://github.com/duriantaco/skylos/compare/v4.16.1...v4.16.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* **ci:** guard defense sidecar reads ([#457](https://github.com/duriantaco/skylos/issues/457)) ([c8fd80b](https://github.com/duriantaco/skylos/commit/c8fd80b73b59c58709fe696d0b75387e93209569))
+* **debt:** guard history reads ([#458](https://github.com/duriantaco/skylos/issues/458)) ([64fce26](https://github.com/duriantaco/skylos/commit/64fce268348b4b9c5d75293b83a464b18b59eee2))
+* **scan:** fail concise on reported findings ([#456](https://github.com/duriantaco/skylos/issues/456)) ([0a4e978](https://github.com/duriantaco/skylos/commit/0a4e978644baf6f7a52e18a56b1b346c25631739))
+* **ui:** guard nudge config reads ([#459](https://github.com/duriantaco/skylos/issues/459)) ([d257579](https://github.com/duriantaco/skylos/commit/d257579afb3123f580cf640a2d27b6e2b67aaad2))
+
+
+### Documentation
+
+* **entrypoints:** add more call maps ([#460](https://github.com/duriantaco/skylos/issues/460)) ([a8c28a5](https://github.com/duriantaco/skylos/commit/a8c28a5345076a744826f7c45fd2b055b2324c17))
+
 ## [4.16.1](https://github.com/duriantaco/skylos/compare/v4.16.0...v4.16.1) (2026-05-19)
 
 
