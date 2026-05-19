@@ -76,6 +76,19 @@ def _receiver_name(node: ast.Call) -> str | None:
     return None
 
 
+def _qualified_name_from_expr(node: ast.AST) -> str | None:
+    parts = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+        parts.reverse()
+        return ".".join(parts)
+    return None
+
+
 def _has_safe_base_url(node):
     if not node.values:
         return True
@@ -282,6 +295,52 @@ class _SSRFFlowChecker(TaintVisitor):
     def __init__(self, file_path, findings, sanitizers=None):
         super().__init__(file_path, findings, sanitizers=sanitizers)
         self.http_names: set[str] = set()
+        self.http_receiver_alias_stack: list[set[str]] = [set()]
+
+    def _push(self):
+        super()._push()
+        self.http_receiver_alias_stack.append(set())
+
+    def _pop(self):
+        if len(self.http_receiver_alias_stack) > 1:
+            self.http_receiver_alias_stack.pop()
+        super()._pop()
+
+    def _mark_http_receiver_alias(self, name: str) -> None:
+        if not self.http_receiver_alias_stack:
+            self.http_receiver_alias_stack.append(set())
+        self.http_receiver_alias_stack[-1].add(name)
+
+    def _is_known_http_receiver_name(self, name: str) -> bool:
+        if name in self.http_names:
+            return True
+        return any(name in scope for scope in reversed(self.http_receiver_alias_stack))
+
+    def _is_http_reference(self, node: ast.AST) -> bool:
+        if isinstance(node, ast.Call):
+            return self._is_http_reference(node.func)
+
+        if isinstance(node, ast.Name):
+            return self._is_known_http_receiver_name(node.id)
+
+        qual_name = _qualified_name_from_expr(node)
+        if not qual_name:
+            return False
+
+        root = qual_name.split(".", 1)[0]
+        if root in HTTP_MODULES:
+            return True
+        return self._is_known_http_receiver_name(root)
+
+    def _track_http_receiver_aliases(self, targets, value: ast.AST | None) -> None:
+        if value is None or not self._is_http_reference(value):
+            return
+
+        for target in targets:
+            if isinstance(target, ast.Name):
+                self._mark_http_receiver_alias(target.id)
+            elif isinstance(target, ast.Attribute):
+                self._mark_http_receiver_alias(target.attr)
 
     def is_tainted(self, node):
         if isinstance(node, ast.JoinedStr) and _has_safe_base_url(node):
@@ -305,16 +364,24 @@ class _SSRFFlowChecker(TaintVisitor):
                     self.http_names.add(alias.asname or alias.name)
         self.generic_visit(node)
 
+    def visit_Assign(self, node):
+        self._track_http_receiver_aliases(node.targets, node.value)
+        super().visit_Assign(node)
+
+    def visit_AnnAssign(self, node):
+        self._track_http_receiver_aliases([node.target], node.value)
+        super().visit_AnnAssign(node)
+
     def _is_likely_http_receiver(self, node: ast.Call) -> bool:
         name = _receiver_name(node)
         if name is None:
             return False
 
+        if self._is_known_http_receiver_name(name):
+            return True
+
         if name.lower() in NON_HTTP_RECEIVER_NAMES:
             return False
-
-        if name in self.http_names:
-            return True
 
         if name.lower() in HTTP_RECEIVER_NAMES:
             return True

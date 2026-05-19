@@ -48,6 +48,27 @@ def test_httpx_tainted_url_flags(tmp_path):
     assert "SKY-D216" in _rule_ids(out)
 
 
+def test_requests_neutral_assignment_alias_flags(tmp_path):
+    code = (
+        "import requests\n"
+        "api = requests\n"
+        "def f(url):\n"
+        "    api.get(url)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_requests_alias.py", code)
+    assert "SKY-D216" in _rule_ids(out)
+
+
+def test_unrelated_get_receiver_is_not_http(tmp_path):
+    code = (
+        "def f(url):\n"
+        "    cache = {}\n"
+        "    cache.get(url)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_unrelated_get.py", code)
+    assert "SKY-D216" not in _rule_ids(out)
+
+
 def test_urllib_urlopen_tainted_url_flags(tmp_path):
     code = "import urllib.request as u\ndef f(x):\n    u.urlopen(f'http://{x}')\n"
     out = _scan_one(tmp_path, "ssrf_urlopen.py", code)

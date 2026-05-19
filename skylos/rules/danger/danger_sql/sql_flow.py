@@ -147,6 +147,19 @@ def _receiver_name(node: ast.Call) -> str | None:
     return None
 
 
+def _qualified_name_from_expr(node: ast.AST) -> str | None:
+    parts = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+        parts.reverse()
+        return ".".join(parts)
+    return None
+
+
 def get_query_expression(call: ast.Call, names=("sql", "query", "statement")):
     expression = None
     if call.args and len(call.args) > 0:
@@ -197,14 +210,18 @@ class _SQLFlowChecker(TaintVisitor):
         self.passthrough_functions: set[str] = set()
         self.db_names: set[str] = set()
         self.static_string_stack: list[dict[str, bool]] = [{}]
+        self.db_receiver_alias_stack: list[set[str]] = [set()]
 
     def _push(self):
         super()._push()
         self.static_string_stack.append({})
+        self.db_receiver_alias_stack.append(set())
 
     def _pop(self):
         if len(self.static_string_stack) > 1:
             self.static_string_stack.pop()
+        if len(self.db_receiver_alias_stack) > 1:
+            self.db_receiver_alias_stack.pop()
         super()._pop()
 
     def _set_static_string(self, name: str, is_static: bool) -> None:
@@ -224,6 +241,42 @@ class _SQLFlowChecker(TaintVisitor):
         if isinstance(node, ast.Name):
             return self._is_static_string_name(node.id)
         return False
+
+    def _mark_db_receiver_alias(self, name: str) -> None:
+        if not self.db_receiver_alias_stack:
+            self.db_receiver_alias_stack.append(set())
+        self.db_receiver_alias_stack[-1].add(name)
+
+    def _is_known_db_receiver_name(self, name: str) -> bool:
+        if name in self.db_names:
+            return True
+        return any(name in scope for scope in reversed(self.db_receiver_alias_stack))
+
+    def _is_db_reference(self, node: ast.AST) -> bool:
+        if isinstance(node, ast.Call):
+            return self._is_db_reference(node.func)
+
+        if isinstance(node, ast.Name):
+            return self._is_known_db_receiver_name(node.id)
+
+        qual_name = _qualified_name_from_expr(node)
+        if not qual_name:
+            return False
+
+        root = qual_name.split(".", 1)[0]
+        if root in DB_MODULES:
+            return True
+        return self._is_known_db_receiver_name(root)
+
+    def _track_db_receiver_aliases(self, targets, value: ast.AST | None) -> None:
+        if value is None or not self._is_db_reference(value):
+            return
+
+        for target in targets:
+            if isinstance(target, ast.Name):
+                self._mark_db_receiver_alias(target.id)
+            elif isinstance(target, ast.Attribute):
+                self._mark_db_receiver_alias(target.attr)
 
     def visit_Import(self, node):
         for alias in node.names:
@@ -245,7 +298,7 @@ class _SQLFlowChecker(TaintVisitor):
         if name is None:
             return False
 
-        if name in self.db_names:
+        if self._is_known_db_receiver_name(name):
             return True
 
         if name.lower() in DB_RECEIVER_NAMES:
@@ -274,6 +327,7 @@ class _SQLFlowChecker(TaintVisitor):
         super().visit_AsyncFunctionDef(node)
 
     def visit_Assign(self, node):
+        self._track_db_receiver_aliases(node.targets, node.value)
         is_static = self._is_static_query_expr(node.value)
         for target in node.targets:
             if isinstance(target, ast.Name):
@@ -281,6 +335,7 @@ class _SQLFlowChecker(TaintVisitor):
         super().visit_Assign(node)
 
     def visit_AnnAssign(self, node):
+        self._track_db_receiver_aliases([node.target], node.value)
         if node.value and isinstance(node.target, ast.Name):
             self._set_static_string(
                 node.target.id,
