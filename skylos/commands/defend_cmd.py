@@ -13,6 +13,31 @@ from skylos.defend.owasp import (
 )
 
 
+DEFAULT_DEFEND_EXCLUDES = {
+    "node_modules",
+    ".git",
+    ".next",
+    ".nuxt",
+    ".svelte-kit",
+    ".turbo",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    "dist",
+    "build",
+}
+
+SEVERITY_ORDER = {
+    "critical": 4,
+    "high": 3,
+    "medium": 2,
+    "low": 1,
+}
+
+
 def _build_empty_defense_json(
     *,
     owasp_framework: str = DEFAULT_OWASP_FRAMEWORK,
@@ -52,140 +77,147 @@ def _build_empty_defense_json(
     )
 
 
-def run_defend_command(
-    argv: list[str],
-    *,
-    console_factory,
-    progress_factory,
-) -> int:
-    def_parser = argparse.ArgumentParser(
+def _build_defend_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
         prog="skylos defend",
         description="Check LLM integrations for missing defenses",
     )
-    def_parser.add_argument("path", nargs="?", default=".", help="Path to scan")
-    def_parser.add_argument(
+    parser.add_argument("path", nargs="?", default=".", help="Path to scan")
+    parser.add_argument(
         "--json", action="store_true", dest="output_json", help="Output as JSON"
     )
-    def_parser.add_argument(
+    parser.add_argument(
         "-o", "--output", dest="output_file", help="Write output to file"
     )
-    def_parser.add_argument(
+    parser.add_argument(
         "--min-severity",
         choices=["critical", "high", "medium", "low"],
         help="Minimum severity to include",
     )
-    def_parser.add_argument(
+    parser.add_argument(
         "--fail-on",
         choices=["critical", "high", "medium", "low"],
         help="Exit 1 if any finding at or above this severity",
     )
-    def_parser.add_argument(
+    parser.add_argument(
         "--min-score",
         type=int,
         help="Exit 1 if weighted score percentage below this value (0-100)",
     )
-    def_parser.add_argument(
+    parser.add_argument(
         "--policy",
         dest="policy_file",
         help="Path to skylos-defend.yaml policy file",
     )
-    def_parser.add_argument(
+    parser.add_argument(
         "--owasp",
         dest="owasp_filter",
         help="Comma-separated OWASP IDs to filter (e.g. LLM01,LLM04 or ASI02)",
     )
-    def_parser.add_argument(
+    parser.add_argument(
         "--owasp-framework",
         choices=supported_owasp_frameworks(),
         default=DEFAULT_OWASP_FRAMEWORK,
         type=str.lower,
         help="OWASP framework to report against",
     )
-    def_parser.add_argument(
+    parser.add_argument(
         "--owasp-version",
         help="OWASP framework version (llm: 2024/2025, agentic: 2026)",
     )
-    def_parser.add_argument(
+    parser.add_argument(
         "--exclude",
         nargs="+",
         default=None,
         help="Additional folders to exclude",
     )
-    def_parser.add_argument(
+    parser.add_argument(
         "--upload",
         action="store_true",
         help="Upload defense results to Skylos Cloud dashboard",
     )
+    return parser
 
-    def_args = def_parser.parse_args(argv)
-    console = console_factory()
 
-    from skylos.defend.engine import run_defense_checks
-    from skylos.defend.policy import load_policy
-    from skylos.defend.report import format_defense_json, format_defense_table
-    from skylos.discover.detector import _collect_ai_files, detect_integrations
-
-    target = Path(def_args.path).resolve()
+def _validate_defend_target(console, target: Path) -> bool:
     if not target.exists():
         console.print(f"[red]Error: path does not exist: {target}[/red]")
-        return 1
+        return False
+
     if not target.is_dir():
         console.print(f"[red]Error: path is not a directory: {target}[/red]")
-        return 1
+        return False
 
-    if def_args.min_score is not None and not 0 <= def_args.min_score <= 100:
+    return True
+
+
+def _validate_min_score(console, min_score: int | None) -> bool:
+    if min_score is not None and not 0 <= min_score <= 100:
         console.print(
-            f"[red]Error: --min-score must be 0-100, got {def_args.min_score}[/red]"
+            f"[red]Error: --min-score must be 0-100, got {min_score}[/red]"
         )
-        return 1
+        return False
 
+    return True
+
+
+def _normalize_defend_owasp(console, framework: str, version: str | None):
     try:
-        owasp_framework, owasp_version = normalize_owasp_selection(
-            def_args.owasp_framework,
-            def_args.owasp_version,
-        )
+        return normalize_owasp_selection(framework, version)
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")
-        return 1
+        return None
 
-    exclude = {
-        "node_modules",
-        ".git",
-        ".next",
-        ".nuxt",
-        ".svelte-kit",
-        ".turbo",
-        "__pycache__",
-        ".venv",
-        "venv",
-        ".tox",
-        ".mypy_cache",
-        ".pytest_cache",
-        "dist",
-        "build",
-    }
-    if def_args.exclude:
-        exclude.update(def_args.exclude)
 
-    policy = None
+def _build_defend_excludes(extra_excludes: list[str] | None) -> set[str]:
+    excludes = set(DEFAULT_DEFEND_EXCLUDES)
+    if extra_excludes:
+        excludes.update(extra_excludes)
+    return excludes
+
+
+def _load_explicit_policy(console, policy_file: str | None):
+    if not policy_file:
+        return None, 0
+
     try:
-        if def_args.policy_file:
-            policy = load_policy(def_args.policy_file)
+        from skylos.defend.policy import load_policy
+
+        return load_policy(policy_file), 0
     except (FileNotFoundError, ValueError, ImportError) as e:
         console.print(f"[bold red]Policy error: {e}[/bold red]")
-        return 1
+        return None, 1
 
-    owasp_filter = None
-    if def_args.owasp_filter:
-        try:
-            owasp_filter = validate_owasp_ids(
-                def_args.owasp_filter.split(","),
-                framework=owasp_framework,
-                version=owasp_version,
-            )
-        except ValueError as e:
-            console.print(f"[red]Error: {e}[/red]")
-            return 1
+
+def _validate_owasp_filter(
+    console,
+    raw_filter: str | None,
+    *,
+    framework: str,
+    version: str,
+):
+    if not raw_filter:
+        return None, 0
+
+    try:
+        return validate_owasp_ids(
+            raw_filter.split(","),
+            framework=framework,
+            version=version,
+        ), 0
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        return None, 1
+
+
+def _discover_defend_inputs(
+    target: Path,
+    exclude: set[str],
+    *,
+    console,
+    progress_factory,
+):
+    from skylos.discover.detector import _collect_ai_files, detect_integrations
 
     with progress_factory(
         SpinnerColumn(),
@@ -197,40 +229,54 @@ def run_defend_command(
         files = _collect_ai_files(target, exclude)
         integrations, graph = detect_integrations(target, exclude_folders=exclude)
 
-    if not integrations:
-        if def_args.output_json:
-            empty = _build_empty_defense_json(
-                owasp_framework=owasp_framework,
-                owasp_version=owasp_version,
+    return files, integrations, graph
+
+
+def _write_empty_defend_output(
+    args: argparse.Namespace,
+    console,
+    *,
+    owasp_framework: str,
+    owasp_version: str,
+) -> int:
+    if args.output_json:
+        empty = _build_empty_defense_json(
+            owasp_framework=owasp_framework,
+            owasp_version=owasp_version,
+        )
+        if args.output_file:
+            Path(args.output_file).write_text(  # skylos: ignore[SKY-D215] user-selected defend output path
+                empty,
+                encoding="utf-8",
             )
-            if def_args.output_file:
-                Path(def_args.output_file).write_text(empty, encoding="utf-8")
-            else:
-                print(empty)
         else:
-            console.print("[dim]No LLM integrations found.[/dim]")
-        if def_args.upload:
-            console.print("[dim]No integrations found — skipping upload.[/dim]")
-        return 0
+            print(empty)
+    else:
+        console.print("[dim]No LLM integrations found.[/dim]")
 
-    results, score, ops_score = run_defense_checks(
-        integrations,
-        graph,
-        policy=policy,
-        min_severity=def_args.min_severity,
-        owasp_filter=owasp_filter,
-        owasp_framework=owasp_framework,
-        owasp_version=owasp_version,
-    )
+    if args.upload:
+        console.print("[dim]No integrations found — skipping upload.[/dim]")
 
-    owasp_coverage = compute_owasp_coverage(
-        results,
-        framework=owasp_framework,
-        version=owasp_version,
-    )
+    return 0
+
+
+def _format_defend_output(
+    args: argparse.Namespace,
+    *,
+    target: Path,
+    results,
+    score,
+    ops_score,
+    integrations,
+    files,
+    owasp_coverage,
+    owasp_framework: str,
+    owasp_version: str,
+):
+    from skylos.defend.report import format_defense_json, format_defense_table
 
     json_output = None
-    if def_args.output_json or def_args.upload:
+    if args.output_json or args.upload:
         json_output = format_defense_json(
             results,
             score,
@@ -244,75 +290,93 @@ def run_defend_command(
             owasp_version=owasp_version,
         )
 
-    if def_args.output_json:
-        output = json_output
-    else:
-        output = format_defense_table(
-            results,
-            score,
-            len(integrations),
-            len(files),
-            owasp_coverage,
-            ops_score,
-            owasp_framework=owasp_framework,
-            owasp_version=owasp_version,
-        )
+    if args.output_json:
+        return json_output, json_output
 
-    if def_args.output_file:
+    table_output = format_defense_table(
+        results,
+        score,
+        len(integrations),
+        len(files),
+        owasp_coverage,
+        ops_score,
+        owasp_framework=owasp_framework,
+        owasp_version=owasp_version,
+    )
+    return table_output, json_output
+
+
+def _write_defend_output(args: argparse.Namespace, console, output: str) -> int:
+    if args.output_file:
         try:
-            Path(def_args.output_file).write_text(output, encoding="utf-8")
+            Path(args.output_file).write_text(  # skylos: ignore[SKY-D215] user-selected defend output path
+                output,
+                encoding="utf-8",
+            )
         except OSError as e:
             console.print(f"[red]Error writing output file: {e}[/red]")
             return 1
-        console.print(f"[green]Output written to {def_args.output_file}[/green]")
-    elif def_args.output_json:
+        console.print(f"[green]Output written to {args.output_file}[/green]")
+    elif args.output_json:
         print(output)
     else:
         console.print(output)
 
-    upload_failed = False
-    if def_args.upload:
-        if not def_args.output_json:
-            from skylos.cloud.upload_manifest import (
-                build_defense_manifest,
-                print_upload_manifest,
-            )
+    return 0
 
-            print_upload_manifest(console, [build_defense_manifest()])
 
-        from skylos.api import upload_defense_report
+def _upload_defend_output(args: argparse.Namespace, console, json_output: str) -> bool:
+    if not args.upload:
+        return False
 
-        upload_result = upload_defense_report(
-            json_output,
-            quiet=def_args.output_json,
+    if not args.output_json:
+        from skylos.cloud.upload_manifest import (
+            build_defense_manifest,
+            print_upload_manifest,
         )
-        if not upload_result.get("success"):
-            upload_failed = True
-            if not def_args.output_json:
-                console.print(
-                    f"[red]Upload failed: {upload_result.get('error', 'Unknown')}[/red]"
-                )
 
+        print_upload_manifest(console, [build_defense_manifest()])
+
+    from skylos.api import upload_defense_report
+
+    upload_result = upload_defense_report(json_output, quiet=args.output_json)
+    if upload_result.get("success"):
+        return False
+
+    if not args.output_json:
+        console.print(
+            f"[red]Upload failed: {upload_result.get('error', 'Unknown')}[/red]"
+        )
+    return True
+
+
+def _defend_exit_code(
+    args: argparse.Namespace,
+    *,
+    policy,
+    results,
+    score,
+    upload_failed: bool,
+) -> int:
     exit_code = 1 if upload_failed else 0
 
-    fail_on = def_args.fail_on
+    fail_on = args.fail_on
     if policy and policy.gate_fail_on and not fail_on:
         fail_on = policy.gate_fail_on
 
     if fail_on:
-        severity_order = {"critical": 4, "high": 3, "medium": 2, "low": 1}
-        threshold = severity_order.get(fail_on, 0)
+        threshold = SEVERITY_ORDER.get(fail_on, 0)
         for result in results:
             if result.category != "defense":
                 continue
             if (
                 not result.passed
-                and severity_order.get(result.severity, 0) >= threshold
+                and SEVERITY_ORDER.get(result.severity, 0) >= threshold
             ):
                 exit_code = 1
                 break
 
-    min_score = def_args.min_score
+    min_score = args.min_score
     if policy and policy.gate_min_score is not None and min_score is None:
         min_score = policy.gate_min_score
 
@@ -320,3 +384,102 @@ def run_defend_command(
         exit_code = 1
 
     return exit_code
+
+
+def run_defend_command(
+    argv: list[str],
+    *,
+    console_factory,
+    progress_factory,
+) -> int:
+    parser = _build_defend_parser()
+    args = parser.parse_args(argv)
+    console = console_factory()
+
+    target = Path(args.path).resolve()
+    if not _validate_defend_target(console, target):
+        return 1
+
+    if not _validate_min_score(console, args.min_score):
+        return 1
+
+    owasp_selection = _normalize_defend_owasp(
+        console,
+        args.owasp_framework,
+        args.owasp_version,
+    )
+    if owasp_selection is None:
+        return 1
+    owasp_framework, owasp_version = owasp_selection
+
+    exclude = _build_defend_excludes(args.exclude)
+    policy, policy_error = _load_explicit_policy(console, args.policy_file)
+    if policy_error:
+        return policy_error
+
+    owasp_filter, owasp_error = _validate_owasp_filter(
+        console,
+        args.owasp_filter,
+        framework=owasp_framework,
+        version=owasp_version,
+    )
+    if owasp_error:
+        return owasp_error
+
+    files, integrations, graph = _discover_defend_inputs(
+        target,
+        exclude,
+        console=console,
+        progress_factory=progress_factory,
+    )
+
+    if not integrations:
+        return _write_empty_defend_output(
+            args,
+            console,
+            owasp_framework=owasp_framework,
+            owasp_version=owasp_version,
+        )
+
+    from skylos.defend.engine import run_defense_checks
+
+    results, score, ops_score = run_defense_checks(
+        integrations,
+        graph,
+        policy=policy,
+        min_severity=args.min_severity,
+        owasp_filter=owasp_filter,
+        owasp_framework=owasp_framework,
+        owasp_version=owasp_version,
+    )
+
+    owasp_coverage = compute_owasp_coverage(
+        results,
+        framework=owasp_framework,
+        version=owasp_version,
+    )
+    output, json_output = _format_defend_output(
+        args,
+        target=target,
+        results=results,
+        score=score,
+        ops_score=ops_score,
+        integrations=integrations,
+        files=files,
+        owasp_coverage=owasp_coverage,
+        owasp_framework=owasp_framework,
+        owasp_version=owasp_version,
+    )
+
+    write_result = _write_defend_output(args, console, output)
+    if write_result:
+        return write_result
+
+    upload_failed = _upload_defend_output(args, console, json_output)
+    return _defend_exit_code(
+        args,
+        policy=policy,
+        results=results,
+        score=score,
+        upload_failed=upload_failed,
+    )
