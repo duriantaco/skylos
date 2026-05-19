@@ -58,6 +58,7 @@ _FUNC_PATTERN = """
 """
 
 _AWAIT_PATTERN = "(await_expression) @await_expr"
+_CONDITION_PREVIEW_LIMIT = 120
 
 
 def _get_query(lang: Language, key: str, pattern: str) -> Query | None:
@@ -243,12 +244,14 @@ def _check_duplicate_conditions(
 ) -> None:
     """SKY-Q305: Detect identical condition expressions in if-else-if chains."""
     stack = [root_node]
+    processed_chain_nodes: set[int] = set()
     while stack:
         node = stack.pop()
-        if node.type == "if_statement":
+        if node.type == "if_statement" and node.id not in processed_chain_nodes:
             conditions: list[tuple[str, int]] = []
             current = node
             while current and current.type == "if_statement":
+                processed_chain_nodes.add(current.id)
                 cond = current.child_by_field_name("condition")
                 if cond:
                     cond_text = _get_text(source, cond)
@@ -268,11 +271,12 @@ def _check_duplicate_conditions(
                 seen: dict[str, int] = {}
                 for cond_text, cond_line in conditions:
                     if cond_text in seen:
+                        preview = _condition_preview(cond_text)
                         findings.append(
                             {
                                 "rule_id": "SKY-Q305",
                                 "severity": "MEDIUM",
-                                "message": f"Duplicate condition '{cond_text}' in if-else chain (first seen at line {seen[cond_text]})",
+                                "message": f"Duplicate condition '{preview}' in if-else chain (first seen at line {seen[cond_text]})",
                                 "file": str(file_path),
                                 "line": cond_line,
                                 "col": 0,
@@ -283,6 +287,13 @@ def _check_duplicate_conditions(
 
         for child in node.children:
             stack.append(child)
+
+
+def _condition_preview(cond_text: str) -> str:
+    if len(cond_text) <= _CONDITION_PREVIEW_LIMIT:
+        return cond_text
+
+    return cond_text[: _CONDITION_PREVIEW_LIMIT - 3] + "..."
 
 
 def _check_await_in_loop(

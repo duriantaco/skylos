@@ -1208,6 +1208,47 @@ class TestNewQualityRules:
         ids = {f["rule_id"] for f in quality}
         assert "SKY-Q305" in ids
 
+    def test_duplicate_condition_else_if_chain_scanned_once(self, tmp_path):
+        chain_length = 8
+        lines = [
+            "function check(x: number) {",
+            "    if (x === 1) { return 0; }",
+        ]
+        for index in range(1, chain_length):
+            lines.append(f"    else if (x === 1) {{ return {index}; }}")
+        lines.append("    return -1;")
+        lines.append("}")
+        code = "\n".join(lines)
+
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        q305 = []
+        for finding in quality:
+            if finding["rule_id"] == "SKY-Q305":
+                q305.append(finding)
+
+        assert len(q305) == chain_length - 1
+
+    def test_duplicate_condition_message_truncates_long_condition(self, tmp_path):
+        long_value = "a" * 200
+        condition = f"x === '{long_value}'"
+        code = (
+            "function check(x: string) {\n"
+            f"    if ({condition}) {{ return 1; }}\n"
+            f"    else if ({condition}) {{ return 2; }}\n"
+            "    return 0;\n"
+            "}\n"
+        )
+
+        _, _, quality, _ = _scan_ts(tmp_path, code)
+        q305 = []
+        for finding in quality:
+            if finding["rule_id"] == "SKY-Q305":
+                q305.append(finding)
+
+        assert len(q305) == 1
+        assert "..." in q305[0]["message"]
+        assert long_value not in q305[0]["message"]
+
     def test_no_duplicate_condition(self, tmp_path):
         """No duplicate conditions should not trigger SKY-Q305."""
         code = (
