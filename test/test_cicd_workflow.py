@@ -156,7 +156,9 @@ def test_workflow_scan_path_is_monorepo_aware():
     content = generate_workflow(scan_path="apps/api", use_upload=True, use_defend=True)
     assert "skylos apps/api" in content
     assert "skylos defend apps/api" in content
-    assert "--defense-input defense-results.json" in content
+    assert '--json -o "$RUNNER_TEMP/defense-results.json"' in content
+    assert '--defense-input "$RUNNER_TEMP/defense-results.json"' in content
+    assert "--defense-input defense-results.json" not in content
 
 
 def test_workflow_prefixes_leading_dash_scan_path():
