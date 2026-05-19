@@ -7,6 +7,120 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 
+def _normalize_path_text(value: str) -> str:
+    return value.replace("\\", "/").rstrip("/")
+
+
+def _normalized_parts(value: str) -> tuple[str, ...]:
+    return tuple(part for part in value.split("/") if part and part != ".")
+
+
+def _dedupe_candidates(candidates: list[str]) -> list[str]:
+    seen = set()
+    deduped = []
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            deduped.append(candidate)
+    return deduped
+
+
+def _absolute_exclude_candidate(exclude_folder: str, root_path: Path) -> str | None:
+    exclude_path = Path(exclude_folder)
+    if not exclude_path.is_absolute():
+        return None
+
+    try:
+        rel = exclude_path.resolve(strict=False).relative_to(
+            root_path.resolve(strict=False)
+        )
+    except (OSError, ValueError):
+        return None
+
+    return _normalize_path_text(str(rel))
+
+
+def _root_prefixed_exclude_candidate(exclude_normalized: str, root_path: Path) -> str | None:
+    if "/" not in exclude_normalized:
+        return None
+
+    exclude_parts = _normalized_parts(exclude_normalized)
+    root_parts = tuple(
+        part
+        for part in root_path.resolve(strict=False).parts
+        if part not in {"", os.sep}
+    )
+    max_prefix = min(len(exclude_parts), len(root_parts))
+    for prefix_size in range(max_prefix, 0, -1):
+        if exclude_parts[:prefix_size] == root_parts[-prefix_size:]:
+            return "/".join(exclude_parts[prefix_size:]) or None
+    return None
+
+
+def _exclude_candidates(exclude_folder: str, root_path: Path) -> list[str]:
+    exclude_normalized = _normalize_path_text(exclude_folder)
+    candidates = [exclude_normalized]
+
+    if "*" not in exclude_normalized:
+        absolute_candidate = _absolute_exclude_candidate(exclude_folder, root_path)
+        prefixed_candidate = _root_prefixed_exclude_candidate(
+            exclude_normalized, root_path
+        )
+        if absolute_candidate:
+            candidates.append(absolute_candidate)
+        if prefixed_candidate:
+            candidates.append(prefixed_candidate)
+
+    return _dedupe_candidates(candidates)
+
+
+def _glob_patterns(exclude_normalized: str) -> set[str]:
+    patterns = {exclude_normalized}
+    if exclude_normalized.startswith("**/"):
+        patterns.add(exclude_normalized[3:])
+    if exclude_normalized.endswith("/**"):
+        patterns.add(exclude_normalized[:-3])
+    if exclude_normalized.startswith("**/") and exclude_normalized.endswith("/**"):
+        patterns.add(exclude_normalized[3:-3])
+    return patterns
+
+
+def _matches_glob_exclude(
+    rel_path_str: str, path_parts: tuple[str, ...], exclude_normalized: str
+) -> bool:
+    for pattern in _glob_patterns(exclude_normalized):
+        if rel_path_str == pattern or fnmatchcase(rel_path_str, pattern):
+            return True
+        if pattern.endswith("/**"):
+            directory = pattern[:-3]
+            if rel_path_str == directory or rel_path_str.startswith(directory + "/"):
+                return True
+
+    suffix = exclude_normalized.replace("*", "")
+    return any(part.endswith(suffix) for part in path_parts)
+
+
+def _matches_nested_exclude(rel_path_str: str, exclude_normalized: str) -> bool:
+    if rel_path_str == exclude_normalized:
+        return True
+    if rel_path_str.startswith(exclude_normalized + "/"):
+        return True
+    check = "/" + rel_path_str + "/"
+    return "/" + exclude_normalized + "/" in check
+
+
+def _path_matches_exclude(
+    rel_path_str: str, path_parts: tuple[str, ...], exclude_normalized: str
+) -> bool:
+    if "*" in exclude_normalized:
+        return _matches_glob_exclude(rel_path_str, path_parts, exclude_normalized)
+
+    if "/" in exclude_normalized:
+        return _matches_nested_exclude(rel_path_str, exclude_normalized)
+
+    return exclude_normalized in path_parts
+
+
 def should_exclude_path(
     file_path: Path,
     root_path: Path,
@@ -24,53 +138,8 @@ def should_exclude_path(
     rel_path_str = str(rel_path).replace("\\", "/")
 
     for exclude_folder in exclude_folders:
-        exclude_normalized = exclude_folder.replace("\\", "/").rstrip("/")
-
-        if "*" in exclude_normalized:
-            patterns = {exclude_normalized}
-            if exclude_normalized.startswith("**/"):
-                patterns.add(exclude_normalized[3:])
-            if exclude_normalized.endswith("/**"):
-                patterns.add(exclude_normalized[:-3])
-            if exclude_normalized.startswith("**/") and exclude_normalized.endswith(
-                "/**"
-            ):
-                patterns.add(exclude_normalized[3:-3])
-
-            for pattern in patterns:
-                if rel_path_str == pattern or fnmatchcase(rel_path_str, pattern):
-                    return True
-                if pattern.endswith("/**"):
-                    directory = pattern[:-3]
-                    if rel_path_str == directory or rel_path_str.startswith(
-                        directory + "/"
-                    ):
-                        return True
-
-            suffix = exclude_normalized.replace("*", "")
-            for part in path_parts:
-                if part.endswith(suffix):
-                    return True
-        elif "/" in exclude_normalized:
-            if rel_path_str == exclude_normalized:
-                return True
-            if rel_path_str.startswith(exclude_normalized + "/"):
-                return True
-            check = "/" + rel_path_str + "/"
-            if "/" + exclude_normalized + "/" in check:
-                return True
-
-            root_name = root_path.resolve().name
-            exclude_parts = exclude_normalized.split("/")
-            if exclude_parts[0] == root_name:
-                stripped = "/".join(exclude_parts[1:])
-                if stripped:
-                    if rel_path_str == stripped:
-                        return True
-                    if rel_path_str.startswith(stripped + "/"):
-                        return True
-        else:
-            if exclude_normalized in path_parts:
+        for exclude_normalized in _exclude_candidates(exclude_folder, root_path):
+            if _path_matches_exclude(rel_path_str, path_parts, exclude_normalized):
                 return True
 
     return False

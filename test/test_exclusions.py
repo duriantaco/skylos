@@ -143,6 +143,71 @@ class TestPathExclusion(unittest.TestCase):
 
             shutil.rmtree(tmpdir, ignore_errors=True)
 
+    def test_absolute_exclude_under_scan_root(self):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            target_root = Path(tmpdir) / "app"
+            private_dir = target_root / "private"
+            private_dir.mkdir(parents=True)
+            secret_file = private_dir / "secret.py"
+            secret_file.touch()
+
+            excludes = [str(private_dir)]
+
+            self.assertTrue(
+                self.analyzer._should_exclude_file(secret_file, target_root, excludes),
+                "Absolute exclude under scan root did not match the relative file",
+            )
+        finally:
+            import shutil
+
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_fuller_cwd_relative_exclude_under_scan_root(self):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            target_root = Path(tmpdir) / "services" / "app"
+            private_dir = target_root / "private"
+            private_dir.mkdir(parents=True)
+            secret_file = private_dir / "secret.py"
+            secret_file.touch()
+
+            excludes = ["services/app/private"]
+
+            self.assertTrue(
+                self.analyzer._should_exclude_file(secret_file, target_root, excludes),
+                "Fuller CWD-relative exclude did not match under the scan root",
+            )
+        finally:
+            import shutil
+
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_get_python_files_filters_absolute_exclude(self):
+        tmpdir = tempfile.mkdtemp()
+        try:
+            target_root = Path(tmpdir) / "app"
+            private_dir = target_root / "private"
+            public_dir = target_root / "public"
+            private_dir.mkdir(parents=True)
+            public_dir.mkdir(parents=True)
+            secret_file = private_dir / "secret.py"
+            public_file = public_dir / "visible.py"
+            secret_file.write_text("def secret():\n    pass\n", encoding="utf-8")
+            public_file.write_text("def visible():\n    pass\n", encoding="utf-8")
+
+            files, _root = self.analyzer._get_python_files(
+                target_root, exclude_folders=[str(private_dir)]
+            )
+
+            resolved_files = {path.resolve() for path in files}
+            self.assertIn(public_file.resolve(), resolved_files)
+            self.assertNotIn(secret_file.resolve(), resolved_files)
+        finally:
+            import shutil
+
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
     def test_cwd_relative_exclude_with_trailing_slash(self):
         tmpdir = tempfile.mkdtemp()
         try:
