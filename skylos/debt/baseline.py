@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import stat
 
 from skylos.debt.result import DebtHotspot, DebtSnapshot
 from skylos.debt.scoring import refresh_hotspot_priority
@@ -10,6 +12,7 @@ BASELINE_DIR = ".skylos"
 BASELINE_FILE = "debt_baseline.json"
 HISTORY_FILE = "debt_history.jsonl"
 HISTORY_HOTSPOT_LIMIT = 5
+HISTORY_MAX_BYTES = 5 * 1024 * 1024
 
 
 def _baseline_path(project_root: str | Path) -> Path:
@@ -18,6 +21,55 @@ def _baseline_path(project_root: str | Path) -> Path:
 
 def _history_path(project_root: str | Path) -> Path:
     return Path(project_root) / BASELINE_DIR / HISTORY_FILE
+
+
+def _safe_history_path(project_root: str | Path) -> Path | None:
+    root = Path(project_root).resolve()
+    path = _history_path(root)
+    try:
+        path_stat = path.lstat()
+    except FileNotFoundError:
+        return None
+
+    if stat.S_ISLNK(path_stat.st_mode):
+        raise ValueError(f"{path}: history file must not be a symlink")
+    if not stat.S_ISREG(path_stat.st_mode):
+        raise ValueError(f"{path}: history file must be a regular file")
+
+    resolved = path.resolve(strict=True)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"{path}: history file must stay inside project root") from exc
+
+    return path
+
+
+def _read_history_text(path: Path) -> str:
+    flags = os.O_RDONLY
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow:
+        flags |= nofollow
+
+    fd = os.open(  # skylos: ignore[SKY-D215] validated debt history path with no-follow checks
+        path, flags
+    )
+    try:
+        file_stat = os.fstat(fd)
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise ValueError(f"{path}: history file must be a regular file")
+        if file_stat.st_size > HISTORY_MAX_BYTES:
+            raise ValueError(f"{path}: history file is too large")
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            data = handle.read(HISTORY_MAX_BYTES + 1)
+        if len(data) > HISTORY_MAX_BYTES:
+            raise ValueError(f"{path}: history file is too large")
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+    return data.decode("utf-8")
 
 
 def _summary_for_project_persistence(snapshot: DebtSnapshot) -> dict:
@@ -66,12 +118,12 @@ def load_baseline(project_root: str | Path) -> dict | None:
 
 
 def load_history(project_root: str | Path) -> list[dict]:
-    path = _history_path(project_root)
-    if not path.exists():
+    path = _safe_history_path(project_root)
+    if path is None:
         return []
 
     entries = []
-    lines = path.read_text(encoding="utf-8").splitlines()
+    lines = _read_history_text(path).splitlines()
     for line_number, line in enumerate(lines, 1):
         raw = line.strip()
         if not raw:
