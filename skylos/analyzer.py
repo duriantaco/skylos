@@ -397,6 +397,63 @@ def _grep_verify_rescue_priority(candidate: dict) -> tuple:
     )
 
 
+def _confidence_as_unit_interval(value) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if numeric > 1:
+        return max(0.0, min(numeric / 100.0, 1.0))
+    return max(0.0, min(numeric, 1.0))
+
+
+def _implicit_ref_evidence_marker(reason: str | None) -> str | None:
+    if reason == "entrypoint (pyproject)":
+        return "package_entrypoint"
+    if reason == "dynamic reference":
+        return "dynamic_pattern"
+    if reason and reason.startswith("pattern "):
+        return "dynamic_pattern"
+    if reason == "executed (coverage)":
+        return "coverage_hit"
+    if reason == "executed (call trace)":
+        return "trace_hit"
+    return None
+
+
+def _mark_evidence_ref(defn, marker: str, confidence: float = 1.0) -> None:
+    refs = getattr(defn, "heuristic_refs", None)
+    if not isinstance(refs, dict):
+        return
+    refs[marker] = max(refs.get(marker, 0.0), confidence)
+
+
+def _has_evidence_marker(defn, markers) -> bool:
+    refs = getattr(defn, "heuristic_refs", {})
+    if not isinstance(refs, dict):
+        return False
+    return any(marker in refs for marker in markers)
+
+
+def _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags) -> None:
+    framework_lines = getattr(framework_flags, "framework_decorated_lines", set())
+    test_lines = getattr(test_flags, "test_decorated_lines", set())
+    is_test_file = bool(getattr(test_flags, "is_test_file", False))
+
+    for defn in defs:
+        if getattr(defn, "line", None) in framework_lines:
+            _mark_evidence_ref(defn, "framework_root")
+            signals = getattr(defn, "framework_signals", None)
+            if isinstance(signals, list) and "framework_decorator" not in signals:
+                signals.append("framework_decorator")
+
+        is_test_entry = getattr(defn, "line", None) in test_lines
+        if is_test_file and str(getattr(defn, "simple_name", "")).startswith("test_"):
+            is_test_entry = True
+        if is_test_entry:
+            _mark_evidence_ref(defn, "test_entrypoint")
+
+
 class Skylos:
     def __init__(self):
         self.defs = {}
@@ -1177,9 +1234,18 @@ class Skylos:
             or getattr(global_tracker, "known_qualified_refs", None)
         ):
             for def_obj in self.defs.values():
-                should_mark, _, reason = global_tracker.should_mark_as_used(def_obj)
+                should_mark, confidence, reason = global_tracker.should_mark_as_used(
+                    def_obj
+                )
                 if should_mark:
                     def_obj.references += 1
+                    marker = _implicit_ref_evidence_marker(reason)
+                    if marker is not None:
+                        _mark_evidence_ref(
+                            def_obj,
+                            marker,
+                            _confidence_as_unit_interval(confidence),
+                        )
 
         used_attr_names = getattr(self, "_all_used_attr_names", set())
         used_attr_context = getattr(self, "_all_used_attr_context", set())
@@ -1413,46 +1479,37 @@ class Skylos:
 
                     stack.extend(children_of.get(child, set()))
 
-    def _apply_entry_reachability(self):
+    def _build_def_call_graph(self):
         call_graph = defaultdict(set)
         for defn in self.defs.values():
             calls = getattr(defn, "calls", None)
             if calls and isinstance(calls, (set, list, frozenset)):
                 call_graph[defn.name].update(calls)
+        return call_graph
 
+    def _is_entry_reachability_root(self, defn) -> bool:
+        if str(defn.filename).endswith("__main__.py"):
+            return True
+        if defn.type == "function" and defn.is_exported:
+            return True
+        if defn.references > 0 and defn.type in ("function", "method"):
+            return True
+        if defn.simple_name.startswith("test_"):
+            return True
+        if defn.type != "function":
+            return False
+        return defn.simple_name in ("main", "cli", "run", "app", "create_app")
+
+    def _entry_reachability_roots(self) -> set[str]:
         entry_points = set()
-        for name, defn in self.defs.items():
-            if str(defn.filename).endswith("__main__.py"):
+        for defn in self.defs.values():
+            if self._is_entry_reachability_root(defn):
                 entry_points.add(defn.name)
-                continue
+        return entry_points
 
-            if defn.type == "function" and defn.is_exported:
-                entry_points.add(defn.name)
-                continue
-
-            if defn.references > 0 and defn.type in ("function", "method"):
-                entry_points.add(defn.name)
-                continue
-
-            if defn.simple_name.startswith("test_"):
-                entry_points.add(defn.name)
-                continue
-
-            if defn.type == "function" and defn.simple_name in (
-                "main",
-                "cli",
-                "run",
-                "app",
-                "create_app",
-            ):
-                entry_points.add(defn.name)
-                continue
-
-        if not entry_points:
-            return
-
+    def _walk_call_graph(self, roots: set[str], call_graph) -> set[str]:
         reachable = set()
-        stack = list(entry_points)
+        stack = list(roots)
         while stack:
             current = stack.pop()
             if current in reachable:
@@ -1461,7 +1518,17 @@ class Skylos:
             for callee in call_graph.get(current, []):
                 if callee not in reachable:
                     stack.append(callee)
+        return reachable
 
+    def _mark_evidence_reachable_defs(self, evidence_roots: set[str], call_graph) -> None:
+        for name in self._walk_call_graph(evidence_roots, call_graph):
+            if name in evidence_roots:
+                continue
+            defn = self.defs.get(name)
+            if defn is not None:
+                _mark_evidence_ref(defn, "reachable_from_root")
+
+    def _mark_entry_reachable_defs(self, reachable: set[str]) -> None:
         for name, defn in self.defs.items():
             if defn.type not in ("function", "method"):
                 continue
@@ -1472,6 +1539,19 @@ class Skylos:
 
             if name in reachable:
                 defn.references += 1
+
+    def _apply_entry_reachability(self, evidence_root_names=None):
+        call_graph = self._build_def_call_graph()
+        entry_points = self._entry_reachability_roots()
+        evidence_roots = set(evidence_root_names or ())
+        if not entry_points and not evidence_roots:
+            return
+
+        if evidence_roots:
+            self._mark_evidence_reachable_defs(evidence_roots, call_graph)
+
+        reachable = self._walk_call_graph(entry_points, call_graph)
+        self._mark_entry_reachable_defs(reachable)
 
     def _discover_files(self, path, exclude_folders):
         """Discover and deduplicate files to analyze, return (files, root) or None."""
@@ -1527,6 +1607,32 @@ class Skylos:
         architecture_main_guard_modules = set(architecture_main_guard_modules or ())
         pyproject_entrypoint_qnames = set(pyproject_entrypoint_qnames or ())
         pyproject_entrypoint_modules = set(pyproject_entrypoint_modules or ())
+
+        evidence_root = getattr(self, "_project_root", None)
+        if evidence_root is None:
+            evidence_root = Path(path[0] if isinstance(path, (list, tuple)) else path)
+            if evidence_root.is_file():
+                evidence_root = evidence_root.parent
+        from skylos.deadcode.evidence import build_dead_code_evidence
+
+        dead_code_ledger = build_dead_code_evidence(
+            self.defs,
+            project_root=evidence_root,
+            pyproject_entrypoint_qnames=pyproject_entrypoint_qnames,
+        )
+        dead_code_evidence = dead_code_ledger.to_dict(evidence_root)
+        evidence_by_name = {
+            entry["qualified_name"]: entry
+            for entry in dead_code_evidence.get("symbols", [])
+        }
+
+        def attach_evidence(target: dict, definition) -> None:
+            entry = evidence_by_name.get(getattr(definition, "name", ""))
+            if not entry:
+                return
+            target["dead_code_classification"] = entry["classification"]
+            target["dead_code_evidence"] = list(entry.get("evidence") or [])
+
         unused = []
         dead_class_keys = {
             key
@@ -1558,7 +1664,9 @@ class Skylos:
                     )
                     if owner_key in dead_class_keys:
                         continue
-                unused.append(definition.to_dict())
+                item = definition.to_dict()
+                attach_evidence(item, definition)
+                unused.append(item)
 
         context_map = {}
         for name, d in self.defs.items():
@@ -1578,7 +1686,7 @@ class Skylos:
                     and d.confidence >= thr
                 )
 
-                context_map[name] = {
+                context_entry = {
                     "name": d.name,
                     "file": str(d.filename),
                     "line": d.line,
@@ -1589,6 +1697,8 @@ class Skylos:
                     "called_by": sorted(d.called_by) if d.called_by else [],
                     "dead": is_dead,
                 }
+                attach_evidence(context_entry, d)
+                context_map[name] = context_entry
 
         whitelisted = []
         for d in self.defs.values():
@@ -1617,10 +1727,12 @@ class Skylos:
             "unused_files": [],
             "whitelisted": whitelisted,
             "suppressed": all_suppressed,
+            "dead_code_evidence": dead_code_evidence,
             "analysis_summary": {
                 "total_files": len(files),
                 "excluded_folders": exclude_folders or [],
                 "languages": self._count_languages(files),
+                "dead_code_evidence": dead_code_ledger.summary(),
             },
         }
 
@@ -1975,7 +2087,7 @@ class Skylos:
 
         coverage_path = project_root / ".coverage"
         if coverage_path.exists():
-            if global_pattern_tracker.load_coverage():
+            if global_pattern_tracker.load_coverage(str(coverage_path)):
                 logger.info(
                     f"Loaded coverage data ({len(pattern_tracker.coverage_hits)} lines)"
                 )
@@ -2015,6 +2127,7 @@ class Skylos:
         all_used_attr_context = set()
         all_param_method_refs = defaultdict(list)
         all_call_arg_types = defaultdict(list)
+        all_top_level_refs = set()
 
         injected = False
         if custom_rules_data and not os.getenv("SKYLOS_CUSTOM_RULES"):
@@ -2090,6 +2203,7 @@ class Skylos:
                 file_call_arg_types = out[21] if len(out) > 21 else {}
                 file_clone_fragments = out[22] if len(out) > 22 else []
                 file_architecture_metrics = out[23] if len(out) > 23 else None
+                file_top_level_refs = out[24] if len(out) > 24 else set()
                 (
                     defs,
                     refs,
@@ -2127,6 +2241,8 @@ class Skylos:
                     all_used_attr_names.update(file_used_attr_names)
                 if file_used_attr_context:
                     all_used_attr_context.update(file_used_attr_context)
+                if file_top_level_refs:
+                    all_top_level_refs.update(file_top_level_refs)
                 if file_clone_fragments:
                     all_clone_fragments.extend(file_clone_fragments)
                 if file_architecture_metrics:
@@ -2484,6 +2600,7 @@ class Skylos:
         )
 
         for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
+            _annotate_dead_code_evidence_sources(defs, test_flags, framework_flags)
             for definition in defs:
                 apply_penalties(self, definition, test_flags, framework_flags, cfg)
 
@@ -2803,6 +2920,11 @@ class Skylos:
         self._param_method_refs = all_param_method_refs
         self._call_arg_types = all_call_arg_types
 
+        for top_level_ref in all_top_level_refs:
+            defn = self.defs.get(top_level_ref)
+            if defn is not None:
+                _mark_evidence_ref(defn, "top_level_execution")
+
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: mark refs"))
         self._mark_refs(progress_callback=progress_callback)
@@ -2828,7 +2950,21 @@ class Skylos:
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: entry reachability"))
-        self._apply_entry_reachability()
+        evidence_root_names = {
+            name
+            for name, defn in self.defs.items()
+            if getattr(defn, "type", None) in ("function", "method")
+            and _has_evidence_marker(
+                defn,
+                (
+                    "framework_root",
+                    "package_entrypoint",
+                    "test_entrypoint",
+                    "top_level_execution",
+                ),
+            )
+        }
+        self._apply_entry_reachability(evidence_root_names=evidence_root_names)
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: transitive dead code"))
@@ -3366,6 +3502,7 @@ def proc_file(
             getattr(v, "call_arg_types", {}),
             clone_fragments,
             architecture_metrics,
+            getattr(v, "top_level_refs", set()),
         )
 
     except Exception as e:
@@ -3400,6 +3537,7 @@ def proc_file(
             {},
             [],
             None,
+            set(),
         )
 
 
