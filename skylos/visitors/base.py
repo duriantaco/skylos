@@ -349,6 +349,7 @@ class Visitor(ast.NodeVisitor):
         self.abc_implementers = {}
         self.protocol_implementers = {}
         self.protocol_method_names = {}
+        self.top_level_refs = set()
         self.param_method_refs = defaultdict(list)
         self.call_arg_types = defaultdict(list)
 
@@ -1531,6 +1532,8 @@ class Visitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         self.generic_visit(node)
         callee = self._resolve_callee_fqname(node.func)
+        if callee and not self.current_function_scope and self.cls is None:
+            self.top_level_refs.add(callee)
         if callee:
             for index, arg in enumerate(node.args):
                 arg_type = self._get_expr_type(arg)
@@ -1962,6 +1965,8 @@ class Visitor(ast.NodeVisitor):
             return
 
         qualified = self.qual(node.id)
+        if not self.current_function_scope and self.cls is None:
+            self.top_level_refs.add(qualified)
         self.first_read_lineno.setdefault(qualified, node.lineno)
         self.add_ref(qualified)
 
