@@ -53,6 +53,7 @@ Rule IDs use a stable public prefix:
 | Upload / Cloud workflow | Optional upload of scan results to Skylos Cloud; not required for local analysis. |
 | MCP server | Integration surface for AI agents and coding assistants. |
 | SCA | Software composition analysis for dependency vulnerability findings. |
+| Symlink safety | Checks for file operations that follow repository-controlled symbolic links across the intended scan or output boundary. |
 
 ## CLI Output Modes
 
@@ -186,6 +187,9 @@ Finding types:
 | D321 | MEDIUM | Privileged job missing timeout | GitLab CI |
 | D322 | MEDIUM | Dynamic runner tag | GitLab CI |
 | D323 | MEDIUM | Ambiguous secret token | GitLab CI |
+| D324 | HIGH | Symlink-following file write | Python |
+| D325 | MEDIUM | Symlink-following file read | Python |
+| D326 | HIGH | Unsafe archive extraction | Python |
 
 ## Secrets (SKY-S)
 
