@@ -85,6 +85,115 @@ def test_requests_verify_false(tmp_path):
     assert "SKY-D210" in _rule_ids(out)
 
 
+def test_symlink_following_write_flags_attacker_controlled_output(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_symlink_write.py",
+        """
+from pathlib import Path
+
+def save(raw_path, data):
+    out = Path(raw_path)
+    out.write_text(data, encoding="utf-8")
+""",
+    )
+    assert "SKY-D324" in _rule_ids(out)
+
+
+def test_symlink_following_read_flags_attacker_controlled_history(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_symlink_read.py",
+        """
+def show_history(project_root):
+    path = project_root / ".skylos" / "debt_history.jsonl"
+    return path.read_text(encoding="utf-8")
+""",
+    )
+    assert "SKY-D325" in _rule_ids(out)
+
+
+def test_basename_only_sidecar_still_flags_symlink_read(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_sidecar.py",
+        """
+from pathlib import Path
+
+def load_sidecar(raw_path):
+    safe_name = Path(raw_path).name
+    return Path(safe_name).read_text(encoding="utf-8")
+""",
+    )
+    assert "SKY-D325" in _rule_ids(out)
+
+
+def test_bounded_nofollow_read_is_not_symlink_finding(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_safe_read.py",
+        """
+import os
+import stat
+
+MAX_BYTES = 4096
+
+def load(path):
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        file_stat = os.fstat(fd)
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise ValueError("not a regular file")
+        if file_stat.st_size > MAX_BYTES:
+            raise ValueError("too large")
+        with os.fdopen(fd, "rb") as handle:
+            return handle.read(MAX_BYTES)
+    finally:
+        os.close(fd)
+""",
+    )
+    assert "SKY-D324" not in _rule_ids(out)
+    assert "SKY-D325" not in _rule_ids(out)
+
+
+def test_unsafe_archive_extractall_flags(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_archive.py",
+        """
+import tarfile
+
+def unpack(archive_path, dest):
+    with tarfile.open(archive_path) as archive:
+        archive.extractall(dest)
+""",
+    )
+    assert "SKY-D326" in _rule_ids(out)
+
+
+def test_archive_member_validation_suppresses_extractall_finding(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_safe_archive.py",
+        """
+import tarfile
+from pathlib import Path
+
+def unpack(archive_path, dest):
+    with tarfile.open(archive_path) as archive:
+        for member in archive.getmembers():
+            member_path = Path(member.name)
+            if member.issym() or member.islnk() or member_path.is_absolute():
+                raise ValueError("unsafe archive member")
+            if ".." in member_path.parts:
+                raise ValueError("unsafe archive member")
+        archive.extractall(dest)
+""",
+    )
+    assert "SKY-D326" not in _rule_ids(out)
+
+
 def test_random_random_flags_weak_security_random(tmp_path):
     out = _scan_one(
         tmp_path,

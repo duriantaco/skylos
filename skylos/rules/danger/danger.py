@@ -223,6 +223,10 @@ _PATH_TOKENS = (
     "write_bytes",
     "send_file",
     "send_from_directory",
+    "extract(",
+    "extractall",
+    "tarfile",
+    "zipfile",
 )
 _XSS_TOKENS = (
     "markup",

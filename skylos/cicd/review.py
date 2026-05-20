@@ -439,6 +439,9 @@ _RULE_SUGGESTIONS: dict[str, str] = {
     "SKY-D321": "Add `timeout:` to GitLab CI release, deploy, or OIDC jobs.",
     "SKY-D322": "Use static GitLab runner tags so untrusted refs cannot select privileged runners.",
     "SKY-D323": "Set an explicit `token:` for each GitLab CI secret when the job defines multiple `id_tokens`.",
+    "SKY-D324": "Reject symlinks before writing, keep the resolved path inside the trusted root, or open with `O_NOFOLLOW`.",
+    "SKY-D325": "Reject symlinks and non-regular files before reading, enforce root containment, and cap the read size.",
+    "SKY-D326": "Manually validate archive members before extraction; reject absolute paths, `..`, symlinks, and hardlinks.",
     "SKY-S101": "Move secrets to environment variables: `os.getenv('SECRET_KEY')`. Never hardcode credentials.",
 }
 
