@@ -16,6 +16,11 @@ ANALYSIS_FLAG_MAP: dict[str, str] = {
 }
 
 SKYLOS_DEFENSE_RESULTS_SHELL_PATH = '"$RUNNER_TEMP/defense-results.json"'
+PINNED_ACTIONS_CHECKOUT = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
+PINNED_ACTIONS_SETUP_PYTHON = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
+PINNED_ACTIONS_UPLOAD_ARTIFACT = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+PINNED_ACTIONS_DOWNLOAD_ARTIFACT = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+PINNED_CLAUDE_CODE_ACTION = "anthropics/claude-code-action@1dc994ee7a008f0ecc866d9ac23ef036b7229f84"
 
 
 def _installed_skylos_version() -> str | None:
@@ -154,14 +159,10 @@ def generate_workflow(
             f"          {review_command}",
         ]
     )
+    skylos_environment = "\n    environment: skylos-security" if use_llm else ""
 
     permissions_block = """permissions:
-  contents: read
-  pull-requests: write
-  checks: write
-  id-token: write"""
-    if use_claude_security:
-        permissions_block += "\n  security-events: write"
+  contents: read"""
 
     sync_step = """
       - name: Pull Skylos Cloud Policy
@@ -179,14 +180,21 @@ jobs:
   skylos:
     name: Skylos Quality Gate
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+{skylos_environment}
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: {PINNED_ACTIONS_CHECKOUT}
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: {PINNED_ACTIONS_SETUP_PYTHON}
         with:
           python-version: '{python_version}'
 
@@ -218,10 +226,11 @@ jobs:
         else '''
       - name: Upload Skylos Results for Cross-Reference
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
         with:
           name: skylos-results
           path: skylos-results.json
+          if-no-files-found: error
 '''
     }"""
 
@@ -235,24 +244,27 @@ def _build_claude_security_jobs(python_version: str, install_command: str) -> st
     return f"""
   claude-security:
     runs-on: ubuntu-latest
+    environment: skylos-security
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: {PINNED_ACTIONS_CHECKOUT}
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run Claude Code Security Review
-        uses: anthropics/claude-code-action@main
+        uses: {PINNED_CLAUDE_CODE_ACTION}
         with:
           anthropic_api_key: ${{{{ secrets.ANTHROPIC_API_KEY }}}}
           direct_prompt: "/review --output-file claude-security-results.json"
 
       - name: Upload Claude Security Results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: {PINNED_ACTIONS_UPLOAD_ARTIFACT}
         with:
           name: claude-security-results
           path: claude-security-results.json
+          if-no-files-found: error
 
   upload-claude-findings:
     if: always()
@@ -260,10 +272,12 @@ def _build_claude_security_jobs(python_version: str, install_command: str) -> st
     needs: [skylos, claude-security]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: {PINNED_ACTIONS_CHECKOUT}
+        with:
+          persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: {PINNED_ACTIONS_SETUP_PYTHON}
         with:
           python-version: '{python_version}'
 
@@ -271,12 +285,12 @@ def _build_claude_security_jobs(python_version: str, install_command: str) -> st
         run: {install_command}
 
       - name: Download Claude Security Results
-        uses: actions/download-artifact@v4
+        uses: {PINNED_ACTIONS_DOWNLOAD_ARTIFACT}
         with:
           name: claude-security-results
 
       - name: Download Skylos Results
-        uses: actions/download-artifact@v4
+        uses: {PINNED_ACTIONS_DOWNLOAD_ARTIFACT}
         with:
           name: skylos-results
 

@@ -293,12 +293,15 @@ class TestWorkflowClaudeSecurity:
         assert "upload-claude-findings" not in yaml
 
     def test_with_flag(self):
-        from skylos.cicd.workflow import generate_workflow
+        from skylos.cicd.workflow import (
+            PINNED_CLAUDE_CODE_ACTION,
+            generate_workflow,
+        )
 
         yaml = generate_workflow(use_claude_security=True)
         assert "claude-security:" in yaml
         assert "upload-claude-findings:" in yaml
-        assert "anthropics/claude-code-action@main" in yaml
+        assert PINNED_CLAUDE_CODE_ACTION in yaml
         assert "skylos ingest claude-security" in yaml
         assert "SKYLOS_TOKEN" not in yaml
         assert "ANTHROPIC_API_KEY" in yaml
@@ -309,11 +312,12 @@ class TestWorkflowClaudeSecurity:
         yaml = generate_workflow(use_claude_security=True)
         assert "needs: [skylos, claude-security]" in yaml
 
-    def test_security_events_permission(self):
+    def test_claude_security_uses_dedicated_environment_without_broad_permission(self):
         from skylos.cicd.workflow import generate_workflow
 
         yaml = generate_workflow(use_claude_security=True)
-        assert "security-events: write" in yaml
+        assert "environment: skylos-security" in yaml
+        assert "security-events: write" not in yaml
 
     def test_no_security_events_without_flag(self):
         from skylos.cicd.workflow import generate_workflow

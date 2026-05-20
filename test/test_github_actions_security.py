@@ -5,7 +5,10 @@ import yaml
 
 from skylos.analyzer import analyze
 from skylos.rules.config import scan_config_files
-from skylos.rules.config.cicd.github_actions import scan_github_actions
+from skylos.rules.config.cicd.github_actions import (
+    scan_github_actions,
+    scan_github_actions_file,
+)
 
 
 def _rule_ids(findings):
@@ -421,6 +424,10 @@ def test_composite_action_validates_and_quotes_max_comments_input():
     assert "${{ inputs.max-comments }}" not in run
     assert '"$SKYLOS_MAX_COMMENTS"' in run
     assert "=~ ^[0-9]+$" in run
+
+
+def test_composite_action_passes_skylos_actions_audit():
+    assert scan_github_actions_file("action.yml", root=".") == []
 
 
 def test_analyzer_reports_github_actions_dangers_without_source_files(tmp_path):
