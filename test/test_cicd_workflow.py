@@ -1,6 +1,7 @@
 import pytest
 import yaml
 from skylos.cicd.workflow import generate_workflow
+from skylos.rules.config.cicd.github_actions import scan_github_actions
 
 
 def test_default_workflow_valid_yaml():
@@ -106,10 +107,39 @@ def test_workflow_non_claude_model_no_anthropic_key():
 def test_workflow_permissions():
     content = generate_workflow()
     parsed = yaml.safe_load(content)
-    perms = parsed["permissions"]
-    assert perms["contents"] == "read"
-    assert perms["pull-requests"] == "write"
-    assert perms["id-token"] == "write"
+    assert parsed["permissions"] == {"contents": "read"}
+    job = parsed["jobs"]["skylos"]
+    assert job["permissions"] == {
+        "contents": "read",
+        "pull-requests": "write",
+        "id-token": "write",
+    }
+    assert job["timeout-minutes"] == 15
+
+
+def test_generated_workflow_passes_skylos_actions_audit(tmp_path):
+    workflow = tmp_path / ".github" / "workflows" / "skylos.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text(generate_workflow(), encoding="utf-8")
+
+    assert scan_github_actions(tmp_path) == []
+
+
+def test_generated_claude_workflow_passes_skylos_actions_audit(tmp_path):
+    workflow = tmp_path / ".github" / "workflows" / "skylos.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text(
+        generate_workflow(
+            use_upload=True,
+            use_llm=True,
+            use_defend=True,
+            use_claude_security=True,
+            model="gpt-4.1",
+        ),
+        encoding="utf-8",
+    )
+
+    assert scan_github_actions(tmp_path) == []
 
 
 def test_workflow_schedule_trigger():
