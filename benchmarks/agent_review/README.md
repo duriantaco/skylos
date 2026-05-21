@@ -23,6 +23,16 @@ Run it with:
 python3 scripts/agent_review_benchmark.py --manifest benchmarks/agent_review/manifest.json
 ```
 
+Adversarial grounding cases live in a separate manifest:
+
+```bash
+python3 scripts/agent_review_benchmark.py --manifest benchmarks/agent_review/adversarial_manifest.json
+```
+
+The adversarial manifest is public but not part of the default required gate.
+Some cases intentionally document current failure modes or high-cost review
+paths while grounding and verification work is still in progress.
+
 Compare against Codex with:
 
 ```bash

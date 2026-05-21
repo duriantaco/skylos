@@ -19,6 +19,11 @@ from skylos.llm.schemas import AnalysisResult
 MANIFEST_PATH = (
     Path(__file__).resolve().parent.parent / "benchmarks/agent_review" / "manifest.json"
 )
+ADVERSARIAL_MANIFEST_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "benchmarks/agent_review"
+    / "adversarial_manifest.json"
+)
 
 
 def test_checked_in_agent_review_manifest_validates():
@@ -65,6 +70,26 @@ def test_checked_in_agent_review_manifest_validates():
         "deserialization",
         "archive_extraction",
     }
+
+
+def test_checked_in_agent_review_adversarial_manifest_validates():
+    manifest = load_manifest(ADVERSARIAL_MANIFEST_PATH)
+    cases = validate_manifest(manifest, ADVERSARIAL_MANIFEST_PATH)
+
+    assert {case["id"] for case in cases} == {
+        "extreme-grounding-framework",
+        "static-blind-plugin-dispatch",
+    }
+    labels = {label for case in cases for label in case["taxonomy"]}
+    assert labels <= set(AGENT_REVIEW_TAXONOMY)
+    security_labels = {
+        label for case in cases for label in case.get("security_classes", [])
+    }
+    assert security_labels == {"sql_injection", "command_injection", "ssrf"}
+    assert all(
+        case.get("scan", {}).get("issue_types") == ["security_audit"]
+        for case in cases
+    )
 
 
 def test_agent_review_runner_reports_symbol_and_budget_failures(tmp_path, monkeypatch):

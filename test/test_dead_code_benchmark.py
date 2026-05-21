@@ -18,6 +18,11 @@ from skylos.benchmarks.dead_code import (
 MANIFEST_PATH = (
     Path(__file__).resolve().parent.parent / "benchmarks/dead_code" / "manifest.json"
 )
+ADVERSARIAL_MANIFEST_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "benchmarks/dead_code"
+    / "adversarial_manifest.json"
+)
 EXTERNAL_TARGETS_PATH = (
     Path(__file__).resolve().parent.parent
     / "benchmarks/dead_code"
@@ -36,6 +41,18 @@ def test_checked_in_dead_code_manifest_validates():
         "dynamic-registry-used",
     }
 
+    labels = {label for case in cases for label in case["taxonomy"]}
+    assert labels <= set(DEAD_CODE_TAXONOMY)
+
+
+def test_checked_in_dead_code_adversarial_manifest_validates():
+    manifest = load_manifest(ADVERSARIAL_MANIFEST_PATH)
+    cases = validate_manifest(manifest, ADVERSARIAL_MANIFEST_PATH)
+
+    assert {case["id"] for case in cases} == {
+        "extreme-grounding-framework-dead-code",
+        "static-blind-plugin-dispatch-dead-code",
+    }
     labels = {label for case in cases for label in case["taxonomy"]}
     assert labels <= set(DEAD_CODE_TAXONOMY)
 

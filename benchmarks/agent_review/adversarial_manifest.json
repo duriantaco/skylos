@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "extreme-grounding-framework",
+      "path": "fixtures/extreme_grounding_framework",
+      "description": "Adversarial repo with app roots, decorator roots, package script roots, safe lookalikes, mutable allowlist traps, and dead risky decoys.",
+      "taxonomy": ["security", "control_flow", "precision_guard"],
+      "security_classes": ["sql_injection", "command_injection", "ssrf"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "test-only",
+        "notes": "Adversarial regression target for LLM grounding and finding verification. This manifest is not part of the default required gate."
+      },
+      "scan": {
+        "max_files": 14,
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 35.0
+      },
+      "expect": {
+        "present": {
+          "security": [
+            "load_account",
+            "run_dynamic_hook",
+            "run_mutable_runner",
+            "fetch_partner",
+            "admin_query_route",
+            "dangerous_admin"
+          ]
+        },
+        "absent": {
+          "security": [
+            "archive_account",
+            "dormant_report",
+            "run_registered_hook",
+            "run_sample",
+            "fetch_internal_status",
+            "lab_fetch"
+          ]
+        }
+      }
+    },
+    {
+      "id": "static-blind-plugin-dispatch",
+      "path": "fixtures/static_blind_plugin_dispatch",
+      "description": "Dynamic plugin dispatch through module:function strings and importlib, with live vulnerabilities, safe lookalikes, and dead risky decoys.",
+      "taxonomy": ["security", "control_flow", "precision_guard"],
+      "security_classes": ["sql_injection", "command_injection", "ssrf"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "test-only",
+        "notes": "Adversarial regression target for LLM grounding and finding verification. This manifest is not part of the default required gate."
+      },
+      "scan": {
+        "max_files": 14,
+        "issue_types": ["security_audit"]
+      },
+      "budget": {
+        "max_seconds": 35.0
+      },
+      "expect": {
+        "present": {
+          "security": [
+            "charge_card",
+            "ship_audit",
+            "run_mutable_registered",
+            "fetch_url"
+          ]
+        },
+        "absent": {
+          "security": [
+            "archived_invoice",
+            "debug_query",
+            "sample_shell",
+            "run_safe_builtin",
+            "fetch_fixed_status",
+            "lab_fetch"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+[project]
+name = "static-blind-fixture"
+version = "0.0.0"
+
+[project.scripts]
+blind-runner = "app:main"
