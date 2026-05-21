@@ -18,6 +18,7 @@ QUALITY_TAXONOMY: dict[str, str] = {
     "framework": "Framework-specific route and handler practices.",
     "maintainability": "Long functions and patterns that become hard to review or change.",
     "precision_guard": "Clean cases that should stay free of noisy quality findings.",
+    "readability": "Identifier clarity and naming choices that affect code review.",
     "repo_policy": "Repository-level lint, type-check, gate, and hook policy.",
     "security_practice": "Security-oriented coding practices that support safe defaults.",
     "typing": "Type annotation coverage and type-check policy.",

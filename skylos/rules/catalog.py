@@ -46,6 +46,7 @@ _RULES = (
     RuleCatalogEntry("SKY-Q803", "Architecture zone warning", "quality"),
     RuleCatalogEntry("SKY-Q804", "Dependency inversion violation", "quality"),
     RuleCatalogEntry("SKY-Q805", "Architecture layer policy violation", "quality"),
+    RuleCatalogEntry("SKY-Q806", "Opaque identifier", "quality", "LOW"),
     RuleCatalogEntry("SKY-L001", "Mutable default argument", "quality"),
     RuleCatalogEntry("SKY-L002", "Bare except block", "quality"),
     RuleCatalogEntry("SKY-L003", "Dangerous comparison", "quality"),

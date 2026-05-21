@@ -88,6 +88,7 @@ from skylos.rules.quality.practices import (
     FrameworkPracticeRule,
     TypeAnnotationPracticeRule,
 )
+from skylos.rules.quality._readability import OpaqueIdentifierRule
 from skylos.rules.quality.policy import analyze_repo_policy
 from skylos.rules.quality.phantom_refs import scan_repo_phantom_security_references
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
@@ -285,6 +286,7 @@ _LINTER_RULE_NODE_TYPES = {
     PerformanceRule: (ast.Call, ast.For),
     TypeAnnotationPracticeRule: (ast.Module,),
     FrameworkPracticeRule: (ast.Module,),
+    OpaqueIdentifierRule: (ast.Module,),
     DangerousCallsRule: (ast.Module, ast.Import, ast.ImportFrom, ast.Assign, ast.Call),
 }
 
@@ -3299,6 +3301,8 @@ def proc_file(
                 q_rules.append(TypeAnnotationPracticeRule())
             if "SKY-F101" not in cfg["ignore"] or "SKY-F102" not in cfg["ignore"]:
                 q_rules.append(FrameworkPracticeRule())
+            if "SKY-Q806" not in cfg["ignore"]:
+                q_rules.append(OpaqueIdentifierRule())
 
             if "SKY-U001" not in cfg["ignore"]:
                 q_rules.append(UnreachableCodeRule())
