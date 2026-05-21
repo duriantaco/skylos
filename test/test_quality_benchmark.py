@@ -29,6 +29,7 @@ def test_checked_in_quality_manifest_validates():
         "empty-error-handler",
         "type-annotation-gaps",
         "framework-route-policy",
+        "opaque-identifier",
         "repo-policy-missing-typechecker",
         "clean-module",
     }

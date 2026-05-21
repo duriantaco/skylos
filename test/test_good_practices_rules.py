@@ -8,6 +8,7 @@ from skylos.rules.quality.practices import (
     FrameworkPracticeRule,
     TypeAnnotationPracticeRule,
 )
+from skylos.rules.quality._readability import OpaqueIdentifierRule
 
 
 def _run_rule(rule, code: str, filename: str = "app.py") -> list[dict]:
@@ -143,6 +144,72 @@ def test_mutating_flask_route_accepts_login_required_guard():
         def create_user():
             return {}
         """,
+    )
+
+    assert findings == []
+
+
+def test_opaque_identifier_flags_long_lived_semantic_rhs():
+    findings = _run_rule(
+        OpaqueIdentifierRule(),
+        """
+        def load_profile(request, repository, audit_log):
+            x = request.args.get("user_id")
+            if not x:
+                audit_log.warning("missing user")
+                return None
+            audit_log.info("loading profile")
+            profile = repository.fetch_profile(x)
+            if profile.disabled:
+                return {"status": "disabled", "id": x}
+            return {"status": "active", "id": x}
+        """,
+    )
+
+    assert [finding["rule_id"] for finding in findings] == ["SKY-Q806"]
+    assert findings[0]["kind"] == "readability"
+    assert findings[0]["name"] == "x"
+    assert findings[0]["value"] == "user_id"
+
+
+def test_opaque_identifier_accepts_coordinate_names():
+    findings = _run_rule(
+        OpaqueIdentifierRule(),
+        """
+        def area(point):
+            x = point.get("x", 0)
+            y = point.get("y", 0)
+            return x * y
+        """,
+    )
+
+    assert findings == []
+
+
+def test_opaque_identifier_accepts_short_lived_temporary():
+    findings = _run_rule(
+        OpaqueIdentifierRule(),
+        """
+        def normalize(raw):
+            tmp = raw.strip()
+            return tmp
+        """,
+    )
+
+    assert findings == []
+
+
+def test_opaque_identifier_skips_test_files():
+    findings = _run_rule(
+        OpaqueIdentifierRule(),
+        """
+        def test_load_profile(request, repository):
+            x = request.args.get("user_id")
+            assert repository.fetch_profile(x)
+            assert x
+            assert x.startswith("user_")
+        """,
+        filename="tests/test_profiles.py",
     )
 
     assert findings == []
