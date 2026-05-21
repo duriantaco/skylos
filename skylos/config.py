@@ -41,6 +41,9 @@ DEFAULTS = {
         "security_audit": None,
         "review": None,
     },
+    "security_enabled": False,
+    "secrets_enabled": False,
+    "quality_enabled": False,
     "vibe": {
         "extra_phantom_names": [],
         "extra_phantom_decorators": [],
@@ -79,6 +82,22 @@ _DICT_CONFIG_KEYS = {
 _BOOL_CONFIG_KEYS = {
     "nudges",
     "check_circular",
+    "security_enabled",
+    "secrets_enabled",
+    "quality_enabled",
+}
+_SYNCED_SECURITY_POLICY_KEYS = {
+    "security_contracts",
+    "security_enabled",
+    "secrets_enabled",
+    "quality_enabled",
+}
+_SYNCED_POLICY_OVERRIDE_KEYS = _SYNCED_SECURITY_POLICY_KEYS | {
+    "gate",
+}
+_REPO_POLICY_WEAKENING_KEYS = {
+    "ignore",
+    "exclude",
 }
 
 
@@ -89,17 +108,52 @@ def load_config(start_path) -> dict:
 
     root_config, sync_config = _find_config_paths(current)
     final_cfg = copy.deepcopy(DEFAULTS)
+    synced_cfg = _load_synced_config(sync_config) if sync_config else {}
 
-    if sync_config:
-        final_cfg = _merge_user_config(final_cfg, _load_synced_config(sync_config))
+    if synced_cfg:
+        final_cfg = _merge_user_config(final_cfg, synced_cfg)
 
     if not root_config:
         return final_cfg
 
     try:
-        return _merge_user_config(final_cfg, _load_pyproject_user_config(root_config))
+        final_cfg = _merge_user_config(
+            final_cfg, _load_pyproject_user_config(root_config)
+        )
     except Exception:
         return final_cfg
+    return _restore_synced_policy_precedence(final_cfg, synced_cfg)
+
+
+def _restore_synced_policy_precedence(final_cfg: dict, synced_cfg: dict) -> dict:
+    if not isinstance(synced_cfg, dict) or not synced_cfg:
+        return final_cfg
+
+    protected = {
+        key
+        for key in (_SYNCED_POLICY_OVERRIDE_KEYS | _REPO_POLICY_WEAKENING_KEYS)
+        if key in synced_cfg
+    }
+    synced_security_policy = _has_synced_security_policy(synced_cfg)
+    if synced_security_policy:
+        protected.update(_REPO_POLICY_WEAKENING_KEYS)
+
+    if not protected:
+        return final_cfg
+
+    cloud_cfg = _merge_user_config(copy.deepcopy(DEFAULTS), synced_cfg)
+    restored = copy.deepcopy(final_cfg)
+    for key in protected:
+        restored[key] = copy.deepcopy(cloud_cfg.get(key, DEFAULTS.get(key)))
+    if synced_security_policy:
+        restored["ignore"] = [
+            rule_id for rule_id in restored.get("ignore", []) if rule_id != "SKY-SC001"
+        ]
+    return _sanitize_config(restored)
+
+
+def _has_synced_security_policy(synced_cfg: dict) -> bool:
+    return any(bool(synced_cfg.get(key)) for key in _SYNCED_SECURITY_POLICY_KEYS)
 
 
 def _is_safe_config_file(config_path: Path, expected_name: str) -> bool:

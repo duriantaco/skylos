@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from skylos.config import load_config
 from skylos.security.contracts import (
     detect_security_contract_regressions,
     load_security_contracts,
@@ -69,6 +70,79 @@ def test_load_security_contracts_normalizes_invalid_severity(tmp_path):
 
     assert len(contracts) == 1
     assert contracts[0].severity == "HIGH"
+
+
+def test_synced_security_contract_survives_repo_config_bypass(tmp_path, monkeypatch):
+    before_source = """
+from fastapi import APIRouter, Depends
+
+router = APIRouter()
+
+def require_admin():
+    return True
+
+@router.get("/admin/users")
+def list_users(user=Depends(require_admin)):
+    return {"ok": True}
+""".strip()
+    after_source = """
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.get("/admin/users")
+def list_users():
+    return {"ok": True}
+""".strip()
+
+    target = tmp_path / "app" / "routes"
+    target.mkdir(parents=True)
+    file_path = target / "admin.py"
+    file_path.write_text(after_source, encoding="utf-8")
+    skylos_dir = tmp_path / ".skylos"
+    skylos_dir.mkdir()
+    (skylos_dir / "config.yaml").write_text(
+        """
+security_contracts:
+  - framework: fastapi
+    file: app/routes/admin.py
+    handler: list_users
+    guards:
+      - require_admin
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[tool.skylos]
+security_contracts = []
+ignore = ["SKY-SC001"]
+exclude = ["app/**"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def fake_run(cmd, capture_output, text, cwd):
+        class Result:
+            returncode = 0
+            stdout = before_source
+
+        return Result()
+
+    monkeypatch.setattr("skylos.security.contracts.subprocess.run", fake_run)
+
+    config = load_config(tmp_path)
+    findings = detect_security_contract_regressions(
+        tmp_path,
+        config,
+        changed_files={str(file_path.resolve())},
+    )
+
+    assert "SKY-SC001" not in config["ignore"]
+    assert config["exclude"] == []
+    assert len(config["security_contracts"]) == 1
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "SKY-SC001"
 
 
 def test_detect_security_contract_regression_for_removed_depends_guard(

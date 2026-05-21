@@ -74,7 +74,7 @@ security_contracts:
         self.assertEqual(len(config["security_contracts"]), 1)
         self.assertEqual(config["security_contracts"][0]["handler"], "list_users")
 
-    def test_load_config_local_pyproject_overrides_synced_yaml(self):
+    def test_load_config_local_pyproject_cannot_override_synced_security_policy(self):
         skylos_dir = self.root / ".skylos"
         skylos_dir.mkdir()
         (skylos_dir / "config.yaml").write_text(
@@ -96,12 +96,8 @@ security_contracts:
 [tool.skylos]
 complexity = 99
 exclude = ["local/**"]
-
-[[tool.skylos.security_contracts]]
-framework = "fastapi"
-file = "app/api/admin.py"
-handler = "admin_panel"
-guards = ["require_staff"]
+ignore = ["SKY-SC001"]
+security_contracts = []
 """.strip(),
             encoding="utf-8",
         )
@@ -109,9 +105,40 @@ guards = ["require_staff"]
         config = load_config(self.root)
 
         self.assertEqual(config["complexity"], 99)
-        self.assertEqual(config["exclude"], ["local/**"])
+        self.assertEqual(config["exclude"], ["generated/**"])
+        self.assertNotIn("SKY-SC001", config["ignore"])
         self.assertEqual(len(config["security_contracts"]), 1)
-        self.assertEqual(config["security_contracts"][0]["handler"], "admin_panel")
+        self.assertEqual(config["security_contracts"][0]["handler"], "list_users")
+
+    def test_load_config_synced_security_policy_rejects_repo_ignore_and_exclude(self):
+        skylos_dir = self.root / ".skylos"
+        skylos_dir.mkdir()
+        (skylos_dir / "config.yaml").write_text(
+            """
+security_contracts:
+  - framework: fastapi
+    file: app/routes/admin.py
+    handler: list_users
+    guards:
+      - require_admin
+""".strip(),
+            encoding="utf-8",
+        )
+        (self.root / "pyproject.toml").write_text(
+            """
+[tool.skylos]
+ignore = ["SKY-SC001", "SKY-D000"]
+exclude = ["app/**"]
+security_enabled = false
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root)
+
+        self.assertEqual(config["exclude"], [])
+        self.assertEqual(config["ignore"], [])
+        self.assertEqual(config["security_contracts"][0]["handler"], "list_users")
 
     def test_load_config_with_gate_logic(self):
         toml_path = self.root / "pyproject.toml"
