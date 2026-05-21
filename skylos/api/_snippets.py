@@ -28,10 +28,10 @@ def _resolve_snippet_path(file_abs, repo_root=None) -> Path | None:
 
 
 def extract_snippet(
-    file_abs,
-    line_number,
-    context=SNIPPET_CONTEXT_LINES,
-    repo_root=None,
+    file_abs: str | Path,
+    line_number: int,
+    context: int = SNIPPET_CONTEXT_LINES,
+    repo_root: str | Path | None = None,
 ) -> str | None:
     safe_path = _resolve_snippet_path(file_abs, repo_root)
     if safe_path is None:

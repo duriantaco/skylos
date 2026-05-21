@@ -9,7 +9,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     Run the main scan command after top-level CLI dispatch.
 
     Calls: skylos/analyzer.py analyze; skylos/core/gatekeeper.py run_gate_interaction;
-        skylos/api.py upload_report; skylos/ui/nudge.py pick_nudge.
+        skylos/api/__init__.py upload_report; skylos/ui/nudge.py pick_nudge.
 
     Called from: skylos/cli.py _run_scan_command.
     """

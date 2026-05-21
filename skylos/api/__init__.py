@@ -1,4 +1,4 @@
-import os
+import os  # skylos: ignore[SKY-Q502] package facade is being split incrementally
 import logging
 import requests
 import subprocess
@@ -10,7 +10,8 @@ import json
 from typing import Any
 from uuid import uuid4
 
-from skylos.api_artifacts import (
+from skylos.api._ai_detection import detect_ai_code as _detect_ai_code
+from skylos.api._artifacts import (
     UPLOAD_PROTOCOL_VERSION as UPLOAD_PROTOCOL_VERSION,
     PreparedReportUpload,
     UploadArtifact as UploadArtifact,
@@ -25,13 +26,13 @@ from skylos.api_artifacts import (
     _write_gzip_json_artifact as _write_gzip_json_artifact,
     upload_artifact,
 )
-from skylos.api_findings import (
+from skylos.api._findings import (
     UPLOAD_FINDING_SPECS,
     VERIFY_FINDING_SPECS,
     _normalize_findings as _normalize_findings,
     _normalize_result_sections,
 )
-from skylos.api_payloads import (
+from skylos.api._payloads import (
     _build_legacy_payload,
     _build_report_scan_summary,
     _coerce_debt_snapshot_dict,
@@ -43,11 +44,11 @@ from skylos.api_payloads import (
     _json_size_bytes,
     _truncate_upload_text as _truncate_upload_text,
 )
-from skylos.api_snippets import (
+from skylos.api._snippets import (
     _resolve_snippet_path as _resolve_snippet_path,
     extract_snippet as extract_snippet,
 )
-from skylos.api_urls import (
+from skylos.api._urls import (
     _append_query_param,
     _host_is_private_or_metadata as _host_is_private_or_metadata,
     _normalize_http_url as _normalize_http_url,
@@ -262,11 +263,17 @@ def _normalize_branch(branch):
 
 def _read_json(path: Path):
     try:
-        if path and path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+        if path and _is_bounded_regular_file(path):
+            return json.loads(path.read_text(encoding="utf-8"))  # skylos: ignore[SKY-D325] _is_bounded_regular_file rejects symlinks and caps size
     except (OSError, json.JSONDecodeError, ValueError):
         pass
     return None
+
+
+def _is_bounded_regular_file(path: Path, *, max_bytes: int = 1_000_000) -> bool:
+    if path.is_symlink() or not path.is_file():
+        return False
+    return path.stat().st_size <= max_bytes
 
 
 def _get_repo_root_for_link():
@@ -383,7 +390,7 @@ def get_credit_balance(token=None) -> dict | None:
         return None
     try:
         resp = requests.get(
-            f"{BASE_URL}/api/credits/balance",
+            _validate_api_request_url(f"{BASE_URL}/api/credits/balance"),
             headers={"Authorization": f"Bearer {token}"},
             timeout=SUBPROCESS_TIMEOUT,
         )
@@ -480,76 +487,70 @@ def get_git_info() -> tuple[str, str, str, dict]:
     override_sha = os.getenv("SKYLOS_COMMIT")
     override_branch = os.getenv("SKYLOS_BRANCH")
     override_actor = os.getenv("SKYLOS_ACTOR")
-
     provider, meta = _detect_ci()
+    git_commit, git_branch = _read_git_head()
+    commit = override_sha or _ci_commit(meta) or git_commit or "unknown"
+    branch = override_branch or _ci_branch(provider, meta) or git_branch or "unknown"
+    actor = override_actor or _ci_actor(meta) or os.getenv("USER") or "unknown"
+    branch = _normalize_branch(branch)
+    pr_number = _extract_pr_number(provider, meta)
+    return commit, branch, actor, _build_ci_metadata(provider, meta, pr_number)
 
-    commit = (
-        override_sha
-        or meta.get("sha")
+
+def _ci_commit(meta: dict) -> str | None:
+    return (
+        meta.get("sha")
         or meta.get("git_commit")
         or meta.get("sha1")
         or meta.get("commit_sha")
     )
 
+
+def _ci_branch(provider: str | None, meta: dict) -> str | None:
     branch = (
-        override_branch
-        or meta.get("change_branch")
+        meta.get("change_branch")
         or meta.get("git_branch")
         or meta.get("branch")
         or meta.get("commit_branch")
     )
-    if not branch and provider == "github_actions":
-        ref = meta.get("ref") or ""
-        if ref.startswith("refs/heads/"):
-            branch = ref
+    if branch or provider != "github_actions":
+        return branch
+    ref = meta.get("ref") or ""
+    return ref if ref.startswith("refs/heads/") else None
 
-    actor = (
-        override_actor
-        or meta.get("actor")
-        or meta.get("username")
-        or meta.get("user_login")
-        or os.getenv("USER")
-        or "unknown"
-    )
 
-    if not commit or not branch:
-        try:
-            git_commit = (
-                subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
-                )
-                .decode()
-                .strip()
+def _ci_actor(meta: dict) -> str | None:
+    return meta.get("actor") or meta.get("username") or meta.get("user_login")
+
+
+def _read_git_head() -> tuple[str | None, str | None]:
+    try:
+        git_commit = (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
             )
-            git_branch = (
-                subprocess.check_output(
-                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                    stderr=subprocess.DEVNULL,
-                )
-                .decode()
-                .strip()
+            .decode()
+            .strip()
+        )
+        git_branch = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                stderr=subprocess.DEVNULL,
             )
-            commit = commit or git_commit
-            branch = branch or git_branch
-        except (subprocess.SubprocessError, OSError):
-            commit = commit or "unknown"
-            branch = branch or "unknown"
+            .decode()
+            .strip()
+        )
+        return git_commit, git_branch
+    except (subprocess.SubprocessError, OSError):
+        return None, None
 
-    branch = _normalize_branch(branch)
 
-    pr_number = _extract_pr_number(provider, meta)
-    ci = {}
-    if provider:
-        ci["provider"] = provider
-
-    for key, value in meta.items():
-        if value:
-            ci[key] = value
-
+def _build_ci_metadata(provider: str | None, meta: dict, pr_number: int | None) -> dict:
+    ci = {"provider": provider} if provider else {}
+    ci.update({key: value for key, value in meta.items() if value})
     if pr_number:
         ci["pr_number"] = pr_number
-
-    return commit, branch, actor, ci
+    return ci
 
 
 def _build_auth_headers(token):
@@ -592,161 +593,19 @@ def _new_upload_client_session_id() -> str:
 
 
 def detect_ai_code(git_root=None) -> dict:
-    if not git_root:
-        git_root = get_git_root()
-    if not git_root:
-        return {
-            "detected": False,
-            "indicators": [],
-            "ai_files": [],
-            "confidence": "low",
-        }
-
-    import re as _re
-
-    indicators = []
-    ai_files = set()
-
-    AI_COAUTHOR_PATTERNS = [
-        _re.compile(r"copilot", _re.IGNORECASE),
-        _re.compile(r"claude", _re.IGNORECASE),
-        _re.compile(r"cursor", _re.IGNORECASE),
-        _re.compile(r"codewhisperer", _re.IGNORECASE),
-        _re.compile(r"tabnine", _re.IGNORECASE),
-        _re.compile(r"github-actions\[bot\]", _re.IGNORECASE),
-        _re.compile(r"devin", _re.IGNORECASE),
-    ]
-
-    AI_EMAIL_PATTERNS = [
-        _re.compile(r"\[bot\]@", _re.IGNORECASE),
-        _re.compile(r"copilot", _re.IGNORECASE),
-        _re.compile(r"cursor", _re.IGNORECASE),
-        _re.compile(r"claude", _re.IGNORECASE),
-    ]
-
-    AI_MESSAGE_PATTERNS = [
-        _re.compile(r"generated\s+by\s+(copilot|claude|cursor|ai)", _re.IGNORECASE),
-        _re.compile(r"ai[- ]generated", _re.IGNORECASE),
-        _re.compile(r"co-authored-by.*copilot", _re.IGNORECASE),
-        _re.compile(r"co-authored-by.*claude", _re.IGNORECASE),
-    ]
-
-    try:
-        log_output = subprocess.check_output(
-            [
-                "git",
-                "log",
-                "--format=%H|%an|%ae|%s|%(trailers:key=Co-authored-by,valueonly,separator=%x00)",
-                "-50",
-            ],
-            cwd=git_root,
-            stderr=subprocess.DEVNULL,
-            timeout=SUBPROCESS_TIMEOUT,
-        ).decode("utf-8", errors="ignore")
-
-        for line in log_output.strip().splitlines():
-            if not line.strip():
-                continue
-            parts = line.split("|", 4)
-            if len(parts) < 4:
-                continue
-
-            commit_sha = parts[0]
-            author_name = parts[1]
-            author_email = parts[2]
-            subject = parts[3]
-
-            if len(parts) > 4:
-                trailers = parts[4]
-            else:
-                trailers = ""
-
-            is_ai_commit = False
-
-            for pat in AI_COAUTHOR_PATTERNS:
-                if pat.search(trailers):
-                    indicators.append(
-                        {
-                            "type": "co-author",
-                            "commit": commit_sha[:7],
-                            "detail": trailers.strip()[:100],
-                        }
-                    )
-                    is_ai_commit = True
-                    break
-
-            if not is_ai_commit:
-                for pat in AI_EMAIL_PATTERNS:
-                    if pat.search(author_email):
-                        indicators.append(
-                            {
-                                "type": "author-email",
-                                "commit": commit_sha[:7],
-                                "detail": f"{author_name} <{author_email}>",
-                            }
-                        )
-                        is_ai_commit = True
-                        break
-
-            if not is_ai_commit:
-                for pat in AI_MESSAGE_PATTERNS:
-                    if pat.search(subject):
-                        indicators.append(
-                            {
-                                "type": "commit-message",
-                                "commit": commit_sha[:7],
-                                "detail": subject[:100],
-                            }
-                        )
-                        is_ai_commit = True
-                        break
-
-            if is_ai_commit:
-                try:
-                    diff_output = subprocess.check_output(
-                        [
-                            "git",
-                            "diff-tree",
-                            "--no-commit-id",
-                            "--name-only",
-                            "-r",
-                            commit_sha,
-                        ],
-                        cwd=git_root,
-                        stderr=subprocess.DEVNULL,
-                        timeout=NETWORK_TIMEOUT_SHORT,
-                    ).decode("utf-8", errors="ignore")
-                    for f in diff_output.strip().splitlines():
-                        if f.strip():
-                            ai_files.add(f.strip())
-                except (subprocess.SubprocessError, OSError):
-                    logger.debug(
-                        "Failed to get git diff-tree for AI detection", exc_info=True
-                    )
-
-    except (subprocess.SubprocessError, OSError):
-        logger.debug("Failed to detect AI code from git log", exc_info=True)
-
-    detected = len(indicators) > 0
-    if len(indicators) > 5:
-        confidence = "high"
-    elif len(indicators) > 0:
-        confidence = "medium"
-    else:
-        confidence = "low"
-
-    return {
-        "detected": detected,
-        "indicators": indicators[:20],
-        "ai_files": sorted(ai_files)[:100],
-        "confidence": confidence,
-    }
+    return _detect_ai_code(git_root, get_git_root_func=get_git_root)
 
 
 def _get_blame_map(findings: list, git_root: str | None) -> dict:
     if not git_root:
         return {}
+    blame_map = {}
+    for file_path, lines in _collect_finding_lines(findings).items():
+        blame_map.update(_get_file_blame_map(git_root, file_path, lines))
+    return blame_map
 
+
+def _collect_finding_lines(findings: list) -> dict:
     from collections import defaultdict
 
     files_lines = defaultdict(set)
@@ -755,42 +614,57 @@ def _get_blame_map(findings: list, git_root: str | None) -> dict:
         ln = f.get("line_number", 0)
         if fp and ln and ln > 0:
             files_lines[fp].add(ln)
+    return files_lines
 
+
+def _get_file_blame_map(git_root: str, file_path: str, lines: set[int]) -> dict:
+    abs_path = os.path.join(git_root, file_path)
+    if not os.path.isfile(abs_path):
+        return {}
+
+    try:
+        out = subprocess.check_output(
+            _build_blame_command(file_path, lines),
+            cwd=git_root,
+            stderr=subprocess.DEVNULL,
+            timeout=NETWORK_TIMEOUT_DEFAULT,
+        ).decode("utf-8", errors="ignore")
+    except (subprocess.SubprocessError, OSError):
+        return {}
+    return _parse_blame_output(file_path, out)
+
+
+def _build_blame_command(file_path: str, lines: set[int]) -> list[str]:
+    cmd = ["git", "blame", "--porcelain"]
+    for line in sorted(lines):
+        cmd.extend(["-L", f"{line},{line}"])
+    cmd.extend(["--", file_path])
+    return cmd
+
+
+def _parse_blame_output(file_path: str, output: str) -> dict:
     blame_map = {}
-    for file_path, lines in files_lines.items():
-        abs_path = os.path.join(git_root, file_path)
-        if not os.path.isfile(abs_path):
+    current_line = None
+    for raw in output.splitlines():
+        parsed_line = _parse_blame_line_number(raw)
+        if parsed_line is not None:
+            current_line = parsed_line
             continue
-
-        cmd = ["git", "blame", "--porcelain"]
-        for ln in sorted(lines):
-            cmd.extend(["-L", f"{ln},{ln}"])
-        cmd.extend(["--", file_path])
-
-        try:
-            out = subprocess.check_output(
-                cmd,
-                cwd=git_root,
-                stderr=subprocess.DEVNULL,
-                timeout=NETWORK_TIMEOUT_DEFAULT,
-            ).decode("utf-8", errors="ignore")
-        except (subprocess.SubprocessError, OSError):
-            continue
-
-        current_line = None
-        for raw in out.splitlines():
-            parts = raw.split()
-            if len(parts) >= 3 and len(parts[0]) == 40:
-                try:
-                    current_line = int(parts[2])
-                except ValueError:
-                    current_line = None
-            elif raw.startswith("author-mail ") and current_line is not None:
-                email = raw[len("author-mail ") :].strip().strip("<>")
-                if email and email != "not.committed.yet":
-                    blame_map[(file_path, current_line)] = email
-
+        if raw.startswith("author-mail ") and current_line is not None:
+            email = raw[len("author-mail ") :].strip().strip("<>")
+            if email and email != "not.committed.yet":
+                blame_map[(file_path, current_line)] = email
     return blame_map
+
+
+def _parse_blame_line_number(raw: str) -> int | None:
+    parts = raw.split()
+    if len(parts) < 3 or len(parts[0]) != 40:
+        return None
+    try:
+        return int(parts[2])
+    except ValueError:
+        return None
 
 
 def _prepare_report_upload(
@@ -1154,76 +1028,127 @@ def _finalize_report_upload(
     strict=False,
     is_forced=False,
 ) -> dict:
-    if response.status_code == 401:
-        return {
-            "success": False,
-            "error": "Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
-        }
-
-    if response.status_code == 402:
-        data = {}
-        try:
-            data = response.json()
-        except (ValueError, KeyError):
-            pass
-        return {
-            "success": False,
-            "error": data.get(
-                "error",
-                "No credits remaining. Buy more at skylos.dev/dashboard/credits",
-            ),
-            "code": "NO_CREDITS",
-        }
+    error_result = _report_upload_error_result(response)
+    if error_result:
+        return error_result
 
     data = response.json()
     scan_id = data.get("scanId") or data.get("scan_id")
     quality_gate = data.get("quality_gate", {})
     passed = quality_gate.get("passed", True)
     new_violations = quality_gate.get("new_violations", 0)
-
     plan = data.get("plan", "free")
 
     if not quiet:
-        print(" done!\n✓ Scan uploaded")
-        if grade_data:
-            g = grade_data["overall"]
-            print(f"Grade: {g['letter']} ({g['score']}/100)")
-        if passed:
-            print("✅ PASS Quality gate: PASSED")
-        else:
-            print(
-                f"❌ FAIL Quality gate: FAILED ({new_violations} new violation{'' if new_violations == 1 else 's'})"
-            )
+        _print_report_upload_success(
+            grade_data=grade_data,
+            passed=passed,
+            new_violations=new_violations,
+            plan=plan,
+            scan_id=scan_id,
+            credits_left=data.get("credits_remaining"),
+        )
+    _enforce_report_quality_gate(passed, strict=strict, is_forced=is_forced, quiet=quiet)
+    return _report_upload_success_result(data, scan_id, passed, plan)
 
-        if scan_id:
-            print(f"\nView: {BASE_URL}/dashboard/scans/{scan_id}")
 
-        if not passed and plan == "free":
-            print("\n⚠️  Quality gate failed but continuing (Free plan)")
-            print("💡 Upgrade to Pro to automatically block commits/CI on failures")
-            print(f"   Learn more: {BASE_URL}/dashboard/settings?upgrade=true")
+def _report_upload_error_result(response) -> dict | None:
+    if response.status_code == 401:
+        return {
+            "success": False,
+            "error": "Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
+        }
+    if response.status_code != 402:
+        return None
+    data = _safe_response_json(response)
+    return {
+        "success": False,
+        "error": data.get(
+            "error",
+            "No credits remaining. Buy more at skylos.dev/dashboard/credits",
+        ),
+        "code": "NO_CREDITS",
+    }
 
-        if scan_id:
-            print(f"\n🔗 View details: {BASE_URL}/dashboard/scans/{scan_id}")
 
-    credits_left = data.get("credits_remaining")
-    if not quiet and credits_left is not None:
-        if credits_left < 50:
-            print(
-                f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
-            )
-        else:
-            print(f"\n💰 Credits remaining: {credits_left}")
+def _safe_response_json(response) -> dict:
+    try:
+        data = response.json()
+    except (ValueError, KeyError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
-    if not passed:
-        if strict and (not is_forced):
-            if not quiet:
-                print("\n Commit blocked by quality gate")
-            sys.exit(1)
 
+def _print_report_upload_success(
+    *,
+    grade_data,
+    passed: bool,
+    new_violations: int,
+    plan: str,
+    scan_id: str | None,
+    credits_left,
+) -> None:
+    print(" done!\n✓ Scan uploaded")
+    _print_report_grade(grade_data)
+    _print_quality_gate_result(passed, new_violations, plan)
+    if scan_id:
+        print(f"\nView: {BASE_URL}/dashboard/scans/{scan_id}")
+        print(f"\n🔗 View details: {BASE_URL}/dashboard/scans/{scan_id}")
+    _print_credit_balance_after_upload(credits_left)
+
+
+def _print_report_grade(grade_data) -> None:
+    if grade_data:
+        grade = grade_data["overall"]
+        print(f"Grade: {grade['letter']} ({grade['score']}/100)")
+
+
+def _print_quality_gate_result(passed: bool, new_violations: int, plan: str) -> None:
+    if passed:
+        print("✅ PASS Quality gate: PASSED")
+        return
+    suffix = "" if new_violations == 1 else "s"
+    print(f"❌ FAIL Quality gate: FAILED ({new_violations} new violation{suffix})")
+    if plan == "free":
+        print("\n⚠️  Quality gate failed but continuing (Free plan)")
+        print("💡 Upgrade to Pro to automatically block commits/CI on failures")
+        print(f"   Learn more: {BASE_URL}/dashboard/settings?upgrade=true")
+
+
+def _print_credit_balance_after_upload(credits_left) -> None:
+    if credits_left is None:
+        return
+    if credits_left < 50:
+        print(
+            f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
+        )
+        return
+    print(f"\n💰 Credits remaining: {credits_left}")
+
+
+def _enforce_report_quality_gate(
+    passed: bool,
+    *,
+    strict: bool,
+    is_forced: bool,
+    quiet: bool,
+) -> None:
+    if passed:
+        return
+    if strict and not is_forced:
         if not quiet:
-            print("\n⚠️ Quality gate failed, but not enforcing in local mode.")
+            print("\n Commit blocked by quality gate")
+        sys.exit(1)
+    if not quiet:
+        print("\n⚠️ Quality gate failed, but not enforcing in local mode.")
 
+
+def _report_upload_success_result(
+    data: dict,
+    scan_id: str | None,
+    passed: bool,
+    plan: str,
+) -> dict:
     return {
         "success": True,
         "scan_id": scan_id,
@@ -1383,106 +1308,35 @@ def upload_report_v2(
 ) -> dict:
     artifacts = _build_report_artifacts(prepared)
     try:
-        init_payload = _build_report_init_payload(prepared, artifacts)
-        init_response, last_err = _post_json_with_retries(
-            REPORT_INIT_URL,
-            _build_auth_headers(token),
-            init_payload,
-            quiet=quiet,
-            initial_message="Uploading scan results...",
-            accepted_statuses=(200, 201, 401, 402, 404, 405, 501),
+        init_result = _start_report_artifact_upload(
+            token,
+            prepared,
+            artifacts,
+            quiet,
+            strict=strict,
+            is_forced=is_forced,
         )
-        if init_response is None:
-            if _looks_like_server_error(last_err):
-                return _build_large_upload_protocol_error(prepared, last_err)
-            return {"success": False, "error": last_err or "Unknown error"}
-        if init_response.status_code in (404, 405, 501):
-            return _build_large_upload_protocol_error(prepared)
-        if init_response.status_code == 401:
-            return _finalize_report_upload(
-                init_response,
-                grade_data=prepared.grade_data,
-                quiet=quiet,
-                strict=strict,
-                is_forced=is_forced,
-            )
-        if init_response.status_code == 402:
-            return _finalize_report_upload(
-                init_response,
-                grade_data=prepared.grade_data,
-                quiet=quiet,
-                strict=strict,
-                is_forced=is_forced,
-            )
+        if init_result.get("complete"):
+            return init_result["result"]
 
-        init_data = init_response.json() or {}
-        artifact_instructions = init_data.get("artifacts") or {}
-        if not isinstance(artifact_instructions, dict):
-            return {
-                "success": False,
-                "error": "Invalid large-upload response: missing artifact instructions.",
-            }
+        artifact_result = _upload_report_artifacts(
+            artifacts,
+            init_result["artifact_instructions"],
+        )
+        if not artifact_result.get("success", True):
+            return artifact_result
 
-        uploaded_artifacts = {}
-        skipped_artifacts = []
-
-        for artifact_name, artifact in artifacts.items():
-            artifact_info = artifact_instructions.get(artifact_name)
-            if not artifact_info:
-                missing_result = _missing_artifact_instruction_result(
-                    artifact_name, artifact
-                )
-                if not missing_result.get("success", True):
-                    return missing_result
-                _append_skipped_artifact(
-                    skipped_artifacts,
-                    artifact_name,
-                    missing_result["reason"],
-                )
-                continue
-
-            upload_spec = artifact_info.get("upload") or artifact_info
-            upload_result = upload_artifact(artifact, upload_spec)
-            if not upload_result["success"]:
-                if artifact.required:
-                    return {
-                        "success": False,
-                        "error": upload_result["error"],
-                    }
-                _append_skipped_artifact(
-                    skipped_artifacts,
-                    artifact_name,
-                    "upload_failed",
-                    upload_result["error"],
-                )
-                continue
-
-            uploaded_artifacts[artifact_name] = _build_uploaded_artifact_record(
-                artifact,
-                artifact_info,
-                upload_result,
-            )
-
-        complete_payload = _build_report_complete_payload(
-            init_data,
-            uploaded_artifacts,
-            skipped_artifacts,
+        complete_response = _complete_report_artifact_upload(
+            token,
+            init_result["init_data"],
+            artifact_result["uploaded_artifacts"],
+            artifact_result["skipped_artifacts"],
             prepared.metadata,
         )
-
-        complete_response, last_err = _post_json_with_retries(
-            REPORT_COMPLETE_URL,
-            _build_auth_headers(token),
-            complete_payload,
-            quiet=True,
-            accepted_statuses=(200, 201, 401, 402),
-            timeout=UPLOAD_TIMEOUT,
-        )
-        if complete_response is None:
-            return {"success": False, "error": last_err or "Unknown error"}
-
+        if complete_response.get("error"):
+            return complete_response["error"]
         return _finalize_report_upload(
-            complete_response,
+            complete_response["response"],
             grade_data=prepared.grade_data,
             quiet=quiet,
             strict=strict,
@@ -1491,6 +1345,170 @@ def upload_report_v2(
     finally:
         for artifact in artifacts.values():
             artifact.cleanup()
+
+
+def _start_report_artifact_upload(
+    token,
+    prepared: PreparedReportUpload,
+    artifacts: dict,
+    quiet: bool,
+    *,
+    strict: bool,
+    is_forced: bool,
+) -> dict[str, Any]:
+    init_response, last_err = _post_json_with_retries(
+        REPORT_INIT_URL,
+        _build_auth_headers(token),
+        _build_report_init_payload(prepared, artifacts),
+        quiet=quiet,
+        initial_message="Uploading scan results...",
+        accepted_statuses=(200, 201, 401, 402, 404, 405, 501),
+    )
+    if init_response is None:
+        if _looks_like_server_error(last_err):
+            return {
+                "complete": True,
+                "result": _build_large_upload_protocol_error(prepared, last_err),
+            }
+        return {
+            "complete": True,
+            "result": {"success": False, "error": last_err or "Unknown error"},
+        }
+    if init_response.status_code in (404, 405, 501):
+        return {"complete": True, "result": _build_large_upload_protocol_error(prepared)}
+    if init_response.status_code in (401, 402):
+        return {
+            "complete": True,
+            "result": _finalize_report_upload(
+                init_response,
+                grade_data=prepared.grade_data,
+                quiet=quiet,
+                strict=strict,
+                is_forced=is_forced,
+            ),
+        }
+    init_data = init_response.json() or {}
+    artifact_instructions = init_data.get("artifacts") or {}
+    if not isinstance(artifact_instructions, dict):
+        return {
+            "complete": True,
+            "result": {
+                "success": False,
+                "error": "Invalid large-upload response: missing artifact instructions.",
+            },
+        }
+    return {
+        "complete": False,
+        "init_data": init_data,
+        "artifact_instructions": artifact_instructions,
+    }
+
+
+def _upload_report_artifacts(
+    artifacts: dict,
+    artifact_instructions: dict,
+) -> dict[str, Any]:
+    uploaded_artifacts = {}
+    skipped_artifacts = []
+    for artifact_name, artifact in artifacts.items():
+        result = _upload_one_report_artifact(
+            artifact_name,
+            artifact,
+            artifact_instructions,
+            skipped_artifacts,
+        )
+        if not result.get("success", True):
+            return result
+        if result.get("uploaded_record"):
+            uploaded_artifacts[artifact_name] = result["uploaded_record"]
+    return {
+        "success": True,
+        "uploaded_artifacts": uploaded_artifacts,
+        "skipped_artifacts": skipped_artifacts,
+    }
+
+
+def _upload_one_report_artifact(
+    artifact_name: str,
+    artifact,
+    artifact_instructions: dict,
+    skipped_artifacts: list,
+) -> dict[str, Any]:
+    artifact_info = artifact_instructions.get(artifact_name)
+    if not artifact_info:
+        return _handle_missing_report_artifact(artifact_name, artifact, skipped_artifacts)
+
+    upload_spec = artifact_info.get("upload") or artifact_info
+    upload_result = upload_artifact(artifact, upload_spec)
+    if not upload_result["success"]:
+        return _handle_failed_report_artifact(
+            artifact_name,
+            artifact,
+            upload_result,
+            skipped_artifacts,
+        )
+    return {
+        "success": True,
+        "uploaded_record": _build_uploaded_artifact_record(
+            artifact,
+            artifact_info,
+            upload_result,
+        ),
+    }
+
+
+def _handle_missing_report_artifact(
+    artifact_name: str,
+    artifact,
+    skipped_artifacts: list,
+) -> dict[str, Any]:
+    missing_result = _missing_artifact_instruction_result(artifact_name, artifact)
+    if not missing_result.get("success", True):
+        return missing_result
+    _append_skipped_artifact(skipped_artifacts, artifact_name, missing_result["reason"])
+    return {"success": True}
+
+
+def _handle_failed_report_artifact(
+    artifact_name: str,
+    artifact,
+    upload_result: dict,
+    skipped_artifacts: list,
+) -> dict[str, Any]:
+    if artifact.required:
+        return {"success": False, "error": upload_result["error"]}
+    _append_skipped_artifact(
+        skipped_artifacts,
+        artifact_name,
+        "upload_failed",
+        upload_result["error"],
+    )
+    return {"success": True}
+
+
+def _complete_report_artifact_upload(
+    token,
+    init_data: dict,
+    uploaded_artifacts: dict,
+    skipped_artifacts: list,
+    metadata: dict,
+) -> dict[str, Any]:
+    complete_response, last_err = _post_json_with_retries(
+        REPORT_COMPLETE_URL,
+        _build_auth_headers(token),
+        _build_report_complete_payload(
+            init_data,
+            uploaded_artifacts,
+            skipped_artifacts,
+            metadata,
+        ),
+        quiet=True,
+        accepted_statuses=(200, 201, 401, 402),
+        timeout=UPLOAD_TIMEOUT,
+    )
+    if complete_response is None:
+        return {"error": {"success": False, "error": last_err or "Unknown error"}}
+    return {"response": complete_response}
 
 
 def upload_report(
@@ -1640,20 +1658,70 @@ def upload_defense_report(defense_json_str, quiet=False, scan_bundle_id=None) ->
             "error": "No token found. Run 'skylos login' or 'skylos project use', or set SKYLOS_TOKEN.",
         }
 
-    import json as _json
+    defense_data, error = _parse_defense_upload_data(defense_json_str)
+    if error:
+        return error
 
+    payload = _build_defense_upload_payload(defense_data, scan_bundle_id)
+
+    response, last_err = _post_report_payload(
+        token,
+        payload,
+        quiet=quiet,
+        initial_message="Uploading defense results...",
+    )
+    if response is None:
+        if not quiet:
+            print(" failed.")
+        return {"success": False, "error": last_err or "Unknown error"}
+
+    error_result = _defense_upload_error_result(response, quiet)
+    if error_result:
+        return error_result
+
+    if not quiet:
+        _print_defense_upload_success(defense_data, response)
+
+    scan_id = _response_scan_id(response)
+    return {
+        "success": True,
+        "scan_id": scan_id,
+    }
+
+
+def _parse_defense_upload_data(defense_json_str) -> tuple[dict | None, dict | None]:
     try:
-        defense_data = _json.loads(defense_json_str)
-    except (ValueError, TypeError) as e:
-        return {"success": False, "error": f"Invalid defense JSON: {e}"}
+        return json.loads(defense_json_str), None
+    except (ValueError, TypeError) as exc:
+        return None, {"success": False, "error": f"Invalid defense JSON: {exc}"}
 
+
+def _build_defense_upload_payload(
+    defense_data: dict,
+    scan_bundle_id=None,
+) -> dict[str, Any]:
     commit, branch, actor, ci = get_git_info()
     git_root = get_git_root()
-    project_root = _infer_upload_project_root(defense_data, git_root)
-
     link = _load_repo_link(git_root)
+    payload = _base_defense_upload_payload(defense_data, commit, branch, actor, ci)
+    project_root = _infer_upload_project_root(defense_data, git_root)
+    if project_root is not None:
+        payload["project_root"] = project_root
+    if link.get("project_id"):
+        payload["project_id"] = link["project_id"]
+    if scan_bundle_id:
+        payload["scan_bundle_id"] = str(scan_bundle_id)
+    return payload
 
-    payload = {
+
+def _base_defense_upload_payload(
+    defense_data: dict,
+    commit: str,
+    branch: str,
+    actor: str,
+    ci: dict,
+) -> dict[str, Any]:
+    return {
         "commit_hash": commit,
         "branch": branch,
         "actor": actor,
@@ -1669,65 +1737,46 @@ def upload_defense_report(defense_json_str, quiet=False, scan_bundle_id=None) ->
         "defense_findings": defense_data.get("findings", []),
         "defense_integrations": defense_data.get("integrations", []),
     }
-    if project_root is not None:
-        payload["project_root"] = project_root
 
-    if link.get("project_id"):
-        payload["project_id"] = link["project_id"]
-    if scan_bundle_id:
-        payload["scan_bundle_id"] = str(scan_bundle_id)
 
-    response, last_err = _post_report_payload(
-        token,
-        payload,
-        quiet=quiet,
-        initial_message="Uploading defense results...",
-    )
-    if response is None:
-        if not quiet:
-            print(" failed.")
-        return {"success": False, "error": last_err or "Unknown error"}
-
+def _defense_upload_error_result(response, quiet: bool) -> dict | None:
+    if response.status_code not in (401, 402):
+        return None
+    if not quiet:
+        print(" failed.")
     if response.status_code == 401:
-        if not quiet:
-            print(" failed.")
         return {
             "success": False,
             "error": "Invalid API token. Run 'skylos login' to reconnect or 'skylos sync connect' to set a token manually.",
         }
-
-    if response.status_code == 402:
-        if not quiet:
-            print(" failed.")
-        return {
-            "success": False,
-            "error": "No credits remaining. Buy more at skylos.dev/dashboard/credits",
-            "code": "NO_CREDITS",
-        }
-
-    data = response.json()
-    scan_id = data.get("scanId") or data.get("scan_id")
-
-    if not quiet:
-        score = defense_data.get("summary", {})
-        print(" done!")
-        print("✓ Defense scan uploaded")
-        print(
-            f"  Defense Score: {score.get('score_pct', 0)}% ({score.get('risk_rating', 'UNKNOWN')})"
-        )
-        if scan_id:
-            print(f"\n🔗 View: {BASE_URL}/dashboard/scans/{scan_id}")
-
-        credits_left = data.get("credits_remaining")
-        if credits_left is not None and credits_left < 50:
-            print(
-                f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
-            )
-
     return {
-        "success": True,
-        "scan_id": scan_id,
+        "success": False,
+        "error": "No credits remaining. Buy more at skylos.dev/dashboard/credits",
+        "code": "NO_CREDITS",
     }
+
+
+def _print_defense_upload_success(defense_data: dict, response) -> None:
+    data = _safe_response_json(response)
+    scan_id = data.get("scanId") or data.get("scan_id")
+    score = defense_data.get("summary", {})
+    print(" done!")
+    print("✓ Defense scan uploaded")
+    print(
+        f"  Defense Score: {score.get('score_pct', 0)}% ({score.get('risk_rating', 'UNKNOWN')})"
+    )
+    if scan_id:
+        print(f"\n🔗 View: {BASE_URL}/dashboard/scans/{scan_id}")
+    credits_left = data.get("credits_remaining")
+    if credits_left is not None and credits_left < 50:
+        print(
+            f"\n⚠️  Credits remaining: {credits_left}. Top up at skylos.dev/dashboard/billing"
+        )
+
+
+def _response_scan_id(response) -> str | None:
+    data = _safe_response_json(response)
+    return data.get("scanId") or data.get("scan_id")
 
 
 def upload_agent_run(
@@ -1777,10 +1826,7 @@ def verify_report(result_json, quiet=False) -> dict:
             "error": "Verification requires a valid Skylos token. Run 'skylos login' or set SKYLOS_TOKEN.",
         }
 
-    info = get_project_info(token) or {}
-    plan = (info.get("plan") or "free").lower()
-
-    if plan not in ["pro", "enterprise", "beta"]:
+    if not _token_allows_verification(token):
         return {
             "success": False,
             "error": "Verification requires Skylos Pro. Upgrade to enable --verify.",
@@ -1800,81 +1846,124 @@ def verify_report(result_json, quiet=False) -> dict:
     if not findings:
         return {"success": False, "error": "No security findings to verify."}
 
+    response = _post_verification_request(token, commit, branch, actor, findings)
+    if response.get("error"):
+        return response["error"]
+
+    data = response["response"].json() or {}
+    results = data.get("results") or []
+    _merge_verification_results(result_json, results)
+    verdict_counts = _verification_verdict_counts(results)
+
+    if not quiet:
+        _print_verification_counts(verdict_counts)
+
+    return {"success": True, "counts": verdict_counts}
+
+
+def _token_allows_verification(token: str) -> bool:
+    info = get_project_info(token) or {}
+    plan = (info.get("plan") or "free").lower()
+    return plan in ["pro", "enterprise", "beta"]
+
+
+def _post_verification_request(
+    token: str,
+    commit: str,
+    branch: str,
+    actor: str,
+    findings: list[dict],
+) -> dict[str, Any]:
     payload = {
         "commit_hash": commit,
         "branch": branch,
         "actor": actor,
         "findings": findings,
     }
-
     try:
-        resp = requests.post(
+        response = requests.post(
             VERIFY_URL,
             json=payload,
             headers={"Authorization": f"Bearer {token}"},
             timeout=UPLOAD_TIMEOUT,
         )
-    except requests.exceptions.RequestException as e:
-        return {"success": False, "error": f"Verification connection failed: {e}"}
+    except requests.exceptions.RequestException as exc:
+        return {
+            "error": {
+                "success": False,
+                "error": f"Verification connection failed: {exc}",
+            }
+        }
+    error = _verification_error_response(response)
+    return {"error": error} if error else {"response": response}
 
-    if resp.status_code in (401, 403):
+
+def _verification_error_response(response) -> dict | None:
+    if response.status_code in (401, 403):
         return {
             "success": False,
             "error": "Verification denied (token invalid or not paid).",
         }
-
-    if resp.status_code == 402:
+    if response.status_code == 402:
         return {
             "success": False,
             "error": "Verification requires Skylos Pro (payment required).",
         }
-
-    if resp.status_code != 200:
+    if response.status_code != 200:
         return {
             "success": False,
-            "error": f"Verifier error {resp.status_code}: {resp.text[:2000]}",
+            "error": f"Verifier error {response.status_code}: {response.text[:2000]}",
         }
+    return None
 
-    data = resp.json() or {}
-    results = data.get("results") or []
 
-    by_id = {}
-    for r in results:
-        fid = r.get("finding_id") or r.get("id")
-        if fid:
-            by_id[fid] = r
+def _merge_verification_results(result_json: dict, results: list[dict]) -> None:
+    by_id = _verification_results_by_id(results)
+    _merge_verified_items(result_json.get("danger", []), by_id)
+    _merge_verified_items(result_json.get("secrets", []), by_id)
 
-    def _merge_into(items):
-        for it in items or []:
-            rule_id = str(
-                it.get("rule_id") or it.get("rule") or it.get("code") or "UNKNOWN"
-            )
-            file_path = (it.get("file_path") or it.get("file") or "unknown").replace(
-                "\\", "/"
-            )
-            line = it.get("line_number") or it.get("line") or 1
-            try:
-                line = int(line)
-            except (TypeError, ValueError):
-                line = 1
-            fid = f"{rule_id}::{file_path}::{line}"
-            vr = by_id.get(fid)
-            if vr:
-                it["verification"] = vr
 
-    _merge_into(result_json.get("danger", []))
-    _merge_into(result_json.get("secrets", []))
+def _verification_results_by_id(results: list[dict]) -> dict:
+    return {
+        finding_id: result
+        for result in results
+        for finding_id in [result.get("finding_id") or result.get("id")]
+        if finding_id
+    }
 
+
+def _merge_verified_items(items, by_id: dict) -> None:
+    for item in items or []:
+        verification = by_id.get(_verification_item_id(item))
+        if verification:
+            item["verification"] = verification
+
+
+def _verification_item_id(item: dict) -> str:
+    rule_id = str(item.get("rule_id") or item.get("rule") or item.get("code") or "UNKNOWN")
+    file_path = (item.get("file_path") or item.get("file") or "unknown").replace(
+        "\\", "/"
+    )
+    line = _coerce_verification_line(item.get("line_number") or item.get("line") or 1)
+    return f"{rule_id}::{file_path}::{line}"
+
+
+def _coerce_verification_line(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _verification_verdict_counts(results: list[dict]) -> dict[str, int]:
     verdict_counts = {"VERIFIED": 0, "REFUTED": 0, "UNKNOWN": 0}
-    for r in results:
-        v = (r.get("verdict") or "UNKNOWN").upper()
-        if v not in verdict_counts:
-            v = "UNKNOWN"
-        verdict_counts[v] += 1
+    for result in results:
+        verdict = (result.get("verdict") or "UNKNOWN").upper()
+        verdict_counts[verdict if verdict in verdict_counts else "UNKNOWN"] += 1
+    return verdict_counts
 
-    if not quiet:
-        print(
-            f"Verifier results: ✅{verdict_counts['VERIFIED']}  ❌{verdict_counts['REFUTED']}  ⚠️{verdict_counts['UNKNOWN']}"
-        )
 
-    return {"success": True, "counts": verdict_counts}
+def _print_verification_counts(verdict_counts: dict[str, int]) -> None:
+    print(
+        f"Verifier results: ✅{verdict_counts['VERIFIED']}  ❌{verdict_counts['REFUTED']}  ⚠️{verdict_counts['UNKNOWN']}"
+    )

@@ -7,7 +7,7 @@ import re
 from rich.console import Console
 from rich.text import Text
 
-from skylos.api_snippets import _resolve_snippet_path
+from skylos.api._snippets import _resolve_snippet_path
 
 
 CATEGORY_SPECS = (
