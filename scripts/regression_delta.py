@@ -80,6 +80,100 @@ def _taxonomy_scores(summary: dict[str, Any]) -> dict[str, float]:
     }
 
 
+def _security_scorecard_scores(summary: dict[str, Any]) -> dict[str, float]:
+    scorecard = summary.get("security_scorecard", {}) or {}
+    return {
+        str(name): float((bucket or {}).get("weighted_score") or 0.0)
+        for name, bucket in scorecard.items()
+    }
+
+
+def _metric(summary: dict[str, Any], key: str) -> float:
+    value = summary.get(key)
+    if value is None:
+        return 0.0
+    return float(value or 0.0)
+
+
+def _append_failure_count_regression(
+    lines: list[str], base: dict[str, Any], head: dict[str, Any]
+) -> bool:
+    if _failure_count(head) <= _failure_count(base):
+        return False
+    lines.append(
+        f"Regression: failure count increased "
+        f"{_failure_count(base)} -> {_failure_count(head)}."
+    )
+    return True
+
+
+def _append_score_regressions(
+    lines: list[str], scores: list[tuple[str, float, float]]
+) -> bool:
+    failed = False
+    for label, base_value, head_value in scores:
+        if head_value < base_value:
+            failed = True
+            lines.append(f"Regression: {label} dropped {base_value} -> {head_value}.")
+    return failed
+
+
+def _append_agent_review_security_regressions(
+    lines: list[str], base: dict[str, Any], head: dict[str, Any]
+) -> bool:
+    failed = False
+    head_security = _security_scorecard_scores(head)
+    for label, base_value in sorted(_security_scorecard_scores(base).items()):
+        if label not in head_security:
+            continue
+        head_value = head_security[label]
+        if head_value < base_value:
+            failed = True
+            lines.append(
+                f"Regression: security class '{label}' score dropped "
+                f"{base_value} -> {head_value}."
+            )
+    return failed
+
+
+def _append_agent_review_new_failures(
+    lines: list[str], base: dict[str, Any], head: dict[str, Any]
+) -> bool:
+    added = _new_failures(base, head)
+    if not added:
+        return False
+
+    lines.append("Regression: new failing agent-review expectations:")
+    for case_id, failures in sorted(added.items()):
+        for failure in sorted(failures):
+            failure_type, category, mode, expected = failure
+            lines.append(
+                f"- {case_id}: {failure_type} {mode} {category} -> {expected}"
+            )
+    return True
+
+
+def _append_agent_review_warnings(
+    lines: list[str],
+    *,
+    base_tokens: float,
+    head_tokens: float,
+    base_elapsed: float,
+    head_elapsed: float,
+) -> None:
+    if base_tokens and head_tokens > base_tokens * 1.15:
+        lines.append(
+            f"Warning: avg tokens/case increased more than 15% "
+            f"{base_tokens} -> {head_tokens}."
+        )
+
+    if base_elapsed and head_elapsed > base_elapsed * 1.25:
+        lines.append(
+            f"Warning: total elapsed time increased more than 25% "
+            f"{base_elapsed} -> {head_elapsed}."
+        )
+
+
 def compare_corpus(
     base: dict[str, Any], head: dict[str, Any]
 ) -> tuple[bool, list[str]]:
@@ -109,6 +203,63 @@ def compare_corpus(
 
     if not failed:
         lines.append("No corpus regression detected.")
+
+    return not failed, lines
+
+
+def compare_agent_review(
+    base: dict[str, Any], head: dict[str, Any]
+) -> tuple[bool, list[str]]:
+    base_score = _score(base, "overall_score")
+    head_score = _score(head, "overall_score")
+    base_recall = _score(base, "recall")
+    head_recall = _score(head, "recall")
+    base_absence = _score(base, "absence_guard")
+    head_absence = _score(head, "absence_guard")
+    base_tokens = _metric(base, "avg_tokens_per_case")
+    head_tokens = _metric(head, "avg_tokens_per_case")
+    base_elapsed = _metric(base, "total_elapsed_seconds")
+    head_elapsed = _metric(head, "total_elapsed_seconds")
+    lines = [
+        "# Agent Review Benchmark Regression Delta",
+        "",
+        f"Base failures: {_failure_count(base)}",
+        f"Head failures: {_failure_count(head)}",
+        f"Base overall score: {base_score}",
+        f"Head overall score: {head_score}",
+        f"Base recall: {base_recall}",
+        f"Head recall: {head_recall}",
+        f"Base absence guard: {base_absence}",
+        f"Head absence guard: {head_absence}",
+        f"Base avg tokens/case: {base_tokens}",
+        f"Head avg tokens/case: {head_tokens}",
+    ]
+    failed = any(
+        (
+            _append_failure_count_regression(lines, base, head),
+            _append_score_regressions(
+                lines,
+                [
+                    ("overall score", base_score, head_score),
+                    ("recall", base_recall, head_recall),
+                    ("absence guard", base_absence, head_absence),
+                ],
+            ),
+            _append_agent_review_security_regressions(lines, base, head),
+            _append_agent_review_new_failures(lines, base, head),
+        )
+    )
+
+    _append_agent_review_warnings(
+        lines,
+        base_tokens=base_tokens,
+        head_tokens=head_tokens,
+        base_elapsed=base_elapsed,
+        head_elapsed=head_elapsed,
+    )
+
+    if not failed:
+        lines.append("No agent-review benchmark regression detected.")
 
     return not failed, lines
 
@@ -172,6 +323,8 @@ def compare_quality(
 def compare(
     kind: str, base: dict[str, Any], head: dict[str, Any]
 ) -> tuple[bool, list[str]]:
+    if kind == "agent_review":
+        return compare_agent_review(base, head)
     if kind == "corpus":
         return compare_corpus(base, head)
     if kind == "quality":
@@ -183,7 +336,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Compare base and head benchmark JSON outputs for regressions."
     )
-    parser.add_argument("--kind", choices=("corpus", "quality"), required=True)
+    parser.add_argument(
+        "--kind", choices=("agent_review", "corpus", "quality"), required=True
+    )
     parser.add_argument("--base", required=True, help="Base branch JSON summary.")
     parser.add_argument("--head", required=True, help="Head branch JSON summary.")
     args = parser.parse_args()
