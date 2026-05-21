@@ -81,7 +81,7 @@ def run_debt_command(
 
     Calls: skylos/debt/__init__.py run_debt_analysis;
         skylos/debt/__init__.py load_history; skylos/debt/__init__.py append_history;
-        skylos/api.py upload_debt_report.
+        skylos/api/__init__.py upload_debt_report.
 
     Called from: skylos/cli.py run_debt_command.
     """

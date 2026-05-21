@@ -51,7 +51,7 @@ def _infer_upload_project_root(payload, git_root) -> str | None:
             normalize_repo_subpath,
             repo_subpath_for_project,
         )
-    except Exception:
+    except ImportError:
         return None
 
     for candidate in candidates:
@@ -74,48 +74,12 @@ def _extract_workspace_upload_metadata(payload) -> dict[str, Any] | None:
     workspace_data = payload.get("workspaces")
     if not isinstance(workspace_data, dict):
         return None
-    has_workspace_report = bool(
-        workspace_data.get("root_package")
-        or workspace_data.get("packages")
-        or workspace_data.get("diagnostics")
-    )
-    if not has_workspace_report:
+    if not _has_workspace_report(workspace_data):
         return None
 
-    def compact_package(pkg) -> dict[str, Any] | None:
-        if not isinstance(pkg, dict):
-            return None
-        out = {
-            "name": pkg.get("name"),
-            "relative_path": pkg.get("relative_path"),
-            "is_root": bool(pkg.get("is_root")),
-            "is_internal_dependency": bool(pkg.get("is_internal_dependency")),
-            "has_package_json": bool(pkg.get("has_package_json", True)),
-        }
-        sources = pkg.get("discovered_from")
-        if isinstance(sources, list):
-            out["discovered_from"] = [str(item) for item in sources]
-        return out
-
-    root_package = compact_package(workspace_data.get("root_package"))
-    packages = [
-        pkg
-        for pkg in (
-            compact_package(item) for item in workspace_data.get("packages", [])
-        )
-        if pkg is not None
-    ]
-    diagnostics = []
-    for diag in workspace_data.get("diagnostics", []):
-        if not isinstance(diag, dict):
-            continue
-        diagnostics.append(
-            {
-                "kind": diag.get("kind"),
-                "relative_path": diag.get("relative_path"),
-                "message": diag.get("message"),
-            }
-        )
+    root_package = _compact_workspace_package(workspace_data.get("root_package"))
+    packages = _compact_workspace_packages(workspace_data.get("packages", []))
+    diagnostics = _compact_workspace_diagnostics(workspace_data.get("diagnostics", []))
 
     return {
         "is_monorepo": bool(workspace_data.get("is_monorepo")),
@@ -130,13 +94,59 @@ def _extract_workspace_upload_metadata(payload) -> dict[str, Any] | None:
         "root_package": root_package,
         "packages": packages,
         "diagnostics": diagnostics[:20],
-        "declared_patterns": [
-            str(item) for item in workspace_data.get("declared_patterns", [])
-        ],
-        "tsconfig_references": [
-            str(item) for item in workspace_data.get("tsconfig_references", [])
-        ],
+        "declared_patterns": _string_list(workspace_data.get("declared_patterns", [])),
+        "tsconfig_references": _string_list(
+            workspace_data.get("tsconfig_references", [])
+        ),
     }
+
+
+def _has_workspace_report(workspace_data: dict[str, Any]) -> bool:
+    return bool(
+        workspace_data.get("root_package")
+        or workspace_data.get("packages")
+        or workspace_data.get("diagnostics")
+    )
+
+
+def _compact_workspace_package(pkg) -> dict[str, Any] | None:
+    if not isinstance(pkg, dict):
+        return None
+    out = {
+        "name": pkg.get("name"),
+        "relative_path": pkg.get("relative_path"),
+        "is_root": bool(pkg.get("is_root")),
+        "is_internal_dependency": bool(pkg.get("is_internal_dependency")),
+        "has_package_json": bool(pkg.get("has_package_json", True)),
+    }
+    sources = pkg.get("discovered_from")
+    if isinstance(sources, list):
+        out["discovered_from"] = [str(item) for item in sources]
+    return out
+
+
+def _compact_workspace_packages(packages) -> list[dict[str, Any]]:
+    return [
+        pkg
+        for pkg in (_compact_workspace_package(item) for item in packages)
+        if pkg is not None
+    ]
+
+
+def _compact_workspace_diagnostics(diagnostics) -> list[dict[str, Any]]:
+    return [
+        {
+            "kind": diag.get("kind"),
+            "relative_path": diag.get("relative_path"),
+            "message": diag.get("message"),
+        }
+        for diag in diagnostics
+        if isinstance(diag, dict)
+    ]
+
+
+def _string_list(items) -> list[str]:
+    return [str(item) for item in items]
 
 
 def _truncate_upload_text(value: Any, max_len: int) -> str | None:
