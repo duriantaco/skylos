@@ -59,8 +59,9 @@ def filter_findings_with_evidence(
             finding.symbol, finding.location.file, finding.location.line
         )
         owner_source = _owner_source(resolved, source_cache, root)
+        module_source = _module_source(resolved, source_cache, root)
 
-        if _safe_sink_refutes(finding, owner_source):
+        if _safe_sink_refutes(finding, owner_source, module_source):
             continue
 
         if (
@@ -86,12 +87,16 @@ def _is_filterable_security_finding(finding: Finding) -> bool:
     return True
 
 
-def _safe_sink_refutes(finding: Finding, owner_source: str | None) -> bool:
+def _safe_sink_refutes(
+    finding: Finding,
+    owner_source: str | None,
+    module_source: str | None,
+) -> bool:
     if not owner_source:
         return False
     evidence_text = _finding_text(finding)
     return _is_safe_subprocess_finding(
-        evidence_text, owner_source
+        evidence_text, owner_source, module_source
     ) or _is_parameterized_sql_finding(evidence_text, owner_source)
 
 
@@ -106,22 +111,27 @@ def _finding_text(finding: Finding) -> str:
     return " ".join(str(part or "") for part in parts).lower()
 
 
-def _is_safe_subprocess_finding(evidence_text: str, owner_source: str) -> bool:
+def _is_safe_subprocess_finding(
+    evidence_text: str,
+    owner_source: str,
+    module_source: str | None,
+) -> bool:
     if not any(term in evidence_text for term in COMMAND_TERMS):
         return False
     if "subprocess." not in owner_source:
         return False
 
-    return _ast_proves_safe_subprocess(owner_source)
+    return _ast_proves_safe_subprocess(owner_source, module_source or owner_source)
 
 
-def _ast_proves_safe_subprocess(owner_source: str) -> bool:
+def _ast_proves_safe_subprocess(owner_source: str, context_source: str) -> bool:
     try:
-        tree = ast.parse(owner_source)
+        owner_tree = ast.parse(owner_source)
+        context_tree = ast.parse(context_source)
     except SyntaxError:
         return False
 
-    for node in ast.walk(tree):
+    for node in ast.walk(owner_tree):
         if not isinstance(node, ast.Call):
             continue
         if _dotted_name(node.func).split(".")[:1] != ["subprocess"]:
@@ -135,7 +145,7 @@ def _ast_proves_safe_subprocess(owner_source: str) -> bool:
             return _literal_sequence(argv)
         allowlist = _subscript_name(argv)
         if allowlist and allowlist.isupper():
-            return _allowlist_is_not_mutated(tree, allowlist)
+            return _allowlist_is_literal_and_not_mutated(context_tree, allowlist)
     return False
 
 
@@ -156,15 +166,16 @@ def _subscript_name(node: ast.AST) -> str:
     return ""
 
 
-def _allowlist_is_not_mutated(tree: ast.AST, name: str) -> bool:
+def _allowlist_is_literal_and_not_mutated(tree: ast.AST, name: str) -> bool:
+    bindings: list[ast.AST] = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            targets = []
-            if isinstance(node, ast.Assign):
-                targets = list(node.targets)
-            else:
-                targets = [node.target]
-            for target in targets:
+            binding = _literal_allowlist_binding(node, name)
+            if binding is False:
+                return False
+            if isinstance(binding, ast.AST):
+                bindings.append(binding)
+            for target in _assignment_targets(node):
                 if _is_mutation_target(target, name):
                     return False
         if isinstance(node, ast.Call):
@@ -182,7 +193,48 @@ def _allowlist_is_not_mutated(tree: ast.AST, name: str) -> bool:
                 "update",
             }:
                 return False
-    return True
+    return len(bindings) == 1 and _literal_allowlist_value(bindings[0])
+
+
+def _literal_allowlist_binding(
+    node: ast.Assign | ast.AnnAssign | ast.AugAssign,
+    name: str,
+) -> ast.AST | bool | None:
+    if isinstance(node, ast.AugAssign):
+        return False if _target_binds_name(node.target, name) else None
+    targets = _assignment_targets(node)
+    direct_targets = [target for target in targets if _target_binds_name(target, name)]
+    if not direct_targets:
+        return None
+    if len(targets) != 1:
+        return False
+    return node.value
+
+
+def _assignment_targets(
+    node: ast.Assign | ast.AnnAssign | ast.AugAssign,
+) -> list[ast.AST]:
+    if isinstance(node, ast.Assign):
+        return list(node.targets)
+    return [node.target]
+
+
+def _target_binds_name(target: ast.AST, name: str) -> bool:
+    return isinstance(target, ast.Name) and target.id == name
+
+
+def _literal_allowlist_value(node: ast.AST) -> bool:
+    if isinstance(node, ast.Dict):
+        return all(
+            isinstance(value, (ast.List, ast.Tuple)) and _literal_sequence(value)
+            for value in node.values
+        )
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return all(
+            isinstance(value, (ast.List, ast.Tuple)) and _literal_sequence(value)
+            for value in node.elts
+        )
+    return False
 
 
 def _is_mutation_target(target: ast.AST, name: str) -> bool:
@@ -225,6 +277,16 @@ def _owner_source(
     start = max(symbol.line - 1, 0)
     end = max(symbol.end_line, symbol.line)
     return "\n".join(lines[start:end])
+
+
+def _module_source(
+    resolved: SymbolLiveness | None,
+    cache: dict[str, str | None],
+    root: Path,
+) -> str | None:
+    if not resolved:
+        return None
+    return _read_source(resolved.symbol.path, cache, root)
 
 
 def _read_source(path: str, cache: dict[str, str | None], root: Path) -> str | None:

@@ -271,6 +271,40 @@ def test_filter_keeps_dynamic_registry_handlers_and_mutable_allowlist(tmp_path):
     }
 
 
+def test_filter_keeps_uppercase_allowlist_assigned_from_untrusted_payload(tmp_path):
+    (tmp_path / "app.py").write_text(
+        """
+from tools import run_untrusted
+
+
+def main(event):
+    return run_untrusted(event)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    (tmp_path / "tools.py").write_text(
+        """
+import subprocess
+
+
+def run_untrusted(payload):
+    COMMANDS = payload.get("commands", {})
+    return subprocess.run(COMMANDS[payload["name"]], check=False)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    files = sorted(tmp_path.glob("*.py"))
+    finding = _finding(
+        tmp_path / "tools.py",
+        "run_untrusted",
+        "Command injection via user-controlled subprocess executable",
+    )
+
+    filtered = filter_findings_with_evidence([finding], files)
+
+    assert filtered == [finding]
+
+
 def test_analyze_files_filters_after_collecting_project_graph(tmp_path, monkeypatch):
     files = _write_hard_project(tmp_path)
     by_name = {path.name: path for path in files}
