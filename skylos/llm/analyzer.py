@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .context import ContextBuilder
 from .agents import AgentConfig, create_agent
+from .finding_evidence import filter_findings_with_evidence
 from .validator import ResultValidator, deduplicate_findings, merge_findings
 from .ui import SkylosUI, estimate_cost
 
@@ -750,6 +751,7 @@ class SkylosLLM:
                         progress_callback(i + 1, len(files), file)
 
         elapsed_ms = int((time.time() - start_time) * 1000)
+        all_findings = filter_findings_with_evidence(all_findings, files)
 
         result = AnalysisResult(
             findings=all_findings,

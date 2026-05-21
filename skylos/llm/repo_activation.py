@@ -4,6 +4,8 @@ import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ._grounding import build_grounding_context
+
 
 ENTRYPOINT_BASENAMES = {
     "__main__.py",
@@ -151,6 +153,7 @@ class FileActivation:
     total_branches: int = 0
     review_score: int = 0
     prefer_full_file_review: bool = False
+    graph_facts: list[str] = field(default_factory=list)
 
     def context_block(self) -> str:
         parts = [
@@ -175,6 +178,8 @@ class FileActivation:
             parts.append("- security surfaces: " + "; ".join(self.security_hints[:3]))
         if self.hotspot_hints:
             parts.append("- hotspot signals: " + "; ".join(self.hotspot_hints[:3]))
+        if self.graph_facts:
+            parts.extend(self.graph_facts[:8])
         parts.append(
             f"- module stats: defs={self.total_defs}, branches={self.total_branches}, lines={self.source_lines}"
         )
@@ -335,9 +340,32 @@ class RepoActivationIndex:
                 ):
                     meta.related_tests.append(test_path)
 
+        self._apply_graph_grounding()
         self._apply_static_signals()
         self._score()
         return self
+
+    def _apply_graph_grounding(self) -> None:
+        entrypoint_paths = {
+            meta.path
+            for meta in self.by_path.values()
+            if meta.entrypoint_reasons and "test module" not in meta.entrypoint_reasons
+        }
+        related_tests_by_path = {
+            meta.path: list(meta.related_tests)
+            for meta in self.by_path.values()
+            if meta.related_tests
+        }
+        grounding = build_grounding_context(
+            self.project_root,
+            self.files,
+            entrypoint_paths=entrypoint_paths,
+            related_tests_by_path=related_tests_by_path,
+        )
+        for path, facts in grounding.items():
+            meta = self.by_path.get(path)
+            if meta:
+                meta.graph_facts = facts
 
     def _apply_static_signals(self) -> None:
         weights = {"security": 100, "secrets": 100, "quality": 45}
