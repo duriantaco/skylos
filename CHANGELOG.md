@@ -1,5 +1,22 @@
 ## Changelog
 
+## [4.17.0](https://github.com/duriantaco/skylos/compare/v4.16.2...v4.17.0) (2026-05-21)
+
+
+### Features
+
+* **dead-code:** add evidence ledger ([#462](https://github.com/duriantaco/skylos/issues/462)) ([0d82ef1](https://github.com/duriantaco/skylos/commit/0d82ef1c2c3023cef425ff7b955ff1ac8a024e33))
+* **debt:** cap uploaded hotspot samples ([#466](https://github.com/duriantaco/skylos/issues/466)) ([14652fa](https://github.com/duriantaco/skylos/commit/14652fa593678c8719ac96a4282534e1293ed199))
+* **llm:** add grounded verification benchmarks ([#467](https://github.com/duriantaco/skylos/issues/467)) ([a900f14](https://github.com/duriantaco/skylos/commit/a900f14295bcdeaa732a5ffbafcc1823c71ef50d))
+* **quality:** add opaque identifier readability rule ([#468](https://github.com/duriantaco/skylos/issues/468)) ([1d0c5c8](https://github.com/duriantaco/skylos/commit/1d0c5c87d73e3d86ce831bc0bfbe44280eda5540))
+* **security:** add symlink safety rules ([#465](https://github.com/duriantaco/skylos/issues/465)) ([f7b28a9](https://github.com/duriantaco/skylos/commit/f7b28a9d4990e4504f24eddf185c4437d7f698a6))
+
+
+### Bug Fixes
+
+* **ci:** harden generated workflows ([#464](https://github.com/duriantaco/skylos/issues/464)) ([cd1789e](https://github.com/duriantaco/skylos/commit/cd1789e50b2a87f902a346e4fe08274bf7a5e04d))
+* **llm:** require literal subprocess allowlists ([#470](https://github.com/duriantaco/skylos/issues/470)) ([1e0960c](https://github.com/duriantaco/skylos/commit/1e0960c5b28fa5e5d411b02acce53817031a0145))
+
 ## [4.16.2](https://github.com/duriantaco/skylos/compare/v4.16.1...v4.16.2) (2026-05-19)
 
 
