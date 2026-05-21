@@ -289,7 +289,10 @@ class TestSkylosApi(unittest.TestCase):
                     "signal_count": 9,
                     "hotspot_count": 2,
                 },
-                "summary": {"dimensions": {"architecture": 2}},
+                "summary": {
+                    "dimensions": {"architecture": 2},
+                    "changed_files": ["app.py", "worker.py"],
+                },
                 "hotspots": [{"fingerprint": "hotspot:app.py", "file": "app.py"}],
             },
             quiet=True,
@@ -303,11 +306,61 @@ class TestSkylosApi(unittest.TestCase):
         self.assertEqual(payload["analysis_mode"], "debt")
         self.assertEqual(payload["scan_bundle_id"], "bundle-123")
         self.assertEqual(payload["summary"]["debt_score_pct"], 84)
-        self.assertEqual(payload["summary"]["debt_hotspots"], 1)
+        self.assertEqual(payload["summary"]["debt_hotspots"], 2)
+        self.assertEqual(payload["summary"]["debt_hotspots_uploaded"], 1)
         self.assertEqual(payload["summary"]["files_scanned"], 7)
-        self.assertEqual(payload["debt_summary"], {"dimensions": {"architecture": 2}})
+        self.assertEqual(payload["debt_summary"]["dimensions"], {"architecture": 2})
+        self.assertNotIn("changed_files", payload["debt_summary"])
+        self.assertEqual(payload["debt_summary"]["changed_file_count"], 2)
+        self.assertEqual(payload["debt_summary"]["changed_file_sample"], ["app.py", "worker.py"])
+        self.assertEqual(payload["debt_summary"]["upload_policy"]["hotspot_limit"], 50)
+        self.assertEqual(payload["debt_summary"]["upload_policy"]["uploaded_hotspot_count"], 1)
+        self.assertEqual(payload["debt_summary"]["upload_policy"]["project_hotspot_count"], 2)
         self.assertEqual(payload["debt_hotspots"][0]["file"], "app.py")
         self.assertNotIn("project_path", payload)
+
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    def test_prepare_debt_upload_sends_ranked_sample_not_every_hotspot(
+        self, _mock_root, _mock_git_info
+    ):
+        hotspots = [
+            {
+                "fingerprint": f"hotspot:file_{idx}.py",
+                "file": f"file_{idx}.py",
+                "score": idx,
+                "priority_score": idx,
+                "signals": [{"subject": f"s-{idx}-{sig}"} for sig in range(10)],
+            }
+            for idx in range(75)
+        ]
+
+        prepared = api._prepare_debt_upload(
+            {
+                "version": "1.0",
+                "timestamp": "2026-04-23T00:00:00+00:00",
+                "score": {
+                    "score_pct": 50,
+                    "signal_count": 750,
+                    "hotspot_count": 75,
+                },
+                "summary": {"changed_files": [f"file_{idx}.py" for idx in range(80)]},
+                "hotspots": hotspots,
+            }
+        )
+        payload = prepared.core_payload
+
+        self.assertEqual(payload["summary"]["debt_hotspots"], 75)
+        self.assertEqual(payload["summary"]["debt_hotspots_uploaded"], 50)
+        self.assertEqual(payload["summary"]["debt_hotspots_omitted"], 25)
+        self.assertEqual(len(payload["debt_hotspots"]), 50)
+        self.assertEqual(payload["debt_hotspots"][0]["file"], "file_74.py")
+        self.assertEqual(payload["debt_hotspots"][-1]["file"], "file_25.py")
+        self.assertEqual(len(payload["debt_hotspots"][0]["signals"]), 5)
+        self.assertEqual(payload["debt_summary"]["changed_file_count"], 80)
+        self.assertEqual(len(payload["debt_summary"]["changed_file_sample"]), 25)
+        self.assertEqual(payload["debt_summary"]["upload_policy"]["omitted_hotspot_count"], 25)
+        self.assertEqual(payload["debt_summary"]["upload_policy"]["project_hotspot_count"], 75)
 
     def test_extract_snippet_valid(self):
         content = "line1\nline2\nline3\nline4\nline5\n"

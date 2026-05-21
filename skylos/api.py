@@ -865,6 +865,108 @@ def _prepare_report_upload(
     )
 
 
+DEBT_UPLOAD_HOTSPOT_LIMIT = 50
+DEBT_UPLOAD_SIGNAL_LIMIT = 5
+DEBT_UPLOAD_CHANGED_FILE_SAMPLE_LIMIT = 25
+
+
+def _debt_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _debt_int(value: Any, fallback: int = 0) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        try:
+            return max(0, int(float(value)))
+        except (TypeError, ValueError):
+            return fallback
+
+
+def _debt_hotspot_sort_key(hotspot: dict[str, Any]) -> tuple[float, float, str]:
+    return (
+        -_debt_float(hotspot.get("priority_score") or hotspot.get("score")),
+        -_debt_float(hotspot.get("score")),
+        str(hotspot.get("file") or ""),
+    )
+
+
+def _compact_debt_hotspot(
+    hotspot: Any,
+    *,
+    signal_limit: int = DEBT_UPLOAD_SIGNAL_LIMIT,
+) -> dict[str, Any] | None:
+    if not isinstance(hotspot, dict):
+        return None
+
+    compact = dict(hotspot)
+    signals = hotspot.get("signals")
+    if isinstance(signals, list):
+        compact["signals"] = signals[: max(0, signal_limit)]
+    elif "signals" in compact:
+        compact["signals"] = []
+    return compact
+
+
+def _compact_debt_hotspots_for_upload(
+    hotspots: Any,
+    *,
+    hotspot_limit: int = DEBT_UPLOAD_HOTSPOT_LIMIT,
+    signal_limit: int = DEBT_UPLOAD_SIGNAL_LIMIT,
+) -> tuple[list[dict[str, Any]], int]:
+    if not isinstance(hotspots, list):
+        return [], 0
+
+    valid_hotspots = [item for item in hotspots if isinstance(item, dict)]
+    ordered = sorted(valid_hotspots, key=_debt_hotspot_sort_key)
+    compacted = [
+        compact
+        for compact in (
+            _compact_debt_hotspot(item, signal_limit=signal_limit)
+            for item in ordered[: max(0, hotspot_limit)]
+        )
+        if compact is not None
+    ]
+    return compacted, len(valid_hotspots)
+
+
+def _compact_debt_summary_for_upload(
+    summary: Any,
+    *,
+    uploaded_hotspot_count: int,
+    total_hotspot_count: int,
+    project_hotspot_count: int | None = None,
+) -> dict[str, Any]:
+    compact = dict(summary) if isinstance(summary, dict) else {}
+
+    changed_files = compact.get("changed_files")
+    if isinstance(changed_files, list):
+        compact["changed_file_count"] = len(changed_files)
+        compact["changed_file_sample"] = [
+            str(item)[:500]
+            for item in changed_files[:DEBT_UPLOAD_CHANGED_FILE_SAMPLE_LIMIT]
+        ]
+        compact.pop("changed_files", None)
+
+    upload_policy = {
+        "hotspot_limit": DEBT_UPLOAD_HOTSPOT_LIMIT,
+        "signal_limit_per_hotspot": DEBT_UPLOAD_SIGNAL_LIMIT,
+        "changed_file_sample_limit": DEBT_UPLOAD_CHANGED_FILE_SAMPLE_LIMIT,
+        "uploaded_hotspot_count": uploaded_hotspot_count,
+        "total_hotspot_count": total_hotspot_count,
+        "omitted_hotspot_count": max(total_hotspot_count - uploaded_hotspot_count, 0),
+        "ranking": "priority_score desc, score desc, file asc",
+    }
+    if project_hotspot_count is not None:
+        upload_policy["project_hotspot_count"] = project_hotspot_count
+    compact["upload_policy"] = upload_policy
+    return compact
+
+
 def _prepare_debt_upload(
     debt_report, *, is_forced=False, scan_bundle_id=None
 ) -> PreparedReportUpload:
@@ -875,9 +977,22 @@ def _prepare_debt_upload(
     project_id = link.get("project_id")
 
     debt_payload = _coerce_debt_snapshot_dict(debt_report)
-    debt_score = debt_payload.get("score") or {}
-    debt_hotspots = debt_payload.get("hotspots") or []
-    debt_summary = debt_payload.get("summary") or {}
+    raw_debt_score = debt_payload.get("score")
+    debt_score = raw_debt_score if isinstance(raw_debt_score, dict) else {}
+    raw_debt_summary = debt_payload.get("summary") or {}
+    debt_hotspots, total_hotspot_count = _compact_debt_hotspots_for_upload(
+        debt_payload.get("hotspots") or []
+    )
+    score_hotspot_count = _debt_int(
+        debt_score.get("hotspot_count"),
+        fallback=total_hotspot_count or len(debt_hotspots),
+    )
+    debt_summary = _compact_debt_summary_for_upload(
+        raw_debt_summary,
+        uploaded_hotspot_count=len(debt_hotspots),
+        total_hotspot_count=total_hotspot_count,
+        project_hotspot_count=score_hotspot_count,
+    )
 
     metadata = _build_report_metadata(
         commit_hash=commit,
@@ -895,7 +1010,9 @@ def _prepare_debt_upload(
         "tool": "skylos-debt",
         "summary": {
             "debt_score_pct": int(debt_score.get("score_pct") or 100),
-            "debt_hotspots": len(debt_hotspots),
+            "debt_hotspots": score_hotspot_count,
+            "debt_hotspots_uploaded": len(debt_hotspots),
+            "debt_hotspots_omitted": max(total_hotspot_count - len(debt_hotspots), 0),
             "debt_signals": int(debt_score.get("signal_count") or 0),
             "files_scanned": int(debt_payload.get("files_scanned") or 0),
             "total_loc": int(debt_payload.get("total_loc") or 0),
@@ -914,7 +1031,8 @@ def _prepare_debt_upload(
         "sarif_result_count": 0,
         "sarif_rule_count": 0,
         "definitions_count": 0,
-        "debt_hotspot_count": len(debt_hotspots),
+        "debt_hotspot_count": score_hotspot_count,
+        "debt_hotspot_upload_count": len(debt_hotspots),
         "debt_signal_count": int(debt_score.get("signal_count") or 0),
     }
 
