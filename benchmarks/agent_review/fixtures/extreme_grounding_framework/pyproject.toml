@@ -1,0 +1,6 @@
+[project]
+name = "extreme-grounding-fixture"
+version = "0.0.0"
+
+[project.scripts]
+extreme-admin = "tools.admin:dangerous_admin"

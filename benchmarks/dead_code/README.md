@@ -30,6 +30,16 @@ python scripts/dead_code_benchmark.py --target /Users/oha/skylos-demo
 python scripts/dead_code_benchmark.py --strict-labels
 ```
 
+Adversarial liveness cases live in a separate manifest:
+
+```bash
+python scripts/dead_code_benchmark.py --manifest benchmarks/dead_code/adversarial_manifest.json
+```
+
+The adversarial manifest is public but not part of the default required gate.
+It includes cases that deliberately stress framework/package entrypoints and
+dynamic dispatch patterns where one or more scanners may currently fail.
+
 Optional competitor baseline:
 
 ```bash

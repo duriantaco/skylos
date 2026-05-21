@@ -90,10 +90,13 @@ def test_review_prompt_tells_model_how_to_use_review_hints():
 
     assert "expert code reviewer for Python repositories" in system
     assert "mutable default arguments that retain shared state across calls" in system
+    assert "graph grounding evidence" in system
+    assert "allowlisted argv-list subprocess calls" in system
     assert (
         "If [REVIEW HINTS] are present, treat them as hypotheses to confirm or reject"
         in user
     )
+    assert "do not invent callers, callees, traces, tests, or reachability" in user
 
 
 def test_cleanup_analysis_prompt_treats_source_as_untrusted():
