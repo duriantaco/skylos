@@ -28,6 +28,22 @@ def _persona_attr(item: dict[str, Any]) -> str:
 
 
 def render_personas(personas: list[dict[str, Any]]) -> str:
+    """
+    Render persona filter cards for the top of the repo map.
+
+    Args:
+        personas: Curated persona dictionaries with id, title, summary, search
+            text, and paths.
+
+    Returns:
+        HTML button cards. Each card carries `data-mode` for client-side
+        filtering and escaped search text.
+
+    Calls: scripts/repo_map_renderer.py _esc;
+        scripts/repo_map_renderer.py _link.
+
+    Called from: scripts/repo_map_renderer.py render_html.
+    """
     cards = [
         """
         <button class="persona-card active" type="button" data-mode="all" data-search="all everything full map reset">
@@ -53,6 +69,23 @@ def render_personas(personas: list[dict[str, Any]]) -> str:
 
 
 def render_workflows(workflows: list[dict[str, Any]]) -> str:
+    """
+    Render task-oriented route cards.
+
+    Args:
+        workflows: Curated workflow dictionaries with title, goal, persona
+            tags, paths, tests, and ordered steps.
+
+    Returns:
+        HTML article cards showing what to read, what to test, and what action
+        to take next.
+
+    Calls: scripts/repo_map_renderer.py _link;
+        scripts/repo_map_renderer.py _esc;
+        scripts/repo_map_renderer.py _persona_attr.
+
+    Called from: scripts/repo_map_renderer.py render_html.
+    """
     cards = []
     for workflow in workflows:
         path_links = " ".join(_link(path) for path in workflow["paths"])
@@ -113,6 +146,26 @@ def render_sharp_edges(groups: list[dict[str, Any]]) -> str:
 
 
 def render_architecture_layers(layers: list[dict[str, Any]]) -> str:
+    """
+    Render the architecture-at-a-glance section.
+
+    Args:
+        layers: Curated layer dictionaries with purpose, dependency direction,
+            guardrail, persona tags, and representative paths.
+
+    Returns:
+        HTML cards that explain ownership boundaries before users open files.
+
+    Invariants:
+        Keep this conceptual and small. The page should guide navigation, not
+        become a giant dependency graph.
+
+    Calls: scripts/repo_map_renderer.py _link;
+        scripts/repo_map_renderer.py _esc;
+        scripts/repo_map_renderer.py _persona_attr.
+
+    Called from: scripts/repo_map_renderer.py render_html.
+    """
     cards = []
     for layer in layers:
         links = " ".join(_link(path) for path in layer["paths"])
@@ -142,6 +195,18 @@ def render_architecture_layers(layers: list[dict[str, Any]]) -> str:
 
 
 def render_docstring_guide(items: list[dict[str, str]]) -> str:
+    """
+    Render the guidance for future key-function docstrings.
+
+    Args:
+        items: Curated docstring guidance items with title and body text.
+
+    Returns:
+        HTML cards describing what maintainers should document for important
+        functions and classes.
+
+    Called from: scripts/repo_map_renderer.py render_html.
+    """
     cards = []
     for item in items:
         search_text = f"{item['title']} {item['body']}"
@@ -157,6 +222,17 @@ def render_docstring_guide(items: list[dict[str, str]]) -> str:
 
 
 def render_flow() -> str:
+    """
+    Render the main scan-flow pipeline.
+
+    Args:
+        None.
+
+    Returns:
+        HTML cards for the fixed high-level flow from input to output.
+
+    Called from: scripts/repo_map_renderer.py render_flow_section.
+    """
     steps = [
         ("Input", "CLI args, changed files, config", ["skylos/cli.py", "skylos/config.py"]),
         ("Discovery", "Select source files and language paths", ["skylos/discover/", "skylos/pipeline.py"]),
@@ -181,10 +257,41 @@ def render_flow() -> str:
 
 
 def render_folder_cards(cards: list[dict[str, Any]]) -> str:
+    """
+    Render all folder ownership cards.
+
+    Args:
+        cards: Folder card dictionaries produced by collect_repo_map.
+
+    Returns:
+        Concatenated HTML for each folder card.
+
+    Calls: scripts/repo_map_renderer.py render_folder_card.
+
+    Called from: scripts/repo_map_renderer.py render_folder_section.
+    """
     return "\n".join(render_folder_card(card) for card in cards)
 
 
 def render_folder_card(card: dict[str, Any]) -> str:
+    """
+    Render one folder ownership card.
+
+    Args:
+        card: Folder metadata and generated facts. Expected keys include path,
+            purpose, touch, entrypoints, tests, modules, and key_symbols.
+
+    Returns:
+        HTML article with folder purpose, touch guidance, entrypoints, nearby
+        tests, important files, and key symbols.
+
+    Calls: scripts/repo_map_renderer.py _link;
+        scripts/repo_map_renderer.py _pill;
+        scripts/repo_map_renderer.py _folder_detail_lists;
+        scripts/repo_map_renderer.py _folder_search_text.
+
+    Called from: scripts/repo_map_renderer.py render_folder_cards.
+    """
     modules = "\n".join(
         f"<li>{_link(module.path)} <span>{_esc(module.lines)} lines</span></li>"
         for module in card["modules"]
@@ -251,6 +358,22 @@ def _folder_detail_lists(modules: str, symbols: str) -> str:
 
 
 def render_hot_modules(modules: list[Any]) -> str:
+    """
+    Render high-risk or high-traffic modules.
+
+    Args:
+        modules: ModuleInfo-like objects sorted by size and symbol count.
+
+    Returns:
+        Table rows with path, line count, public/all symbol count, risk labels,
+        and summary.
+
+    Calls: scripts/repo_map_renderer.py _hot_module_labels;
+        scripts/repo_map_renderer.py _link;
+        scripts/repo_map_renderer.py _esc.
+
+    Called from: scripts/repo_map_renderer.py render_hot_section.
+    """
     rows = []
     for module in modules:
         public_symbols = sum(1 for symbol in module.symbols if not symbol.private)
@@ -282,6 +405,17 @@ def _hot_module_labels(module: Any) -> list[str]:
 
 
 def render_symbol_index(symbols: list[dict[str, Any]]) -> str:
+    """
+    Render the searchable symbol index.
+
+    Args:
+        symbols: Bounded symbol dictionaries from collect_repo_map.
+
+    Returns:
+        HTML table rows for symbol name, kind, surface, and file path.
+
+    Called from: scripts/repo_map_renderer.py render_symbol_section.
+    """
     rows = []
     for item in symbols:
         badge = '<span class="muted">private</span>' if item["private"] else '<span class="ok">public</span>'
@@ -312,6 +446,31 @@ def render_glossary(items: list[tuple[str, str]]) -> str:
 
 
 def render_html(data: dict[str, Any]) -> str:
+    """
+    Render the full repo-map HTML document.
+
+    Args:
+        data: Deterministic map data from scripts/build_repo_map.py
+            collect_repo_map.
+
+    Returns:
+        Full HTML page string. CSS and JS are external files under
+        docs/repo-map/.
+
+    Trust boundary:
+        Dynamic values come from repository metadata and are escaped by the
+        lower-level render helpers before interpolation.
+
+    Calls: scripts/repo_map_renderer.py render_snapshot;
+        scripts/repo_map_renderer.py section;
+        scripts/repo_map_renderer.py render_flow_section;
+        scripts/repo_map_renderer.py render_folder_section;
+        scripts/repo_map_renderer.py render_hot_section;
+        scripts/repo_map_renderer.py render_symbol_section.
+
+    Called from: scripts/build_repo_map.py write_repo_map;
+        scripts/build_repo_map.py main.
+    """
     sections = [
         render_snapshot(data),
         section("personas", "Choose A Mode", render_personas(data["personas"]), PERSONA_COPY, "persona-grid"),
@@ -330,6 +489,17 @@ def render_html(data: dict[str, Any]) -> str:
 
 
 def render_snapshot(data: dict[str, Any]) -> str:
+    """
+    Render repository-level counts and the comprehension-debt framing note.
+
+    Args:
+        data: Full map data dictionary.
+
+    Returns:
+        HTML section for top-level metrics and context.
+
+    Called from: scripts/repo_map_renderer.py render_html.
+    """
     guided_routes = len(data["workflows"]) + len(data["first_steps"])
     return (  # skylos: ignore escaped static repo-map HTML fragments
         f"""
@@ -349,6 +519,21 @@ def render_snapshot(data: dict[str, Any]) -> str:
 
 
 def section(section_id: str, title: str, body: str, lede: str = "", grid_class: str | None = None) -> str:
+    """
+    Wrap rendered cards in a named page section.
+
+    Args:
+        section_id: HTML id and sidebar anchor target.
+        title: Section heading text.
+        body: Already-rendered safe HTML card content.
+        lede: Optional introductory sentence.
+        grid_class: Optional CSS grid class override.
+
+    Returns:
+        HTML section wrapper.
+
+    Called from: scripts/repo_map_renderer.py render_html.
+    """
     lede_html = f'<p class="lede">{_esc(lede)}</p>' if lede else ""
     resolved_grid = grid_class or ("guide-grid" if section_id in {"first-steps", "sharp-edges"} else "route-grid")
     return (  # skylos: ignore escaped static repo-map HTML fragments
