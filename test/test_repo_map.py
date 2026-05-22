@@ -59,8 +59,13 @@ def test_render_html_prioritizes_start_routes_and_search(tmp_path):
 
     assert "Skylos Map" in page
     assert "Start Here" in page
+    assert "Choose A Mode" in page
+    assert "Architecture" in page
+    assert "Docstring Standard" in page
     assert "First 10 Minutes" in page
     assert "Safe Path" in page
+    assert "I am debugging a bad finding" in page
+    assert "Trust Boundary" in page
     assert "I want to understand a normal scan" in page
     assert "repo-search" in page
     assert "load_config" in page

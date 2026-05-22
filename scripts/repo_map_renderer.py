@@ -23,6 +23,35 @@ def _pill(label: str, value: Any) -> str:
     )
 
 
+def _persona_attr(item: dict[str, Any]) -> str:
+    return _esc(item.get("personas", "user contributor debugger security maintainer"))
+
+
+def render_personas(personas: list[dict[str, Any]]) -> str:
+    cards = [
+        """
+        <button class="persona-card active" type="button" data-mode="all" data-search="all everything full map reset">
+          <span class="persona-title">Show everything</span>
+          <span class="persona-summary">Use this when you already know what you are looking for.</span>
+          <span class="link-row"><span class="muted">Full map</span></span>
+        </button>
+        """
+    ]
+    for persona in personas:
+        links = " ".join(_link(path) for path in persona["paths"])
+        search_text = " ".join([persona["title"], persona["summary"], persona.get("search", ""), *persona["paths"]])
+        cards.append(
+            f"""
+            <button class="persona-card searchable" type="button" data-mode="{_esc(persona["id"])}" data-search="{_esc(search_text.lower())}">
+              <span class="persona-title">{_esc(persona["title"])}</span>
+              <span class="persona-summary">{_esc(persona["summary"])}</span>
+              <span class="link-row">{links}</span>
+            </button>
+            """
+        )
+    return "\n".join(cards)
+
+
 def render_workflows(workflows: list[dict[str, Any]]) -> str:
     cards = []
     for workflow in workflows:
@@ -34,7 +63,7 @@ def render_workflows(workflows: list[dict[str, Any]]) -> str:
         )
         cards.append(
             f"""
-            <article class="route-card searchable" data-search="{_esc(search_text.lower())}">
+            <article class="route-card searchable persona-target" data-personas="{_persona_attr(workflow)}" data-search="{_esc(search_text.lower())}">
               <h3>{_esc(workflow["title"])}</h3>
               <p>{_esc(workflow["goal"])}</p>
               <ol class="step-list">{steps}</ol>
@@ -56,7 +85,7 @@ def render_first_steps(first_steps: list[dict[str, Any]]) -> str:
         search_text = " ".join([item["title"], item["time"], *item["steps"], *item["paths"]])
         cards.append(
             f"""
-            <article class="guide-card searchable" data-search="{_esc(search_text.lower())}">
+            <article class="guide-card searchable persona-target" data-personas="{_persona_attr(item)}" data-search="{_esc(search_text.lower())}">
               <div class="guide-time">{_esc(item["time"])}</div>
               <h3>{_esc(item["title"])}</h3>
               <ol class="step-list">{steps}</ol>
@@ -77,6 +106,50 @@ def render_sharp_edges(groups: list[dict[str, Any]]) -> str:
             <article class="guide-card searchable" data-search="{_esc(search_text.lower())}">
               <h3>{_esc(group["title"])}</h3>
               <ul>{items}</ul>
+            </article>
+            """
+        )
+    return "\n".join(cards)
+
+
+def render_architecture_layers(layers: list[dict[str, Any]]) -> str:
+    cards = []
+    for layer in layers:
+        links = " ".join(_link(path) for path in layer["paths"])
+        search_text = " ".join(
+            [
+                layer["title"],
+                layer["purpose"],
+                layer["depends_on"],
+                layer["guardrail"],
+                *layer["paths"],
+            ]
+        )
+        cards.append(
+            f"""
+            <article class="arch-card searchable persona-target" data-personas="{_persona_attr(layer)}" data-search="{_esc(search_text.lower())}">
+              <h3>{_esc(layer["title"])}</h3>
+              <p>{_esc(layer["purpose"])}</p>
+              <div class="mini-label">Depends on</div>
+              <p class="compact">{_esc(layer["depends_on"])}</p>
+              <div class="mini-label">Guardrail</div>
+              <p class="compact">{_esc(layer["guardrail"])}</p>
+              <div class="link-row">{links}</div>
+            </article>
+            """
+        )
+    return "\n".join(cards)
+
+
+def render_docstring_guide(items: list[dict[str, str]]) -> str:
+    cards = []
+    for item in items:
+        search_text = f"{item['title']} {item['body']}"
+        cards.append(
+            f"""
+            <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="{_esc(search_text.lower())}">
+              <h3>{_esc(item["title"])}</h3>
+              <p>{_esc(item["body"])}</p>
             </article>
             """
         )
@@ -241,9 +314,12 @@ def render_glossary(items: list[tuple[str, str]]) -> str:
 def render_html(data: dict[str, Any]) -> str:
     sections = [
         render_snapshot(data),
+        section("personas", "Choose A Mode", render_personas(data["personas"]), PERSONA_COPY, "persona-grid"),
         section("first-steps", "First 10 Minutes", render_first_steps(data["first_steps"]), FIRST_STEPS_COPY),
         section("routes", "Start Here", render_workflows(data["workflows"])),
         section("sharp-edges", "Safe Path", render_sharp_edges(data["sharp_edges"]), SAFE_PATH_COPY),
+        section("architecture", "Architecture", render_architecture_layers(data["architecture_layers"]), ARCHITECTURE_COPY, "arch-grid"),
+        section("docstrings", "Docstring Standard", render_docstring_guide(data["docstring_guide"]), DOCSTRING_COPY, "doc-grid"),
         render_flow_section(),
         render_folder_section(data),
         render_hot_section(data),
@@ -272,14 +348,15 @@ def render_snapshot(data: dict[str, Any]) -> str:
     )
 
 
-def section(section_id: str, title: str, body: str, lede: str = "") -> str:
+def section(section_id: str, title: str, body: str, lede: str = "", grid_class: str | None = None) -> str:
     lede_html = f'<p class="lede">{_esc(lede)}</p>' if lede else ""
+    resolved_grid = grid_class or ("guide-grid" if section_id in {"first-steps", "sharp-edges"} else "route-grid")
     return (  # skylos: ignore escaped static repo-map HTML fragments
         f"""
     <section id="{_esc(section_id)}">
       <h2>{_esc(title)}</h2>
       {lede_html}
-      <div class="{'guide-grid' if section_id in {'first-steps', 'sharp-edges'} else 'route-grid'}">
+      <div class="{_esc(resolved_grid)}">
         {body}
       </div>
     </section>
@@ -340,7 +417,10 @@ def render_symbol_section(data: dict[str, Any]) -> str:
 
 
 FIRST_STEPS_COPY = "Pick the card that matches your situation. Stop after the listed files unless you have a reason to go deeper."
+PERSONA_COPY = "Choose the closest job-to-be-done. The page will hide unrelated cards while keeping search available."
 SAFE_PATH_COPY = "This is the quick judgment layer: where a new contributor can start, where to slow down, and what proof usually matters."
+ARCHITECTURE_COPY = "Use this when a change crosses ownership boundaries. It shows dependency direction and the guardrail for each layer."
+DOCSTRING_COPY = "Use these fields for key functions, not every helper. The goal is to preserve editing judgment, trust boundaries, and proof expectations."
 COMPREHENSION_COPY = (
     "Comprehension debt grows when the codebase changes faster than the team can maintain a shared mental model. "
     'This page keeps the first question simple: where should I start? Source framing: '
@@ -367,8 +447,11 @@ PAGE_TEMPLATE = """<!doctype html>
       </div>
       <nav>
         <a href="#routes">Start Here</a>
+        <a href="#personas">Choose A Mode</a>
         <a href="#first-steps">First 10 Minutes</a>
         <a href="#sharp-edges">Safe Path</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#docstrings">Docstrings</a>
         <a href="#flow">Scan Flow</a>
         <a href="#folders">Folders</a>
         <a href="#hot">Hot Zones</a>

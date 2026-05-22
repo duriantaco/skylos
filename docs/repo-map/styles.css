@@ -111,7 +111,10 @@ nav a {
 }
 
 .meta-grid,
+.persona-grid,
 .guide-grid,
+.arch-grid,
+.doc-grid,
 .route-grid,
 .folder-grid {
   display: grid;
@@ -127,13 +130,25 @@ nav a {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.persona-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.arch-grid,
+.doc-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .route-grid,
 .folder-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .metric,
+.persona-card,
 .guide-card,
+.arch-card,
+.doc-card,
 .route-card,
 .folder-card,
 .flow-step,
@@ -146,7 +161,10 @@ nav a {
 }
 
 .metric,
+.persona-card,
 .guide-card,
+.arch-card,
+.doc-card,
 .route-card,
 .folder-card,
 .flow-step,
@@ -168,16 +186,48 @@ nav a {
 }
 
 .guide-card,
+.arch-card,
+.doc-card,
 .route-card,
 .folder-card {
   padding: 16px;
 }
 
+.persona-card {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.persona-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.persona-title {
+  font-weight: 700;
+}
+
+.persona-summary {
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .guide-card p,
+.arch-card p,
+.doc-card p,
 .route-card p,
 .folder-card p {
   margin-bottom: 12px;
   color: var(--muted);
+}
+
+.compact {
+  margin-bottom: 10px;
 }
 
 .guide-time {
@@ -382,7 +432,10 @@ dd {
   }
 
   .meta-grid,
+  .persona-grid,
   .guide-grid,
+  .arch-grid,
+  .doc-grid,
   .route-grid,
   .folder-grid,
   dl {

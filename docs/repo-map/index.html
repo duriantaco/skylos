@@ -17,8 +17,11 @@
       </div>
       <nav>
         <a href="#routes">Start Here</a>
+        <a href="#personas">Choose A Mode</a>
         <a href="#first-steps">First 10 Minutes</a>
         <a href="#sharp-edges">Safe Path</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#docstrings">Docstrings</a>
         <a href="#flow">Scan Flow</a>
         <a href="#folders">Folders</a>
         <a href="#hot">Hot Zones</a>
@@ -36,11 +39,61 @@
       <p class="lede">Use the route cards first. The folder and symbol sections are there when you need detail.</p>
       <div class="meta-grid">
         <div class="metric"><strong>641</strong><span>Python files scanned</span></div>
-        <div class="metric"><strong>5234</strong><span>top-level classes/functions</span></div>
+        <div class="metric"><strong>5238</strong><span>top-level classes/functions</span></div>
         <div class="metric"><strong>32</strong><span>ownership areas</span></div>
         <div class="metric"><strong>11</strong><span>guided routes</span></div>
       </div>
       <div class="note">Comprehension debt grows when the codebase changes faster than the team can maintain a shared mental model. This page keeps the first question simple: where should I start? Source framing: <a href="https://dev.to/javz/your-codebase-has-technical-debt-but-does-your-team-have-comprehension-debt-385f">DEV Community article</a>.</div>
+    </section>
+    
+
+    <section id="personas">
+      <h2>Choose A Mode</h2>
+      <p class="lede">Choose the closest job-to-be-done. The page will hide unrelated cards while keeping search available.</p>
+      <div class="persona-grid">
+        
+        <button class="persona-card active" type="button" data-mode="all" data-search="all everything full map reset">
+          <span class="persona-title">Show everything</span>
+          <span class="persona-summary">Use this when you already know what you are looking for.</span>
+          <span class="link-row"><span class="muted">Full map</span></span>
+        </button>
+        
+
+            <button class="persona-card searchable" type="button" data-mode="user" data-search="i just want to use skylos start with install, commands, output, and rule meanings. skip internal ownership maps. install quick start cli output rules user docs readme.md docs/readme.md dictionary.md">
+              <span class="persona-title">I just want to use Skylos</span>
+              <span class="persona-summary">Start with install, commands, output, and rule meanings. Skip internal ownership maps.</span>
+              <span class="link-row"><a href="../../README.md">README.md</a> <a href="../../docs/README.md">docs/README.md</a> <a href="../../dictionary.md">dictionary.md</a></span>
+            </button>
+            
+
+            <button class="persona-card searchable" type="button" data-mode="contributor" data-search="i want to contribute pick a safe ownership area, find nearby tests, and keep the change narrow. contribute first pr tests safe change ownership contributing.md test/ scripts/">
+              <span class="persona-title">I want to contribute</span>
+              <span class="persona-summary">Pick a safe ownership area, find nearby tests, and keep the change narrow.</span>
+              <span class="link-row"><a href="../../CONTRIBUTING.md">CONTRIBUTING.md</a> <a href="../../test">test</a> <a href="../../scripts">scripts</a></span>
+            </button>
+            
+
+            <button class="persona-card searchable" type="button" data-mode="debugger" data-search="i am debugging a bad finding reproduce the finding, locate the detector/evidence layer, and add a regression test. false positive false negative detector evidence regression skylos/analyzer.py skylos/rules/ skylos/analysis/ test/">
+              <span class="persona-title">I am debugging a bad finding</span>
+              <span class="persona-summary">Reproduce the finding, locate the detector/evidence layer, and add a regression test.</span>
+              <span class="link-row"><a href="../../skylos/analyzer.py">skylos/analyzer.py</a> <a href="../../skylos/rules">skylos/rules</a> <a href="../../skylos/analysis">skylos/analysis</a> <a href="../../test">test</a></span>
+            </button>
+            
+
+            <button class="persona-card searchable" type="button" data-mode="security" data-search="i am reviewing security or llm behavior follow trust boundaries: config policy, llm evidence filters, ci, and cloud sync. security llm policy cloud ci evidence bypass skylos/config.py skylos/llm/ skylos/security/ skylos/cloud/ skylos/cicd/">
+              <span class="persona-title">I am reviewing security or LLM behavior</span>
+              <span class="persona-summary">Follow trust boundaries: config policy, LLM evidence filters, CI, and cloud sync.</span>
+              <span class="link-row"><a href="../../skylos/config.py">skylos/config.py</a> <a href="../../skylos/llm">skylos/llm</a> <a href="../../skylos/security">skylos/security</a> <a href="../../skylos/cloud">skylos/cloud</a> <a href="../../skylos/cicd">skylos/cicd</a></span>
+            </button>
+            
+
+            <button class="persona-card searchable" type="button" data-mode="maintainer" data-search="i need the architecture use the layer map, hot zones, and docstring guide before reshaping shared paths. architecture maintainer hot zones boundaries main sequence skylos/pipeline.py skylos/analyzer.py skylos/cli.py skylos/config.py">
+              <span class="persona-title">I need the architecture</span>
+              <span class="persona-summary">Use the layer map, hot zones, and docstring guide before reshaping shared paths.</span>
+              <span class="link-row"><a href="../../skylos/pipeline.py">skylos/pipeline.py</a> <a href="../../skylos/analyzer.py">skylos/analyzer.py</a> <a href="../../skylos/cli.py">skylos/cli.py</a> <a href="../../skylos/config.py">skylos/config.py</a></span>
+            </button>
+            
+      </div>
     </section>
     
 
@@ -49,7 +102,7 @@
       <p class="lede">Pick the card that matches your situation. Stop after the listed files unless you have a reason to go deeper.</p>
       <div class="guide-grid">
         
-            <article class="guide-card searchable" data-search="i am completely new 10 minutes open readme.md to understand what skylos does. open this map and pick exactly one route card. read only the first two files in that route before browsing deeper. readme.md docs/repo-map/index.html">
+            <article class="guide-card searchable persona-target" data-personas="user contributor" data-search="i am completely new 10 minutes open readme.md to understand what skylos does. open this map and pick exactly one route card. read only the first two files in that route before browsing deeper. readme.md docs/repo-map/index.html">
               <div class="guide-time">10 minutes</div>
               <h3>I am completely new</h3>
               <ol class="step-list"><li>Open README.md to understand what Skylos does.</li>
@@ -59,7 +112,7 @@
             </article>
             
 
-            <article class="guide-card searchable" data-search="i need to make a small change 15 minutes search this page for the thing you want to change. open the matching folder card and check the nearby tests. change one ownership area first; avoid drive-by refactors. test/ scripts/">
+            <article class="guide-card searchable persona-target" data-personas="contributor" data-search="i need to make a small change 15 minutes search this page for the thing you want to change. open the matching folder card and check the nearby tests. change one ownership area first; avoid drive-by refactors. test/ scripts/">
               <div class="guide-time">15 minutes</div>
               <h3>I need to make a small change</h3>
               <ol class="step-list"><li>Search this page for the thing you want to change.</li>
@@ -69,7 +122,7 @@
             </article>
             
 
-            <article class="guide-card searchable" data-search="i am debugging a bad result 20 minutes find the rule or finding category in the route cards. build the smallest fixture that reproduces the bad result. patch the detector and keep the fixture as a regression test. skylos/rules/ skylos/analyzer.py test/">
+            <article class="guide-card searchable persona-target" data-personas="debugger" data-search="i am debugging a bad result 20 minutes find the rule or finding category in the route cards. build the smallest fixture that reproduces the bad result. patch the detector and keep the fixture as a regression test. skylos/rules/ skylos/analyzer.py test/">
               <div class="guide-time">20 minutes</div>
               <h3>I am debugging a bad result</h3>
               <ol class="step-list"><li>Find the rule or finding category in the route cards.</li>
@@ -79,7 +132,7 @@
             </article>
             
 
-            <article class="guide-card searchable" data-search="i am reviewing a risky pr 20 minutes check whether the pr touches a hot zone. follow the scan flow to see downstream output impact. ask for benchmark or regression evidence before merging scanner semantics. skylos/llm/ skylos/security/ skylos/cloud/ skylos/cicd/">
+            <article class="guide-card searchable persona-target" data-personas="security maintainer" data-search="i am reviewing a risky pr 20 minutes check whether the pr touches a hot zone. follow the scan flow to see downstream output impact. ask for benchmark or regression evidence before merging scanner semantics. skylos/llm/ skylos/security/ skylos/cloud/ skylos/cicd/">
               <div class="guide-time">20 minutes</div>
               <h3>I am reviewing a risky PR</h3>
               <ol class="step-list"><li>Check whether the PR touches a hot zone.</li>
@@ -97,7 +150,7 @@
       
       <div class="route-grid">
         
-            <article class="route-card searchable" data-search="i want to understand a normal scan follow the main path from cli input to findings and output. skylos/cli.py skylos/config.py skylos/pipeline.py skylos/analyzer.py skylos/reporting/ test/test_cli.py test/test_analyzer.py read the cli route first, then jump to config loading. follow the handoff into pipeline/analyzer only after the inputs make sense. verify with cli and analyzer tests before trusting a behavior change.">
+            <article class="route-card searchable persona-target" data-personas="user contributor maintainer" data-search="i want to understand a normal scan follow the main path from cli input to findings and output. skylos/cli.py skylos/config.py skylos/pipeline.py skylos/analyzer.py skylos/reporting/ test/test_cli.py test/test_analyzer.py read the cli route first, then jump to config loading. follow the handoff into pipeline/analyzer only after the inputs make sense. verify with cli and analyzer tests before trusting a behavior change.">
               <h3>I want to understand a normal scan</h3>
               <p>Follow the main path from CLI input to findings and output.</p>
               <ol class="step-list"><li>Read the CLI route first, then jump to config loading.</li>
@@ -110,7 +163,7 @@
             </article>
             
 
-            <article class="route-card searchable" data-search="i want to fix a false positive find the detector, the evidence proof, and the regression test that should pin the behavior. skylos/analyzer.py skylos/analysis/ skylos/deadcode/ skylos/visitors/ test/ test/test_analyzer.py reproduce the wrong finding with the smallest possible fixture. find whether the bug is rule logic, liveness evidence, framework handling, or output filtering. add a regression test that fails before the fix and passes after it.">
+            <article class="route-card searchable persona-target" data-personas="debugger contributor maintainer" data-search="i want to fix a false positive find the detector, the evidence proof, and the regression test that should pin the behavior. skylos/analyzer.py skylos/analysis/ skylos/deadcode/ skylos/visitors/ test/ test/test_analyzer.py reproduce the wrong finding with the smallest possible fixture. find whether the bug is rule logic, liveness evidence, framework handling, or output filtering. add a regression test that fails before the fix and passes after it.">
               <h3>I want to fix a false positive</h3>
               <p>Find the detector, the evidence proof, and the regression test that should pin the behavior.</p>
               <ol class="step-list"><li>Reproduce the wrong finding with the smallest possible fixture.</li>
@@ -123,7 +176,7 @@
             </article>
             
 
-            <article class="route-card searchable" data-search="i want to add or tune a rule change the catalog and implementation together so docs, ids, and behavior stay aligned. skylos/rules/catalog.py skylos/rules/danger/ skylos/rules/quality/ dictionary.md scripts/check_rule_docs_parity.py start with the rule id and public wording before touching detector code. keep the catalog, implementation, tests, and docs parity together. run parity checks so users do not see undocumented or mismatched rule ids.">
+            <article class="route-card searchable persona-target" data-personas="contributor debugger maintainer" data-search="i want to add or tune a rule change the catalog and implementation together so docs, ids, and behavior stay aligned. skylos/rules/catalog.py skylos/rules/danger/ skylos/rules/quality/ dictionary.md scripts/check_rule_docs_parity.py start with the rule id and public wording before touching detector code. keep the catalog, implementation, tests, and docs parity together. run parity checks so users do not see undocumented or mismatched rule ids.">
               <h3>I want to add or tune a rule</h3>
               <p>Change the catalog and implementation together so docs, IDs, and behavior stay aligned.</p>
               <ol class="step-list"><li>Start with the rule ID and public wording before touching detector code.</li>
@@ -136,7 +189,7 @@
             </article>
             
 
-            <article class="route-card searchable" data-search="i want to touch llm analysis keep prompts, provider runtime, evidence grounding, and scanner integrity together. skylos/llm/analyzer.py skylos/llm/finding_evidence.py skylos/adapters/ skylos/agents/ test/test_llm_finding_evidence.py test/test_agent_service.py treat the llm as untrusted until code evidence proves the claim. change prompts/runtime separately from evidence filters when possible. benchmark against hard false-positive and false-negative fixtures.">
+            <article class="route-card searchable persona-target" data-personas="security maintainer" data-search="i want to touch llm analysis keep prompts, provider runtime, evidence grounding, and scanner integrity together. skylos/llm/analyzer.py skylos/llm/finding_evidence.py skylos/adapters/ skylos/agents/ test/test_llm_finding_evidence.py test/test_agent_service.py treat the llm as untrusted until code evidence proves the claim. change prompts/runtime separately from evidence filters when possible. benchmark against hard false-positive and false-negative fixtures.">
               <h3>I want to touch LLM analysis</h3>
               <p>Keep prompts, provider runtime, evidence grounding, and scanner integrity together.</p>
               <ol class="step-list"><li>Treat the LLM as untrusted until code evidence proves the claim.</li>
@@ -149,7 +202,7 @@
             </article>
             
 
-            <article class="route-card searchable" data-search="i want to change cloud or ci policy follow local config, synced policy, generated workflows, and gate output as one security boundary. skylos/config.py skylos/cloud/sync.py skylos/cicd/workflow.py test/test_config.py test/test_security_contracts.py test/test_cicd_workflow.py decide which side owns the policy: local repo, synced cloud policy, or cli flag. check merge precedence before changing analyzer behavior. test the bypass case, not only the normal happy path.">
+            <article class="route-card searchable persona-target" data-personas="security maintainer" data-search="i want to change cloud or ci policy follow local config, synced policy, generated workflows, and gate output as one security boundary. skylos/config.py skylos/cloud/sync.py skylos/cicd/workflow.py test/test_config.py test/test_security_contracts.py test/test_cicd_workflow.py decide which side owns the policy: local repo, synced cloud policy, or cli flag. check merge precedence before changing analyzer behavior. test the bypass case, not only the normal happy path.">
               <h3>I want to change cloud or CI policy</h3>
               <p>Follow local config, synced policy, generated workflows, and gate output as one security boundary.</p>
               <ol class="step-list"><li>Decide which side owns the policy: local repo, synced cloud policy, or CLI flag.</li>
@@ -162,7 +215,7 @@
             </article>
             
 
-            <article class="route-card searchable" data-search="i want to prove quality changed run benchmarks and regression scripts instead of trusting a single happy-path fixture. scripts/security_benchmark.py scripts/quality_benchmark.py scripts/dead_code_benchmark.py skylos/benchmarks/ test/test_security_benchmark.py test/test_quality_benchmark.py test/test_dead_code_benchmark.py pick the benchmark closest to the behavior you changed. record before/after scores and timing. keep hard fixtures in the benchmark suite when they guard real regressions.">
+            <article class="route-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="i want to prove quality changed run benchmarks and regression scripts instead of trusting a single happy-path fixture. scripts/security_benchmark.py scripts/quality_benchmark.py scripts/dead_code_benchmark.py skylos/benchmarks/ test/test_security_benchmark.py test/test_quality_benchmark.py test/test_dead_code_benchmark.py pick the benchmark closest to the behavior you changed. record before/after scores and timing. keep hard fixtures in the benchmark suite when they guard real regressions.">
               <h3>I want to prove quality changed</h3>
               <p>Run benchmarks and regression scripts instead of trusting a single happy-path fixture.</p>
               <ol class="step-list"><li>Pick the benchmark closest to the behavior you changed.</li>
@@ -175,7 +228,7 @@
             </article>
             
 
-            <article class="route-card searchable" data-search="i want to use skylos as a library start with the public api facade before reaching into private helpers. skylos/api/__init__.py skylos/api/_findings.py skylos/api/_payloads.py test/test_api.py import from skylos.api first; treat underscore modules as implementation details. check payload shape helpers before creating a new response format. preserve public facade behavior even when private helpers move.">
+            <article class="route-card searchable persona-target" data-personas="user contributor" data-search="i want to use skylos as a library start with the public api facade before reaching into private helpers. skylos/api/__init__.py skylos/api/_findings.py skylos/api/_payloads.py test/test_api.py import from skylos.api first; treat underscore modules as implementation details. check payload shape helpers before creating a new response format. preserve public facade behavior even when private helpers move.">
               <h3>I want to use Skylos as a library</h3>
               <p>Start with the public API facade before reaching into private helpers.</p>
               <ol class="step-list"><li>Import from skylos.api first; treat underscore modules as implementation details.</li>
@@ -220,6 +273,147 @@
 <li>Security changes need a bypass or attacker-controlled input test</li>
 <li>LLM grounding changes need before/after benchmark evidence</li>
 <li>Public API changes need facade compatibility tests</li></ul>
+            </article>
+            
+      </div>
+    </section>
+    
+
+    <section id="architecture">
+      <h2>Architecture</h2>
+      <p class="lede">Use this when a change crosses ownership boundaries. It shows dependency direction and the guardrail for each layer.</p>
+      <div class="arch-grid">
+        
+            <article class="arch-card searchable persona-target" data-personas="user contributor maintainer" data-search="interfaces where users, ci, agents, and library consumers enter skylos. policy, discovery, analysis, reporting keep interface code thin; move command-specific logic into focused modules. skylos/cli.py skylos/api/ skylos/commands/ skylos/cicd/">
+              <h3>Interfaces</h3>
+              <p>Where users, CI, agents, and library consumers enter Skylos.</p>
+              <div class="mini-label">Depends on</div>
+              <p class="compact">Policy, discovery, analysis, reporting</p>
+              <div class="mini-label">Guardrail</div>
+              <p class="compact">Keep interface code thin; move command-specific logic into focused modules.</p>
+              <div class="link-row"><a href="../../skylos/cli.py">skylos/cli.py</a> <a href="../../skylos/api">skylos/api</a> <a href="../../skylos/commands">skylos/commands</a> <a href="../../skylos/cicd">skylos/cicd</a></div>
+            </article>
+            
+
+            <article class="arch-card searchable persona-target" data-personas="security maintainer" data-search="policy and trust configuration, synced cloud policy, security contracts, and gate decisions. interfaces and analyzer output treat merge precedence and attacker-controlled repo config as security-sensitive. skylos/config.py skylos/cloud/sync.py">
+              <h3>Policy And Trust</h3>
+              <p>Configuration, synced cloud policy, security contracts, and gate decisions.</p>
+              <div class="mini-label">Depends on</div>
+              <p class="compact">Interfaces and analyzer output</p>
+              <div class="mini-label">Guardrail</div>
+              <p class="compact">Treat merge precedence and attacker-controlled repo config as security-sensitive.</p>
+              <div class="link-row"><a href="../../skylos/config.py">skylos/config.py</a> <a href="../../skylos/cloud/sync.py">skylos/cloud/sync.py</a></div>
+            </article>
+            
+
+            <article class="arch-card searchable persona-target" data-personas="debugger contributor maintainer" data-search="discovery decides which files and languages enter the scanner. config and filesystem state too broad creates noise; too narrow creates false negatives. skylos/discover/ skylos/pipeline.py skylos/engines/">
+              <h3>Discovery</h3>
+              <p>Decides which files and languages enter the scanner.</p>
+              <div class="mini-label">Depends on</div>
+              <p class="compact">Config and filesystem state</p>
+              <div class="mini-label">Guardrail</div>
+              <p class="compact">Too broad creates noise; too narrow creates false negatives.</p>
+              <div class="link-row"><a href="../../skylos/discover">skylos/discover</a> <a href="../../skylos/pipeline.py">skylos/pipeline.py</a> <a href="../../skylos/engines">skylos/engines</a></div>
+            </article>
+            
+
+            <article class="arch-card searchable persona-target" data-personas="debugger security maintainer" data-search="static analysis core owns liveness, rules, framework handling, quality checks, and dangerous-flow detection. discovery, config, language engines every semantic change needs a small fixture and a regression test. skylos/analyzer.py skylos/analysis/ skylos/rules/ skylos/visitors/">
+              <h3>Static Analysis Core</h3>
+              <p>Owns liveness, rules, framework handling, quality checks, and dangerous-flow detection.</p>
+              <div class="mini-label">Depends on</div>
+              <p class="compact">Discovery, config, language engines</p>
+              <div class="mini-label">Guardrail</div>
+              <p class="compact">Every semantic change needs a small fixture and a regression test.</p>
+              <div class="link-row"><a href="../../skylos/analyzer.py">skylos/analyzer.py</a> <a href="../../skylos/analysis">skylos/analysis</a> <a href="../../skylos/rules">skylos/rules</a> <a href="../../skylos/visitors">skylos/visitors</a></div>
+            </article>
+            
+
+            <article class="arch-card searchable persona-target" data-personas="security maintainer" data-search="evidence and ai review grounds llm/agent findings against source code and scanner evidence. static analysis output and provider adapters filters must prove safety; weak refutation creates scanner false negatives. skylos/llm/ skylos/agents/ skylos/adapters/">
+              <h3>Evidence And AI Review</h3>
+              <p>Grounds LLM/agent findings against source code and scanner evidence.</p>
+              <div class="mini-label">Depends on</div>
+              <p class="compact">Static analysis output and provider adapters</p>
+              <div class="mini-label">Guardrail</div>
+              <p class="compact">Filters must prove safety; weak refutation creates scanner false negatives.</p>
+              <div class="link-row"><a href="../../skylos/llm">skylos/llm</a> <a href="../../skylos/agents">skylos/agents</a> <a href="../../skylos/adapters">skylos/adapters</a></div>
+            </article>
+            
+
+            <article class="arch-card searchable persona-target" data-personas="user contributor maintainer" data-search="output and feedback turns findings into terminal output, reports, uploads, annotations, and review comments. analyzer results and policy decisions output changes should preserve machine-readable compatibility. skylos/reporting/ skylos/cloud/ skylos/cicd/ skylos/ui/">
+              <h3>Output And Feedback</h3>
+              <p>Turns findings into terminal output, reports, uploads, annotations, and review comments.</p>
+              <div class="mini-label">Depends on</div>
+              <p class="compact">Analyzer results and policy decisions</p>
+              <div class="mini-label">Guardrail</div>
+              <p class="compact">Output changes should preserve machine-readable compatibility.</p>
+              <div class="link-row"><a href="../../skylos/reporting">skylos/reporting</a> <a href="../../skylos/cloud">skylos/cloud</a> <a href="../../skylos/cicd">skylos/cicd</a> <a href="../../skylos/ui">skylos/ui</a></div>
+            </article>
+            
+
+            <article class="arch-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="proof harness keeps behavior honest with tests, benchmarks, parity checks, and generated artifacts. all product layers benchmark updates should explain score, timing, and regression intent. test/ benchmarks/ scripts/ skylos/benchmarks/">
+              <h3>Proof Harness</h3>
+              <p>Keeps behavior honest with tests, benchmarks, parity checks, and generated artifacts.</p>
+              <div class="mini-label">Depends on</div>
+              <p class="compact">All product layers</p>
+              <div class="mini-label">Guardrail</div>
+              <p class="compact">Benchmark updates should explain score, timing, and regression intent.</p>
+              <div class="link-row"><a href="../../test">test</a> <a href="../../benchmarks">benchmarks</a> <a href="../../scripts">scripts</a> <a href="../../skylos/benchmarks">skylos/benchmarks</a></div>
+            </article>
+            
+      </div>
+    </section>
+    
+
+    <section id="docstrings">
+      <h2>Docstring Standard</h2>
+      <p class="lede">Use these fields for key functions, not every helper. The goal is to preserve editing judgment, trust boundaries, and proof expectations.</p>
+      <div class="doc-grid">
+        
+            <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="intent why this function exists, in product terms. prefer the user-visible or scanner-integrity reason over a paraphrase of the function name.">
+              <h3>Intent</h3>
+              <p>Why this function exists, in product terms. Prefer the user-visible or scanner-integrity reason over a paraphrase of the function name.</p>
+            </article>
+            
+
+            <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="trust boundary state whether inputs can come from a scanned repo, ci, cloud policy, llm output, or local filesystem. this is mandatory for security-sensitive helpers.">
+              <h3>Trust Boundary</h3>
+              <p>State whether inputs can come from a scanned repo, CI, cloud policy, LLM output, or local filesystem. This is mandatory for security-sensitive helpers.</p>
+            </article>
+            
+
+            <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="invariants list conditions the function must preserve, such as policy precedence, no symlink writes, no html injection, or no llm-only refutation.">
+              <h3>Invariants</h3>
+              <p>List conditions the function must preserve, such as policy precedence, no symlink writes, no HTML injection, or no LLM-only refutation.</p>
+            </article>
+            
+
+            <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="failure mode say what happens when parsing, io, provider calls, or analysis fails. future maintainers need to know whether fail-open is intentional.">
+              <h3>Failure Mode</h3>
+              <p>Say what happens when parsing, IO, provider calls, or analysis fails. Future maintainers need to know whether fail-open is intentional.</p>
+            </article>
+            
+
+            <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="evidence contract for scanners, explain what proof is enough to emit or suppress a finding. this reduces false positives and false negatives.">
+              <h3>Evidence Contract</h3>
+              <p>For scanners, explain what proof is enough to emit or suppress a finding. This reduces false positives and false negatives.</p>
+            </article>
+            
+
+            <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="performance shape call out whole-repo walks, ast parsing, subprocesses, network calls, caching, or expected input size.">
+              <h3>Performance Shape</h3>
+              <p>Call out whole-repo walks, AST parsing, subprocesses, network calls, caching, or expected input size.</p>
+            </article>
+            
+
+            <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="extension point name the safe place to add new rules, providers, languages, output formats, or framework conventions.">
+              <h3>Extension Point</h3>
+              <p>Name the safe place to add new rules, providers, languages, output formats, or framework conventions.</p>
+            </article>
+            
+
+            <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="validation point to the exact test family, benchmark, or parity check that should fail if the function regresses.">
+              <h3>Validation</h3>
+              <p>Point to the exact test family, benchmark, or parity check that should fail if the function regresses.</p>
             </article>
             
       </div>
@@ -325,8 +519,8 @@
         <h3><a href="../../scripts">scripts</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 16</span>
-          <span class="pill"><strong>symbols</strong> 115</span>
-          <span class="pill"><strong>lines</strong> 3707</span>
+          <span class="pill"><strong>symbols</strong> 119</span>
+          <span class="pill"><strong>lines</strong> 3936</span>
         </div>
       </div>
       <p>Repository maintenance, benchmark, parity, and regression scripts.</p>
@@ -340,8 +534,8 @@
         <div class="split-list">
       <div>
         <div class="mini-label">Important files</div>
-        <ul><li><a href="../../scripts/build_repo_map.py">scripts/build_repo_map.py</a> <span>756 lines</span></li>
-<li><a href="../../scripts/repo_map_renderer.py">scripts/repo_map_renderer.py</a> <span>391 lines</span></li>
+        <ul><li><a href="../../scripts/build_repo_map.py">scripts/build_repo_map.py</a> <span>902 lines</span></li>
+<li><a href="../../scripts/repo_map_renderer.py">scripts/repo_map_renderer.py</a> <span>474 lines</span></li>
 <li><a href="../../scripts/regression_delta.py">scripts/regression_delta.py</a> <span>353 lines</span></li>
 <li><a href="../../scripts/compare_codex_skylos_quality.py">scripts/compare_codex_skylos_quality.py</a> <span>420 lines</span></li>
 <li><a href="../../scripts/compare_codex_skylos_agent_review.py">scripts/compare_codex_skylos_agent_review.py</a> <span>424 lines</span></li>
@@ -351,16 +545,16 @@
       </div>
       <div>
         <div class="mini-label">Key symbols</div>
-        <ul><li><a href="../../scripts/build_repo_map.py">SymbolInfo:370</a> <span>class</span></li>
-<li><a href="../../scripts/build_repo_map.py">ModuleInfo:378</a> <span>class</span></li>
-<li><a href="../../scripts/build_repo_map.py">collect_repo_map:531</a> <span>def</span></li>
-<li><a href="../../scripts/build_repo_map.py">write_repo_map:704</a> <span>def</span></li>
-<li><a href="../../scripts/build_repo_map.py">main:712</a> <span>def</span></li>
-<li><a href="../../scripts/repo_map_renderer.py">render_workflows:26</a> <span>def</span></li>
-<li><a href="../../scripts/repo_map_renderer.py">render_first_steps:51</a> <span>def</span></li>
-<li><a href="../../scripts/repo_map_renderer.py">render_sharp_edges:70</a> <span>def</span></li>
-<li><a href="../../scripts/repo_map_renderer.py">render_flow:86</a> <span>def</span></li>
-<li><a href="../../scripts/repo_map_renderer.py">render_folder_cards:110</a> <span>def</span></li>
+        <ul><li><a href="../../scripts/build_repo_map.py">SymbolInfo:513</a> <span>class</span></li>
+<li><a href="../../scripts/build_repo_map.py">ModuleInfo:521</a> <span>class</span></li>
+<li><a href="../../scripts/build_repo_map.py">collect_repo_map:674</a> <span>def</span></li>
+<li><a href="../../scripts/build_repo_map.py">write_repo_map:850</a> <span>def</span></li>
+<li><a href="../../scripts/build_repo_map.py">main:858</a> <span>def</span></li>
+<li><a href="../../scripts/repo_map_renderer.py">render_personas:30</a> <span>def</span></li>
+<li><a href="../../scripts/repo_map_renderer.py">render_workflows:55</a> <span>def</span></li>
+<li><a href="../../scripts/repo_map_renderer.py">render_first_steps:80</a> <span>def</span></li>
+<li><a href="../../scripts/repo_map_renderer.py">render_sharp_edges:99</a> <span>def</span></li>
+<li><a href="../../scripts/repo_map_renderer.py">render_architecture_layers:115</a> <span>def</span></li>
 <li><a href="../../scripts/regression_delta.py">compare_corpus:177</a> <span>def</span></li>
 <li><a href="../../scripts/regression_delta.py">compare_agent_review:210</a> <span>def</span></li>
 <li><a href="../../scripts/regression_delta.py">compare_quality:267</a> <span>def</span></li>
@@ -1705,7 +1899,7 @@
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 189</span>
           <span class="pill"><strong>symbols</strong> 2244</span>
-          <span class="pill"><strong>lines</strong> 77028</span>
+          <span class="pill"><strong>lines</strong> 77033</span>
         </div>
       </div>
       <p>Unit and regression tests covering CLI, analyzer, rules, integrations, and benchmarks.</p>
@@ -3718,7 +3912,7 @@
             
 
             <tr class="searchable" data-search="symbolinfo class scripts/build_repo_map.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/build_repo_map.py">SymbolInfo:370</a></td>
+              <td><a href="../../scripts/build_repo_map.py">SymbolInfo:513</a></td>
               <td>class</td>
               <td><span class="ok">public</span></td>
               <td>scripts/build_repo_map.py</td>
@@ -3726,7 +3920,7 @@
             
 
             <tr class="searchable" data-search="moduleinfo class scripts/build_repo_map.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/build_repo_map.py">ModuleInfo:378</a></td>
+              <td><a href="../../scripts/build_repo_map.py">ModuleInfo:521</a></td>
               <td>class</td>
               <td><span class="ok">public</span></td>
               <td>scripts/build_repo_map.py</td>
@@ -3734,7 +3928,7 @@
             
 
             <tr class="searchable" data-search="collect_repo_map def scripts/build_repo_map.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/build_repo_map.py">collect_repo_map:531</a></td>
+              <td><a href="../../scripts/build_repo_map.py">collect_repo_map:674</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/build_repo_map.py</td>
@@ -3742,7 +3936,7 @@
             
 
             <tr class="searchable" data-search="write_repo_map def scripts/build_repo_map.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/build_repo_map.py">write_repo_map:704</a></td>
+              <td><a href="../../scripts/build_repo_map.py">write_repo_map:850</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/build_repo_map.py</td>
@@ -3750,7 +3944,7 @@
             
 
             <tr class="searchable" data-search="main def scripts/build_repo_map.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/build_repo_map.py">main:712</a></td>
+              <td><a href="../../scripts/build_repo_map.py">main:858</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/build_repo_map.py</td>
@@ -3861,8 +4055,16 @@
             </tr>
             
 
+            <tr class="searchable" data-search="render_personas def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
+              <td><a href="../../scripts/repo_map_renderer.py">render_personas:30</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>scripts/repo_map_renderer.py</td>
+            </tr>
+            
+
             <tr class="searchable" data-search="render_workflows def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_workflows:26</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_workflows:55</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3870,7 +4072,7 @@
             
 
             <tr class="searchable" data-search="render_first_steps def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_first_steps:51</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_first_steps:80</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3878,7 +4080,23 @@
             
 
             <tr class="searchable" data-search="render_sharp_edges def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_sharp_edges:70</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_sharp_edges:99</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>scripts/repo_map_renderer.py</td>
+            </tr>
+            
+
+            <tr class="searchable" data-search="render_architecture_layers def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
+              <td><a href="../../scripts/repo_map_renderer.py">render_architecture_layers:115</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>scripts/repo_map_renderer.py</td>
+            </tr>
+            
+
+            <tr class="searchable" data-search="render_docstring_guide def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
+              <td><a href="../../scripts/repo_map_renderer.py">render_docstring_guide:144</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3886,7 +4104,7 @@
             
 
             <tr class="searchable" data-search="render_flow def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_flow:86</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_flow:159</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3894,7 +4112,7 @@
             
 
             <tr class="searchable" data-search="render_folder_cards def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_folder_cards:110</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_folder_cards:183</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3902,7 +4120,7 @@
             
 
             <tr class="searchable" data-search="render_folder_card def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_folder_card:114</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_folder_card:187</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3910,7 +4128,7 @@
             
 
             <tr class="searchable" data-search="render_hot_modules def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_hot_modules:180</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_hot_modules:253</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3918,7 +4136,7 @@
             
 
             <tr class="searchable" data-search="render_symbol_index def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_symbol_index:211</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_symbol_index:284</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3926,7 +4144,7 @@
             
 
             <tr class="searchable" data-search="render_glossary def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_glossary:229</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_glossary:302</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3934,7 +4152,7 @@
             
 
             <tr class="searchable" data-search="render_html def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_html:241</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_html:314</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3942,7 +4160,7 @@
             
 
             <tr class="searchable" data-search="render_snapshot def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_snapshot:256</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_snapshot:332</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3950,7 +4168,7 @@
             
 
             <tr class="searchable" data-search="section def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">section:275</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">section:351</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3958,7 +4176,7 @@
             
 
             <tr class="searchable" data-search="render_flow_section def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_flow_section:290</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_flow_section:367</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3966,7 +4184,7 @@
             
 
             <tr class="searchable" data-search="render_folder_section def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_folder_section:301</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_folder_section:378</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3974,7 +4192,7 @@
             
 
             <tr class="searchable" data-search="render_hot_section def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_hot_section:312</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_hot_section:389</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -3982,7 +4200,7 @@
             
 
             <tr class="searchable" data-search="render_symbol_section def scripts/repo_map_renderer.py repository maintenance, benchmark, parity, and regression scripts.">
-              <td><a href="../../scripts/repo_map_renderer.py">render_symbol_section:327</a></td>
+              <td><a href="../../scripts/repo_map_renderer.py">render_symbol_section:404</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>scripts/repo_map_renderer.py</td>
@@ -9063,30 +9281,6 @@
 
             <tr class="searchable" data-search="parse_sonar_properties def skylos/integrations/sonar.py external-service integration helpers.">
               <td><a href="../../skylos/integrations/sonar.py">parse_sonar_properties:16</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/integrations/sonar.py</td>
-            </tr>
-            
-
-            <tr class="searchable" data-search="split_sonar_list def skylos/integrations/sonar.py external-service integration helpers.">
-              <td><a href="../../skylos/integrations/sonar.py">split_sonar_list:86</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/integrations/sonar.py</td>
-            </tr>
-            
-
-            <tr class="searchable" data-search="build_sonar_migration_plan def skylos/integrations/sonar.py external-service integration helpers.">
-              <td><a href="../../skylos/integrations/sonar.py">build_sonar_migration_plan:92</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/integrations/sonar.py</td>
-            </tr>
-            
-
-            <tr class="searchable" data-search="write_skylos_yaml_config def skylos/integrations/sonar.py external-service integration helpers.">
-              <td><a href="../../skylos/integrations/sonar.py">write_skylos_yaml_config:139</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>skylos/integrations/sonar.py</td>
