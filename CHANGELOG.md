@@ -1,5 +1,22 @@
 ## Changelog
 
+## [4.18.0](https://github.com/duriantaco/skylos/compare/v4.17.0...v4.18.0) (2026-05-22)
+
+
+### Features
+
+* **docs:** add Claude Code skill and CLAUDE.md ([#480](https://github.com/duriantaco/skylos/issues/480)) ([4e0b14c](https://github.com/duriantaco/skylos/commit/4e0b14c2c3bdc42a90f1f90a5eaac342d5bacfcf))
+* **docs:** add generated repo map ([#473](https://github.com/duriantaco/skylos/issues/473)) ([c6a8ece](https://github.com/duriantaco/skylos/commit/c6a8ece0ddbf823588538886d64e6ac932376bd2))
+* **docs:** document repo map entrypoints ([#477](https://github.com/duriantaco/skylos/issues/477)) ([d5094bd](https://github.com/duriantaco/skylos/commit/d5094bd2d63ce9d9163a7a2861ae51eeb799487e))
+* **docs:** improve repo map guidance ([#476](https://github.com/duriantaco/skylos/issues/476)) ([d63c51c](https://github.com/duriantaco/skylos/commit/d63c51c6f8b90fa8d4e48f16d1271f90f1732cfa))
+
+
+### Bug Fixes
+
+* **ci:** enable repo map pages ([#475](https://github.com/duriantaco/skylos/issues/475)) ([8a3aa48](https://github.com/duriantaco/skylos/commit/8a3aa48f3d80ab961a23fdd70d60b7d1a33eeb5f))
+* **cli:** avoid eager terminal prompt import ([#479](https://github.com/duriantaco/skylos/issues/479)) ([c6a644c](https://github.com/duriantaco/skylos/commit/c6a644cf3175a22b23b686cbdb688a0857491e2f))
+* **docs:** repair repo map navigation ([#478](https://github.com/duriantaco/skylos/issues/478)) ([a5ab066](https://github.com/duriantaco/skylos/commit/a5ab0663a276ae060f9d6490ae3fd1bcefd539d0))
+
 ## [4.17.0](https://github.com/duriantaco/skylos/compare/v4.16.2...v4.17.0) (2026-05-21)
 
 
