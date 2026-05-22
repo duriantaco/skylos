@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skylos"
+  short_description: "Run and interpret Skylos safely."
+  default_prompt: "Use Skylos to scan, triage findings, or work on this repository safely."

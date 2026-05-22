@@ -1,10 +1,6 @@
 ---
 name: skylos
-description: >-
-  Run, interpret, or modify Skylos safely. Use when the user asks to scan code
-  with Skylos, explain SKY-* findings, triage dead-code false positives, audit
-  security/secrets/SCA/LLM behavior, update Skylos rules/docs/CI, benchmark
-  analyzer behavior, or change this repository safely.
+description: Run, interpret, or modify Skylos safely. Use when the user asks to scan code with Skylos, explain SKY-* findings, triage dead-code false positives, audit security/secrets/SCA/LLM behavior, update Skylos rules/docs/CI, benchmark analyzer behavior, or change this repository safely.
 ---
 
 # Skylos
@@ -44,11 +40,11 @@ Read only the reference needed for the current task.
 - Do not open or close PRs, issues, or GitHub comments unless the user
   explicitly asks for that action.
 - Do not use `git add .`; stage exact paths.
-- Do not place Claude skill files under `skylos/agents` or `skylos/llm`; those
+- Do not place Codex skill files under `skylos/agents` or `skylos/llm`; those
   are Skylos runtime modules.
 
 ## Invocation
 
-Invoke explicitly with `/skylos`, or rely on automatic selection when the task
+Invoke explicitly with `$skylos`, or rely on automatic selection when the task
 mentions Skylos scans, `SKY-*` findings, static analysis, security hardening,
 dead-code false positives, benchmarks, or this repo's analyzer internals.
