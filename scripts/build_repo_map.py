@@ -206,6 +206,7 @@ WORKFLOWS: list[dict[str, Any]] = [
     {
         "title": "I want to understand a normal scan",
         "goal": "Follow the main path from CLI input to findings and output.",
+        "personas": "user contributor maintainer",
         "paths": ["skylos/cli.py", "skylos/config.py", "skylos/pipeline.py", "skylos/analyzer.py", "skylos/reporting/"],
         "tests": ["test/test_cli.py", "test/test_analyzer.py"],
         "steps": [
@@ -217,6 +218,7 @@ WORKFLOWS: list[dict[str, Any]] = [
     {
         "title": "I want to fix a false positive",
         "goal": "Find the detector, the evidence proof, and the regression test that should pin the behavior.",
+        "personas": "debugger contributor maintainer",
         "paths": ["skylos/analyzer.py", "skylos/analysis/", "skylos/deadcode/", "skylos/visitors/", "test/"],
         "tests": ["test/test_analyzer.py", "test/test_framework_liveness.py"],
         "steps": [
@@ -228,6 +230,7 @@ WORKFLOWS: list[dict[str, Any]] = [
     {
         "title": "I want to add or tune a rule",
         "goal": "Change the catalog and implementation together so docs, IDs, and behavior stay aligned.",
+        "personas": "contributor debugger maintainer",
         "paths": ["skylos/rules/catalog.py", "skylos/rules/danger/", "skylos/rules/quality/", "dictionary.md"],
         "tests": ["test/test_rule_catalog.py", "scripts/check_rule_docs_parity.py"],
         "steps": [
@@ -239,6 +242,7 @@ WORKFLOWS: list[dict[str, Any]] = [
     {
         "title": "I want to touch LLM analysis",
         "goal": "Keep prompts, provider runtime, evidence grounding, and scanner integrity together.",
+        "personas": "security maintainer",
         "paths": ["skylos/llm/analyzer.py", "skylos/llm/finding_evidence.py", "skylos/adapters/", "skylos/agents/"],
         "tests": ["test/test_llm_finding_evidence.py", "test/test_agent_service.py"],
         "steps": [
@@ -250,6 +254,7 @@ WORKFLOWS: list[dict[str, Any]] = [
     {
         "title": "I want to change cloud or CI policy",
         "goal": "Follow local config, synced policy, generated workflows, and gate output as one security boundary.",
+        "personas": "security maintainer",
         "paths": ["skylos/config.py", "skylos/cloud/sync.py", "skylos/cicd/workflow.py", "skylos/security_contracts.py"],
         "tests": ["test/test_config.py", "test/test_security_contracts.py", "test/test_cicd_workflow.py"],
         "steps": [
@@ -261,6 +266,7 @@ WORKFLOWS: list[dict[str, Any]] = [
     {
         "title": "I want to prove quality changed",
         "goal": "Run benchmarks and regression scripts instead of trusting a single happy-path fixture.",
+        "personas": "contributor debugger security maintainer",
         "paths": ["scripts/security_benchmark.py", "scripts/quality_benchmark.py", "scripts/dead_code_benchmark.py", "skylos/benchmarks/"],
         "tests": ["test/test_security_benchmark.py", "test/test_quality_benchmark.py", "test/test_dead_code_benchmark.py"],
         "steps": [
@@ -272,6 +278,7 @@ WORKFLOWS: list[dict[str, Any]] = [
     {
         "title": "I want to use Skylos as a library",
         "goal": "Start with the public API facade before reaching into private helpers.",
+        "personas": "user contributor",
         "paths": ["skylos/api/__init__.py", "skylos/api/_findings.py", "skylos/api/_payloads.py"],
         "tests": ["test/test_api.py"],
         "steps": [
@@ -286,6 +293,7 @@ FIRST_STEPS = [
     {
         "title": "I am completely new",
         "time": "10 minutes",
+        "personas": "user contributor",
         "steps": [
             "Open README.md to understand what Skylos does.",
             "Open this map and pick exactly one route card.",
@@ -296,6 +304,7 @@ FIRST_STEPS = [
     {
         "title": "I need to make a small change",
         "time": "15 minutes",
+        "personas": "contributor",
         "steps": [
             "Search this page for the thing you want to change.",
             "Open the matching folder card and check the nearby tests.",
@@ -306,6 +315,7 @@ FIRST_STEPS = [
     {
         "title": "I am debugging a bad result",
         "time": "20 minutes",
+        "personas": "debugger",
         "steps": [
             "Find the rule or finding category in the route cards.",
             "Build the smallest fixture that reproduces the bad result.",
@@ -316,6 +326,7 @@ FIRST_STEPS = [
     {
         "title": "I am reviewing a risky PR",
         "time": "20 minutes",
+        "personas": "security maintainer",
         "steps": [
             "Check whether the PR touches a hot zone.",
             "Follow the scan flow to see downstream output impact.",
@@ -352,6 +363,138 @@ SHARP_EDGES = [
             "LLM grounding changes need before/after benchmark evidence",
             "Public API changes need facade compatibility tests",
         ],
+    },
+]
+
+PERSONAS = [
+    {
+        "id": "user",
+        "title": "I just want to use Skylos",
+        "summary": "Start with install, commands, output, and rule meanings. Skip internal ownership maps.",
+        "paths": ["README.md", "docs/README.md", "dictionary.md"],
+        "search": "install quick start cli output rules user docs",
+    },
+    {
+        "id": "contributor",
+        "title": "I want to contribute",
+        "summary": "Pick a safe ownership area, find nearby tests, and keep the change narrow.",
+        "paths": ["CONTRIBUTING.md", "test/", "scripts/"],
+        "search": "contribute first pr tests safe change ownership",
+    },
+    {
+        "id": "debugger",
+        "title": "I am debugging a bad finding",
+        "summary": "Reproduce the finding, locate the detector/evidence layer, and add a regression test.",
+        "paths": ["skylos/analyzer.py", "skylos/rules/", "skylos/analysis/", "test/"],
+        "search": "false positive false negative detector evidence regression",
+    },
+    {
+        "id": "security",
+        "title": "I am reviewing security or LLM behavior",
+        "summary": "Follow trust boundaries: config policy, LLM evidence filters, CI, and cloud sync.",
+        "paths": ["skylos/config.py", "skylos/llm/", "skylos/security/", "skylos/cloud/", "skylos/cicd/"],
+        "search": "security llm policy cloud ci evidence bypass",
+    },
+    {
+        "id": "maintainer",
+        "title": "I need the architecture",
+        "summary": "Use the layer map, hot zones, and docstring guide before reshaping shared paths.",
+        "paths": ["skylos/pipeline.py", "skylos/analyzer.py", "skylos/cli.py", "skylos/config.py"],
+        "search": "architecture maintainer hot zones boundaries main sequence",
+    },
+]
+
+ARCHITECTURE_LAYERS = [
+    {
+        "title": "Interfaces",
+        "purpose": "Where users, CI, agents, and library consumers enter Skylos.",
+        "paths": ["skylos/cli.py", "skylos/api/", "skylos/commands/", "skylos/cicd/"],
+        "depends_on": "Policy, discovery, analysis, reporting",
+        "guardrail": "Keep interface code thin; move command-specific logic into focused modules.",
+        "personas": "user contributor maintainer",
+    },
+    {
+        "title": "Policy And Trust",
+        "purpose": "Configuration, synced cloud policy, security contracts, and gate decisions.",
+        "paths": ["skylos/config.py", "skylos/cloud/sync.py", "skylos/security_contracts.py"],
+        "depends_on": "Interfaces and analyzer output",
+        "guardrail": "Treat merge precedence and attacker-controlled repo config as security-sensitive.",
+        "personas": "security maintainer",
+    },
+    {
+        "title": "Discovery",
+        "purpose": "Decides which files and languages enter the scanner.",
+        "paths": ["skylos/discover/", "skylos/pipeline.py", "skylos/engines/"],
+        "depends_on": "Config and filesystem state",
+        "guardrail": "Too broad creates noise; too narrow creates false negatives.",
+        "personas": "debugger contributor maintainer",
+    },
+    {
+        "title": "Static Analysis Core",
+        "purpose": "Owns liveness, rules, framework handling, quality checks, and dangerous-flow detection.",
+        "paths": ["skylos/analyzer.py", "skylos/analysis/", "skylos/rules/", "skylos/visitors/"],
+        "depends_on": "Discovery, config, language engines",
+        "guardrail": "Every semantic change needs a small fixture and a regression test.",
+        "personas": "debugger security maintainer",
+    },
+    {
+        "title": "Evidence And AI Review",
+        "purpose": "Grounds LLM/agent findings against source code and scanner evidence.",
+        "paths": ["skylos/llm/", "skylos/agents/", "skylos/adapters/"],
+        "depends_on": "Static analysis output and provider adapters",
+        "guardrail": "Filters must prove safety; weak refutation creates scanner false negatives.",
+        "personas": "security maintainer",
+    },
+    {
+        "title": "Output And Feedback",
+        "purpose": "Turns findings into terminal output, reports, uploads, annotations, and review comments.",
+        "paths": ["skylos/reporting/", "skylos/cloud/", "skylos/cicd/", "skylos/ui/"],
+        "depends_on": "Analyzer results and policy decisions",
+        "guardrail": "Output changes should preserve machine-readable compatibility.",
+        "personas": "user contributor maintainer",
+    },
+    {
+        "title": "Proof Harness",
+        "purpose": "Keeps behavior honest with tests, benchmarks, parity checks, and generated artifacts.",
+        "paths": ["test/", "benchmarks/", "scripts/", "skylos/benchmarks/"],
+        "depends_on": "All product layers",
+        "guardrail": "Benchmark updates should explain score, timing, and regression intent.",
+        "personas": "contributor debugger security maintainer",
+    },
+]
+
+DOCSTRING_GUIDE = [
+    {
+        "title": "Intent",
+        "body": "Why this function exists, in product terms. Prefer the user-visible or scanner-integrity reason over a paraphrase of the function name.",
+    },
+    {
+        "title": "Trust Boundary",
+        "body": "State whether inputs can come from a scanned repo, CI, cloud policy, LLM output, or local filesystem. This is mandatory for security-sensitive helpers.",
+    },
+    {
+        "title": "Invariants",
+        "body": "List conditions the function must preserve, such as policy precedence, no symlink writes, no HTML injection, or no LLM-only refutation.",
+    },
+    {
+        "title": "Failure Mode",
+        "body": "Say what happens when parsing, IO, provider calls, or analysis fails. Future maintainers need to know whether fail-open is intentional.",
+    },
+    {
+        "title": "Evidence Contract",
+        "body": "For scanners, explain what proof is enough to emit or suppress a finding. This reduces false positives and false negatives.",
+    },
+    {
+        "title": "Performance Shape",
+        "body": "Call out whole-repo walks, AST parsing, subprocesses, network calls, caching, or expected input size.",
+    },
+    {
+        "title": "Extension Point",
+        "body": "Name the safe place to add new rules, providers, languages, output formats, or framework conventions.",
+    },
+    {
+        "title": "Validation",
+        "body": "Point to the exact test family, benchmark, or parity check that should fail if the function regresses.",
     },
 ]
 
@@ -605,6 +748,9 @@ def collect_repo_map(root: Path) -> dict[str, Any]:
         "python_file_count": len(python_modules),
         "symbol_count": sum(len(module.symbols) for module in python_modules),
         "first_steps": _sanitize_path_groups(root, FIRST_STEPS),
+        "personas": _sanitize_path_groups(root, PERSONAS),
+        "architecture_layers": _sanitize_path_groups(root, ARCHITECTURE_LAYERS),
+        "docstring_guide": DOCSTRING_GUIDE,
         "sharp_edges": SHARP_EDGES,
         "workflows": _sanitize_workflows(root),
         "symbol_index": symbol_index,
