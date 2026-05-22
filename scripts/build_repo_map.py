@@ -15,6 +15,28 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_renderer():
+    """
+    Load the repo-map HTML renderer from the local scripts directory.
+
+    Args:
+        None.
+
+    Returns:
+        The renderer module's `render_html` callable.
+
+    Trust boundary:
+        The renderer path is fixed relative to this repository, not supplied by
+        a scanned project. Loading by file path avoids treating
+        `repo_map_renderer` as an external package dependency.
+
+    Failure mode:
+        Raises RuntimeError if the renderer module cannot be loaded.
+
+    Calls: importlib.util.spec_from_file_location;
+        importlib.util.module_from_spec.
+
+    Called from: scripts/build_repo_map.py module import.
+    """
     renderer_path = REPO_ROOT / "scripts" / "repo_map_renderer.py"
     spec = importlib.util.spec_from_file_location("skylos_repo_map_renderer", renderer_path)
     if spec is None or spec.loader is None:
@@ -511,6 +533,21 @@ GLOSSARY = [
 
 @dataclass(frozen=True)
 class SymbolInfo:
+    """
+    Top-level class or function discovered in one Python source file.
+
+    Attributes:
+        name: Symbol name exactly as it appears in source.
+        kind: Human-readable symbol type, such as `class`, `def`, or
+            `async def`.
+        line: 1-based source line for the symbol definition.
+        private: Whether the symbol name starts with `_`.
+
+    Used by:
+        scripts/build_repo_map.py _extract_symbols;
+        scripts/build_repo_map.py _key_symbols;
+        scripts/repo_map_renderer.py render_symbol_index.
+    """
     name: str
     kind: str
     line: int
@@ -519,6 +556,20 @@ class SymbolInfo:
 
 @dataclass(frozen=True)
 class ModuleInfo:
+    """
+    Parsed facts for one Python module shown in the repo map.
+
+    Attributes:
+        path: Repository-relative POSIX path.
+        lines: Approximate source line count.
+        summary: Module docstring summary or curated folder fallback.
+        symbols: Top-level symbols extracted from the module AST.
+        imports: Top-level import roots used by the module.
+
+    Used by:
+        scripts/build_repo_map.py collect_repo_map;
+        scripts/repo_map_renderer.py render_hot_modules.
+    """
     path: str
     lines: int
     summary: str
@@ -531,6 +582,25 @@ def _rel(path: Path, root: Path) -> str:
 
 
 def _iter_source_files(root: Path) -> list[Path]:
+    """
+    Walk the repository roots that feed the generated map.
+
+    Args:
+        root: Repository root to scan.
+
+    Returns:
+        Sorted source/config/doc files under SOURCE_ROOTS that are regular,
+        non-symlink files under the size cap.
+
+    Trust boundary:
+        Source paths may come from the repository being documented. Directory
+        symlinks and oversized files are skipped before read/parsing.
+
+    Calls: scripts/build_repo_map.py _include_directory;
+        scripts/build_repo_map.py _safe_source_file.
+
+    Called from: scripts/build_repo_map.py collect_repo_map.
+    """
     files: list[Path] = []
     for root_name in SOURCE_ROOTS:
         base = root / root_name
@@ -559,6 +629,25 @@ def _include_directory(path: Path) -> bool:
 
 
 def _safe_source_file(path: Path) -> bool:
+    """
+    Decide whether a path is safe for the repo-map generator to read.
+
+    Args:
+        path: Candidate file path.
+
+    Returns:
+        True only for regular non-symlink files no larger than
+        MAX_SOURCE_BYTES.
+
+    Invariants:
+        Do not follow symlinks. Do not read unbounded file content.
+
+    Calls: pathlib.Path.stat.
+
+    Called from: scripts/build_repo_map.py _iter_source_files;
+        scripts/build_repo_map.py _read_text;
+        scripts/build_repo_map.py main.
+    """
     try:
         file_stat = path.stat(follow_symlinks=False)
         return (
@@ -581,6 +670,29 @@ def _first_sentence(text: str) -> str:
 
 
 def _read_text(path: Path) -> str:
+    """
+    Read a validated source file with symlink and size defenses.
+
+    Args:
+        path: Regular source file already expected to be inside the repo walk.
+
+    Returns:
+        UTF-8 text, replacing undecodable bytes.
+
+    Trust boundary:
+        Files are repository content and may be attacker-controlled in forks or
+        PRs. Reads are guarded by _safe_source_file and O_NOFOLLOW where the OS
+        supports it.
+
+    Failure mode:
+        Raises ValueError for unsafe paths. IO errors are allowed to propagate
+        because a broken repo-map generation should fail loudly.
+
+    Calls: scripts/build_repo_map.py _safe_source_file; os.open; os.fdopen.
+
+    Called from: scripts/build_repo_map.py _parse_python_module;
+        scripts/build_repo_map.py main.
+    """
     if not _safe_source_file(path):
         raise ValueError(f"Refusing to read unsafe or oversized source file: {path}")
     flags = os.O_RDONLY
@@ -630,6 +742,26 @@ def _fallback_summary(relpath: str) -> str:
 
 
 def _parse_python_module(path: Path, root: Path) -> ModuleInfo:
+    """
+    Parse one Python file into the module facts shown by the map.
+
+    Args:
+        path: Python source file to parse.
+        root: Repository root used to compute display paths.
+
+    Returns:
+        ModuleInfo containing path, line count, summary, imports, and top-level
+        symbols. Syntax errors produce an empty-symbol ModuleInfo instead of
+        aborting the whole map.
+
+    Calls: scripts/build_repo_map.py _rel;
+        scripts/build_repo_map.py _read_text;
+        scripts/build_repo_map.py _first_sentence;
+        scripts/build_repo_map.py _extract_symbols;
+        scripts/build_repo_map.py _extract_imports.
+
+    Called from: scripts/build_repo_map.py collect_repo_map.
+    """
     relpath = _rel(path, root)
     source = _read_text(path)
     lines = source.count("\n") + (1 if source else 0)
@@ -675,8 +807,26 @@ def collect_repo_map(root: Path) -> dict[str, Any]:
     """
     Build deterministic repo-map data from code and a small curated folder map.
 
+    Args:
+        root: Repository root to scan.
+
+    Returns:
+        Dictionary consumed by `scripts.repo_map_renderer.render_html`. It
+        includes persona cards, architecture layers, docstring guidance,
+        folder cards, hot modules, symbol index, and repo-level counts.
+
+    Invariants:
+        Generated data must be deterministic for the same tree. This keeps
+        `scripts/build_repo_map.py --check` useful in CI and avoids noisy PRs.
+
+    Performance shape:
+        Walks selected repository roots once, then parses Python files with
+        `ast`. The scan is intentionally local-only and uses a per-file size cap.
+
     Calls: scripts/build_repo_map.py _iter_source_files;
-        scripts/build_repo_map.py _parse_python_module.
+        scripts/build_repo_map.py _parse_python_module;
+        scripts/build_repo_map.py _sanitize_path_groups;
+        scripts/build_repo_map.py _sanitize_workflows.
 
     Called from: scripts/build_repo_map.py write_repo_map;
         scripts/build_repo_map.py main.
@@ -758,6 +908,21 @@ def collect_repo_map(root: Path) -> dict[str, Any]:
 
 
 def _sanitize_path_groups(root: Path, groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Remove stale links from curated card groups before rendering.
+
+    Args:
+        root: Repository root used to check whether paths still exist.
+        groups: Curated persona, first-step, or architecture cards.
+
+    Returns:
+        Shallow-copied card dictionaries with `paths` filtered to existing
+        files/directories or approved generated paths.
+
+    Calls: scripts/build_repo_map.py _path_exists_or_directory.
+
+    Called from: scripts/build_repo_map.py collect_repo_map.
+    """
     sanitized: list[dict[str, Any]] = []
     for group in groups:
         copy = dict(group)
@@ -767,6 +932,19 @@ def _sanitize_path_groups(root: Path, groups: list[dict[str, Any]]) -> list[dict
 
 
 def _sanitize_workflows(root: Path) -> list[dict[str, Any]]:
+    """
+    Remove stale file and test links from workflow cards.
+
+    Args:
+        root: Repository root used for path existence checks.
+
+    Returns:
+        Workflow dictionaries with non-existent `paths` and `tests` removed.
+
+    Calls: scripts/build_repo_map.py _path_exists_or_directory.
+
+    Called from: scripts/build_repo_map.py collect_repo_map.
+    """
     workflows: list[dict[str, Any]] = []
     for workflow in WORKFLOWS:
         copy = dict(workflow)
@@ -785,6 +963,18 @@ def _path_exists_or_directory(root: Path, relpath: str) -> bool:
 
 
 def _key_symbols(modules: list[ModuleInfo]) -> list[dict[str, Any]]:
+    """
+    Select a compact symbol sample for one folder card.
+
+    Args:
+        modules: ModuleInfo objects already sorted by local importance.
+
+    Returns:
+        Up to 14 dictionaries containing symbol name, kind, file path, and
+        source line. Public symbols are preferred before private helpers.
+
+    Called from: scripts/build_repo_map.py collect_repo_map.
+    """
     items: list[dict[str, Any]] = []
     for module in modules:
         public = [symbol for symbol in module.symbols if not symbol.private]
@@ -804,6 +994,21 @@ def _key_symbols(modules: list[ModuleInfo]) -> list[dict[str, Any]]:
 
 
 def _symbol_index(modules: list[ModuleInfo]) -> list[dict[str, Any]]:
+    """
+    Build the searchable symbol table shown near the bottom of the map.
+
+    Args:
+        modules: Parsed Python module facts.
+
+    Returns:
+        Up to 900 symbol dictionaries sorted by file and line. Private helpers
+        are hidden except in the major shared entrypoint files.
+
+    Invariants:
+        Keep this bounded so the generated page stays usable and predictable.
+
+    Called from: scripts/build_repo_map.py collect_repo_map.
+    """
     symbols: list[dict[str, Any]] = []
     for module in sorted(modules, key=lambda item: item.path):
         for symbol in module.symbols:
@@ -823,6 +1028,26 @@ def _symbol_index(modules: list[ModuleInfo]) -> list[dict[str, Any]]:
 
 
 def _resolve_output_path(root: Path, output: Path) -> Path:
+    """
+    Resolve and validate the generated HTML output path.
+
+    Args:
+        root: Repository root that must contain the output parent.
+        output: Absolute or root-relative output path requested by the caller.
+
+    Returns:
+        Absolute output path under `root`.
+
+    Trust boundary:
+        Output paths can be supplied from CLI args. The generator refuses
+        symlink parents, symlink targets, and paths outside the repository.
+
+    Failure mode:
+        Raises ValueError when the output path is unsafe.
+
+    Called from: scripts/build_repo_map.py write_repo_map;
+        scripts/build_repo_map.py main.
+    """
     candidate = output if output.is_absolute() else root / output
     candidate_parent = candidate.parent
     candidate_parent.mkdir(parents=True, exist_ok=True)
@@ -837,6 +1062,25 @@ def _resolve_output_path(root: Path, output: Path) -> Path:
 
 
 def _write_text_safely(path: Path, content: str) -> None:
+    """
+    Write generated repo-map HTML without following symlink targets.
+
+    Args:
+        path: Validated output file path.
+        content: Full HTML document to write.
+
+    Returns:
+        None.
+
+    Trust boundary:
+        This protects local and CI runs from writing generated content through
+        an attacker-controlled symlink in a checked-out repository.
+
+    Calls: os.open; os.fdopen.
+
+    Called from: scripts/build_repo_map.py write_repo_map;
+        scripts/build_repo_map.py main.
+    """
     if path.is_symlink():
         raise ValueError(f"Refusing to write repo map through symlink: {path}")
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
@@ -848,6 +1092,24 @@ def _write_text_safely(path: Path, content: str) -> None:
 
 
 def write_repo_map(root: Path, output: Path) -> str:
+    """
+    Generate and write the repo-map HTML page.
+
+    Args:
+        root: Repository root to scan.
+        output: HTML output path.
+
+    Returns:
+        The generated HTML string after it has been written to disk.
+
+    Calls: scripts/build_repo_map.py _resolve_output_path;
+        scripts/build_repo_map.py collect_repo_map;
+        scripts.repo_map_renderer.render_html;
+        scripts/build_repo_map.py _write_text_safely.
+
+    Called from: tests and by callers that want generation without invoking
+        the CLI parser.
+    """
     output = _resolve_output_path(root.resolve(), output)
     data = collect_repo_map(root)
     page = render_html(data)
@@ -856,6 +1118,28 @@ def write_repo_map(root: Path, output: Path) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """
+    Command-line entrypoint for building or checking the repo map.
+
+    Args:
+        argv: Optional argument list. When None, argparse reads sys.argv.
+
+    Returns:
+        Process-style exit code: 0 for success, 1 when `--check` finds a
+        missing or stale generated page.
+
+    Behavior:
+        Without `--check`, writes `docs/repo-map/index.html`. With `--check`,
+        renders in memory and compares against the checked-in generated file.
+
+    Calls: scripts/build_repo_map.py collect_repo_map;
+        scripts.repo_map_renderer.render_html;
+        scripts/build_repo_map.py _resolve_output_path;
+        scripts/build_repo_map.py _read_text;
+        scripts/build_repo_map.py _write_text_safely.
+
+    Called from: shell, GitHub Pages workflow, and test/test_repo_map.py.
+    """
     parser = argparse.ArgumentParser(description="Build Skylos' static repo navigator.")
     parser.add_argument(
         "--root",
