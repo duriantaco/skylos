@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import html
 from typing import Any
+from urllib.parse import quote
+
+
+REPO_SOURCE_BASE = "https://github.com/duriantaco/skylos"
 
 
 def _esc(value: Any) -> str:
@@ -10,11 +14,16 @@ def _esc(value: Any) -> str:
 
 def _link(path: str, *, label: str | None = None, line: int | None = None) -> str:
     clean = path.rstrip("/")
-    href = f"../../{clean}"
+    route = "tree" if path.endswith("/") else "blob"
+    href = f"{REPO_SOURCE_BASE}/{route}/main/{quote(clean, safe='/._-')}"
+    if line and route == "blob":
+        href = f"{href}#L{line}"
     text = label or clean
     if line:
         text = f"{text}:{line}"
-    return f'<a href="{_esc(href)}">{_esc(text)}</a>'  # skylos: ignore escaped static repo-map HTML
+    return (  # skylos: ignore escaped static repo-map HTML
+        f'<a href="{_esc(href)}" rel="noopener noreferrer">{_esc(text)}</a>'
+    )
 
 
 def _pill(label: str, value: Any) -> str:
@@ -25,6 +34,123 @@ def _pill(label: str, value: Any) -> str:
 
 def _persona_attr(item: dict[str, Any]) -> str:
     return _esc(item.get("personas", "user contributor debugger security maintainer"))
+
+
+def _personas_for(item: dict[str, Any]) -> set[str]:
+    return set(str(item.get("personas", "")).split())
+
+
+def _first_step_for_mode(mode: str, first_steps: list[dict[str, Any]]) -> dict[str, Any]:
+    candidates = [item for item in first_steps if mode in _personas_for(item)]
+    if not candidates:
+        return {
+            "title": "Use the full map",
+            "time": "10 minutes",
+            "steps": [
+                "Use search when you already know a path, symbol, or rule id.",
+                "Pick a mode when you want unrelated sections hidden.",
+                "Start from route cards before opening folder or symbol indexes.",
+            ],
+            "paths": [],
+        }
+    return sorted(candidates, key=lambda item: len(_personas_for(item)))[0]
+
+
+def _mode_plan_template(mode: str, item: dict[str, Any]) -> str:
+    steps = "\n".join(f"<li>{_esc(step)}</li>" for step in item["steps"])
+    links = " ".join(_link(path) for path in item.get("paths", []))
+    link_row = f'<div class="link-row">{links}</div>' if links else ""
+    return (  # skylos: ignore escaped static repo-map HTML fragments
+        f"""
+      <template data-mode-plan="{_esc(mode)}">
+        <div class="guide-time">{_esc(item["time"])}</div>
+        <h3>{_esc(item["title"])}</h3>
+        <ol class="step-list">{steps}</ol>
+        {link_row}
+      </template>
+    """
+    )
+
+
+def render_mode_plan_templates(
+    personas: list[dict[str, Any]], first_steps: list[dict[str, Any]]
+) -> str:
+    """
+    Render inert mode-plan templates consumed by docs/repo-map/app.js.
+
+    Args:
+        personas: Persona dictionaries with stable ids.
+        first_steps: First-step cards tagged with persona ids.
+
+    Returns:
+        HTML templates keyed by mode. They are static, escaped, and cloned into
+        the visible mode panel when a user chooses a mode.
+
+    Calls: scripts/repo_map_renderer.py _first_step_for_mode;
+        scripts/repo_map_renderer.py _mode_plan_template.
+
+    Called from: scripts/repo_map_renderer.py render_mode_selector.
+    """
+    all_plan = {
+        "title": "Use the full map",
+        "time": "10 minutes",
+        "steps": [
+            "Use search when you already know a path, symbol, or rule id.",
+            "Pick a mode when you want unrelated sections hidden.",
+            "Start from route cards before opening folder or symbol indexes.",
+        ],
+        "paths": [],
+    }
+    modes = ["all", *(persona["id"] for persona in personas)]
+    return "\n".join(
+        _mode_plan_template(
+            mode,
+            all_plan if mode == "all" else _first_step_for_mode(mode, first_steps),
+        )
+        for mode in modes
+    )
+
+
+def render_mode_selector(
+    personas: list[dict[str, Any]], first_steps: list[dict[str, Any]]
+) -> str:
+    """
+    Render the mode picker plus an immediately visible first-step preview.
+
+    Args:
+        personas: Curated mode cards.
+        first_steps: First-step cards used to build each mode's preview.
+
+    Returns:
+        HTML for the visible current-mode panel, mode cards, and inert
+        per-mode templates.
+
+    Calls: scripts/repo_map_renderer.py render_personas;
+        scripts/repo_map_renderer.py render_mode_plan_templates.
+
+    Called from: scripts/repo_map_renderer.py render_html.
+    """
+    return (  # skylos: ignore escaped static repo-map HTML fragments
+        f"""
+      <div id="mode-panel" class="mode-panel" aria-live="polite">
+        <div>
+          <div class="mini-label">Current mode</div>
+          <h3 id="active-mode-title">Show everything</h3>
+          <p id="active-mode-summary">Everything is visible. Choose a mode to hide unrelated cards and rows.</p>
+        </div>
+        <div>
+          <div class="mini-label">First 10 minutes</div>
+          <div id="active-mode-plan"></div>
+        </div>
+      </div>
+      <div class="persona-grid">
+        {render_personas(personas)}
+      </div>
+      <div id="mode-plan-templates" hidden>
+        {render_mode_plan_templates(personas, first_steps)}
+      </div>
+    """
+    )
 
 
 def render_personas(personas: list[dict[str, Any]]) -> str:
@@ -46,7 +172,7 @@ def render_personas(personas: list[dict[str, Any]]) -> str:
     """
     cards = [
         """
-        <button class="persona-card active" type="button" data-mode="all" data-search="all everything full map reset">
+        <button class="persona-card active" type="button" data-mode="all" data-mode-title="Show everything" data-mode-summary="Everything is visible. Choose a mode to hide unrelated cards and rows." data-search="all everything full map reset" aria-pressed="true">
           <span class="persona-title">Show everything</span>
           <span class="persona-summary">Use this when you already know what you are looking for.</span>
           <span class="link-row"><span class="muted">Full map</span></span>
@@ -58,7 +184,7 @@ def render_personas(personas: list[dict[str, Any]]) -> str:
         search_text = " ".join([persona["title"], persona["summary"], persona.get("search", ""), *persona["paths"]])
         cards.append(
             f"""
-            <button class="persona-card searchable" type="button" data-mode="{_esc(persona["id"])}" data-search="{_esc(search_text.lower())}">
+            <button class="persona-card searchable" type="button" data-mode="{_esc(persona["id"])}" data-mode-title="{_esc(persona["title"])}" data-mode-summary="{_esc(persona["summary"])}" data-search="{_esc(search_text.lower())}" aria-pressed="false">
               <span class="persona-title">{_esc(persona["title"])}</span>
               <span class="persona-summary">{_esc(persona["summary"])}</span>
               <span class="link-row">{links}</span>
@@ -473,7 +599,13 @@ def render_html(data: dict[str, Any]) -> str:
     """
     sections = [
         render_snapshot(data),
-        section("personas", "Choose A Mode", render_personas(data["personas"]), PERSONA_COPY, "persona-grid"),
+        section(
+            "personas",
+            "Choose A Mode",
+            render_mode_selector(data["personas"], data["first_steps"]),
+            PERSONA_COPY,
+            "mode-stack",
+        ),
         section("first-steps", "First 10 Minutes", render_first_steps(data["first_steps"]), FIRST_STEPS_COPY),
         section("routes", "Start Here", render_workflows(data["workflows"])),
         section("sharp-edges", "Safe Path", render_sharp_edges(data["sharp_edges"]), SAFE_PATH_COPY),

@@ -53,6 +53,8 @@ def test_collect_repo_map_extracts_routes_and_symbols(tmp_path):
 def test_render_html_prioritizes_start_routes_and_search(tmp_path):
     repo_map = _load_repo_map_module()
     _write(tmp_path / "skylos" / "config.py", "def load_config():\n    return {}\n")
+    _write(tmp_path / "dictionary.md", "# Rules\n")
+    _write(tmp_path / "test" / "test_config.py", "def test_config():\n    assert True\n")
     data = repo_map.collect_repo_map(tmp_path)
 
     page = repo_map.render_html(data)
@@ -63,12 +65,17 @@ def test_render_html_prioritizes_start_routes_and_search(tmp_path):
     assert "Architecture" in page
     assert "Docstring Standard" in page
     assert "First 10 Minutes" in page
+    assert "Current mode" in page
+    assert "active-mode-plan" in page
     assert "Safe Path" in page
     assert "I am debugging a bad finding" in page
     assert "Trust Boundary" in page
     assert "I want to understand a normal scan" in page
     assert "repo-search" in page
     assert "load_config" in page
+    assert 'href="../../' not in page
+    assert "https://github.com/duriantaco/skylos/blob/main/dictionary.md" in page
+    assert "https://github.com/duriantaco/skylos/tree/main/test" in page
 
 
 def test_main_check_detects_stale_output(tmp_path):

@@ -112,6 +112,7 @@ nav a {
 
 .meta-grid,
 .persona-grid,
+.mode-stack,
 .guide-grid,
 .arch-grid,
 .doc-grid,
@@ -134,6 +135,10 @@ nav a {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.mode-stack {
+  grid-template-columns: 1fr;
+}
+
 .arch-grid,
 .doc-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -145,6 +150,7 @@ nav a {
 }
 
 .metric,
+.mode-panel,
 .persona-card,
 .guide-card,
 .arch-card,
@@ -161,6 +167,7 @@ nav a {
 }
 
 .metric,
+.mode-panel,
 .persona-card,
 .guide-card,
 .arch-card,
@@ -183,6 +190,40 @@ nav a {
 .muted {
   color: var(--muted);
   font-size: 13px;
+}
+
+.mode-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.75fr) minmax(300px, 1.25fr);
+  gap: 18px;
+  border-color: #b7d8d2;
+  background: #fbfefd;
+}
+
+.mode-panel h3 {
+  margin: 4px 0 8px;
+}
+
+.mode-panel p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.mode-panel .step-list {
+  margin-bottom: 8px;
+}
+
+.mode-panel-updated {
+  animation: mode-panel-pulse 650ms ease-out;
+}
+
+@keyframes mode-panel-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(15, 118, 110, 0.28);
+  }
+  100% {
+    box-shadow: 0 0 0 8px rgba(15, 118, 110, 0);
+  }
 }
 
 .guide-card,
@@ -433,6 +474,7 @@ dd {
 
   .meta-grid,
   .persona-grid,
+  .mode-panel,
   .guide-grid,
   .arch-grid,
   .doc-grid,

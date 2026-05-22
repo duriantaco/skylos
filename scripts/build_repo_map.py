@@ -356,6 +356,17 @@ FIRST_STEPS = [
         ],
         "paths": ["skylos/llm/", "skylos/security/", "skylos/cloud/", "skylos/cicd/"],
     },
+    {
+        "title": "I need the architecture",
+        "time": "15 minutes",
+        "personas": "maintainer",
+        "steps": [
+            "Read the Architecture section before opening shared core files.",
+            "Check hot zones for files that can change many workflows.",
+            "Use the docstring standard before reshaping public entrypoints.",
+        ],
+        "paths": ["skylos/pipeline.py", "skylos/analyzer.py", "skylos/cli.py", "skylos/config.py"],
+    },
 ]
 
 SHARP_EDGES = [
