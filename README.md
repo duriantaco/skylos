@@ -17,6 +17,7 @@
 
 [Website](https://skylos.dev) |
 [Docs](https://docs.skylos.dev) |
+[Repo Map](https://duriantaco.github.io/skylos/repo-map/) |
 [Quick Start](https://docs.skylos.dev/quick-start) |
 [GitHub Action](./action.yml) |
 [VS Code Extension](./editors/vscode/README.md) |
