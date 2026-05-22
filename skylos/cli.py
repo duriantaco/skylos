@@ -1,5 +1,6 @@
 import argparse
 import importlib
+import importlib.util
 import json
 import sys
 import re
@@ -56,12 +57,33 @@ from rich.rule import Rule
 from rich.tree import Tree
 from rich.markup import escape
 
-try:
-    import inquirer
+class _LazyInquirer:
+    """Import inquirer only when an interactive prompt is actually used."""
 
-    INTERACTIVE_AVAILABLE = True
-except ImportError:
-    INTERACTIVE_AVAILABLE = False
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            self._module = importlib.import_module("inquirer")
+        return self._module
+
+    def __getattr__(self, name):
+        return getattr(self._load(), name)
+
+
+def _inquirer_available() -> bool:
+    try:
+        return importlib.util.find_spec("inquirer") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+INTERACTIVE_AVAILABLE = _inquirer_available()
+inquirer = _LazyInquirer() if INTERACTIVE_AVAILABLE else None
+
+
+def _get_inquirer():
+    return inquirer if INTERACTIVE_AVAILABLE else None
 
 logger = logging.getLogger(__name__)
 
@@ -1153,7 +1175,8 @@ def _print_feature_hints(console: Console, args):
 def interactive_selection(
     console: Console, unused_functions, unused_imports, root_path=None
 ):
-    if not INTERACTIVE_AVAILABLE:
+    prompt = _get_inquirer()
+    if prompt is None:
         console.print(
             "[bad]Interactive mode requires 'inquirer'. Install with: pip install inquirer[/bad]"
         )
@@ -1174,13 +1197,13 @@ def interactive_selection(
             function_choices.append((choice_text, item))
 
         questions = [
-            inquirer.Checkbox(
+            prompt.Checkbox(
                 "functions",
                 message="Select functions to remove",
                 choices=function_choices,
             )
         ]
-        answers = inquirer.prompt(questions)
+        answers = prompt.prompt(questions)
         if answers:
             selected_functions = answers["functions"]
 
@@ -1196,11 +1219,11 @@ def interactive_selection(
             import_choices.append((choice_text, item))
 
         questions = [
-            inquirer.Checkbox(
+            prompt.Checkbox(
                 "imports", message="Select imports to remove", choices=import_choices
             )
         ]
-        answers = inquirer.prompt(questions)
+        answers = prompt.prompt(questions)
         if answers:
             selected_imports = answers["imports"]
 
@@ -4870,16 +4893,22 @@ def main() -> None:
                     and getattr(agent_args, "interactive", False)
                     and len(files) > 1
                 ):
+                    prompt = _get_inquirer()
+                    if prompt is None:
+                        console.print(
+                            "[bad]Interactive mode requires 'inquirer'. Install with: pip install inquirer[/bad]"
+                        )
+                        sys.exit(2)
                     choices = [
                         (f"{f.name} ({f.stat().st_size / 1024:.1f}KB)", f)
                         for f in files
                     ]
                     questions = [
-                        inquirer.Checkbox(
+                        prompt.Checkbox(
                             "files", message="Select files", choices=choices
                         )
                     ]
-                    answers = inquirer.prompt(questions)
+                    answers = prompt.prompt(questions)
                     if not answers or not answers["files"]:
                         sys.exit(0)
                     files = answers["files"]
@@ -4892,7 +4921,8 @@ def main() -> None:
                 if (
                     INTERACTIVE_AVAILABLE
                     and _is_tty()
-                    and not inquirer.confirm("Proceed?", default=True)
+                    and (prompt := _get_inquirer()) is not None
+                    and not prompt.confirm("Proceed?", default=True)
                 ):
                     sys.exit(0)
 
