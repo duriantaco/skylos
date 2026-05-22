@@ -40,7 +40,7 @@ skylos . --gate          # quality gate; non-zero exit blocks on failure
 Run `skylos commands` for the full command list and `skylos <cmd> --help` for
 details on any subcommand.
 
-## Skill for using Skylos
+## Skill For Using Skylos
 
 A detailed agent skill for installing, running, and interpreting Skylos lives
 at:
@@ -50,13 +50,16 @@ at:
 ```
 
 It is auto-discovered by Claude Code. Consult it for output formats, JSON
-result keys, filtering flags, gating/exit codes, suppression syntax, the
-`SKY-*` rule-ID families, and subcommand reference.
+result keys, filtering flags, gating/exit codes, suppression syntax, security
+guardrails, CI behavior, dead-code false-positive triage, and repo workflow.
+
+Keep Claude skill files under `.claude/skills/`. Do not put them under
+`skylos/agents` or `skylos/llm`; those are Skylos runtime modules.
 
 ## Reference docs
 
 - `README.md` — overview, workflow table, language support.
 - `docs/cli-output.md` — output modes and TUI keys.
 - `dictionary.md` — every rule ID and product term.
-- `CONTRIBUTING.md` / `QUALITY.md` — contribution and quality-gate expectations.
+- `CONTRIBUTING.md` / `QUALITY.md` — repo workflow and quality-gate expectations.
 - Full docs: https://docs.skylos.dev
