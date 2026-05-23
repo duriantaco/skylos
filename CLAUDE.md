@@ -56,6 +56,15 @@ guardrails, CI behavior, dead-code false-positive triage, and repo workflow.
 Keep Claude skill files under `.claude/skills/`. Do not put them under
 `skylos/agents` or `skylos/llm`; those are Skylos runtime modules.
 
+For security investigations and hardening, use:
+
+```
+.claude/skills/skylos-security/SKILL.md
+```
+
+Use it for scanner bypasses, LLM evidence filters, CI/cloud policy trust
+boundaries, and severity classification.
+
 ## Reference docs
 
 - `README.md` — overview, workflow table, language support.
