@@ -1,3 +1,5 @@
+import pickle
+
 import pytest
 
 from skylos.visitors.languages.typescript import scan_typescript_file
@@ -102,3 +104,12 @@ def test_jsx_scanner_parses_component_file(tmp_path):
     assert "div" not in ref_names
     assert quality == []
     assert danger == []
+
+
+def test_typescript_scan_result_is_parallel_worker_picklable(tmp_path):
+    p = tmp_path / "app.ts"
+    p.write_text("export function run(input: string) { return eval(input); }\n")
+
+    result = scan_typescript_file(str(p), {}, enable_quality_rules=False)
+
+    pickle.dumps(result)
