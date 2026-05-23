@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from unittest.mock import Mock, patch
 
@@ -13,8 +14,11 @@ from skylos.debt.advisor import (
     augment_hotspots_with_advisories,
 )
 from skylos.debt.baseline import (
+    _read_text_no_follow,
+    _write_text_no_follow,
     append_history,
     compare_to_baseline,
+    load_baseline,
     load_history,
     save_baseline,
 )
@@ -37,6 +41,13 @@ from skylos.debt.result import (
     DebtSnapshot,
 )
 from skylos.debt.scoring import build_hotspots
+
+
+def _hardlink_or_skip(source, target):
+    try:
+        os.link(source, target)
+    except OSError as exc:
+        pytest.skip(f"hard links unavailable: {exc}")
 
 
 SAMPLE_RESULT = {
@@ -357,6 +368,215 @@ def test_save_baseline_normalizes_changed_scope_to_project(tmp_path):
     assert "baseline" not in payload["summary"]
 
 
+def test_safe_file_write_rejects_hardlink_without_truncating(tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("do-not-clobber\n", encoding="utf-8")
+    hardlink = tmp_path / "hardlink.txt"
+    _hardlink_or_skip(outside, hardlink)
+
+    with pytest.raises(ValueError, match="hard-linked"):
+        _write_text_no_follow(hardlink, "replacement\n", label="test")
+
+    assert outside.read_text(encoding="utf-8") == "do-not-clobber\n"
+
+
+def test_safe_file_append_rejects_hardlink_without_appending(tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("do-not-append\n", encoding="utf-8")
+    hardlink = tmp_path / "hardlink.txt"
+    _hardlink_or_skip(outside, hardlink)
+
+    with pytest.raises(ValueError, match="hard-linked"):
+        _write_text_no_follow(hardlink, "extra\n", label="test", append=True)
+
+    assert outside.read_text(encoding="utf-8") == "do-not-append\n"
+
+
+def test_safe_file_write_rejects_symlink_without_clobbering(tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("do-not-clobber\n", encoding="utf-8")
+    link = tmp_path / "link.txt"
+    try:
+        link.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="symlink"):
+        _write_text_no_follow(link, "replacement\n", label="test")
+
+    assert outside.read_text(encoding="utf-8") == "do-not-clobber\n"
+
+
+def test_safe_file_append_rejects_symlink_without_appending(tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("do-not-append\n", encoding="utf-8")
+    link = tmp_path / "link.txt"
+    try:
+        link.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="symlink"):
+        _write_text_no_follow(link, "extra\n", label="test", append=True)
+
+    assert outside.read_text(encoding="utf-8") == "do-not-append\n"
+
+
+def test_safe_file_read_rejects_invalid_utf8(tmp_path):
+    path = tmp_path / "bad.txt"
+    path.write_bytes(b"\xff\xfe")
+
+    with pytest.raises(ValueError, match="valid UTF-8"):
+        _read_text_no_follow(path, label="test", max_bytes=10)
+
+
+def test_safe_file_read_rejects_oversized_file(tmp_path):
+    path = tmp_path / "large.txt"
+    path.write_text("12345", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="too large"):
+        _read_text_no_follow(path, label="test", max_bytes=4)
+
+
+def test_load_baseline_rejects_oversized_baseline_file(tmp_path, monkeypatch):
+    baseline_dir = tmp_path / ".skylos"
+    baseline_dir.mkdir()
+    (baseline_dir / "debt_baseline.json").write_text(
+        json.dumps({"hotspots": []}) + "\n",
+        encoding="utf-8",
+    )
+    from skylos.debt import baseline
+
+    monkeypatch.setattr(baseline, "BASELINE_MAX_BYTES", 4)
+
+    with pytest.raises(ValueError, match="too large"):
+        load_baseline(tmp_path)
+
+
+def test_load_baseline_rejects_invalid_utf8(tmp_path):
+    baseline_dir = tmp_path / ".skylos"
+    baseline_dir.mkdir()
+    (baseline_dir / "debt_baseline.json").write_bytes(b"\xff\xfe")
+
+    with pytest.raises(ValueError, match="valid UTF-8"):
+        load_baseline(tmp_path)
+
+
+def test_load_baseline_rejects_symlinked_baseline_file(tmp_path):
+    baseline_dir = tmp_path / ".skylos"
+    baseline_dir.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text(
+        json.dumps({"token": "secret-outside-value"}) + "\n",
+        encoding="utf-8",
+    )
+    baseline_path = baseline_dir / "debt_baseline.json"
+    try:
+        baseline_path.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="symlink"):
+        load_baseline(tmp_path)
+
+
+def test_load_baseline_rejects_hardlinked_baseline_file(tmp_path):
+    baseline_dir = tmp_path / ".skylos"
+    baseline_dir.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text(
+        json.dumps({"token": "secret-outside-value"}) + "\n",
+        encoding="utf-8",
+    )
+    _hardlink_or_skip(outside, baseline_dir / "debt_baseline.json")
+
+    with pytest.raises(ValueError, match="hard-linked"):
+        load_baseline(tmp_path)
+
+
+def test_save_baseline_rejects_symlinked_baseline_file(tmp_path):
+    snapshot = _snapshot(str(tmp_path))
+    baseline_dir = tmp_path / ".skylos"
+    baseline_dir.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("do-not-clobber\n", encoding="utf-8")
+    baseline_path = baseline_dir / "debt_baseline.json"
+    try:
+        baseline_path.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="symlink"):
+        save_baseline(tmp_path, snapshot)
+
+    assert outside.read_text(encoding="utf-8") == "do-not-clobber\n"
+
+
+def test_save_baseline_rejects_hardlinked_baseline_file(tmp_path):
+    snapshot = _snapshot(str(tmp_path))
+    baseline_dir = tmp_path / ".skylos"
+    baseline_dir.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("do-not-clobber\n", encoding="utf-8")
+    _hardlink_or_skip(outside, baseline_dir / "debt_baseline.json")
+
+    with pytest.raises(ValueError, match="hard-linked"):
+        save_baseline(tmp_path, snapshot)
+
+    assert outside.read_text(encoding="utf-8") == "do-not-clobber\n"
+
+
+def test_save_baseline_rejects_parent_symlink(tmp_path):
+    snapshot = _snapshot(str(tmp_path))
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    link = tmp_path / ".skylos"
+    try:
+        link.symlink_to(outside_dir, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="parent directory must not be a symlink"):
+        save_baseline(tmp_path, snapshot)
+
+    assert not (outside_dir / "debt_baseline.json").exists()
+
+
+def test_load_baseline_rejects_baseline_resolved_outside_project(tmp_path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (outside_dir / "debt_baseline.json").write_text(
+        json.dumps({"token": "secret-outside-value"}) + "\n",
+        encoding="utf-8",
+    )
+    try:
+        (project / ".skylos").symlink_to(outside_dir, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="parent directory must not be a symlink"):
+        load_baseline(project)
+
+
+def test_compare_to_baseline_ignores_malformed_hotspot_entries():
+    snapshot = _snapshot("/repo")
+    baseline = {
+        "hotspots": [
+            "not-a-dict",
+            {"fingerprint": "hotspot:app/services.py", "score": "bad-score"},
+            {"fingerprint": "hotspot:app/old.py", "score": 8.0},
+        ]
+    }
+
+    counts = compare_to_baseline(snapshot, baseline)
+
+    assert snapshot.hotspots[0].baseline_status == "new"
+    assert counts["new"] == 1
+    assert counts["resolved"] == 1
+
+
 def test_load_history_reads_saved_jsonl_entries(tmp_path):
     snapshot = _snapshot(str(tmp_path))
 
@@ -392,6 +612,54 @@ def test_load_history_rejects_symlinked_history_file(tmp_path):
         load_history(tmp_path)
 
 
+def test_append_history_rejects_symlinked_history_file(tmp_path):
+    snapshot = _snapshot(str(tmp_path))
+    history_dir = tmp_path / ".skylos"
+    history_dir.mkdir()
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text("do-not-append\n", encoding="utf-8")
+    history_path = history_dir / "debt_history.jsonl"
+    try:
+        history_path.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="symlink"):
+        append_history(tmp_path, snapshot)
+
+    assert outside.read_text(encoding="utf-8") == "do-not-append\n"
+
+
+def test_append_history_rejects_hardlinked_history_file(tmp_path):
+    snapshot = _snapshot(str(tmp_path))
+    history_dir = tmp_path / ".skylos"
+    history_dir.mkdir()
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text("do-not-append\n", encoding="utf-8")
+    _hardlink_or_skip(outside, history_dir / "debt_history.jsonl")
+
+    with pytest.raises(ValueError, match="hard-linked"):
+        append_history(tmp_path, snapshot)
+
+    assert outside.read_text(encoding="utf-8") == "do-not-append\n"
+
+
+def test_append_history_rejects_parent_symlink(tmp_path):
+    snapshot = _snapshot(str(tmp_path))
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    link = tmp_path / ".skylos"
+    try:
+        link.symlink_to(outside_dir, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="parent directory must not be a symlink"):
+        append_history(tmp_path, snapshot)
+
+    assert not (outside_dir / "debt_history.jsonl").exists()
+
+
 def test_load_history_rejects_history_resolved_outside_project(tmp_path):
     project = tmp_path / "repo"
     project.mkdir()
@@ -407,7 +675,7 @@ def test_load_history_rejects_history_resolved_outside_project(tmp_path):
     except OSError as exc:
         pytest.skip(f"symlinks unavailable: {exc}")
 
-    with pytest.raises(ValueError, match="inside project root"):
+    with pytest.raises(ValueError, match="parent directory must not be a symlink"):
         load_history(project)
 
 
@@ -457,6 +725,48 @@ def test_load_policy_discovers_from_start_path(tmp_path):
 
     assert policy is not None
     assert policy.report_top == 3
+
+
+def test_load_policy_rejects_symlinked_policy_file(tmp_path):
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("report:\n  top: 3\n", encoding="utf-8")
+    policy_path = tmp_path / "skylos-debt.yaml"
+    try:
+        policy_path.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="symlink"):
+        load_policy(policy_path)
+
+
+def test_load_policy_rejects_hardlinked_policy_file(tmp_path):
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("report:\n  top: 3\n", encoding="utf-8")
+    policy_path = tmp_path / "skylos-debt.yaml"
+    _hardlink_or_skip(outside, policy_path)
+
+    with pytest.raises(ValueError, match="hard-linked"):
+        load_policy(policy_path)
+
+
+def test_load_policy_rejects_oversized_policy_file(tmp_path, monkeypatch):
+    policy_path = tmp_path / "skylos-debt.yaml"
+    policy_path.write_text("report:\n  top: 3\n", encoding="utf-8")
+    from skylos.debt import policy as debt_policy
+
+    monkeypatch.setattr(debt_policy, "POLICY_MAX_BYTES", 4)
+
+    with pytest.raises(ValueError, match="too large"):
+        load_policy(policy_path)
+
+
+def test_load_policy_rejects_invalid_utf8(tmp_path):
+    policy_path = tmp_path / "skylos-debt.yaml"
+    policy_path.write_bytes(b"\xff\xfe")
+
+    with pytest.raises(ValueError, match="valid UTF-8"):
+        load_policy(policy_path)
 
 
 def test_augment_hotspots_with_advisories_sets_advisory(tmp_path):
@@ -964,6 +1274,71 @@ def test_cli_debt_fail_on_status_uses_baseline_comparison(tmp_path, monkeypatch)
         cli.main()
 
     assert exc.value.code == 1
+
+
+def test_cli_debt_baseline_reports_invalid_baseline_json(tmp_path, monkeypatch):
+    snapshot = _snapshot(str(tmp_path))
+    baseline_dir = tmp_path / ".skylos"
+    baseline_dir.mkdir()
+    (baseline_dir / "debt_baseline.json").write_text(
+        "{not-json",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "debt", str(tmp_path), "--baseline"],
+    )
+    mock_console = Mock()
+
+    with (
+        patch("skylos.debt.run_debt_analysis", return_value=snapshot),
+        patch("skylos.cli.Console", return_value=mock_console),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 1
+    message = mock_console.print.call_args.args[0]
+    assert "Error reading debt baseline" in message
+    assert "invalid JSON" in message
+
+
+def test_cli_debt_baseline_symlink_error_does_not_leak_file_content(
+    tmp_path,
+    monkeypatch,
+):
+    snapshot = _snapshot(str(tmp_path))
+    baseline_dir = tmp_path / ".skylos"
+    baseline_dir.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text(
+        json.dumps({"token": "secret-outside-value"}) + "\n",
+        encoding="utf-8",
+    )
+    try:
+        (baseline_dir / "debt_baseline.json").symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "debt", str(tmp_path), "--baseline"],
+    )
+    mock_console = Mock()
+
+    with (
+        patch("skylos.debt.run_debt_analysis", return_value=snapshot),
+        patch("skylos.cli.Console", return_value=mock_console),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 1
+    message = mock_console.print.call_args.args[0]
+    assert "Error reading debt baseline" in message
+    assert "symlink" in message
+    assert "secret-outside-value" not in message
 
 
 def test_cli_debt_json_min_score_includes_gate_failure(tmp_path, monkeypatch):
