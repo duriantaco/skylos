@@ -8,7 +8,7 @@ def build_main_parser(*, version: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Find dead code, secrets, and risky flows in Python, JS/TS, Go, "
-            "Java, PHP, Rust, and Dart"
+            "Java, PHP, Rust, Dart, and C#"
         ),
         epilog="""
 Run 'skylos commands' for a full list of all available commands.

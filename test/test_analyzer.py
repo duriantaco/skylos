@@ -731,6 +731,59 @@ class TestAnalyze:
         }
         mock_log_info.assert_any_call("Analyzing 2 files...")
 
+    @patch("skylos.analyzer.logger.info")
+    def test_analyze_mixed_languages_includes_csharp_in_summary(self, mock_log_info):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "main.py").write_text(
+                "def hello():\n    return 1\n", encoding="utf-8"
+            )
+            (root / "Program.cs").write_text(
+                "public class Program {\n"
+                "    public static void Main(string[] args) {\n"
+                '        System.Console.WriteLine("hi");\n'
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            result_json = analyze(str(root), conf=0)
+
+        result = json.loads(result_json)
+
+        assert result["analysis_summary"]["total_files"] == 2
+        assert result["analysis_summary"]["languages"] == {
+            "C#": 1,
+            "Python": 1,
+        }
+        mock_log_info.assert_any_call("Analyzing 2 files...")
+
+    def test_analyze_csharp_unused_private_method_without_using_noise(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "Demo.cs").write_text(
+                "using System;\n"
+                "\n"
+                "public class Demo {\n"
+                "    private void DeadHelper() { }\n"
+                "    public void Alive() {\n"
+                "        Used();\n"
+                "    }\n"
+                "    private void Used() { }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            result_json = analyze(str(root), conf=0)
+
+        result = json.loads(result_json)
+
+        assert result["analysis_summary"]["languages"] == {"C#": 1}
+        assert {item["name"] for item in result["unused_functions"]} == {
+            "Demo.DeadHelper"
+        }
+        assert result["unused_imports"] == []
+
     def test_analyze_malformed_pyproject_config_does_not_suppress_findings(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
