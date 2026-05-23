@@ -244,6 +244,7 @@ class TestSkylos:
                 ".php",
                 ".rs",
                 ".dart",
+                ".cs",
             },
             exclude_folders=None,
         )
