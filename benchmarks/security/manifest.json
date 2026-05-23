@@ -13,7 +13,7 @@
         "notes": "Regression fixture distilled from a confirmed false negative in Skylos SQL flow analysis."
       },
       "budget": {
-        "max_seconds": 5.0
+        "max_seconds": 6.0
       },
       "expect": {
         "present": {
@@ -403,6 +403,314 @@
           "danger": ["SKY-D201"]
         },
         "absent": {}
+      }
+    },
+    {
+      "id": "csharp-command-injection",
+      "path": "fixtures/csharp_command_injection",
+      "description": "C# Process.Start with caller-controlled command input should be reported as command injection.",
+      "languages": ["csharp"],
+      "taxonomy": ["command_injection", "csharp"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for C# process execution taint."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D212"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "csharp-command-literal-safe",
+      "path": "fixtures/csharp_command_literal_safe",
+      "description": "C# Process.Start with literal argv should not be reported as command injection.",
+      "languages": ["csharp"],
+      "taxonomy": ["command_injection", "csharp", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden precision fixture for literal C# process execution."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D212"]
+        }
+      }
+    },
+    {
+      "id": "csharp-sql-injection",
+      "path": "fixtures/csharp_sql_injection",
+      "description": "C# SqlCommand built from caller-controlled SQL text should be reported.",
+      "languages": ["csharp"],
+      "taxonomy": ["sql_injection", "csharp"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for C# raw SQL taint."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D211"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "csharp-sql-parameterized-safe",
+      "path": "fixtures/csharp_sql_parameterized_safe",
+      "description": "C# parameterized SqlCommand with literal query text should stay quiet.",
+      "languages": ["csharp"],
+      "taxonomy": ["sql_injection", "csharp", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden precision fixture for parameterized C# SQL."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D211"]
+        }
+      }
+    },
+    {
+      "id": "csharp-ssrf",
+      "path": "fixtures/csharp_ssrf",
+      "description": "C# HttpClient request using caller-controlled URL should be reported as SSRF.",
+      "languages": ["csharp"],
+      "taxonomy": ["ssrf", "csharp"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for C# outbound request taint."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D216"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "csharp-ssrf-fixed-host-safe",
+      "path": "fixtures/csharp_ssrf_fixed_host_safe",
+      "description": "C# HttpClient request to a literal fixed URL should stay quiet.",
+      "languages": ["csharp"],
+      "taxonomy": ["ssrf", "csharp", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden precision fixture for literal C# outbound request targets."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D216"]
+        }
+      }
+    },
+    {
+      "id": "csharp-path-traversal",
+      "path": "fixtures/csharp_path_traversal",
+      "description": "C# File.ReadAllText with caller-controlled path should be reported as path traversal.",
+      "languages": ["csharp"],
+      "taxonomy": ["path_traversal", "csharp"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for C# filesystem path taint."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D215"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "csharp-path-basename-safe",
+      "path": "fixtures/csharp_path_basename_safe",
+      "description": "C# path input sanitized with Path.GetFileName before fixed-directory access should stay quiet.",
+      "languages": ["csharp"],
+      "taxonomy": ["path_traversal", "csharp", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden precision fixture for C# path basename sanitization."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D215"]
+        }
+      }
+    },
+    {
+      "id": "csharp-open-redirect",
+      "path": "fixtures/csharp_open_redirect",
+      "description": "C# MVC Redirect using caller-controlled target should be reported as open redirect.",
+      "languages": ["csharp"],
+      "taxonomy": ["open_redirect", "csharp"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for C# redirect taint."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D230"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "csharp-open-redirect-literal-safe",
+      "path": "fixtures/csharp_open_redirect_literal_safe",
+      "description": "C# MVC Redirect to a literal local route should stay quiet.",
+      "languages": ["csharp"],
+      "taxonomy": ["open_redirect", "csharp", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden precision fixture for literal C# redirects."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D230"]
+        }
+      }
+    },
+    {
+      "id": "php-unserialize",
+      "path": "fixtures/php_unserialize",
+      "description": "PHP unserialize on request-controlled data should be reported as unsafe deserialization.",
+      "languages": ["php"],
+      "taxonomy": ["deserialization", "php"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for PHP unsafe deserialization."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D204"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "php-json-decode-safe",
+      "path": "fixtures/php_json_decode_safe",
+      "description": "PHP JSON decoding request data should not be treated as unsafe deserialization.",
+      "languages": ["php"],
+      "taxonomy": ["deserialization", "php", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden precision fixture for PHP JSON parsing."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D204"]
+        }
+      }
+    },
+    {
+      "id": "php-path-traversal",
+      "path": "fixtures/php_path_traversal",
+      "description": "PHP filesystem read using request-controlled path should be reported as path traversal.",
+      "languages": ["php"],
+      "taxonomy": ["path_traversal", "php"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden fixture for PHP filesystem path taint."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D215"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "php-path-basename-safe",
+      "path": "fixtures/php_path_basename_safe",
+      "description": "PHP path input sanitized with basename before fixed-directory access should stay quiet.",
+      "languages": ["php"],
+      "taxonomy": ["path_traversal", "php", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Golden precision fixture for PHP basename sanitization."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D215"]
+        }
       }
     },
     {

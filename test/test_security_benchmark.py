@@ -29,10 +29,35 @@ def test_checked_in_security_manifest_validates():
         "ssrf-fixed-host-path",
         "subprocess-alias-shell",
         "yaml-safeloader-positional",
+        "csharp-command-injection",
+        "csharp-sql-parameterized-safe",
+        "php-unserialize",
+        "php-path-basename-safe",
     }
 
     labels = {label for case in cases for label in case["taxonomy"]}
     assert labels <= set(SECURITY_TAXONOMY)
+
+
+def test_security_benchmark_scans_only_fixture_changed_files(tmp_path, monkeypatch):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    app = case_dir / "app.py"
+    app.write_text("def demo():\n    return 1\n", encoding="utf-8")
+
+    captured = {}
+
+    def fake_analyze(path, **kwargs):
+        captured["path"] = path
+        captured["changed_files"] = kwargs.get("changed_files")
+        return json.dumps({})
+
+    monkeypatch.setattr(benchmark, "analyze", fake_analyze)
+
+    benchmark._scan_case(case_dir)
+
+    assert captured["path"] == str(case_dir)
+    assert captured["changed_files"] == {str(app.resolve())}
 
 
 def test_checked_in_security_benchmark_passes():

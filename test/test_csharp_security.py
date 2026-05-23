@@ -207,6 +207,23 @@ public class UserRepository {
     assert "SKY-D211" not in _rule_ids(findings)
 
 
+def test_parameterized_sql_literal_with_id_token_is_safe(tmp_path):
+    findings = _scan_csharp_findings(
+        tmp_path,
+        """
+using System.Data.SqlClient;
+
+public class UserRepository {
+    public void Find(int id, SqlConnection connection) {
+        var command = new SqlCommand("SELECT * FROM Users WHERE id = @id", connection);
+        command.Parameters.AddWithValue("@id", id);
+    }
+}
+""",
+    )
+    assert "SKY-D211" not in _rule_ids(findings)
+
+
 def test_http_client_with_tainted_url_flags(tmp_path):
     findings = _scan_csharp_findings(
         tmp_path,

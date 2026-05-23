@@ -57,6 +57,30 @@ class TSFrameworkVisitor:
         self.framework_decorated_lines: set[int] = set()
         self.detected_frameworks: set[str] = set()
 
+    def __getstate__(self) -> dict:
+        return {
+            "is_test_file": self.is_test_file,
+            "test_decorated_lines": self.test_decorated_lines,
+            "dataclass_fields": self.dataclass_fields,
+            "pydantic_models": self.pydantic_models,
+            "class_defs": self.class_defs,
+            "first_read_lineno": self.first_read_lineno,
+            "framework_decorated_lines": self.framework_decorated_lines,
+            "detected_frameworks": self.detected_frameworks,
+        }
+
+    def __setstate__(self, state: dict) -> None:
+        self.is_test_file = bool(state.get("is_test_file", False))
+        self.test_decorated_lines = set(state.get("test_decorated_lines", set()))
+        self.dataclass_fields = set(state.get("dataclass_fields", set()))
+        self.pydantic_models = set(state.get("pydantic_models", set()))
+        self.class_defs = dict(state.get("class_defs", {}))
+        self.first_read_lineno = dict(state.get("first_read_lineno", {}))
+        self.framework_decorated_lines = set(
+            state.get("framework_decorated_lines", set())
+        )
+        self.detected_frameworks = set(state.get("detected_frameworks", set()))
+
     def scan(
         self,
         file_path: str,

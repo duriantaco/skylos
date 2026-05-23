@@ -200,11 +200,16 @@ def _tracked_property_sink(
 
 
 def _is_tainted(expr: str, tainted_vars: set[str]) -> bool:
-    if not expr or any(hint in expr for hint in _SANITIZER_HINTS):
+    if not expr:
         return False
-    if any(hint in expr for hint in _SOURCE_HINTS):
+    masked = mask_comments_and_strings(expr)
+    if any(hint in masked for hint in _SANITIZER_HINTS):
+        return False
+    if any(hint in masked for hint in _SOURCE_HINTS):
         return True
-    return any(re.search(rf"\b@?{re.escape(name)}\b", expr) for name in tainted_vars)
+    return any(
+        re.search(rf"\b@?{re.escape(name)}\b", masked) for name in tainted_vars
+    )
 
 
 def _iter_scopes(source: str) -> list[tuple[str, int, set[str]]]:
