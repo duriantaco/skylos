@@ -43,6 +43,7 @@ DEEP_AUDIT_EXTENSIONS = (
     ".php",
     ".rs",
     ".dart",
+    ".cs",
     ".env",
     ".yaml",
     ".yml",

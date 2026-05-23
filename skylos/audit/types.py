@@ -87,6 +87,7 @@ def language_for_path(path: str | Path) -> str:
         ".php": "php",
         ".rs": "rust",
         ".dart": "dart",
+        ".cs": "csharp",
         ".env": "env",
         ".yaml": "yaml",
         ".yml": "yaml",

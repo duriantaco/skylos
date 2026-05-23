@@ -73,6 +73,7 @@ SUPPORTED_LANGUAGES = {
     "typescript",
     "rust",
     "dart",
+    "csharp",
 }
 SCANNER_LANGUAGE_SUPPORT = {
     "skylos": SUPPORTED_LANGUAGES,

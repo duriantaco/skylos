@@ -31,6 +31,7 @@ POLYGLOT_LANGUAGES = {
     "php",
     "rust",
     "dart",
+    "csharp",
 }
 
 _TS_JS_RULES = (
@@ -278,6 +279,46 @@ _DART_RULES = (
     ),
 )
 
+_CSHARP_RULES = (
+    PolyglotSignalRule(
+        rule_id="SKY-D212",
+        pattern_id="csharp-process",
+        severity="high",
+        reason="Process execution should be reviewed for command injection risk.",
+        regex=re.compile(r"\b(?:Process\.Start|new\s+ProcessStartInfo)\s*\("),
+    ),
+    PolyglotSignalRule(
+        rule_id="SKY-D211",
+        pattern_id="csharp-sql-dynamic",
+        severity="high",
+        reason="SQL command construction with dynamic strings needs review.",
+        regex=re.compile(
+            r"\b(?:new\s+(?:SqlCommand|DbCommand|NpgsqlCommand|MySqlCommand)|FromSqlRaw|ExecuteSqlRaw)\s*\([^;\n]*(?:\+|\$\{)",
+            re.IGNORECASE,
+        ),
+    ),
+    PolyglotSignalRule(
+        rule_id="SKY-D216",
+        pattern_id="csharp-http-client",
+        severity="high",
+        reason="Outbound HTTP calls with dynamic URLs should be reviewed for SSRF.",
+        regex=re.compile(
+            r"\b(?:GetAsync|PostAsync|SendAsync|WebRequest\.Create)\s*\([^;\n]*(?:url|uri|Request\.)",
+            re.IGNORECASE,
+        ),
+    ),
+    PolyglotSignalRule(
+        rule_id="SKY-D215",
+        pattern_id="csharp-file-path",
+        severity="medium",
+        reason="File access with dynamic paths should be reviewed.",
+        regex=re.compile(
+            r"\b(?:File|Directory)\.(?:ReadAllText|ReadAllBytes|Open|WriteAllText|Delete)\s*\([^;\n]*(?:path|file|Request\.)",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
 _RULES_BY_LANGUAGE = {
     "typescript": _TS_JS_RULES,
     "javascript": _TS_JS_RULES,
@@ -286,6 +327,7 @@ _RULES_BY_LANGUAGE = {
     "php": _PHP_RULES,
     "rust": _RUST_RULES,
     "dart": _DART_RULES,
+    "csharp": _CSHARP_RULES,
 }
 
 _SEVERITY_PRIORITY = {

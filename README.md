@@ -48,7 +48,7 @@
 ## What Is Skylos?
 
 Skylos is an open-source static analysis tool and CI/CD PR gate for Python,
-TypeScript, JavaScript, Java, Go, PHP, Rust, and Dart repositories. It combines
+TypeScript, JavaScript, Java, Go, PHP, Rust, Dart, and C# repositories. It combines
 dead code detection, security scanning, secrets detection, code quality checks,
 and AI-generated code guardrails in one local-first workflow.
 
@@ -206,6 +206,7 @@ credential names, sensitive files, and network calls that must set timeouts.
 | PHP | Yes | Yes | Partial | PHP parser coverage plus taint-style security sinks and sources |
 | Rust | Yes | Yes | Partial | Rust parser coverage plus security sink/source checks |
 | Dart | Yes | Yes | Partial | Dart parser coverage plus selected security sinks and sources |
+| C# | Yes | Yes | Partial | C# symbol coverage plus selected ASP.NET, process, SQL, HTTP, and file sinks |
 
 See [Rules Reference](https://docs.skylos.dev/rules-reference) for rule families
 and scanner scope.
