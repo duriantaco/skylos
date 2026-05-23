@@ -514,7 +514,7 @@ def render_hot_modules(modules: list[Any]) -> str:
               <td>{label_html}</td>
               <td>{_esc(module.summary)}</td>
             </tr>
-            """
+            """.rstrip()
         )
     return "\n".join(rows)
 
@@ -554,7 +554,7 @@ def render_symbol_index(symbols: list[dict[str, Any]]) -> str:
               <td>{badge}</td>
               <td>{_esc(item["path"])}</td>
             </tr>
-            """
+            """.rstrip()
         )
     return "\n".join(rows)
 

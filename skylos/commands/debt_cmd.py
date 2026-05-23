@@ -348,7 +348,11 @@ def run_debt_command(
             console.print(f"[warn]Debt agent advisory failed: {e}[/warn]")
 
     if debt_args.baseline:
-        baseline = load_debt_baseline(snapshot.project)
+        try:
+            baseline = load_debt_baseline(snapshot.project)
+        except ValueError as e:
+            console.print(f"[red]Error reading debt baseline: {e}[/red]")
+            return 1
         if baseline is None:
             console.print("[dim]No debt baseline found.[/dim]")
         else:
@@ -361,7 +365,11 @@ def run_debt_command(
                 f"Re-run against {project_target}[/red]"
             )
             return 1
-        baseline_path = save_debt_baseline(snapshot.project, snapshot)
+        try:
+            baseline_path = save_debt_baseline(snapshot.project, snapshot)
+        except (OSError, ValueError) as e:
+            console.print(f"[red]Error writing debt baseline: {e}[/red]")
+            return 1
         console.print(f"[green]Debt baseline written to {baseline_path}[/green]")
 
     if debt_args.history:
@@ -371,7 +379,11 @@ def run_debt_command(
                 f"Re-run against {project_target}[/red]"
             )
             return 1
-        history_path = append_debt_history(snapshot.project, snapshot)
+        try:
+            history_path = append_debt_history(snapshot.project, snapshot)
+        except (OSError, ValueError) as e:
+            console.print(f"[red]Error writing debt history: {e}[/red]")
+            return 1
         console.print(f"[dim]Debt history appended to {history_path}[/dim]")
 
     min_score, fail_on_status = _resolve_gate_settings(debt_args, policy)
