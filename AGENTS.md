@@ -21,6 +21,16 @@ Use that skill when the task involves running Skylos, interpreting `SKY-*`
 findings, reducing dead-code false positives, auditing security behavior,
 working on CI/SARIF output, or changing Skylos itself.
 
+For security investigations and hardening, use the stricter security skill:
+
+```text
+.agents/skills/skylos-security/SKILL.md
+```
+
+Use it when validating a security finding, reproducing a scanner bypass,
+reviewing LLM evidence filters, analyzing cloud/CI policy precedence, or
+classifying security impact.
+
 ## Work Safely
 
 - Preserve user changes. Do not revert unrelated work.

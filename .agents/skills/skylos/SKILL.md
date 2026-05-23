@@ -14,8 +14,9 @@ test surface, and security guardrails.
   install troubleshooting: read `references/cli.md`.
 - Changing Skylos code, adding rules, updating docs, selecting focused tests,
   or preserving repo hygiene: read `references/repo-workflow.md`.
-- Security findings, secrets, SCA, LLM evidence filters, cloud policy, CI trust
-  boundaries, or hardening reviews: read `references/security.md`.
+- Basic security scan usage, secrets, and SCA: read `references/security.md`.
+  For scanner bypasses, LLM evidence filters, cloud/CI policy, or severity
+  classification, use `$skylos-security`.
 - Dead-code false positives, framework liveness, runtime tracing, Vulture
   comparisons, and benchmark work: read `references/dead-code.md`.
 - GitHub Actions, SARIF, repo map Pages, CI gates, docs deploy, and generated

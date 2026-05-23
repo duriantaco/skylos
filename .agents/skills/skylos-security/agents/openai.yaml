@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skylos Security"
+  short_description: "Investigate and harden Skylos security behavior."
+  default_prompt: "Use Skylos Security to validate a finding, reproduce a scanner bypass, or harden security-sensitive analyzer behavior."
