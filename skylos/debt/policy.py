@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import stat
 from typing import Optional
 
 try:
@@ -18,6 +20,8 @@ POLICY_FILENAMES = (
     ".skylos-debt.yaml",
     ".skylos-debt.yml",
 )
+POLICY_MAX_BYTES = 1024 * 1024
+POLICY_READ_CHUNK_BYTES = 64 * 1024
 
 
 @dataclass
@@ -51,6 +55,60 @@ def find_policy_path(start_path: str | Path | None = None) -> Path | None:
         current = current.parent
 
 
+def _read_policy_text(policy_path: Path) -> str:
+    try:
+        path_stat = policy_path.lstat()
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Policy file not found: {policy_path}") from exc
+    _validate_policy_file(policy_path, path_stat)
+
+    flags = os.O_RDONLY
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow:
+        flags |= nofollow
+
+    fd = os.open(  # skylos: ignore[SKY-D215] validated policy path with no-follow checks
+        policy_path, flags
+    )
+    try:
+        _validate_policy_file(policy_path, os.fstat(fd))
+        data = _read_policy_bytes(fd, policy_path)
+    finally:
+        os.close(fd)
+
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{policy_path}: policy file must be valid UTF-8") from exc
+
+
+def _validate_policy_file(policy_path: Path, path_stat: os.stat_result) -> None:
+    if stat.S_ISLNK(path_stat.st_mode):
+        raise ValueError(f"{policy_path}: policy file must not be a symlink")
+    if not stat.S_ISREG(path_stat.st_mode):
+        raise ValueError(f"{policy_path}: policy file must be a regular file")
+    if getattr(path_stat, "st_nlink", 1) > 1:
+        raise ValueError(f"{policy_path}: policy file must not be hard-linked")
+
+
+def _read_policy_bytes(fd: int, policy_path: Path) -> bytes:
+    chunks = []
+    remaining = POLICY_MAX_BYTES + 1
+    while remaining > 0:
+        chunk = os.read(  # skylos: ignore[SKY-P401] bounded chunked read
+            fd, min(POLICY_READ_CHUNK_BYTES, remaining)
+        )
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+
+    data = b"".join(chunks)
+    if len(data) > POLICY_MAX_BYTES:
+        raise ValueError(f"{policy_path}: policy file is too large")
+    return data
+
+
 def load_policy(
     path: str | Path | None = None,
     *,
@@ -71,7 +129,7 @@ def load_policy(
             "PyYAML is required for policy files. Install with: pip install pyyaml"
         )
 
-    raw = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    raw = yaml.safe_load(_read_policy_text(policy_path))
     if not isinstance(raw, dict):
         raise ValueError(
             f"Invalid policy file: expected a YAML mapping, got {type(raw).__name__}"
