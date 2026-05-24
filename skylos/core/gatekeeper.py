@@ -1,3 +1,5 @@
+import importlib  # skylos: ignore[SKY-Q502] legacy gate flow module is being split incrementally
+import importlib.util
 import os
 import subprocess
 import sys
@@ -5,12 +7,30 @@ import sys
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-try:
-    import inquirer
 
-    INTERACTIVE = True
-except ImportError:
-    INTERACTIVE = False
+class _LazyInquirer:
+    """Import inquirer only when an interactive prompt is actually used."""
+
+    _module = None
+
+    def _load(self):
+        if self._module is None:
+            self._module = importlib.import_module("inquirer")
+        return self._module
+
+    def __getattr__(self, name):
+        return getattr(self._load(), name)
+
+
+def _inquirer_available() -> bool:
+    try:
+        return importlib.util.find_spec("inquirer") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+INTERACTIVE = _inquirer_available()
+inquirer = _LazyInquirer() if INTERACTIVE else None
 
 console = Console()
 DEAD_CODE_RESULT_KEYS = (
