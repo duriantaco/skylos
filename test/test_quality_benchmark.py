@@ -102,6 +102,55 @@ def test_runner_reports_present_and_budget_failures(tmp_path, monkeypatch):
     assert summary["scores"]["overall_score"] < 50.0
 
 
+def test_runner_treats_small_budget_overrun_as_latency_penalty(tmp_path, monkeypatch):
+    case_dir = tmp_path / "slightly_slow_case"
+    case_dir.mkdir()
+    (case_dir / "demo.py").write_text(
+        "def demo(flag):\n    return flag\n", encoding="utf-8"
+    )
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "slightly-slow-quality-case",
+                "path": "slightly_slow_case",
+                "description": "Synthetic benchmark timing grace case.",
+                "taxonomy": ["control_flow"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "Test-only fixture.",
+                },
+                "budget": {"max_seconds": 0.5},
+                "expect": {
+                    "present": {"quality": ["SKY-L006"]},
+                    "absent": {},
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(
+        benchmark,
+        "_scan_case",
+        lambda case_path, scan=None: {
+            "quality": [{"rule_id": "SKY-L006"}],
+        },
+    )
+
+    ticks = iter([0.0, 0.54])
+    monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
+
+    summary = run_manifest(manifest_path)
+
+    assert summary["failure_count"] == 0
+    assert summary["scores"]["latency_score"] < 1.0
+
+
 def test_format_summary_includes_taxonomy_and_metrics():
     summary = {
         "case_count": 1,
