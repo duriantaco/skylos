@@ -12,15 +12,11 @@ def _esc(value: Any) -> str:
     return html.escape(str(value), quote=True)
 
 
-def _link(path: str, *, label: str | None = None, line: int | None = None) -> str:
+def _link(path: str, *, label: str | None = None) -> str:
     clean = path.rstrip("/")
     route = "tree" if path.endswith("/") else "blob"
     href = f"{REPO_SOURCE_BASE}/{route}/main/{quote(clean, safe='/._-')}"
-    if line and route == "blob":
-        href = f"{href}#L{line}"
     text = label or clean
-    if line:
-        text = f"{text}:{line}"
     return (  # skylos: ignore escaped static repo-map HTML
         f'<a href="{_esc(href)}" rel="noopener noreferrer">{_esc(text)}</a>'
     )
@@ -419,11 +415,11 @@ def render_folder_card(card: dict[str, Any]) -> str:
     Called from: scripts/repo_map_renderer.py render_folder_cards.
     """
     modules = "\n".join(
-        f"<li>{_link(module.path)} <span>{_esc(module.lines)} lines</span></li>"
+        f"<li>{_link(module.path)}</li>"
         for module in card["modules"]
     )
     symbols = "\n".join(
-        f"<li>{_link(item['path'], label=item['name'], line=item['line'])} <span>{_esc(item['kind'])}</span></li>"
+        f"<li>{_link(item['path'], label=item['name'])} <span>{_esc(item['kind'])}</span></li>"
         for item in card["key_symbols"]
     )
     entrypoints = " ".join(_link(path) for path in card["entrypoints"]) or '<span class="muted">Generated only</span>'
@@ -436,7 +432,6 @@ def render_folder_card(card: dict[str, Any]) -> str:
         <div class="stat-row">
           {_pill("files", card["files"])}
           {_pill("symbols", card["symbols"])}
-          {_pill("lines", card["lines"])}
         </div>
       </div>
       <p>{_esc(card["purpose"])}</p>
@@ -488,11 +483,11 @@ def render_hot_modules(modules: list[Any]) -> str:
     Render high-risk or high-traffic modules.
 
     Args:
-        modules: ModuleInfo-like objects sorted by size and symbol count.
+        modules: ModuleInfo-like objects sorted by coarse risk signals.
 
     Returns:
-        Table rows with path, line count, public/all symbol count, risk labels,
-        and summary.
+        Table rows with path, public/all symbol count, risk labels, and
+        summary.
 
     Calls: scripts/repo_map_renderer.py _hot_module_labels;
         scripts/repo_map_renderer.py _link;
@@ -509,7 +504,6 @@ def render_hot_modules(modules: list[Any]) -> str:
             f"""
             <tr class="searchable" data-search="{_esc((module.path + " " + module.summary).lower())}">
               <td>{_link(module.path)}</td>
-              <td>{_esc(module.lines)}</td>
               <td>{_esc(public_symbols)} / {_esc(len(module.symbols))}</td>
               <td>{label_html}</td>
               <td>{_esc(module.summary)}</td>
@@ -521,8 +515,6 @@ def render_hot_modules(modules: list[Any]) -> str:
 
 def _hot_module_labels(module: Any) -> list[str]:
     labels = []
-    if module.lines >= 600:
-        labels.append("large")
     if len(module.symbols) >= 40:
         labels.append("many symbols")
     if module.path in {"skylos/cli.py", "skylos/analyzer.py", "skylos/pipeline.py", "skylos/config.py"}:
@@ -549,7 +541,7 @@ def render_symbol_index(symbols: list[dict[str, Any]]) -> str:
         rows.append(
             f"""
             <tr class="searchable" data-search="{_esc(search_text.lower())}">
-              <td>{_link(item["path"], label=item["name"], line=item["line"])}</td>
+              <td>{_link(item["path"], label=item["name"])}</td>
               <td>{_esc(item["kind"])}</td>
               <td>{badge}</td>
               <td>{_esc(item["path"])}</td>
@@ -710,7 +702,7 @@ def render_hot_section(data: dict[str, Any]) -> str:
       <h2>Hot Zones</h2>
       <p class="lede">These files are not bad by default. They are places where a small change can affect many workflows.</p>
       <table>
-        <thead><tr><th>File</th><th>Lines</th><th>Public / all symbols</th><th>Signal</th><th>What it seems to own</th></tr></thead>
+        <thead><tr><th>File</th><th>Public / all symbols</th><th>Signal</th><th>What it seems to own</th></tr></thead>
         <tbody>{render_hot_modules(data["hot_modules"])}</tbody>
       </table>
     </section>

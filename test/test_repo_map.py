@@ -89,3 +89,17 @@ def test_main_check_detects_stale_output(tmp_path):
     output.write_text("stale", encoding="utf-8")
 
     assert repo_map.main(["--root", str(tmp_path), "--output", str(output), "--check"]) == 1
+
+
+def test_main_check_ignores_line_only_source_churn(tmp_path):
+    repo_map = _load_repo_map_module()
+    source = tmp_path / "skylos" / "config.py"
+    _write(source, "def load_config():\n    return {}\n")
+    output = tmp_path / "docs" / "repo-map" / "index.html"
+
+    assert repo_map.main(["--root", str(tmp_path), "--output", str(output)]) == 0
+
+    line_noise = "\n".join("# implementation note" for _ in range(700))
+    source.write_text(f"{line_noise}\n\ndef load_config():\n    return {{}}\n", encoding="utf-8")
+
+    assert repo_map.main(["--root", str(tmp_path), "--output", str(output), "--check"]) == 0

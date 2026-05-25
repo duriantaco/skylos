@@ -53,6 +53,8 @@ render_html = _load_renderer()
 SOURCE_ROOTS = ("skylos", "test", "scripts", "benchmarks")
 GENERATED_PATHS = {"docs/repo-map/index.html"}
 MAX_SOURCE_BYTES = 1_000_000
+SHARED_ENTRYPOINTS = {"skylos/cli.py", "skylos/analyzer.py", "skylos/pipeline.py", "skylos/config.py"}
+PRIVATE_SYMBOL_ENTRYPOINTS = {"skylos/cli.py", "skylos/analyzer.py", "skylos/pipeline.py"}
 EXCLUDED_DIRS = {
     ".git",
     ".mypy_cache",
@@ -551,7 +553,9 @@ class SymbolInfo:
         name: Symbol name exactly as it appears in source.
         kind: Human-readable symbol type, such as `class`, `def`, or
             `async def`.
-        line: 1-based source line for the symbol definition.
+        line: 1-based source line for stable in-file ordering. The renderer
+            intentionally does not emit this value because line anchors churn
+            whenever unrelated code moves.
         private: Whether the symbol name starts with `_`.
 
     Used by:
@@ -572,7 +576,6 @@ class ModuleInfo:
 
     Attributes:
         path: Repository-relative POSIX path.
-        lines: Approximate source line count.
         summary: Module docstring summary or curated folder fallback.
         symbols: Top-level symbols extracted from the module AST.
         imports: Top-level import roots used by the module.
@@ -582,7 +585,6 @@ class ModuleInfo:
         scripts/repo_map_renderer.py render_hot_modules.
     """
     path: str
-    lines: int
     summary: str
     symbols: list[SymbolInfo]
     imports: list[str]
@@ -761,9 +763,9 @@ def _parse_python_module(path: Path, root: Path) -> ModuleInfo:
         root: Repository root used to compute display paths.
 
     Returns:
-        ModuleInfo containing path, line count, summary, imports, and top-level
-        symbols. Syntax errors produce an empty-symbol ModuleInfo instead of
-        aborting the whole map.
+        ModuleInfo containing path, summary, imports, and top-level symbols.
+        Syntax errors produce an empty-symbol ModuleInfo instead of aborting
+        the whole map.
 
     Calls: scripts/build_repo_map.py _rel;
         scripts/build_repo_map.py _read_text;
@@ -775,15 +777,13 @@ def _parse_python_module(path: Path, root: Path) -> ModuleInfo:
     """
     relpath = _rel(path, root)
     source = _read_text(path)
-    lines = source.count("\n") + (1 if source else 0)
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return ModuleInfo(relpath, lines, "Python file could not be parsed by ast.", [], [])
+        return ModuleInfo(relpath, "Python file could not be parsed by ast.", [], [])
     doc_summary = _first_sentence(ast.get_docstring(tree) or "")
     return ModuleInfo(
         path=relpath,
-        lines=lines,
         summary=doc_summary or _fallback_summary(relpath),
         symbols=_extract_symbols(tree),
         imports=_extract_imports(tree),
@@ -799,6 +799,11 @@ def _group_for_path(relpath: str) -> str:
             return f"skylos/{parts[1]}"
         return "skylos"
     return parts[0]
+
+
+def _hot_module_score(module: ModuleInfo) -> int:
+    shared = 1 if module.path in SHARED_ENTRYPOINTS else 0
+    return shared * 1000 + len(module.symbols)
 
 
 def _test_files_for_group(group: str, test_files: list[str]) -> list[str]:
@@ -859,14 +864,12 @@ def collect_repo_map(root: Path) -> dict[str, Any]:
             {
                 "path": group,
                 "files": 0,
-                "lines": 0,
                 "symbols": 0,
                 "public_symbols": 0,
                 "modules": [],
             },
         )
         bucket["files"] += 1
-        bucket["lines"] += module.lines
         bucket["symbols"] += len(module.symbols)
         bucket["public_symbols"] += sum(1 for symbol in module.symbols if not symbol.private)
         bucket["modules"].append(module)
@@ -876,7 +879,7 @@ def collect_repo_map(root: Path) -> dict[str, Any]:
         meta = FOLDER_META.get(group, {})
         modules = sorted(
             groups[group]["modules"],
-            key=lambda item: (-(len(item.symbols) * 20 + item.lines), item.path),
+            key=lambda item: (-len(item.symbols), item.path),
         )
         key_symbols = _key_symbols(modules)
         folder_cards.append(
@@ -887,7 +890,6 @@ def collect_repo_map(root: Path) -> dict[str, Any]:
                 "entrypoints": [path for path in meta.get("entrypoints", []) if _path_exists_or_directory(root, path)],
                 "tests": _test_files_for_group(group, test_files),
                 "files": groups[group]["files"],
-                "lines": groups[group]["lines"],
                 "symbols": groups[group]["symbols"],
                 "public_symbols": groups[group]["public_symbols"],
                 "modules": modules[:8],
@@ -897,7 +899,7 @@ def collect_repo_map(root: Path) -> dict[str, Any]:
 
     hot_modules = sorted(
         python_modules,
-        key=lambda item: (-(item.lines + len(item.symbols) * 25), item.path),
+        key=lambda item: (-_hot_module_score(item), item.path),
     )[:14]
     symbol_index = _symbol_index(python_modules)
 
@@ -1023,7 +1025,7 @@ def _symbol_index(modules: list[ModuleInfo]) -> list[dict[str, Any]]:
     symbols: list[dict[str, Any]] = []
     for module in sorted(modules, key=lambda item: item.path):
         for symbol in module.symbols:
-            if symbol.private and not module.path.startswith(("skylos/cli.py", "skylos/analyzer.py", "skylos/pipeline.py")):
+            if symbol.private and module.path not in PRIVATE_SYMBOL_ENTRYPOINTS:
                 continue
             symbols.append(
                 {
