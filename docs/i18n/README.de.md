@@ -28,8 +28,9 @@
 ## Was ist Skylos?
 
 Skylos ist eine Open-Source-CLI für statische Analyse in Python-, TypeScript-,
-JavaScript-, Java-, Go-, PHP-, Rust-, Dart- und C#-Repositories. Skylos läuft
-standardmäßig lokal und kann auch als CI/CD-PR-Gate verwendet werden.
+JavaScript-, Java-, Go-, PHP-, Rust-, Dart-, C#- und Shell-Repositories.
+Skylos läuft standardmäßig lokal und kann auch als CI/CD-PR-Gate verwendet
+werden.
 
 Nutze Skylos, wenn du mit einem Befehl ein Repository oder einen Pull Request
 prüfen möchtest auf:
@@ -196,6 +197,7 @@ Timeout-Pflicht beizubringen.
 | Rust | Ja | Ja | Teilweise | Rust-Parser-Abdeckung plus Security-Sink/Source-Prüfungen |
 | Dart | Ja | Ja | Teilweise | Dart-Parser-Abdeckung plus ausgewählte Security-Sinks und -Sources |
 | C# | Ja | Ja | Teilweise | C#-Symbolabdeckung plus ausgewählte ASP.NET-, Process-, SQL-, HTTP- und File-Sinks |
+| Shell | Nein | Ja | Teilweise | Shell-Script-Security-Prüfungen für Command Injection, SSRF und Path Traversal |
 
 Regelfamilien und Scanner-Scope stehen in der
 [Rules Reference](https://docs.skylos.dev/rules-reference).
@@ -209,7 +211,7 @@ dass ein Tool in jeder Situation State of the Art ist.
 | Suite | Aktuelles Skylos-Ergebnis | Baseline |
 |:---|:---|:---|
 | Dead-code regression | 16 cases, TP=36 FP=0 FN=0 TN=59, score 100.0 | Ruff score 62.67; Vulture im letzten lokalen Rerun nicht installiert |
-| Security regression | 49 cases, TP=30 FP=0 FN=0 TN=21, score 100.0 | Bandit score 47.14 auf Python-anwendbaren Cases |
+| Security regression | 56 cases, TP=35 FP=0 FN=0 TN=23, score 100.0 | Bandit score 47.14 auf Python-anwendbaren Cases |
 | Quality regression | 13 cases, score 100.0 | nur Regression-Gate |
 | Agent review | 25 cases, score 100.0 | nur Regression-Gate |
 

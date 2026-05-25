@@ -26,6 +26,7 @@ from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.languages.php import scan_php_file
 from skylos.visitors.languages.dart import scan_dart_file
+from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS, scan_shell_file
 from skylos.visitors.languages.typescript import scan_typescript_file
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
@@ -142,6 +143,7 @@ _PHP_SOURCE_EXTS = (".php",)
 _RUST_SOURCE_EXTS = (".rs",)
 _DART_SOURCE_EXTS = (".dart",)
 _CSHARP_SOURCE_EXTS = (".cs",)
+_SHELL_SOURCE_EXTS = SHELL_SOURCE_EXTS
 _PYTHON_SOURCE_ROOT_NAMES = {"src", "lib", "python"}
 
 _TRY_NODE_TYPES = (ast.Try, getattr(ast, "TryStar", ast.Try))
@@ -547,6 +549,11 @@ class Skylos:
         ".rs": "Rust",
         ".dart": "Dart",
         ".cs": "C#",
+        ".sh": "Shell",
+        ".bash": "Shell",
+        ".zsh": "Shell",
+        ".ksh": "Shell",
+        ".bats": "Shell",
     }
 
     def _count_languages(self, files) -> dict[str, int]:
@@ -576,6 +583,7 @@ class Skylos:
             *(_RUST_SOURCE_EXTS),
             *(_DART_SOURCE_EXTS),
             *(_CSHARP_SOURCE_EXTS),
+            *(_SHELL_SOURCE_EXTS),
         }
         ext_list = [
             "py",
@@ -593,6 +601,11 @@ class Skylos:
             "rs",
             "dart",
             "cs",
+            "sh",
+            "bash",
+            "zsh",
+            "ksh",
+            "bats",
         ]
 
         # use rust file discovery when avail
@@ -3121,6 +3134,16 @@ def proc_file(
 
     if str(file).endswith(".cs"):
         out = scan_csharp_file(
+            file,
+            cfg,
+            enable_danger_rules=enable_danger_rules,
+        )
+        if isinstance(out, tuple) and len(out) < 13:
+            return (*out, *([None] * (13 - len(out))))
+        return out[:13]
+
+    if str(file).endswith(_SHELL_SOURCE_EXTS):
+        out = scan_shell_file(
             file,
             cfg,
             enable_danger_rules=enable_danger_rules,

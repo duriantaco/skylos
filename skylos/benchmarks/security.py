@@ -31,6 +31,7 @@ SECURITY_TAXONOMY: dict[str, str] = {
     "javascript": "JavaScript security flow and sanitizer patterns.",
     "php": "PHP security flow and sanitizer patterns.",
     "rust": "Rust security flow and sanitizer patterns.",
+    "shell": "Shell security flow and sanitizer patterns.",
     "typescript": "TypeScript security flow and sanitizer patterns.",
     "csharp": "C# security flow and sanitizer patterns.",
     "precision_guard": "Clean patterns that should stay free of noisy security findings.",
@@ -59,6 +60,7 @@ SUPPORTED_LANGUAGES = {
     "typescript",
     "php",
     "rust",
+    "shell",
     "dart",
     "csharp",
 }

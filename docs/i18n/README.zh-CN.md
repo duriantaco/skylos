@@ -24,7 +24,7 @@
 
 ## Skylos 是什么？
 
-Skylos 是一款面向 Python、TypeScript、JavaScript、Java、Go、PHP、Rust、Dart 和 C# 仓库的开源静态分析 CLI。它默认在本地运行，也可以作为 CI/CD PR 门控使用。
+Skylos 是一款面向 Python、TypeScript、JavaScript、Java、Go、PHP、Rust、Dart、C# 和 Shell 仓库的开源静态分析 CLI。它默认在本地运行，也可以作为 CI/CD PR 门控使用。
 
 如果你使用 Vulture 检测死代码、Bandit 做安全检查，或使用 Semgrep、CodeQL、GitHub Advanced Security 做 CI 门控，Skylos 可以作为补充：它更关注框架感知的死代码检测、差异感知的回归检查，以及适合 PR 审查的反馈。
 
@@ -122,6 +122,7 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | Rust | 是 | 是 | 部分 | Rust parser 覆盖，加上安全 sinks 和 sources |
 | Dart | 是 | 是 | 部分 | Dart parser 覆盖，加上部分安全 sinks 和 sources |
 | C# | 是 | 是 | 部分 | C# 符号覆盖，加上部分 ASP.NET、process、SQL、HTTP 和文件 sinks |
+| Shell | 否 | 是 | 部分 | shell 脚本安全检查，覆盖命令注入、SSRF 和路径穿越 |
 
 规则族和扫描范围请看 [Rules Reference](https://docs.skylos.dev/rules-reference)。
 
@@ -132,7 +133,7 @@ Skylos 有已提交的死代码、安全、质量和 Agent 审查回归基准。
 | 套件 | 当前 Skylos 结果 | 基线 |
 |:---|:---|:---|
 | 死代码回归 | 16 cases, TP=36 FP=0 FN=0 TN=59, score 100.0 | Ruff score 62.67；最新本地重跑未安装 Vulture |
-| 安全回归 | 49 cases, TP=30 FP=0 FN=0 TN=21, score 100.0 | Bandit 在 Python 适用 cases 上 score 47.14 |
+| 安全回归 | 56 cases, TP=35 FP=0 FN=0 TN=23, score 100.0 | Bandit 在 Python 适用 cases 上 score 47.14 |
 | 质量回归 | 13 cases, score 100.0 | 仅作为回归门控 |
 | Agent 审查 | 25 cases, score 100.0 | 仅作为回归门控 |
 

@@ -17,6 +17,7 @@ from skylos.analyzer import (
     _architecture_iad_strict,
     _resolve_analysis_root,
 )
+from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS
 
 
 @pytest.fixture
@@ -245,6 +246,7 @@ class TestSkylos:
                 ".rs",
                 ".dart",
                 ".cs",
+                *SHELL_SOURCE_EXTS,
             },
             exclude_folders=None,
         )
