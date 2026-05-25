@@ -164,6 +164,8 @@ def scan_go_quality(
                     "file": str(file_path),
                     "line": line,
                     "col": 0,
+                    "name": name,
+                    "simple_name": name,
                 }
             )
 
@@ -177,6 +179,8 @@ def scan_go_quality(
                     "file": str(file_path),
                     "line": line,
                     "col": 0,
+                    "name": name,
+                    "simple_name": name,
                 }
             )
 
@@ -190,6 +194,8 @@ def scan_go_quality(
                     "file": str(file_path),
                     "line": line,
                     "col": 0,
+                    "name": name,
+                    "simple_name": name,
                 }
             )
 
@@ -203,6 +209,8 @@ def scan_go_quality(
                     "file": str(file_path),
                     "line": line,
                     "col": 0,
+                    "name": name,
+                    "simple_name": name,
                 }
             )
 

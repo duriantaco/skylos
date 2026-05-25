@@ -27,6 +27,22 @@ export async function POST(request: Request) {
         assert len(findings) == 1
         assert findings[0]["rule_id"] == "SKY-D280"
 
+    def test_route_with_author_identifier_still_requires_auth(self):
+        source = b"""
+export async function POST(request: Request) {
+    const body = await request.json();
+    const authorId = body.authorId;
+    await db.billing.update({ where: { id: body.id }, data: { authorId } });
+    return Response.json({ ok: true });
+}
+"""
+        findings = []
+        _check_nextjs_missing_auth(
+            source, "/project/app/api/billing/route.ts", findings
+        )
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-D280"
+
     def test_route_with_post_has_auth(self):
         source = b"""
 import { getServerSession } from "next-auth";
@@ -284,6 +300,32 @@ export async function search(term: string) {
         findings = []
         _check_nextjs_server_action_sqli(source, "/project/app/actions.ts", findings)
         assert len(findings) == 1
+
+    def test_prisma_query_raw_unsafe_method(self):
+        source = b"""
+"use server"
+
+export async function findUser(formData: FormData) {
+    const email = String(formData.get("email") ?? "");
+    return prisma.$queryRawUnsafe(`SELECT * FROM users WHERE email = '${email}'`);
+}
+"""
+        findings = []
+        _check_nextjs_server_action_sqli(source, "/project/app/actions.ts", findings)
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-D281"
+
+    def test_prisma_safe_query_raw_tag_not_flagged(self):
+        source = b"""
+"use server"
+
+export async function findUser(email: string) {
+    return prisma.$queryRaw`SELECT * FROM users WHERE email = ${email}`;
+}
+"""
+        findings = []
+        _check_nextjs_server_action_sqli(source, "/project/app/actions.ts", findings)
+        assert len(findings) == 0
 
     def test_template_without_sql_keywords_ok(self):
         source = b"""

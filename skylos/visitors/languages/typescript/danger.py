@@ -884,31 +884,43 @@ def scan_danger(
     return findings
 
 
-_AUTH_EVIDENCE = frozenset(
-    {
-        "auth",
-        "session",
-        "getServerSession",
-        "getToken",
-        "cookies",
-        "headers",
-        "getSession",
-        "withAuth",
-        "requireAuth",
-        "verifyToken",
-        "authenticate",
-        "isAuthenticated",
-        "currentUser",
-        "getUser",
-        "clerkClient",
-        "authMiddleware",
-        "NextAuth",
-    }
+_AUTH_EVIDENCE_PATTERNS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"\bauth\b",
+        r"\bsession\b",
+        r"\bcookies\b",
+        r"\bheaders\b",
+        r"\bgetServerSession\b",
+        r"\bgetToken\b",
+        r"\bgetSession\b",
+        r"\bwithAuth\b",
+        r"\brequireAuth\b",
+        r"\bverifyToken\b",
+        r"\bauthenticate\b",
+        r"\bisAuthenticated\b",
+        r"\bcurrentUser\b",
+        r"\bgetUser\b",
+        r"\bclerkClient\b",
+        r"\bauthMiddleware\b",
+        r"\bNextAuth\b",
+    )
 )
 
 _MUTATING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 
 _NEXTJS_ROUTE_PATTERNS = ("/app/", "/pages/api/")
+
+_SERVER_ACTION_SQL_CALL_PATTERN = re.compile(
+    r"\.(\$?(?:query|exec|execute|raw|sql|queryRaw|executeRaw|queryRawUnsafe|executeRawUnsafe))\s*"
+    r"\(\s*`([^`]*\$\{[^`]*)`",
+    re.DOTALL,
+)
+
+_SERVER_ACTION_UNSAFE_SQL_TAG_PATTERN = re.compile(
+    r"\.\$?(queryRawUnsafe|executeRawUnsafe)\s*`([^`]*\$\{[^`]*)`",
+    re.DOTALL,
+)
 
 _ARCHIVE_LIBRARY_HINTS = (
     "unzip.Parse(",
@@ -1120,11 +1132,7 @@ def _check_nextjs_missing_auth(
     if not has_mutating:
         return
 
-    has_auth = False
-    for evidence in _AUTH_EVIDENCE:
-        if evidence in source_text:
-            has_auth = True
-            break
+    has_auth = any(pattern.search(source_text) for pattern in _AUTH_EVIDENCE_PATTERNS)
 
     if not has_auth:
         findings.append(
@@ -1469,13 +1477,9 @@ def _check_nextjs_server_action_sqli(
     if not is_server:
         return
 
-    import re
+    db_methods = list(_SERVER_ACTION_SQL_CALL_PATTERN.finditer(source_text))
+    db_methods.extend(_SERVER_ACTION_UNSAFE_SQL_TAG_PATTERN.finditer(source_text))
 
-    db_methods = re.finditer(
-        r"\.(query|execute|raw|sql)\s*\(\s*`([^`]*\$\{[^`]*)`",
-        source_text,
-        re.DOTALL,
-    )
     for match in db_methods:
         template_content = match.group(2).upper()
         if any(kw in template_content for kw in _SQL_KEYWORDS):
