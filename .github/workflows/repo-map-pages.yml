@@ -5,9 +5,11 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/repo-map-pages.yml"
+      - "benchmarks/**"
       - "docs/**"
-      - "scripts/build_repo_map.py"
-      - "scripts/repo_map_*.py"
+      - "scripts/**"
+      - "skylos/**"
+      - "test/**"
   workflow_dispatch:
 
 permissions:
@@ -30,8 +32,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Verify generated repo map
-        run: python scripts/build_repo_map.py --check
+      - name: Build repo map
+        run: python scripts/build_repo_map.py
 
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
         with:
