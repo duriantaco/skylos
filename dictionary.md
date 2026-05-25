@@ -1,8 +1,8 @@
 # Skylos Rule Dictionary and Product Glossary
 
 This file is the repo-local glossary for public Skylos terminology and emitted
-rule IDs. Keep it aligned with `README.md`, `README_CN.md`, `docs/*.md`, CLI
-help text, and rule implementations.
+rule IDs. Keep it aligned with `README.md`, translated READMEs in
+`docs/i18n/`, `docs/*.md`, CLI help text, and rule implementations.
 
 Rule IDs use a stable public prefix:
 
