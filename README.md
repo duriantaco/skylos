@@ -1,17 +1,14 @@
 <div align="center">
     <img src="assets/DOG_1.png" alt="Skylos" width="260">
     <h1>Skylos</h1>
-    <h3>Local-first code scanning for dead code, security, secrets, quality, and AI-generated-code mistakes.</h3>
+    <h3>Open-source, local-first checks for dead code, security issues, secrets, quality regressions, and AI-code mistakes before merge.</h3>
 </div>
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
-![CI/CD Ready](https://img.shields.io/badge/CI%2FCD-30s%20Setup-brightgreen?style=flat&logo=github-actions&logoColor=white)
 [![codecov](https://codecov.io/gh/duriantaco/skylos/branch/main/graph/badge.svg)](https://codecov.io/gh/duriantaco/skylos)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 [![PyPI version](https://img.shields.io/pypi/v/skylos)](https://pypi.org/project/skylos/)
-[![Downloads/month](https://img.shields.io/pypi/dm/skylos)](https://pypistats.org/packages/skylos)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
-[![GitHub stars](https://img.shields.io/github/stars/duriantaco/skylos)](https://github.com/duriantaco/skylos/stargazers)
 [![Astronomer Trust](https://img.shields.io/badge/Astronomer%20Trust-A-brightgreen?style=flat&logo=github&logoColor=white)](#star-authenticity-audit)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
 
@@ -28,33 +25,20 @@
 
 **English** | [Chinese README](./README_CN.md)
 
-> **Real-world validation:** Skylos-assisted dead-code cleanup PRs have been
-> merged in [Black](https://github.com/psf/black/pull/5041),
-> [NetworkX](https://github.com/networkx/networkx/pull/8572),
-> [Optuna](https://github.com/optuna/optuna/pull/6547),
-> [mitmproxy](https://github.com/mitmproxy/mitmproxy/pull/8136),
-> [pypdf](https://github.com/py-pdf/pypdf/pull/3685),
-> [beets](https://github.com/beetbox/beets/pull/6473), and
-> [Flagsmith](https://github.com/Flagsmith/flagsmith/pull/6953).
-> These are accepted cleanup PRs, not project endorsements. See
-> [Real-World Results](./REAL_WORLD_RESULTS.md).
-
-<a id="star-authenticity-audit"></a>
-
-> **Star authenticity audit:** A local Astronomer scan on April 26, 2026
-> computed 420 stargazers and returned **overall trust: A**. StarGuard also
-> reported **low fake-star risk**.
-
 ## What Is Skylos?
 
-Skylos is an open-source static analysis tool and CI/CD PR gate for Python,
-TypeScript, JavaScript, Java, Go, PHP, Rust, Dart, and C# repositories. It combines
-dead code detection, security scanning, secrets detection, code quality checks,
-and AI-generated code guardrails in one local-first workflow.
+Skylos is an open-source static analysis CLI for Python, TypeScript,
+JavaScript, Java, Go, PHP, Rust, Dart, and C# repositories. It runs locally by
+default and can also be used as a CI/CD PR gate.
 
-If you use tools like Vulture, Bandit, Semgrep, CodeQL, or GitHub Advanced
-Security, Skylos is designed to complement that workflow with framework-aware
-dead code detection, diff-aware regression checks, and PR-native feedback.
+Use Skylos when you want one command to check a repo or pull request for:
+
+- dead code and unused files
+- security flaws and dangerous data flows
+- secrets and dependency CVEs
+- quality regressions such as complexity, duplicate branches, and deep nesting
+- common AI-generated code mistakes, including missing guards and fake helpers
+- LLM app risks such as unsafe tool use and missing output validation
 
 ## Start In 60 Seconds
 
@@ -63,10 +47,8 @@ pip install skylos
 skylos .
 ```
 
-If Skylos catches something useful in your repo, star it so more maintainers can
-find it.
-
-Add security, secrets, quality, and dependency checks:
+The default scan focuses on dead code. Add security, secrets, quality, and
+dependency checks with `-a`:
 
 ```bash
 skylos . -a
@@ -101,7 +83,7 @@ git push
 
 Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-reference).
 
-## Choose Your Workflow
+## Common Workflows
 
 | Goal | Command | What You Get | More Detail |
 |:---|:---|:---|:---|
@@ -132,22 +114,23 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 
 See the full [Rules Reference](https://docs.skylos.dev/rules-reference).
 
-## Why Teams Use Skylos
+## How Skylos Fits
 
-- **Framework-aware dead code detection:** understands FastAPI, Django, Flask,
-  pytest, SQLAlchemy, Next.js, React, package entrypoints, and common plugin
-  patterns.
-- **CI/CD-first workflow:** run locally, gate PRs, annotate GitHub diffs, and
-  keep legacy findings under control with baselines.
-- **Local-first by default:** core static analysis does not require cloud upload
+Skylos is not a replacement for every specialized scanner. It is a local-first
+repo and PR checker that puts several common review checks behind one CLI.
+
+- **Framework-aware dead code detection:** FastAPI, Django, Flask, pytest,
+  SQLAlchemy, Next.js, React, package entrypoints, and common plugin patterns.
+- **PR-focused output:** diff scanning, CI thresholds, GitHub annotations, and
+  baselines for existing findings.
+- **Local-first operation:** core static analysis does not require cloud upload
   or LLM calls.
-- **AI-era regression checks:** catches removed validation, auth, logging,
-  CSRF, rate limiting, missing timeouts, and other controls during
-  AI-assisted edits.
-- **Configurable guardrails:** extend prompt templates and vibe-code
-  dictionaries from project config without editing Skylos source.
-- **One command surface:** dead code, security, secrets, quality, technical
-  debt, agent review, and AI defense live behind one CLI.
+- **AI-assisted change review:** checks for removed validation, auth, logging,
+  CSRF, rate limiting, timeouts, and other guards in generated or edited code.
+- **Project-specific rules:** add local YAML rules and extend prompt, credential,
+  sensitive-file, and timeout dictionaries from config.
+- **One command surface:** dead code, security, secrets, dependency, quality,
+  technical debt, agent review, and AI defense commands share the same CLI.
 
 ## Install Options
 
@@ -220,8 +203,8 @@ tool is universally state of the art.
 | Suite | Current Skylos Result | Baseline |
 |:---|:---|:---|
 | Dead code regression | 16 cases, TP=36 FP=0 FN=0 TN=59, score 100.0 | Ruff score 62.67; Vulture not installed in latest local rerun |
-| Security regression | 20 cases, TP=11 FP=0 FN=0 TN=10, score 100.0 | Bandit score 47.14 on Python-applicable cases |
-| Quality regression | 6 cases, score 100.0 | regression gate only |
+| Security regression | 49 cases, TP=30 FP=0 FN=0 TN=21, score 100.0 | Bandit score 47.14 on Python-applicable cases |
+| Quality regression | 13 cases, score 100.0 | regression gate only |
 | Agent review | 25 cases, score 100.0 | regression gate only |
 
 Frozen `golden-v0.2` highlights:
@@ -235,6 +218,24 @@ Frozen `golden-v0.2` highlights:
 
 For methodology, commands, competitor rows, and caveats, see
 [BENCHMARK.md](./BENCHMARK.md).
+
+## Project Evidence
+
+Skylos-assisted dead-code cleanup PRs have been merged in
+[Black](https://github.com/psf/black/pull/5041),
+[NetworkX](https://github.com/networkx/networkx/pull/8572),
+[Optuna](https://github.com/optuna/optuna/pull/6547),
+[mitmproxy](https://github.com/mitmproxy/mitmproxy/pull/8136),
+[pypdf](https://github.com/py-pdf/pypdf/pull/3685),
+[beets](https://github.com/beetbox/beets/pull/6473), and
+[Flagsmith](https://github.com/Flagsmith/flagsmith/pull/6953). These are
+accepted cleanup PRs, not project endorsements. See
+[Real-World Results](./REAL_WORLD_RESULTS.md).
+
+<a id="star-authenticity-audit"></a>
+
+A local Astronomer scan on April 26, 2026 computed 420 stargazers and returned
+**overall trust: A**. StarGuard also reported **low fake-star risk**.
 
 ## Integrations
 

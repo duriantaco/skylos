@@ -16,11 +16,14 @@ QUALITY_TAXONOMY: dict[str, str] = {
     "control_flow": "Inconsistent returns, unreachable code, and path logic mistakes.",
     "exception_handling": "Swallowed errors, broad suppression, and silent failure.",
     "framework": "Framework-specific route and handler practices.",
+    "go": "Go quality and maintainability patterns.",
+    "java": "Java quality and maintainability patterns.",
     "maintainability": "Long functions and patterns that become hard to review or change.",
     "precision_guard": "Clean cases that should stay free of noisy quality findings.",
     "readability": "Identifier clarity and naming choices that affect code review.",
     "repo_policy": "Repository-level lint, type-check, gate, and hook policy.",
     "security_practice": "Security-oriented coding practices that support safe defaults.",
+    "typescript": "TypeScript quality and maintainability patterns.",
     "typing": "Type annotation coverage and type-check policy.",
 }
 

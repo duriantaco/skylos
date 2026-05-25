@@ -734,6 +734,336 @@
           "danger": ["SKY-D201"]
         }
       }
+    },
+    {
+      "id": "typescript-nextjs-author-shadow-missing-auth",
+      "path": "fixtures/typescript_nextjs_author_shadow",
+      "description": "Next.js mutating route without an authorization check should be reported even when unrelated identifiers contain the substring auth.",
+      "languages": ["typescript"],
+      "taxonomy": ["auth_bypass", "typescript"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/vercel/next.js",
+        "license": "MIT",
+        "notes": "Distilled from common App Router mutation handlers and substring-bypass missing-auth patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D280"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "typescript-nextjs-session-guard-safe",
+      "path": "fixtures/typescript_nextjs_session_guard",
+      "description": "Next.js mutating route with an explicit server-session guard should stay quiet.",
+      "languages": ["typescript"],
+      "taxonomy": ["auth_bypass", "typescript", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/vercel/next.js",
+        "license": "MIT",
+        "notes": "Distilled precision guard for App Router routes protected with server-side session checks."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D280"]
+        }
+      }
+    },
+    {
+      "id": "typescript-server-action-prisma-unsafe",
+      "path": "fixtures/typescript_server_action_prisma_unsafe",
+      "description": "Next.js server action using Prisma unsafe raw SQL with interpolated form input should be reported.",
+      "languages": ["typescript"],
+      "taxonomy": ["sql_injection", "typescript"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/prisma/prisma",
+        "license": "Apache-2.0",
+        "notes": "Distilled from common server-action and Prisma raw-query misuse patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D281"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "typescript-webhook-unverified",
+      "path": "fixtures/typescript_webhook_unverified",
+      "description": "Stripe webhook handler that parses raw request body before signature verification should be reported.",
+      "languages": ["typescript"],
+      "taxonomy": ["auth_bypass", "typescript"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/stripe/stripe-node",
+        "license": "MIT",
+        "notes": "Distilled from provider webhook signature verification requirements."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D282"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "typescript-webhook-verified-safe",
+      "path": "fixtures/typescript_webhook_verified",
+      "description": "Stripe webhook handler that uses provider signature verification before trusting the event should stay quiet.",
+      "languages": ["typescript"],
+      "taxonomy": ["auth_bypass", "typescript", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/stripe/stripe-node",
+        "license": "MIT",
+        "notes": "Distilled precision guard for verified provider webhooks."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D282"]
+        }
+      }
+    },
+    {
+      "id": "java-ssrf-httpclient-send",
+      "path": "fixtures/java_ssrf_httpclient_send",
+      "description": "Java HttpClient request built from servlet-controlled URL and sent outbound should be reported as SSRF.",
+      "languages": ["java"],
+      "taxonomy": ["ssrf", "java"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled from SSRF prevention guidance around complete user-controlled URLs."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D216"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "java-open-redirect-protocol-relative",
+      "path": "fixtures/java_open_redirect_protocol_relative",
+      "description": "Java redirect guarded only by startsWith('/') should still be reported because protocol-relative URLs bypass that guard.",
+      "languages": ["java"],
+      "taxonomy": ["open_redirect", "java"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled from unvalidated redirect allowlist guidance and protocol-relative bypasses."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D230"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "java-ldap-xpath-injection",
+      "path": "fixtures/java_ldap_xpath_injection",
+      "description": "Java servlet parameters concatenated into LDAP filters and XPath expressions should be reported.",
+      "languages": ["java"],
+      "taxonomy": ["ldap_injection", "xpath_injection", "java"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled from LDAP and XPath injection classes: user input changes interpreter expressions."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D240", "SKY-D241"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "go-command-shell-query",
+      "path": "fixtures/go_command_shell_query",
+      "description": "Go HTTP query parameter concatenated into a shell command should be reported as command injection.",
+      "languages": ["go"],
+      "taxonomy": ["command_injection", "go"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/securego/gosec",
+        "license": "Apache-2.0",
+        "notes": "Distilled from shell execution and request-taint command injection patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D212"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "go-tar-symlink-escape",
+      "path": "fixtures/go_tar_symlink_escape",
+      "description": "Go tar extraction that creates archive-controlled symlinks without resolving the final target should be reported.",
+      "languages": ["go"],
+      "taxonomy": ["path_traversal", "go"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/securego/gosec",
+        "license": "Apache-2.0",
+        "notes": "Distilled from archive extraction symlink escape patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D215"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "rust-shell-arg-taint",
+      "path": "fixtures/rust_shell_arg_taint",
+      "description": "Rust CLI argument passed through sh -c should be reported as command injection.",
+      "languages": ["rust"],
+      "taxonomy": ["command_injection", "rust"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled from OS command injection guidance around shell invocation and externally influenced input."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D212"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "rust-path-filename-safe",
+      "path": "fixtures/rust_path_filename_safe",
+      "description": "Rust path input reduced to file_name before fixed-directory access should stay quiet.",
+      "languages": ["rust"],
+      "taxonomy": ["path_traversal", "rust", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/rust-lang/rust-clippy",
+        "license": "MIT OR Apache-2.0",
+        "notes": "Distilled precision guard for basename-style path sanitization in Rust."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D215"]
+        }
+      }
+    },
+    {
+      "id": "dart-http-tainted-url",
+      "path": "fixtures/dart_http_tainted_url",
+      "description": "Dart http.get with caller-controlled Uri.parse input should be reported as SSRF.",
+      "languages": ["dart"],
+      "taxonomy": ["ssrf", "dart"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/dart-lang/http",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from outbound request APIs that accept caller-controlled URLs."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D216"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "dart-uri-https-safe",
+      "path": "fixtures/dart_uri_https_safe",
+      "description": "Dart request built with Uri.https fixed host and tainted query parameter should stay quiet.",
+      "languages": ["dart"],
+      "taxonomy": ["ssrf", "dart", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/dart-lang/http",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled precision guard for fixed-host Uri.https construction."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D216"]
+        }
+      }
+    },
+    {
+      "id": "php-request-include",
+      "path": "fixtures/php_request_include",
+      "description": "PHP include using request-controlled template path should be reported as path traversal.",
+      "languages": ["php"],
+      "taxonomy": ["path_traversal", "php"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled from file inclusion and path traversal guidance."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D215"]
+        },
+        "absent": {}
+      }
     }
   ]
 }

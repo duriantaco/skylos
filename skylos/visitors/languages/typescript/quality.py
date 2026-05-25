@@ -160,6 +160,8 @@ def scan_quality(
                     "file": str(file_path),
                     "line": line,
                     "col": 0,
+                    "name": name,
+                    "simple_name": name,
                 }
             )
 
@@ -173,6 +175,8 @@ def scan_quality(
                     "file": str(file_path),
                     "line": line,
                     "col": 0,
+                    "name": name,
+                    "simple_name": name,
                 }
             )
 
@@ -186,6 +190,8 @@ def scan_quality(
                     "file": str(file_path),
                     "line": line,
                     "col": 0,
+                    "name": name,
+                    "simple_name": name,
                 }
             )
 
@@ -199,6 +205,8 @@ def scan_quality(
                     "file": str(file_path),
                     "line": line,
                     "col": 0,
+                    "name": name,
+                    "simple_name": name,
                 }
             )
 
@@ -248,6 +256,7 @@ def _check_duplicate_conditions(
     while stack:
         node = stack.pop()
         if node.type == "if_statement" and node.id not in processed_chain_nodes:
+            func_name = _enclosing_function_name(node, source)
             conditions: list[tuple[str, int]] = []
             current = node
             while current and current.type == "if_statement":
@@ -272,16 +281,18 @@ def _check_duplicate_conditions(
                 for cond_text, cond_line in conditions:
                     if cond_text in seen:
                         preview = _condition_preview(cond_text)
-                        findings.append(
-                            {
-                                "rule_id": "SKY-Q305",
-                                "severity": "MEDIUM",
-                                "message": f"Duplicate condition '{preview}' in if-else chain (first seen at line {seen[cond_text]})",
-                                "file": str(file_path),
-                                "line": cond_line,
-                                "col": 0,
-                            }
-                        )
+                        finding = {
+                            "rule_id": "SKY-Q305",
+                            "severity": "MEDIUM",
+                            "message": f"Duplicate condition '{preview}' in if-else chain (first seen at line {seen[cond_text]})",
+                            "file": str(file_path),
+                            "line": cond_line,
+                            "col": 0,
+                        }
+                        if func_name:
+                            finding["name"] = func_name
+                            finding["simple_name"] = func_name
+                        findings.append(finding)
                     else:
                         seen[cond_text] = cond_line
 
@@ -294,6 +305,15 @@ def _condition_preview(cond_text: str) -> str:
         return cond_text
 
     return cond_text[: _CONDITION_PREVIEW_LIMIT - 3] + "..."
+
+
+def _enclosing_function_name(node, source: bytes) -> str | None:
+    current = node.parent
+    while current:
+        if current.type in _FUNC_BOUNDARY_NODES:
+            return _get_func_name(current, source)
+        current = current.parent
+    return None
 
 
 def _check_await_in_loop(
@@ -310,21 +330,24 @@ def _check_await_in_loop(
         return
 
     for node in captures.get("await_expr", []):
+        func_name = _enclosing_function_name(node, source)
         current = node.parent
         while current:
             if current.type in _FUNC_BOUNDARY_NODES:
                 break
             if current.type in _LOOP_NODES:
-                findings.append(
-                    {
-                        "rule_id": "SKY-Q402",
-                        "severity": "MEDIUM",
-                        "message": "await inside loop — consider using Promise.all() for parallel execution.",
-                        "file": str(file_path),
-                        "line": node.start_point[0] + 1,
-                        "col": 0,
-                    }
-                )
+                finding = {
+                    "rule_id": "SKY-Q402",
+                    "severity": "MEDIUM",
+                    "message": "await inside loop — consider using Promise.all() for parallel execution.",
+                    "file": str(file_path),
+                    "line": node.start_point[0] + 1,
+                    "col": 0,
+                }
+                if func_name:
+                    finding["name"] = func_name
+                    finding["simple_name"] = func_name
+                findings.append(finding)
                 break
             current = current.parent
 

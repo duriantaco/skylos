@@ -224,6 +224,78 @@
           "quality": ["SKY-Q301", "SKY-C303", "SKY-C304", "SKY-L006", "SKY-L007", "SKY-UC001", "SKY-Q806"]
         }
       }
+    },
+    {
+      "id": "typescript-async-loop-duplicate-condition",
+      "path": "fixtures/typescript_async_loop_duplicate_condition",
+      "description": "TypeScript service code should flag duplicate branch conditions and serialized await inside loops.",
+      "languages": ["typescript"],
+      "taxonomy": ["typescript", "control_flow", "maintainability"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/microsoft/TypeScript",
+        "license": "Apache-2.0",
+        "notes": "Distilled from common async service-loop and duplicated-branch review patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-Q305", "SKY-Q402", "reconcileInvoices"]
+        },
+        "absent": {
+          "quality": ["markPaid", "markVoid"]
+        }
+      }
+    },
+    {
+      "id": "go-service-quality-hotspot",
+      "path": "fixtures/go_service_quality_hotspot",
+      "description": "Go service function with excessive branching and a wide call surface should be flagged.",
+      "languages": ["go"],
+      "taxonomy": ["go", "complexity", "api_design", "maintainability"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/golang/go",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from service-layer branching and oversized function signatures."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-Q301", "SKY-C303", "EvaluateOrder"]
+        },
+        "absent": {
+          "quality": ["Helper"]
+        }
+      }
+    },
+    {
+      "id": "java-service-quality-hotspot",
+      "path": "fixtures/java_service_quality_hotspot",
+      "description": "Java service method with deep nesting and too many parameters should be flagged.",
+      "languages": ["java"],
+      "taxonomy": ["java", "complexity", "api_design", "maintainability"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/google/styleguide",
+        "license": "CC-BY-3.0",
+        "notes": "Distilled from Java service-method maintainability review patterns."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "quality": ["SKY-Q302", "SKY-C303", "decide"]
+        },
+        "absent": {
+          "quality": ["helper"]
+        }
+      }
     }
   ]
 }
