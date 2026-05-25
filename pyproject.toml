@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "skylos"
 version = "4.19.0"
 requires-python = ">=3.10"
-description = "Open-source, local-first static analysis and PR gates for Python, TypeScript/JavaScript, Go, Java, PHP, Rust, Dart, and C#. Finds dead code, security issues, secrets, quality regressions, and AI-code mistakes."
+description = "Open-source, local-first static analysis and PR gates for Python, TypeScript/JavaScript, Go, Java, PHP, Rust, Dart, C#, and Shell. Finds dead code, security issues, secrets, quality regressions, and AI-code mistakes."
 authors = [{name = "Aaron Oh", email = "aaronoh2015@gmail.com"}]
 readme = "README.md"
 license = "Apache-2.0"
@@ -31,6 +31,7 @@ keywords = [
     "github-actions-security",
     "gitlab-ci",
     "gitlab-ci-security",
+    "shell-security",
     "supply-chain-security",
     "code-review",
     "secrets-detection",

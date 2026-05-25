@@ -1064,6 +1064,160 @@
         },
         "absent": {}
       }
+    },
+    {
+      "id": "shell-eval-arg",
+      "path": "fixtures/shell_eval_arg",
+      "description": "Shell positional argument assigned to a command and passed to eval should be reported as command injection.",
+      "languages": ["shell"],
+      "taxonomy": ["command_injection", "shell"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/koalaman/shellcheck",
+        "license": "GPL-3.0",
+        "notes": "Distilled from shell injection guidance around eval of externally controlled input."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D212"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "shell-source-arg",
+      "path": "fixtures/shell_source_arg",
+      "description": "Shell source of a positional-argument path should be reported because the sourced file executes in-process.",
+      "languages": ["shell"],
+      "taxonomy": ["command_injection", "shell"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/koalaman/shellcheck",
+        "license": "GPL-3.0",
+        "notes": "Distilled from dynamic source/include patterns that execute attacker-selected shell code."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D212"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "shell-c-flag-arg",
+      "path": "fixtures/shell_c_flag_arg",
+      "description": "Shell command string passed to bash -c from a positional argument should be reported.",
+      "languages": ["shell"],
+      "taxonomy": ["command_injection", "shell"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled from OS command injection guidance around shell interpreters and command strings."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D212"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "shell-curl-tainted-url",
+      "path": "fixtures/shell_curl_tainted_url",
+      "description": "Shell read input passed as a curl URL should be reported as SSRF.",
+      "languages": ["shell"],
+      "taxonomy": ["ssrf", "shell"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled from SSRF guidance around complete user-controlled URLs."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D216"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "shell-curl-fixed-host-path",
+      "path": "fixtures/shell_curl_fixed_host_path",
+      "description": "Shell curl to a fixed host with only the path segment tainted should stay quiet for SSRF.",
+      "languages": ["shell"],
+      "taxonomy": ["ssrf", "shell", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled precision guard for fixed-destination requests with attacker-controlled path data."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D216"]
+        }
+      }
+    },
+    {
+      "id": "shell-path-read-arg",
+      "path": "fixtures/shell_path_read_arg",
+      "description": "Shell positional argument interpolated into a filesystem path should be reported as path traversal.",
+      "languages": ["shell"],
+      "taxonomy": ["path_traversal", "shell"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled from path traversal guidance around joining untrusted file names to fixed directories."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {
+          "danger": ["SKY-D215"]
+        },
+        "absent": {}
+      }
+    },
+    {
+      "id": "shell-basename-safe",
+      "path": "fixtures/shell_basename_safe",
+      "description": "Shell positional argument reduced with basename before fixed-directory file access should stay quiet for path traversal.",
+      "languages": ["shell"],
+      "taxonomy": ["path_traversal", "shell", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/OWASP/CheatSheetSeries",
+        "license": "CC-BY-SA-4.0",
+        "notes": "Distilled precision guard for basename-style shell path sanitization."
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "present": {},
+        "absent": {
+          "danger": ["SKY-D215"]
+        }
+      }
     }
   ]
 }
