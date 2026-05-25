@@ -1,32 +1,30 @@
 <div align="center">
-    <img src="assets/DOG_1.png" alt="Skylos 开源 Python SAST、死代码检测、AI 代码安全和 CI/CD PR 门控" width="260">
-    <h1>Skylos：开源 Python SAST、死代码检测和 AI 代码安全</h1>
-    <h3>在代码进入 main 之前，发现无用代码、硬编码密钥、可利用的数据流和 AI 生成的安全回归。</h3>
+    <img src="../../assets/DOG_1.png" alt="Skylos" width="260">
+    <h1>Skylos</h1>
+    <h3>开源、本地优先，在代码合并前检查死代码、安全问题、密钥、质量回归和 AI 代码错误。</h3>
 </div>
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
-![CI/CD Ready](https://img.shields.io/badge/CI%2FCD-30s%20Setup-brightgreen?style=flat&logo=github-actions&logoColor=white)
 [![codecov](https://codecov.io/gh/duriantaco/skylos/branch/main/graph/badge.svg)](https://codecov.io/gh/duriantaco/skylos)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/skylos)
 [![PyPI version](https://img.shields.io/pypi/v/skylos)](https://pypi.org/project/skylos/)
-[![Downloads/month](https://img.shields.io/pypi/dm/skylos)](https://pypistats.org/packages/skylos)
 ![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/oha.skylos-vscode-extension)
-[![GitHub stars](https://img.shields.io/github/stars/duriantaco/skylos)](https://github.com/duriantaco/skylos/stargazers)
+[![Astronomer Trust](https://img.shields.io/badge/Astronomer%20Trust-A-brightgreen?style=flat&logo=github&logoColor=white)](#star-authenticity-audit)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/Ftn9t9tErf)
 
 [官网](https://skylos.dev) |
 [文档](https://docs.skylos.dev) |
 [快速开始](https://docs.skylos.dev/quick-start) |
-[GitHub Action](./action.yml) |
-[VS Code 扩展](./editors/vscode/README.md) |
-[基准测试](./BENCHMARK.md) |
-[贡献指南](./CONTRIBUTING.md)
+[GitHub Action](../../action.yml) |
+[VS Code 扩展](../../editors/vscode/README.md) |
+[基准测试](../../BENCHMARK.md) |
+[贡献指南](../../CONTRIBUTING.md)
 
-[English](./README.md) | **中文**
+[English](../../README.md) | [Deutsch](./README.de.md) | **简体中文** | [其他翻译](./README.md)
 
 ## Skylos 是什么？
 
-Skylos 是一款面向 Python、TypeScript、JavaScript、Java、Go、PHP、Rust 和 Dart 仓库的开源静态分析工具与 CI/CD PR 门控。它把死代码检测、安全扫描、密钥检测、代码质量检查和 AI 生成代码防护整合进一个本地优先的工作流。
+Skylos 是一款面向 Python、TypeScript、JavaScript、Java、Go、PHP、Rust、Dart 和 C# 仓库的开源静态分析 CLI。它默认在本地运行，也可以作为 CI/CD PR 门控使用。
 
 如果你使用 Vulture 检测死代码、Bandit 做安全检查，或使用 Semgrep、CodeQL、GitHub Advanced Security 做 CI 门控，Skylos 可以作为补充：它更关注框架感知的死代码检测、差异感知的回归检查，以及适合 PR 审查的反馈。
 
@@ -61,8 +59,8 @@ git push
 | 第一次死代码扫描 | `skylos .` | 发现未使用的函数、类、导入、文件和框架入口点问题 | [死代码文档](https://docs.skylos.dev/dead-code-detection) |
 | 安全与质量审计 | `skylos . -a` | 增加危险数据流、密钥、依赖和质量检查 | [安全文档](https://docs.skylos.dev/security-analysis) |
 | PR 门控 | `skylos cicd init` | 生成带注释和失败阈值的 GitHub Actions 工作流 | [CI/CD 指南](https://docs.skylos.dev/ci-cd) |
-| 更易读的终端报告 | `skylos . --format pretty` | 按文件分组展示发现，包含严重级别标记、代码片段和可复制的 `file:line` 位置 | [CLI Output Modes](./docs/cli-output.md) |
-| 可选择的终端界面 | `skylos . --tui` | 打开键盘驱动的分类列表、发现列表和详情面板 | [CLI Output Modes](./docs/cli-output.md) |
+| 更易读的终端报告 | `skylos . --format pretty` | 按文件分组展示发现，包含严重级别标记、代码片段和可复制的 `file:line` 位置 | [CLI Output Modes](../cli-output.md) |
+| 可选择的终端界面 | `skylos . --tui` | 打开键盘驱动的分类列表、发现列表和详情面板 | [CLI Output Modes](../cli-output.md) |
 | 只审查变更行 | `skylos . -a --diff origin/main` | 聚焦当前 PR，避免被历史债务淹没 | [质量门控](https://docs.skylos.dev/quality-gate) |
 | 运行时辅助死代码检测 | `skylos . --trace` | 用测试运行轨迹降低动态代码误报 | [Smart Tracing](https://docs.skylos.dev/smart-tracing) |
 | AI 辅助审查 | `skylos agent scan .` | 静态分析加可选 LLM 审查和修复建议 | [AI Features](https://docs.skylos.dev/ai-features) |
@@ -123,6 +121,7 @@ docker run --rm -v "$PWD":/work -w /work ghcr.io/duriantaco/skylos:latest . --js
 | PHP | 是 | 是 | 部分 | PHP parser 覆盖，加上污点式安全 sinks 和 sources |
 | Rust | 是 | 是 | 部分 | Rust parser 覆盖，加上安全 sinks 和 sources |
 | Dart | 是 | 是 | 部分 | Dart parser 覆盖，加上部分安全 sinks 和 sources |
+| C# | 是 | 是 | 部分 | C# 符号覆盖，加上部分 ASP.NET、process、SQL、HTTP 和文件 sinks |
 
 规则族和扫描范围请看 [Rules Reference](https://docs.skylos.dev/rules-reference)。
 
@@ -133,8 +132,8 @@ Skylos 有已提交的死代码、安全、质量和 Agent 审查回归基准。
 | 套件 | 当前 Skylos 结果 | 基线 |
 |:---|:---|:---|
 | 死代码回归 | 16 cases, TP=36 FP=0 FN=0 TN=59, score 100.0 | Ruff score 62.67；最新本地重跑未安装 Vulture |
-| 安全回归 | 20 cases, TP=11 FP=0 FN=0 TN=10, score 100.0 | Bandit 在 Python 适用 cases 上 score 47.14 |
-| 质量回归 | 6 cases, score 100.0 | 仅作为回归门控 |
+| 安全回归 | 49 cases, TP=30 FP=0 FN=0 TN=21, score 100.0 | Bandit 在 Python 适用 cases 上 score 47.14 |
+| 质量回归 | 13 cases, score 100.0 | 仅作为回归门控 |
 | Agent 审查 | 25 cases, score 100.0 | 仅作为回归门控 |
 
 冻结的 `golden-v0.2` 重点结果：
@@ -146,14 +145,31 @@ Skylos 有已提交的死代码、安全、质量和 Agent 审查回归基准。
 | OWASP Java security dev | TP=105 FP=0 FN=15 TN=120, score 94.37 | request-wrapper、LDAP、XPath、property weak-hash 仍有缺口 |
 | Quality seeded dev | TP=1 FP=0 FN=0 TN=1, score 100.0 | 目前只有一个 seeded case |
 
-方法论、命令、竞品行和 caveats 请看 [BENCHMARK.md](./BENCHMARK.md)。
+方法论、命令、竞品行和 caveats 请看 [BENCHMARK.md](../../BENCHMARK.md)。
+
+## 项目证据
+
+Skylos 辅助的死代码清理 PR 已被
+[Black](https://github.com/psf/black/pull/5041)、
+[NetworkX](https://github.com/networkx/networkx/pull/8572)、
+[Optuna](https://github.com/optuna/optuna/pull/6547)、
+[mitmproxy](https://github.com/mitmproxy/mitmproxy/pull/8136)、
+[pypdf](https://github.com/py-pdf/pypdf/pull/3685)、
+[beets](https://github.com/beetbox/beets/pull/6473) 和
+[Flagsmith](https://github.com/Flagsmith/flagsmith/pull/6953) 合并。这些是已被接受的清理 PR，不代表相关项目背书。详见
+[Real-World Results](../../REAL_WORLD_RESULTS.md)。
+
+<a id="star-authenticity-audit"></a>
+
+2026 年 4 月 26 日，本地 Astronomer 扫描统计 420 个 stargazer，返回
+**overall trust: A**。StarGuard 同时报告 **low fake-star risk**。
 
 ## 集成
 
 | 集成 | 链接 | 用途 |
 |:---|:---|:---|
-| GitHub Action | [GitHub Action](./action.yml) | PR 门控、注释和 CI 执行 |
-| VS Code 扩展 | [VS Code extension](./editors/vscode/README.md) | 编辑器内发现和 AI 辅助修复 |
+| GitHub Action | [GitHub Action](../../action.yml) | PR 门控、注释和 CI 执行 |
+| VS Code 扩展 | [VS Code extension](../../editors/vscode/README.md) | 编辑器内发现和 AI 辅助修复 |
 | MCP server | [MCP setup](https://docs.skylos.dev/mcp-server) | 将 Skylos 扫描暴露给 AI Agent 和编码助手 |
 | Docker image | [Installation](https://docs.skylos.dev/installation) | 无需本地 Python 安装即可运行 Skylos |
 | Skylos Cloud | [Cloud workflow](https://docs.skylos.dev/cloud-workflow) | 可选上传和仪表盘工作流 |
@@ -165,11 +181,11 @@ Skylos 有已提交的死代码、安全、质量和 Agent 审查回归基准。
 | 安装、源码安装和 Docker | [Installation](https://docs.skylos.dev/installation) |
 | 第一次扫描和核心工作流 | [Quick Start](https://docs.skylos.dev/quick-start) |
 | CLI 命令、flags 和示例 | [CLI Reference](https://docs.skylos.dev/cli-reference) |
-| CLI 输出模式、pretty 报告和 TUI 快捷键 | [CLI Output Modes](./docs/cli-output.md) |
+| CLI 输出模式、pretty 报告和 TUI 快捷键 | [CLI Output Modes](../cli-output.md) |
 | CI 设置、PR 门控、注释和分支保护 | [CI/CD](https://docs.skylos.dev/ci-cd) |
 | 死代码行为和框架感知 | [Dead Code Detection](https://docs.skylos.dev/dead-code-detection) |
 | 安全扫描和污点分析 | [Security Analysis](https://docs.skylos.dev/security-analysis) |
-| Rule ID 前缀和产品术语 | [Rule Dictionary](./dictionary.md) |
+| Rule ID 前缀和产品术语 | [Rule Dictionary](../../dictionary.md) |
 | Agent 扫描、验证、修复和模型设置 | [AI Features](https://docs.skylos.dev/ai-features) |
 | AI 防御和 LLM guardrails | [AI Defense](https://docs.skylos.dev/ai-defense) |
 | MCP server 设置 | [MCP Server](https://docs.skylos.dev/mcp-server) |
@@ -178,10 +194,10 @@ Skylos 有已提交的死代码、安全、质量和 Agent 审查回归基准。
 | 规则族和语言支持 | [Rules Reference](https://docs.skylos.dev/rules-reference) |
 | 云端上传和仪表盘流程 | [CLI to Dashboard](https://docs.skylos.dev/cloud-workflow) |
 | VS Code 扩展 | [VS Code Extension](https://docs.skylos.dev/vscode) |
-| 基准测试和方法论 | [BENCHMARK.md](./BENCHMARK.md) |
-| 安全政策 | [SECURITY.md](./SECURITY.md) |
-| 发布流程 | [RELEASE_WORKFLOW.md](./RELEASE_WORKFLOW.md) |
-| 贡献 | [CONTRIBUTING.md](./CONTRIBUTING.md) |
+| 基准测试和方法论 | [BENCHMARK.md](../../BENCHMARK.md) |
+| 安全政策 | [SECURITY.md](../../SECURITY.md) |
+| 发布流程 | [RELEASE_WORKFLOW.md](../../RELEASE_WORKFLOW.md) |
+| 贡献 | [CONTRIBUTING.md](../../CONTRIBUTING.md) |
 
 ## 常见问题
 
@@ -203,14 +219,14 @@ Skylos 有已提交的死代码、安全、质量和 Agent 审查回归基准。
 
 ## 贡献与支持
 
-- 安全问题请通过 [SECURITY.md](./SECURITY.md) 报告。
+- 安全问题请通过 [SECURITY.md](../../SECURITY.md) 报告。
 - Bug 和误报请附带最小复现。
-- 发送 PR 前请阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)。
-- 项目质量和门控要求请看 [QUALITY.md](./QUALITY.md)。
+- 发送 PR 前请阅读 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
+- 项目质量和门控要求请看 [QUALITY.md](../../QUALITY.md)。
 - 社区支持请加入 [Discord](https://discord.gg/Ftn9t9tErf)。
 
 ## 许可证
 
-Skylos 使用 [Apache License 2.0](./LICENSE)。
+Skylos 使用 [Apache License 2.0](../../LICENSE)。
 
 <!-- mcp-name: io.github.duriantaco/skylos -->

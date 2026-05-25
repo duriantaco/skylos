@@ -23,7 +23,7 @@
 [Roadmap](./ROADMAP.md) |
 [Contributing](./CONTRIBUTING.md)
 
-**English** | [Chinese README](./README_CN.md)
+**English** | [Deutsch](./docs/i18n/README.de.md) | [简体中文](./docs/i18n/README.zh-CN.md) | [Translations](./docs/i18n/README.md)
 
 ## What Is Skylos?
 
