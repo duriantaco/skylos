@@ -3390,6 +3390,201 @@ def _add_agent_prompt_template_arg(parser):
     )
 
 
+def _add_agent_security_quick_args(parser):
+    parser.add_argument(
+        "path", nargs="?", default=".", help="File or directory to analyze"
+    )
+    _add_agent_model_arg(parser)
+    parser.add_argument(
+        "--format", choices=["table", "tree", "json", "sarif"], default="table"
+    )
+    _add_agent_output_arg(parser)
+    _add_agent_quiet_arg(parser)
+    _add_agent_provider_arg(parser)
+    _add_agent_base_url_arg(parser)
+    _add_agent_prompt_template_arg(parser)
+    parser.add_argument(
+        "--interactive",
+        "-i",
+        action="store_true",
+        help="Interactive file selection",
+    )
+
+
+def _add_agent_security_deep_args(parser):
+    parser.add_argument("path", nargs="?", default=".")
+    _add_agent_model_arg(parser)
+    _add_agent_provider_arg(parser)
+    _add_agent_base_url_arg(parser)
+    _add_agent_prompt_template_arg(parser)
+    parser.add_argument(
+        "--scan-only",
+        action="store_true",
+        help=(
+            "Stage 1 only: update static threat-model/candidate state without "
+            "LLM calls"
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume pending Deep Mode processing work",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force Deep Mode reprocessing for already analyzed files",
+    )
+    parser.add_argument(
+        "--changed",
+        action="store_true",
+        help="Restrict Deep Mode security work to git-changed files",
+    )
+    parser.add_argument(
+        "--base",
+        default=None,
+        help="Base ref for changed-file scans",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit Deep Mode agent processing; scan-only records all candidates",
+    )
+    parser.add_argument(
+        "--fail-on",
+        choices=["critical", "high", "medium", "low"],
+        default=None,
+        help="Exit 1 when Deep Mode work at or above this severity remains",
+    )
+    parser.add_argument(
+        "--revalidate",
+        action="store_true",
+        help="Stage 2 validation: revalidate stored Deep Mode findings",
+    )
+    parser.add_argument(
+        "--challenge",
+        action="store_true",
+        help="Challenge prior uncertain Deep Mode revalidation verdicts",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["table", "json", "sarif", "md", "markdown", "md-dir"],
+        default="table",
+    )
+    parser.add_argument(
+        "--severity",
+        choices=["critical", "high", "medium", "low", "info"],
+        default=None,
+        help="Filter Deep Mode export entries to this severity or higher",
+    )
+    parser.add_argument(
+        "--verdict",
+        action="append",
+        choices=[
+            "true_positive",
+            "false_positive",
+            "fixed",
+            "uncertain",
+            "pending",
+            "not_analyzed",
+            "error",
+            "skipped",
+            "deleted",
+        ],
+        help="Filter Deep Mode export entries by verdict/status",
+    )
+    parser.add_argument(
+        "--include-deleted",
+        action="store_true",
+        help="Include deleted Deep Mode audit records in exports",
+    )
+    parser.add_argument("--out", "--output", "-o", dest="output")
+    _add_agent_quiet_arg(parser)
+
+
+def _security_deep_workflow_payload(
+    *,
+    mode: str,
+    summary,
+    process_summary=None,
+    revalidation_summary=None,
+):
+    discovery_status = "queued"
+    discovery_detail = "Static candidates were recorded for later agent processing."
+    if process_summary is not None:
+        discovery_status = "completed" if process_summary.complete else "incomplete"
+        discovery_detail = (
+            f"Processed {process_summary.processed_files} file(s), "
+            f"added {process_summary.findings_added} finding(s)."
+        )
+    elif revalidation_summary is not None:
+        discovery_status = (
+            "completed" if revalidation_summary.complete else "incomplete"
+        )
+        discovery_detail = (
+            f"Revalidated {revalidation_summary.revalidated_findings} finding(s), "
+            f"challenged {revalidation_summary.challenged_findings}."
+        )
+
+    remediation_status = "handoff"
+    remediation_detail = (
+        "Validated findings are kept in Deep Mode state/export formats; patch "
+        "application remains explicit through `skylos agent remediate`."
+    )
+    if process_summary is None and revalidation_summary is None:
+        remediation_status = "pending" if summary.candidate_count else "not_needed"
+        remediation_detail = (
+            "Run `skylos agent security-deep` without `--scan-only` or run "
+            "`--revalidate` before remediation."
+        )
+    if summary.candidate_count == 0 and process_summary is None:
+        remediation_status = "not_needed"
+        remediation_detail = "No Deep Mode security candidates were found."
+
+    return {
+        "name": "security-deep",
+        "compatibility": (
+            "Equivalent to `skylos agent audit --deep` with clearer workflow "
+            "naming."
+        ),
+        "mode": mode,
+        "stages": [
+            {
+                "number": 1,
+                "name": "threat_model_context",
+                "status": "completed",
+                "detail": (
+                    f"Scanned {summary.files_scanned} file(s), recorded "
+                    f"{summary.candidate_count} security candidate(s), and "
+                    "updated persisted Deep Mode project context."
+                ),
+            },
+            {
+                "number": 2,
+                "name": "discovery_validation",
+                "status": discovery_status,
+                "detail": discovery_detail,
+            },
+            {
+                "number": 3,
+                "name": "remediation_handoff",
+                "status": remediation_status,
+                "detail": remediation_detail,
+            },
+        ],
+    }
+
+
+def _print_security_deep_workflow(console, workflow):
+    console.print("[brand]Security Deep stages:[/brand]")
+    for stage in workflow.get("stages", []):
+        console.print(
+            f"  Stage {stage['number']}: {stage['name']} "
+            f"({stage['status']})"
+        )
+
+
 def _explicit_prompt_templates_from_args(agent_args, console):
     values = list(getattr(agent_args, "prompt_template", None) or [])
     if not values:
@@ -3610,6 +3805,21 @@ def _build_agent_parser():
     )
     p_audit.add_argument("--out", "--output", "-o", dest="output")
     _add_agent_quiet_arg(p_audit)
+
+    p_security_quick = agent_sub.add_parser(
+        "security-quick",
+        help="Quick one-shot LLM security audit (alias for scan --security)",
+    )
+    _add_agent_security_quick_args(p_security_quick)
+
+    p_security_deep = agent_sub.add_parser(
+        "security-deep",
+        help=(
+            "Three-stage security workflow: threat model/context, "
+            "discovery/validation, and remediation handoff"
+        ),
+    )
+    _add_agent_security_deep_args(p_security_deep)
 
     p_remediate = agent_sub.add_parser(
         "remediate",
@@ -3902,6 +4112,16 @@ def main() -> None:
         agent_args = agent_parser.parse_args(sys.argv[2:])
         console = Console()
         cmd = agent_args.agent_cmd
+        if cmd == "security-quick":
+            agent_args.security = True
+            agent_args.agent_cmd = "scan"
+            agent_args.security_workflow_alias = "security-quick"
+            cmd = "scan"
+        elif cmd == "security-deep":
+            agent_args.deep = True
+            agent_args.agent_cmd = "audit"
+            agent_args.security_workflow_alias = "security-deep"
+            cmd = "audit"
 
         if cmd in {"watch", "pre-commit", "triage", "status", "serve"}:
             from skylos.agents.center import (
@@ -4693,6 +4913,13 @@ def main() -> None:
                 payload["revalidation"] = revalidation_summary.to_dict()
             if ci_summary is not None:
                 payload["ci"] = ci_summary.to_dict()
+            if getattr(agent_args, "security_workflow_alias", None) == "security-deep":
+                payload["workflow"] = _security_deep_workflow_payload(
+                    mode=mode,
+                    summary=summary,
+                    process_summary=process_summary,
+                    revalidation_summary=revalidation_summary,
+                )
 
             export_payload = None
             export_format = getattr(agent_args, "format", "table")
@@ -4824,6 +5051,8 @@ def main() -> None:
                 if ci_summary is not None:
                     console.print(f"[brand]Deep audit CI:[/brand] {ci_summary.reason}")
                 console.print(f"  Store: {store.project_dir}")
+                if workflow := payload.get("workflow"):
+                    _print_security_deep_workflow(console, workflow)
             sys.exit(ci_summary.exit_code if ci_summary is not None else 0)
 
         if not _ensure_llm_support():

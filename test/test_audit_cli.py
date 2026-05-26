@@ -444,8 +444,109 @@ def test_agent_audit_deep_processing_runs_after_scan(tmp_path: Path, monkeypatch
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["mode"] == "deep_process"
     assert payload["processing"]["processed_files"] == 1
+    assert "workflow" not in payload
     assert calls["process"]["limit"] == 3
     assert calls["process"]["force"] is False
+
+
+def test_agent_security_deep_alias_runs_deep_processing_with_workflow_stages(
+    tmp_path: Path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    out = tmp_path / "security-deep.json"
+    store = SimpleNamespace(
+        project_dir=repo / ".skylos" / "audit" / "projects" / "default"
+    )
+    calls = {}
+
+    def fake_scan(path, *, changed_files=None):
+        calls["scan_path"] = Path(path)
+        return (
+            AuditScanSummary(
+                project_id="default",
+                project_root=str(repo),
+                files_scanned=1,
+                records_written=1,
+                candidate_count=1,
+                redacted_candidates=0,
+                pending_files=1,
+                not_analyzed_files=0,
+                complete=False,
+            ),
+            store,
+        )
+
+    def fake_process(**kwargs):
+        calls["process"] = kwargs
+        return AuditProcessSummary(
+            run_id="process-one",
+            project_id="default",
+            project_root=str(repo),
+            considered_files=1,
+            processed_files=1,
+            findings_added=1,
+            skipped_secret_files=0,
+            unsupported_files=0,
+            locked_files=0,
+            error_files=0,
+            remaining_pending_files=0,
+            limited=False,
+            complete=True,
+        )
+
+    class FakeLLM:
+        def __init__(self, config):
+            self.config = config
+
+    monkeypatch.setattr(
+        "skylos.audit.candidates.scan_deep_audit_candidates",
+        fake_scan,
+    )
+    monkeypatch.setattr(
+        "skylos.audit.processor.process_deep_audit_records",
+        fake_process,
+    )
+    monkeypatch.setattr(cli, "_ensure_llm_support", lambda: True)
+    monkeypatch.setattr(cli, "_build_analyzer_config", lambda **kwargs: kwargs)
+    monkeypatch.setattr(cli, "SkylosLLM", FakeLLM)
+    monkeypatch.setattr(
+        cli,
+        "resolve_llm_runtime",
+        lambda **kwargs: ("ollama", None, None, True),
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            "agent",
+            "security-deep",
+            str(repo),
+            "--limit",
+            "3",
+            "--format",
+            "json",
+            "--output",
+            str(out),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert exc.value.code == 0
+    assert payload["mode"] == "deep_process"
+    assert payload["workflow"]["name"] == "security-deep"
+    assert [stage["name"] for stage in payload["workflow"]["stages"]] == [
+        "threat_model_context",
+        "discovery_validation",
+        "remediation_handoff",
+    ]
+    assert payload["workflow"]["stages"][1]["status"] == "completed"
+    assert calls["scan_path"] == repo
+    assert calls["process"]["limit"] == 3
 
 
 def test_agent_audit_uses_only_explicit_prompt_template_file(
