@@ -31,6 +31,7 @@ from skylos.visitors.languages.typescript import scan_typescript_file
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
     demote_unconsumed_ts_exports,
+    _discover_ts_vscode_lifecycle_entry_files,
     find_dead_ts_files,
     find_unused_ts_exports,
 )
@@ -797,11 +798,21 @@ class Skylos:
             self._ts_importers_of,
         ) = build_ts_import_graph(ts_raw_imports, self.defs, monorepo_resolver)
 
-    def _demote_unconsumed_ts_exports(self):
+    def _demote_unconsumed_ts_exports(
+        self, files=None, exclude_folders=None, workspace_inventory=None
+    ):
         if not hasattr(self, "ts_consumed_exports"):
             return
+        lifecycle_entry_points = _discover_ts_vscode_lifecycle_entry_files(
+            files or [],
+            project_root=str(self._project_root),
+            workspace_inventory=workspace_inventory,
+            exclude_folders=exclude_folders,
+        )
         self._ts_demoted_exports = demote_unconsumed_ts_exports(
-            self.defs, self.ts_consumed_exports
+            self.defs,
+            self.ts_consumed_exports,
+            lifecycle_entry_points=lifecycle_entry_points,
         )
 
     def _find_dead_ts_files(self, files, exclude_folders, workspace_inventory=None):
@@ -2966,7 +2977,9 @@ class Skylos:
             progress_callback(0, 1, Path("PHASE: exports"))
         self._mark_exports()
 
-        self._demote_unconsumed_ts_exports()
+        self._demote_unconsumed_ts_exports(
+            files, exclude_folders, workspace_inventory=workspace_inventory
+        )
 
         if progress_callback:
             progress_callback(0, 1, Path("PHASE: entry reachability"))

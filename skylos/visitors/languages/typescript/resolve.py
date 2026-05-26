@@ -263,7 +263,11 @@ def _find_nearest_package_dir(start_path: str, stop_dir: str) -> str | None:
 
 
 def _candidate_package_targets(target: str) -> list[str]:
-    base_target = target.replace("dist/", "src/").replace("/prod/", "/")
+    base_target = (
+        target.replace("dist/", "src/")
+        .replace("out/", "src/")
+        .replace("/prod/", "/")
+    )
     candidates = [base_target]
 
     if base_target.endswith(".d.ts"):

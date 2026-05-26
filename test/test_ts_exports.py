@@ -460,6 +460,29 @@ class TestTypeScriptDeadFiles:
 
         assert dead_files == []
 
+    def test_package_json_out_entrypoint_keeps_source_file_live(self, tmp_path):
+        extension_file = tmp_path / "src" / "extension.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"vscode-ext","main":"./out/extension.js"}',
+            encoding="utf-8",
+        )
+        extension_file.parent.mkdir(parents=True, exist_ok=True)
+        extension_file.write_text(
+            "export function activate() { return true; }\n", encoding="utf-8"
+        )
+
+        dead_files = find_dead_ts_files(
+            [extension_file],
+            [],
+            {},
+            {},
+            project_root=str(extension_file.parent),
+            workspace_inventory=None,
+        )
+
+        assert dead_files == []
+
     def test_package_json_subpath_export_keeps_exported_file_live(self, tmp_path):
         helper_file = tmp_path / "packages" / "ui" / "src" / "helpers.ts"
 
@@ -822,6 +845,31 @@ class TestTypeScriptUnusedExports:
             {},
             project_root=str(tmp_path),
             workspace_inventory=inventory,
+        )
+
+        assert findings == []
+
+    def test_package_json_out_entrypoint_export_is_not_flagged(self, tmp_path):
+        extension_file = tmp_path / "src" / "extension.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"vscode-ext","main":"./out/extension.js"}',
+            encoding="utf-8",
+        )
+        extension_file.parent.mkdir(parents=True, exist_ok=True)
+        extension_file.write_text(
+            "export function activate() { return true; }\n", encoding="utf-8"
+        )
+
+        defn = _make_def("activate", "function", str(extension_file), exported=True)
+        defn.references = 1
+        defn.is_exported = False
+
+        findings = find_unused_ts_exports(
+            [defn],
+            {},
+            project_root=str(extension_file.parent),
+            workspace_inventory=None,
         )
 
         assert findings == []
