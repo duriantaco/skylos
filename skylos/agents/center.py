@@ -926,21 +926,20 @@ def _append_findings(
         severity = normalize_severity(item.get("severity"), default_severity)
         absolute = str(resolve_file_path(file_path, project_root))
         confidence = item.get("confidence")
-        out.append(
-            {
-                "fingerprint": finding_fingerprint(
-                    category, rule_id, rel, line, message
-                ),
-                "rule_id": rule_id,
-                "category": category,
-                "severity": severity,
-                "message": message,
-                "file": rel,
-                "absolute_file": absolute,
-                "line": line,
-                "confidence": confidence,
-            }
-        )
+        finding = {
+            "fingerprint": finding_fingerprint(category, rule_id, rel, line, message),
+            "rule_id": rule_id,
+            "category": category,
+            "severity": severity,
+            "message": message,
+            "file": rel,
+            "absolute_file": absolute,
+            "line": line,
+            "confidence": confidence,
+        }
+        if "advisory" in item:
+            finding["advisory"] = bool(item.get("advisory"))
+        out.append(finding)
 
 
 def _append_dead_code(

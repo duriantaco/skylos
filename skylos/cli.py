@@ -588,6 +588,7 @@ def _filter_precommit_findings_to_changed_lines(
 
 LOCAL_PRECOMMIT_BLOCKING_QUALITY_RULE_IDS = {"SKY-L021"}
 LOCAL_PRECOMMIT_BLOCKING_QUALITY_SEVERITIES = {"CRITICAL", "HIGH"}
+LOCAL_PRECOMMIT_ADVISORY_QUALITY_RULE_IDS = {"SKY-Q802", "SKY-Q803"}
 
 
 def _precommit_blocks_finding(finding: dict) -> bool:
@@ -598,6 +599,12 @@ def _precommit_blocks_finding(finding: dict) -> bool:
         return True
 
     rule_id = str(finding.get("rule_id", ""))
+    if (
+        rule_id in LOCAL_PRECOMMIT_ADVISORY_QUALITY_RULE_IDS
+        and finding.get("advisory") is True
+    ):
+        return False
+
     if rule_id in LOCAL_PRECOMMIT_BLOCKING_QUALITY_RULE_IDS:
         return True
 

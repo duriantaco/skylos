@@ -442,6 +442,13 @@ _RULE_SUGGESTIONS: dict[str, str] = {
     "SKY-D324": "Reject symlinks before writing, keep the resolved path inside the trusted root, or open with `O_NOFOLLOW`.",
     "SKY-D325": "Reject symlinks and non-regular files before reading, enforce root containment, and cap the read size.",
     "SKY-D326": "Manually validate archive members before extraction; reject absolute paths, `..`, symlinks, and hardlinks.",
+    "SKY-D330": "Remove `privileged: true` and grant only the specific Linux devices or capabilities the edge service requires.",
+    "SKY-D331": "Avoid broad host control mounts; prefer specific read-only device mappings and never mount the Docker socket into edge services.",
+    "SKY-D332": "Avoid `network_mode: host`; bind only required ports and keep robot or device control services off untrusted networks.",
+    "SKY-D333": "Run the systemd unit as a dedicated non-root user and grant only the device access it needs.",
+    "SKY-D334": "Move the systemd executable under a root-owned directory and lock down script permissions.",
+    "SKY-D335": "Add systemd sandboxing such as `NoNewPrivileges=true`, `ProtectSystem=full`, and `PrivateTmp=true`.",
+    "SKY-D336": "Reduce systemd capabilities, broad device access, or privileged container flags to the minimum required set.",
     "SKY-S101": "Move secrets to environment variables: `os.getenv('SECRET_KEY')`. Never hardcode credentials.",
 }
 
