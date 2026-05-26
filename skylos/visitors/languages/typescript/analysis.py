@@ -304,7 +304,13 @@ def _resolve_namespace_reexports(
                                         defs[target_key].references += 1
 
 
-def demote_unconsumed_ts_exports(defs, consumed_exports):
+_VSCODE_EXTENSION_LIFECYCLE_EXPORTS = frozenset({"activate", "deactivate"})
+
+
+def demote_unconsumed_ts_exports(defs, consumed_exports, lifecycle_entry_points=None):
+    lifecycle_entry_points = {
+        os.path.realpath(str(path)) for path in lifecycle_entry_points or ()
+    }
     demoted = []
     for _name, defn in defs.items():
         if not defn.is_exported:
@@ -312,6 +318,11 @@ def demote_unconsumed_ts_exports(defs, consumed_exports):
         if not str(defn.filename).endswith(_TS_JS_EXTENSIONS):
             continue
         if defn.type == "import":
+            continue
+        if (
+            os.path.realpath(str(defn.filename)) in lifecycle_entry_points
+            and defn.simple_name in _VSCODE_EXTENSION_LIFECYCLE_EXPORTS
+        ):
             continue
 
         consumed = consumed_exports.get(str(defn.filename), set())
@@ -1223,6 +1234,70 @@ def _discover_ts_reachability_entry_files(
         if discovery.file in ts_files
         and (include_dev_roots or discovery.scope == "prod")
     }
+
+
+def _has_vscode_extension_metadata(data: dict) -> bool:
+    engines = data.get("engines")
+    if isinstance(engines, dict) and isinstance(engines.get("vscode"), str):
+        return True
+
+    activation_events = data.get("activationEvents")
+    if isinstance(activation_events, list) and activation_events:
+        return True
+
+    contributes = data.get("contributes")
+    if isinstance(contributes, dict):
+        return any(
+            key in contributes
+            for key in ("commands", "views", "viewsContainers", "menus")
+        )
+    return False
+
+
+def _discover_ts_vscode_lifecycle_entry_files(
+    files,
+    project_root: str | None = None,
+    workspace_inventory=None,
+    exclude_folders=None,
+) -> set[str]:
+    exclude_root = _resolve_exclude_root(files, project_root)
+    ts_files = {
+        os.path.realpath(str(f))
+        for f in files
+        if str(f).endswith(_TS_JS_EXTENSIONS)
+        and not _is_excluded_path(str(f), exclude_folders, exclude_root)
+    }
+    if not ts_files:
+        return set()
+
+    package_roots = set(_workspace_package_roots(workspace_inventory))
+    if workspace_inventory is None or not workspace_inventory.is_monorepo:
+        package_roots.update(
+            _discover_package_roots_from_files(
+                list(ts_files),
+                project_root,
+                exclude_folders=exclude_folders,
+            )
+        )
+    if project_root and workspace_inventory is not None:
+        package_roots.update(
+            _discover_referenced_package_roots(
+                list(ts_files),
+                project_root,
+                workspace_inventory,
+                exclude_folders=exclude_folders,
+            )
+        )
+
+    entry_files: set[str] = set()
+    for package_root in package_roots:
+        data = _read_json_file(os.path.join(str(package_root), "package.json"))
+        if not _has_vscode_extension_metadata(data):
+            continue
+        for entry_file in _discover_package_entry_files(str(package_root)):
+            if entry_file in ts_files:
+                entry_files.add(entry_file)
+    return entry_files
 
 
 def _is_ts_reachability_root(path: str, entry_files: set[str]) -> bool:

@@ -666,6 +666,48 @@ class TestTSMonorepoReachability:
         assert "makeLabel" not in unused_exports
         assert "previewText" not in unused_exports
 
+    def test_out_package_entrypoint_exports_are_not_reported_unused_functions(
+        self, tmp_path
+    ):
+        from skylos.analyzer import analyze
+
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "vscode-ext",
+                    "main": "./out/extension.js",
+                    "engines": {"vscode": "^1.87.0"},
+                    "activationEvents": ["onCommand:vscode-ext.run"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (src_dir / "extension.ts").write_text(
+            "export function activate() { return true; }\n"
+            "export function deactivate() { return false; }\n"
+            "export function orphanHandler() { return null; }\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(src_dir), conf=0, grep_verify=False))
+
+        unused_functions = {
+            item["name"] for item in result.get("unused_functions", [])
+        }
+        unused_files = {
+            Path(item["file"]).name for item in result.get("unused_files", [])
+        }
+        unused_exports = {item["name"] for item in result.get("unused_exports", [])}
+
+        assert "extension.ts" not in unused_files
+        assert "activate" not in unused_functions
+        assert "deactivate" not in unused_functions
+        assert "orphanHandler" in unused_functions
+        assert "activate" not in unused_exports
+        assert "deactivate" not in unused_exports
+
     def test_direct_project_reference_keeps_referenced_package_entrypoint_live(
         self, tmp_path
     ):
