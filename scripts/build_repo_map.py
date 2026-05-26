@@ -180,9 +180,9 @@ FOLDER_META: dict[str, dict[str, Any]] = {
         "entrypoints": ["skylos/reporting/"],
     },
     "skylos/rules": {
-        "purpose": "Rule catalog and concrete rule implementations for quality, security, config, and SCA findings.",
-        "touch": "Start here when adding rule IDs, tuning scanner semantics, or changing rule docs parity.",
-        "entrypoints": ["skylos/rules/catalog.py", "skylos/rules/danger", "skylos/rules/quality"],
+        "purpose": "Rule catalog and concrete rule implementations for quality, security, config, edge, CI/CD, and SCA findings.",
+        "touch": "Start here when adding rule IDs, tuning scanner semantics, config posture checks, or changing rule docs parity.",
+        "entrypoints": ["skylos/rules/catalog.py", "skylos/rules/danger", "skylos/rules/config", "skylos/rules/quality"],
     },
     "skylos/scale": {
         "purpose": "Scale and performance helpers for larger repositories.",
@@ -255,7 +255,7 @@ WORKFLOWS: list[dict[str, Any]] = [
         "title": "I want to add or tune a rule",
         "goal": "Change the catalog and implementation together so docs, IDs, and behavior stay aligned.",
         "personas": "contributor debugger maintainer",
-        "paths": ["skylos/rules/catalog.py", "skylos/rules/danger/", "skylos/rules/quality/", "dictionary.md"],
+        "paths": ["skylos/rules/catalog.py", "skylos/rules/danger/", "skylos/rules/config/", "skylos/rules/quality/", "dictionary.md"],
         "tests": ["test/test_rule_catalog.py", "scripts/check_rule_docs_parity.py"],
         "steps": [
             "Start with the rule ID and public wording before touching detector code.",
@@ -426,9 +426,9 @@ PERSONAS = [
     {
         "id": "security",
         "title": "I am reviewing security or LLM behavior",
-        "summary": "Follow trust boundaries: config policy, LLM evidence filters, CI, and cloud sync.",
-        "paths": ["skylos/config.py", "skylos/llm/", "skylos/security/", "skylos/cloud/", "skylos/cicd/"],
-        "search": "security llm policy cloud ci evidence bypass",
+        "summary": "Follow trust boundaries: config policy, config scanners, LLM evidence filters, CI, and cloud sync.",
+        "paths": ["skylos/config.py", "skylos/rules/config/", "skylos/llm/", "skylos/security/", "skylos/cloud/", "skylos/cicd/"],
+        "search": "security llm policy cloud ci edge config evidence bypass",
     },
     {
         "id": "maintainer",
@@ -466,7 +466,7 @@ ARCHITECTURE_LAYERS = [
     },
     {
         "title": "Static Analysis Core",
-        "purpose": "Owns liveness, rules, framework handling, quality checks, and dangerous-flow detection.",
+        "purpose": "Owns liveness, rules, framework handling, config posture checks, quality checks, and dangerous-flow detection.",
         "paths": ["skylos/analyzer.py", "skylos/analysis/", "skylos/rules/", "skylos/visitors/"],
         "depends_on": "Discovery, config, language engines",
         "guardrail": "Every semantic change needs a small fixture and a regression test.",
@@ -740,7 +740,6 @@ def _extract_symbols(tree: ast.Module) -> list[SymbolInfo]:
 
 
 def _fallback_summary(relpath: str) -> str:
-    path = Path(relpath)
     if relpath in {
         "skylos/cli.py",
         "skylos/analyzer.py",

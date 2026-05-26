@@ -149,7 +149,15 @@ Finding types:
 | D243 | CRITICAL | MCP server bound to `0.0.0.0` | Python |
 | D244 | CRITICAL | MCP hardcoded secrets in tool params | Python |
 
-### CI/CD Security
+### Filesystem And Archive Safety
+
+| ID | Severity | Name | Languages / Scope |
+|:---|:---|:---|:---|
+| D324 | HIGH | Symlink-following file write | Python |
+| D325 | MEDIUM | Symlink-following file read | Python |
+| D326 | HIGH | Unsafe archive extraction | Python |
+
+### Config And Deployment Security
 
 | ID | Severity | Name | Provider |
 |:---|:---|:---|:---|
@@ -187,9 +195,13 @@ Finding types:
 | D321 | MEDIUM | Privileged job missing timeout | GitLab CI |
 | D322 | MEDIUM | Dynamic runner tag | GitLab CI |
 | D323 | MEDIUM | Ambiguous secret token | GitLab CI |
-| D324 | HIGH | Symlink-following file write | Python |
-| D325 | MEDIUM | Symlink-following file read | Python |
-| D326 | HIGH | Unsafe archive extraction | Python |
+| D330 | HIGH | Privileged edge container | Docker Compose |
+| D331 | HIGH | Host device exposure | Docker Compose |
+| D332 | MEDIUM | Host networking on edge service | Docker Compose |
+| D333 | HIGH | Edge service runs as root | systemd |
+| D334 | HIGH | Root service executes mutable path | systemd |
+| D335 | MEDIUM | Edge service missing sandboxing | systemd |
+| D336 | HIGH | Broad edge service privilege | systemd |
 
 ## Secrets (SKY-S)
 

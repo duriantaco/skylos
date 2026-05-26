@@ -28,14 +28,15 @@
 ## What Is Skylos?
 
 Skylos is an open-source static analysis CLI for Python, TypeScript,
-JavaScript, Java, Go, PHP, Rust, Dart, C#, and Shell repositories. It runs
-locally by default and can also be used as a CI/CD PR gate.
+JavaScript, Java, Go, PHP, Rust, Dart, C#, Shell, and deployment config. It
+runs locally by default and can also be used as a CI/CD PR gate.
 
 Use Skylos when you want one command to check a repo or pull request for:
 
 - dead code and unused files
 - security flaws and dangerous data flows
 - secrets and dependency CVEs
+- CI/CD and edge-device deployment misconfigurations
 - quality regressions such as complexity, duplicate branches, and deep nesting
 - common AI-generated code mistakes, including missing guards and fake helpers
 - LLM app risks such as unsafe tool use and missing output validation
@@ -88,7 +89,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Goal | Command | What You Get | More Detail |
 |:---|:---|:---|:---|
 | First dead-code scan | `skylos .` | Finds unused functions, classes, imports, files, and framework entrypoint mistakes | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
-| Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, and quality checks | [Security docs](https://docs.skylos.dev/security-analysis) |
+| Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, config, and quality checks | [Security docs](https://docs.skylos.dev/security-analysis) |
 | PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
 | Readable terminal report | `skylos . --format pretty` | Groups findings by file with severity badges, snippets, and copyable `file:line` locations | [CLI output modes](./docs/cli-output.md) |
 | Selectable terminal triage | `skylos . --tui` | Opens a keyboard-driven category list, finding list, and detail pane | [CLI output modes](./docs/cli-output.md) |
@@ -108,6 +109,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Security flaws | SQL injection, XSS, SSRF, path traversal, command injection, unsafe deserialization | catches exploitable flows before code reaches main |
 | Secrets | API keys, tokens, private credentials, high-entropy strings | prevents credentials from leaking through commits and PRs |
 | CI/CD workflows | GitHub Actions and GitLab CI dangerous triggers, unpinned actions/includes, broad tokens, OIDC misuse, cache poisoning, mutable images | reduces CI/CD supply-chain risk before release jobs run |
+| Edge deployment config | Docker Compose privileged device access, host networking, systemd root services, broad capabilities, missing sandboxing | catches repo-controlled settings that turn app bugs into device compromise |
 | Quality regressions | complexity, deep nesting, duplicate branches, long functions, inconsistent returns | keeps AI-assisted refactors from adding brittle code |
 | AI code mistakes | phantom security calls, missing decorators, unfinished stubs, disabled controls, network calls without timeouts | catches common hallucinated or incomplete code paths |
 | LLM app risks | unsafe tool use, prompt injection exposure, missing output validation, missing rate limits | helps teams ship AI features with guardrails |
@@ -194,6 +196,15 @@ credential names, sensitive files, and network calls that must set timeouts.
 
 See [Rules Reference](https://docs.skylos.dev/rules-reference) for rule families
 and scanner scope.
+
+## Config And Deployment Support
+
+| Surface | Files | Security Scope |
+|:---|:---|:---|
+| GitHub Actions | `.github/workflows/*.yml`, `.github/workflows/*.yaml`, `action.yml`, `action.yaml` | dangerous triggers, token permissions, unpinned actions, template injection, secrets, OIDC, cache, and artifact policy |
+| GitLab CI | `.gitlab-ci.yml` | mutable images, unpinned includes, literal secrets, untrusted eval, Docker-in-Docker, OIDC, cache, timeout, and runner-tag policy |
+| Edge Docker Compose | `compose*.yml`, `compose*.yaml`, `docker-compose*.yml`, `docker-compose*.yaml` | privileged containers, broad host device/control mounts, GPU/device runtime, and host networking |
+| Edge systemd | `*.service` | root edge services, mutable `ExecStart` paths, missing sandboxing, broad capabilities, and broad device access |
 
 ## Benchmark Snapshot
 

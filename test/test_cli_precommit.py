@@ -843,3 +843,71 @@ def test_agent_pre_commit_blocks_high_severity_quality_findings(tmp_path):
     assert "1 quality" in printed
     assert "Hardcoded credential" in printed
     assert "Function is 54 lines long" not in printed
+
+
+def test_agent_pre_commit_suppresses_advisory_architecture_findings(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "module.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+
+    console = Mock()
+    staged = Mock(stdout="module.py\n", returncode=0)
+    cached_diff = Mock(
+        stdout=(
+            "diff --git a/module.py b/module.py\n"
+            "--- a/module.py\n"
+            "+++ b/module.py\n"
+            "@@ -1 +1 @@\n"
+        ),
+        returncode=0,
+    )
+    unstaged = Mock(stdout="", returncode=0)
+    result = {
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_classes": [],
+        "unused_variables": [],
+        "danger": [],
+        "quality": [
+            {
+                "rule_id": "SKY-Q802",
+                "advisory": True,
+                "file": "module.py",
+                "line": 1,
+                "severity": "HIGH",
+                "message": "Module is far from the Main Sequence.",
+            }
+        ],
+        "secrets": [],
+    }
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "diff", "--cached", "--name-only"]:
+            return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return unstaged
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    with (
+        patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
+        patch("skylos.cli.Console", return_value=console),
+        patch("skylos.cli.setup_logger"),
+        patch("skylos.cli.find_project_root", return_value=repo),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.parse_exclude_folders", return_value=set()),
+        patch("skylos.cli.subprocess.run", side_effect=fake_run),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.core.baseline.load_baseline", return_value=None),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 0
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "non-blocking quality finding(s)" in printed
+    assert "No staged security, secrets, or quality issues" in printed
+    assert "Main Sequence" not in printed
