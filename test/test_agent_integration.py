@@ -498,6 +498,37 @@ def test_security_audit_uses_security_taskflow_runner(tmp_path):
     fake_llm.analyze_files.assert_not_called()
 
 
+def test_security_quick_alias_uses_security_taskflow_runner(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text("print('hi')\n")
+
+    fake_llm = MagicMock()
+    fake_taskflow = MagicMock(result=AnalysisResult(findings=[], files_analyzed=1))
+
+    with (
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch("skylos.cli._is_tty", return_value=False),
+        patch("skylos.cli.llm_estimate_cost", return_value=(1, 0.01)),
+        patch("skylos.cli.SkylosLLM", return_value=fake_llm),
+        patch(
+            "skylos.cli.run_security_taskflow", return_value=fake_taskflow
+        ) as mock_run,
+        patch("sys.argv", ["skylos", "agent", "security-quick", str(tmp_path)]),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+    mock_run.assert_called_once()
+    assert mock_run.call_args.kwargs["files"] == [sample]
+    fake_llm.analyze_files.assert_not_called()
+
+
 def test_security_audit_passes_provider_and_base_url_into_analyzer_config(tmp_path):
     sample = tmp_path / "sample.py"
     sample.write_text("print('hi')\n")
