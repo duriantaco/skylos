@@ -1,5 +1,22 @@
 ## Changelog
 
+## [4.20.0](https://github.com/duriantaco/skylos/compare/v4.19.0...v4.20.0) (2026-05-27)
+
+
+### Features
+
+* **analyzer:** harden cross-language security and quality checks ([#491](https://github.com/duriantaco/skylos/issues/491)) ([7b3d62c](https://github.com/duriantaco/skylos/commit/7b3d62ca31a87ce43e485a5dc5159aea3014ccc2))
+* **cli:** add security agent aliases ([#500](https://github.com/duriantaco/skylos/issues/500)) ([aeaeefa](https://github.com/duriantaco/skylos/commit/aeaeefa96f0dc2acf48371da1a013156282ab315))
+* **config:** add edge deployment scanners ([#497](https://github.com/duriantaco/skylos/issues/497)) ([4fc098a](https://github.com/duriantaco/skylos/commit/4fc098aed169e81bcd3c1a0ceb461ab1ff961025))
+* **security:** add static threat traces ([#501](https://github.com/duriantaco/skylos/issues/501)) ([e18885f](https://github.com/duriantaco/skylos/commit/e18885fa2b1bb04d50378b4a91e1196d3d84d3f8))
+* **shell:** add shell security scanning ([#495](https://github.com/duriantaco/skylos/issues/495)) ([8c764a0](https://github.com/duriantaco/skylos/commit/8c764a0cdbdb157604a06d73521a4385778339bc))
+
+
+### Bug Fixes
+
+* **analyzer:** reduce vscode extension dead-code false positives ([#499](https://github.com/duriantaco/skylos/issues/499)) ([6848ab9](https://github.com/duriantaco/skylos/commit/6848ab9adad1096c84a6c424d0eaeae540f4084c))
+* **docs:** avoid repo map line churn ([#496](https://github.com/duriantaco/skylos/issues/496)) ([df08da4](https://github.com/duriantaco/skylos/commit/df08da4c925a48952faf06dd9e5fdcf228ef0705))
+
 ## [4.19.0](https://github.com/duriantaco/skylos/compare/v4.18.0...v4.19.0) (2026-05-24)
 
 
