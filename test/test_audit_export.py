@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from skylos.audit.export import (
     build_deep_audit_export,
@@ -23,20 +24,53 @@ from skylos.audit.types import (
 def _candidate(
     candidate_id: str,
     *,
+    kind: str = "static_finding",
+    rule_id: str = "SKY-D999",
+    line: int = 2,
     severity: str = "high",
     redacted: bool = False,
     reason: str = "candidate",
+    evidence: str = "static",
+    data: dict[str, Any] | None = None,
 ) -> AuditCandidate:
     return AuditCandidate(
         candidate_id=candidate_id,
-        kind="static_finding",
-        rule_id="SKY-D999",
-        line=2,
+        kind=kind,
+        rule_id=rule_id,
+        line=line,
         severity_hint=severity,
         reason=reason,
+        evidence=evidence,
         redacted=redacted,
         priority=800,
+        data=data or {},
     )
+
+
+def _threat_trace(trace_id: str = "trace-123") -> dict[str, Any]:
+    return {
+        "trace_id": trace_id,
+        "file": "app.py",
+        "entrypoint": "proxy [app.get]",
+        "source": {
+            "file": "app.py",
+            "line": 6,
+            "name": "request.args.get",
+            "kind": "source",
+        },
+        "sink": {
+            "file": "app.py",
+            "line": 7,
+            "name": "requests.get",
+            "kind": "sink",
+        },
+        "sink_category": "ssrf",
+        "path": [],
+        "guards": [],
+        "confidence": "medium",
+        "validation": "static_unvalidated",
+        "limitations": ["python_intra_procedural_only"],
+    }
 
 
 def _record(
@@ -181,6 +215,82 @@ def test_export_surfaces_not_analyzed_polyglot_work(tmp_path: Path):
     assert export["completion"]["not_analyzed_files"] == 1
     assert export["entry_count"] == 1
     assert export["entries"][0]["verdict"] == "not_analyzed"
+
+
+def test_export_surfaces_threat_traces_in_all_formats(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text(
+        "from flask import Flask, request\n"
+        "import requests\n"
+        "app = Flask(__name__)\n"
+        "@app.get('/proxy')\n"
+        "def proxy():\n"
+        "    url = request.args.get('url')\n"
+        "    return requests.get(url).text\n",
+        encoding="utf-8",
+    )
+    pending = repo / "pending.py"
+    pending.write_text("print('pending')\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+
+    trace = _threat_trace()
+    analyzed = _record(store, app, status=STATUS_ANALYZED)
+    analyzed.findings = [
+        {
+            "audit_finding_id": "finding-trace",
+            "rule_id": "SKY-D102",
+            "severity": "high",
+            "message": "untrusted URL reaches HTTP client",
+            "line": 7,
+            "metadata": {"threat_trace": trace},
+        }
+    ]
+    store.write_file_record(analyzed)
+    _record(
+        store,
+        pending,
+        status=STATUS_NOT_ANALYZED,
+        candidate=_candidate(
+            "candidate-trace",
+            kind="threat_trace",
+            rule_id="SKY-AUDIT-TRACE",
+            line=7,
+            reason="request data reaches requests.get",
+            evidence="static_unvalidated",
+            data={"threat_trace": _threat_trace("trace-candidate")},
+        ),
+    )
+
+    export = build_deep_audit_export(store=store)
+    entries = {entry["id"]: entry for entry in export["entries"]}
+
+    assert entries["finding-trace"]["threat_trace"]["trace_id"] == "trace-123"
+    assert entries["candidate-trace"]["threat_trace"]["trace_id"] == "trace-candidate"
+
+    sarif = json.loads(render_deep_audit_export(export, "sarif"))
+    metadata_by_rule = {
+        result["ruleId"]: result["properties"]["skylos_metadata"]
+        for result in sarif["runs"][0]["results"]
+    }
+    assert metadata_by_rule["SKY-D102"]["threat_trace"]["trace_id"] == "trace-123"
+    assert (
+        metadata_by_rule["SKY-D102"]["threat_trace_summary"]
+        == "request.args.get@L6 -> requests.get@L7 (static_unvalidated)"
+    )
+
+    markdown = render_deep_audit_export(export, "md")
+    assert "| Severity | Verdict | Status | Rule | Location | Threat Trace | Message |" in markdown
+    assert "request.args.get@L6 -> requests.get@L7 (static_unvalidated)" in markdown
+
+    out_dir = tmp_path / "audit-report"
+    write_deep_audit_export(export, out_dir, "md-dir")
+    detail = (out_dir / "001-high-sky-d102-app.py.md").read_text(encoding="utf-8")
+    assert "## Threat Trace" in detail
+    assert "- Entrypoint: `proxy [app.get]`" in detail
+    assert "- Source: `request.args.get` at `app.py` at line `6`" in detail
 
 
 def test_export_treats_no_candidate_files_as_complete(tmp_path: Path):

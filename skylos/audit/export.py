@@ -194,48 +194,50 @@ def _finding_entry(
     )
     rule_id = str(finding.get("rule_id") or finding.get("rule") or "SKY-AUDIT")
     message = str(finding.get("message") or finding.get("title") or rule_id)
-    return sanitize_for_audit(
-        {
-            "type": "finding",
-            "id": finding_id,
-            "file": record.file,
-            "line": line,
-            "rule_id": rule_id,
-            "severity": severity,
-            "message": message,
-            "status": record.status,
-            "verdict": verdict,
-            "verdict_reason": (latest or {}).get("reason"),
-            "redacted": False,
-            "source": "agent",
-            "finding": finding,
-        }
-    )
+    entry = {
+        "type": "finding",
+        "id": finding_id,
+        "file": record.file,
+        "line": line,
+        "rule_id": rule_id,
+        "severity": severity,
+        "message": message,
+        "status": record.status,
+        "verdict": verdict,
+        "verdict_reason": (latest or {}).get("reason"),
+        "redacted": False,
+        "source": "agent",
+        "finding": finding,
+    }
+    threat_trace = _finding_threat_trace(finding)
+    if threat_trace is not None:
+        entry["threat_trace"] = threat_trace
+    return sanitize_for_audit(entry)
 
 
 def _candidate_entries(record: AuditFileRecord) -> list[dict[str, Any]]:
     verdict = _record_status_verdict(record.status)
     entries = []
     for candidate in record.candidates:
-        entries.append(
-            sanitize_for_audit(
-                {
-                    "type": "candidate",
-                    "id": candidate.candidate_id,
-                    "file": record.file,
-                    "line": candidate.line,
-                    "rule_id": candidate.rule_id,
-                    "severity": _normalize_severity(candidate.severity_hint),
-                    "message": candidate.reason,
-                    "status": record.status,
-                    "verdict": verdict,
-                    "redacted": candidate.redacted,
-                    "source": candidate.evidence,
-                    "kind": candidate.kind,
-                    "symbol": candidate.symbol,
-                }
-            )
-        )
+        entry = {
+            "type": "candidate",
+            "id": candidate.candidate_id,
+            "file": record.file,
+            "line": candidate.line,
+            "rule_id": candidate.rule_id,
+            "severity": _normalize_severity(candidate.severity_hint),
+            "message": candidate.reason,
+            "status": record.status,
+            "verdict": verdict,
+            "redacted": candidate.redacted,
+            "source": candidate.evidence,
+            "kind": candidate.kind,
+            "symbol": candidate.symbol,
+        }
+        threat_trace = _candidate_threat_trace(candidate)
+        if threat_trace is not None:
+            entry["threat_trace"] = threat_trace
+        entries.append(sanitize_for_audit(entry))
     return entries
 
 
@@ -330,6 +332,63 @@ def _finding_id(finding: dict[str, Any]) -> str:
     return "finding-" + sha256_text(payload)[:16]
 
 
+def _finding_threat_trace(finding: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = finding.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    trace = metadata.get("threat_trace")
+    return dict(trace) if isinstance(trace, dict) else None
+
+
+def _candidate_threat_trace(candidate: Any) -> dict[str, Any] | None:
+    data = getattr(candidate, "data", None)
+    if not isinstance(data, dict):
+        return None
+    trace = data.get("threat_trace")
+    return dict(trace) if isinstance(trace, dict) else None
+
+
+def _entry_threat_trace(entry: dict[str, Any]) -> dict[str, Any] | None:
+    trace = entry.get("threat_trace")
+    if isinstance(trace, dict):
+        return dict(trace)
+
+    finding = entry.get("finding")
+    if isinstance(finding, dict):
+        return _finding_threat_trace(finding)
+    return None
+
+
+def _threat_trace_summary(trace: dict[str, Any] | None) -> str:
+    if not isinstance(trace, dict):
+        return ""
+    source = _threat_trace_point_summary(trace.get("source"))
+    sink = _threat_trace_point_summary(trace.get("sink"))
+    validation = str(trace.get("validation") or "").strip()
+    parts: list[str] = []
+    if source or sink:
+        parts.append(f"{source or 'source'} -> {sink or 'sink'}")
+    if validation:
+        parts.append(f"({validation})")
+    if parts:
+        return " ".join(parts)
+    return str(trace.get("trace_id") or "").strip()
+
+
+def _threat_trace_point_summary(point: Any) -> str:
+    if not isinstance(point, dict):
+        return ""
+    name = str(point.get("name") or point.get("kind") or "").strip()
+    line = point.get("line")
+    if name and line:
+        return f"{name}@L{line}"
+    if name:
+        return name
+    if line:
+        return f"L{line}"
+    return ""
+
+
 def _entry_matches(
     entry: dict[str, Any],
     severity_filter: str | None,
@@ -417,6 +476,19 @@ def _export_to_sarif(export: dict[str, Any]) -> dict[str, Any]:
 def _entry_to_sarif_finding(entry: dict[str, Any]) -> dict[str, Any]:
     message = str(entry.get("message") or entry.get("rule_id") or "Deep audit entry")
     verdict = str(entry.get("verdict") or "uncertain")
+    metadata = {
+        "deep_audit_id": entry.get("id"),
+        "verdict": verdict,
+        "status": entry.get("status"),
+        "redacted": entry.get("redacted", False),
+        "source": entry.get("source"),
+    }
+    threat_trace = _entry_threat_trace(entry)
+    if threat_trace is not None:
+        metadata["threat_trace"] = threat_trace
+        summary = _threat_trace_summary(threat_trace)
+        if summary:
+            metadata["threat_trace_summary"] = summary
     return {
         "rule_id": entry.get("rule_id") or "SKY-AUDIT",
         "severity": str(entry.get("severity") or "info").upper(),
@@ -425,13 +497,7 @@ def _entry_to_sarif_finding(entry: dict[str, Any]) -> dict[str, Any]:
         "line": entry.get("line") or 1,
         "category": "SECURITY",
         "kind": entry.get("type"),
-        "metadata": {
-            "deep_audit_id": entry.get("id"),
-            "verdict": verdict,
-            "status": entry.get("status"),
-            "redacted": entry.get("redacted", False),
-            "source": entry.get("source"),
-        },
+        "metadata": metadata,
     }
 
 
@@ -469,28 +535,37 @@ def _export_to_markdown(export: dict[str, Any]) -> str:
         lines.extend(["## Entries", "", "No Deep Mode entries matched the filters."])
         return "\n".join(lines)
 
-    lines.extend(
-        [
-            "## Entries",
-            "",
-            "| Severity | Verdict | Status | Rule | Location | Message |",
-            "| --- | --- | --- | --- | --- | --- |",
-        ]
-    )
+    has_threat_traces = any(_entry_threat_trace(entry) for entry in entries)
+    lines.extend(["## Entries", ""])
+    if has_threat_traces:
+        lines.extend(
+            [
+                "| Severity | Verdict | Status | Rule | Location | Threat Trace | Message |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "| Severity | Verdict | Status | Rule | Location | Message |",
+                "| --- | --- | --- | --- | --- | --- |",
+            ]
+        )
     for entry in entries:
         location = f"{entry.get('file')}:{entry.get('line') or 1}"
+        row = [
+            _md_cell(entry.get("severity")),
+            _md_cell(entry.get("verdict")),
+            _md_cell(entry.get("status")),
+            _md_cell(entry.get("rule_id")),
+            _md_cell(location),
+        ]
+        if has_threat_traces:
+            row.append(_md_cell(_threat_trace_summary(_entry_threat_trace(entry))))
+        row.append(_md_cell(entry.get("message")))
         lines.append(
             "| "
-            + " | ".join(
-                [
-                    _md_cell(entry.get("severity")),
-                    _md_cell(entry.get("verdict")),
-                    _md_cell(entry.get("status")),
-                    _md_cell(entry.get("rule_id")),
-                    _md_cell(location),
-                    _md_cell(entry.get("message")),
-                ]
-            )
+            + " | ".join(row)
             + " |"
         )
     return "\n".join(lines)
@@ -539,7 +614,43 @@ def _entry_to_markdown(entry: dict[str, Any]) -> str:
     reason = entry.get("verdict_reason")
     if reason:
         lines.extend(["", "## Verdict Reason", "", str(reason)])
+    threat_trace = _entry_threat_trace(entry)
+    if threat_trace is not None:
+        lines.extend(["", "## Threat Trace", ""])
+        summary = _threat_trace_summary(threat_trace)
+        if summary:
+            lines.append(summary)
+        entrypoint = str(threat_trace.get("entrypoint") or "").strip()
+        if entrypoint:
+            lines.append(f"- Entrypoint: `{_md_inline(entrypoint)}`")
+        source = _threat_trace_point_markdown("Source", threat_trace.get("source"))
+        if source:
+            lines.append(source)
+        sink = _threat_trace_point_markdown("Sink", threat_trace.get("sink"))
+        if sink:
+            lines.append(sink)
+        validation = str(threat_trace.get("validation") or "").strip()
+        if validation:
+            lines.append(f"- Validation: `{_md_inline(validation)}`")
     return "\n".join(lines)
+
+
+def _threat_trace_point_markdown(label: str, point: Any) -> str:
+    if not isinstance(point, dict):
+        return ""
+    name = str(point.get("name") or point.get("kind") or "").strip()
+    line = point.get("line")
+    file_path = str(point.get("file") or "").strip()
+    if not any([name, line, file_path]):
+        return ""
+    details = []
+    if name:
+        details.append(f"`{_md_inline(name)}`")
+    if file_path:
+        details.append(f"`{_md_inline(file_path)}`")
+    if line:
+        details.append(f"line `{_md_inline(line)}`")
+    return f"- {label}: " + " at ".join(details)
 
 
 def _slug(value: Any) -> str:
