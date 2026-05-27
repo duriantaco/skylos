@@ -199,6 +199,49 @@ def test_scan_deep_audit_candidates_is_stable_across_reruns(
     assert len(ids) == len(set(ids))
 
 
+def test_scan_deep_audit_candidates_records_static_threat_trace_candidate(
+    tmp_path: Path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text(
+        "from flask import Flask, request\n"
+        "import requests\n"
+        "app = Flask(__name__)\n"
+        "@app.get('/proxy')\n"
+        "def proxy():\n"
+        "    url = request.args.get('url')\n"
+        "    return requests.get(url).text\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        audit_candidates,
+        "run_static_on_files",
+        lambda files, **kwargs: {"danger": [], "secrets": []},
+    )
+
+    summary, store = audit_candidates.scan_deep_audit_candidates(repo)
+    record = store.read_file_record(app)
+
+    assert summary.candidate_count >= 1
+    assert record is not None
+    trace_candidates = [
+        candidate
+        for candidate in record.candidates
+        if candidate.kind == "threat_trace"
+        and candidate.rule_id == "SKY-AUDIT-TRACE"
+    ]
+    assert len(trace_candidates) == 1
+    candidate = trace_candidates[0]
+    assert candidate.line == 7
+    assert candidate.source_kind == "request.args.get"
+    assert candidate.sink_kind == "requests.get"
+    assert candidate.evidence == "static_unvalidated"
+    assert candidate.data["threat_trace"]["validation"] == "static_unvalidated"
+
+
 def test_scan_deep_audit_candidates_records_non_candidate_files(
     tmp_path: Path, monkeypatch
 ):

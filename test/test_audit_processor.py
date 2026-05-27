@@ -30,12 +30,28 @@ class FakeAnalyzer:
         ]
 
 
+class LineThreeAnalyzer:
+    def analyze_file(self, file_path, issue_types=None):
+        return [
+            {
+                "rule_id": "SKY-D216",
+                "issue_type": "security",
+                "severity": "high",
+                "message": "Possible SSRF",
+                "location": {"file": str(file_path), "line": 3},
+                "confidence": "high",
+            }
+        ]
+
+
 class CapturingAgent:
     def __init__(self):
         self.sources: list[str] = []
+        self.contexts: list[str | None] = []
 
     def analyze(self, source, file_path, defs_map=None, context=None):
         self.sources.append(source)
+        self.contexts.append(context)
         return []
 
 
@@ -77,6 +93,41 @@ def _candidate(
         redacted=redacted,
         priority=priority,
         code_hash=candidate_id,
+    )
+
+
+def _threat_trace_candidate() -> AuditCandidate:
+    return AuditCandidate(
+        candidate_id="trace-cand",
+        kind="threat_trace",
+        rule_id="SKY-AUDIT-TRACE",
+        line=3,
+        severity_hint="high",
+        reason="Static threat trace: request.args.get reaches requests.get in proxy",
+        evidence="static_unvalidated",
+        priority=875,
+        source_kind="request.args.get",
+        sink_kind="requests.get",
+        code_hash="trace-123",
+        data={
+            "threat_trace": {
+                "trace_id": "trace-123",
+                "entrypoint": "proxy [app.get]",
+                "source": {
+                    "file": "app.py",
+                    "line": 2,
+                    "name": "request.args.get",
+                    "kind": "source",
+                },
+                "sink": {
+                    "file": "app.py",
+                    "line": 3,
+                    "name": "requests.get",
+                    "kind": "sink",
+                },
+                "validation": "static_unvalidated",
+            }
+        },
     )
 
 
@@ -314,6 +365,64 @@ def test_process_deep_audit_records_redacts_incidental_secrets_before_agent_call
     assert raw_secret not in analyzer.agent.sources[0]
     assert REDACTION in analyzer.agent.sources[0]
     assert store.read_file_record(app).status == "analyzed"
+
+
+def test_process_deep_audit_records_passes_threat_trace_candidate_context(
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text(
+        "from flask import request\n"
+        "import requests\n"
+        "def proxy():\n"
+        "    url = request.args.get('url')\n"
+        "    return requests.get(url).text\n",
+        encoding="utf-8",
+    )
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app, candidates=[_threat_trace_candidate()])
+
+    analyzer = AgentBackedAnalyzer()
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-threat-context",
+    )
+
+    assert summary.processed_files == 1
+    assert len(analyzer.agent.contexts) == 1
+    context = analyzer.agent.contexts[0]
+    assert context is not None
+    assert "[DEEP AUDIT CANDIDATES]" in context
+    assert "request.args.get@L2 -> requests.get@L3" in context
+
+
+def test_process_deep_audit_records_attaches_threat_trace_to_matching_finding(
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text("import requests\nurl = 'x'\nrequests.get(url)\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app, candidates=[_threat_trace_candidate()])
+
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=LineThreeAnalyzer(),
+        model="test-model",
+        run_id="run-threat-finding",
+    )
+
+    record = store.read_file_record(app)
+    assert summary.processed_files == 1
+    assert record is not None
+    assert record.findings[0]["metadata"]["threat_trace"]["trace_id"] == "trace-123"
 
 
 def test_process_deep_audit_records_marks_agent_errors_without_raw_secret(

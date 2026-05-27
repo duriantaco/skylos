@@ -15,6 +15,7 @@ from skylos.audit.types import (
     STATUS_PROCESSING,
     STATUS_SKIPPED,
     AuditFileRecord,
+    AuditCandidate,
     AuditProcessSummary,
     code_region_hash,
     normalize_relative_path,
@@ -92,7 +93,7 @@ def process_deep_audit_records(
 
         file_path = store.project_root / record.file
         try:
-            result = _analyze_file_with_redaction(analyzer, file_path)
+            result = _analyze_file_with_redaction(analyzer, file_path, record=record)
             findings = _normalize_findings(result, record=record, file_path=file_path)
         except Exception as exc:
             store.mark_error(record.file, f"Agent processing failed: {exc}")
@@ -355,19 +356,27 @@ def _normalize_findings(
         else:
             continue
         payload = sanitize_for_audit(payload)
+        _attach_candidate_threat_trace(payload, record=record)
         payload["audit_finding_id"] = _finding_id(payload, record=record, source=source)
         normalized.append(payload)
     return normalized
 
 
-def _analyze_file_with_redaction(analyzer: Any, file_path: Path) -> Any:
+def _analyze_file_with_redaction(
+    analyzer: Any, file_path: Path, *, record: AuditFileRecord
+) -> Any:
     source = file_path.read_text(encoding="utf-8", errors="ignore")
     redacted_source = redact_text(source)
 
     get_agent = getattr(analyzer, "_get_agent", None)
     if callable(get_agent):
         agent = get_agent(SECURITY_AUDIT_ISSUE)
-        context = _build_redacted_context(analyzer, redacted_source, file_path)
+        context = _build_redacted_context(
+            analyzer,
+            redacted_source,
+            file_path,
+            record=record,
+        )
         return agent.analyze(redacted_source, str(file_path), context=context)
 
     whole_file_analyzer = getattr(analyzer, "_analyze_whole_file", None)
@@ -390,10 +399,13 @@ def _analyze_file_with_redaction(analyzer: Any, file_path: Path) -> Any:
     )
 
 
-def _build_redacted_context(analyzer: Any, source: str, file_path: Path) -> str | None:
+def _build_redacted_context(
+    analyzer: Any, source: str, file_path: Path, *, record: AuditFileRecord
+) -> str | None:
+    candidate_context = _candidate_context(record)
     context_builder = getattr(analyzer, "context_builder", None)
     if context_builder is None:
-        return None
+        return candidate_context
 
     config = getattr(analyzer, "config", None)
     repo_context_map = getattr(config, "repo_context_map", {}) or {}
@@ -402,6 +414,10 @@ def _build_redacted_context(analyzer: Any, source: str, file_path: Path) -> str 
         or repo_context_map.get(file_path.as_posix())
         or repo_context_map.get(file_path.name)
     )
+    if candidate_context:
+        repo_metadata = (
+            f"{repo_metadata}\n{candidate_context}" if repo_metadata else candidate_context
+        )
 
     try:
         return context_builder.build_analysis_context(
@@ -418,6 +434,66 @@ def _build_redacted_context(analyzer: Any, source: str, file_path: Path) -> str 
             defs_map=None,
             include_review_hints=False,
         )
+
+
+def _candidate_context(record: AuditFileRecord) -> str | None:
+    if not record.candidates:
+        return None
+    lines = ["[DEEP AUDIT CANDIDATES]"]
+    for candidate in sorted(
+        record.candidates,
+        key=lambda item: (-item.priority, item.line, item.candidate_id),
+    )[:8]:
+        lines.append(
+            f"- {candidate.kind} {candidate.rule_id} L{candidate.line}: "
+            f"{candidate.reason}"
+        )
+        trace = _candidate_threat_trace(candidate)
+        if trace is not None:
+            source = trace.get("source") if isinstance(trace.get("source"), dict) else {}
+            sink = trace.get("sink") if isinstance(trace.get("sink"), dict) else {}
+            lines.append(
+                "  threat trace: "
+                f"{source.get('name')}@L{source.get('line')} -> "
+                f"{sink.get('name')}@L{sink.get('line')} "
+                f"({trace.get('validation')})"
+            )
+    return "\n".join(lines)
+
+
+def _candidate_threat_trace(candidate: AuditCandidate) -> dict[str, Any] | None:
+    data = candidate.data if isinstance(candidate.data, dict) else {}
+    trace = data.get("threat_trace")
+    return dict(trace) if isinstance(trace, dict) else None
+
+
+def _candidate_threat_traces_by_line(
+    record: AuditFileRecord,
+) -> dict[int, dict[str, Any]]:
+    by_line: dict[int, dict[str, Any]] = {}
+    for candidate in record.candidates:
+        trace = _candidate_threat_trace(candidate)
+        if trace is not None:
+            by_line.setdefault(candidate.line, trace)
+    return by_line
+
+
+def _attach_candidate_threat_trace(
+    finding: dict[str, Any], *, record: AuditFileRecord
+) -> None:
+    location = finding.get("location") if isinstance(finding.get("location"), dict) else {}
+    try:
+        line = int(finding.get("line") or location.get("line") or 0)
+    except (TypeError, ValueError):
+        return
+    trace = _candidate_threat_traces_by_line(record).get(line)
+    if trace is None:
+        return
+    metadata = finding.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata.setdefault("threat_trace", trace)
+    finding["metadata"] = metadata
 
 
 def _finding_id(

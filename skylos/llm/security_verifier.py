@@ -167,6 +167,12 @@ def _get_message(finding: Finding | dict[str, Any]) -> str:
     return str(finding.get("message") if isinstance(finding, dict) else finding.message)
 
 
+def _get_metadata(finding: Finding | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(finding, dict):
+        return dict(finding.get("metadata") or {})
+    return dict(getattr(finding, "metadata", None) or {})
+
+
 def _new_review_result(reviewable_count: int, reviewed_count: int) -> dict[str, Any]:
     return {
         SUPPORTED_COUNT: 0,
@@ -390,16 +396,47 @@ class SecurityVerifier:
     ) -> str:
         line_num = _get_line_number(finding)
         context = self._build_context(line_num, lines)
+        parts = [
+            f"### Candidate {index}",
+            f"- Rule: {_get_rule_id(finding)}",
+            f"- Severity: {_get_severity(finding)}",
+            f"- Line: {line_num}",
+            f"- Message: {_get_message(finding)}",
+        ]
+        threat_trace = self._format_threat_trace(finding)
+        if threat_trace:
+            parts.extend(["", "Threat trace evidence:", threat_trace])
+        parts.extend(["", "Code context:", context])
+        return "\n".join(parts)
+
+    def _format_threat_trace(self, finding: Finding | dict[str, Any]) -> str | None:
+        metadata = _get_metadata(finding)
+        trace = metadata.get("threat_trace")
+        if not isinstance(trace, dict):
+            return None
+
+        source = trace.get("source") if isinstance(trace.get("source"), dict) else {}
+        sink = trace.get("sink") if isinstance(trace.get("sink"), dict) else {}
+        source_name = str(source.get("name") or "unknown source")
+        source_line = source.get("line") or "?"
+        sink_name = str(sink.get("name") or "unknown sink")
+        sink_line = sink.get("line") or "?"
+        guards = trace.get("guards") if isinstance(trace.get("guards"), list) else []
+        guard_text = "none observed"
+        if guards:
+            guard_text = ", ".join(
+                f"{guard.get('name')}@L{guard.get('line')}"
+                for guard in guards
+                if isinstance(guard, dict)
+            )
         return "\n".join(
             [
-                f"### Candidate {index}",
-                f"- Rule: {_get_rule_id(finding)}",
-                f"- Severity: {_get_severity(finding)}",
-                f"- Line: {line_num}",
-                f"- Message: {_get_message(finding)}",
-                "",
-                "Code context:",
-                context,
+                f"- Trace ID: {trace.get('trace_id')}",
+                f"- Entry point: {trace.get('entrypoint')}",
+                f"- Source: {source_name} at line {source_line}",
+                f"- Sink: {sink_name} at line {sink_line}",
+                f"- Validation: {trace.get('validation')}",
+                f"- Guards: {guard_text}",
             ]
         )
 
