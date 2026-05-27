@@ -26,6 +26,7 @@ from skylos.audit.types import (
 from skylos.config import load_config
 from skylos.constants import parse_exclude_folders
 from skylos.core.file_discovery import discover_source_files, should_exclude_path
+from skylos.llm.threat_trace import build_static_threat_traces
 from skylos.llm.repo_activation import build_repo_activation_index
 from skylos.pipeline import run_static_on_files
 from skylos.rules.secrets import scan_ctx as scan_secrets_ctx
@@ -78,6 +79,8 @@ SECURITY_PATH_TOKENS = (
     "token",
     "upload",
 )
+THREAT_TRACE_KIND = "threat_trace"
+THREAT_TRACE_RULE_ID = "SKY-AUDIT-TRACE"
 
 
 def scan_deep_audit_candidates(
@@ -135,6 +138,11 @@ def scan_deep_audit_candidates(
         static_result=static_result,
     )
     _add_polyglot_signal_candidates(
+        candidates_by_file,
+        files,
+        project_root=project_root,
+    )
+    _add_threat_trace_candidates(
         candidates_by_file,
         files,
         project_root=project_root,
@@ -507,6 +515,49 @@ def _add_polyglot_signal_candidates(
                 continue
             existing.append(candidate)
             existing_locations.add((candidate.rule_id, candidate.line))
+
+
+def _add_threat_trace_candidates(
+    candidates_by_file: dict[str, list[AuditCandidate]],
+    files: list[Path],
+    *,
+    project_root: Path,
+) -> None:
+    for trace in build_static_threat_traces(project_root, files):
+        rel_path = normalize_relative_path(project_root, trace.file)
+        if rel_path not in candidates_by_file:
+            continue
+        reason = (
+            "Static threat trace: "
+            f"{trace.source.name} reaches {trace.sink.name} in {trace.entrypoint}"
+        )
+        candidate_id = _candidate_id(
+            rel_path=rel_path,
+            kind=THREAT_TRACE_KIND,
+            rule_id=THREAT_TRACE_RULE_ID,
+            line=trace.sink.line,
+            source_kind=trace.source.name,
+            sink_kind=trace.sink.name,
+            code_hash=trace.trace_id,
+        )
+        candidates_by_file.setdefault(rel_path, []).append(
+            AuditCandidate(
+                candidate_id=candidate_id,
+                kind=THREAT_TRACE_KIND,
+                rule_id=THREAT_TRACE_RULE_ID,
+                line=trace.sink.line,
+                severity_hint="high",
+                reason=reason,
+                evidence=trace.validation,
+                redacted=False,
+                priority=875,
+                symbol=trace.entrypoint,
+                source_kind=trace.source.name,
+                sink_kind=trace.sink.name,
+                code_hash=trace.trace_id,
+                data={"threat_trace": trace.to_dict()},
+            )
+        )
 
 
 def _add_path_signal_candidates(

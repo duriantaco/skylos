@@ -16,6 +16,12 @@ from .security_verifier import (
     annotate_security_finding,
     is_security_finding,
 )
+from .threat_trace import (
+    ThreatTrace,
+    attach_threat_traces_to_findings,
+    build_static_threat_traces,
+    threat_trace_context_lines,
+)
 
 COMPLETED_STATUS = "completed"
 REPO_MAP_STAGE = "repo_map"
@@ -44,6 +50,7 @@ REPO_MAP_FILENAME = "repo_map.json"
 CANDIDATES_FILENAME = "candidates.json"
 VERIFIED_FILENAME = "verified.json"
 SUMMARY_FILENAME = "summary.json"
+THREAT_TRACES_FILENAME = "threat_traces.json"
 
 
 @dataclass(frozen=True)
@@ -128,6 +135,8 @@ class SecurityFindingCandidate:
     evidence: str = HYPOTHESIS_EVIDENCE
     review_verdict: str | None = None
     review_reason: str | None = None
+    threat_trace_id: str | None = None
+    threat_trace_validation: str | None = None
     history: list[SecurityCandidateEvent] = field(default_factory=list)
 
 
@@ -142,6 +151,7 @@ class SecurityTaskflowRun:
     preferred_audit_targets: list[str] = field(default_factory=list)
     entry_points: list[SecurityEntrypoint] = field(default_factory=list)
     trust_boundaries: list[SecurityTrustBoundary] = field(default_factory=list)
+    threat_traces: list[ThreatTrace] = field(default_factory=list)
     stages: list[SecurityTaskStage] = field(default_factory=list)
     candidate_count: int = 0
     supported_count: int = 0
@@ -170,6 +180,7 @@ class SecurityTaskflowRun:
             "trust_boundaries": [
                 _trust_boundary_dict(item) for item in self.trust_boundaries
             ],
+            "threat_traces": [trace.to_dict() for trace in self.threat_traces],
             "stages": [_stage_dict(stage) for stage in self.stages],
             "candidate_count": self.candidate_count,
             "supported_count": self.supported_count,
@@ -239,7 +250,7 @@ def _candidate_event_dict(event: SecurityCandidateEvent) -> dict[str, Any]:
 
 
 def _candidate_dict(candidate: SecurityFindingCandidate) -> dict[str, Any]:
-    return {
+    payload = {
         "candidate_id": candidate.candidate_id,
         "fingerprint": candidate.fingerprint,
         "file": candidate.file,
@@ -253,6 +264,11 @@ def _candidate_dict(candidate: SecurityFindingCandidate) -> dict[str, Any]:
         "review_reason": candidate.review_reason,
         "history": [_candidate_event_dict(event) for event in candidate.history],
     }
+    if candidate.threat_trace_id:
+        payload["threat_trace_id"] = candidate.threat_trace_id
+    if candidate.threat_trace_validation:
+        payload["threat_trace_validation"] = candidate.threat_trace_validation
+    return payload
 
 
 def _repo_node(meta: FileActivation) -> SecurityRepoNode:
@@ -465,6 +481,12 @@ def _finding_review_verdict(finding: Any) -> str | None:
     return str(verdict).upper() if verdict else None
 
 
+def _finding_threat_trace(finding: Any) -> dict[str, Any] | None:
+    metadata = _finding_metadata(finding)
+    trace = metadata.get("threat_trace")
+    return dict(trace) if isinstance(trace, dict) else None
+
+
 def _candidate_fingerprint(finding: Any) -> str:
     raw = "|".join(
         [
@@ -507,6 +529,12 @@ def _build_candidate_ledger(findings: list[Any]) -> list[SecurityFindingCandidat
             message=_finding_message(finding),
             symbol=_finding_symbol(finding),
         )
+        threat_trace = _finding_threat_trace(finding)
+        if threat_trace is not None:
+            candidate.threat_trace_id = str(threat_trace.get("trace_id") or "")
+            candidate.threat_trace_validation = str(
+                threat_trace.get("validation") or ""
+            )
         candidate.history.append(
             SecurityCandidateEvent(
                 stage=AUDIT_STAGE,
@@ -534,6 +562,12 @@ def _update_candidate_ledger(
         candidate.evidence = event.evidence
         candidate.review_verdict = event.review_verdict
         candidate.review_reason = event.review_reason
+        threat_trace = _finding_threat_trace(finding)
+        if threat_trace is not None:
+            candidate.threat_trace_id = str(threat_trace.get("trace_id") or "")
+            candidate.threat_trace_validation = str(
+                threat_trace.get("validation") or ""
+            )
         candidate.history.append(event)
 
 
@@ -621,6 +655,25 @@ def _build_repo_map(
     )
 
 
+def _add_threat_traces_to_repo_context(
+    repo_context_map: dict[str, str], traces: list[ThreatTrace]
+) -> dict[str, str]:
+    trace_lines_by_file = threat_trace_context_lines(traces)
+    if not trace_lines_by_file:
+        return repo_context_map
+
+    enriched = dict(repo_context_map)
+    for file_path, lines in trace_lines_by_file.items():
+        if not lines:
+            continue
+        existing = enriched.get(file_path)
+        trace_context = "\n".join(["[THREAT TRACE EVIDENCE]", *lines])
+        enriched[file_path] = (
+            f"{existing}\n{trace_context}" if existing else trace_context
+        )
+    return enriched
+
+
 def _security_review_defaults(
     result: AnalysisResult, findings: list[Any]
 ) -> dict[str, Any]:
@@ -705,6 +758,16 @@ def _candidate_ledger_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
     }
 
 
+def _threat_traces_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
+    return {
+        "run_id": run.run_id,
+        "project_root": run.project_root,
+        "trace_count": len(run.threat_traces),
+        "validation": "static_unvalidated",
+        "traces": [trace.to_dict() for trace in run.threat_traces],
+    }
+
+
 def _verified_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
     result_payload = (
         run.result.to_dict() if run.result is not None else AnalysisResult().to_dict()
@@ -726,6 +789,7 @@ def _summary_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
         "artifacts_dir": run.artifacts_dir,
         "scanned_files": list(run.scanned_files),
         "candidate_count": run.candidate_count,
+        "threat_trace_count": len(run.threat_traces),
         "supported_count": run.supported_count,
         "refuted_count": run.refuted_count,
         "hypothesis_count": run.hypothesis_count,
@@ -750,6 +814,7 @@ def _write_run_artifacts(run: SecurityTaskflowRun) -> None:
     artifact_dir = Path(run.artifacts_dir)
     payloads = (
         (REPO_MAP_FILENAME, _repo_map_payload(run)),
+        (THREAT_TRACES_FILENAME, _threat_traces_payload(run)),
         (CANDIDATES_FILENAME, _candidate_ledger_payload(run)),
         (VERIFIED_FILENAME, _verified_payload(run)),
         (SUMMARY_FILENAME, _summary_payload(run)),
@@ -829,6 +894,11 @@ def _build_taskflow_run(
         entry_points,
         trust_boundaries,
     ) = _build_repo_map(project_root, files)
+    threat_traces = build_static_threat_traces(project_root, files)
+    repo_context_map = _add_threat_traces_to_repo_context(
+        repo_context_map,
+        threat_traces,
+    )
     run = SecurityTaskflowRun(
         run_id=run_id,
         project_root=str(project_root),
@@ -839,6 +909,7 @@ def _build_taskflow_run(
         preferred_audit_targets=preferred_targets,
         entry_points=entry_points,
         trust_boundaries=trust_boundaries,
+        threat_traces=threat_traces,
     )
     run.add_stage(
         REPO_MAP_STAGE,
@@ -850,6 +921,7 @@ def _build_taskflow_run(
         ENTRY_POINTS_STAGE,
         entry_points=len(entry_points),
         trust_boundaries=len(trust_boundaries),
+        threat_traces=len(threat_traces),
     )
     return run
 
@@ -910,6 +982,7 @@ def run_security_taskflow(
     run = _build_taskflow_run(project_root, files)
     analyzer.config.repo_context_map = dict(run.repo_context_map)
     result = analyzer.analyze_files(files, issue_types=["security_audit"])
+    attach_threat_traces_to_findings(result.findings, run.threat_traces)
     run.candidate_ledger = _build_candidate_ledger(result.findings)
     review = review_security_analysis_result(
         result=result,

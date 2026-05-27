@@ -38,7 +38,8 @@ Rule IDs use a stable public prefix:
 | Quality | Maintainability, complexity, architecture, resilience, typing, framework practice, and repo policy issues. |
 | AI code mistakes | Hallucinated security calls, phantom decorators, unfinished stubs, disabled controls, placeholder data, stale mocks, and missing timeouts. |
 | Security quick | `skylos agent security-quick .`; one-shot LLM security audit, equivalent to `skylos agent scan . --security`. |
-| Security deep | `skylos agent security-deep .`; three-stage security workflow for threat-model context, discovery/validation, and remediation handoff, equivalent to `skylos agent audit . --deep`. |
+| Security deep | `skylos agent security-deep .`; three-stage security workflow for threat-model context, static threat tracing, discovery/validation, and remediation handoff, equivalent to `skylos agent audit . --deep`. |
+| Threat trace | Static source-to-sink evidence showing how user-controlled input reaches a sensitive sink, recorded on security-deep findings and run artifacts. |
 | LLM app defense | `skylos defend .`; checks LLM integrations for guardrails such as tool safety, output validation, rate limits, and prompt-injection exposure. |
 | Prompt templates | Maintainer-provided files under `[tool.skylos.templates]` that extend built-in LLM prompts without replacing safety and JSON-output contracts. |
 | Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, and timeout-required calls. |

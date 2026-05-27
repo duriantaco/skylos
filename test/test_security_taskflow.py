@@ -106,6 +106,123 @@ def test_run_security_taskflow_builds_repo_context_and_entry_points(tmp_path):
     assert run.candidate_ledger == []
 
 
+def test_run_security_taskflow_attaches_static_threat_trace_evidence(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text(
+        "from flask import Flask, request\n"
+        "import requests\n"
+        "app = Flask(__name__)\n"
+        "@app.get('/proxy')\n"
+        "def proxy():\n"
+        "    url = request.args.get('url')\n"
+        "    return requests.get(url).text\n",
+        encoding="utf-8",
+    )
+    finding = _security_finding(str(app), 7, "SKY-D216")
+    analyzer = _FakeAnalyzer(AnalysisResult(findings=[finding], files_analyzed=1))
+
+    def _review(found):
+        annotate_security_finding(
+            found[0],
+            evidence="review_supported",
+            review_verdict="SUPPORTED",
+            review_reason="static threat trace shows request source reaches HTTP sink",
+            needs_review=True,
+            ci_blocking=False,
+        )
+        return {
+            "supported": 1,
+            "refuted": 0,
+            "undecided": 0,
+            "refuted_findings": [],
+        }
+
+    with (
+        patch(
+            "skylos.llm.security_taskflow._generate_run_id",
+            return_value="run-trace-123",
+        ),
+        patch(
+            "skylos.llm.security_taskflow.SecurityVerifier.review_findings",
+            side_effect=_review,
+        ),
+    ):
+        run = run_security_taskflow(
+            path=tmp_path,
+            files=[app],
+            analyzer=analyzer,
+            model="gpt-4.1",
+            api_key="k",
+        )
+
+    assert len(run.threat_traces) == 1
+    trace = run.threat_traces[0]
+    assert trace.entrypoint == "proxy [app.get]"
+    assert trace.source.name == "request.args.get"
+    assert trace.sink.name == "requests.get"
+    assert trace.sink.line == 7
+    assert trace.validation == "static_unvalidated"
+
+    context = analyzer.config.repo_context_map[str(app.resolve())]
+    assert "[THREAT TRACE EVIDENCE]" in context
+    assert "source request.args.get@L6 reaches requests.get@L7" in context
+
+    metadata = run.result.findings[0].metadata
+    assert metadata["threat_trace"]["trace_id"] == trace.trace_id
+    assert metadata["threat_trace"]["sink"]["name"] == "requests.get"
+
+    candidate = run.candidate_ledger[0]
+    assert candidate.threat_trace_id == trace.trace_id
+    assert candidate.threat_trace_validation == "static_unvalidated"
+
+    artifacts_dir = tmp_path / ".skylos" / "runs" / "run-trace-123"
+    threat_payload = json.loads((artifacts_dir / "threat_traces.json").read_text())
+    verified_payload = json.loads((artifacts_dir / "verified.json").read_text())
+    candidates_payload = json.loads((artifacts_dir / "candidates.json").read_text())
+
+    assert threat_payload["trace_count"] == 1
+    assert threat_payload["traces"][0]["trace_id"] == trace.trace_id
+    assert (
+        verified_payload["result"]["findings"][0]["metadata"]["threat_trace"][
+            "trace_id"
+        ]
+        == trace.trace_id
+    )
+    assert candidates_payload["candidates"][0]["threat_trace_id"] == trace.trace_id
+
+
+def test_run_security_taskflow_does_not_trace_sanitized_or_unrelated_sinks(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text(
+        "from flask import request\n"
+        "import os\n"
+        "import requests\n\n"
+        "def sanitized_path():\n"
+        "    name = request.args.get('name')\n"
+        "    safe = os.path.basename(name)\n"
+        "    return open(safe).read()\n\n"
+        "def unrelated_sink():\n"
+        "    url = request.args.get('url')\n"
+        "    return requests.get('https://example.com').text\n",
+        encoding="utf-8",
+    )
+    analyzer = _FakeAnalyzer(AnalysisResult(findings=[], files_analyzed=1))
+
+    run = run_security_taskflow(
+        path=tmp_path,
+        files=[app],
+        analyzer=analyzer,
+        model="gpt-4.1",
+        api_key="k",
+    )
+
+    assert run.threat_traces == []
+    assert "[THREAT TRACE EVIDENCE]" not in analyzer.config.repo_context_map.get(
+        str(app.resolve()),
+        "",
+    )
+
+
 def test_run_security_taskflow_tolerates_non_utf8_python_file(tmp_path):
     malformed = tmp_path / "malformed.py"
     malformed.write_bytes(b"def handler():\n    return b'\\xff' + \xff\n")
