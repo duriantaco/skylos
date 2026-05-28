@@ -26,7 +26,7 @@ from skylos.constants import (
     DEFAULT_EXCLUDE_FOLDERS,
     get_non_library_dir_kind,
 )
-from skylos.config import load_config
+from skylos.config import ConfigError, load_config, resolve_config_file_path
 from skylos.cloud.credentials import PROVIDERS
 from skylos.core.result_cache import (
     build_trace_cache_key,
@@ -2791,7 +2791,8 @@ def _build_main_scan_context(args):
             logger.debug(f"Excluding folders: {args.exclude_folders}")
 
     use_defaults = not args.no_default_excludes
-    project_cfg = load_config(project_root)
+    config_file = resolve_config_file_path(getattr(args, "config_file", None))
+    project_cfg = load_config(project_root, config_file=config_file)
     final_exclude_folders = parse_exclude_folders(
         user_exclude_folders=args.exclude_folders,
         config_exclude_folders=project_cfg.get("exclude"),
@@ -2806,6 +2807,7 @@ def _build_main_scan_context(args):
         console=console,
         final_exclude_folders=final_exclude_folders,
         config=project_cfg,
+        config_file=config_file,
     )
 
 

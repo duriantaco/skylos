@@ -1,7 +1,10 @@
 import unittest
 import tempfile
+import os
 from pathlib import Path
 from skylos.config import (
+    CONFIG_FILE_ENV_VAR,
+    ConfigError,
     load_config,
     DEFAULTS,
     is_path_excluded,
@@ -36,6 +39,108 @@ class TestSkylosConfig(unittest.TestCase):
 
         self.assertEqual(config["complexity"], 99)
         self.assertEqual(config["nesting"], DEFAULTS["nesting"])
+
+    def test_load_config_explicit_file_replaces_pyproject_discovery(self):
+        (self.root / "pyproject.toml").write_text(
+            "[tool.skylos]\ncomplexity = 99\nmax_args = 2",
+            encoding="utf-8",
+        )
+        quality_dir = self.root / "quality"
+        quality_dir.mkdir()
+        (quality_dir / "skylos.toml").write_text(
+            """
+[skylos]
+complexity = 7
+ignore = ["SKY-Q301"]
+""".strip(),
+            encoding="utf-8",
+        )
+        nested_path = self.root / "a" / "b"
+        nested_path.mkdir(parents=True)
+
+        old_cwd = os.getcwd()
+        os.chdir(self.root)
+        try:
+            config = load_config(nested_path, config_file="quality/skylos.toml")
+        finally:
+            os.chdir(old_cwd)
+
+        self.assertEqual(config["complexity"], 7)
+        self.assertEqual(config["max_args"], DEFAULTS["max_args"])
+        self.assertEqual(config["ignore"], ["SKY-Q301"])
+
+    def test_load_config_explicit_file_accepts_tool_skylos_table(self):
+        config_path = self.root / "quality.toml"
+        config_path.write_text(
+            """
+[tool.skylos]
+max_lines = 42
+
+[tool.skylos.gate]
+strict = true
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root, config_file=config_path)
+
+        self.assertEqual(config["max_lines"], 42)
+        self.assertTrue(config["gate"]["strict"])
+
+    def test_load_config_env_config_file(self):
+        config_path = self.root / "skylos.toml"
+        config_path.write_text("[skylos]\nnesting = 5", encoding="utf-8")
+        old_value = os.environ.get(CONFIG_FILE_ENV_VAR)
+        os.environ[CONFIG_FILE_ENV_VAR] = str(config_path)
+        try:
+            config = load_config(self.root)
+        finally:
+            if old_value is None:
+                os.environ.pop(CONFIG_FILE_ENV_VAR, None)
+            else:
+                os.environ[CONFIG_FILE_ENV_VAR] = old_value
+
+        self.assertEqual(config["nesting"], 5)
+
+    def test_load_config_explicit_file_requires_skylos_table(self):
+        config_path = self.root / "skylos.toml"
+        config_path.write_text("[tool.other]\ncomplexity = 1", encoding="utf-8")
+
+        with self.assertRaises(ConfigError):
+            load_config(self.root, config_file=config_path)
+
+    def test_load_config_explicit_file_preserves_synced_policy_precedence(self):
+        skylos_dir = self.root / ".skylos"
+        skylos_dir.mkdir()
+        (skylos_dir / "config.yaml").write_text(
+            """
+security_contracts:
+  - framework: fastapi
+    file: app/api/routes.py
+    handler: list_users
+    guards:
+      - require_admin
+""".strip(),
+            encoding="utf-8",
+        )
+        config_path = self.root / "quality" / "skylos.toml"
+        config_path.parent.mkdir()
+        config_path.write_text(
+            """
+[skylos]
+ignore = ["SKY-SC001"]
+exclude = ["app/**"]
+security_contracts = []
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root, config_file=config_path)
+
+        self.assertEqual(config["exclude"], [])
+        self.assertNotIn("SKY-SC001", config["ignore"])
+        self.assertEqual(len(config["security_contracts"]), 1)
+        self.assertEqual(config["security_contracts"][0]["handler"], "list_users")
 
     def test_load_config_ignores_symlinked_pyproject(self):
         with tempfile.TemporaryDirectory() as outside_dir:

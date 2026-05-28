@@ -72,12 +72,18 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
         if not _is_tty():
             parser.error("--tui requires an interactive terminal")
     args._explicit_upload_requested = bool(getattr(args, "upload", False))
-    context = _build_main_scan_context(args)
+
+    try:
+        context = _build_main_scan_context(args)
+    except cli_module.ConfigError as exc:
+        parser.error(str(exc))
+
     project_root = context.project_root
     logger = context.logger
     console = context.console
     final_exclude_folders = context.final_exclude_folders
     config = context.config
+    config_file = context.config_file
     machine_output = _is_main_machine_output(args)
 
     if _print_main_scan_banner(args, console, final_exclude_folders):
@@ -90,7 +96,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     trace_file = pre_analysis.trace_file
 
     try:
-        scan_path = args.path if len(args.path) > 1 else args.path[0]
+        if len(args.path) > 1:
+            scan_path = args.path
+        else:
+            scan_path = args.path[0]
 
         def run_main_analysis(progress_callback=None):
             return run_analyze(
@@ -106,6 +115,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 grep_verify=not getattr(args, "no_grep_verify", False),
                 enable_sca=bool(args.sca),
                 trace_file=trace_file,
+                config_file=config_file,
             )
 
         quiet_analysis_output = (

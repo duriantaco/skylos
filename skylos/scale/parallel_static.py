@@ -15,6 +15,7 @@ def _worker(
     collect_architecture_metrics=False,
     enable_quality_rules=True,
     enable_danger_rules=True,
+    config_file=None,
 ):
     from skylos.analyzer import proc_file
 
@@ -28,6 +29,7 @@ def _worker(
         collect_architecture_metrics=collect_architecture_metrics,
         enable_quality_rules=enable_quality_rules,
         enable_danger_rules=enable_danger_rules,
+        config_file=config_file,
     )
     return str(file_path), out
 
@@ -45,6 +47,7 @@ def run_proc_file_parallel(
     collect_architecture_metrics=False,
     enable_quality_rules=True,
     enable_danger_rules=True,
+    config_file=None,
 ):
     import os
 
@@ -76,6 +79,7 @@ def run_proc_file_parallel(
                 collect_architecture_metrics=collect_architecture_metrics,
                 enable_quality_rules=enable_quality_rules,
                 enable_danger_rules=enable_danger_rules,
+                config_file=config_file,
             )
             outs.append(out)
 
@@ -102,6 +106,7 @@ def run_proc_file_parallel(
                 collect_architecture_metrics,
                 enable_quality_rules,
                 enable_danger_rules,
+                config_file,
             )
             fut_to_file[fut] = f
 
@@ -134,6 +139,7 @@ def run_proc_file_parallel(
                         collect_architecture_metrics=collect_architecture_metrics,
                         enable_quality_rules=enable_quality_rules,
                         enable_danger_rules=enable_danger_rules,
+                        config_file=config_file,
                     )
                 except Exception:
                     logger.error(
