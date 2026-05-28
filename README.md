@@ -182,6 +182,12 @@ JSON-only output contract or untrusted-code safety rules. Vibe dictionary
 extensions let teams teach Skylos about local fake-auth helpers, project
 credential names, sensitive files, and network calls that must set timeouts.
 
+By default Skylos discovers `[tool.skylos]` in `pyproject.toml` by walking up
+from the scan path. To use a dedicated TOML config, pass `--config-file PATH`
+or set `SKYLOS_CONFIG_FILE`; standalone files may use either `[tool.skylos]`
+or top-level `[skylos]`. Synced Skylos Cloud policy keeps its protected
+precedence over repository-controlled config.
+
 ## Language Support
 
 | Language | Dead Code | Security | Quality | Notes |

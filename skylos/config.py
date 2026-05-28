@@ -1,6 +1,13 @@
-from pathlib import Path
-import fnmatch
 import copy
+import fnmatch
+import os
+from pathlib import Path
+
+CONFIG_FILE_ENV_VAR = "SKYLOS_CONFIG_FILE"
+
+
+class ConfigError(ValueError):
+    """thrown when your selected config file cannot be loaded."""
 
 DEFAULTS = {
     "complexity": 10,
@@ -101,12 +108,18 @@ _REPO_POLICY_WEAKENING_KEYS = {
 }
 
 
-def load_config(start_path) -> dict:
+def load_config(start_path, config_file=None) -> dict:
     current = Path(start_path).resolve()
     if current.is_file():
         current = current.parent
 
-    root_config, sync_config = _find_config_paths(current)
+    explicit_config = resolve_config_file_path(config_file)
+    if explicit_config is None:
+        root_config, sync_config = _find_config_paths(current)
+    else:
+        root_config = explicit_config
+        _, sync_config = _find_config_paths(current)
+
     final_cfg = copy.deepcopy(DEFAULTS)
     synced_cfg = _load_synced_config(sync_config) if sync_config else {}
 
@@ -118,11 +131,41 @@ def load_config(start_path) -> dict:
 
     try:
         final_cfg = _merge_user_config(
-            final_cfg, _load_pyproject_user_config(root_config)
+            final_cfg,
+            _load_toml_user_config(root_config, explicit=explicit_config is not None),
         )
+    except ConfigError:
+        raise
     except Exception:
+        if explicit_config is not None:
+            raise ConfigError(f"Could not load config file: {root_config}")
         return final_cfg
     return _restore_synced_policy_precedence(final_cfg, synced_cfg)
+
+
+def resolve_config_file_path(config_file=None) -> Path | None:
+    raw_config_file = config_file
+    if raw_config_file is None:
+        raw_config_file = os.environ.get(CONFIG_FILE_ENV_VAR)
+    if raw_config_file is None:
+        return None
+
+    raw_path = str(raw_config_file).strip()
+    if not raw_path:
+        return None
+
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ConfigError(f"Config file not found: {raw_path}") from exc
+
+    if not resolved.is_file():
+        raise ConfigError(f"Config path is not a file: {raw_path}")
+    return resolved
 
 
 def _restore_synced_policy_precedence(final_cfg: dict, synced_cfg: dict) -> dict:
@@ -192,10 +235,7 @@ def _find_config_paths(start_dir: Path) -> tuple[Path | None, Path | None]:
     return root_config, sync_config
 
 
-def _load_pyproject_user_config(root_config: Path) -> dict:
-    if not _is_safe_config_file(root_config, "pyproject.toml"):
-        return {}
-
+def _load_toml_data(root_config: Path) -> dict:
     try:
         import tomllib
     except ImportError:
@@ -205,10 +245,33 @@ def _load_pyproject_user_config(root_config: Path) -> dict:
             return {}
 
     with root_config.open("rb") as f:
-        data = tomllib.load(f)
+        return tomllib.load(f)
 
-    user_cfg = dict(data.get("tool", {}).get("skylos", {}) or {})
-    gate_cfg = data.get("tool", {}).get("skylos", {}).get("gate", {})
+
+def _select_skylos_toml_config(data: dict, *, explicit: bool) -> dict:
+    tool_cfg = data.get("tool")
+    if isinstance(tool_cfg, dict) and "skylos" in tool_cfg:
+        tool_skylos = tool_cfg.get("skylos")
+        if isinstance(tool_skylos, dict):
+            return tool_skylos
+
+    top_skylos = data.get("skylos")
+    if explicit and isinstance(top_skylos, dict):
+        return top_skylos
+    if explicit:
+        raise ConfigError("Config file must contain [tool.skylos] or [skylos]")
+
+    return {}
+
+
+def _load_toml_user_config(root_config: Path, *, explicit: bool = False) -> dict:
+    if not explicit and not _is_safe_config_file(root_config, "pyproject.toml"):
+        return {}
+
+    data = _load_toml_data(root_config)
+    skylos_cfg = _select_skylos_toml_config(data, explicit=explicit)
+    user_cfg = dict(skylos_cfg or {})
+    gate_cfg = skylos_cfg.get("gate", {})
     if gate_cfg:
         user_cfg["gate"] = gate_cfg
     return user_cfg
@@ -308,7 +371,10 @@ def _merge_user_config(base_cfg: dict, user_cfg: dict | None) -> dict:
 
 
 def _sanitize_config(cfg: dict) -> dict:
-    safe = copy.deepcopy(cfg) if isinstance(cfg, dict) else copy.deepcopy(DEFAULTS)
+    if isinstance(cfg, dict):
+        safe = copy.deepcopy(cfg)
+    else:
+        safe = copy.deepcopy(DEFAULTS)
 
     for key, minimum in _INT_CONFIG_KEYS.items():
         safe[key] = _safe_int(safe.get(key), DEFAULTS[key], minimum=minimum)
@@ -423,7 +489,10 @@ def _safe_dict_list(value, default):
 
 
 def _sanitize_masking_section(value):
-    raw = value if isinstance(value, dict) else {}
+    if isinstance(value, dict):
+        raw = value
+    else:
+        raw = {}
     safe = copy.deepcopy(DEFAULTS["masking"])
     safe["names"] = _safe_string_list(raw.get("names"), safe["names"])
     safe["decorators"] = _safe_string_list(raw.get("decorators"), safe["decorators"])
@@ -435,7 +504,10 @@ def _sanitize_masking_section(value):
 
 
 def _sanitize_templates_section(value):
-    raw = value if isinstance(value, dict) else {}
+    if isinstance(value, dict):
+        raw = value
+    else:
+        raw = {}
     safe = copy.deepcopy(DEFAULTS["templates"])
     for key in list(safe):
         candidate = raw.get(key)
@@ -445,7 +517,10 @@ def _sanitize_templates_section(value):
 
 
 def _sanitize_vibe_section(value):
-    raw = value if isinstance(value, dict) else {}
+    if isinstance(value, dict):
+        raw = value
+    else:
+        raw = {}
     safe = copy.deepcopy(DEFAULTS["vibe"])
     for key in list(safe):
         safe[key] = _safe_string_list(raw.get(key), safe[key])
@@ -453,7 +528,10 @@ def _sanitize_vibe_section(value):
 
 
 def _sanitize_architecture_section(value):
-    raw = value if isinstance(value, dict) else {}
+    if isinstance(value, dict):
+        raw = value
+    else:
+        raw = {}
     safe = copy.deepcopy(DEFAULTS["architecture"])
     for key in ("strict", "enforce_iad", "strict_iad"):
         if key in raw:

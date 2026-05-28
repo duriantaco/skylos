@@ -339,6 +339,38 @@ class TestMainFunction:
             mock_analyze.assert_called_once()
             mock_print.assert_called_once_with(json.dumps(mock_skylos_result))
 
+    def test_main_config_file_is_loaded_and_forwarded(
+        self, mock_skylos_result, tmp_path, monkeypatch
+    ):
+        config_dir = tmp_path / "quality"
+        config_dir.mkdir()
+        config_path = config_dir / "skylos.toml"
+        config_path.write_text("[skylos]\nquality_enabled = true", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        test_args = [
+            "cli.py",
+            ".",
+            "--json",
+            "--config-file",
+            "quality/skylos.toml",
+            "--no-provenance",
+        ]
+
+        with (
+            patch("sys.argv", test_args),
+            patch("skylos.cli.run_analyze") as mock_analyze,
+            patch("builtins.print"),
+            patch("skylos.cli.setup_logger"),
+            patch("skylos.cli.Progress") as mock_progress,
+        ):
+            mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
+            mock_analyze.return_value = json.dumps(mock_skylos_result)
+
+            main()
+
+            assert mock_analyze.call_args.kwargs["enable_quality"] is True
+            assert mock_analyze.call_args.kwargs["config_file"] == config_path.resolve()
+
     def test_main_verbose_output(self, mock_skylos_result):
         """with verbose"""
         test_args = ["cli.py", "test_path", "--verbose"]

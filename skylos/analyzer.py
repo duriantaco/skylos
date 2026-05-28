@@ -1633,6 +1633,7 @@ class Skylos:
         architecture_main_guard_modules=None,
         pyproject_entrypoint_qnames=None,
         pyproject_entrypoint_modules=None,
+        config_file=None,
     ):
         """Assemble the final result dict from analysis outputs."""
         architecture_main_guard_modules = set(architecture_main_guard_modules or ())
@@ -1859,7 +1860,10 @@ class Skylos:
             result["unused_exports"].extend(unused_ts_exports)
             result["analysis_summary"]["unused_exports_count"] = len(unused_ts_exports)
 
-        project_cfg = load_config(path[0] if isinstance(path, (list, tuple)) else path)
+        project_cfg = load_config(
+            path[0] if isinstance(path, (list, tuple)) else path,
+            config_file=config_file,
+        )
         if project_cfg.get("check_circular", True):
             circular_rule = CircularDependencyRule()
 
@@ -1998,6 +2002,7 @@ class Skylos:
         grep_verify=True,
         enable_sca=False,
         trace_file=None,
+        config_file=None,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -2027,7 +2032,7 @@ class Skylos:
         )
 
         workspace_inventory = discover_workspace_inventory(project_root)
-        project_cfg = load_config(project_root)
+        project_cfg = load_config(project_root, config_file=config_file)
         project_ignore = set(project_cfg.get("ignore", []))
 
         if not files:
@@ -2200,6 +2205,7 @@ class Skylos:
                 collect_architecture_metrics=enable_quality,
                 enable_quality_rules=enable_quality,
                 enable_danger_rules=enable_danger,
+                config_file=config_file,
             )
 
             if os.getenv("SKYLOS_DEBUG"):
@@ -3046,6 +3052,7 @@ class Skylos:
             architecture_main_guard_modules=architecture_main_guard_modules,
             pyproject_entrypoint_qnames=pyproject_entrypoint_qnames,
             pyproject_entrypoint_modules=pyproject_entrypoint_modules,
+            config_file=config_file,
         )
 
         return json.dumps(result, indent=2)
@@ -3079,13 +3086,14 @@ def proc_file(
     collect_architecture_metrics=False,
     enable_quality_rules=True,
     enable_danger_rules=True,
+    config_file=None,
 ) -> dict | None:
     if mod is None and isinstance(file_or_args, tuple):
         file, mod = file_or_args
     else:
         file = file_or_args
 
-    cfg = load_config(file)
+    cfg = load_config(file, config_file=config_file)
 
     if str(file).endswith(_TS_JS_SOURCE_EXTS):
         out = scan_typescript_file(
@@ -3610,21 +3618,23 @@ def analyze(
     grep_verify=True,
     enable_sca=False,
     trace_file=None,
+    config_file=None,
 ) -> str:
     return Skylos().analyze(
         path,
-        conf,
-        exclude_folders,
-        enable_secrets,
-        enable_danger,
-        enable_quality,
-        extra_visitors,
-        progress_callback,
-        custom_rules_data,
-        changed_files,
+        thr=conf,
+        exclude_folders=exclude_folders,
+        enable_secrets=enable_secrets,
+        enable_danger=enable_danger,
+        enable_quality=enable_quality,
+        extra_visitors=extra_visitors,
+        progress_callback=progress_callback,
+        custom_rules_data=custom_rules_data,
+        changed_files=changed_files,
         grep_verify=grep_verify,
         enable_sca=enable_sca,
         trace_file=trace_file,
+        config_file=config_file,
     )
 
 

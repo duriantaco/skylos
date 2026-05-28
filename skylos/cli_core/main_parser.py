@@ -17,6 +17,15 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     )
     parser.add_argument("path", nargs="+", help="Path(s) to the project")
     parser.add_argument(
+        "--config-file",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Read Skylos config from this TOML file instead of discovering "
+            "pyproject.toml. Relative paths are resolved from the current directory."
+        ),
+    )
+    parser.add_argument(
         "--gate",
         action="store_true",
         help="Run as a quality gate (block deployment on failure)",
