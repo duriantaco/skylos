@@ -21,6 +21,7 @@ def clean_results():
         "danger": [],
         "quality": [],
         "secrets": [],
+        "dependency_vulnerabilities": [],
     }
 
 
@@ -43,6 +44,7 @@ def failing_results():
         ],
         "quality": [],
         "secrets": [],
+        "dependency_vulnerabilities": [],
     }
 
 
@@ -56,6 +58,17 @@ def test_gate_fails_on_critical(failing_results):
     passed, reasons = check_gate(failing_results, {})
     assert passed is False
     assert len(reasons) > 0
+
+
+def test_gate_fails_on_dependency_vulnerability(clean_results):
+    clean_results["dependency_vulnerabilities"] = [
+        {"rule_id": "SKY-SCA-GHSA-test", "severity": "HIGH"}
+    ]
+
+    passed, reasons = check_gate(clean_results, {})
+
+    assert passed is False
+    assert "1 dependency vulnerabilities (max: 0)" in reasons
 
 
 def test_gate_strict_mode(clean_results):
@@ -146,6 +159,7 @@ def test_summary_markdown_mixed_output_is_stable():
         ],
         "quality": [{"rule_id": f"Q{i}"} for i in range(11)],
         "secrets": [{"rule_id": "S1"}],
+        "dependency_vulnerabilities": [{"rule_id": "SKY-SCA-GHSA-test"}],
     }
 
     md = build_summary_markdown(
@@ -164,6 +178,7 @@ def test_summary_markdown_mixed_output_is_stable():
         "| Security (total) | 11 | ⚠️ |\n"
         "| Quality | 11 | ⚠️ |\n"
         "| Secrets | 1 | ❌ |\n"
+        "| Dependency vulnerabilities | 1 | ❌ |\n"
         "| Dead Code | 3 | ℹ️ |\n"
         "\n"
         "**Result: ❌ FAILED**\n"

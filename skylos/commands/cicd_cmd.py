@@ -149,7 +149,7 @@ def run_cicd_command(
     p_ci_init.add_argument(
         "--analysis",
         nargs="+",
-        default=["dead-code", "security", "quality", "secrets"],
+        default=["dead-code", "security", "quality", "secrets", "dependency"],
         help="Analysis types to run",
     )
     p_ci_init.add_argument("--no-baseline", action="store_true")
@@ -172,6 +172,11 @@ def run_cicd_command(
         "--defend",
         action="store_true",
         help="Include AI Defense check step (skylos defend)",
+    )
+    p_ci_init.add_argument(
+        "--advisory-gate",
+        action="store_true",
+        help="Report gate failures but let the generated CI job pass.",
     )
     p_ci_init.add_argument(
         "--scan-path",
@@ -264,6 +269,7 @@ def run_cicd_command(
                 use_claude_security=cicd_args.claude_security,
                 use_upload=cicd_args.upload,
                 use_defend=cicd_args.defend,
+                advisory_gate=cicd_args.advisory_gate,
                 scan_path=cicd_args.scan_path,
             )
         except ValueError as e:
