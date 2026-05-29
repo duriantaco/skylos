@@ -10,6 +10,9 @@ console = Console()
 
 ANALYSIS_FLAG_MAP: dict[str, str] = {
     "dead-code": "",
+    "dependency": "--sca",
+    "dependencies": "--sca",
+    "sca": "--sca",
     "security": "--danger",
     "quality": "--quality",
     "secrets": "--secrets",
@@ -67,6 +70,7 @@ def generate_workflow(
     use_claude_security: bool = False,
     use_upload: bool = False,
     use_defend: bool = False,
+    advisory_gate: bool = False,
     scan_path: str = ".",
     skylos_version: str | None = None,
 ) -> str:
@@ -81,7 +85,13 @@ def generate_workflow(
     Called from: skylos/commands/cicd_cmd.py run_cicd_command.
     """
     triggers = triggers or ["pull_request", "push"]
-    analysis_types = analysis_types or ["dead-code", "security", "quality", "secrets"]
+    analysis_types = analysis_types or [
+        "dead-code",
+        "security",
+        "quality",
+        "secrets",
+        "dependency",
+    ]
 
     trigger_block = _build_trigger_block(triggers)
     install_command = _skylos_install_command(skylos_version)
@@ -160,6 +170,7 @@ def generate_workflow(
         ]
     )
     skylos_environment = "\n    environment: skylos-security" if use_llm else ""
+    gate_advisory_flag = " --advisory" if advisory_gate else ""
 
     permissions_block = """permissions:
   contents: read"""
@@ -208,7 +219,7 @@ jobs:
 {llm_step}{defend_step}
       - name: Quality Gate
         if: always()
-        run: skylos cicd gate --input skylos-results.json --summary --advisory
+        run: skylos cicd gate --input skylos-results.json --summary{gate_advisory_flag}
 
       - name: GitHub Annotations
         if: always()

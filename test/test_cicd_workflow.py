@@ -27,9 +27,17 @@ def test_workflow_has_all_steps():
     assert "GitHub Annotations" in step_names
     assert "PR Review Comments" in step_names
     quality_gate = next(s for s in steps if s.get("name") == "Quality Gate")
-    assert "--advisory" in quality_gate["run"]
+    assert "--advisory" not in quality_gate["run"]
     pr_review = next(s for s in steps if s.get("name") == "PR Review Comments")
     assert "--evidence-cards" in pr_review["run"]
+
+
+def test_workflow_can_generate_advisory_gate():
+    content = generate_workflow(advisory_gate=True)
+    parsed = yaml.safe_load(content)
+    steps = parsed["jobs"]["skylos"]["steps"]
+    quality_gate = next(s for s in steps if s.get("name") == "Quality Gate")
+    assert "--advisory" in quality_gate["run"]
 
 
 def test_workflow_triggers():
@@ -49,6 +57,12 @@ def test_workflow_analysis_flags():
     assert "--danger" in content
     assert "--quality" in content
     assert "--secrets" not in content
+    assert "--sca" not in content
+
+
+def test_workflow_includes_dependency_scan_by_default():
+    content = generate_workflow()
+    assert "--sca" in content
 
 
 def test_workflow_uses_baseline_by_default():

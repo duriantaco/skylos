@@ -48,6 +48,7 @@ BASELINE_GATE_CONFIG = {
     "max_security": 10,
     "max_quality": 10,
     "max_secrets": 0,
+    "max_dependency_vulnerabilities": 0,
     "max_dead_code": None,
 }
 ADVISORY_QUALITY_RULE_IDS = {"SKY-Q802", "SKY-Q803"}
@@ -358,9 +359,15 @@ def _check_agent_gate(findings_lists, agent_file_set, agent_cfg, reasons):
     return agent_passed
 
 
-def _check_strict_gate(*, total_findings, danger, quality, secrets):
+def _check_strict_gate(*, total_findings, danger, quality, secrets, dependencies):
     gate_quality = _gate_quality_findings(quality)
-    total_issues = total_findings + len(danger) + len(gate_quality) + len(secrets)
+    total_issues = (
+        total_findings
+        + len(danger)
+        + len(gate_quality)
+        + len(secrets)
+        + len(dependencies)
+    )
     if total_issues > 0:
         return False, [f"Strict mode: {total_issues} issue(s) found"]
     return True, []
@@ -380,6 +387,8 @@ def _apply_gate_thresholds(
     max_quality,
     secrets_count,
     max_secrets,
+    dependency_count,
+    max_dependency_vulnerabilities,
     dead_code_count,
     max_dead_code,
 ):
@@ -430,6 +439,14 @@ def _apply_gate_thresholds(
 
     if not _append_threshold_reason(
         reasons,
+        count=dependency_count,
+        limit=max_dependency_vulnerabilities,
+        message_template="{count} dependency vulnerabilities (max: {limit})",
+    ):
+        passed = False
+
+    if not _append_threshold_reason(
+        reasons,
         count=dead_code_count,
         limit=max_dead_code,
         message_template="{count} dead code issue(s) (max: {limit})",
@@ -470,6 +487,7 @@ def check_gate(results, config, strict=False, provenance=None):
     quality = results.get("quality", []) or []
     gate_quality = _gate_quality_findings(quality)
     secrets = results.get("secrets", []) or []
+    dependencies = results.get("dependency_vulnerabilities", []) or []
     gate_config = _effective_gate_config(config)
 
     if strict:
@@ -478,6 +496,7 @@ def check_gate(results, config, strict=False, provenance=None):
             danger=danger,
             quality=gate_quality,
             secrets=secrets,
+            dependencies=dependencies,
         )
 
     critical_issues, high_issues = _split_danger_by_severity(danger)
@@ -494,6 +513,11 @@ def check_gate(results, config, strict=False, provenance=None):
         max_quality=gate_config.get("max_quality", 10),
         secrets_count=len(secrets),
         max_secrets=gate_config.get("max_secrets", None),
+        dependency_count=len(dependencies),
+        max_dependency_vulnerabilities=gate_config.get(
+            "max_dependency_vulnerabilities",
+            0,
+        ),
         dead_code_count=total_findings,
         max_dead_code=gate_config.get("max_dead_code", None),
     )
@@ -521,6 +545,7 @@ def _build_summary_rows(
     security_count,
     quality_count,
     secrets_count,
+    dependency_count,
     dead_code_count,
 ):
     return [
@@ -529,6 +554,10 @@ def _build_summary_rows(
         f"| Security (total) | {security_count} | {'✅' if security_count <= 10 else '⚠️'} |",
         f"| Quality | {quality_count} | {'✅' if quality_count <= 10 else '⚠️'} |",
         f"| Secrets | {secrets_count} | {'✅' if secrets_count == 0 else '❌'} |",
+        (
+            f"| Dependency vulnerabilities | {dependency_count} | "
+            f"{'✅' if dependency_count == 0 else '❌'} |"
+        ),
         f"| Dead Code | {dead_code_count} | ℹ️ |",
     ]
 
@@ -547,6 +576,7 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
     danger = results.get("danger", []) or []
     quality = results.get("quality", []) or []
     secrets = results.get("secrets", []) or []
+    dependencies = results.get("dependency_vulnerabilities", []) or []
     critical_issues, high_issues = _split_danger_by_severity(danger)
     critical_count = len(critical_issues)
     high_count = len(high_issues)
@@ -570,6 +600,7 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
             security_count=len(danger),
             quality_count=len(quality),
             secrets_count=len(secrets),
+            dependency_count=len(dependencies),
             dead_code_count=dead_code_count,
         ),
         "",
