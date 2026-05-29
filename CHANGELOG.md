@@ -1,5 +1,19 @@
 ## Changelog
 
+## [4.21.0](https://github.com/duriantaco/skylos/compare/v4.20.0...v4.21.0) (2026-05-29)
+
+
+### Features
+
+* **cli:** support explicit config files ([#506](https://github.com/duriantaco/skylos/issues/506)) ([55f1671](https://github.com/duriantaco/skylos/commit/55f167190dda3326f10d39360c61857e3f7d9040))
+* **security:** export threat traces in deep audit ([#503](https://github.com/duriantaco/skylos/issues/503)) ([004b36d](https://github.com/duriantaco/skylos/commit/004b36d2029e9a152952742e5b6dee14e54e6017))
+
+
+### Bug Fixes
+
+* **security:** harden CI workflow permissions ([#508](https://github.com/duriantaco/skylos/issues/508)) ([b29ca43](https://github.com/duriantaco/skylos/commit/b29ca43e2fe1891c3e9db6c409039a2b649a1a8f))
+* **security:** harden config policy and MCP credits ([#507](https://github.com/duriantaco/skylos/issues/507)) ([56b3dbb](https://github.com/duriantaco/skylos/commit/56b3dbbc0dbde748207bb97c7206bfa4edc86e85))
+
 ## [4.20.0](https://github.com/duriantaco/skylos/compare/v4.19.0...v4.20.0) (2026-05-27)
 
 
