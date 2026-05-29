@@ -1,5 +1,18 @@
 ## Changelog
 
+## [4.22.0](https://github.com/duriantaco/skylos/compare/v4.21.0...v4.22.0) (2026-05-29)
+
+
+### Features
+
+* **security:** detect agent command exfiltration ([#511](https://github.com/duriantaco/skylos/issues/511)) ([f2c44a8](https://github.com/duriantaco/skylos/commit/f2c44a8a3661c10ae28c124c33fa27306d86f6b5))
+
+
+### Bug Fixes
+
+* **cicd:** gate dependency vulnerabilities by default ([#512](https://github.com/duriantaco/skylos/issues/512)) ([7619b0b](https://github.com/duriantaco/skylos/commit/7619b0b10372cfb29c81a7c909d79e7f64db1b5f))
+* **security:** harden repo-controlled IO surfaces ([#509](https://github.com/duriantaco/skylos/issues/509)) ([b7cbce1](https://github.com/duriantaco/skylos/commit/b7cbce12480cb93cb4803b544a6324e5a4a5bfe0))
+
 ## [4.21.0](https://github.com/duriantaco/skylos/compare/v4.20.0...v4.21.0) (2026-05-29)
 
 
