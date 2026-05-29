@@ -9,6 +9,7 @@ from typing import Any
 
 from skylos.core.safe_cache_io import read_text_no_symlink
 from skylos.rules.config.findings import config_finding
+from skylos.security.command_guard import scan_shell_command
 
 try:
     import yaml
@@ -519,7 +520,8 @@ def _effective_permissions_write(
 
 def _line_for_value(lines: list[str], value: Any) -> int:
     if isinstance(value, str):
-        return _line_for_contains(lines, value)
+        first_line = value.strip().splitlines()[0] if value.strip() else value
+        return _line_for_contains(lines, first_line)
     return 1
 
 
@@ -847,33 +849,46 @@ def _scan_run_blocks(
     is_workflow: bool,
 ) -> None:
     rule_id = "SKY-D294"
-    if rule_id in ignore:
-        return
 
     for step in _iter_steps(data, is_workflow=is_workflow):
         run_body = step.get("run")
         if not isinstance(run_body, str):
             continue
-        if not TEMPLATE_EXPR_RE.search(run_body):
-            continue
-        _add_finding(
-            findings,
-            lines,
-            _finding(
-                rule_id=rule_id,
-                name="github-actions-template-injection",
-                message=(
-                    "run block expands attacker-influenced GitHub context directly. "
-                    "Move the value into env and quote/use the environment variable."
+        for risk in scan_shell_command(run_body):
+            if risk.rule_id in ignore:
+                continue
+            _add_finding(
+                findings,
+                lines,
+                _finding(
+                    rule_id=risk.rule_id,
+                    name="github-actions-shell-command-risk",
+                    message=risk.message,
+                    file=path,
+                    line=_line_for_value(lines, run_body),
+                    severity=risk.severity,
+                    value=risk.rule_id,
                 ),
-                file=path,
-                line=_line_for_template(lines, run_body),
-                severity="HIGH",
-                value="template_in_run",
-            ),
-        )
+            )
+        if rule_id not in ignore and TEMPLATE_EXPR_RE.search(run_body):
+            _add_finding(
+                findings,
+                lines,
+                _finding(
+                    rule_id=rule_id,
+                    name="github-actions-template-injection",
+                    message=(
+                        "run block expands attacker-influenced GitHub context directly. "
+                        "Move the value into env and quote/use the environment variable."
+                    ),
+                    file=path,
+                    line=_line_for_template(lines, run_body),
+                    severity="HIGH",
+                    value="template_in_run",
+                ),
+            )
 
-    if is_workflow:
+    if is_workflow and rule_id not in ignore:
         for job_id, job in _jobs(data):
             container = job.get("container")
             if isinstance(container, dict):

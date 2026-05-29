@@ -12,6 +12,7 @@ from skylos.constants import (
     MIN_SECRET_LENGTH,
     get_non_library_dir_kind,
 )
+from skylos.security.command_guard import findings_for_command, is_external_url
 from skylos.visitors.languages.statement_scan import iter_semicolon_assignments
 
 try:
@@ -309,6 +310,29 @@ def _string_literal_value(node, source_bytes: bytes) -> str:
     return text
 
 
+def _static_string_value(node, source_bytes: bytes) -> str | None:
+    if node is None:
+        return None
+    if node.type == "string":
+        return _string_literal_value(node, source_bytes)
+    if node.type == "template_string":
+        if any(child.type == "template_substitution" for child in node.children):
+            return None
+        text = _get_text(source_bytes, node).strip()
+        if len(text) >= 2 and text[0] == "`" and text[-1] == "`":
+            return text[1:-1]
+    return None
+
+
+def _first_static_call_arg(call_node, source_bytes: bytes) -> str | None:
+    if call_node is None or call_node.type != "call_expression":
+        return None
+    args = call_node.child_by_field_name("arguments")
+    if args is None:
+        return None
+    return _static_string_value(_first_real_arg(args), source_bytes)
+
+
 def _child_process_aliases(root_node, lang: Language, source_bytes: bytes) -> set[str]:
     query = _get_query(lang, "danger_child_process_aliases", _CHILD_PROCESS_ALIAS_PATTERN)
     if query is None:
@@ -520,15 +544,25 @@ def scan_danger(
             )
 
     for prop_node in complex_captures.get("exec_prop", []):
-        call_node = prop_node.parent
-        if call_node is None:
+        member_node = prop_node.parent
+        if member_node is None:
             continue
-        obj_node = call_node.child_by_field_name("object")
+        obj_node = member_node.child_by_field_name("object")
         if obj_node is None:
             continue
         obj_name = _get_text(source_bytes, obj_node).lower()
         if obj_name in _SAFE_EXEC_OBJECTS and obj_name not in child_process_aliases:
             continue
+        call_expr = member_node.parent
+        command = _first_static_call_arg(call_expr, source_bytes)
+        if command is not None:
+            findings.extend(
+                findings_for_command(
+                    command,
+                    file_path,
+                    prop_node.start_point[0] + 1,
+                )
+            )
         findings.append(
             {
                 "rule_id": "SKY-D212",
@@ -875,6 +909,7 @@ def scan_danger(
 
     _check_nextjs_missing_auth(source_bytes, file_path, findings)
     _check_nextjs_client_secrets(source_bytes, file_path, findings)
+    _check_typescript_env_exfil(source_bytes, file_path, findings)
     _check_nextjs_server_action_sqli(source_bytes, file_path, findings)
     _check_unverified_webhook_handler(source_bytes, file_path, findings)
     _check_archive_extraction_path_traversal(
@@ -1451,6 +1486,38 @@ def _check_nextjs_client_secrets(
                     "col": 0,
                 }
             )
+
+
+def _check_typescript_env_exfil(
+    source_bytes: bytes, file_path: str, findings: list[dict]
+) -> None:
+    source_text = source_bytes.decode("utf-8", errors="replace")
+    for match in re.finditer(
+        r"\b(?:fetch|axios\.(?:post|put|patch))\s*\("
+        r"(?P<body>[^;]{0,600}process\.env\.[A-Za-z_][A-Za-z0-9_]*"
+        r"[^;]{0,600})\)",
+        source_text,
+        re.S,
+    ):
+        body = match.group("body")
+        env_match = re.search(r"process\.env\.([A-Za-z_][A-Za-z0-9_]*)", body)
+        if env_match and env_match.group(1).startswith("NEXT_PUBLIC_"):
+            continue
+        url_match = re.search(r"['\"](?P<url>https?://[^'\"]+)['\"]", body)
+        if url_match and not is_external_url(url_match.group("url")):
+            continue
+        findings.append(
+            {
+                "rule_id": "SKY-D327",
+                "severity": "CRITICAL",
+                "message": (
+                    "HTTP request sends process.env data to an external destination."
+                ),
+                "file": str(file_path),
+                "line": source_text[: match.start()].count("\n") + 1,
+                "col": 0,
+            }
+        )
 
 
 def _check_nextjs_server_action_sqli(

