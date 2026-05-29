@@ -390,7 +390,12 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
     assert workflow["permissions"] == {"contents": "read"}
 
     steps = workflow["jobs"]["scan"]["steps"]
-    checkout_step = next(s for s in steps if s.get("uses") == "actions/checkout@v4")
+    checkout_step = next(
+        s for s in steps if str(s.get("uses", "")).startswith("actions/checkout@")
+    )
+    checkout_ref = checkout_step["uses"].split("@", 1)[1]
+    assert len(checkout_ref) == 40
+    assert all(c in "0123456789abcdef" for c in checkout_ref)
     assert checkout_step["with"]["persist-credentials"] is False
 
     go_build_step = next(s for s in steps if s.get("name") == "Build repo Go engine")
