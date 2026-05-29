@@ -8,6 +8,7 @@ from typing import Any
 
 from skylos.core.safe_cache_io import read_text_no_symlink
 from skylos.rules.config.findings import config_finding
+from skylos.security.command_guard import scan_shell_command
 
 try:
     import yaml
@@ -733,6 +734,33 @@ def _scan_untrusted_eval(
             )
 
 
+def _scan_shell_command_risks(
+    data: dict[str, Any],
+    path: Path,
+    lines: list[str],
+    findings: list[dict[str, Any]],
+    ignore: set[str],
+) -> None:
+    for job_id, job in _iter_jobs(data):
+        for command in _iter_commands(data, job):
+            for risk in scan_shell_command(command):
+                if risk.rule_id in ignore:
+                    continue
+                _add_finding(
+                    findings,
+                    lines,
+                    _finding(
+                        rule_id=risk.rule_id,
+                        name="gitlab-ci-shell-command-risk",
+                        message=f"Job {job_id}: {risk.message}",
+                        file=path,
+                        line=_line_for_value(lines, command, fallback_key="script"),
+                        severity=risk.severity,
+                        value=f"{job_id}:{risk.rule_id}",
+                    ),
+                )
+
+
 def _scan_dind_without_tls(
     data: dict[str, Any],
     path: Path,
@@ -993,6 +1021,7 @@ def scan_gitlab_ci_file(
     _scan_external_includes(data, file_path, lines, findings, ignore)
     _scan_literal_secret_variables(data, file_path, lines, findings, ignore)
     _scan_untrusted_eval(data, file_path, lines, findings, ignore)
+    _scan_shell_command_risks(data, file_path, lines, findings, ignore)
     _scan_dind_without_tls(data, file_path, lines, findings, ignore)
     _scan_oidc_local_scripts(data, file_path, lines, findings, ignore)
     _scan_release_cache(data, file_path, lines, findings, ignore)

@@ -160,6 +160,19 @@ Finding types:
 | D325 | MEDIUM | Symlink-following file read | Python |
 | D326 | HIGH | Unsafe archive extraction | Python |
 
+### Agent And Build Command Safety
+
+| ID | Severity | Name | Languages / Scope |
+|:---|:---|:---|:---|
+| D327 | CRITICAL | Data exfiltration command | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
+| D328 | HIGH | Remote script piped to shell | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
+| D329 | HIGH | Broad destructive command | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
+| D337 | HIGH | Package registry or index override | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
+| D338 | CRITICAL | Sensitive host scope access | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
+| D339 | HIGH | Persistent environment mutation | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
+| D340 | HIGH | Unapproved package or artifact publish | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
+| D341 | HIGH | Untrusted package-managed tool execution | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
+
 ### Config And Deployment Security
 
 | ID | Severity | Name | Provider |

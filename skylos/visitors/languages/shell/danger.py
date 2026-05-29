@@ -5,6 +5,8 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from skylos.security.command_guard import findings_for_command
+
 
 _POSITIONAL_RE = re.compile(r"\$(?:\d+|[@*])|\$\{(?:\d+|[@*])(?:[:?+\-][^}]*)?\}")
 _VAR_REF_RE = re.compile(
@@ -111,6 +113,8 @@ def scan_danger(file_path: str, source: str) -> list[dict]:
         _handle_read(text, state)
         _handle_assignment(text, state)
 
+        for finding in findings_for_command(text, file_path, line_no):
+            _add_existing_finding(findings, seen, finding)
         if _command_sink_is_tainted(text, state):
             _add_finding(findings, seen, _COMMAND_FINDING, file_path, line_no)
         if _url_sink_is_tainted(text, state):
@@ -474,3 +478,15 @@ def _add_finding(
             "category": "danger",
         }
     )
+
+
+def _add_existing_finding(
+    findings: list[dict],
+    seen: set[tuple[str, int, str]],
+    finding: dict,
+) -> None:
+    key = (finding["rule_id"], finding["line"], str(Path(finding["file"])))
+    if key in seen:
+        return
+    seen.add(key)
+    findings.append(finding)
