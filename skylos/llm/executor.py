@@ -10,6 +10,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from skylos.core.safe_cache_io import (
+    read_text_no_symlink,
+    write_existing_text_no_symlink,
+)
+
+MAX_REMEDIATION_FILE_BYTES = 5_000_000
+
 
 @dataclass
 class TestResult:
@@ -63,13 +70,15 @@ class RemediationExecutor:
         p = self._safe_file_path(file_path)
         if p is None:
             return False
-        try:
-            original = p.read_text(encoding="utf-8")
-            self._backups[str(p)] = original
-            p.write_text(fixed_code, encoding="utf-8")
-            return True
-        except OSError:
+        original = read_text_no_symlink(
+            p,
+            max_bytes=MAX_REMEDIATION_FILE_BYTES,
+            encoding="utf-8",
+        )
+        if original is None:
             return False
+        self._backups[str(p)] = original
+        return write_existing_text_no_symlink(p, fixed_code, encoding="utf-8")
 
     def revert_fix(self, file_path: str) -> bool:
         p = self._safe_file_path(file_path)
@@ -79,11 +88,7 @@ class RemediationExecutor:
         original = self._backups.pop(key, None)
         if original is None:
             return False
-        try:
-            p.write_text(original, encoding="utf-8")
-            return True
-        except OSError:
-            return False
+        return write_existing_text_no_symlink(p, original, encoding="utf-8")
 
     def revert_all(self):
         for fp in list(self._backups.keys()):
@@ -209,7 +214,7 @@ class RemediationExecutor:
 
     def create_branch(self, prefix: str = "skylos/fix") -> str:
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        short = hashlib.sha1(ts.encode()).hexdigest()[:6]
+        short = hashlib.sha256(ts.encode()).hexdigest()[:6]
         branch = f"{prefix}-{ts[:8]}-{short}"
         subprocess.run(
             ["git", "checkout", "-b", branch],

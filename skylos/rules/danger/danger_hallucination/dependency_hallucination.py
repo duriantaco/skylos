@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -9,6 +8,12 @@ import sys
 import urllib.request
 import urllib.error
 from pathlib import Path
+
+from skylos.core.safe_cache_io import (
+    load_project_json_cache,
+    read_text_no_symlink,
+    save_project_json_cache,
+)
 
 # ---------------------------------------------------------------------------
 # The mapping file uses the pipreqs format: "import_name:dist_name" per line.
@@ -20,6 +25,7 @@ from pathlib import Path
 
 _IMPORT_TO_DIST_MAPPING: dict[str, str] | None = None
 _MAPPING_FILENAME = "pipreqs_import_mapping.txt"
+MAX_DEPENDENCY_MANIFEST_BYTES = 5_000_000
 logger = logging.getLogger(__name__)
 
 
@@ -332,10 +338,15 @@ def _collect_local_modules(repo_root):
 def _parse_requirements_txt(path):
     deps = set()
 
-    try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except OSError:
+    text = read_text_no_symlink(
+        path,
+        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+        encoding="utf-8",
+        errors="ignore",
+    )
+    if text is None:
         return deps
+    lines = text.splitlines()
 
     for line in lines:
         line = line.strip()
@@ -404,9 +415,13 @@ def _parse_pyproject_toml(path):
     deps = set()
     project_name = None
 
-    try:
-        txt = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
+    txt = read_text_no_symlink(
+        path,
+        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+        encoding="utf-8",
+        errors="ignore",
+    )
+    if txt is None:
         return deps, project_name
 
     name_match = re.search(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']', txt)
@@ -499,9 +514,13 @@ def _parse_setup_py(path):
     deps = set()
     project_name = None
 
-    try:
-        txt = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
+    txt = read_text_no_symlink(
+        path,
+        max_bytes=MAX_DEPENDENCY_MANIFEST_BYTES,
+        encoding="utf-8",
+        errors="ignore",
+    )
+    if txt is None:
         return deps, project_name
 
     name_match = re.search(r"""name\s*=\s*['"]([^'"]+)['"]""", txt)
@@ -649,23 +668,13 @@ def _load_private_allowlist():
     return allow
 
 
-def _load_pypi_cache(cache_path):
-    cache = {}
-    try:
-        if cache_path.exists():
-            txt = cache_path.read_text(encoding="utf-8")
-            cache = json.loads(txt)
-    except (OSError, json.JSONDecodeError, TypeError) as exc:
-        logger.debug("Ignoring invalid PyPI cache %s: %s", cache_path, exc)
-    return cache
+def _load_pypi_cache(repo_root, cache_path):
+    return load_project_json_cache(repo_root, cache_path)
 
 
-def _save_pypi_cache(cache_path, cache):
-    try:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
-    except (OSError, TypeError) as exc:
-        logger.debug("Failed to save PyPI cache %s: %s", cache_path, exc)
+def _save_pypi_cache(repo_root, cache_path, cache):
+    if not save_project_json_cache(repo_root, cache_path, cache):
+        logger.debug("Failed to save PyPI cache %s", cache_path)
 
 
 def _check_pypi_status(package_name, cache):
@@ -739,7 +748,7 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
     import_to_dist = _load_import_to_dist_mapping()
 
     cache_path = repo_root / ".skylos" / "cache" / "pypi_exists.json"
-    pypi_cache = _load_pypi_cache(cache_path)
+    pypi_cache = _load_pypi_cache(repo_root, cache_path)
     cache_modified = False
 
     for file_path in py_files:
@@ -889,6 +898,6 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
                 )
 
     if cache_modified:
-        _save_pypi_cache(cache_path, pypi_cache)
+        _save_pypi_cache(repo_root, cache_path, pypi_cache)
 
     return findings

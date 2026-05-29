@@ -275,6 +275,20 @@ jobs:
     assert scan_github_actions(tmp_path) == []
 
 
+def test_github_actions_scanner_rejects_symlinked_workflow(tmp_path):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    target = tmp_path / "outside-workflow.yml"
+    target.write_text("name: outside\non: push\n", encoding="utf-8")
+    link = workflows / "ci.yml"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        return
+
+    assert scan_github_actions(tmp_path) == []
+
+
 def test_github_actions_scanner_handles_shared_yaml_alias_once(tmp_path):
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)

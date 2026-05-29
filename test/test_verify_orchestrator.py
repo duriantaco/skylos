@@ -2483,6 +2483,17 @@ class TestEntryPointCache:
         h2 = _config_files_hash({"a.toml": "v2"})
         assert h1 != h2
 
+    def test_gather_config_files_rejects_symlink(self, tmp_path):
+        target = tmp_path / "outside-pyproject.toml"
+        target.write_text("[project]\nname = 'outside'\n", encoding="utf-8")
+        link = tmp_path / "pyproject.toml"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            return
+
+        assert _gather_config_files(tmp_path) == {}
+
     def test_discover_uses_cache(self, tmp_path):
         configs = {"pyproject.toml": "[project]\nname = 'test'"}
         cache_path = _entry_point_cache_path(tmp_path)
@@ -2508,6 +2519,58 @@ class TestEntryPointCache:
         mock_agent.assert_not_called()
         assert len(results) == 1
         assert results[0].name == "main"
+
+    def test_discover_rejects_symlinked_cache(self, tmp_path):
+        configs = {"pyproject.toml": "[project]\nname = 'test'"}
+        current_hash = _config_files_hash(configs)
+        target = tmp_path / "outside-entry-points.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "hash": current_hash,
+                    "entry_points": [
+                        {"name": "cached", "source": "config", "reason": "entry"}
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        cache_path = _entry_point_cache_path(tmp_path)
+        cache_path.parent.mkdir(parents=True)
+        try:
+            cache_path.symlink_to(target)
+        except OSError:
+            return
+
+        mock_agent = MagicMock(spec=DeadCodeVerifierAgent)
+        with (
+            patch(
+                "skylos.llm.verify_orchestrator._gather_config_files",
+                return_value=configs,
+            ),
+            patch(
+                "skylos.llm.verify_orchestrator._call_llm_with_retry",
+                return_value=json.dumps(
+                    {
+                        "entry_points": [
+                            {
+                                "name": "fresh",
+                                "source": "llm",
+                                "reason": "recomputed",
+                            }
+                        ]
+                    }
+                ),
+            ),
+        ):
+            results = discover_entry_points(mock_agent, tmp_path, [])
+
+        assert len(results) == 1
+        assert results[0].name == "fresh"
+        assert cache_path.is_symlink()
+        assert json.loads(target.read_text(encoding="utf-8"))["entry_points"][0][
+            "name"
+        ] == "cached"
 
     def test_discover_skips_stale_cache(self, tmp_path):
         configs = {"pyproject.toml": "[project]\nname = 'changed'"}

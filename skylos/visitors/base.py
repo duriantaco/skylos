@@ -2280,7 +2280,7 @@ class Visitor(ast.NodeVisitor):
 
     def _apply_string_patterns(self) -> None:
         for pattern in self._string_ref_patterns:
-            regex_pattern = pattern.replace("*", ".*")
+            regex_pattern = re.escape(pattern).replace(r"\*", ".*")
             try:
                 regex = re.compile(f"^{regex_pattern}$")
             except re.error:

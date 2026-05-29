@@ -15,12 +15,14 @@ from pathlib import Path
 from typing import Any
 
 import skylos
+from skylos.core.safe_cache_io import load_project_json_cache, save_project_json_cache
 
 SCHEMA_VERSION = 1
 CACHE_KIND_TRACE = "trace"
 RUN_CACHE_DIR = Path(".skylos") / "cache" / "runs"
 TRACE_CACHE_DIR = RUN_CACHE_DIR / "v1" / "trace"
 MAX_CACHE_STAT_ENTRIES = 100_000
+MAX_TRACE_PAYLOAD_BYTES = 10_000_000
 
 TRACE_ENV_VARS = (
     "PYTHONPATH",
@@ -151,14 +153,14 @@ def build_trace_cache_key(
 
 
 def load_trace_cache(project_root: str | Path, key: str) -> dict[str, Any] | None:
-    path = _trace_cache_path(project_root, key)
-    try:
-        entry = json.loads(
-            path.read_text(
-                encoding="utf-8"
-            )  # skylos: ignore[SKY-D215] project-local trace cache
-        )
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+    root = _normalize_root(project_root)
+    path = _trace_cache_path(root, key)
+    entry = load_project_json_cache(
+        root,
+        path,
+        max_bytes=MAX_TRACE_PAYLOAD_BYTES,
+    )
+    if not entry:
         return None
 
     if not isinstance(entry, dict):
@@ -202,7 +204,8 @@ def save_trace_cache(
         "pytest_returncode": int(pytest_returncode),
         "trace": trace_payload,
     }
-    _write_json_atomic(path, entry)
+    if not save_project_json_cache(root, path, entry):
+        return None
     return path
 
 
@@ -217,9 +220,7 @@ def clear_run_cache(project_root: str | Path) -> bool:
         return False
     if not path.exists():
         return False
-    shutil.rmtree(
-        path
-    )  # skylos: ignore[SKY-D215] guarded project-local cache directory
+    shutil.rmtree(path)  # skylos: ignore[SKY-D215] guarded project-local cache directory
     return True
 
 
@@ -319,13 +320,12 @@ def run_cache_stats(project_root: str | Path) -> dict[str, Any]:
 
 def read_trace_payload(trace_file: str | Path) -> dict[str, Any] | None:
     path = Path(trace_file)
-    try:
-        payload = json.loads(
-            path.read_text(
-                encoding="utf-8"
-            )  # skylos: ignore[SKY-D215] local trace file
-        )
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+    payload = load_project_json_cache(
+        path.parent,
+        path,
+        max_bytes=MAX_TRACE_PAYLOAD_BYTES,
+    )
+    if not payload:
         return None
     if not _is_valid_trace_payload(payload):
         return None

@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from skylos.core.safe_cache_io import read_text_no_symlink, save_project_json_cache
+
 from .repo_activation import FileActivation, build_repo_activation_index
 from .schemas import AnalysisResult
 from .security_verifier import (
@@ -41,6 +43,7 @@ REVIEWED_CANDIDATES_KEY = "reviewed_candidates"
 DEFAULT_CANDIDATE_STATE = "pending_review"
 HYPOTHESIS_EVIDENCE = "hypothesis"
 MAX_SECURITY_FACTS = 6
+MAX_SECURITY_FACT_SOURCE_BYTES = 1_000_000
 FLASK_FRAMEWORK = "flask"
 FASTAPI_FRAMEWORK = "fastapi"
 DJANGO_FRAMEWORK = "django"
@@ -408,9 +411,12 @@ def _names_from_tree(tree: ast.AST) -> tuple[str | None, set[str], set[str], set
 
 
 def _extract_security_file_facts(file_path: Path) -> SecurityFileFacts:
-    try:
-        source = file_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    source = read_text_no_symlink(
+        file_path,
+        max_bytes=MAX_SECURITY_FACT_SOURCE_BYTES,
+        encoding="utf-8",
+    )
+    if source is None:
         return SecurityFileFacts()
 
     try:
@@ -725,12 +731,21 @@ def _review_result_payload(
     }
 
 
-def _write_json_payload(file_path: Path, payload: dict[str, Any]) -> None:
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+def _artifact_project_root(artifact_dir: Path) -> Path | None:
+    if artifact_dir.parent.name != RUNS_DIRNAME:
+        return None
+    if artifact_dir.parent.parent.name != SKYLOS_DIRNAME:
+        return None
+    return artifact_dir.parent.parent.parent
+
+
+def _write_json_payload(
+    project_root: Path,
+    file_path: Path,
+    payload: dict[str, Any],
+) -> None:
+    if not save_project_json_cache(project_root, file_path, payload):
+        raise OSError("unsafe artifact path")
 
 
 def _repo_map_payload(run: SecurityTaskflowRun) -> dict[str, Any]:
@@ -812,6 +827,10 @@ def _record_artifact_error(
 
 def _write_run_artifacts(run: SecurityTaskflowRun) -> None:
     artifact_dir = Path(run.artifacts_dir)
+    project_root = _artifact_project_root(artifact_dir)
+    if project_root is None:
+        _record_artifact_error(run, str(artifact_dir), OSError("unsafe artifact path"))
+        return
     payloads = (
         (REPO_MAP_FILENAME, _repo_map_payload(run)),
         (THREAT_TRACES_FILENAME, _threat_traces_payload(run)),
@@ -821,7 +840,7 @@ def _write_run_artifacts(run: SecurityTaskflowRun) -> None:
     )
     for filename, payload in payloads:
         try:
-            _write_json_payload(artifact_dir / filename, payload)
+            _write_json_payload(project_root, artifact_dir / filename, payload)
         except OSError as exc:
             _record_artifact_error(run, filename, exc)
 

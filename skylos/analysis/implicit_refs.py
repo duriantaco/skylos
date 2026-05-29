@@ -1,6 +1,7 @@
 import re
-import json
 from pathlib import Path
+
+from skylos.core.result_cache import read_trace_payload
 
 
 def _compile_pattern_ref(pattern):
@@ -89,11 +90,11 @@ class ImplicitRefTracker:
         if not path.exists():
             return False
 
-        try:
-            data = json.loads(
-                path.read_text()
-            )  # skylos: ignore[SKY-D215] local trace file
+        data = read_trace_payload(path)
+        if data is None:
+            return False
 
+        try:
             for item in data.get("calls", []):
                 filename = item["file"]
                 func_name = item["function"]

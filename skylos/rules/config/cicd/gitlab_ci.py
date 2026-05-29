@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from skylos.core.safe_cache_io import read_text_no_symlink
 from skylos.rules.config.findings import config_finding
 
 try:
@@ -28,6 +29,9 @@ SKIP_DIR_NAMES = {
 }
 
 GITLAB_CI_FILENAMES = {".gitlab-ci.yml"}
+MAX_YAML_BYTES = 1_000_000
+MAX_YAML_GRAPH_DEPTH = 100
+MAX_YAML_GRAPH_NODES = 50_000
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 SECRET_VARIABLE_RE = re.compile(
     r"(?:^|_)(?:SECRET|TOKEN|PASSWORD|PASS|API_KEY|PRIVATE_KEY|ACCESS_KEY|"
@@ -190,10 +194,78 @@ def _load_yaml(path: Path) -> dict[str, Any] | None:
     if yaml is None:
         return None
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        text = read_text_no_symlink(path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
+        if text is None:
+            return None
+        raw = yaml.safe_load(text)
     except Exception:
         return None
-    return raw if isinstance(raw, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    if not _yaml_graph_is_safe(raw):
+        return None
+    return raw
+
+
+def _yaml_graph_is_safe(value: Any) -> bool:
+    active: set[int] = set()
+    visited: set[int] = set()
+    nodes_seen = 0
+    stack: list[tuple[Any, int, bool]] = [(value, 0, False)]
+
+    while stack:
+        current, depth, leaving = stack.pop()
+        if depth > MAX_YAML_GRAPH_DEPTH:
+            return False
+
+        children = _yaml_graph_children(current)
+        if children is None:
+            nodes_seen += 1
+            if nodes_seen > MAX_YAML_GRAPH_NODES:
+                return False
+            continue
+
+        state = _yaml_graph_visit_state(current, leaving, active, visited)
+        if state == "cycle":
+            return False
+        if state != "enter":
+            continue
+
+        nodes_seen += 1
+        if nodes_seen > MAX_YAML_GRAPH_NODES:
+            return False
+        stack.append((current, depth, True))
+        for child in reversed(children):
+            stack.append((child, depth + 1, False))
+
+    return True
+
+
+def _yaml_graph_children(value: Any) -> tuple[Any, ...] | None:
+    if isinstance(value, dict):
+        return tuple(value.values())
+    if isinstance(value, list):
+        return tuple(value)
+    return None
+
+
+def _yaml_graph_visit_state(
+    value: Any,
+    leaving: bool,
+    active: set[int],
+    visited: set[int],
+) -> str:
+    value_id = id(value)
+    if leaving:
+        active.discard(value_id)
+        visited.add(value_id)
+        return "leave"
+    if value_id in active:
+        return "cycle"
+    if value_id in visited:
+        return "visited"
+    active.add(value_id)
+    return "enter"
 
 
 def _line_for_contains(lines: list[str], needle: str, *, start: int = 1) -> int:
@@ -912,10 +984,8 @@ def scan_gitlab_ci_file(
     if data is None:
         return []
 
-    try:
-        lines = file_path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        lines = []
+    text = read_text_no_symlink(file_path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
+    lines = text.splitlines() if text is not None else []
 
     ignore = ignore or set()
     findings: list[dict[str, Any]] = []

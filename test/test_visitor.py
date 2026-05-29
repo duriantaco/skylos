@@ -6,6 +6,7 @@ import warnings
 from pathlib import Path
 import tempfile
 
+from skylos.analysis.implicit_refs import ImplicitRefTracker
 import skylos.visitors.base as visitor_mod
 from skylos.visitors.base import Visitor, Definition, PYTHON_BUILTINS, DYNAMIC_PATTERNS
 
@@ -105,6 +106,18 @@ def my_function():
         definition = visitor.defs[0]
         self.assertEqual(definition.type, "function")
         self.assertEqual(definition.simple_name, "my_function")
+
+    def test_string_ref_patterns_escape_regex_metacharacters(self):
+        self.visitor.pattern_tracker = ImplicitRefTracker()
+        self.visitor.defs = [
+            Definition("test_module.handlerXsave", "function", self.temp_file.name, 1)
+        ]
+        self.visitor._string_ref_patterns = ["handler.*"]
+
+        self.visitor._apply_string_patterns()
+
+        self.assertEqual(self.visitor.defs[0].references, 0)
+        self.assertNotIn("handlerXsave", self.visitor.pattern_tracker.known_refs)
 
     def test_async_function(self):
         code = """

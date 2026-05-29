@@ -85,3 +85,19 @@ def test_analyzer_default_trace_file_preserves_legacy_root_trace(tmp_path):
 
     assert "root_traced" not in names
     assert "alt_traced" in names
+
+
+def test_analyzer_default_trace_file_rejects_symlink(tmp_path):
+    module = _write_project(tmp_path)
+    target = tmp_path / "outside-trace.json"
+    _write_trace(target, module, "root_traced", 1)
+    try:
+        (tmp_path / ".skylos_trace").symlink_to(target)
+    except OSError:
+        return
+
+    result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+    names = _unused_function_names(result)
+
+    assert "root_traced" in names
+    assert "alt_traced" in names
