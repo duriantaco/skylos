@@ -106,6 +106,16 @@ _REPO_POLICY_WEAKENING_KEYS = {
     "ignore",
     "exclude",
 }
+_REPO_SECURITY_POLICY_WEAKENING_KEYS = _REPO_POLICY_WEAKENING_KEYS | {
+    "lower_confidence",
+    "masking",
+    "overrides",
+    "templates",
+    "vibe",
+    "whitelist",
+    "whitelist_documented",
+    "whitelist_temporary",
+}
 
 
 def load_config(start_path, config_file=None) -> dict:
@@ -179,7 +189,7 @@ def _restore_synced_policy_precedence(final_cfg: dict, synced_cfg: dict) -> dict
     }
     synced_security_policy = _has_synced_security_policy(synced_cfg)
     if synced_security_policy:
-        protected.update(_REPO_POLICY_WEAKENING_KEYS)
+        protected.update(_REPO_SECURITY_POLICY_WEAKENING_KEYS)
 
     if not protected:
         return final_cfg

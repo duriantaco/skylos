@@ -32,6 +32,7 @@ MCP_CLIENT_TOKEN_ENV = "SKYLOS_MCP_TOKEN"
 MCP_AUTH_SCOPE = "skylos:mcp"
 MCP_NETWORK_TRANSPORTS = {"sse", "streamable-http"}
 MCP_CLIENT_TOKEN_MIN_LENGTH = 16
+RATE_LIMITS_BY_PLAN = {"free": 50, "pro": 500, "enterprise": 5000}
 
 
 @dataclass
@@ -204,16 +205,13 @@ def initialize_auth() -> AuthSession:
         return _session
 
     plan = data.get("plan", "free")
-
-    rate_limits = {"free": 50, "pro": 500, "enterprise": 5000}
-
     _session = AuthSession(
         authenticated=True,
         api_key=api_key,
         plan=plan,
         credits=data.get("credits", 0),
         org_id=data.get("org_id", ""),
-        rate_limit_per_hour=rate_limits.get(plan, 50),
+        rate_limit_per_hour=RATE_LIMITS_BY_PLAN.get(plan, 50),
         validated_at=time.time(),
     )
 
@@ -226,8 +224,34 @@ def initialize_auth() -> AuthSession:
     return _session
 
 
+def _refresh_authenticated_session(session: AuthSession) -> bool:
+    if not session.authenticated:
+        return False
+
+    data = _validate_with_cloud(session.api_key)
+    if data is None:
+        session.authenticated = False
+        session.plan = "free"
+        session.credits = 0
+        session.org_id = ""
+        session.rate_limit_per_hour = RATE_LIMITS_BY_PLAN["free"]
+        session.validated_at = 0.0
+        return False
+
+    plan = data.get("plan", "free")
+    session.plan = plan
+    session.credits = data.get("credits", 0)
+    session.org_id = data.get("org_id", "")
+    session.rate_limit_per_hour = RATE_LIMITS_BY_PLAN.get(plan, 50)
+    session.validated_at = time.time()
+    return True
+
+
 def check_tool_access(tool_name: str) -> tuple[bool, str]:
     session = get_session()
+
+    if session.authenticated and not session.is_valid():
+        _refresh_authenticated_session(session)
 
     if not session.authenticated:
         if tool_name not in UNAUTHENTICATED_TOOLS:
@@ -296,13 +320,17 @@ def deduct_credits(tool_name: str) -> tuple[bool, str]:
             session.record_call(tool_name)
             return (True, "")
 
-        logger.warning(
-            "Credit deduction returned %d — allowing call (fail-open)", resp.status_code
+        logger.warning("Credit deduction returned %d — blocking call", resp.status_code)
+        return (
+            False,
+            "Could not verify credit deduction with Skylos Cloud. "
+            "Try again or check your connection.",
         )
-        session.record_call(tool_name)
-        return (True, "")
 
     except Exception as e:
-        logger.warning("Credit deduction failed: %s — allowing call (fail-open)", e)
-        session.record_call(tool_name)
-        return (True, "")
+        logger.warning("Credit deduction failed: %s — blocking call", e)
+        return (
+            False,
+            "Could not verify credit deduction with Skylos Cloud. "
+            "Try again or check your connection.",
+        )
