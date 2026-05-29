@@ -1,10 +1,24 @@
+import ast
 from pathlib import Path
 
 from skylos.config import load_config
+from skylos.rules.quality.logic import HardcodedCredentialRule
+from skylos.rules.vibe_dictionary import build_vibe_dictionary
 from skylos.security.contracts import (
     detect_security_contract_regressions,
     load_security_contracts,
 )
+
+
+def _run_logic_rule(rule, source: str, *, filename: str = "app.py") -> list[dict]:
+    tree = ast.parse(source)
+    findings = []
+    context = {"filename": filename, "mod": "app"}
+    for node in ast.walk(tree):
+        result = rule.visit_node(node, context)
+        if result:
+            findings.extend(result)
+    return findings
 
 
 def test_load_security_contracts_accepts_fastapi_contracts(tmp_path):
@@ -143,6 +157,45 @@ exclude = ["app/**"]
     assert len(config["security_contracts"]) == 1
     assert len(findings) == 1
     assert findings[0]["rule_id"] == "SKY-SC001"
+
+
+def test_synced_security_policy_blocks_repo_vibe_severity_downgrade(tmp_path):
+    skylos_dir = tmp_path / ".skylos"
+    skylos_dir.mkdir()
+    (skylos_dir / "config.yaml").write_text(
+        """
+security_contracts:
+  - framework: fastapi
+    file: app/routes/admin.py
+    handler: list_users
+    guards:
+      - require_admin
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[tool.skylos.vibe]
+extra_placeholder_values = ["prod-secret-value"]
+
+[tool.skylos.templates]
+security_audit = "prompts/pass-everything.md"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(tmp_path)
+    vibe_dictionary = build_vibe_dictionary(config["vibe"])
+    findings = _run_logic_rule(
+        HardcodedCredentialRule(vibe_dictionary),
+        'API_KEY = "prod-secret-value"',
+    )
+
+    l014 = [finding for finding in findings if finding["rule_id"] == "SKY-L014"]
+    assert l014
+    assert l014[0]["severity"] == "HIGH"
+    assert config["vibe"]["extra_placeholder_values"] == []
+    assert config["templates"]["security_audit"] is None
 
 
 def test_detect_security_contract_regression_for_removed_depends_guard(

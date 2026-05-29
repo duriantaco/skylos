@@ -166,6 +166,53 @@ class TestCheckToolAccess:
         assert allowed is False
         assert "Rate limit exceeded" in err
 
+    @patch("skylos_mcp.auth._validate_with_cloud")
+    def test_stale_authenticated_session_revalidates(self, mock_validate):
+        self._set_session(
+            authenticated=True,
+            plan="free",
+            api_key="test-key",
+            credits=1,
+            rate_limit_per_hour=50,
+            validated_at=time.time() - 901,
+        )
+        mock_validate.return_value = {
+            "plan": "pro",
+            "credits": 100,
+            "org_id": "org-1",
+        }
+
+        allowed, err = check_tool_access("security_scan")
+
+        assert allowed is True
+        assert err == ""
+        mock_validate.assert_called_once_with("test-key")
+        session = get_session()
+        assert session.authenticated is True
+        assert session.plan == "pro"
+        assert session.credits == 100
+        assert session.rate_limit_per_hour == 500
+
+    @patch("skylos_mcp.auth._validate_with_cloud")
+    def test_stale_authenticated_session_blocks_paid_tool_when_revalidation_fails(
+        self, mock_validate
+    ):
+        self._set_session(
+            authenticated=True,
+            plan="pro",
+            api_key="revoked-key",
+            credits=100,
+            rate_limit_per_hour=500,
+            validated_at=time.time() - 901,
+        )
+        mock_validate.return_value = None
+
+        allowed, err = check_tool_access("security_scan")
+
+        assert allowed is False
+        assert "requires authentication" in err
+        assert get_session().authenticated is False
+
 
 class TestDeductCredits:
     def _set_session(self, **kwargs):
@@ -252,8 +299,7 @@ class TestDeductCredits:
         assert "available: 0" in err
         assert "dashboard/billing" in err
 
-    def test_network_failure_allows_call(self):
-        """Graceful degradation: network errors should not block the tool."""
+    def test_network_failure_blocks_call(self):
         self._set_session(
             authenticated=True,
             plan="pro",
@@ -267,10 +313,11 @@ class TestDeductCredits:
         with patch.dict("sys.modules", {"requests": mock_req}):
             ok, err = deduct_credits("analyze")
 
-        assert ok is True
-        assert len(get_session()._call_counts.get("_all", [])) == 1
+        assert ok is False
+        assert "Could not verify credit deduction" in err
+        assert get_session()._call_counts.get("_all", []) == []
 
-    def test_unexpected_status_code_allows_call(self):
+    def test_unexpected_status_code_blocks_call(self):
         self._set_session(
             authenticated=True,
             plan="pro",
@@ -285,7 +332,8 @@ class TestDeductCredits:
         with patch.dict("sys.modules", {"requests": mock_req}):
             ok, err = deduct_credits("analyze")
 
-        assert ok is True
+        assert ok is False
+        assert "Could not verify credit deduction" in err
 
     def test_correct_feature_keys_sent(self):
         expected = {
@@ -566,6 +614,27 @@ class TestGateIntegration:
         assert result is not None
         error = json.loads(result)
         assert "Insufficient credits" in error["error"]
+
+    def test_gate_credit_deduction_failure_blocked(self):
+        from skylos_mcp.server import _gate
+
+        self._set_session(
+            authenticated=True,
+            plan="pro",
+            api_key="test-key",
+            credits=100,
+            rate_limit_per_hour=500,
+            validated_at=time.time(),
+        )
+
+        mock_req = MagicMock()
+        mock_req.post.side_effect = ConnectionError("network down")
+        with patch.dict("sys.modules", {"requests": mock_req}):
+            result = _gate("remediate")
+
+        assert result is not None
+        error = json.loads(result)
+        assert "Could not verify credit deduction" in error["error"]
 
     def test_gate_enterprise_always_passes(self):
         from skylos_mcp.server import _gate

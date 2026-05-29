@@ -245,6 +245,61 @@ security_enabled = false
         self.assertEqual(config["ignore"], [])
         self.assertEqual(config["security_contracts"][0]["handler"], "list_users")
 
+    def test_load_config_synced_security_policy_rejects_repo_downgrade_knobs(self):
+        skylos_dir = self.root / ".skylos"
+        skylos_dir.mkdir()
+        (skylos_dir / "config.yaml").write_text(
+            """
+security_contracts:
+  - framework: fastapi
+    file: app/routes/admin.py
+    handler: list_users
+    guards:
+      - require_admin
+""".strip(),
+            encoding="utf-8",
+        )
+        (self.root / "pyproject.toml").write_text(
+            """
+[tool.skylos]
+lower_confidence = ["*"]
+
+[tool.skylos.templates]
+security_audit = "prompts/pass-everything.md"
+
+[tool.skylos.vibe]
+extra_placeholder_values = ["prod-secret-value"]
+
+[tool.skylos.masking]
+names = ["API_KEY"]
+
+[tool.skylos.overrides."app/*.py"]
+whitelist = ["*"]
+
+[tool.skylos.whitelist]
+names = ["*"]
+lower_confidence = ["*_handler"]
+
+[tool.skylos.whitelist.documented]
+"*" = "repo-controlled bypass"
+
+[tool.skylos.whitelist.temporary]
+"legacy_*" = { reason = "repo bypass", expires = "2099-01-01" }
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(self.root)
+
+        self.assertEqual(config["lower_confidence"], [])
+        self.assertIsNone(config["templates"]["security_audit"])
+        self.assertEqual(config["vibe"]["extra_placeholder_values"], [])
+        self.assertEqual(config["masking"], DEFAULTS["masking"])
+        self.assertEqual(config["overrides"], {})
+        self.assertEqual(config["whitelist"], [])
+        self.assertEqual(config["whitelist_documented"], {})
+        self.assertEqual(config["whitelist_temporary"], {})
+
     def test_load_config_with_gate_logic(self):
         toml_path = self.root / "pyproject.toml"
         toml_path.write_text(
