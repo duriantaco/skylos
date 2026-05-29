@@ -19,6 +19,7 @@ from skylos.llm.security_taskflow import (
     REPO_MAP_STAGE,
     VERIFY_STAGE,
     DEFAULT_CANDIDATE_STATE,
+    _extract_security_file_facts,
     run_security_taskflow,
 )
 from skylos.llm.security_verifier import annotate_security_finding
@@ -469,6 +470,51 @@ def test_run_security_taskflow_writes_run_artifacts(tmp_path):
     assert summary_payload["final_finding_count"] == 1
     assert summary_payload["stages"][-1]["name"] == FINALIZE_STAGE
     assert summary_payload["artifact_write_error"] is None
+
+
+def test_run_security_taskflow_rejects_symlinked_artifact_dir(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("print('hi')\n", encoding="utf-8")
+    outside = tmp_path / "outside-artifacts"
+    outside.mkdir()
+    try:
+        (tmp_path / ".skylos").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        return
+
+    analyzer = _FakeAnalyzer(AnalysisResult(findings=[], files_analyzed=1))
+    with patch(
+        "skylos.llm.security_taskflow._generate_run_id",
+        return_value="run-test-123",
+    ):
+        run = run_security_taskflow(
+            path=tmp_path,
+            files=[app],
+            analyzer=analyzer,
+            model="gpt-4.1",
+            api_key="k",
+        )
+
+    assert run.artifact_write_error is not None
+    assert not (outside / "runs").exists()
+
+
+def test_extract_security_file_facts_rejects_symlink(tmp_path):
+    target = tmp_path / "outside.py"
+    target.write_text(
+        "from flask import request\nurl = request.args.get('next')\n",
+        encoding="utf-8",
+    )
+    link = tmp_path / "app.py"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        return
+
+    facts = _extract_security_file_facts(link)
+
+    assert facts.framework is None
+    assert facts.sources == ()
 
 
 def test_run_security_taskflow_challenges_uncertain_findings(tmp_path):

@@ -11,6 +11,7 @@ from skylos.core.result_cache import (
     RUN_CACHE_DIR,
     TRACE_CACHE_DIR,
     build_trace_cache_key,
+    read_trace_payload,
     save_trace_cache,
 )
 from skylos.commands.cache_cmd import run_cache_command
@@ -155,6 +156,39 @@ def test_trace_cache_hit_skips_trace_subprocess_and_writes_trace(tmp_path):
     assert (
         json.loads((tmp_path / ".skylos_trace").read_text(encoding="utf-8")) == payload
     )
+
+
+def test_read_trace_payload_rejects_symlink(tmp_path):
+    _write_minimal_project(tmp_path)
+    target = tmp_path / "outside-trace.json"
+    target.write_text(json.dumps(_trace_payload(tmp_path)), encoding="utf-8")
+    link = tmp_path / ".skylos_trace"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        return
+
+    assert read_trace_payload(link) is None
+
+
+def test_trace_cache_save_rejects_symlinked_cache_dir(tmp_path):
+    _write_minimal_project(tmp_path)
+    outside = tmp_path / "outside-cache"
+    outside.mkdir()
+    try:
+        (tmp_path / ".skylos").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        return
+
+    saved = save_trace_cache(
+        tmp_path,
+        "abc123",
+        _trace_payload(tmp_path),
+        pytest_returncode=0,
+    )
+
+    assert saved is None
+    assert not (outside / "cache").exists()
 
 
 def test_refresh_cache_runs_subprocess_despite_hit(tmp_path):

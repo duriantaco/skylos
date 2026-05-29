@@ -60,6 +60,18 @@ def test_parse_requirements_txt_basic(tmp_path):
     assert "numpy" in deps
 
 
+def test_parse_requirements_txt_rejects_symlink(tmp_path):
+    target = tmp_path / "outside-requirements.txt"
+    target.write_text("notarealpackage==1.0.0\n", encoding="utf-8")
+    link = tmp_path / "requirements.txt"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        return
+
+    assert dep._parse_requirements_txt(link) == set()
+
+
 def test_parse_pyproject_toml_dependencies_array(tmp_path):
     py = tmp_path / "pyproject.toml"
     py.write_text(
@@ -278,6 +290,47 @@ def test_scan_cache_is_written_when_modified(monkeypatch, tmp_path):
     data = json.loads(cache_path.read_text(encoding="utf-8"))
     assert "somepkg" in data
     assert data["somepkg"] == "exists"
+
+
+def test_scan_rejects_symlinked_pypi_cache_file(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\ndependencies = []\n',
+        encoding="utf-8",
+    )
+
+    f = _write_py(repo / "x.py", "import somepkg\n")
+
+    monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: set())
+    monkeypatch.setattr(dep, "_collect_local_modules", lambda root: set())
+    monkeypatch.setattr(dep, "_collect_declared_deps", lambda root: set())
+    monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
+    monkeypatch.setattr(dep, "_build_installed_module_mapping", lambda: {})
+
+    def fake_check(name, cache):
+        cache[dep._normalize_name(name)] = "exists"
+        return "exists"
+
+    monkeypatch.setattr(dep, "_check_pypi_status", fake_check)
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = outside / "pypi_exists.json"
+    target.write_text('{"somepkg": "missing"}', encoding="utf-8")
+    cache_path = repo / ".skylos" / "cache" / "pypi_exists.json"
+    cache_path.parent.mkdir(parents=True)
+    try:
+        cache_path.symlink_to(target)
+    except OSError:
+        import pytest
+
+        pytest.skip("filesystem does not allow symlink creation")
+
+    _ = dep.scan_python_dependency_hallucinations(repo, [f])
+
+    assert target.read_text(encoding="utf-8") == '{"somepkg": "missing"}'
+    assert cache_path.is_symlink()
 
 
 def test_scan_does_not_write_cache_when_not_modified(monkeypatch, tmp_path):

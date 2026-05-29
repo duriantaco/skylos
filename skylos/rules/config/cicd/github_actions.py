@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from skylos.core.safe_cache_io import read_text_no_symlink
 from skylos.rules.config.findings import config_finding
 
 try:
@@ -259,9 +260,10 @@ def _load_yaml(path: Path) -> dict[str, Any] | None:
     if yaml is None:
         return None
     try:
-        if path.stat().st_size > MAX_YAML_BYTES:
+        text = read_text_no_symlink(path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
+        if text is None:
             return None
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = yaml.safe_load(text)
     except Exception:
         return None
     if not isinstance(raw, dict):
@@ -1900,10 +1902,8 @@ def scan_github_actions_file(
     if data is None:
         return []
 
-    try:
-        lines = file_path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        lines = []
+    text = read_text_no_symlink(file_path, max_bytes=MAX_YAML_BYTES, encoding="utf-8")
+    lines = text.splitlines() if text is not None else []
 
     ignore = ignore or set()
     findings: list[dict[str, Any]] = []

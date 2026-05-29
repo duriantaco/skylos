@@ -7,8 +7,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from skylos.core.safe_cache_io import (
+    load_project_json_cache,
+    read_text_no_symlink,
+    save_project_json_cache,
+)
 
 logger = logging.getLogger(__name__)
+MAX_CONFIG_FILE_BYTES = 50_000
 
 
 @dataclass
@@ -121,7 +127,14 @@ def _gather_config_files(project_root: Path) -> dict[str, str]:
         if "*" in pattern:
             for p in project_root.glob(pattern):
                 try:
-                    text = p.read_text(encoding="utf-8", errors="ignore")
+                    text = read_text_no_symlink(
+                        p,
+                        max_bytes=MAX_CONFIG_FILE_BYTES,
+                        encoding="utf-8",
+                        errors="ignore",
+                    )
+                    if text is None:
+                        continue
                     if len(text) > 10_000:
                         text = text[:10_000] + "\n... (truncated)"
                     configs[str(p.relative_to(project_root))] = text
@@ -131,7 +144,14 @@ def _gather_config_files(project_root: Path) -> dict[str, str]:
             p = project_root / pattern
             if p.exists():
                 try:
-                    text = p.read_text(encoding="utf-8", errors="ignore")
+                    text = read_text_no_symlink(
+                        p,
+                        max_bytes=MAX_CONFIG_FILE_BYTES,
+                        encoding="utf-8",
+                        errors="ignore",
+                    )
+                    if text is None:
+                        continue
                     if len(text) > 10_000:
                         text = text[:10_000] + "\n... (truncated)"
                     configs[pattern] = text
@@ -197,8 +217,15 @@ def _build_repo_facts(
     pyproject_path = project_root / "pyproject.toml"
     if pyproject_path.exists():
         try:
-            with pyproject_path.open("rb") as handle:
-                pyproject = tomllib.load(handle)
+            pyproject_text = read_text_no_symlink(
+                pyproject_path,
+                max_bytes=MAX_CONFIG_FILE_BYTES,
+                encoding="utf-8",
+            )
+            if pyproject_text is None:
+                pyproject = {}
+            else:
+                pyproject = tomllib.loads(pyproject_text)
             ini_options = (
                 pyproject.get("tool", {}).get("pytest", {}).get("ini_options", {})
             )
@@ -287,7 +314,7 @@ def discover_entry_points(
     current_hash = (config_files_hash or _config_files_hash)(configs)
     if cache_path.exists():
         try:
-            cached = json.loads(cache_path.read_text())
+            cached = load_project_json_cache(project_root, cache_path)
             if cached.get("hash") == current_hash:
                 return [
                     EntryPoint(
@@ -354,12 +381,9 @@ def discover_entry_points(
                     )
 
         try:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(
-                json.dumps(
-                    {"hash": current_hash, "entry_points": all_discovered}, indent=2
-                )
-            )
+            payload = {"hash": current_hash, "entry_points": all_discovered}
+            if not save_project_json_cache(project_root, cache_path, payload):
+                raise OSError("unsafe entry point cache path")
         except OSError as exc:
             logger.debug("Failed to write entry point cache %s: %s", cache_path, exc)
 
