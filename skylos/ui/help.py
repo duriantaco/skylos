@@ -151,7 +151,7 @@ COMMANDS = [
     },
     {
         "name": "skylos run",
-        "desc": "Start local web dashboard server (--port and SKYLOS_PORT supported)",
+        "desc": "Deprecated local web dashboard; use skylos . -a or skylos suite .",
         "group": "Utility",
     },
     {"name": "skylos commands", "desc": "List all commands (flat)", "group": "Utility"},
