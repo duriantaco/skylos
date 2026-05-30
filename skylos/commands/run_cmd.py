@@ -11,6 +11,13 @@ from skylos.config import load_config
 from skylos.constants import parse_exclude_folders
 
 
+DEPRECATION_WARNING = (
+    "[bold yellow]Warning:[/bold yellow] `skylos run` is deprecated and will be "
+    "removed in the next major release. Use [bold]skylos . -a[/bold] or "
+    "[bold]skylos suite .[/bold] for local analysis."
+)
+
+
 def _load_start_server() -> Callable[..., Any]:
     from skylos.web.server import start_server
 
@@ -25,6 +32,7 @@ def run_run_command(
     parse_exclude_folders_func: Callable[..., set[str] | tuple[str, ...]] = parse_exclude_folders,
     start_server_loader: Callable[[], Callable[..., Any]] = _load_start_server,
 ) -> None:
+    console = console_factory()
     run_exclude_folders: list[str] = []
     run_include_folders: list[str] = []
     run_port = None
@@ -45,11 +53,11 @@ def run_run_command(
             try:
                 run_port = int(argv[i + 1])
             except ValueError:
-                console_factory().print("[bold red]Error: --port must be an integer[/bold red]")
+                console.print("[bold red]Error: --port must be an integer[/bold red]")
                 raise SystemExit(1)
             i += 2
         elif argv[i] == "--port":
-            console_factory().print("[bold red]Error: --port requires a value[/bold red]")
+            console.print("[bold red]Error: --port requires a value[/bold red]")
             raise SystemExit(1)
         else:
             i += 1
@@ -59,11 +67,13 @@ def run_run_command(
         if run_port is not None:
             os.environ["SKYLOS_PORT"] = str(run_port)
 
+        console.print(DEPRECATION_WARNING)
+
         try:
             start_server = start_server_loader()
         except ImportError:
-            console_factory().print("[bold red]Error: Flask is required[/bold red]")
-            console_factory().print(
+            console.print("[bold red]Error: Flask is required[/bold red]")
+            console.print(
                 "[bold yellow]Install with: pip install flask flask-cors[/bold yellow]"
             )
             raise SystemExit(1)
@@ -77,13 +87,13 @@ def run_run_command(
 
         start_server(exclude_folders=list(exclude_folders))
     except ImportError:
-        console_factory().print("[bold red]Error: Flask is required[/bold red]")
-        console_factory().print(
+        console.print("[bold red]Error: Flask is required[/bold red]")
+        console.print(
             "[bold yellow]Install with: pip install flask flask-cors[/bold yellow]"
         )
         raise SystemExit(1)
     except ValueError as exc:
-        console_factory().print(f"[bold red]Error: {exc}[/bold red]")
+        console.print(f"[bold red]Error: {exc}[/bold red]")
         raise SystemExit(1)
     finally:
         if run_port is not None:
