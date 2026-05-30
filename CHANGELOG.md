@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.22.1](https://github.com/duriantaco/skylos/compare/v4.22.0...v4.22.1) (2026-05-30)
+
+
+### Bug Fixes
+
+* **cli:** deprecate run dashboard ([#513](https://github.com/duriantaco/skylos/issues/513)) ([eb5331d](https://github.com/duriantaco/skylos/commit/eb5331d282ef7fd6f1fffded0cfa75dd85429069))
+
 ## [4.22.0](https://github.com/duriantaco/skylos/compare/v4.21.0...v4.22.0) (2026-05-29)
 
 
