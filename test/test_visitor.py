@@ -145,6 +145,32 @@ except ImportError:
         self.assertTrue(imports[0].conditional_import)
         self.assertTrue(imports[0].to_dict()["conditional_import"])
 
+    def test_try_except_tuple_import_marks_conditional_import(self):
+        code = """
+try:
+    import brotli
+except (ImportError, ModuleNotFoundError):
+    brotli = None
+"""
+        visitor = self.parse_and_visit(code)
+
+        imports = [d for d in visitor.defs if d.type == "import"]
+        self.assertEqual(len(imports), 1)
+        self.assertTrue(imports[0].conditional_import)
+
+    def test_try_star_import_marks_conditional_import(self):
+        code = """
+try:
+    import brotli
+except* ImportError:
+    brotli = None
+"""
+        visitor = self.parse_and_visit(code)
+
+        imports = [d for d in visitor.defs if d.type == "import"]
+        self.assertEqual(len(imports), 1)
+        self.assertTrue(imports[0].conditional_import)
+
     def test_class_with_methods(self):
         code = """
 class MyClass:

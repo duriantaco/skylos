@@ -204,6 +204,8 @@ _RULES = (
     RuleCatalogEntry("SKY-D339", "Persistent environment mutation", "security", "HIGH"),
     RuleCatalogEntry("SKY-D340", "Unapproved package or artifact publish", "security", "HIGH"),
     RuleCatalogEntry("SKY-D341", "Untrusted package-managed tool execution", "security", "HIGH"),
+    RuleCatalogEntry("SKY-D342", "Dockerfile remote ADD without checksum", "security", "HIGH"),
+    RuleCatalogEntry("SKY-D343", "Dockerfile literal secret build value", "security", "HIGH"),
     RuleCatalogEntry("SKY-G203", "Go defer in loop", "security", "HIGH"),
     RuleCatalogEntry("SKY-G206", "Go unsafe package import", "security", "HIGH"),
     RuleCatalogEntry("SKY-G207", "Go weak MD5 hash", "security", "MEDIUM"),

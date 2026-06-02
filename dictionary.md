@@ -172,6 +172,8 @@ Finding types:
 | D339 | HIGH | Persistent environment mutation | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
 | D340 | HIGH | Unapproved package or artifact publish | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
 | D341 | HIGH | Untrusted package-managed tool execution | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
+| D342 | HIGH | Dockerfile remote ADD without checksum | Dockerfile |
+| D343 | HIGH | Dockerfile literal secret build value | Dockerfile |
 
 ### Config And Deployment Security
 

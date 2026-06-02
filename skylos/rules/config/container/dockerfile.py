@@ -27,13 +27,23 @@ SKIP_DIR_NAMES = {
     "venv",
 }
 MAX_DOCKERFILE_BYTES = 1_000_000
-RUN_RE = re.compile(r"^\s*RUN(?:\s|$)", re.I)
+INSTRUCTION_RE = re.compile(r"^\s*(?P<instruction>[A-Z]+)(?:\s|$)", re.I)
 RUN_OPTION_RE = re.compile(
     r"^--(?:mount|network|security)"
     r"(?:=(?:\"[^\"]*\"|'[^']*'|[^\s]+)|\s+(?:\"[^\"]*\"|'[^']*'|[^\s]+))"
     r"\s*"
 )
 SHELL_INTERPRETERS = {"bash", "dash", "ksh", "sh", "zsh"}
+ADD_VALUE_FLAGS = {"--checksum", "--chown", "--chmod", "--exclude", "--keep-git-dir"}
+SECRET_REFERENCE_SUFFIXES = ("_FILE", "_PATH", "_DIR", "_NAME", "_ARN")
+REMOTE_URL_RE = re.compile(r"^https?://", re.I)
+SECRET_NAME_RE = re.compile(
+    r"(?:^|_)(?:"
+    r"API_KEY|ACCESS_KEY|CLIENT_SECRET|CREDENTIALS?|PASSWORD|PASSWD|"
+    r"PRIVATE_KEY|SECRET|TOKEN"
+    r")(?:_|$)",
+    re.I,
+)
 
 
 def _finding(
@@ -111,22 +121,24 @@ def _discover_dockerfiles(root: Path, changed_files: set[str] | None) -> list[Pa
     return sorted(candidates)
 
 
-def _iter_run_instructions(lines: list[str]) -> Iterator[tuple[int, str]]:
+def _iter_instructions(lines: list[str]) -> Iterator[tuple[int, str, str]]:
     idx = 0
     while idx < len(lines):
         line = lines[idx]
-        if not RUN_RE.match(line):
+        match = INSTRUCTION_RE.match(line)
+        if not match:
             idx += 1
             continue
 
+        instruction = match.group("instruction").upper()
         start_line = idx + 1
-        body = RUN_RE.sub("", line, count=1).strip()
+        body = line[match.end() :].strip()
         while _line_continues(lines[idx]) and idx + 1 < len(lines):
             body = body.rstrip().removesuffix("\\").rstrip()
             idx += 1
             body = f"{body} {lines[idx].strip()}".strip()
 
-        yield start_line, body
+        yield start_line, instruction, body
         idx += 1
 
 
@@ -146,6 +158,172 @@ def _commands_from_run_body(body: str) -> Iterator[str]:
         return
 
     yield stripped
+
+
+def _add_sources_from_body(body: str) -> tuple[list[str], bool]:
+    tokens = _instruction_tokens(body)
+    if not tokens:
+        return [], False
+
+    sources: list[str] = []
+    has_checksum = False
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token == "--checksum":
+            has_checksum = True
+            idx += 2
+            continue
+        if token.startswith("--checksum="):
+            has_checksum = True
+            idx += 1
+            continue
+        if token.startswith("--"):
+            flag_name = token.split("=", 1)[0]
+            if "=" in token or flag_name not in ADD_VALUE_FLAGS:
+                idx += 1
+            else:
+                idx += 2
+            continue
+        sources.append(token)
+        idx += 1
+
+    if len(sources) <= 1:
+        return [], has_checksum
+    return sources[:-1], has_checksum
+
+
+def _instruction_tokens(body: str) -> list[str]:
+    stripped = body.strip()
+    if not stripped:
+        return []
+    if stripped.startswith("["):
+        try:
+            raw = json.loads(stripped)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(raw, list) and all(isinstance(item, str) for item in raw):
+            return raw
+        return []
+    return _shell_tokens(stripped)
+
+
+def _secret_assignments_from_body(instruction: str, body: str) -> list[tuple[str, str]]:
+    tokens = _instruction_tokens(body)
+    if not tokens:
+        return []
+
+    assignments: list[tuple[str, str]] = []
+    if instruction == "ARG":
+        for token in tokens:
+            if "=" not in token:
+                continue
+            name, value = token.split("=", 1)
+            assignments.append((name, value))
+        return assignments
+
+    if instruction != "ENV":
+        return []
+
+    equals_tokens = [
+        token for token in tokens if "=" in token and not token.startswith("=")
+    ]
+    if equals_tokens:
+        for token in equals_tokens:
+            name, value = token.split("=", 1)
+            assignments.append((name, value))
+        return assignments
+
+    if len(tokens) >= 2:
+        assignments.append((tokens[0], " ".join(tokens[1:])))
+    return assignments
+
+
+def _secret_value_is_literal(value: str) -> bool:
+    raw = value.strip()
+    if not raw:
+        return False
+    if raw.startswith("$"):
+        return False
+    return True
+
+
+def _secret_name_is_sensitive(name: str) -> bool:
+    normalized = name.strip()
+    if not normalized:
+        return False
+    if normalized.upper().endswith(SECRET_REFERENCE_SUFFIXES):
+        return False
+    return SECRET_NAME_RE.search(normalized) is not None
+
+
+def _scan_remote_add(
+    findings: list[dict[str, Any]],
+    *,
+    file_path: Path,
+    lines: list[str],
+    line: int,
+    body: str,
+    ignore: set[str],
+) -> None:
+    rule_id = "SKY-D342"
+    if rule_id in ignore or _is_inline_ignored(lines, line, rule_id):
+        return
+    sources, has_checksum = _add_sources_from_body(body)
+    if has_checksum:
+        return
+    if not any(REMOTE_URL_RE.match(source) for source in sources):
+        return
+    findings.append(
+        _finding(
+            rule_id=rule_id,
+            name="dockerfile-remote-add-without-checksum",
+            message=(
+                "Dockerfile ADD fetches a remote URL without a checksum. "
+                "Download with a pinned digest/checksum or vendor the artifact."
+            ),
+            file=file_path,
+            line=line,
+            severity="HIGH",
+            value="ADD remote URL",
+        )
+    )
+
+
+def _scan_secret_build_values(
+    findings: list[dict[str, Any]],
+    *,
+    file_path: Path,
+    lines: list[str],
+    line: int,
+    instruction: str,
+    body: str,
+    ignore: set[str],
+) -> None:
+    rule_id = "SKY-D343"
+    if rule_id in ignore or _is_inline_ignored(lines, line, rule_id):
+        return
+    for name, value in _secret_assignments_from_body(instruction, body):
+        if not _secret_name_is_sensitive(name):
+            continue
+        if not _secret_value_is_literal(value):
+            continue
+        findings.append(
+            _finding(
+                rule_id=rule_id,
+                name="dockerfile-literal-secret-build-value",
+                message=(
+                    f"Dockerfile {instruction} sets secret-looking `{name}` to a "
+                    "literal value. Use build secrets or runtime secret injection "
+                    "instead of baking credentials into image layers."
+                ),
+                file=file_path,
+                line=line,
+                severity="HIGH",
+                value=f"{instruction} {name}",
+            )
+        )
+        return
 
 
 def _strip_run_options(body: str) -> str:
@@ -206,22 +384,44 @@ def scan_dockerfile_file(
     ignored = ignore or set()
     lines = text.splitlines()
     findings: list[dict[str, Any]] = []
-    for line, body in _iter_run_instructions(lines):
-        for command in _commands_from_run_body(body):
-            for risk in scan_shell_command(command):
-                if risk.rule_id in ignored or _is_inline_ignored(lines, line, risk.rule_id):
-                    continue
-                findings.append(
-                    _finding(
-                        rule_id=risk.rule_id,
-                        name="dockerfile-run-command-risk",
-                        message=risk.message,
-                        file=file_path,
-                        line=line,
-                        severity=risk.severity,
-                        value=risk.rule_id,
+    for line, instruction, body in _iter_instructions(lines):
+        if instruction == "RUN":
+            for command in _commands_from_run_body(body):
+                for risk in scan_shell_command(command):
+                    if risk.rule_id in ignored or _is_inline_ignored(
+                        lines, line, risk.rule_id
+                    ):
+                        continue
+                    findings.append(
+                        _finding(
+                            rule_id=risk.rule_id,
+                            name="dockerfile-run-command-risk",
+                            message=risk.message,
+                            file=file_path,
+                            line=line,
+                            severity=risk.severity,
+                            value=risk.rule_id,
+                        )
                     )
-                )
+        elif instruction == "ADD":
+            _scan_remote_add(
+                findings,
+                file_path=file_path,
+                lines=lines,
+                line=line,
+                body=body,
+                ignore=ignored,
+            )
+        elif instruction in {"ARG", "ENV"}:
+            _scan_secret_build_values(
+                findings,
+                file_path=file_path,
+                lines=lines,
+                line=line,
+                instruction=instruction,
+                body=body,
+                ignore=ignored,
+            )
     return findings
 
 

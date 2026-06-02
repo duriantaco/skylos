@@ -64,6 +64,7 @@ PYTHON_BUILTINS = {
 }
 
 DYNAMIC_PATTERNS = {"getattr", "globals", "eval", "exec"}
+IMPORT_FALLBACK_EXCEPTIONS = {"ImportError", "ModuleNotFoundError"}
 
 OVERRIDE_DECORATORS = {
     "override",
@@ -177,6 +178,21 @@ IMPLICIT_DUNDERS = {
 }
 
 METACLASS_BASES = {"ABCMeta", "EnumMeta", "type"}
+
+
+def _exception_type_leaf_names(exc_type: ast.expr | None) -> set[str]:
+    if exc_type is None:
+        return set()
+    if isinstance(exc_type, ast.Name):
+        return {exc_type.id}
+    if isinstance(exc_type, ast.Attribute):
+        return {exc_type.attr}
+    if isinstance(exc_type, (ast.Tuple, ast.List)):
+        names: set[str] = set()
+        for elt in exc_type.elts:
+            names.update(_exception_type_leaf_names(elt))
+        return names
+    return set()
 
 
 class Definition:
@@ -601,8 +617,7 @@ class Visitor(ast.NodeVisitor):
         self._complexity_stack[-1] += len(node.handlers)
 
         is_import_error_handler = any(
-            isinstance(h.type, ast.Name)
-            and h.type.id in ("ImportError", "ModuleNotFoundError")
+            _exception_type_leaf_names(h.type) & IMPORT_FALLBACK_EXCEPTIONS
             for h in node.handlers
         )
 
@@ -639,6 +654,9 @@ class Visitor(ast.NodeVisitor):
                             self.add_ref(full_name)
 
         self.generic_visit(node)
+
+    if hasattr(ast, "TryStar"):
+        visit_TryStar = visit_Try
 
     def visit_With(self, node: ast.With) -> None:
         for item in node.items:
