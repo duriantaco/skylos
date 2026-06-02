@@ -40,6 +40,33 @@ def test_optional_import_fallback_is_live(tmp_path):
     assert any(item["reason"] == "optional_import_fallback" for item in rescues)
 
 
+def test_optional_import_fallback_tuple_handler_is_live(tmp_path):
+    _write(
+        tmp_path / "pkg" / "mod.py",
+        """
+        class InvalidSchema(Exception):
+            pass
+
+        try:
+            from optional_package import OptionalFactory
+        except (ImportError, ModuleNotFoundError):
+            def OptionalFactory(*args, **kwargs):
+                raise InvalidSchema("missing optional package")
+
+        def build():
+            return OptionalFactory()
+
+        build()
+        """,
+    )
+
+    result = json.loads(analyze(str(tmp_path), grep_verify=False))
+
+    assert "pkg.mod.OptionalFactory" not in _unused_function_names(result)
+    rescues = result["analysis_summary"]["dead_code_liveness"]["rescued"]
+    assert any(item["reason"] == "optional_import_fallback" for item in rescues)
+
+
 def test_protocol_override_method_is_live(tmp_path):
     _write(
         tmp_path / "handlers.py",
