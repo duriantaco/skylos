@@ -320,6 +320,37 @@ def _validate_code_change_impl(
     }
 
 
+def _verify_change_impl(
+    path: str = ".",
+    file: str | None = None,
+    line_range: str | None = None,
+    confidence: int = 60,
+    project_context: bool = False,
+    include_dependency_hallucinations: bool = False,
+    exclude_folders: str | None = None,
+) -> dict:
+    """Core logic for verify_change, extracted for testability."""
+    from skylos.verify_change import verify_change_path
+
+    parse_exclude_folders, _ = _lazy_constants()
+    excl = list(parse_exclude_folders(use_defaults=True))
+    if exclude_folders:
+        for folder in exclude_folders.split(","):
+            folder = folder.strip()
+            if folder:
+                excl.append(folder)
+
+    return verify_change_path(
+        path,
+        file=file,
+        line_range=line_range,
+        confidence=confidence,
+        exclude_folders=excl,
+        project_context=project_context,
+        include_dependency_hallucinations=include_dependency_hallucinations,
+    )
+
+
 def _resolve_analysis_target(path: str) -> Path:
     return Path(path).expanduser().resolve()
 
@@ -1060,6 +1091,42 @@ def _register_tools(mcp):
         try:
             result = _validate_code_change_impl(diff, path, policy)
             _store_result(result, "validate_code_change", path)
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    def verify_change(
+        path: str = ".",
+        file: str | None = None,
+        line_range: str | None = None,
+        confidence: int = 60,
+        project_context: bool = False,
+        include_dependency_hallucinations: bool = False,
+        exclude_folders: str | None = None,
+    ) -> str:
+        """Verify a changed file/range for AI-code defects.
+
+        Returns a narrow, versioned JSON verdict containing only AI-code trust
+        findings such as hallucinated references, unfinished generated code,
+        stale references, disabled controls, and optional dependency
+        hallucinations.
+        """
+        gate_err = _gate("verify_change")
+        if gate_err:
+            return gate_err
+
+        try:
+            result = _verify_change_impl(
+                path=path,
+                file=file,
+                line_range=line_range,
+                confidence=confidence,
+                project_context=project_context,
+                include_dependency_hallucinations=include_dependency_hallucinations,
+                exclude_folders=exclude_folders,
+            )
+            _store_result(result, "verify_change", path)
             return json.dumps(result, indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)})

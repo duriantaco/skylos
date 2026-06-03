@@ -371,6 +371,23 @@ def test_cli_guardrail_discover_dispatch_preserves_argv(monkeypatch):
     mock_discover.assert_called_once_with(["repo", "--json", "--exclude", "venv"])
 
 
+def test_cli_guardrail_verify_dispatch_preserves_argv(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "verify", "repo", "--file", "app.py", "--range", "2:5"],
+    )
+
+    with (
+        patch("skylos.commands.verify_cmd.run_verify_command", return_value=0) as mock_verify,
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    mock_verify.assert_called_once_with(["repo", "--file", "app.py", "--range", "2:5"])
+
+
 def test_cli_guardrail_defend_dispatch_preserves_argv(monkeypatch):
     monkeypatch.setattr(
         sys,

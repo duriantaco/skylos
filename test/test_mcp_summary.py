@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import skylos_mcp.server as mcp_server
 from skylos_mcp.server import (
     _architecture_payload,
@@ -130,3 +132,44 @@ def test_mcp_remediate_rejects_test_cmd(monkeypatch):
     result = fake.tools["remediate"](".", test_cmd="true; touch /tmp/marker")
 
     assert "does not accept test_cmd" in result
+
+
+def test_mcp_verify_change_returns_shared_schema(monkeypatch):
+    class FakeMCP:
+        def __init__(self):
+            self.tools = {}
+
+        def tool(self):
+            def decorate(fn):
+                self.tools[fn.__name__] = fn
+                return fn
+
+            return decorate
+
+        def resource(self, *_args, **_kwargs):
+            def decorate(fn):
+                return fn
+
+            return decorate
+
+    fake = FakeMCP()
+    _register_tools(fake)
+    monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+    monkeypatch.setattr(
+        mcp_server,
+        "_verify_change_impl",
+        lambda **_kwargs: {
+            "schema_version": 1,
+            "tool": "verify_change",
+            "status": "pass",
+            "target": {"path": ".", "file": "app.py", "range": None},
+            "findings": [],
+            "summary": "No AI-code issues found",
+        },
+    )
+
+    result = json.loads(fake.tools["verify_change"](path=".", file="app.py"))
+
+    assert result["schema_version"] == 1
+    assert result["tool"] == "verify_change"
+    assert result["status"] == "pass"
