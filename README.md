@@ -56,6 +56,12 @@ dependency checks with `-a`:
 skylos . -a
 ```
 
+Verify a changed file or range before an agent hands it to review:
+
+```bash
+skylos verify . --file src/app.py --range 40:75 --project-context
+```
+
 Create a project config with thresholds, ignores, template hooks, and vibe
 dictionary extensions:
 
@@ -95,12 +101,15 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Readable terminal report | `skylos . --format pretty` | Groups findings by file with severity badges, snippets, and copyable `file:line` locations | [CLI output modes](./docs/cli-output.md) |
 | Selectable terminal triage | `skylos . --tui` | Opens a keyboard-driven category list, finding list, and detail pane | [CLI output modes](./docs/cli-output.md) |
 | IDE/test-script output | `skylos --format concise src/test.py` | Prints only `file:line` findings and exits non-zero when findings exist | [CLI Reference](https://docs.skylos.dev/cli-reference) |
+| In-loop AI-code verification | `skylos verify . --file src/app.py --range 40:75` | Returns narrow JSON for hallucinated helpers, unfinished code, stale references, disabled controls, and API/dependency hallucinations | [AI features](https://docs.skylos.dev/ai-features) |
 | Changed-lines review | `skylos . -a --diff origin/main` | Keeps findings focused on active work instead of legacy debt | [Quality gate docs](https://docs.skylos.dev/quality-gate) |
 | Runtime-assisted dead-code check | `skylos . --trace` | Uses runtime traces to reduce dynamic-code false positives | [Smart tracing](https://docs.skylos.dev/smart-tracing) |
 | Local rule pack | `skylos rules init` | Scaffolds YAML rules for project-specific security and quality checks | [Custom rules](https://docs.skylos.dev/custom-rules) |
 | Security agent quick scan | `skylos agent security-quick .` | One-shot LLM security audit; compatibility alias for `skylos agent scan . --security` | [AI features](https://docs.skylos.dev/ai-features) |
 | Security agent deep scan | `skylos agent security-deep .` | Three-stage security workflow with threat-model context, static threat traces, discovery/validation, and remediation handoff | [AI features](https://docs.skylos.dev/ai-features) |
 | AI-assisted review | `skylos agent scan .` | Static analysis plus optional LLM review and fix suggestions | [AI features](https://docs.skylos.dev/ai-features) |
+| Verification-backed remediation | `skylos agent scan . --fix` | Re-scans fixed security findings and records proof-test metadata for supported fixes | [AI features](https://docs.skylos.dev/ai-features) |
+| MCP agent verification | `verify_change` MCP tool | Lets Claude, Cursor, and other MCP clients verify an edited file/range with the same schema as `skylos verify` | [MCP server](https://docs.skylos.dev/mcp-server) |
 | LLM app defense | `skylos defend .` | Finds missing AI app guardrails mapped to OWASP LLM risks | [AI defense](https://docs.skylos.dev/ai-defense) |
 | Technical debt triage | `skylos debt .` | Ranks hotspots and debt trends | [Technical debt](https://docs.skylos.dev/technical-debt) |
 
@@ -133,6 +142,12 @@ repo and PR checker that puts several common review checks behind one CLI.
 - **AI-assisted change review:** checks for removed validation, auth, logging,
   CSRF, rate limiting, timeouts, real-package API hallucinations, and other
   guardrails in generated or edited code.
+- **Agent-loop verification:** `skylos verify` and MCP `verify_change` return
+  versioned JSON for only AI-code trust findings, so coding agents can
+  self-correct before a human sees the change.
+- **Verification-backed remediation:** security fixes are checked by re-running
+  analysis, and supported findings can include targeted regression-test proof
+  metadata.
 - **Project-specific rules:** add local YAML rules and extend prompt, credential,
   sensitive-file, and timeout dictionaries from config.
 - **One command surface:** dead code, security, secrets, dependency, quality,
@@ -177,12 +192,21 @@ extra_phantom_names = ["verify_enterprise_auth"]
 extra_phantom_decorators = ["tenant_admin_required"]
 extra_credential_names = ["tenant_signing_secret"]
 extra_network_timeout_calls = ["vendor_sdk.fetch"]
+
+[tool.skylos.contribution]
+collect_local_signals = false
+contribute_public_corpus = false
+structural_signatures_only = true
+include_source = false
 ```
 
 Template files extend Skylos' built-in prompts; they do not replace the
 JSON-only output contract or untrusted-code safety rules. Vibe dictionary
 extensions let teams teach Skylos about local fake-auth helpers, project
 credential names, sensitive files, and network calls that must set timeouts.
+Contribution signals are off by default; when enabled, Skylos records local
+structural accept/dismiss/learn events under `.skylos/contribution/` without raw
+source.
 
 By default Skylos discovers `[tool.skylos]` in `pyproject.toml` by walking up
 from the scan path. To use a dedicated TOML config, pass `--config-file PATH`
@@ -229,6 +253,7 @@ tool is universally state of the art.
 | Security regression | 56 cases, TP=35 FP=0 FN=0 TN=23, score 100.0 | Bandit score 47.14 on Python-applicable cases |
 | Quality regression | 13 cases, score 100.0 | regression gate only |
 | Agent review | 25 cases, score 100.0 | regression gate only |
+| AI-code defect regression | curated verifier cases for hallucinated references, package APIs, and dependency versions | run `python scripts/ai_code_defect_benchmark.py` |
 
 Frozen `golden-v0.2` highlights:
 
