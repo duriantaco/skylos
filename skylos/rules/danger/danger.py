@@ -18,6 +18,9 @@ from .danger_webhook.webhook_flow import scan as scan_webhook
 from .danger_hallucination.dependency_hallucination import (
     scan_python_dependency_hallucinations,
 )
+from .danger_hallucination.api_signature_hallucination import (
+    scan_python_api_signature_hallucinations,
+)
 from skylos.security.command_guard import (
     findings_for_command,
     is_external_url,
@@ -498,6 +501,10 @@ def scan_ctx(_, files):
             dep_findings = scan_python_dependency_hallucinations(repo_root, py_files)
             if dep_findings:
                 findings.extend(dep_findings)
+
+            api_findings = scan_python_api_signature_hallucinations(repo_root, py_files)
+            if api_findings:
+                findings.extend(api_findings)
 
     except Exception as e:
         print(f"Dependency hallucination scan failed: {e}", file=sys.stderr)
