@@ -79,6 +79,81 @@
       }
     },
     {
+      "id": "range-scoped-mixed-edit",
+      "path": "fixtures/range_scoped_mixed_edit",
+      "description": "A generated file contains multiple AI defects, but verify is scoped to only the changed handler range.",
+      "taxonomy": ["hallucinated_reference"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for diff/range-scoped agent-loop verification."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "range": "10:13"
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "category": "quality",
+            "severity": "CRITICAL",
+            "message_contains": "sanitize_input",
+            "start_line": 12
+          }
+        ],
+        "absent": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "message_contains": "validate_token"
+          },
+          {
+            "rule_id": "SKY-L026",
+            "vibe_category": "incomplete_generation"
+          }
+        ]
+      }
+    },
+    {
+      "id": "file-scoped-multi-module",
+      "path": "fixtures/file_scoped_multi_module",
+      "description": "A generated package contains defects in multiple modules, but verify is scoped to the edited route file.",
+      "taxonomy": ["hallucinated_reference", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for file-scoped verification in a multi-module edit."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "file": "app/routes.py"
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "file_contains": "app/routes.py",
+            "message_contains": "validate_token",
+            "start_line": 2
+          }
+        ],
+        "absent": [
+          {
+            "rule_id": "SKY-L026",
+            "vibe_category": "incomplete_generation",
+            "file_contains": "app/background.py"
+          }
+        ]
+      }
+    },
+    {
       "id": "incomplete-generation",
       "path": "fixtures/incomplete_generation",
       "description": "Generated business function is left as a pass-body stub.",
@@ -193,6 +268,75 @@
       }
     },
     {
+      "id": "compound-ai-failure-edit",
+      "path": "fixtures/compound_ai_failure_edit",
+      "description": "One generated edit combines phantom helpers, unfinished code, invented package APIs, and hallucinated dependencies.",
+      "taxonomy": [
+        "hallucinated_reference",
+        "incomplete_generation",
+        "api_signature_hallucination",
+        "dependency_hallucination"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic compound fixture for multi-category agent edit verification."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "danger": true,
+        "dependency_statuses": [
+          {
+            "ecosystem": "npm",
+            "name": "skylos-compound-ghost-sdk",
+            "version": "1.0.0",
+            "status": "missing_package"
+          },
+          {
+            "ecosystem": "npm",
+            "name": "left-pad",
+            "version": "99.99.99",
+            "status": "missing_version"
+          }
+        ]
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "message_contains": "validate_token",
+            "start_line": 5
+          },
+          {
+            "rule_id": "SKY-L026",
+            "vibe_category": "incomplete_generation",
+            "start_line": 14
+          },
+          {
+            "rule_id": "SKY-D224",
+            "vibe_category": "api_signature_hallucination",
+            "category": "security",
+            "message_contains": "requests.fetch_json",
+            "start_line": 6
+          },
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination",
+            "message_contains": "skylos-compound-ghost-sdk"
+          },
+          {
+            "rule_id": "SKY-D225",
+            "vibe_category": "dependency_hallucination",
+            "message_contains": "left-pad"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
       "id": "dependency-version-hallucination",
       "path": "fixtures/dependency_version_hallucination",
       "description": "Generated package manifest pins a dependency/version that should be verified against the registry.",
@@ -259,6 +403,107 @@
           }
         ],
         "absent": []
+      }
+    },
+    {
+      "id": "mixed-manifest-hallucinations",
+      "path": "fixtures/mixed_manifest_hallucinations",
+      "description": "A generated manifest mixes multiple missing packages with an invented version in one dependency edit.",
+      "taxonomy": ["dependency_hallucination"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for multiple deterministic manifest dependency hallucinations."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "dependency_hallucinations": true,
+        "dependency_statuses": [
+          {
+            "ecosystem": "npm",
+            "name": "skylos-enterprise-agent",
+            "version": "1.0.0",
+            "status": "missing_package"
+          },
+          {
+            "ecosystem": "npm",
+            "name": "left-pad",
+            "version": "99.99.99",
+            "status": "missing_version"
+          },
+          {
+            "ecosystem": "npm",
+            "name": "skylos-agent-testkit",
+            "version": "2.0.0",
+            "status": "missing_package"
+          }
+        ]
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination",
+            "message_contains": "skylos-enterprise-agent"
+          },
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination",
+            "message_contains": "skylos-agent-testkit"
+          },
+          {
+            "rule_id": "SKY-D225",
+            "vibe_category": "dependency_hallucination",
+            "message_contains": "left-pad"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "clean-dependency-manifest",
+      "path": "fixtures/clean_dependency_manifest",
+      "description": "Generated npm and Go manifests use dependency versions known to exist.",
+      "taxonomy": ["precision_guard", "dependency_hallucination"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic clean manifest fixture for dependency hallucination precision."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "dependency_hallucinations": true,
+        "dependency_statuses": [
+          {
+            "ecosystem": "npm",
+            "name": "left-pad",
+            "version": "1.3.0",
+            "status": "exists"
+          },
+          {
+            "ecosystem": "Go",
+            "name": "github.com/gin-gonic/gin",
+            "version": "1.9.1",
+            "status": "exists"
+          }
+        ]
+      },
+      "expect": {
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination"
+          },
+          {
+            "rule_id": "SKY-D225",
+            "vibe_category": "dependency_hallucination"
+          }
+        ]
       }
     },
     {

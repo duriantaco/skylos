@@ -8,9 +8,12 @@ The checked-in manifest intentionally mixes simple single-finding fixtures with
 harder cases:
 
 - cross-file repo-local phantom references
+- range-scoped and file-scoped verification cases
 - multiple hallucinated helper calls in one generated edit
 - multiple unfinished generation patterns in one class/module
+- compound edits that mix quality, API, and dependency hallucinations
 - missing npm package and missing npm/Go versions
+- clean dependency manifests for package/version precision
 - installed-package API member hallucinations
 - a clean generated-code absence guard
 

@@ -27,12 +27,17 @@ EXPECTED_CASE_IDS = {
     "hallucinated-reference",
     "repo-local-phantom-reference",
     "multiple-phantom-references",
+    "range-scoped-mixed-edit",
+    "file-scoped-multi-module",
     "incomplete-generation",
     "unfinished-generated-class",
     "api-signature-hallucination",
     "dependency-package-hallucination",
+    "compound-ai-failure-edit",
     "dependency-version-hallucination",
     "go-module-version-hallucination",
+    "mixed-manifest-hallucinations",
+    "clean-dependency-manifest",
     "clean-generated-code",
 }
 
@@ -41,22 +46,44 @@ EXPECTED_CASE_PATH_NAMES = [
     "hallucinated_reference",
     "repo_local_phantom_reference",
     "multiple_phantom_references",
+    "range_scoped_mixed_edit",
+    "file_scoped_multi_module",
     "incomplete_generation",
     "unfinished_generated_class",
     "api_signature_hallucination",
     "dependency_package_hallucination",
+    "compound_ai_failure_edit",
     "dependency_version_hallucination",
     "go_module_version_hallucination",
+    "mixed_manifest_hallucinations",
+    "clean_dependency_manifest",
     "clean_generated_code",
 ]
 
 
-def _finding(rule_id, vibe_category, *, message="", file_path="app.py"):
+def _finding(
+    rule_id,
+    vibe_category,
+    *,
+    message="",
+    file_path="app.py",
+    start_line=1,
+    category="quality",
+    severity="CRITICAL",
+    ai_likelihood="high",
+):
     return {
         "rule_id": rule_id,
         "vibe_category": vibe_category,
+        "ai_likelihood": ai_likelihood,
         "message": message,
-        "range": {"file": file_path},
+        "range": {
+            "file": file_path,
+            "start_line": start_line,
+            "end_line": start_line,
+        },
+        "severity": severity,
+        "category": category,
     }
 
 
@@ -80,15 +107,54 @@ def _fake_findings_for_case(case_path):
             _finding("SKY-L012", "hallucinated_reference"),
             _finding("SKY-L012", "hallucinated_reference"),
         ]
+    if case_name == "range_scoped_mixed_edit":
+        return [
+            _finding(
+                "SKY-L012",
+                "hallucinated_reference",
+                message="Call to 'sanitize_input()' but this function is never defined.",
+                start_line=12,
+            ),
+        ]
+    if case_name == "file_scoped_multi_module":
+        return [
+            _finding(
+                "SKY-L012",
+                "hallucinated_reference",
+                message="Call to 'validate_token()' but this function is never defined.",
+                file_path="app/routes.py",
+                start_line=2,
+            ),
+        ]
     if case_name == "incomplete_generation":
         return [
-            _finding("SKY-L026", "incomplete_generation"),
+            _finding(
+                "SKY-L026",
+                "incomplete_generation",
+                severity="MEDIUM",
+                ai_likelihood="medium",
+            ),
         ]
     if case_name == "unfinished_generated_class":
         return [
-            _finding("SKY-L026", "incomplete_generation"),
-            _finding("SKY-L026", "incomplete_generation"),
-            _finding("SKY-L026", "incomplete_generation"),
+            _finding(
+                "SKY-L026",
+                "incomplete_generation",
+                severity="MEDIUM",
+                ai_likelihood="medium",
+            ),
+            _finding(
+                "SKY-L026",
+                "incomplete_generation",
+                severity="MEDIUM",
+                ai_likelihood="medium",
+            ),
+            _finding(
+                "SKY-L026",
+                "incomplete_generation",
+                severity="MEDIUM",
+                ai_likelihood="medium",
+            ),
         ]
     if case_name == "api_signature_hallucination":
         return [
@@ -96,11 +162,15 @@ def _fake_findings_for_case(case_path):
                 "SKY-D224",
                 "api_signature_hallucination",
                 message="Installed package 'requests' does not expose requests.fetch_json",
+                category="security",
+                severity="HIGH",
             ),
             _finding(
                 "SKY-D224",
                 "api_signature_hallucination",
                 message="Installed package 'requests' does not expose requests.open_stream",
+                category="security",
+                severity="HIGH",
             ),
         ]
     if case_name == "dependency_package_hallucination":
@@ -109,11 +179,54 @@ def _fake_findings_for_case(case_path):
                 "SKY-D222",
                 "dependency_hallucination",
                 message="Hallucinated npm dependency skylos-ai-ghost-sdk",
+                category="security",
+            ),
+        ]
+    if case_name == "compound_ai_failure_edit":
+        return [
+            _finding(
+                "SKY-L012",
+                "hallucinated_reference",
+                message="Call to 'validate_token()' but this function is never defined.",
+                start_line=5,
+            ),
+            _finding(
+                "SKY-L026",
+                "incomplete_generation",
+                start_line=14,
+                severity="MEDIUM",
+                ai_likelihood="medium",
+            ),
+            _finding(
+                "SKY-D224",
+                "api_signature_hallucination",
+                message="Installed package 'requests' does not expose requests.fetch_json",
+                start_line=6,
+                category="security",
+                severity="HIGH",
+            ),
+            _finding(
+                "SKY-D222",
+                "dependency_hallucination",
+                message="Hallucinated npm dependency skylos-compound-ghost-sdk",
+                category="security",
+            ),
+            _finding(
+                "SKY-D225",
+                "dependency_hallucination",
+                message="Hallucinated npm dependency version left-pad@99.99.99",
+                category="security",
+                severity="HIGH",
             ),
         ]
     if case_name == "dependency_version_hallucination":
         return [
-            _finding("SKY-D225", "dependency_hallucination"),
+            _finding(
+                "SKY-D225",
+                "dependency_hallucination",
+                category="security",
+                severity="HIGH",
+            ),
         ]
     if case_name == "go_module_version_hallucination":
         return [
@@ -121,6 +234,30 @@ def _fake_findings_for_case(case_path):
                 "SKY-D225",
                 "dependency_hallucination",
                 message="github.com/gin-gonic/gin@99.99.99 does not exist",
+                category="security",
+                severity="HIGH",
+            ),
+        ]
+    if case_name == "mixed_manifest_hallucinations":
+        return [
+            _finding(
+                "SKY-D222",
+                "dependency_hallucination",
+                message="Hallucinated npm dependency skylos-enterprise-agent",
+                category="security",
+            ),
+            _finding(
+                "SKY-D225",
+                "dependency_hallucination",
+                message="Hallucinated npm dependency version left-pad@99.99.99",
+                category="security",
+                severity="HIGH",
+            ),
+            _finding(
+                "SKY-D222",
+                "dependency_hallucination",
+                message="Hallucinated npm dependency skylos-agent-testkit",
+                category="security",
             ),
         ]
     return []
@@ -145,46 +282,24 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
         seen.append((Path(case_path).name, kwargs))
         return {"findings": _fake_findings_for_case(case_path)}
 
-    ticks = iter(
-        [
-            0.0,
-            0.1,
-            0.2,
-            0.3,
-            0.4,
-            0.5,
-            0.6,
-            0.7,
-            0.8,
-            0.9,
-            1.0,
-            1.1,
-            1.2,
-            1.3,
-            1.4,
-            1.5,
-            1.6,
-            1.7,
-            1.8,
-            1.9,
-            2.0,
-            2.1,
-        ]
-    )
+    ticks = iter(range(40))
     monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
 
     summary = run_manifest(MANIFEST_PATH, verify_func=fake_verify)
 
-    assert summary["case_count"] == 10
-    assert summary["pass_count"] == 10
+    assert summary["case_count"] == 15
+    assert summary["pass_count"] == 15
     assert summary["failure_count"] == 0
     assert summary["scores"]["overall_score"] == pytest.approx(100.0)
 
     danger_case_names = {
         "api_signature_hallucination",
         "dependency_package_hallucination",
+        "compound_ai_failure_edit",
         "dependency_version_hallucination",
         "go_module_version_hallucination",
+        "mixed_manifest_hallucinations",
+        "clean_dependency_manifest",
         "clean_generated_code",
     }
     for case_name, kwargs in seen:
@@ -202,7 +317,7 @@ def test_ai_code_defect_runner_empty_selection_runs_all_cases(monkeypatch):
 
     summary = run_manifest(MANIFEST_PATH, selected_cases=None, verify_func=fake_verify)
 
-    assert summary["case_count"] == 10
+    assert summary["case_count"] == 15
     assert seen == EXPECTED_CASE_PATH_NAMES
 
 
