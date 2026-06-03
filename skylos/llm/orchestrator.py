@@ -6,6 +6,7 @@ from pathlib import Path
 from .planner import RemediationPlanner, RemediationPlan, FixBatch
 from .executor import RemediationExecutor
 from .prompts import build_pr_description
+from skylos.remediation.regression_tests import generate_regression_test_candidate
 
 
 class RemediationAgent:
@@ -46,9 +47,9 @@ class RemediationAgent:
 
         log("Step 1/5: Scanning project...")
         results = self._scan(path)
-        danger_count = len(results.get("danger", []) or [])
-        quality_count = len(results.get("quality", []) or [])
-        secrets_count = len(results.get("secrets", []) or [])
+        danger_count = _section_count(results, "danger")
+        quality_count = _section_count(results, "quality")
+        secrets_count = _section_count(results, "secrets")
         total = danger_count + quality_count + secrets_count
         log(
             f"  Found {total} findings ({danger_count} danger, "
@@ -75,8 +76,9 @@ class RemediationAgent:
         branch_name = None
         if auto_pr:
             log("Step 3/6: Creating remediation branch...")
+            branch_root = _project_root_for_path(path)
             branch_name = self._prepare_pr_branch(
-                path if path.is_dir() else path.parent,
+                branch_root,
                 branch_prefix,
                 log,
             )
@@ -88,7 +90,7 @@ class RemediationAgent:
         log("Step 4/6: Generating and applying fixes...")
         executor = RemediationExecutor(
             test_cmd=self.test_cmd,
-            project_root=path if path.is_dir() else path.parent,
+            project_root=_project_root_for_path(path),
             allow_test_execution=self.allow_test_execution,
             auto_detect_tests=self.auto_detect_tests,
         )
@@ -140,7 +142,9 @@ class RemediationAgent:
             enable_quality=True,
             enable_secrets=True,
         )
-        return json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(raw, str):
+            return json.loads(raw)
+        return raw
 
     def _create_fixer(self):
         from .agents import FixerAgent, AgentConfig
@@ -214,14 +218,40 @@ class RemediationAgent:
         if not verify.finding_resolved:
             executor.revert_fix(file_path)
             batch.status = "not_resolved"
-            batch.fix_description = (
-                f"Finding still present after fix: {verify.remaining_rule_ids}"
-            )
+            if verify.verification_error:
+                batch.fix_description = (
+                    f"Could not verify fix after remediation: {verify.verification_error}"
+                )
+            else:
+                batch.fix_description = (
+                    f"Finding still present after fix: {verify.remaining_rule_ids}"
+                )
             return
+
+        self._attach_regression_test(batch, executor)
 
         batch.status = "fixed"
         desc = getattr(fix, "description", "")
-        batch.fix_description = desc[:200] if desc else primary.message
+        if desc:
+            batch.fix_description = desc[:200]
+        else:
+            batch.fix_description = primary.message
+
+    def _attach_regression_test(
+        self,
+        batch: FixBatch,
+        executor: RemediationExecutor,
+    ) -> None:
+        for finding in batch.findings:
+            candidate = generate_regression_test_candidate(
+                finding,
+                executor.project_root,
+            )
+            if candidate is None:
+                continue
+            if executor.write_regression_test(candidate):
+                batch.regression_tests.append(candidate)
+            return
 
     def _prepare_pr_branch(
         self,
@@ -304,3 +334,16 @@ def _logger(quiet: bool):
         print(msg, file=sys.stderr)
 
     return _log
+
+
+def _section_count(results: dict, key: str) -> int:
+    values = results.get(key)
+    if not isinstance(values, list):
+        return 0
+    return len(values)
+
+
+def _project_root_for_path(path: Path) -> Path:
+    if path.is_dir():
+        return path
+    return path.parent

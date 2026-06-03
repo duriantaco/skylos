@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shlex
 import subprocess
 import sys
 import shutil
+import stat
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +16,7 @@ from skylos.core.safe_cache_io import (
     read_text_no_symlink,
     write_existing_text_no_symlink,
 )
+from skylos.remediation.regression_tests import RegressionTestCandidate
 
 MAX_REMEDIATION_FILE_BYTES = 5_000_000
 
@@ -30,6 +33,7 @@ class TestResult:
 class VerifyResult:
     finding_resolved: bool
     remaining_rule_ids: list[str] = field(default_factory=list)
+    verification_error: str = ""
 
 
 _SHELL_METACHAR_RE = re.compile(r"[;&|<>`$]")
@@ -94,6 +98,34 @@ class RemediationExecutor:
         for fp in list(self._backups.keys()):
             self.revert_fix(fp)
 
+    def write_regression_test(self, candidate: RegressionTestCandidate) -> bool:
+        destination = self._safe_new_project_file(candidate.test_file)
+        if destination is None:
+            return False
+        return _write_new_text_no_symlink(destination, candidate.content)
+
+    def _safe_new_project_file(self, file_path: str) -> Path | None:
+        raw = Path(file_path)
+        if raw.is_absolute():
+            return None
+
+        destination = self.project_root / raw
+        parent = destination.parent
+        if parent.is_symlink():
+            return None
+        if not parent.is_dir():
+            return None
+        if destination.exists():
+            return None
+
+        try:
+            resolved_parent = parent.resolve(strict=True)
+            resolved_parent.relative_to(self.project_root)
+        except (OSError, ValueError):
+            return None
+
+        return destination
+
     def run_tests(self, timeout: int = 300) -> TestResult:
         if not self.allow_test_execution:
             return TestResult(
@@ -153,7 +185,9 @@ class RemediationExecutor:
             argv = shlex.split(cmd)
         except ValueError:
             return None
-        return argv or None
+        if not argv:
+            return None
+        return argv
 
     def _detect_test_command(self) -> str | None:
         root = self.project_root
@@ -196,13 +230,24 @@ class RemediationExecutor:
                 enable_quality=True,
                 enable_secrets=True,
             )
-            result = _json.loads(raw) if isinstance(raw, str) else raw
-        except Exception:
-            return VerifyResult(finding_resolved=True)
+            if isinstance(raw, str):
+                result = _json.loads(raw)
+            else:
+                result = raw
+        except Exception as exc:
+            return VerifyResult(
+                finding_resolved=False,
+                verification_error=str(exc),
+            )
 
         remaining = set()
         for key in ("danger", "quality", "secrets"):
-            for finding in result.get(key, []) or []:
+            findings = result.get(key)
+            if not isinstance(findings, list):
+                continue
+            for finding in findings:
+                if not isinstance(finding, dict):
+                    continue
                 rid = finding.get("rule_id", "")
                 if rid in original_rule_ids:
                     remaining.add(rid)
@@ -285,3 +330,30 @@ class RemediationExecutor:
         except subprocess.CalledProcessError as e:
             print(f"PR creation failed: {e.stderr}", file=sys.stderr)
             return None
+
+
+def _write_new_text_no_symlink(path: Path, text: str) -> bool:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    fd: int | None = None
+    try:
+        fd = os.open(path, flags, 0o644)  # skylos: ignore[SKY-D215] path was contained by _safe_new_project_file
+        stat_result = os.fstat(fd)
+        if not stat.S_ISREG(stat_result.st_mode):
+            return False
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = None
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return True
+    except (OSError, UnicodeError):
+        return False
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
