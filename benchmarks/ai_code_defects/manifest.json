@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "hallucinated-reference",
+      "path": "fixtures/hallucinated_reference",
+      "description": "Generated handler calls a plausible helper that was never defined.",
+      "taxonomy": ["hallucinated_reference"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture distilled from common AI coding-agent helper hallucinations."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "incomplete-generation",
+      "path": "fixtures/incomplete_generation",
+      "description": "Generated business function is left as a pass-body stub.",
+      "taxonomy": ["incomplete_generation"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture distilled from incomplete coding-agent edits."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-L026",
+            "vibe_category": "incomplete_generation"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "dependency-version-hallucination",
+      "path": "fixtures/dependency_version_hallucination",
+      "description": "Generated package manifest pins a dependency/version that should be verified against the registry.",
+      "taxonomy": ["dependency_hallucination"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for AI-generated dependency/version hallucination checks."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "dependency_hallucinations": true
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination"
+          }
+        ],
+        "absent": []
+      }
+    }
+  ]
+}
