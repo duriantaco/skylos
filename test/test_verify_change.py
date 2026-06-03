@@ -77,6 +77,51 @@ def test_build_verify_change_response_applies_rule_defaults(tmp_path):
     assert finding["confidence"] == 70
 
 
+def test_build_verify_change_response_applies_api_signature_defaults(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("api.missing(arg=True)\n")
+    result = {
+        "danger": [
+            {
+                "rule_id": "SKY-D224",
+                "severity": "HIGH",
+                "file": str(app),
+                "line": 1,
+                "message": "Installed API does not accept keyword.",
+            }
+        ]
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    finding = payload["findings"][0]
+    assert finding["vibe_category"] == "api_signature_hallucination"
+    assert finding["ai_likelihood"] == "high"
+    assert finding["suggested_fix"]
+
+
+def test_build_verify_change_response_applies_version_hallucination_defaults(tmp_path):
+    manifest = tmp_path / "package.json"
+    manifest.write_text('{"dependencies": {"ghost": "9.9.9"}}\n')
+    result = {
+        "danger": [
+            {
+                "rule_id": "SKY-D225",
+                "severity": "HIGH",
+                "file": str(manifest),
+                "line": 1,
+                "message": "Dependency version does not exist.",
+            }
+        ]
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    finding = payload["findings"][0]
+    assert finding["vibe_category"] == "dependency_hallucination"
+    assert finding["ai_likelihood"] == "high"
+
+
 def test_build_verify_change_response_filters_target_file_and_range(tmp_path):
     app = tmp_path / "app.py"
     other = tmp_path / "other.py"

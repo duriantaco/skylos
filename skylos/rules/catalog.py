@@ -107,6 +107,8 @@ _RULES = (
     RuleCatalogEntry("SKY-D217", "Raw SQL execution", "security", "CRITICAL"),
     RuleCatalogEntry("SKY-D222", "Dependency hallucination", "security", "CRITICAL"),
     RuleCatalogEntry("SKY-D223", "Undeclared third-party dependency", "security", "MEDIUM"),
+    RuleCatalogEntry("SKY-D224", "API signature hallucination", "security", "HIGH"),
+    RuleCatalogEntry("SKY-D225", "Dependency version hallucination", "security", "HIGH"),
     RuleCatalogEntry("SKY-D226", "Cross-site scripting: untrusted content marked safe", "security", "CRITICAL",aliases=("xss", "cross site scripting", "cross-site scripting"),),
     RuleCatalogEntry("SKY-D227", "Cross-site scripting: unsafe inline template", "security", "HIGH", aliases=("xss", "cross site scripting", "cross-site scripting"),),
     RuleCatalogEntry("SKY-D228", "Cross-site scripting: HTML built from user input", "security", "HIGH", aliases=("xss", "cross site scripting", "cross-site scripting"),),

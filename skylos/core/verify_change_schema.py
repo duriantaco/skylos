@@ -13,12 +13,15 @@ AI_VIBE_CATEGORIES = {
     "ghost_config",
     "stale_reference",
     "missing_resilience_control",
+    "api_signature_hallucination",
 }
 
 AI_RULE_DEFAULTS = {
     "SKY-L011": ("disabled_security_control", "medium"),
     "SKY-D222": ("dependency_hallucination", "high"),
     "SKY-D223": ("dependency_hallucination", "medium"),
+    "SKY-D224": ("api_signature_hallucination", "high"),
+    "SKY-D225": ("dependency_hallucination", "high"),
 }
 
 FINDING_SECTIONS = (
@@ -38,6 +41,9 @@ SUGGESTED_FIX_BY_VIBE = {
     "disabled_security_control": "Re-enable the security control or remove the bypass.",
     "dependency_hallucination": (
         "Remove the hallucinated dependency or replace it with a real package."
+    ),
+    "api_signature_hallucination": (
+        "Update the call to match the installed package API surface."
     ),
 }
 
