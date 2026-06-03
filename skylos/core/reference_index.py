@@ -26,6 +26,7 @@ def build_empty_index(project_root: str | Path) -> dict[str, Any]:
         "references": [],
         "imports": {},
         "reverse_dependencies": {},
+        "content_graphs": {},
     }
 
 
@@ -37,6 +38,7 @@ def build_index_payload(
     references: list[dict[str, Any]] | None = None,
     imports: dict[str, Any] | None = None,
     reverse_dependencies: dict[str, list[str]] | None = None,
+    content_graphs: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     payload = build_empty_index(project_root)
     payload["files"] = _dict_copy(files)
@@ -46,6 +48,7 @@ def build_index_payload(
     payload["reverse_dependencies"] = _normalize_reverse_dependencies(
         reverse_dependencies
     )
+    payload["content_graphs"] = _normalize_content_graphs(content_graphs)
     return payload
 
 
@@ -117,6 +120,9 @@ def validate_index_payload(payload: dict[str, Any]) -> bool:
         return False
     if not isinstance(payload["reverse_dependencies"], dict):
         return False
+    if "content_graphs" in payload:
+        if not isinstance(payload["content_graphs"], dict):
+            return False
     return True
 
 
@@ -190,4 +196,18 @@ def _normalize_reverse_dependencies(
         for dependency in dependencies:
             unique_dependencies.add(str(dependency))
         normalized[str(path)] = sorted(unique_dependencies)
+    return normalized
+
+
+def _normalize_content_graphs(
+    content_graphs: dict[str, dict[str, Any]] | None,
+) -> dict[str, dict[str, Any]]:
+    if content_graphs is None:
+        return {}
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for content_hash, graph in content_graphs.items():
+        if not isinstance(graph, dict):
+            continue
+        normalized[str(content_hash)] = dict(graph)
     return normalized
