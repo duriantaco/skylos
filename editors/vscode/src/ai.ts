@@ -2,8 +2,20 @@ import * as vscode from "vscode";
 import * as crypto from "crypto";
 import type { FindingsStore } from "./store";
 import type { SkylosFinding, AIIssue, FunctionBlock, AIProvider } from "./types";
-import { getAIProvider, getAIApiKey, getAIModel, getOpenAIBaseUrl, getPopupCooldownMs, isStreamingEnabled, isFixPreviewFirst, getPostFixCommand, isRealtimeAIEnabled } from "./config";
+import {
+  getAIProvider,
+  getAIApiKey,
+  getAIModel,
+  getOpenAIBaseUrl,
+  getPopupCooldownMs,
+  isFixPreviewFirst,
+  getPostFixCommand,
+  isRealtimeAIEnabled,
+  getSkylosBin,
+  getConfidenceThreshold,
+} from "./config";
 import { out } from "./scanner";
+import { buildVerifyCommandDisplay, runSkylosVerify } from "./verifyCore";
 
 
 export class AIAnalyzer {
@@ -29,10 +41,6 @@ export class AIAnalyzer {
 
   async maybeAnalyze(document: vscode.TextDocument): Promise<void> {
     if (!isRealtimeAIEnabled())
-      return;
-
-    const apiKey = getAIApiKey();
-    if (!apiKey) 
       return;
 
     const currentContent = document.getText();
@@ -62,11 +70,6 @@ export class AIAnalyzer {
     if (this.inFlight || functions.length === 0) 
       return;
 
-    const provider = getAIProvider();
-    const apiKey = getAIApiKey();
-    if (!apiKey) 
-      return;
-
     if (this.abortController) {
       this.abortController.abort();
       this.streamingManager?.clearAll();
@@ -76,44 +79,10 @@ export class AIAnalyzer {
 
     this.inFlight = true;
     const prevText = this.statusBar?.text ?? "";
-    if (this.statusBar) this.statusBar.text = "$(sync~spin) Skylos AI...";
+    if (this.statusBar) this.statusBar.text = "$(sync~spin) Skylos verify...";
 
     try {
-      const langId = document.languageId;
-      const langLabel = langId === "typescriptreact" ? "TypeScript (React)" : langId;
-
-      const codeToAnalyze = functions
-        .map((fn) => `# Function: ${fn.name} (line ${fn.startLine + 1})\n${fn.content}`)
-        .join("\n\n---\n\n");
-
-      const editor = vscode.window.activeTextEditor;
-      const useStreaming = isStreamingEnabled() && editor && editor.document === document;
-
-      let issues: AIIssue[];
-
-      if (useStreaming) {
-        const startLines = functions.map((fn) => fn.startLine);
-        this.streamingManager?.showAnalyzing(editor, startLines);
-
-        const { StreamingJsonParser } = await import("./streaming");
-        const streamedIssues: AIIssue[] = [];
-        const parser = new StreamingJsonParser((issue) => {
-          streamedIssues.push(issue);
-          if (this.streamingManager && !signal.aborted) {
-            const line = Math.max(0, issue.line - 1);
-            this.streamingManager.streamIssueText(editor, line, issue.message);
-          }
-        });
-
-        await callLLMStreamingWithCallback(apiKey, codeToAnalyze, provider, langLabel, (chunk) => {
-          parser.feed(chunk);
-        }, signal);
-
-        issues = streamedIssues;
-        this.streamingManager?.clearAll();
-      } else {
-        issues = await callLLMForIssues(apiKey, codeToAnalyze, provider, langLabel);
-      }
+      const issues = await this.verifyChangedFunctions(document, functions);
 
       if (signal.aborted) 
         return;
@@ -146,7 +115,11 @@ export class AIAnalyzer {
       }
 
       if (this.statusBar) {
-        this.statusBar.text = issues.length > 0 ? `$(eye) AI: ${issues.length}` : prevText;
+        if (issues.length > 0) {
+          this.statusBar.text = `$(eye) AI: ${issues.length}`;
+        } else {
+          this.statusBar.text = prevText;
+        }
       }
     } catch (err) {
       if (signal.aborted) {
@@ -158,6 +131,27 @@ export class AIAnalyzer {
     } finally {
       this.inFlight = false;
     }
+  }
+
+  private async verifyChangedFunctions(
+    document: vscode.TextDocument,
+    functions: FunctionBlock[],
+  ): Promise<AIIssue[]> {
+    const workspace = vscode.workspace.workspaceFolders?.[0];
+    if (!workspace) {
+      return [];
+    }
+
+    const request = {
+      bin: getSkylosBin(),
+      workspaceRoot: workspace.uri.fsPath,
+      filePath: document.uri.fsPath,
+      code: document.getText(),
+      lineRange: lineRangeForFunctions(functions),
+      confidence: getConfidenceThreshold(),
+    };
+    out.appendLine(`Running realtime verifier: ${buildVerifyCommandDisplay(request)}`);
+    return runSkylosVerify(request);
   }
 
   private maybeShowPopup(document: vscode.TextDocument, issue: AIIssue): void {
@@ -200,6 +194,26 @@ export class AIAnalyzer {
   dispose(): void {
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
   }
+}
+
+function lineRangeForFunctions(functions: FunctionBlock[]): string | undefined {
+  if (functions.length === 0) {
+    return undefined;
+  }
+
+  let startLine = functions[0].startLine + 1;
+  let endLine = functions[0].endLine + 1;
+  for (const fn of functions) {
+    const candidateStart = fn.startLine + 1;
+    const candidateEnd = fn.endLine + 1;
+    if (candidateStart < startLine) {
+      startLine = candidateStart;
+    }
+    if (candidateEnd > endLine) {
+      endLine = candidateEnd;
+    }
+  }
+  return `${startLine}:${endLine}`;
 }
 
 function formatAIError(err: unknown): string {
