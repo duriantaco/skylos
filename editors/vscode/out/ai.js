@@ -10,6 +10,7 @@ const vscode = require("vscode");
 const crypto = require("crypto");
 const config_1 = require("./config");
 const scanner_1 = require("./scanner");
+const verifyCore_1 = require("./verifyCore");
 class AIAnalyzer {
     constructor(store) {
         this.store = store;
@@ -27,9 +28,6 @@ class AIAnalyzer {
     }
     async maybeAnalyze(document) {
         if (!(0, config_1.isRealtimeAIEnabled)())
-            return;
-        const apiKey = (0, config_1.getAIApiKey)();
-        if (!apiKey)
             return;
         const currentContent = document.getText();
         const filePath = document.uri.fsPath;
@@ -50,10 +48,6 @@ class AIAnalyzer {
     async analyzeChangedFunctions(document, functions) {
         if (this.inFlight || functions.length === 0)
             return;
-        const provider = (0, config_1.getAIProvider)();
-        const apiKey = (0, config_1.getAIApiKey)();
-        if (!apiKey)
-            return;
         if (this.abortController) {
             this.abortController.abort();
             this.streamingManager?.clearAll();
@@ -63,37 +57,9 @@ class AIAnalyzer {
         this.inFlight = true;
         const prevText = this.statusBar?.text ?? "";
         if (this.statusBar)
-            this.statusBar.text = "$(sync~spin) Skylos AI...";
+            this.statusBar.text = "$(sync~spin) Skylos verify...";
         try {
-            const langId = document.languageId;
-            const langLabel = langId === "typescriptreact" ? "TypeScript (React)" : langId;
-            const codeToAnalyze = functions
-                .map((fn) => `# Function: ${fn.name} (line ${fn.startLine + 1})\n${fn.content}`)
-                .join("\n\n---\n\n");
-            const editor = vscode.window.activeTextEditor;
-            const useStreaming = (0, config_1.isStreamingEnabled)() && editor && editor.document === document;
-            let issues;
-            if (useStreaming) {
-                const startLines = functions.map((fn) => fn.startLine);
-                this.streamingManager?.showAnalyzing(editor, startLines);
-                const { StreamingJsonParser } = await Promise.resolve().then(() => require("./streaming"));
-                const streamedIssues = [];
-                const parser = new StreamingJsonParser((issue) => {
-                    streamedIssues.push(issue);
-                    if (this.streamingManager && !signal.aborted) {
-                        const line = Math.max(0, issue.line - 1);
-                        this.streamingManager.streamIssueText(editor, line, issue.message);
-                    }
-                });
-                await callLLMStreamingWithCallback(apiKey, codeToAnalyze, provider, langLabel, (chunk) => {
-                    parser.feed(chunk);
-                }, signal);
-                issues = streamedIssues;
-                this.streamingManager?.clearAll();
-            }
-            else {
-                issues = await callLLMForIssues(apiKey, codeToAnalyze, provider, langLabel);
-            }
+            const issues = await this.verifyChangedFunctions(document, functions);
             if (signal.aborted)
                 return;
             const now = Date.now();
@@ -119,7 +85,12 @@ class AIAnalyzer {
                     this.maybeShowPopup(document, critical);
             }
             if (this.statusBar) {
-                this.statusBar.text = issues.length > 0 ? `$(eye) AI: ${issues.length}` : prevText;
+                if (issues.length > 0) {
+                    this.statusBar.text = `$(eye) AI: ${issues.length}`;
+                }
+                else {
+                    this.statusBar.text = prevText;
+                }
             }
         }
         catch (err) {
@@ -134,6 +105,22 @@ class AIAnalyzer {
         finally {
             this.inFlight = false;
         }
+    }
+    async verifyChangedFunctions(document, functions) {
+        const workspace = vscode.workspace.workspaceFolders?.[0];
+        if (!workspace) {
+            return [];
+        }
+        const request = {
+            bin: (0, config_1.getSkylosBin)(),
+            workspaceRoot: workspace.uri.fsPath,
+            filePath: document.uri.fsPath,
+            code: document.getText(),
+            lineRange: lineRangeForFunctions(functions),
+            confidence: (0, config_1.getConfidenceThreshold)(),
+        };
+        scanner_1.out.appendLine(`Running realtime verifier: ${(0, verifyCore_1.buildVerifyCommandDisplay)(request)}`);
+        return (0, verifyCore_1.runSkylosVerify)(request);
     }
     maybeShowPopup(document, issue) {
         const cooldown = (0, config_1.getPopupCooldownMs)();
@@ -168,6 +155,24 @@ class AIAnalyzer {
     }
 }
 exports.AIAnalyzer = AIAnalyzer;
+function lineRangeForFunctions(functions) {
+    if (functions.length === 0) {
+        return undefined;
+    }
+    let startLine = functions[0].startLine + 1;
+    let endLine = functions[0].endLine + 1;
+    for (const fn of functions) {
+        const candidateStart = fn.startLine + 1;
+        const candidateEnd = fn.endLine + 1;
+        if (candidateStart < startLine) {
+            startLine = candidateStart;
+        }
+        if (candidateEnd > endLine) {
+            endLine = candidateEnd;
+        }
+    }
+    return `${startLine}:${endLine}`;
+}
 function formatAIError(err) {
     if (err instanceof Error)
         return `${err.name}: ${err.message}`;
