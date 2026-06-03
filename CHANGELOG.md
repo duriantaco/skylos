@@ -1,5 +1,28 @@
 ## Changelog
 
+## [4.23.0](https://github.com/duriantaco/skylos/compare/v4.22.1...v4.23.0) (2026-06-03)
+
+
+### Features
+
+* **agent:** add skylos verify workflow ([#517](https://github.com/duriantaco/skylos/issues/517)) ([ec57048](https://github.com/duriantaco/skylos/commit/ec570486cba0efa194abc1b61622c522d74b68d3))
+* **bench:** add ai code defect benchmark ([#518](https://github.com/duriantaco/skylos/issues/518)) ([676d872](https://github.com/duriantaco/skylos/commit/676d872ace662544b96f1a8eee55551bc2d19502))
+* **corpus:** capture local structural signals ([#522](https://github.com/duriantaco/skylos/issues/522)) ([83f6dcc](https://github.com/duriantaco/skylos/commit/83f6dcc47df72ef09c1205cb34ebf17a74c1b03a))
+* **index:** persist reference graph cache ([#520](https://github.com/duriantaco/skylos/issues/520)) ([f7c5646](https://github.com/duriantaco/skylos/commit/f7c56461f1fe243cba72c3a78ed5ed9b936266b5))
+* **remediate:** add verification proof tests ([#523](https://github.com/duriantaco/skylos/issues/523)) ([e694656](https://github.com/duriantaco/skylos/commit/e694656eb3ae6cab6f373abbebad692ff1280b0c))
+* **verify:** detect API and dependency hallucinations ([#519](https://github.com/duriantaco/skylos/issues/519)) ([dea81c5](https://github.com/duriantaco/skylos/commit/dea81c51f636eb8bcf42466247c1bc36f5598770))
+* **vscode:** route idle analysis through verify ([#521](https://github.com/duriantaco/skylos/issues/521)) ([a6be270](https://github.com/duriantaco/skylos/commit/a6be2702532fb8bbc9581b193c6d7cb30e91b10e))
+
+
+### Bug Fixes
+
+* **security:** harden optional import and Dockerfile scanning ([#515](https://github.com/duriantaco/skylos/issues/515)) ([498a15d](https://github.com/duriantaco/skylos/commit/498a15d4ecaeb6586b820a27b7daa2cb1bfb9ff1))
+
+
+### Documentation
+
+* **readme:** document AI trust workflows ([#524](https://github.com/duriantaco/skylos/issues/524)) ([f5a3af1](https://github.com/duriantaco/skylos/commit/f5a3af10b910db1a0976e744598d915cc784f36a))
+
 ## [4.22.1](https://github.com/duriantaco/skylos/compare/v4.22.0...v4.22.1) (2026-05-30)
 
 
