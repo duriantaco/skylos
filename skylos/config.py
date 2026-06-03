@@ -48,6 +48,12 @@ DEFAULTS = {
         "security_audit": None,
         "review": None,
     },
+    "contribution": {
+        "collect_local_signals": False,
+        "contribute_public_corpus": False,
+        "structural_signatures_only": True,
+        "include_source": False,
+    },
     "security_enabled": False,
     "secrets_enabled": False,
     "quality_enabled": False,
@@ -348,9 +354,13 @@ def _merge_user_config(base_cfg: dict, user_cfg: dict | None) -> dict:
                 merged_masking.update(value)
                 final_cfg["masking"] = merged_masking
             continue
-        if key in ("gate", "templates", "vibe", "architecture") and isinstance(
-            value, dict
-        ):
+        if key in (
+            "gate",
+            "templates",
+            "vibe",
+            "architecture",
+            "contribution",
+        ) and isinstance(value, dict):
             merged_section = {}
             current_section = final_cfg.get(key)
             if isinstance(current_section, dict):
@@ -412,6 +422,7 @@ def _sanitize_config(cfg: dict) -> dict:
     )
     safe["masking"] = _sanitize_masking_section(safe.get("masking"))
     safe["templates"] = _sanitize_templates_section(safe.get("templates"))
+    safe["contribution"] = _sanitize_contribution_section(safe.get("contribution"))
     safe["vibe"] = _sanitize_vibe_section(safe.get("vibe"))
     safe["architecture"] = _sanitize_architecture_section(safe.get("architecture"))
 
@@ -523,6 +534,29 @@ def _sanitize_templates_section(value):
         candidate = raw.get(key)
         if candidate is None or isinstance(candidate, str):
             safe[key] = candidate
+    return safe
+
+
+def _sanitize_contribution_section(value):
+    if isinstance(value, dict):
+        raw = value
+    else:
+        raw = {}
+
+    safe = copy.deepcopy(DEFAULTS["contribution"])
+    safe["collect_local_signals"] = _safe_bool(
+        raw.get("collect_local_signals"),
+        safe["collect_local_signals"],
+    )
+    safe["contribute_public_corpus"] = _safe_bool(
+        raw.get("contribute_public_corpus"),
+        safe["contribute_public_corpus"],
+    )
+    safe["structural_signatures_only"] = _safe_bool(
+        raw.get("structural_signatures_only"),
+        safe["structural_signatures_only"],
+    )
+    safe["include_source"] = False
     return safe
 
 
