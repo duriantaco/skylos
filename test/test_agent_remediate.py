@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from skylos.llm.planner import (
     RemediationPlanner,
@@ -10,8 +11,9 @@ from skylos.llm.planner import (
     FixBatch,
     SEVERITY_PRIORITY,
 )
-from skylos.llm.executor import RemediationExecutor
+from skylos.llm.executor import RemediationExecutor, VerifyResult
 from skylos.llm.prompts import build_pr_description
+from skylos.remediation.regression_tests import RegressionTestCandidate
 
 
 class TestRemediationPlanner:
@@ -163,6 +165,16 @@ class TestRemediationPlanner:
                         )
                     ],
                     status="fixed",
+                    regression_tests=[
+                        RegressionTestCandidate(
+                            rule_id="SKY-D211",
+                            family="sql_injection",
+                            source_file="a.py",
+                            test_file="tests/test_skylos_sqli_a_py_1234567890.py",
+                            description="Regression proof for SKY-D211.",
+                            content="",
+                        )
+                    ],
                 ),
                 FixBatch(
                     file="b.py",
@@ -188,6 +200,8 @@ class TestRemediationPlanner:
         assert s["failed"] == 1
         assert s["skipped"] == 3 + 0
         assert s["total_findings"] == 5
+        first_batch = s["batches"][0]
+        assert first_batch["regression_tests"][0]["rule_id"] == "SKY-D211"
 
     def test_finding_item_from_dict(self):
         raw = {
@@ -397,6 +411,17 @@ class TestRemediationExecutor:
         result = executor.verify_fix(str(f), ["SKY-D201"])
         assert result.finding_resolved is True
 
+    def test_verify_fix_treats_analysis_error_as_unverified(self, tmp_path):
+        f = tmp_path / "test_verify_error.py"
+        f.write_text("x = 1 + 2\n")
+
+        executor = RemediationExecutor(project_root=tmp_path)
+        with patch("skylos.analyzer.analyze", side_effect=RuntimeError("scan failed")):
+            result = executor.verify_fix(str(f), ["SKY-D201"])
+
+        assert result.finding_resolved is False
+        assert result.verification_error == "scan failed"
+
 
 class TestPRDescription:
     def test_basic_description(self):
@@ -446,6 +471,38 @@ class TestPRDescription:
         }
         body = build_pr_description(summary)
         assert "Skylos" in body
+
+    def test_description_includes_regression_test_proof(self):
+        summary = {
+            "total_findings": 1,
+            "fixed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "batches": [
+                {
+                    "file": "app.py",
+                    "findings": 1,
+                    "status": "fixed",
+                    "top_severity": "CRITICAL",
+                    "description": "Parameterized query",
+                    "regression_tests": [
+                        {
+                            "rule_id": "SKY-D211",
+                            "family": "sql_injection",
+                            "source_file": "app.py",
+                            "test_file": "tests/test_skylos_sqli_app_py_123.py",
+                            "description": "Regression proof for SKY-D211.",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        body = build_pr_description(summary)
+
+        assert "Verification Proof" in body
+        assert "tests/test_skylos_sqli_app_py_123.py" in body
+        assert "SKY-D211" in body
 
 
 class TestOrchestrator:
@@ -573,3 +630,90 @@ class TestOrchestrator:
         assert summary["branch_error"] == "Could not create remediation branch"
         mock_create_fixer.assert_not_called()
         mock_process_batch.assert_not_called()
+
+    def test_process_batch_reverts_when_fix_cannot_be_verified(self, tmp_path):
+        from skylos.llm.orchestrator import RemediationAgent
+
+        test_file = tmp_path / "vuln.py"
+        test_file.write_text("import hashlib\nhashlib.md5(b'data')\n")
+        batch = FixBatch(
+            file=str(test_file),
+            findings=[
+                FindingItem(
+                    rule_id="SKY-D206",
+                    severity="HIGH",
+                    message="Weak hash",
+                    file=str(test_file),
+                    line=2,
+                )
+            ],
+        )
+        fixer = MagicMock()
+        fixer.fix.return_value = SimpleNamespace(
+            fixed_code="import hashlib\nhashlib.sha256(b'data')\n",
+            confidence=SimpleNamespace(value="high"),
+            description="Use sha256",
+        )
+        executor = MagicMock()
+        executor.apply_fix.return_value = True
+        executor.run_tests.return_value = SimpleNamespace(passed=True)
+        executor.verify_fix.return_value = VerifyResult(
+            finding_resolved=False,
+            verification_error="scan failed",
+        )
+
+        agent = RemediationAgent()
+        agent._process_batch(batch, fixer, executor, lambda _message: None)
+
+        assert batch.status == "not_resolved"
+        assert "Could not verify fix" in batch.fix_description
+        executor.revert_fix.assert_called_once_with(str(test_file))
+
+    def test_process_batch_writes_sqli_regression_test_after_verification(self, tmp_path):
+        from skylos.llm.orchestrator import RemediationAgent
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tmp_path / "vuln.py"
+        test_file.write_text(
+            "def get_user(cursor, user_id):\n"
+            "    query = f\"SELECT * FROM users WHERE id = {user_id}\"\n"
+            "    return cursor.execute(query)\n",
+            encoding="utf-8",
+        )
+        batch = FixBatch(
+            file=str(test_file),
+            findings=[
+                FindingItem(
+                    rule_id="SKY-D211",
+                    severity="CRITICAL",
+                    message="Possible SQL injection",
+                    file=str(test_file),
+                    line=3,
+                )
+            ],
+        )
+        fixer = MagicMock()
+        fixer.fix.return_value = SimpleNamespace(
+            fixed_code=(
+                "def get_user(cursor, user_id):\n"
+                "    return cursor.execute(\n"
+                "        \"SELECT * FROM users WHERE id = ?\",\n"
+                "        (user_id,),\n"
+                "    )\n"
+            ),
+            confidence=SimpleNamespace(value="high"),
+            description="Parameterized query",
+        )
+        executor = RemediationExecutor(project_root=tmp_path)
+
+        agent = RemediationAgent()
+        agent._process_batch(batch, fixer, executor, lambda _message: None)
+
+        assert batch.status == "fixed"
+        assert len(batch.regression_tests) == 1
+        generated = tmp_path / batch.regression_tests[0].test_file
+        assert generated.exists()
+        content = generated.read_text(encoding="utf-8")
+        assert "SKY-D211" in content
+        assert "from skylos.analyzer import analyze" in content
