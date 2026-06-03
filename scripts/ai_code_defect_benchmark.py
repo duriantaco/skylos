@@ -37,7 +37,11 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    summary = run_manifest(args.manifest, selected_cases=set(args.case))
+    selected_cases = None
+    if args.case:
+        selected_cases = set(args.case)
+
+    summary = run_manifest(args.manifest, selected_cases=selected_cases)
     if args.json:
         print(json.dumps(summary, indent=2))
     else:

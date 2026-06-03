@@ -65,7 +65,7 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
         return {
             "findings": [
                 {
-                    "rule_id": "SKY-D222",
+                    "rule_id": "SKY-D225",
                     "vibe_category": "dependency_hallucination",
                 }
             ]
@@ -81,6 +81,71 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
     assert summary["failure_count"] == 0
     assert summary["scores"]["overall_score"] == pytest.approx(100.0)
     assert seen[2][1]["include_dependency_hallucinations"] is True
+
+
+def test_ai_code_defect_runner_empty_selection_runs_all_cases(monkeypatch):
+    seen = []
+
+    def fake_verify(case_path, **_kwargs):
+        seen.append(Path(case_path).name)
+        return {
+            "findings": [
+                {
+                    "rule_id": "SKY-L012",
+                    "vibe_category": "hallucinated_reference",
+                },
+                {
+                    "rule_id": "SKY-L026",
+                    "vibe_category": "incomplete_generation",
+                },
+                {
+                    "rule_id": "SKY-D225",
+                    "vibe_category": "dependency_hallucination",
+                },
+            ]
+        }
+
+    summary = run_manifest(MANIFEST_PATH, selected_cases=None, verify_func=fake_verify)
+
+    assert summary["case_count"] == 3
+    assert seen == [
+        "hallucinated_reference",
+        "incomplete_generation",
+        "dependency_version_hallucination",
+    ]
+
+
+def test_ai_code_defect_runner_seeds_dependency_status_cache():
+    cache_payloads = []
+    prepared_paths = []
+
+    def fake_verify(case_path, **_kwargs):
+        prepared_path = Path(case_path)
+        prepared_paths.append(prepared_path)
+        cache_path = prepared_path / ".skylos" / "cache" / "dependency_versions.json"
+        cache_payloads.append(json.loads(cache_path.read_text(encoding="utf-8")))
+        return {
+            "findings": [
+                {
+                    "rule_id": "SKY-D225",
+                    "vibe_category": "dependency_hallucination",
+                }
+            ]
+        }
+
+    summary = run_manifest(
+        MANIFEST_PATH,
+        selected_cases={"dependency-version-hallucination"},
+        verify_func=fake_verify,
+    )
+
+    assert summary["case_count"] == 1
+    assert summary["pass_count"] == 1
+    assert cache_payloads[0]["schema_version"] == 1
+    assert cache_payloads[0]["statuses"] == {
+        "npm:left-pad:99.99.99": "missing_version"
+    }
+    assert not prepared_paths[0].exists()
 
 
 def test_ai_code_defect_runner_reports_missing_expectation(monkeypatch):
