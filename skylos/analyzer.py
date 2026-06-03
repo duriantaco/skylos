@@ -426,6 +426,20 @@ def _resolve_analysis_root(path_like: Path) -> Path:
     return current
 
 
+def _no_source_danger_targets(
+    first_path: Path,
+    discovered_root: Path,
+) -> tuple[Path, Path]:
+    if first_path.is_file():
+        scan_target = first_path
+        manifest_root = first_path.parent
+    else:
+        scan_target = discovered_root
+        manifest_root = discovered_root
+
+    return scan_target, manifest_root
+
+
 def _grep_verify_rescue_priority(candidate: dict) -> tuple:
     """Budget grep verification toward candidates most worth rescuing first."""
     return (
@@ -2070,6 +2084,10 @@ class Skylos:
 
         if not files:
             logger.warning(f"No Python files found in {path}")
+            no_source_scan_target, no_source_manifest_root = _no_source_danger_targets(
+                _first,
+                Path(root),
+            )
             result = {
                 "unused_functions": [],
                 "unused_imports": [],
@@ -2088,29 +2106,46 @@ class Skylos:
                 "workspaces": workspace_inventory.to_dict(project_root),
             }
             if enable_danger:
+                danger_findings = []
                 try:
                     from skylos.rules.config import scan_config_files
 
-                    scan_target = _first if _first.is_file() else project_root
                     config_findings = scan_config_files(
-                        scan_target,
+                        no_source_scan_target,
                         changed_files=changed_files,
                         ignore=project_ignore,
                     )
                     if config_findings:
-                        from skylos.rules.compliance import (
-                            enrich_findings_with_compliance,
-                        )
-
-                        result["danger"] = enrich_findings_with_compliance(
-                            config_findings
-                        )
-                        result["analysis_summary"]["danger_count"] = len(
-                            config_findings
-                        )
+                        danger_findings.extend(config_findings)
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("Config scan failed", exc_info=True)
+
+                try:
+                    from skylos.rules.danger.danger_hallucination.manifest_dependency_hallucination import (
+                        scan_manifest_dependency_hallucinations,
+                    )
+
+                    manifest_findings = scan_manifest_dependency_hallucinations(
+                        no_source_manifest_root,
+                    )
+                    for finding in manifest_findings:
+                        if finding.get("rule_id") in project_ignore:
+                            continue
+                        danger_findings.append(finding)
+                except Exception:
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error("Manifest dependency scan failed", exc_info=True)
+
+                if danger_findings:
+                    from skylos.rules.compliance import (
+                        enrich_findings_with_compliance,
+                    )
+
+                    result["danger"] = enrich_findings_with_compliance(
+                        danger_findings
+                    )
+                    result["analysis_summary"]["danger_count"] = len(danger_findings)
             return json.dumps(result)
 
         logger.info(f"Analyzing {len(files)} files...")
@@ -2678,7 +2713,11 @@ class Skylos:
             try:
                 from skylos.rules.config import scan_config_files
 
-                scan_target = _first if _first.is_file() else project_root
+                if _first.is_file():
+                    scan_target = _first
+                else:
+                    scan_target = project_root
+
                 config_findings = scan_config_files(
                     scan_target,
                     changed_files=changed_files,

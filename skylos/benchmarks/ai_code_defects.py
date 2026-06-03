@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from skylos.rules.danger.danger_hallucination.manifest_dependency_hallucination import (
+    VERSION_CACHE_PATH,
+    VERSION_CACHE_SCHEMA_VERSION,
+)
 from skylos.verify_change import verify_change_path
 
 
@@ -22,6 +28,12 @@ IMPORTANCE_WEIGHTS = {
     "medium": 1.0,
     "high": 2.0,
     "critical": 3.0,
+}
+DEPENDENCY_STATUS_VALUES = {
+    "exists",
+    "missing_package",
+    "missing_version",
+    "unknown",
 }
 
 VerifyFunc = Callable[..., dict[str, Any]]
@@ -291,6 +303,51 @@ def _validate_scan(case: dict[str, Any], case_id: str) -> None:
         raise ValueError(
             f"AI-code-defect benchmark case {case_id} scan config must be an object"
         )
+    _validate_dependency_statuses(scan, case_id)
+
+
+def _validate_dependency_statuses(scan: dict[str, Any], case_id: str) -> None:
+    dependency_statuses = scan.get("dependency_statuses")
+    if dependency_statuses is None:
+        return
+    if not isinstance(dependency_statuses, list):
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} scan.dependency_statuses "
+            "must be a list"
+        )
+
+    for entry in dependency_statuses:
+        _validate_dependency_status_entry(entry, case_id)
+
+
+def _validate_dependency_status_entry(entry: Any, case_id: str) -> None:
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} dependency status entries "
+            "must be objects"
+        )
+
+    for key in ("ecosystem", "name", "version", "status"):
+        value = entry.get(key)
+        if not isinstance(value, str):
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} dependency status "
+                f"needs string {key}"
+            )
+        if not value.strip():
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} dependency status "
+                f"needs non-empty {key}"
+            )
+
+    if entry["status"] in DEPENDENCY_STATUS_VALUES:
+        return
+
+    allowed = ", ".join(sorted(DEPENDENCY_STATUS_VALUES))
+    raise ValueError(
+        f"AI-code-defect benchmark case {case_id} dependency status must be "
+        f"one of: {allowed}"
+    )
 
 
 def _selected_cases(selected_cases: set[str] | None) -> set[str] | None:
@@ -318,17 +375,22 @@ def _run_case(
     if not isinstance(scan, dict):
         scan = {}
 
+    run_case_path, temp_case = _prepared_case_path(case_path, scan)
     started = time.perf_counter()
-    result = verify_func(
-        case_path,
-        line_range=scan.get("range"),
-        confidence=int(scan.get("confidence", 60)),
-        project_context=bool(scan.get("project_context", True)),
-        include_dependency_hallucinations=bool(
-            scan.get("dependency_hallucinations", False)
-        ),
-    )
-    elapsed = time.perf_counter() - started
+    try:
+        result = verify_func(
+            run_case_path,
+            line_range=scan.get("range"),
+            confidence=int(scan.get("confidence", 60)),
+            project_context=bool(scan.get("project_context", True)),
+            include_dependency_hallucinations=bool(
+                scan.get("dependency_hallucinations", False)
+            ),
+        )
+        elapsed = time.perf_counter() - started
+    finally:
+        if temp_case is not None:
+            temp_case.cleanup()
 
     failures, counts = _evaluate_case(case, result)
     return {
@@ -344,6 +406,69 @@ def _run_case(
         "absent_total": counts["absent_total"],
         "absent_violations": counts["absent_violations"],
     }
+
+
+def _prepared_case_path(
+    case_path: Path,
+    scan: dict[str, Any],
+) -> tuple[Path, tempfile.TemporaryDirectory[str] | None]:
+    dependency_statuses = _dependency_status_entries(scan)
+    if not dependency_statuses:
+        return case_path, None
+
+    temp_case = tempfile.TemporaryDirectory(prefix="skylos-ai-defect-")
+    prepared_path = Path(temp_case.name) / case_path.name
+    if case_path.is_dir():
+        shutil.copytree(case_path, prepared_path)
+    else:
+        prepared_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(case_path, prepared_path)
+
+    _write_dependency_status_cache(prepared_path, dependency_statuses)
+    return prepared_path, temp_case
+
+
+def _dependency_status_entries(scan: dict[str, Any]) -> list[dict[str, Any]]:
+    entries = scan.get("dependency_statuses")
+    if not isinstance(entries, list):
+        return []
+
+    statuses: list[dict[str, Any]] = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            statuses.append(entry)
+    return statuses
+
+
+def _write_dependency_status_cache(
+    case_path: Path,
+    dependency_statuses: list[dict[str, Any]],
+) -> None:
+    if case_path.is_file():
+        cache_root = case_path.parent
+    else:
+        cache_root = case_path
+
+    cache_path = cache_root / VERSION_CACHE_PATH
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    statuses: dict[str, str] = {}
+    for entry in dependency_statuses:
+        key = _dependency_status_key(entry)
+        statuses[key] = str(entry["status"])
+
+    payload = {
+        "schema_version": VERSION_CACHE_SCHEMA_VERSION,
+        "statuses": statuses,
+    }
+    cache_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _dependency_status_key(entry: dict[str, Any]) -> str:
+    ecosystem = str(entry["ecosystem"])
+    name = str(entry["name"])
+    version = str(entry["version"])
+    return f"{ecosystem}:{name}:{version}"
 
 
 def _evaluate_case(

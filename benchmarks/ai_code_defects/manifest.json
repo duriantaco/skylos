@@ -65,12 +65,20 @@
       "scan": {
         "confidence": 60,
         "project_context": true,
-        "dependency_hallucinations": true
+        "dependency_hallucinations": true,
+        "dependency_statuses": [
+          {
+            "ecosystem": "npm",
+            "name": "left-pad",
+            "version": "99.99.99",
+            "status": "missing_version"
+          }
+        ]
       },
       "expect": {
         "present": [
           {
-            "rule_id": "SKY-D222",
+            "rule_id": "SKY-D225",
             "vibe_category": "dependency_hallucination"
           }
         ],

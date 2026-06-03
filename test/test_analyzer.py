@@ -2887,6 +2887,52 @@ def handler(request):
         assert result["analysis_summary"]["sca_count"] == 1
         assert result["dependency_vulnerabilities"][0]["rule_id"] == "CVE-TEST"
 
+    def test_danger_scan_checks_manifest_dependencies_without_python_files(
+        self, tmp_path, monkeypatch
+    ):
+        project = tmp_path / "repo"
+        manifest_only = project / "fixtures" / "manifest_only"
+        manifest_only.mkdir(parents=True)
+        (project / "pyproject.toml").write_text(
+            "[tool.skylos]\n",
+            encoding="utf-8",
+        )
+        (project / "package.json").write_text(
+            json.dumps({"dependencies": {"parent-only": "99.99.99"}}),
+            encoding="utf-8",
+        )
+        (manifest_only / "package.json").write_text(
+            json.dumps({"dependencies": {"child-only": "99.99.99"}}),
+            encoding="utf-8",
+        )
+
+        from skylos.rules.danger.danger_hallucination import (
+            manifest_dependency_hallucination,
+        )
+
+        def fake_status_checker(_ecosystem, _name, _version, _cache):
+            return manifest_dependency_hallucination.STATUS_MISSING_VERSION
+
+        monkeypatch.setattr(
+            manifest_dependency_hallucination,
+            "check_dependency_version_status",
+            fake_status_checker,
+        )
+
+        raw_result = analyze(
+            str(manifest_only),
+            conf=0,
+            enable_danger=True,
+            grep_verify=False,
+        )
+        result = json.loads(raw_result)
+
+        danger = result.get("danger")
+        assert isinstance(danger, list)
+        assert result["analysis_summary"]["danger_count"] == 1
+        assert danger[0]["rule_id"] == "SKY-D225"
+        assert danger[0]["metadata"]["package_name"] == "child-only"
+
     def test_danger_dependency_scan_uses_project_root_for_src_layout(
         self, tmp_path, monkeypatch
     ):
