@@ -258,6 +258,8 @@ def _validate_expectations(case: dict[str, Any], case_id: str) -> None:
     if not isinstance(expect, dict):
         raise ValueError(f"AI-code-defect benchmark case {case_id} needs expectations")
 
+    _validate_expectation_finding_count(expect, case_id)
+
     total = 0
     for mode in ("present", "absent"):
         expectations = expect.get(mode)
@@ -272,6 +274,25 @@ def _validate_expectations(case: dict[str, Any], case_id: str) -> None:
     if total == 0:
         raise ValueError(
             f"AI-code-defect benchmark case {case_id} must define expectations"
+        )
+
+
+def _validate_expectation_finding_count(
+    expect: dict[str, Any],
+    case_id: str,
+) -> None:
+    finding_count = expect.get("finding_count")
+    if finding_count is None:
+        return
+    if not isinstance(finding_count, int):
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} expect.finding_count "
+            "must be an integer"
+        )
+    if finding_count < 0:
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} expect.finding_count "
+            "must not be negative"
         )
 
 
@@ -557,6 +578,8 @@ def _evaluate_case(
     }
 
     expect = case["expect"]
+    _evaluate_finding_count(case, findings, failures)
+
     for expectation in expect["present"]:
         counts["present_total"] += 1
         matched = _matching_findings(expectation, findings)
@@ -585,6 +608,29 @@ def _evaluate_case(
         )
 
     return failures, counts
+
+
+def _evaluate_finding_count(
+    case: dict[str, Any],
+    findings: list[dict[str, Any]],
+    failures: list[AICodeDefectBenchmarkFailure],
+) -> None:
+    expect = case["expect"]
+    expected_count = expect.get("finding_count")
+    if expected_count is None:
+        return
+    if len(findings) == expected_count:
+        return
+
+    failures.append(
+        AICodeDefectBenchmarkFailure(
+            case["id"],
+            "count",
+            "finding_count",
+            {"finding_count": expected_count},
+            findings,
+        )
+    )
 
 
 def _findings(result: dict[str, Any]) -> list[dict[str, Any]]:

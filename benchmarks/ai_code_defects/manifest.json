@@ -17,6 +17,7 @@
         "project_context": true
       },
       "expect": {
+        "finding_count": 1,
         "present": [
           {
             "rule_id": "SKY-L012",
@@ -42,6 +43,7 @@
         "project_context": true
       },
       "expect": {
+        "finding_count": 1,
         "present": [
           {
             "rule_id": "SKY-L012",
@@ -68,6 +70,7 @@
         "project_context": true
       },
       "expect": {
+        "finding_count": 3,
         "present": [
           {
             "rule_id": "SKY-L012",
@@ -95,6 +98,7 @@
         "range": "10:13"
       },
       "expect": {
+        "finding_count": 1,
         "present": [
           {
             "rule_id": "SKY-L012",
@@ -135,6 +139,7 @@
         "file": "app/routes.py"
       },
       "expect": {
+        "finding_count": 1,
         "present": [
           {
             "rule_id": "SKY-L012",
@@ -169,6 +174,7 @@
         "project_context": true
       },
       "expect": {
+        "finding_count": 1,
         "present": [
           {
             "rule_id": "SKY-L026",
@@ -194,6 +200,7 @@
         "project_context": true
       },
       "expect": {
+        "finding_count": 3,
         "present": [
           {
             "rule_id": "SKY-L026",
@@ -221,12 +228,52 @@
         "danger": true
       },
       "expect": {
+        "finding_count": 2,
         "present": [
           {
             "rule_id": "SKY-D224",
             "vibe_category": "api_signature_hallucination",
             "min_count": 2,
             "message_contains": "requests"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "api-keyword-hallucination",
+      "path": "fixtures/api_keyword_hallucination",
+      "description": "Generated code passes invented keyword arguments to real installed package APIs.",
+      "taxonomy": ["api_signature_hallucination"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for installed API keyword hallucinations."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "danger": true
+      },
+      "expect": {
+        "finding_count": 2,
+        "present": [
+          {
+            "rule_id": "SKY-D224",
+            "vibe_category": "api_signature_hallucination",
+            "category": "security",
+            "severity": "HIGH",
+            "message_contains": "retry_policy",
+            "start_line": 6
+          },
+          {
+            "rule_id": "SKY-D224",
+            "vibe_category": "api_signature_hallucination",
+            "category": "security",
+            "severity": "HIGH",
+            "message_contains": "json_body",
+            "start_line": 15
           }
         ],
         "absent": []
@@ -257,6 +304,7 @@
         ]
       },
       "expect": {
+        "finding_count": 1,
         "present": [
           {
             "rule_id": "SKY-D222",
@@ -303,6 +351,7 @@
         ]
       },
       "expect": {
+        "finding_count": 5,
         "present": [
           {
             "rule_id": "SKY-L012",
@@ -337,6 +386,72 @@
       }
     },
     {
+      "id": "compound-api-range-scope",
+      "path": "fixtures/compound_ai_failure_edit",
+      "description": "A compound generated edit is scoped down to only the invented installed-package API call.",
+      "taxonomy": [
+        "api_signature_hallucination",
+        "precision_guard"
+      ],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for file-and-range scoped verification inside a compound edit."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "danger": true,
+        "file": "app.py",
+        "range": "6:8",
+        "dependency_statuses": [
+          {
+            "ecosystem": "npm",
+            "name": "skylos-compound-ghost-sdk",
+            "version": "1.0.0",
+            "status": "missing_package"
+          },
+          {
+            "ecosystem": "npm",
+            "name": "left-pad",
+            "version": "99.99.99",
+            "status": "missing_version"
+          }
+        ]
+      },
+      "expect": {
+        "finding_count": 1,
+        "present": [
+          {
+            "rule_id": "SKY-D224",
+            "vibe_category": "api_signature_hallucination",
+            "category": "security",
+            "message_contains": "requests.fetch_json",
+            "start_line": 6
+          }
+        ],
+        "absent": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference"
+          },
+          {
+            "rule_id": "SKY-L026",
+            "vibe_category": "incomplete_generation"
+          },
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination"
+          },
+          {
+            "rule_id": "SKY-D225",
+            "vibe_category": "dependency_hallucination"
+          }
+        ]
+      }
+    },
+    {
       "id": "dependency-version-hallucination",
       "path": "fixtures/dependency_version_hallucination",
       "description": "Generated package manifest pins a dependency/version that should be verified against the registry.",
@@ -361,6 +476,7 @@
         ]
       },
       "expect": {
+        "finding_count": 1,
         "present": [
           {
             "rule_id": "SKY-D225",
@@ -395,6 +511,7 @@
         ]
       },
       "expect": {
+        "finding_count": 1,
         "present": [
           {
             "rule_id": "SKY-D225",
@@ -442,6 +559,7 @@
         ]
       },
       "expect": {
+        "finding_count": 3,
         "present": [
           {
             "rule_id": "SKY-D222",
@@ -456,6 +574,55 @@
           {
             "rule_id": "SKY-D225",
             "vibe_category": "dependency_hallucination",
+            "message_contains": "left-pad"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "nested-manifest-workspace",
+      "path": "fixtures/nested_manifest_workspace",
+      "description": "Generated dependency hallucinations live in a nested workspace manifest instead of the scan root.",
+      "taxonomy": ["dependency_hallucination"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for nested manifest traversal and deterministic dependency status checks."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "dependency_hallucinations": true,
+        "dependency_statuses": [
+          {
+            "ecosystem": "npm",
+            "name": "skylos-nested-ghost-sdk",
+            "version": "1.0.0",
+            "status": "missing_package"
+          },
+          {
+            "ecosystem": "npm",
+            "name": "left-pad",
+            "version": "99.99.99",
+            "status": "missing_version"
+          }
+        ]
+      },
+      "expect": {
+        "finding_count": 2,
+        "present": [
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination",
+            "file_contains": "packages/api/package.json",
+            "message_contains": "skylos-nested-ghost-sdk"
+          },
+          {
+            "rule_id": "SKY-D225",
+            "vibe_category": "dependency_hallucination",
+            "file_contains": "packages/api/package.json",
             "message_contains": "left-pad"
           }
         ],
@@ -493,6 +660,7 @@
         ]
       },
       "expect": {
+        "finding_count": 0,
         "present": [],
         "absent": [
           {
@@ -502,6 +670,71 @@
           {
             "rule_id": "SKY-D225",
             "vibe_category": "dependency_hallucination"
+          }
+        ]
+      }
+    },
+    {
+      "id": "clean-api-signature",
+      "path": "fixtures/clean_api_signature",
+      "description": "Generated code calls real installed package APIs with accepted keyword arguments.",
+      "taxonomy": [
+        "api_signature_hallucination",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic clean fixture for API-signature precision."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "danger": true
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-D224",
+            "vibe_category": "api_signature_hallucination"
+          }
+        ]
+      }
+    },
+    {
+      "id": "clean-range-scope",
+      "path": "fixtures/range_scoped_mixed_edit",
+      "description": "A generated file has later AI defects, but the selected clean range must stay quiet.",
+      "taxonomy": [
+        "hallucinated_reference",
+        "incomplete_generation",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic clean range fixture for scoped verification precision."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "range": "1:3"
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference"
+          },
+          {
+            "rule_id": "SKY-L026",
+            "vibe_category": "incomplete_generation"
           }
         ]
       }
@@ -523,6 +756,7 @@
         "danger": true
       },
       "expect": {
+        "finding_count": 0,
         "present": [],
         "absent": [
           {

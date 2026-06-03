@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "skylos-nested-ghost-sdk": "1.0.0",
+    "left-pad": "99.99.99"
+  }
+}
