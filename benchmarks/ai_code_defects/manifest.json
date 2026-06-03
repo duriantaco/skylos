@@ -27,6 +27,58 @@
       }
     },
     {
+      "id": "repo-local-phantom-reference",
+      "path": "fixtures/repo_local_phantom_reference",
+      "description": "Generated handler calls a plausible method on a real local module, but the method was never implemented.",
+      "taxonomy": ["hallucinated_reference"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for cross-file repo-local helper hallucinations."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "file_contains": "app/views.py"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "multiple-phantom-references",
+      "path": "fixtures/multiple_phantom_references",
+      "description": "Generated request handler chains several plausible security helpers that do not exist.",
+      "taxonomy": ["hallucinated_reference"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for multiple hallucinated helper calls in one edit."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "min_count": 3
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
       "id": "incomplete-generation",
       "path": "fixtures/incomplete_generation",
       "description": "Generated business function is left as a pass-body stub.",
@@ -46,6 +98,95 @@
           {
             "rule_id": "SKY-L026",
             "vibe_category": "incomplete_generation"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "unfinished-generated-class",
+      "path": "fixtures/unfinished_generated_class",
+      "description": "Generated workflow mixes pass, ellipsis, and NotImplementedError placeholders.",
+      "taxonomy": ["incomplete_generation"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for multiple unfinished generation patterns in one class/module."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-L026",
+            "vibe_category": "incomplete_generation",
+            "min_count": 3
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "api-signature-hallucination",
+      "path": "fixtures/api_signature_hallucination",
+      "description": "Generated code calls real installed package APIs that do not exist.",
+      "taxonomy": ["api_signature_hallucination"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for requests API member hallucinations."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "danger": true
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-D224",
+            "vibe_category": "api_signature_hallucination",
+            "min_count": 2,
+            "message_contains": "requests"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "dependency-package-hallucination",
+      "path": "fixtures/dependency_package_hallucination",
+      "description": "Generated package manifest adds a package that does not exist.",
+      "taxonomy": ["dependency_hallucination"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for npm package hallucination checks."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "dependency_hallucinations": true,
+        "dependency_statuses": [
+          {
+            "ecosystem": "npm",
+            "name": "skylos-ai-ghost-sdk",
+            "version": "1.0.0",
+            "status": "missing_package"
+          }
+        ]
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination",
+            "message_contains": "skylos-ai-ghost-sdk"
           }
         ],
         "absent": []
@@ -83,6 +224,83 @@
           }
         ],
         "absent": []
+      }
+    },
+    {
+      "id": "go-module-version-hallucination",
+      "path": "fixtures/go_module_version_hallucination",
+      "description": "Generated Go module manifest pins a real module to an invented version.",
+      "taxonomy": ["dependency_hallucination"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for Go module version hallucination checks."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "dependency_hallucinations": true,
+        "dependency_statuses": [
+          {
+            "ecosystem": "Go",
+            "name": "github.com/gin-gonic/gin",
+            "version": "99.99.99",
+            "status": "missing_version"
+          }
+        ]
+      },
+      "expect": {
+        "present": [
+          {
+            "rule_id": "SKY-D225",
+            "vibe_category": "dependency_hallucination",
+            "message_contains": "github.com/gin-gonic/gin"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "clean-generated-code",
+      "path": "fixtures/clean_generated_code",
+      "description": "Generated code defines the helper it calls and contains no unfinished body.",
+      "taxonomy": ["precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic clean fixture used as an absence guard against over-triggering AI-defect rules."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "danger": true
+      },
+      "expect": {
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference"
+          },
+          {
+            "rule_id": "SKY-L026",
+            "vibe_category": "incomplete_generation"
+          },
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination"
+          },
+          {
+            "rule_id": "SKY-D224",
+            "vibe_category": "api_signature_hallucination"
+          },
+          {
+            "rule_id": "SKY-D225",
+            "vibe_category": "dependency_hallucination"
+          }
+        ]
       }
     }
   ]

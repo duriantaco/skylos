@@ -293,7 +293,34 @@ def _validate_expectation(expectation: Any, case_id: str, mode: str) -> None:
     if vibe is not None:
         if not isinstance(vibe, str):
             raise ValueError(
-                f"AI-code-defect benchmark case {case_id} expect.{mode} vibe_category must be a string"
+                f"AI-code-defect benchmark case {case_id} expect.{mode} "
+                "vibe_category must be a string"
+            )
+
+    min_count = expectation.get("min_count")
+    if min_count is not None:
+        if not isinstance(min_count, int):
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} expect.{mode} "
+                "min_count must be an integer"
+            )
+        if min_count < 1:
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} expect.{mode} "
+                "min_count must be at least 1"
+            )
+
+    for key in ("message_contains", "file_contains"):
+        value = expectation.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} expect.{mode} {key} must be a string"
+            )
+        if not value.strip():
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} expect.{mode} {key} must be non-empty"
             )
 
 
@@ -383,9 +410,7 @@ def _run_case(
             line_range=scan.get("range"),
             confidence=int(scan.get("confidence", 60)),
             project_context=bool(scan.get("project_context", True)),
-            include_dependency_hallucinations=bool(
-                scan.get("dependency_hallucinations", False)
-            ),
+            include_dependency_hallucinations=_include_danger_scan(scan),
         )
         elapsed = time.perf_counter() - started
     finally:
@@ -406,6 +431,12 @@ def _run_case(
         "absent_total": counts["absent_total"],
         "absent_violations": counts["absent_violations"],
     }
+
+
+def _include_danger_scan(scan: dict[str, Any]) -> bool:
+    if bool(scan.get("danger", False)):
+        return True
+    return bool(scan.get("dependency_hallucinations", False))
 
 
 def _prepared_case_path(
@@ -488,7 +519,8 @@ def _evaluate_case(
     for expectation in expect["present"]:
         counts["present_total"] += 1
         matched = _matching_findings(expectation, findings)
-        if matched:
+        min_count = _expectation_min_count(expectation)
+        if len(matched) >= min_count:
             counts["present_matched"] += 1
             continue
         failures.append(
@@ -546,7 +578,29 @@ def _finding_matches(expectation: dict[str, Any], finding: dict[str, Any]) -> bo
     if vibe is not None:
         if finding.get("vibe_category") != vibe:
             return False
+
+    message_contains = expectation.get("message_contains")
+    if isinstance(message_contains, str):
+        message = str(finding.get("message", ""))
+        if message_contains not in message:
+            return False
+
+    file_contains = expectation.get("file_contains")
+    if isinstance(file_contains, str):
+        finding_range = finding.get("range")
+        if not isinstance(finding_range, dict):
+            return False
+        file_path = str(finding_range.get("file", ""))
+        if file_contains not in file_path:
+            return False
     return True
+
+
+def _expectation_min_count(expectation: dict[str, Any]) -> int:
+    value = expectation.get("min_count")
+    if isinstance(value, int):
+        return value
+    return 1
 
 
 def _scores(
