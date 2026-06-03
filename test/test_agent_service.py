@@ -11,6 +11,7 @@ from skylos.agents.service import (
     _default_allowed_origins,
     create_agent_service,
 )
+from skylos.core.contribution_events import load_local_events
 
 
 @contextlib.contextmanager
@@ -116,6 +117,20 @@ def build_service_state(project_root, findings):
     return state
 
 
+def enable_local_contribution(project_root):
+    config_path = project_root / "pyproject.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[tool.skylos.contribution]",
+                "collect_local_signals = true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_agent_service_controller_serves_command_center_and_triage_updates(tmp_path):
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -163,6 +178,71 @@ def test_agent_service_controller_serves_command_center_and_triage_updates(tmp_p
     restored = controller.restore("security:1")
     assert restored["triage"] == {}
     assert restored["actions"][0]["id"] == "security:1"
+
+
+def test_agent_service_dismiss_records_local_contribution_event(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    enable_local_contribution(project_root)
+    build_service_state(
+        project_root,
+        [
+            {
+                "fingerprint": "vibe:1",
+                "rule_id": "SKY-L012",
+                "category": "quality",
+                "severity": "MEDIUM",
+                "message": "validate_token is never defined",
+                "file": "src/auth.py",
+                "absolute_file": str(project_root / "src" / "auth.py"),
+                "line": 27,
+                "vibe_category": "hallucinated_reference",
+                "ai_likelihood": "high",
+            },
+        ],
+    )
+
+    controller = AgentServiceController(str(project_root))
+    dismissed = controller.dismiss("vibe:1")
+    payload = load_local_events(project_root)
+
+    assert dismissed["triage"]["vibe:1"]["status"] == "dismissed"
+    assert len(payload["events"]) == 1
+    assert payload["events"][0]["event_type"] == "dismiss"
+    assert payload["events"][0]["rule_id"] == "SKY-L012"
+    assert payload["events"][0]["vibe_category"] == "hallucinated_reference"
+
+
+def test_agent_service_learn_accept_records_local_contribution_event(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    enable_local_contribution(project_root)
+    build_service_state(
+        project_root,
+        [
+            {
+                "fingerprint": "vibe:1",
+                "rule_id": "SKY-L012",
+                "category": "quality",
+                "severity": "MEDIUM",
+                "message": "validate_token is never defined",
+                "file": "src/auth.py",
+                "absolute_file": str(project_root / "src" / "auth.py"),
+                "line": 27,
+                "vibe_category": "hallucinated_reference",
+                "ai_likelihood": "high",
+            },
+        ],
+    )
+
+    controller = AgentServiceController(str(project_root))
+    result = controller.learn_triage("vibe:1", "accept")
+    payload = load_local_events(project_root)
+
+    assert result["ok"] is True
+    assert len(payload["events"]) == 1
+    assert payload["events"][0]["event_type"] == "accept"
+    assert payload["events"][0]["rule_id"] == "SKY-L012"
 
 
 def test_agent_service_controller_tracks_snoozed_actions(tmp_path):

@@ -16,6 +16,7 @@ from skylos.agents.center import (
     resolve_state_path,
     update_action_triage,
 )
+from skylos.core.contribution_events import record_structural_event
 
 
 def _error_payload(message: str) -> dict[str, str]:
@@ -155,12 +156,16 @@ class AgentServiceController:
 
     def dismiss(self, action_id: str) -> dict[str, Any]:
         with self._lock:
-            return update_action_triage(
+            state = self.get_state()
+            finding = _finding_by_fingerprint(state, action_id)
+            updated = update_action_triage(
                 self.project_root,
                 action_id,
                 status="dismissed",
                 state_file=self.state_file,
             )
+            self._record_contribution_event(finding, event_type="dismiss")
+            return updated
 
     def snooze(self, action_id: str, *, hours: float) -> dict[str, Any]:
         with self._lock:
@@ -197,6 +202,10 @@ class AgentServiceController:
         updated = learner.learn_from_triage(finding, action)
         learner.save(str(self.project_root))
 
+        event_type = _contribution_event_type(action)
+        if event_type is not None:
+            self._record_contribution_event(finding, event_type=event_type)
+
         return {
             "ok": True,
             "patterns_updated": len(updated),
@@ -229,6 +238,18 @@ class AgentServiceController:
             "total_patterns": learner.pattern_count,
         }
 
+    def _record_contribution_event(
+        self,
+        finding: dict[str, Any] | None,
+        *,
+        event_type: str,
+    ) -> None:
+        record_structural_event(
+            self.project_root,
+            finding,
+            event_type=event_type,
+        )
+
 
 def _resolve_refresh_query(query: str) -> bool:
     params = parse_qs(query or "", keep_blank_values=False)
@@ -243,6 +264,32 @@ def _resolve_limit_query(query: str, default: int) -> int:
     except ValueError:
         return default
     return max(1, min(value, 100))
+
+
+def _finding_by_fingerprint(
+    state: dict[str, Any],
+    action_id: str,
+) -> dict[str, Any] | None:
+    findings = state.get("findings")
+    if not isinstance(findings, list):
+        return None
+
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        fingerprint = finding.get("fingerprint")
+        if fingerprint == action_id:
+            return finding
+    return None
+
+
+def _contribution_event_type(action: str) -> str | None:
+    normalized = str(action).strip().lower()
+    if normalized == "accept":
+        return "accept"
+    if normalized == "dismiss":
+        return "dismiss"
+    return None
 
 
 def _dispatch_get_request(
