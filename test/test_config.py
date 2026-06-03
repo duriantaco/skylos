@@ -13,6 +13,7 @@ from skylos.config import (
     get_all_ignore_lines,
     suggest_pattern,
 )
+from skylos.core.contribution_settings import load_contribution_settings
 
 
 class TestSkylosConfig(unittest.TestCase):
@@ -27,6 +28,57 @@ class TestSkylosConfig(unittest.TestCase):
         config = load_config(self.root)
         self.assertEqual(config["complexity"], DEFAULTS["complexity"])
         self.assertEqual(config["ignore"], [])
+        self.assertEqual(config["contribution"], DEFAULTS["contribution"])
+
+    def test_contribution_settings_default_to_no_capture_or_upload(self):
+        settings = load_contribution_settings(self.root)
+
+        self.assertFalse(settings.collect_local_signals)
+        self.assertFalse(settings.contribute_public_corpus)
+        self.assertTrue(settings.structural_signatures_only)
+        self.assertFalse(settings.include_source)
+        self.assertFalse(settings.local_only)
+
+    def test_contribution_settings_allow_explicit_local_only_capture(self):
+        toml_path = self.root / "pyproject.toml"
+        toml_path.write_text(
+            """
+[tool.skylos.contribution]
+collect_local_signals = true
+contribute_public_corpus = false
+structural_signatures_only = true
+include_source = true
+""".strip(),
+            encoding="utf-8",
+        )
+
+        settings = load_contribution_settings(self.root)
+
+        self.assertTrue(settings.collect_local_signals)
+        self.assertFalse(settings.contribute_public_corpus)
+        self.assertTrue(settings.structural_signatures_only)
+        self.assertFalse(settings.include_source)
+        self.assertTrue(settings.local_only)
+
+    def test_contribution_settings_require_explicit_public_corpus_opt_in(self):
+        toml_path = self.root / "pyproject.toml"
+        toml_path.write_text(
+            """
+[tool.skylos.contribution]
+collect_local_signals = true
+contribute_public_corpus = true
+structural_signatures_only = false
+""".strip(),
+            encoding="utf-8",
+        )
+
+        settings = load_contribution_settings(self.root)
+
+        self.assertTrue(settings.collect_local_signals)
+        self.assertTrue(settings.contribute_public_corpus)
+        self.assertFalse(settings.structural_signatures_only)
+        self.assertFalse(settings.include_source)
+        self.assertFalse(settings.local_only)
 
     def test_load_config_traversal(self):
         toml_path = self.root / "pyproject.toml"

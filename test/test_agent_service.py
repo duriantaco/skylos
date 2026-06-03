@@ -5,12 +5,15 @@ import http.client
 import json
 import threading
 
+import skylos.agents.service as service_module
 from skylos.agents.center import rebuild_agent_state_from_existing, save_agent_state
 from skylos.agents.service import (
     AgentServiceController,
     _default_allowed_origins,
     create_agent_service,
 )
+from skylos.core.contribution_events import load_local_events
+from skylos.core.reference_index_store import record_file_graph, save_reference_index
 
 
 @contextlib.contextmanager
@@ -116,6 +119,20 @@ def build_service_state(project_root, findings):
     return state
 
 
+def enable_local_contribution(project_root):
+    config_path = project_root / "pyproject.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[tool.skylos.contribution]",
+                "collect_local_signals = true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_agent_service_controller_serves_command_center_and_triage_updates(tmp_path):
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -163,6 +180,71 @@ def test_agent_service_controller_serves_command_center_and_triage_updates(tmp_p
     restored = controller.restore("security:1")
     assert restored["triage"] == {}
     assert restored["actions"][0]["id"] == "security:1"
+
+
+def test_agent_service_dismiss_records_local_contribution_event(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    enable_local_contribution(project_root)
+    build_service_state(
+        project_root,
+        [
+            {
+                "fingerprint": "vibe:1",
+                "rule_id": "SKY-L012",
+                "category": "quality",
+                "severity": "MEDIUM",
+                "message": "validate_token is never defined",
+                "file": "src/auth.py",
+                "absolute_file": str(project_root / "src" / "auth.py"),
+                "line": 27,
+                "vibe_category": "hallucinated_reference",
+                "ai_likelihood": "high",
+            },
+        ],
+    )
+
+    controller = AgentServiceController(str(project_root))
+    dismissed = controller.dismiss("vibe:1")
+    payload = load_local_events(project_root)
+
+    assert dismissed["triage"]["vibe:1"]["status"] == "dismissed"
+    assert len(payload["events"]) == 1
+    assert payload["events"][0]["event_type"] == "dismiss"
+    assert payload["events"][0]["rule_id"] == "SKY-L012"
+    assert payload["events"][0]["vibe_category"] == "hallucinated_reference"
+
+
+def test_agent_service_learn_accept_records_local_contribution_event(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    enable_local_contribution(project_root)
+    build_service_state(
+        project_root,
+        [
+            {
+                "fingerprint": "vibe:1",
+                "rule_id": "SKY-L012",
+                "category": "quality",
+                "severity": "MEDIUM",
+                "message": "validate_token is never defined",
+                "file": "src/auth.py",
+                "absolute_file": str(project_root / "src" / "auth.py"),
+                "line": 27,
+                "vibe_category": "hallucinated_reference",
+                "ai_likelihood": "high",
+            },
+        ],
+    )
+
+    controller = AgentServiceController(str(project_root))
+    result = controller.learn_triage("vibe:1", "accept")
+    payload = load_local_events(project_root)
+
+    assert result["ok"] is True
+    assert len(payload["events"]) == 1
+    assert payload["events"][0]["event_type"] == "accept"
+    assert payload["events"][0]["rule_id"] == "SKY-L012"
 
 
 def test_agent_service_controller_tracks_snoozed_actions(tmp_path):
@@ -308,6 +390,141 @@ def test_create_agent_service_post_parsing_happens_before_route_dispatch(tmp_pat
         )
         assert status == 404
         assert payload == {"error": "Not found"}
+
+
+def test_agent_service_verify_change_route_uses_project_scoped_path(
+    tmp_path,
+    monkeypatch,
+):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    app = project_root / "app.py"
+    app.write_text("def handler():\n    return 1\n")
+    seen = {}
+
+    def fake_verify(path, **kwargs):
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return {
+            "schema_version": 1,
+            "tool": "verify_change",
+            "status": "pass",
+            "target": {"path": str(path), "file": "app.py", "range": None},
+            "findings": [],
+            "summary": "No AI-code issues found",
+        }
+
+    monkeypatch.setattr(service_module, "verify_change_path", fake_verify)
+
+    with running_agent_service(project_root, token="secret") as server:
+        status, payload = request_json(
+            server,
+            "POST",
+            "/verify-change",
+            token="secret",
+            body={"file": "app.py", "range": "1:1", "confidence": "73"},
+        )
+
+    assert status == 200
+    assert payload["tool"] == "verify_change"
+    assert seen["path"] == project_root.resolve()
+    assert seen["kwargs"]["file"] == app.resolve()
+    assert seen["kwargs"]["line_range"] == "1:1"
+    assert seen["kwargs"]["confidence"] == 73
+    assert seen["kwargs"]["project_context"] is True
+
+
+def test_agent_service_verify_change_route_rejects_path_escape(
+    tmp_path,
+    monkeypatch,
+):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+
+    def fake_verify(*_args, **_kwargs):
+        raise AssertionError("verify should not run for escaped paths")
+
+    monkeypatch.setattr(service_module, "verify_change_path", fake_verify)
+
+    with running_agent_service(project_root, token="secret") as server:
+        status, payload = request_json(
+            server,
+            "POST",
+            "/verify-change",
+            token="secret",
+            body={"file": "../outside.py"},
+        )
+
+    assert status == 400
+    assert payload == {"error": "verify path must stay inside the served project"}
+
+
+def test_agent_service_verify_change_uses_stdin_manifest(
+    tmp_path,
+    monkeypatch,
+):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    seen = {}
+
+    def fake_stdin(payload, **kwargs):
+        seen["payload"] = payload
+        seen["kwargs"] = kwargs
+        return {
+            "schema_version": 1,
+            "tool": "verify_change",
+            "status": "pass",
+            "target": {"path": ".", "file": "app.py", "range": None},
+            "findings": [],
+            "summary": "No AI-code issues found",
+        }
+
+    monkeypatch.setattr(service_module, "verify_change_stdin_payload", fake_stdin)
+
+    with running_agent_service(project_root, token="secret") as server:
+        status, payload = request_json(
+            server,
+            "POST",
+            "/verify-change",
+            token="secret",
+            body={"file": "app.py", "code": "def handler():\n    return 1\n"},
+        )
+
+    assert status == 200
+    assert payload["status"] == "pass"
+    assert seen["payload"]["file"] == "app.py"
+    assert seen["kwargs"]["confidence"] == 80
+
+
+def test_agent_service_verify_change_drops_stale_warm_index(tmp_path, monkeypatch):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    source = project_root / "app.py"
+    source.write_text("def handler():\n    return 1\n")
+    payload = record_file_graph(project_root, None, source)
+
+    assert payload is not None
+    assert save_reference_index(project_root, payload) is True
+
+    def fake_verify(path, **_kwargs):
+        return {
+            "schema_version": 1,
+            "tool": "verify_change",
+            "status": "pass",
+            "target": {"path": str(path), "file": "app.py", "range": None},
+            "findings": [],
+            "summary": "No AI-code issues found",
+        }
+
+    monkeypatch.setattr(service_module, "verify_change_path", fake_verify)
+    controller = AgentServiceController(str(project_root))
+    assert controller.reference_index is not None
+
+    source.write_text("def handler():\n    return 2\n")
+    result = controller.verify_change({"file": "app.py"})
+
+    assert result["status"] == "pass"
+    assert controller.reference_index is None
 
 
 def test_create_agent_service_auth_short_circuits_before_body_parsing(tmp_path):

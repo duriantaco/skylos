@@ -4,6 +4,7 @@ import json
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlsplit, urlparse
 
@@ -16,6 +17,12 @@ from skylos.agents.center import (
     resolve_state_path,
     update_action_triage,
 )
+from skylos.core.contribution_events import record_structural_event
+from skylos.core.reference_index_store import (
+    invalidation_paths_for_changes,
+    load_reference_index,
+)
+from skylos.verify_change import verify_change_path, verify_change_stdin_payload
 
 
 def _error_payload(message: str) -> dict[str, str]:
@@ -96,6 +103,7 @@ class AgentServiceController:
         self.conf = conf
         self.use_baseline = use_baseline
         self.default_limit = default_limit
+        self.reference_index = load_reference_index(self.project_root)
         self._lock = threading.RLock()
 
         if refresh_on_start:
@@ -111,6 +119,7 @@ class AgentServiceController:
             "project_root": str(self.project_root),
             "state_file": self.state_path,
             "has_state": self.load_state() is not None,
+            "has_reference_index": self.reference_index is not None,
         }
 
     def load_state(self) -> dict[str, Any] | None:
@@ -155,12 +164,16 @@ class AgentServiceController:
 
     def dismiss(self, action_id: str) -> dict[str, Any]:
         with self._lock:
-            return update_action_triage(
+            state = self.get_state()
+            finding = _finding_by_fingerprint(state, action_id)
+            updated = update_action_triage(
                 self.project_root,
                 action_id,
                 status="dismissed",
                 state_file=self.state_file,
             )
+            self._record_contribution_event(finding, event_type="dismiss")
+            return updated
 
     def snooze(self, action_id: str, *, hours: float) -> dict[str, Any]:
         with self._lock:
@@ -197,6 +210,10 @@ class AgentServiceController:
         updated = learner.learn_from_triage(finding, action)
         learner.save(str(self.project_root))
 
+        event_type = _contribution_event_type(action)
+        if event_type is not None:
+            self._record_contribution_event(finding, event_type=event_type)
+
         return {
             "ok": True,
             "patterns_updated": len(updated),
@@ -229,6 +246,80 @@ class AgentServiceController:
             "total_patterns": learner.pattern_count,
         }
 
+    def verify_change(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            self._invalidate_reference_index(body)
+
+        if _body_has_code(body):
+            return verify_change_stdin_payload(
+                body,
+                confidence=_body_int(body, "confidence", self.conf),
+            )
+
+        target_path = self._resolve_verify_path(body)
+        target_file = self._resolve_verify_file(body)
+        return verify_change_path(
+            target_path,
+            file=target_file,
+            line_range=_body_value(body, ("line_range", "range"), None),
+            confidence=_body_int(body, "confidence", self.conf),
+            project_context=_body_bool(body, "project_context", True),
+            include_dependency_hallucinations=_body_bool(
+                body,
+                "include_dependency_hallucinations",
+                False,
+            ),
+        )
+
+    def _invalidate_reference_index(self, body: dict[str, Any]) -> None:
+        if self.reference_index is None:
+            return
+
+        candidate_paths = self._verify_candidate_paths(body)
+        invalidated = invalidation_paths_for_changes(
+            self.project_root,
+            self.reference_index,
+            candidate_paths=candidate_paths,
+        )
+        if invalidated:
+            self.reference_index = None
+
+    def _verify_candidate_paths(self, body: dict[str, Any]) -> list[str | Path] | None:
+        candidates: list[str | Path] = []
+        path_value = _body_value(body, ("path",), None)
+        if path_value is not None:
+            candidates.append(path_value)
+
+        file_value = _body_value(body, ("file",), None)
+        if file_value is not None:
+            candidates.append(file_value)
+
+        if candidates:
+            return candidates
+        return None
+
+    def _resolve_verify_path(self, body: dict[str, Any]) -> Path:
+        path_value = _body_value(body, ("path",), ".")
+        return _resolve_project_path(self.project_root, path_value)
+
+    def _resolve_verify_file(self, body: dict[str, Any]) -> Path | None:
+        file_value = _body_value(body, ("file",), None)
+        if file_value is None:
+            return None
+        return _resolve_project_path(self.project_root, file_value)
+
+    def _record_contribution_event(
+        self,
+        finding: dict[str, Any] | None,
+        *,
+        event_type: str,
+    ) -> None:
+        record_structural_event(
+            self.project_root,
+            finding,
+            event_type=event_type,
+        )
+
 
 def _resolve_refresh_query(query: str) -> bool:
     params = parse_qs(query or "", keep_blank_values=False)
@@ -243,6 +334,94 @@ def _resolve_limit_query(query: str, default: int) -> int:
     except ValueError:
         return default
     return max(1, min(value, 100))
+
+
+def _body_has_code(body: dict[str, Any]) -> bool:
+    code = body.get("code")
+    return isinstance(code, str)
+
+
+def _finding_by_fingerprint(
+    state: dict[str, Any],
+    action_id: str,
+) -> dict[str, Any] | None:
+    findings = state.get("findings")
+    if not isinstance(findings, list):
+        return None
+
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        fingerprint = finding.get("fingerprint")
+        if fingerprint == action_id:
+            return finding
+    return None
+
+
+def _contribution_event_type(action: str) -> str | None:
+    normalized = str(action).strip().lower()
+    if normalized == "accept":
+        return "accept"
+    if normalized == "dismiss":
+        return "dismiss"
+    return None
+
+
+def _body_value(
+    body: dict[str, Any],
+    keys: tuple[str, ...],
+    default: Any,
+) -> Any:
+    for key in keys:
+        value = body.get(key)
+        if _has_body_value(value):
+            return value
+    return default
+
+
+def _has_body_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        if value.strip() == "":
+            return False
+    return True
+
+
+def _body_int(body: dict[str, Any], key: str, default: int) -> int:
+    value = body.get(key)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _body_bool(body: dict[str, Any], key: str, default: bool) -> bool:
+    value = body.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes"}:
+            return True
+        if normalized in {"0", "false", "no"}:
+            return False
+    return default
+
+
+def _resolve_project_path(project_root: Path, value: Any) -> Path:
+    raw = Path(str(value)).expanduser()
+    if raw.is_absolute():
+        candidate = raw
+    else:
+        candidate = project_root / raw
+
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(project_root)
+    except (OSError, ValueError) as exc:
+        raise ValueError("verify path must stay inside the served project") from exc
+    return resolved
 
 
 def _dispatch_get_request(
@@ -290,6 +469,8 @@ def _dispatch_post_request(
         action_id = require_action_id(body)
         action = str(body.get("action", "dismiss"))
         return HTTPStatus.OK, controller.learn_triage(action_id, action)
+    if path == "/verify-change":
+        return HTTPStatus.OK, controller.verify_change(body)
     return HTTPStatus.NOT_FOUND, _error_payload("Not found")
 
 
