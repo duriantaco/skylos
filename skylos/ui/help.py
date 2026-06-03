@@ -12,6 +12,11 @@ COMMANDS = [
         "group": "Core Analysis",
     },
     {
+        "name": "skylos verify <path>",
+        "desc": "Verify changed code for AI-code defects",
+        "group": "AI Agent",
+    },
+    {
         "name": "skylos discover <path>",
         "desc": "Map LLM/AI integrations in your codebase",
         "group": "Core Analysis",

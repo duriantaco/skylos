@@ -2653,6 +2653,12 @@ def _run_sonar_command(argv):
     return run_sonar_command(argv, console_factory=Console)
 
 
+def _run_verify_command(argv):
+    from skylos.commands.verify_cmd import run_verify_command
+
+    return run_verify_command(argv)
+
+
 def _attach_upload_project_context(result: dict, project_root: pathlib.Path) -> None:
     try:
         from skylos.api import get_git_root as _get_git_root

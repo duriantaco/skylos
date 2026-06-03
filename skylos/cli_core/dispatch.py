@@ -24,6 +24,7 @@ EARLY_COMMAND_HANDLERS = {
     "sonar": "_run_sonar_command",
     "city": "_run_removed_city_command",
     "suite": "run_suite_command",
+    "verify": "_run_verify_command",
     "discover": "_run_discover_command",
     "defend": "run_defend_command",
     "debt": "run_debt_command",
@@ -85,4 +86,3 @@ def dispatch_early_command(
         return run_early_command_help(argv[0], console_factory=console_factory)
 
     return namespace[handler_name](argv[1:])
-
