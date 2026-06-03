@@ -98,6 +98,8 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D220 | CRITICAL | SQL injection in added code / diff validation | MCP code-change validator | CWE-89 / A03 |
 | D222 | MEDIUM | Dependency hallucination | Python | AI supply-chain |
 | D223 | MEDIUM | Undeclared third-party dependency | Python | supply-chain |
+| D224 | HIGH | API signature hallucination | Python | AI-code runtime failure |
+| D225 | HIGH | Dependency version hallucination | npm, Go | AI supply-chain |
 | D226 | CRITICAL | XSS: unsafe DOM or HTML rendering | Python, TS/JS, Java, audit | CWE-79 / A03 |
 | D227 | HIGH | XSS: unsafe template rendering | Python | CWE-79 / A03 |
 | D228 | HIGH | XSS: unescaped HTML output | Python | CWE-79 / A03 |

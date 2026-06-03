@@ -38,7 +38,8 @@ Use Skylos when you want one command to check a repo or pull request for:
 - secrets and dependency CVEs
 - CI/CD and edge-device deployment misconfigurations
 - quality regressions such as complexity, duplicate branches, and deep nesting
-- common AI-generated code mistakes, including missing guards and fake helpers
+- common AI-generated code mistakes, including missing guards, fake helpers,
+  invented package APIs, and impossible dependency versions
 - LLM app risks such as unsafe tool use and missing output validation
 
 ## Start In 60 Seconds
@@ -113,7 +114,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | CI/CD workflows | GitHub Actions and GitLab CI dangerous triggers, unpinned actions/includes, broad tokens, OIDC misuse, cache poisoning, mutable images | reduces CI/CD supply-chain risk before release jobs run |
 | Edge deployment config | Docker Compose privileged device access, host networking, systemd root services, broad capabilities, missing sandboxing | catches repo-controlled settings that turn app bugs into device compromise |
 | Quality regressions | complexity, deep nesting, duplicate branches, long functions, inconsistent returns | keeps AI-assisted refactors from adding brittle code |
-| AI code mistakes | phantom security calls, missing decorators, unfinished stubs, disabled controls, network calls without timeouts | catches common hallucinated or incomplete code paths |
+| AI code mistakes | phantom security calls, missing decorators, unfinished stubs, disabled controls, real packages called with invented APIs, impossible npm/Go versions | catches common hallucinated or incomplete code paths before they reach review |
 | LLM app risks | unsafe tool use, prompt injection exposure, missing output validation, missing rate limits | helps teams ship AI features with guardrails |
 
 See the full [Rules Reference](https://docs.skylos.dev/rules-reference).
@@ -130,7 +131,8 @@ repo and PR checker that puts several common review checks behind one CLI.
 - **Local-first operation:** core static analysis does not require cloud upload
   or LLM calls.
 - **AI-assisted change review:** checks for removed validation, auth, logging,
-  CSRF, rate limiting, timeouts, and other guards in generated or edited code.
+  CSRF, rate limiting, timeouts, real-package API hallucinations, and other
+  guardrails in generated or edited code.
 - **Project-specific rules:** add local YAML rules and extend prompt, credential,
   sensitive-file, and timeout dictionaries from config.
 - **One command surface:** dead code, security, secrets, dependency, quality,
