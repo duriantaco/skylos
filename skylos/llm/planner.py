@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from skylos.remediation.regression_tests import RegressionTestCandidate
+
 
 SEVERITY_PRIORITY = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
@@ -55,6 +57,7 @@ class FixBatch:
     status: str = "pending"
     source: str = ""
     fix_description: str = ""
+    regression_tests: list[RegressionTestCandidate] = field(default_factory=list)
 
     @property
     def top_severity(self) -> str:
@@ -93,22 +96,29 @@ class RemediationPlan:
         )
 
     def summary(self) -> dict:
+        batch_summaries = []
+        for batch in self.batches:
+            batch_summary = {
+                "file": batch.file,
+                "findings": len(batch.findings),
+                "status": batch.status,
+                "top_severity": batch.top_severity,
+                "description": batch.fix_description,
+            }
+            if batch.regression_tests:
+                regression_tests = []
+                for regression_test in batch.regression_tests:
+                    regression_tests.append(regression_test.to_summary())
+                batch_summary["regression_tests"] = regression_tests
+            batch_summaries.append(batch_summary)
+
         return {
             "total_findings": self.total_findings,
             "planned": sum(len(b.findings) for b in self.batches),
             "fixed": self.fixed_count,
             "failed": self.failed_count,
             "skipped": self.skipped_count,
-            "batches": [
-                {
-                    "file": b.file,
-                    "findings": len(b.findings),
-                    "status": b.status,
-                    "top_severity": b.top_severity,
-                    "description": b.fix_description,
-                }
-                for b in self.batches
-            ],
+            "batches": batch_summaries,
         }
 
 
@@ -156,6 +166,11 @@ class RemediationPlanner:
     def _extract_findings(self, results: dict) -> list[FindingItem]:
         items: list[FindingItem] = []
         for key in ("danger", "quality", "secrets"):
-            for raw in results.get(key, []) or []:
+            values = results.get(key)
+            if not isinstance(values, list):
+                continue
+            for raw in values:
+                if not isinstance(raw, dict):
+                    continue
                 items.append(FindingItem.from_dict(raw))
         return items
