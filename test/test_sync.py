@@ -719,6 +719,26 @@ def test_cmd_setup_installs_shell_only_pre_push_hook(monkeypatch, tmp_path, caps
     assert "test/test_fast_parity.py" not in hook
 
 
+def test_install_pre_push_hook_refuses_symlink(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    git_dir = tmp_path / ".git"
+    hooks_dir = git_dir / "hooks"
+    hooks_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-hook"
+    outside.write_text("keep-me", encoding="utf-8")
+    hook_path = hooks_dir / "pre-push"
+    try:
+        hook_path.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks are not available on this platform")
+
+    with pytest.raises(OSError):
+        syncmod._install_pre_push_hook(git_dir)
+
+    assert outside.read_text(encoding="utf-8") == "keep-me"
+    assert hook_path.is_symlink()
+
+
 def _run_generated_pre_push_hook(
     tmp_path: Path, stdin: str, *, cwd: Path | None = None
 ) -> subprocess.CompletedProcess:
@@ -881,6 +901,25 @@ def test_cmd_setup_writes_workflow_that_syncs_cloud_policy(
     assert "SKYLOS_COMMIT" in workflow
     assert "SKYLOS_BRANCH" in workflow
     assert "SKYLOS_TOKEN" not in workflow
+
+
+def test_write_cloud_workflow_refuses_symlink(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-workflow.yml"
+    outside.write_text("keep-me", encoding="utf-8")
+    workflow_path = workflow_dir / "skylos.yml"
+    try:
+        workflow_path.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks are not available on this platform")
+
+    with pytest.raises(OSError):
+        syncmod._write_cloud_workflow()
+
+    assert outside.read_text(encoding="utf-8") == "keep-me"
+    assert workflow_path.is_symlink()
 
 
 def test_cmd_upgrade_installs_shell_only_pre_push_hook(monkeypatch, tmp_path, capsys):
