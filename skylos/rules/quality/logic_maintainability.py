@@ -1,5 +1,6 @@
 import ast
 import math
+import re
 from pathlib import Path
 
 from skylos.audit.redaction import REDACTION, redact_text
@@ -63,6 +64,219 @@ def _duplicate_string_display(value: str) -> str:
     return value if len(value) <= 40 else value[:37] + "..."
 
 
+_DUPLICATE_STRING_PATH_PREFIXES = (
+    "benchmarks/",
+    "corpus/",
+    "docs/",
+    "editors/",
+    "scripts/",
+    "skylos/",
+    "test/",
+    "tests/",
+)
+
+_DUPLICATE_STRING_PATH_SUFFIXES = (
+    ".cfg",
+    ".css",
+    ".go",
+    ".html",
+    ".ini",
+    ".java",
+    ".js",
+    ".json",
+    ".md",
+    ".php",
+    ".py",
+    ".rs",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".xml",
+    ".yaml",
+    ".yml",
+)
+
+_DUPLICATE_STRING_SCHEMA_VALUES = frozenset(
+    {
+        "ai",
+        "ai_agent",
+        "ai_authored",
+        "basename",
+        "category",
+        "col",
+        "confidence",
+        "CRITICAL",
+        "cwe",
+        "dead_code",
+        "debt",
+        "dismissed",
+        "error",
+        "failed",
+        "FAIL",
+        "file",
+        "findings",
+        "fingerprint",
+        "HIGH",
+        "INFO",
+        "kind",
+        "line",
+        "LOW",
+        "MEDIUM",
+        "message",
+        "name",
+        "PASS",
+        "passed",
+        "primary_dimension",
+        "priority_score",
+        "quality",
+        "rule_id",
+        "security",
+        "secrets",
+        "severity",
+        "signal_count",
+        "signals",
+        "simple_name",
+        "snoozed",
+        "snoozed_until",
+        "standard_refs",
+        "success",
+        "system",
+        "threshold",
+        "triage",
+        "type",
+        "value",
+        "WARN",
+    }
+)
+
+
+def _is_rule_identifier_literal(value: str) -> bool:
+    return re.fullmatch(r"(?:SKY-[A-Z]\d{3,4}|CUSTOM-[A-Z0-9_-]+)", value) is not None
+
+
+def _looks_like_filesystem_path_literal(value: str) -> bool:
+    stripped = value.strip()
+    normalized = stripped.replace("\\", "/")
+
+    if "/" not in normalized:
+        return False
+
+    if normalized.startswith(("http://", "https://")):
+        return False
+
+    if normalized.startswith("/"):
+        return normalized.endswith(_DUPLICATE_STRING_PATH_SUFFIXES)
+
+    if normalized.endswith("/"):
+        return True
+
+    if normalized.startswith(_DUPLICATE_STRING_PATH_PREFIXES):
+        return True
+
+    last_segment = normalized.rsplit("/", 1)[-1]
+    return last_segment.endswith(_DUPLICATE_STRING_PATH_SUFFIXES)
+
+
+def _looks_like_markup_fragment(value: str) -> bool:
+    stripped = value.strip()
+    if re.search(r"</?[A-Za-z][^>]*>", stripped):
+        return True
+    return bool(re.search(r"\sdata-[A-Za-z0-9_-]+\s*=", stripped))
+
+
+def _is_duplicate_string_noise(value: str) -> bool:
+    stripped = value.strip()
+
+    if stripped in _DUPLICATE_STRING_SCHEMA_VALUES:
+        return True
+
+    if _is_rule_identifier_literal(stripped):
+        return True
+
+    if _looks_like_filesystem_path_literal(stripped):
+        return True
+
+    return _looks_like_markup_fragment(value)
+
+
+def _target_names(target: ast.AST) -> set[str]:
+    if isinstance(target, ast.Name):
+        return {target.id}
+
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names: set[str] = set()
+        for element in target.elts:
+            names.update(_target_names(element))
+        return names
+
+    return set()
+
+
+def _call_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+
+    if isinstance(node, ast.Attribute):
+        base = _call_name(node.value)
+        if base:
+            return f"{base}.{node.attr}"
+        return node.attr
+
+    return ""
+
+
+def _is_container_literal(node: ast.AST) -> bool:
+    if isinstance(node, (ast.Dict, ast.List, ast.Tuple, ast.Set)):
+        return True
+
+    if isinstance(node, ast.Call):
+        call_name = _call_name(node.func)
+        return call_name in {"dict", "frozenset", "list", "set", "tuple"}
+
+    return False
+
+
+def _target_names_are_constant_like(target_names: set[str]) -> bool:
+    return any(name.isupper() or name.startswith("_") for name in target_names)
+
+
+def _is_module_level_assignment(parent: ast.AST, parent_map: dict[int, ast.AST]) -> bool:
+    grandparent = parent_map.get(id(parent))
+    return isinstance(grandparent, ast.Module)
+
+
+def _assignment_targets(parent: ast.Assign | ast.AnnAssign) -> set[str]:
+    if isinstance(parent, ast.Assign):
+        target_names: set[str] = set()
+        for target in parent.targets:
+            target_names.update(_target_names(target))
+        return target_names
+
+    return _target_names(parent.target)
+
+
+def _assignment_value(parent: ast.Assign | ast.AnnAssign) -> ast.AST | None:
+    return parent.value
+
+
+def _is_declarative_assignment(parent: ast.Assign | ast.AnnAssign) -> bool:
+    value = _assignment_value(parent)
+    if value is None:
+        return False
+
+    if _is_container_literal(value):
+        return True
+
+    return _target_names_are_constant_like(_assignment_targets(parent))
+
+
+def _is_local_scope_node(node: ast.AST) -> bool:
+    return isinstance(
+        node,
+        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+    )
+
+
 class DuplicateStringLiteralRule(SkylosRule):
     rule_id = "SKY-L027"
     name = "Duplicate String Literal"
@@ -121,6 +335,24 @@ class DuplicateStringLiteralRule(SkylosRule):
 
             current = parent
 
+    def _is_module_level_declarative_literal(self, node, parent_map):
+        current = node
+
+        while True:
+            parent = parent_map.get(id(current))
+            if parent is None:
+                return False
+
+            if _is_local_scope_node(parent):
+                return False
+
+            if isinstance(parent, (ast.Assign, ast.AnnAssign)):
+                if not _is_module_level_assignment(parent, parent_map):
+                    return False
+                return _is_declarative_assignment(parent)
+
+            current = parent
+
     def visit_node(self, node, context):
         if not isinstance(node, ast.Module):
             return None
@@ -146,6 +378,10 @@ class DuplicateStringLiteralRule(SkylosRule):
                 if self._is_structural_key_literal(child, parent_map):
                     continue
                 if self._is_annotation_literal(child, parent_map):
+                    continue
+                if self._is_module_level_declarative_literal(child, parent_map):
+                    continue
+                if _is_duplicate_string_noise(child.value):
                     continue
                 key = child.value
                 if key not in string_occurrences:
