@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "skylos-enterprise-agent": "1.0.0",
+    "left-pad": "99.99.99"
+  },
+  "devDependencies": {
+    "skylos-agent-testkit": "2.0.0"
+  }
+}

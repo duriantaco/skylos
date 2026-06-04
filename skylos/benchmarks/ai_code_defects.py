@@ -258,6 +258,8 @@ def _validate_expectations(case: dict[str, Any], case_id: str) -> None:
     if not isinstance(expect, dict):
         raise ValueError(f"AI-code-defect benchmark case {case_id} needs expectations")
 
+    _validate_expectation_finding_count(expect, case_id)
+
     total = 0
     for mode in ("present", "absent"):
         expectations = expect.get(mode)
@@ -272,6 +274,25 @@ def _validate_expectations(case: dict[str, Any], case_id: str) -> None:
     if total == 0:
         raise ValueError(
             f"AI-code-defect benchmark case {case_id} must define expectations"
+        )
+
+
+def _validate_expectation_finding_count(
+    expect: dict[str, Any],
+    case_id: str,
+) -> None:
+    finding_count = expect.get("finding_count")
+    if finding_count is None:
+        return
+    if not isinstance(finding_count, int):
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} expect.finding_count "
+            "must be an integer"
+        )
+    if finding_count < 0:
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} expect.finding_count "
+            "must not be negative"
         )
 
 
@@ -293,7 +314,54 @@ def _validate_expectation(expectation: Any, case_id: str, mode: str) -> None:
     if vibe is not None:
         if not isinstance(vibe, str):
             raise ValueError(
-                f"AI-code-defect benchmark case {case_id} expect.{mode} vibe_category must be a string"
+                f"AI-code-defect benchmark case {case_id} expect.{mode} "
+                "vibe_category must be a string"
+            )
+
+    min_count = expectation.get("min_count")
+    if min_count is not None:
+        if not isinstance(min_count, int):
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} expect.{mode} "
+                "min_count must be an integer"
+            )
+        if min_count < 1:
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} expect.{mode} "
+                "min_count must be at least 1"
+            )
+
+    string_keys = (
+        "message_contains",
+        "file_contains",
+        "category",
+        "severity",
+        "ai_likelihood",
+    )
+    for key in string_keys:
+        value = expectation.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} expect.{mode} {key} must be a string"
+            )
+        if not value.strip():
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} expect.{mode} {key} must be non-empty"
+            )
+
+    for key in ("start_line", "end_line"):
+        value = expectation.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, int):
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} expect.{mode} {key} must be an integer"
+            )
+        if value < 1:
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} expect.{mode} {key} must be positive"
             )
 
 
@@ -303,7 +371,27 @@ def _validate_scan(case: dict[str, Any], case_id: str) -> None:
         raise ValueError(
             f"AI-code-defect benchmark case {case_id} scan config must be an object"
         )
+    _validate_optional_scan_string(scan, case_id, "file")
+    _validate_optional_scan_string(scan, case_id, "range")
     _validate_dependency_statuses(scan, case_id)
+
+
+def _validate_optional_scan_string(
+    scan: dict[str, Any],
+    case_id: str,
+    key: str,
+) -> None:
+    value = scan.get(key)
+    if value is None:
+        return
+    if not isinstance(value, str):
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} scan.{key} must be a string"
+        )
+    if not value.strip():
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} scan.{key} must be non-empty"
+        )
 
 
 def _validate_dependency_statuses(scan: dict[str, Any], case_id: str) -> None:
@@ -380,12 +468,11 @@ def _run_case(
     try:
         result = verify_func(
             run_case_path,
+            file=scan.get("file"),
             line_range=scan.get("range"),
             confidence=int(scan.get("confidence", 60)),
             project_context=bool(scan.get("project_context", True)),
-            include_dependency_hallucinations=bool(
-                scan.get("dependency_hallucinations", False)
-            ),
+            include_dependency_hallucinations=_include_danger_scan(scan),
         )
         elapsed = time.perf_counter() - started
     finally:
@@ -406,6 +493,12 @@ def _run_case(
         "absent_total": counts["absent_total"],
         "absent_violations": counts["absent_violations"],
     }
+
+
+def _include_danger_scan(scan: dict[str, Any]) -> bool:
+    if bool(scan.get("danger", False)):
+        return True
+    return bool(scan.get("dependency_hallucinations", False))
 
 
 def _prepared_case_path(
@@ -485,10 +578,13 @@ def _evaluate_case(
     }
 
     expect = case["expect"]
+    _evaluate_finding_count(case, findings, failures)
+
     for expectation in expect["present"]:
         counts["present_total"] += 1
         matched = _matching_findings(expectation, findings)
-        if matched:
+        min_count = _expectation_min_count(expectation)
+        if len(matched) >= min_count:
             counts["present_matched"] += 1
             continue
         failures.append(
@@ -512,6 +608,29 @@ def _evaluate_case(
         )
 
     return failures, counts
+
+
+def _evaluate_finding_count(
+    case: dict[str, Any],
+    findings: list[dict[str, Any]],
+    failures: list[AICodeDefectBenchmarkFailure],
+) -> None:
+    expect = case["expect"]
+    expected_count = expect.get("finding_count")
+    if expected_count is None:
+        return
+    if len(findings) == expected_count:
+        return
+
+    failures.append(
+        AICodeDefectBenchmarkFailure(
+            case["id"],
+            "count",
+            "finding_count",
+            {"finding_count": expected_count},
+            findings,
+        )
+    )
 
 
 def _findings(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -545,6 +664,59 @@ def _finding_matches(expectation: dict[str, Any], finding: dict[str, Any]) -> bo
     vibe = expectation.get("vibe_category")
     if vibe is not None:
         if finding.get("vibe_category") != vibe:
+            return False
+
+    for key in ("category", "severity", "ai_likelihood"):
+        value = expectation.get(key)
+        if not isinstance(value, str):
+            continue
+        if str(finding.get(key, "")) != value:
+            return False
+
+    message_contains = expectation.get("message_contains")
+    if isinstance(message_contains, str):
+        message = str(finding.get("message", ""))
+        if message_contains not in message:
+            return False
+
+    file_contains = expectation.get("file_contains")
+    if isinstance(file_contains, str):
+        finding_range = finding.get("range")
+        if not isinstance(finding_range, dict):
+            return False
+        file_path = str(finding_range.get("file", ""))
+        if file_contains not in file_path:
+            return False
+
+    if not _range_expectation_matches(expectation, finding):
+        return False
+    return True
+
+
+def _expectation_min_count(expectation: dict[str, Any]) -> int:
+    value = expectation.get("min_count")
+    if isinstance(value, int):
+        return value
+    return 1
+
+
+def _range_expectation_matches(
+    expectation: dict[str, Any],
+    finding: dict[str, Any],
+) -> bool:
+    finding_range = finding.get("range")
+    if not isinstance(finding_range, dict):
+        if "start_line" in expectation:
+            return False
+        if "end_line" in expectation:
+            return False
+        return True
+
+    for key in ("start_line", "end_line"):
+        expected_value = expectation.get(key)
+        if expected_value is None:
+            continue
+        if finding_range.get(key) != expected_value:
             return False
     return True
 
