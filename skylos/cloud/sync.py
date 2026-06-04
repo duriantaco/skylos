@@ -6,7 +6,19 @@ import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 import subprocess
+from collections.abc import Sequence
+from typing import Any
 from urllib.parse import urlparse
+from skylos.cloud.sync_setup import (
+    build_pre_push_hook as _sync_setup_build_pre_push_hook,
+    collect_setup_choices as _collect_setup_choices,
+    create_precommit_config,
+    install_pre_push_hook as _install_pre_push_hook,
+    install_selected_setup_features as _install_selected_setup_features,
+    print_free_plan_setup_summary as _print_free_plan_setup_summary,
+    print_setup_next_steps as _print_setup_next_steps,
+    write_cloud_workflow as _write_cloud_workflow,
+)
 
 try:
     import requests
@@ -21,7 +33,10 @@ SKYLOS_DIR = ".skylos"
 CONFIG_FILE = "config.yaml"
 SUPPRESSIONS_FILE = "suppressions.json"
 DEFAULT_API_URL = "https://skylos.dev"
-LOCAL_API_URL = "http://localhost:3000"
+WHOAMI_ENDPOINT = "/api/sync/whoami"
+UNKNOWN_LABEL = "Unknown"
+CANCELLED_MESSAGE = "\nCancelled."
+PRO_PLANS = {"pro", "enterprise", "beta"}
 
 GLOBAL_CREDS_DIR = Path.home() / ".skylos"
 GLOBAL_CREDS_FILE = GLOBAL_CREDS_DIR / "credentials.json"
@@ -34,16 +49,16 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _load_creds():
+def _load_creds() -> dict[str, Any]:
     if not GLOBAL_CREDS_FILE.exists():
         return {}
     try:
         return json.loads(GLOBAL_CREDS_FILE.read_text() or "{}")
-    except Exception:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
 
 
-def _write_creds(data):
+def _write_creds(data: dict[str, Any]) -> None:
     GLOBAL_CREDS_DIR.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(GLOBAL_CREDS_DIR, 0o700)
@@ -66,7 +81,7 @@ def _write_creds(data):
             pass
 
 
-def _find_repo_root():
+def _find_repo_root() -> Path:
     try:
         out = (
             subprocess.check_output(
@@ -77,22 +92,24 @@ def _find_repo_root():
         )
         if out:
             return Path(out)
-    except Exception:
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
         pass
     return Path.cwd()
 
 
-def _linked_project_id(repo_root: Path):
+def _linked_project_id(repo_root: Path) -> str | None:
     data = _read_link(repo_root)
     if not data:
         return None
     repo_subpath = _current_repo_subpath(repo_root)
     subpath_entry = _project_entry_for_subpath(data, repo_subpath)
     project_id = subpath_entry.get("project_id") or data.get("project_id")
-    return str(project_id).strip() if project_id else None
+    if project_id:
+        return str(project_id).strip()
+    return None
 
 
-def _read_link(repo_root: Path):
+def _read_link(repo_root: Path) -> dict[str, Any]:
     try:
         p = _ensure_safe_link_path(repo_root, create_dir=False)
     except AuthError:
@@ -101,17 +118,17 @@ def _read_link(repo_root: Path):
         return {}
     try:
         return json.loads(p.read_text() or "{}")
-    except Exception:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
 
 
-def _normalize_repo_subpath_value(value) -> str:
+def _normalize_repo_subpath_value(value: Any) -> str:
     try:
         from skylos.cloud.project_context import normalize_repo_subpath
 
         normalized = normalize_repo_subpath(value)
         return normalized or ""
-    except Exception:
+    except (ImportError, OSError, ValueError):
         return str(value or "").strip("/")
 
 
@@ -120,11 +137,11 @@ def _current_repo_subpath(repo_root: Path) -> str:
         from skylos.cloud.project_context import repo_subpath_for_project
 
         return repo_subpath_for_project(Path.cwd(), repo_root)
-    except Exception:
+    except (ImportError, OSError, ValueError):
         return ""
 
 
-def _project_entry_for_subpath(link: dict, repo_subpath: str) -> dict:
+def _project_entry_for_subpath(link: dict[str, Any], repo_subpath: str) -> dict:
     projects = link.get("projects")
     if isinstance(projects, dict):
         entry = projects.get(repo_subpath)
@@ -237,14 +254,20 @@ def _write_link(
         payload["org_name"] = org_name
     if plan:
         payload["plan"] = str(plan).lower()
-    projects = existing.get("projects") if isinstance(existing, dict) else {}
+    if isinstance(existing, dict):
+        projects = existing.get("projects")
+    else:
+        projects = {}
     if not isinstance(projects, dict):
         projects = {}
+    project_plan = None
+    if plan:
+        project_plan = str(plan).lower()
     projects[normalized_subpath] = {
         "project_id": str(project_id),
         "project_name": project_name,
         "org_name": org_name,
-        "plan": str(plan).lower() if plan else None,
+        "plan": project_plan,
         "repo_subpath": normalized_subpath,
         "linked_at": payload["linked_at"],
     }
@@ -253,7 +276,7 @@ def _write_link(
     return str(link_path)
 
 
-def _delete_link(repo_root: Path):
+def _delete_link(repo_root: Path) -> str | None:
     try:
         p = _ensure_safe_link_path(repo_root, create_dir=False)
     except AuthError:
@@ -264,9 +287,8 @@ def _delete_link(repo_root: Path):
     return str(p)
 
 
-def get_api_url():
+def get_api_url() -> str:
     return _normalize_api_base_url(os.environ.get("SKYLOS_API_URL", DEFAULT_API_URL))
-    # return os.environ.get("SKYLOS_API_URL", LOCAL_API_URL)
 
 
 def _normalize_api_base_url(base_url: str) -> str:
@@ -300,19 +322,22 @@ def _safe_sync_url(endpoint: str) -> str:
     return f"{get_api_url()}{_normalize_api_endpoint(endpoint)}"
 
 
-def _try_ci_oidc_token():
+def _try_ci_oidc_token() -> str | None:
     try:
         from skylos.api import _try_github_oidc_token
-    except Exception:
+    except ImportError:
         return None
 
     try:
-        return _try_github_oidc_token()
-    except Exception:
+        token = _try_github_oidc_token()
+    except (OSError, RuntimeError, ValueError):
         return None
+    if isinstance(token, str):
+        return token
+    return None
 
 
-def get_token():
+def get_token() -> str | None:
     env_token = os.environ.get("SKYLOS_TOKEN", "").strip()
     if env_token:
         return env_token
@@ -340,13 +365,13 @@ def get_token():
 
 
 def save_token(
-    token,
-    project_id=None,
-    project_name=None,
-    org_name=None,
-    plan=None,
-    repo_subpath=None,
-):
+    token: str,
+    project_id: str | None = None,
+    project_name: str | None = None,
+    org_name: str | None = None,
+    plan: str | None = None,
+    repo_subpath: str | None = None,
+) -> str:
     data = _load_creds()
     now = _utc_now_iso()
 
@@ -376,14 +401,14 @@ def save_token(
     return str(GLOBAL_CREDS_FILE)
 
 
-def clear_token():
+def clear_token() -> bool:
     if GLOBAL_CREDS_FILE.exists():
         GLOBAL_CREDS_FILE.unlink()
         return True
     return False
 
 
-def mask_token(token):
+def mask_token(token: str | None) -> str:
     if not token or len(token) <= 12:
         return "****"
     return token[:8] + "..." + token[-4:]
@@ -393,7 +418,7 @@ class AuthError(Exception):
     pass
 
 
-def _auth_headers(token):
+def _auth_headers(token: str | None) -> dict[str, str]:
     if token and str(token).startswith("oidc:"):
         return {
             "Authorization": f"Bearer {token[5:]}",
@@ -402,7 +427,7 @@ def _auth_headers(token):
     return {"Authorization": f"Bearer {token}"}
 
 
-def api_get(endpoint, token):
+def api_get(endpoint: str, token: str | None) -> dict[str, Any]:
     url = _safe_sync_url(endpoint)
 
     try:
@@ -423,7 +448,7 @@ def api_get(endpoint, token):
     return resp.json()
 
 
-def _extract_project_context(info):
+def _extract_project_context(info: dict[str, Any]) -> dict[str, Any]:
     project = info.get("project", {})
     org = info.get("organization", {})
     plan = info.get("plan", "free")
@@ -436,12 +461,16 @@ def _extract_project_context(info):
     }
 
 
-def _verify_project_context(token):
-    info = api_get("/api/sync/whoami", token)
+def _verify_project_context(token: str) -> dict[str, Any]:
+    info = api_get(WHOAMI_ENDPOINT, token)
     return _extract_project_context(info)
 
 
-def _save_repo_link_and_token(repo_root, token, context):
+def _save_repo_link_and_token(
+    repo_root: Path,
+    token: str,
+    context: dict[str, Any],
+) -> tuple[str, str]:
     link_path = _write_link(
         repo_root,
         context["project_id"],
@@ -461,7 +490,7 @@ def _save_repo_link_and_token(repo_root, token, context):
     return link_path, creds_path
 
 
-def cmd_connect(token_arg=None):
+def cmd_connect(token_arg: str | None = None) -> None:
     print("\n Connect to Skylos Cloud\n")
 
     env_token = os.environ.get("SKYLOS_TOKEN", "").strip()
@@ -489,7 +518,7 @@ def cmd_connect(token_arg=None):
         try:
             token = input("> ").strip()
         except (KeyboardInterrupt, EOFError):
-            print("\nCancelled.")
+            print(CANCELLED_MESSAGE)
             sys.exit(1)
 
     if not token:
@@ -509,8 +538,8 @@ def cmd_connect(token_arg=None):
     plan = context["plan"]
 
     print("\n✓ Connected!\n")
-    print(f"  Project:      {project.get('name', 'Unknown')}")
-    print(f"  Organization: {org.get('name', 'Unknown')}")
+    print(f"  Project:      {project.get('name', UNKNOWN_LABEL)}")
+    print(f"  Organization: {org.get('name', UNKNOWN_LABEL)}")
     print(f"  Plan:         {plan.capitalize()}")
 
     project_id = context["project_id"]
@@ -534,7 +563,7 @@ def cmd_connect(token_arg=None):
     print("  skylos . --upload  # Scan and upload")
 
 
-def cmd_status():
+def cmd_status() -> None:
     token = get_token()
 
     if not token:
@@ -545,7 +574,7 @@ def cmd_status():
     print("\nChecking connection...")
 
     try:
-        info = api_get("/api/sync/whoami", token)
+        info = api_get(WHOAMI_ENDPOINT, token)
     except AuthError as e:
         print(f"\n✗ {e}")
         print(
@@ -558,19 +587,19 @@ def cmd_status():
     plan = info.get("plan", "free")
 
     print("\n✓ Connected\n")
-    print(f"  Project:      {project.get('name', 'Unknown')}")
-    print(f"  Organization: {org.get('name', 'Unknown')}")
+    print(f"  Project:      {project.get('name', UNKNOWN_LABEL)}")
+    print(f"  Organization: {org.get('name', UNKNOWN_LABEL)}")
     print(f"  Plan:         {plan.capitalize()}")
 
 
-def cmd_disconnect():
+def cmd_disconnect() -> None:
     if clear_token():
         print("✓ Disconnected.")
     else:
         print("No saved credentials found.")
 
 
-def _iter_saved_projects():
+def _iter_saved_projects() -> list[dict[str, str]]:
     data = _load_creds()
     tokens = data.get("tokens") or {}
     items = []
@@ -580,8 +609,8 @@ def _iter_saved_projects():
         items.append(
             {
                 "project_id": str(project_id),
-                "project_name": entry.get("project_name") or "Unknown",
-                "org_name": entry.get("org_name") or "Unknown",
+                "project_name": entry.get("project_name") or UNKNOWN_LABEL,
+                "org_name": entry.get("org_name") or UNKNOWN_LABEL,
                 "plan": entry.get("plan") or data.get("plan") or "free",
                 "saved_at": entry.get("saved_at") or "",
             }
@@ -590,7 +619,7 @@ def _iter_saved_projects():
     return items
 
 
-def cmd_project_status():
+def cmd_project_status() -> None:
     repo_root = _find_repo_root()
     link = _read_link(repo_root)
     linked_project_id = link.get("project_id")
@@ -599,7 +628,7 @@ def cmd_project_status():
 
     if token:
         try:
-            active = api_get("/api/sync/whoami", token)
+            active = api_get(WHOAMI_ENDPOINT, token)
         except AuthError:
             active = None
 
@@ -627,7 +656,7 @@ def cmd_project_status():
     if active:
         project = active.get("project", {})
         org = active.get("organization", {})
-        print(f"  Active Name:  {project.get('name', 'Unknown')}")
+        print(f"  Active Name:  {project.get('name', UNKNOWN_LABEL)}")
         print(f"  Active Org:   {org.get('name', 'My Workspace')}")
         print(f"  Plan:         {active.get('plan', 'free').capitalize()}")
     else:
@@ -637,7 +666,7 @@ def cmd_project_status():
         print("\nUse 'skylos project use' to select or create a project for this repo.")
 
 
-def cmd_project_list():
+def cmd_project_list() -> None:
     repo_root = _find_repo_root()
     linked_project_id = _linked_project_id(repo_root)
     items = _iter_saved_projects()
@@ -649,7 +678,9 @@ def cmd_project_list():
 
     print("\nKnown Skylos Projects\n")
     for item in items:
-        marker = "*" if item["project_id"] == linked_project_id else " "
+        marker = " "
+        if item["project_id"] == linked_project_id:
+            marker = "*"
         print(f"{marker} {item['project_name']}  [{item['project_id']}]")
         print(f"    Org: {item['org_name']}   Plan: {str(item['plan']).capitalize()}")
 
@@ -659,7 +690,7 @@ def cmd_project_list():
         print("\nNo active repo link. Use 'skylos project use' to select one.")
 
 
-def cmd_project_use():
+def cmd_project_use() -> None:
     from skylos.cloud.login import run_login
 
     result = run_login()
@@ -667,13 +698,13 @@ def cmd_project_use():
         print("Project selection cancelled.")
 
 
-def cmd_project_create():
+def cmd_project_create() -> None:
     print("\nOpening the Skylos project chooser.")
     print("Create a new project in the browser and it will be linked to this repo.\n")
     cmd_project_use()
 
 
-def cmd_project_unlink():
+def cmd_project_unlink() -> None:
     repo_root = _find_repo_root()
     link_path = _delete_link(repo_root)
     if link_path:
@@ -682,7 +713,7 @@ def cmd_project_unlink():
         print("No repo link found.")
 
 
-def cmd_pull():
+def cmd_pull() -> None:
     token = get_token()
 
     if not token:
@@ -695,8 +726,8 @@ def cmd_pull():
     skylos_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        info = api_get("/api/sync/whoami", token)
-        print(f"Connected to: {info.get('project', {}).get('name', 'Unknown')}\n")
+        info = api_get(WHOAMI_ENDPOINT, token)
+        print(f"Connected to: {info.get('project', {}).get('name', UNKNOWN_LABEL)}\n")
     except AuthError as e:
         print(f"Error: {e}")
         sys.exit(1)
@@ -715,36 +746,6 @@ def cmd_pull():
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
-
-
-def create_precommit_config():
-    precommit_path = Path(".pre-commit-config.yaml")
-
-    if precommit_path.exists():
-        print("  ⚠️  .pre-commit-config.yaml already exists (skipping)")
-        return False
-
-    config_content = """# Skylos pre-commit configuration
-# Fast staged-only local hook.
-# Checks security, secrets, and quality in staged source/config files.
-# Full repo and diff-aware enforcement runs in CI.
-
-repos:
-  - repo: local
-    hooks:
-      - id: skylos-gate
-        name: Skylos Staged Gate
-        entry: skylos
-        language: system
-        pass_filenames: false
-        require_serial: true
-        args: ["agent", "pre-commit", "."]
-        stages: [pre-commit]
-"""
-
-    precommit_path.write_text(config_content)
-    print("  ✓ Created .pre-commit-config.yaml")
-    return True
 
 
 def _write_sync_config(skylos_dir: Path, config_data):
@@ -769,28 +770,16 @@ def _write_sync_suppressions(skylos_dir: Path, supp_data):
 
 
 def _build_pre_push_hook() -> str:
-    return """#!/bin/bash
-# Fast local push guard only. Full Skylos scans should run manually or in CI.
-# Keep this hook shell-only: it must not import or execute repository code.
-
-# Git supplies pending remote updates on stdin. Check the remote ref so
-# `git push origin HEAD:main`, force-pushes, and deletes are all blocked.
-while read -r local_ref local_sha remote_ref remote_sha; do
-    case "$remote_ref" in
-        refs/heads/main|refs/heads/master)
-            echo ""
-            echo "BLOCKED: direct pushes to $remote_ref are not allowed."
-            echo "Create a branch and open a pull request instead."
-            exit 1
-            ;;
-    esac
-done
-
-exit 0
-"""
+    return _sync_setup_build_pre_push_hook()
 
 
-def cmd_setup(token_arg=None):
+def _optional_arg(args: Sequence[str], index: int) -> str | None:
+    if len(args) > index:
+        return args[index]
+    return None
+
+
+def cmd_setup(token_arg: str | None = None) -> None:
     print("\n🐕 Skylos Setup\n")
 
     token = token_arg
@@ -799,7 +788,7 @@ def cmd_setup(token_arg=None):
         try:
             token = input("Paste token: ").strip()
         except (KeyboardInterrupt, EOFError):
-            print("\nCancelled.")
+            print(CANCELLED_MESSAGE)
             return
 
     if not token:
@@ -830,10 +819,10 @@ def cmd_setup(token_arg=None):
         return
 
     print("✓ Connected!\n")
-    print(f"  Project: {project.get('name', 'Unknown')}")
+    print(f"  Project: {project.get('name', UNKNOWN_LABEL)}")
     print(f"  Plan: {plan.capitalize()}\n")
 
-    is_pro = plan in ["pro", "enterprise", "beta"]
+    is_pro = plan in PRO_PLANS
 
     git_dir = Path(".git")
     has_git = git_dir.exists()
@@ -841,24 +830,7 @@ def cmd_setup(token_arg=None):
     has_workflow = Path(".github/workflows/skylos.yml").exists()
 
     if not is_pro:
-        print("=" * 60)
-        print("\n Pro Features Available (Upgrade to enable):\n")
-
-        if has_git:
-            print("  🔒 Git hooks - Block bad code on push")
-            print("  🔒 Pre-commit - Block bad code on commit")
-            print("  🔒 GitHub Actions - Block PRs automatically")
-        else:
-            print("  ⚠️  Initialize git first: git init")
-
-        print("\n" + "=" * 60)
-        print("\n✓ Setup complete!\n")
-        print(" What you can do now:\n")
-        print("  • Run local scans:")
-        print("    $ skylos .\n")
-        print("  • View results in dashboard:")
-        print("    https://skylos.dev/dashboard\n")
-        print("=" * 60 + "\n")
+        _print_free_plan_setup_summary(has_git=has_git)
         return
 
     print("🎉 Pro plan detected!\n")
@@ -871,163 +843,32 @@ def cmd_setup(token_arg=None):
 
     print("  ✓ Git repository detected\n")
 
-    setup_hooks = False
-    setup_precommit = False
-    setup_ci = False
-
-    try:
-        response = (
-            input(
-                "  Install optional pre-push protected-branch hook? "
-                "(blocks direct main/master pushes) [Y/n]: "
-            )
-            .strip()
-            .lower()
-        )
-        setup_hooks = response in ["", "y", "yes"]
-    except (KeyboardInterrupt, EOFError):
-        print("\nCancelled.")
+    setup_choices = _collect_setup_choices(
+        has_precommit_file=has_precommit_file,
+        has_workflow=has_workflow,
+    )
+    if setup_choices is None:
         return
 
-    if not has_precommit_file:
-        try:
-            response = (
-                input(
-                    "  Create staged pre-commit config? (fast local check before commit) [y/N]: "
-                )
-                .strip()
-                .lower()
-            )
-            setup_precommit = response in ["y", "yes"]
-        except (KeyboardInterrupt, EOFError):
-            print("\nCancelled.")
-            return
-    else:
-        print(" * .pre-commit-config.yaml exists (skipping)")
-
-    if not has_workflow:
-        try:
-            response = (
-                input("  Create GitHub Actions? (blocks PR merges) [Y/n]: ")
-                .strip()
-                .lower()
-            )
-            setup_ci = response in ["", "y", "yes"]
-        except (KeyboardInterrupt, EOFError):
-            print("\nCancelled.")
-            return
-    else:
-        print("  *  .github/workflows/skylos.yml exists (skipping)")
+    setup_hooks, setup_precommit, setup_ci = setup_choices
 
     print("\n" + "=" * 60)
     print("\nInstalling selected features...\n")
 
-    if setup_hooks:
-        hooks_dir = git_dir / "hooks"
-        hooks_dir.mkdir(exist_ok=True)
-        hook_path = hooks_dir / "pre-push"
-        hook_content = _build_pre_push_hook()
-        hook_path.write_text(hook_content)
-        hook_path.chmod(0o755)
-        print("  ✓ Installed git hooks (.git/hooks/pre-push)")
-    else:
-        print(" ✗ Skipped git hooks")
-
-    if setup_precommit:
-        created = create_precommit_config()
-        if created:
-            print("  ✓ Created pre-commit config (.pre-commit-config.yaml)")
-    elif not has_precommit_file:
-        print("  ✗ Skipped pre-commit config")
-
-    if setup_ci:
-        workflow_dir = Path(".github/workflows")
-        workflow_dir.mkdir(parents=True, exist_ok=True)
-        workflow_path = workflow_dir / "skylos.yml"
-
-        workflow_content = """name: Skylos Quality Gate
-
-on:
-  pull_request:
-    branches: [main, master]
-
-permissions:
-  contents: read
-  pull-requests: write
-  checks: write
-  id-token: write
-
-jobs:
-  skylos:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      
-      - name: Install Skylos
-        run: python -m pip install skylos
-
-      - name: Pull Skylos Cloud Policy
-        run: |
-          skylos sync pull || echo "No Skylos Cloud policy available through GitHub OIDC; continuing with local config."
-      
-      - name: Run Skylos Scan & Upload
-        run: |
-          skylos . --danger --secrets --quality --upload
-        env:
-          SKYLOS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-          SKYLOS_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
-"""
-        workflow_path.write_text(workflow_content)
-        print("  ✓ Created GitHub Actions (.github/workflows/skylos.yml)")
-    else:
-        print("  ✗ Skipped GitHub Actions")
+    _install_selected_setup_features(
+        git_dir=git_dir,
+        setup_hooks=setup_hooks,
+        setup_precommit=setup_precommit,
+        setup_ci=setup_ci,
+        has_precommit_file=has_precommit_file,
+    )
 
     print("\n" + "=" * 60)
-
-    if setup_precommit or setup_ci:
-        print("\n Next Steps:\n")
-
-        if setup_precommit:
-            print("1. Install pre-commit:")
-            print("   $ pip install pre-commit")
-            print("   $ pre-commit install\n")
-
-        if setup_ci:
-            if setup_precommit:
-                step_num = "2"
-            else:
-                step_num = "1"
-            print(f"{step_num}. Bind this GitHub repo to the Skylos Cloud project.")
-            print(
-                "   The workflow uses GitHub OIDC by default; no SKYLOS_TOKEN secret is required."
-            )
-            print("   Keep SKYLOS_TOKEN only as a legacy fallback for non-GitHub CI.\n")
-
-        final_step = (
-            "3"
-            if (setup_precommit and setup_ci)
-            else ("2" if (setup_precommit or setup_ci) else "1")
-        )
-        print(f"{final_step}. Commit and push:")
-        print("   $ git add .")
-        print("   $ git commit -m 'Add Skylos'")
-        print("   $ git push\n")
-
-        print("🎯 Your code is now protected!")
-    else:
-        print("\n✓ Setup complete!")
-        print("\nRun: skylos . to scan your code\n")
-
+    _print_setup_next_steps(setup_precommit=setup_precommit, setup_ci=setup_ci)
     print("=" * 60 + "\n")
 
 
-def cmd_upgrade():
+def cmd_upgrade() -> None:
     print("\n🐕 Skylos Upgrade\n")
 
     token = get_token()
@@ -1044,7 +885,7 @@ def cmd_upgrade():
         print(f"✗ {e}")
         return
 
-    if plan not in ["pro", "enterprise", "beta"]:
+    if plan not in PRO_PLANS:
         print(f"\nCurrent plan: {plan.capitalize()}")
         print("Upgrade to Pro first!")
         print("Visit: https://skylos.dev/pricing\n")
@@ -1055,56 +896,13 @@ def cmd_upgrade():
 
     git_dir = Path(".git")
     if git_dir.exists():
-        hooks_dir = git_dir / "hooks"
-        hooks_dir.mkdir(exist_ok=True)
-        hook_path = hooks_dir / "pre-push"
-        hook_content = _build_pre_push_hook()
-        hook_path.write_text(hook_content)
-        hook_path.chmod(0o755)
+        _install_pre_push_hook(git_dir)
         print(" ✓ Installed git hooks")
 
-    workflow_dir = Path(".github/workflows")
-    workflow_dir.mkdir(parents=True, exist_ok=True)
-    workflow_path = workflow_dir / "skylos.yml"
+    workflow_path = Path(".github/workflows/skylos.yml")
 
     if not workflow_path.exists():
-        workflow_content = """name: Skylos Quality Gate
-
-on:
-  pull_request:
-    branches: [main, master]
-
-jobs:
-  skylos:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      checks: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      
-      - name: Install Skylos
-        run: python -m pip install skylos
-
-      - name: Pull Skylos Cloud Policy
-        run: |
-          skylos sync pull || echo "No Skylos Cloud policy available through GitHub OIDC; continuing with local config."
-      
-      - name: Run Skylos Scan & Upload
-        run: skylos . --danger --secrets --quality --upload
-        env:
-          SKYLOS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-          SKYLOS_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
-"""
-        workflow_path.write_text(workflow_content)
+        _write_cloud_workflow()
         print("  ✓ Created workflow\n")
 
     print("=" * 60)
@@ -1118,7 +916,7 @@ jobs:
     print("✅ Upgrade complete!")
 
 
-def main(args=None):
+def main(args: Sequence[str] | None = None) -> None:
     if args is None:
         args = sys.argv[1:]
 
@@ -1136,11 +934,11 @@ def main(args=None):
 
     cmd = args[0].lower()
     handlers = {
-        "connect": lambda: cmd_connect(args[1] if len(args) > 1 else None),
+        "connect": lambda: cmd_connect(_optional_arg(args, 1)),
         "status": cmd_status,
         "disconnect": cmd_disconnect,
         "pull": cmd_pull,
-        "setup": lambda: cmd_setup(args[1] if len(args) > 1 else None),
+        "setup": lambda: cmd_setup(_optional_arg(args, 1)),
         "upgrade": cmd_upgrade,
     }
     handler = handlers.get(cmd)
@@ -1150,7 +948,7 @@ def main(args=None):
     handler()
 
 
-def project_main(args=None):
+def project_main(args: Sequence[str] | None = None) -> None:
     if args is None:
         args = sys.argv[1:]
 
@@ -1180,15 +978,18 @@ def project_main(args=None):
     handler()
 
 
-def get_custom_rules():
+def get_custom_rules() -> list[dict[str, Any]]:
     token = get_token()
     if not token:
         return []
 
     try:
         data = api_get("/api/sync/rules", token)
-        return data.get("rules", [])
-    except Exception:
+        rules = data.get("rules", [])
+        if isinstance(rules, list):
+            return rules
+        return []
+    except (AuthError, OSError, ValueError):
         return []
 
 
