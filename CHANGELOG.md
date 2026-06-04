@@ -1,5 +1,13 @@
 ## Changelog
 
+## [4.23.1](https://github.com/duriantaco/skylos/compare/v4.23.0...v4.23.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* **verify:** catch api and stale-reference hallucinations ([#530](https://github.com/duriantaco/skylos/issues/530)) ([7c9d0e2](https://github.com/duriantaco/skylos/commit/7c9d0e2b66de4a0f255c999763963d2b1f3891a6))
+* **verify:** handle manifest-only dependency cases ([#525](https://github.com/duriantaco/skylos/issues/525)) ([9f3393c](https://github.com/duriantaco/skylos/commit/9f3393cd313edc345b2161368235a33b524ca0b4))
+
 ## [4.23.0](https://github.com/duriantaco/skylos/compare/v4.22.1...v4.23.0) (2026-06-03)
 
 
