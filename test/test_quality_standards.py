@@ -193,6 +193,82 @@ y = "hello world"
 """
         assert self._run(code) is None
 
+    def test_skips_filesystem_paths(self):
+        code = """
+a = "skylos/analyzer.py"
+b = "skylos/analyzer.py"
+c = "skylos/analyzer.py"
+d = "test/"
+e = "test/"
+f = "test/"
+"""
+        assert self._run(code) is None
+
+    def test_skips_markup_fragments(self):
+        code = """
+a = "</li>"
+b = "</li>"
+c = "</li>"
+d = '" data-search="'
+e = '" data-search="'
+f = '" data-search="'
+"""
+        assert self._run(code) is None
+
+    def test_skips_schema_vocabulary_and_rule_ids(self):
+        code = """
+a = "rule_id"
+b = "rule_id"
+c = "rule_id"
+d = "SKY-Q802"
+e = "SKY-Q802"
+f = "SKY-Q802"
+g = "CRITICAL"
+h = "CRITICAL"
+i = "CRITICAL"
+"""
+        assert self._run(code) is None
+
+    def test_route_like_strings_still_report(self):
+        code = """
+a = "/api/users"
+b = "/api/users"
+c = "/api/users"
+"""
+        results = self._run(code)
+        assert results is not None
+        assert results[0]["name"] == "/api/users"
+
+    def test_skips_module_level_declarative_tables(self):
+        code = """
+RULE_METADATA = {
+    "one": ("detector", "detector"),
+    "two": ("detector", "detector"),
+    "three": ("detector", "detector"),
+}
+"""
+        assert self._run(code) is None
+
+    def test_skips_module_level_constants(self):
+        code = """
+FIRST_LABEL = "same label"
+SECOND_LABEL = "same label"
+THIRD_LABEL = "same label"
+"""
+        assert self._run(code) is None
+
+    def test_function_local_duplicates_still_report(self):
+        code = """
+def build_messages():
+    first = "same label"
+    second = "same label"
+    third = "same label"
+    return first, second, third
+"""
+        results = self._run(code)
+        assert results is not None
+        assert results[0]["name"] == "same label"
+
 
 # ---------------------------------------------------------------------------
 # TooManyReturnsRule (SKY-L028)
