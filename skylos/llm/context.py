@@ -649,18 +649,30 @@ Code:
   43 | cursor.execute(query)
 
 Finding:
-{"line": 42, "severity": "critical", "type": "security",
- "message": "SQL injection: user input in query string",
- "fix": "Use parameterized query: cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))"}
+{"rule_id": "SKY-D211", "issue_type": "security", "severity": "critical",
+ "message": "SQL injection: user input in query string", "line": 42, "end_line": null,
+ "explanation": "An attacker who controls user_id can alter the SQL query and read or modify user data.",
+ "suggestion": "Use a parameterized query: cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))",
+ "confidence": "high", "symbol": null,
+ "security_details": {"attack_path": "user_id flows into an f-string SQL query executed by cursor.execute",
+ "impact": "attacker-controlled SQL can expose or change user records",
+ "fix": "bind user_id as a query parameter instead of interpolating it",
+ "evidence_lines": [42, 43], "unsafe_if": "user_id is request-controlled and not parameterized"}}
 
 [EXAMPLE 2: Hardcoded Secret]
 Code:
   15 | API_KEY = "sk-live-abc123secret"
 
 Finding:
-{"line": 15, "severity": "critical", "type": "security",
- "message": "Hardcoded API key exposed",
- "fix": "Use environment variable: os.getenv('API_KEY')"}
+{"rule_id": "SKY-S101", "issue_type": "security", "severity": "critical",
+ "message": "Hardcoded API key exposed", "line": 15, "end_line": null,
+ "explanation": "Anyone with repository or artifact access can reuse the embedded API key.",
+ "suggestion": "Move the secret to a secret manager or environment variable and rotate the exposed key.",
+ "confidence": "high", "symbol": "API_KEY",
+ "security_details": {"attack_path": "the API key literal is committed in source code",
+ "impact": "attackers can authenticate as the application or consume paid resources",
+ "fix": "load the key from a secret manager or environment variable and rotate it",
+ "evidence_lines": [15], "unsafe_if": "the literal is a real active credential"}}
 """
 
     DEAD_CODE = """
@@ -669,9 +681,11 @@ Code:
    5 | import json  # never used in file
 
 Finding:
-{"line": 5, "severity": "low", "type": "dead_code",
- "message": "Unused import: json",
- "confidence": "high"}
+{"rule_id": "SKY-U002", "issue_type": "dead_code", "severity": "low",
+ "message": "Unused import: json", "line": 5, "end_line": null,
+ "explanation": "json is imported but never referenced in this file.",
+ "suggestion": "Remove the unused import.", "confidence": "high",
+ "symbol": "json", "security_details": null}
 
 [EXAMPLE 2: Unused Function]
 Code:
@@ -679,9 +693,11 @@ Code:
   21 |     return x * 2
 
 Finding:
-{"line": 20, "severity": "medium", "type": "dead_code",
- "message": "Unused function: old_helper",
- "confidence": "medium"}
+{"rule_id": "SKY-U001", "issue_type": "dead_code", "severity": "medium",
+ "message": "Unused function: old_helper", "line": 20, "end_line": null,
+ "explanation": "old_helper has no observed callers in the provided context.",
+ "suggestion": "Remove it if it is not part of the public API.", "confidence": "medium",
+ "symbol": "old_helper", "security_details": null}
 """
 
     QUALITY = """
@@ -694,9 +710,11 @@ Code:
   14 |                 if data.status:  # 4 levels deep
 
 Finding:
-{"line": 10, "severity": "medium", "type": "quality",
- "message": "Excessive nesting (4 levels)",
- "fix": "Use early returns or extract helper functions"}
+{"rule_id": "SKY-Q302", "issue_type": "quality", "severity": "medium",
+ "message": "Excessive nesting (4 levels)", "line": 10, "end_line": null,
+ "explanation": "The function nests several conditionals, making the control flow hard to scan.",
+ "suggestion": "Use early returns or extract helper functions.", "confidence": "high",
+ "symbol": "process", "security_details": null}
 
 [EXAMPLE 2: Silent Exception]
 Code:
@@ -706,9 +724,11 @@ Code:
   33 |     pass
 
 Finding:
-{"line": 32, "severity": "high", "type": "quality",
- "message": "Bare except swallows all errors silently",
- "fix": "Catch specific exceptions, log or handle appropriately"}
+{"rule_id": "SKY-Q401", "issue_type": "quality", "severity": "high",
+ "message": "Bare except swallows all errors silently", "line": 32, "end_line": null,
+ "explanation": "The handler catches every exception type and suppresses the failure.",
+ "suggestion": "Catch specific exceptions and log or handle them explicitly.", "confidence": "high",
+ "symbol": null, "security_details": null}
 
 [EXAMPLE 3: Inconsistent Return]
 Code:
@@ -718,10 +738,12 @@ Code:
    4 |     return
 
 Finding:
-{"line": 1, "severity": "medium", "type": "bug",
+{"rule_id": "SKY-L001", "issue_type": "bug", "severity": "medium",
  "message": "Inconsistent return behavior: returns a string on one path and None on another",
- "symbol": "resolve_user",
- "fix": "Return a consistent type across all branches"}
+ "line": 1, "end_line": null,
+ "explanation": "Callers may receive None on the false branch despite expecting a string.",
+ "suggestion": "Return a consistent type across all branches.", "confidence": "medium",
+ "symbol": "resolve_user", "security_details": null}
 
 [EXAMPLE 4: Mutable Default State]
 Code:
@@ -730,10 +752,12 @@ Code:
    3 |     return tags
 
 Finding:
-{"line": 1, "severity": "medium", "type": "bug",
+{"rule_id": "SKY-L002", "issue_type": "bug", "severity": "medium",
  "message": "Mutable default argument keeps shared state across calls",
- "symbol": "append_tag",
- "fix": "Use None as the default and create a new list inside the function"}
+ "line": 1, "end_line": null,
+ "explanation": "The default list is reused across calls, so state leaks between callers.",
+ "suggestion": "Use None as the default and create a new list inside the function.",
+ "confidence": "high", "symbol": "append_tag", "security_details": null}
 """
 
     @classmethod

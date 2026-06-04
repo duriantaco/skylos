@@ -259,6 +259,9 @@ _SAFE_FINDING_METADATA_FIELDS = (
     "security_evidence",
     "review_verdict",
     "review_reason",
+    "review_safety_proof",
+    "review_proof_kind",
+    "review_proof_lines",
 )
 _SAFE_VERIFICATION_FIELDS = ("verdict", "confidence", "reason")
 
@@ -283,9 +286,18 @@ def _flatten_findings(results: dict) -> list[dict]:
 
 
 def _copy_safe_finding_metadata(source: dict, target: dict) -> None:
-    for key in ("_security_evidence", "_review_verdict", "_review_reason"):
+    for key in (
+        "_security_evidence",
+        "_review_verdict",
+        "_review_reason",
+        "_review_safety_proof",
+        "_review_proof_kind",
+        "_review_proof_lines",
+    ):
         value = source.get(key)
-        if isinstance(value, str):
+        if isinstance(value, str) or (
+            key == "_review_proof_lines" and isinstance(value, list)
+        ):
             target[key] = value
 
     symbol = source.get("symbol")
@@ -319,11 +331,14 @@ def _copy_safe_finding_metadata(source: dict, target: dict) -> None:
     if not isinstance(metadata, dict):
         return
 
-    safe_metadata = {
-        key: value
-        for key, value in metadata.items()
-        if key in _SAFE_FINDING_METADATA_FIELDS and isinstance(value, str)
-    }
+    safe_metadata = {}
+    for key, value in metadata.items():
+        if key not in _SAFE_FINDING_METADATA_FIELDS:
+            continue
+        if isinstance(value, str) or (
+            key == "review_proof_lines" and isinstance(value, list)
+        ):
+            safe_metadata[key] = value
     if safe_metadata:
         target["metadata"] = safe_metadata
         if "security_evidence" in safe_metadata:
@@ -332,6 +347,12 @@ def _copy_safe_finding_metadata(source: dict, target: dict) -> None:
             target["_review_verdict"] = safe_metadata["review_verdict"]
         if "review_reason" in safe_metadata:
             target["_review_reason"] = safe_metadata["review_reason"]
+        if "review_safety_proof" in safe_metadata:
+            target["_review_safety_proof"] = safe_metadata["review_safety_proof"]
+        if "review_proof_kind" in safe_metadata:
+            target["_review_proof_kind"] = safe_metadata["review_proof_kind"]
+        if "review_proof_lines" in safe_metadata:
+            target["_review_proof_lines"] = safe_metadata["review_proof_lines"]
 
 
 def _merge_llm_findings(

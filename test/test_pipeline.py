@@ -111,6 +111,7 @@ def _llm_finding(
     severity="high",
     confidence="high",
     issue_type="security",
+    security_details=None,
 ):
     f = MagicMock()
     f.location.file = file
@@ -120,6 +121,7 @@ def _llm_finding(
     f.severity.value = severity
     f.confidence.value = confidence
     f.issue_type.value = issue_type
+    f.security_details = security_details
     return f
 
 
@@ -871,11 +873,19 @@ class TestPipelinePhase2b:
         assert len(llm) == 4
 
     def test_deduplicates_against_static(self, tmp_path):
+        security_details = {
+            "attack_path": "eval input reaches code execution",
+            "impact": "remote code execution",
+            "fix": "avoid eval",
+            "evidence_lines": [31],
+            "unsafe_if": "input is user controlled",
+        }
         llm_dup = _llm_finding(
             file="/proj/a.py",
             line=31,
             message="Use of eval()",
             issue_type="security",
+            security_details=security_details,
         )
 
         proj = tmp_path / "proj"
@@ -911,6 +921,9 @@ class TestPipelinePhase2b:
         mock_verifier.return_value.review_findings.assert_not_called()
         llm_only = [f for f in findings if f["_source"] == "llm"]
         assert len(llm_only) == 0
+        static_eval = next(f for f in findings if f.get("message") == "Use of eval()")
+        assert static_eval["_llm_security_details"] == security_details
+        assert static_eval["security_details"] == security_details
 
     def test_unmatched_security_findings_use_rereview_metadata(self, tmp_path):
         proj = tmp_path / "proj"

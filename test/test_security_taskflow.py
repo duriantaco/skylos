@@ -271,6 +271,9 @@ def test_run_security_taskflow_records_review_counts_and_filters_refuted_finding
             evidence="refuted",
             review_verdict="REFUTED",
             review_reason="guarded path",
+            review_safety_proof="guard rejects unsafe input before sink",
+            review_proof_kind="validated_input",
+            review_proof_lines=[2],
             needs_review=True,
             ci_blocking=False,
         )
@@ -321,7 +324,11 @@ def test_run_security_taskflow_records_review_counts_and_filters_refuted_finding
     assert refuted.state == "refuted"
     assert refuted.evidence == "refuted"
     assert refuted.review_verdict == "REFUTED"
+    assert refuted.review_safety_proof == "guard rejects unsafe input before sink"
+    assert refuted.review_proof_kind == "validated_input"
+    assert refuted.review_proof_lines == [2]
     assert [event.stage for event in refuted.history] == [AUDIT_STAGE, VERIFY_STAGE]
+    assert refuted.history[1].review_proof_lines == [2]
 
 
 def test_run_security_taskflow_ledger_ids_are_stable_and_serialized(tmp_path):

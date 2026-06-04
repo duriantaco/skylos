@@ -69,6 +69,7 @@ class Finding:
         references: list[str] | None = None,
         symbol: str | None = None,
         metadata: dict[str, Any] | None = None,
+        security_details: dict[str, Any] | None = None,
     ) -> None:
         self.rule_id = rule_id
         self.issue_type = issue_type
@@ -82,6 +83,7 @@ class Finding:
         self.references = references or []
         self.symbol = symbol
         self.metadata = metadata or {}
+        self.security_details = security_details
 
     def to_dict(self) -> dict[str, Any]:
         data = {
@@ -97,6 +99,8 @@ class Finding:
             "references": self.references,
             "symbol": self.symbol,
         }
+        if self.security_details:
+            data["security_details"] = dict(self.security_details)
         if self.metadata:
             data["metadata"] = dict(self.metadata)
         return data
@@ -106,6 +110,8 @@ class Finding:
             "confidence": self.confidence.value,
             "issueType": self.issue_type.value,
         }
+        if self.security_details:
+            properties["security_details"] = dict(self.security_details)
         if self.metadata:
             properties.update(self.metadata)
         return {
@@ -280,6 +286,28 @@ CONFIDENCE_VALUES = []
 for e in Confidence:
     CONFIDENCE_VALUES.append(e.value)
 
+SECURITY_DETAILS_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "attack_path",
+        "impact",
+        "fix",
+        "evidence_lines",
+        "unsafe_if",
+    ],
+    "properties": {
+        "attack_path": {"type": "string"},
+        "impact": {"type": "string"},
+        "fix": {"type": "string"},
+        "evidence_lines": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 1},
+        },
+        "unsafe_if": {"type": "string"},
+    },
+}
+
 
 FINDING_SCHEMA = {
     "type": "object",
@@ -295,6 +323,7 @@ FINDING_SCHEMA = {
         "suggestion",
         "confidence",
         "symbol",
+        "security_details",
     ],
     "properties": {
         "rule_id": {"type": "string", "pattern": "^SKY-[A-Z][0-9]{3}$"},
@@ -312,8 +341,50 @@ FINDING_SCHEMA = {
         "suggestion": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "confidence": {"type": "string", "enum": CONFIDENCE_VALUES},
         "symbol": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "security_details": {
+            "anyOf": [
+                SECURITY_DETAILS_SCHEMA,
+                {"type": "null"},
+            ]
+        },
     },
 }
+
+
+def _normalize_security_details(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+
+    details = {
+        "attack_path": str(value.get("attack_path") or "").strip(),
+        "impact": str(value.get("impact") or "").strip(),
+        "fix": str(value.get("fix") or "").strip(),
+        "evidence_lines": [],
+        "unsafe_if": str(value.get("unsafe_if") or "").strip(),
+    }
+
+    raw_lines = value.get("evidence_lines")
+    if isinstance(raw_lines, list):
+        for raw_line in raw_lines:
+            try:
+                line = int(raw_line)
+            except (TypeError, ValueError):
+                continue
+            if line >= 1:
+                details["evidence_lines"].append(line)
+
+    if not any(
+        [
+            details["attack_path"],
+            details["impact"],
+            details["fix"],
+            details["evidence_lines"],
+            details["unsafe_if"],
+        ]
+    ):
+        return None
+
+    return details
 
 
 def parse_llm_finding(data: dict[str, Any], file_path: str) -> Finding | None:
@@ -332,6 +403,7 @@ def parse_llm_finding(data: dict[str, Any], file_path: str) -> Finding | None:
         explanation = data.get("explanation")
         suggestion = data.get("suggestion")
         symbol = data.get("symbol")
+        security_details = _normalize_security_details(data.get("security_details"))
 
         location = CodeLocation(file=file_path, line=line, end_line=end_line)
 
@@ -345,6 +417,7 @@ def parse_llm_finding(data: dict[str, Any], file_path: str) -> Finding | None:
             explanation=explanation,
             suggestion=suggestion,
             symbol=symbol,
+            security_details=security_details,
         )
     except (ValueError, KeyError):
         return None

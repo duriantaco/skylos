@@ -766,6 +766,9 @@ def run_pipeline(
                     if hasattr(finding.issue_type, "value")
                     else str(finding.issue_type)
                 )
+                security_details = getattr(finding, "security_details", None)
+                if not isinstance(security_details, dict):
+                    security_details = None
 
                 llm_finding = {
                     "file": finding.location.file,
@@ -785,6 +788,7 @@ def run_pipeline(
                     ),
                     "explanation": finding.explanation,
                     "suggestion": finding.suggestion,
+                    "security_details": security_details,
                     "_source": "llm",
                     "_category": issue_type,
                     "_confidence": "medium",
@@ -861,6 +865,10 @@ def run_pipeline(
                 dup["suggestion"] = llm_f["suggestion"]
             if llm_f.get("explanation") and not dup.get("explanation"):
                 dup["explanation"] = llm_f["explanation"]
+            if llm_f.get("security_details"):
+                dup["_llm_security_details"] = llm_f["security_details"]
+                if not dup.get("security_details"):
+                    dup["security_details"] = llm_f["security_details"]
         else:
             all_findings.append(llm_f)
             llm_only_count += 1
