@@ -24,7 +24,6 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     _build_main_parser = cli_module._build_main_parser
     _build_main_scan_context = cli_module._build_main_scan_context
     _concise_scan_exit_code = cli_module._concise_scan_exit_code
-    _detect_link_file = cli_module._detect_link_file
     _emit_github_annotations = cli_module._emit_github_annotations
     _format_concise_results = cli_module._format_concise_results
     _formatted_output_gate_exit_code = cli_module._formatted_output_gate_exit_code
@@ -822,12 +821,6 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             nudge = pick_nudge(result, args, project_root)
             if nudge:
                 console.print(f"\n  {nudge}")
-
-    if not args.upload and not getattr(args, "no_upload", False) and not args.json:
-        is_linked = _detect_link_file(project_root) is not None
-        has_env_token = bool(os.getenv("SKYLOS_TOKEN"))
-        if is_linked or has_env_token:
-            args.upload = True
 
     forgotten = result.get("forgotten", [])
     if forgotten:

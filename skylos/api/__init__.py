@@ -1322,6 +1322,7 @@ def upload_report_v2(
         artifact_result = _upload_report_artifacts(
             artifacts,
             init_result["artifact_instructions"],
+            init_result.get("skipped_artifacts"),
         )
         if not artifact_result.get("success", True):
             return artifact_result
@@ -1356,14 +1357,27 @@ def _start_report_artifact_upload(
     strict: bool,
     is_forced: bool,
 ) -> dict[str, Any]:
-    init_response, last_err = _post_json_with_retries(
-        REPORT_INIT_URL,
-        _build_auth_headers(token),
-        _build_report_init_payload(prepared, artifacts),
-        quiet=quiet,
-        initial_message="Uploading scan results...",
-        accepted_statuses=(200, 201, 401, 402, 404, 405, 501),
-    )
+    skipped_artifacts = []
+    initial_message = "Uploading scan results..."
+
+    while True:
+        init_response, last_err = _post_json_with_retries(
+            REPORT_INIT_URL,
+            _build_auth_headers(token),
+            _build_report_init_payload(prepared, artifacts),
+            quiet=quiet,
+            initial_message=initial_message,
+            accepted_statuses=(200, 201, 400, 401, 402, 404, 405, 501),
+        )
+        if _retry_artifact_init_without_optional_artifact(
+            init_response,
+            artifacts,
+            skipped_artifacts,
+        ):
+            initial_message = None
+            continue
+        break
+
     if init_response is None:
         if _looks_like_server_error(last_err):
             return {
@@ -1376,6 +1390,11 @@ def _start_report_artifact_upload(
         }
     if init_response.status_code in (404, 405, 501):
         return {"complete": True, "result": _build_large_upload_protocol_error(prepared)}
+    if init_response.status_code == 400:
+        return {
+            "complete": True,
+            "result": _build_report_init_error(init_response),
+        }
     if init_response.status_code in (401, 402):
         return {
             "complete": True,
@@ -1401,15 +1420,91 @@ def _start_report_artifact_upload(
         "complete": False,
         "init_data": init_data,
         "artifact_instructions": artifact_instructions,
+        "skipped_artifacts": skipped_artifacts,
     }
+
+
+def _retry_artifact_init_without_optional_artifact(
+    init_response,
+    artifacts: dict,
+    skipped_artifacts: list,
+) -> bool:
+    artifact_name = _unsupported_optional_artifact_name(init_response, artifacts)
+    if artifact_name is None:
+        return False
+
+    artifact = artifacts.pop(artifact_name)
+    artifact.cleanup()
+    _append_skipped_artifact(skipped_artifacts, artifact_name, "unsupported")
+    return True
+
+
+def _unsupported_optional_artifact_name(init_response, artifacts: dict) -> str | None:
+    if init_response is None:
+        return None
+    if init_response.status_code != 400:
+        return None
+
+    message = _report_init_error_message(init_response)
+    if "Unsupported artifact" not in message:
+        return None
+
+    for artifact_name, artifact in artifacts.items():
+        if artifact.required:
+            continue
+        single_quoted_name = f"'{artifact_name}'"
+        double_quoted_name = f'"{artifact_name}"'
+        if single_quoted_name in message or double_quoted_name in message:
+            return artifact_name
+    return None
+
+
+def _report_init_error_message(response) -> str:
+    parts = []
+    try:
+        data = response.json()
+    except (TypeError, ValueError):
+        data = {}
+
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, str):
+            parts.append(error)
+        code = data.get("code")
+        if isinstance(code, str):
+            parts.append(code)
+
+    text = getattr(response, "text", "")
+    if isinstance(text, str):
+        parts.append(text)
+    return " ".join(parts)
+
+
+def _build_report_init_error(response) -> dict[str, Any]:
+    error = f"Server Error {response.status_code}: {response.text}"
+    result = {
+        "success": False,
+        "error": error,
+    }
+    try:
+        data = response.json()
+    except (TypeError, ValueError):
+        data = {}
+    if isinstance(data, dict) and isinstance(data.get("code"), str):
+        result["code"] = data["code"]
+    return result
 
 
 def _upload_report_artifacts(
     artifacts: dict,
     artifact_instructions: dict,
+    skipped_artifacts: list | None = None,
 ) -> dict[str, Any]:
     uploaded_artifacts = {}
-    skipped_artifacts = []
+    if skipped_artifacts is None:
+        skipped_artifacts = []
+    else:
+        skipped_artifacts = list(skipped_artifacts)
     for artifact_name, artifact in artifacts.items():
         result = _upload_one_report_artifact(
             artifact_name,

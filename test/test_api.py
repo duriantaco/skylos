@@ -1157,6 +1157,85 @@ class TestSkylosApi(unittest.TestCase):
     @patch("skylos.api.get_git_root", return_value=None)
     @patch("skylos.api.get_project_info", return_value={})
     @patch("skylos.api.detect_ai_code", return_value={"detected": False})
+    @patch("requests.put")
+    @patch("requests.post")
+    def test_upload_report_retries_without_unsupported_optional_definitions(
+        self,
+        mock_post,
+        mock_put,
+        _mock_ai,
+        _mock_info,
+        _mock_root,
+        _mock_git_info,
+        mock_token,
+    ):
+        mock_token.return_value = "token"
+
+        unsupported_resp = MagicMock()
+        unsupported_resp.status_code = 400
+        unsupported_resp.text = (
+            '{"error":"Unsupported artifact \'definitions\'.","code":"BAD_REQUEST"}'
+        )
+        unsupported_resp.json.return_value = {
+            "error": "Unsupported artifact 'definitions'.",
+            "code": "BAD_REQUEST",
+        }
+        init_resp = MagicMock()
+        init_resp.status_code = 201
+        init_resp.json.return_value = {
+            "scanId": "scan_artifact",
+            "upload_id": "upload-1",
+            "artifacts": {
+                "scan_report": {
+                    "artifact_id": "artifact-scan",
+                    "key": "scan-key",
+                    "upload": {
+                        "method": "PUT",
+                        "url": "https://uploads.skylos.dev/report",
+                    },
+                }
+            },
+        }
+        complete_resp = MagicMock()
+        complete_resp.status_code = 200
+        complete_resp.json.return_value = {"scanId": "scan_artifact"}
+        mock_post.side_effect = [unsupported_resp, init_resp, complete_resp]
+
+        ok_upload = MagicMock()
+        ok_upload.status_code = 200
+        ok_upload.headers = {}
+        ok_upload.text = "OK"
+        mock_put.return_value = ok_upload
+
+        with patch("skylos.api._legacy_inline_upload_limit_bytes", return_value=10):
+            result = upload_report(
+                {
+                    "danger": [{"file": "app.py", "line": 5, "message": "oops"}],
+                    "definitions": {"app.func": {"file": "app.py", "line": 5}},
+                },
+                quiet=True,
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(mock_put.call_count, 1)
+
+        first_init_payload = mock_post.call_args_list[0].kwargs["json"]
+        second_init_payload = mock_post.call_args_list[1].kwargs["json"]
+        self.assertIn("definitions", first_init_payload["artifacts"])
+        self.assertNotIn("definitions", second_init_payload["artifacts"])
+
+        complete_payload = mock_post.call_args_list[2].kwargs["json"]
+        self.assertIn("scan_report", complete_payload["artifacts"])
+        self.assertEqual(
+            complete_payload["skipped_artifacts"],
+            [{"name": "definitions", "reason": "unsupported"}],
+        )
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("skylos.api.get_project_info", return_value={})
+    @patch("skylos.api.detect_ai_code", return_value={"detected": False})
     @patch("requests.post")
     def test_upload_report_large_payload_fails_cleanly_when_artifacts_unsupported(
         self,

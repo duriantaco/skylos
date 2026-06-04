@@ -1091,6 +1091,40 @@ def test_main_json_upload_calls_upload_report_quiet(monkeypatch):
     assert "provenance_summary" in printed_payload
 
 
+def test_main_linked_repo_does_not_upload_without_upload_flag(monkeypatch):
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "unused_parameters": [],
+        "danger": [],
+        "quality": [],
+        "secrets": [],
+    }
+
+    monkeypatch.setattr(cli.sys, "argv", ["skylos", "."])
+    monkeypatch.setenv("SKYLOS_TOKEN", "token")
+
+    fake_logger = Mock()
+    fake_logger.console = Mock()
+
+    with (
+        patch("skylos.cli.setup_logger", return_value=fake_logger),
+        patch("skylos.cli.Progress", return_value=_progress_ctx()),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.render_results"),
+        patch("skylos.cli.print_badge"),
+        patch("skylos.cli._detect_link_file", return_value=".skylos/link.json"),
+        patch("skylos.cli.upload_report") as mock_upload,
+    ):
+        cli.main()
+
+    mock_upload.assert_not_called()
+
+
 def test_main_json_gate_failure_exits_nonzero(monkeypatch):
     result = {
         "analysis_summary": {"total_files": 1},
