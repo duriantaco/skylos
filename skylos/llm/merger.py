@@ -132,6 +132,14 @@ def merge_findings(
             merged_finding["_confidence"] = "high"
             merged_finding["_llm_message"] = matched_llm.get("message")
             merged_finding["_llm_suggestion"] = matched_llm.get("suggestion")
+            if matched_llm.get("security_details"):
+                merged_finding["_llm_security_details"] = matched_llm[
+                    "security_details"
+                ]
+                if not merged_finding.get("security_details"):
+                    merged_finding["security_details"] = matched_llm[
+                        "security_details"
+                    ]
             merged.append(merged_finding)
         else:
             merged_finding = {**sf}

@@ -122,6 +122,9 @@ class SecurityCandidateEvent:
     evidence: str
     review_verdict: str | None = None
     review_reason: str | None = None
+    review_safety_proof: str | None = None
+    review_proof_kind: str | None = None
+    review_proof_lines: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -137,6 +140,9 @@ class SecurityFindingCandidate:
     evidence: str = HYPOTHESIS_EVIDENCE
     review_verdict: str | None = None
     review_reason: str | None = None
+    review_safety_proof: str | None = None
+    review_proof_kind: str | None = None
+    review_proof_lines: list[int] = field(default_factory=list)
     threat_trace_id: str | None = None
     threat_trace_validation: str | None = None
     history: list[SecurityCandidateEvent] = field(default_factory=list)
@@ -248,6 +254,9 @@ def _candidate_event_dict(event: SecurityCandidateEvent) -> dict[str, Any]:
         "evidence": event.evidence,
         "review_verdict": event.review_verdict,
         "review_reason": event.review_reason,
+        "review_safety_proof": event.review_safety_proof,
+        "review_proof_kind": event.review_proof_kind,
+        "review_proof_lines": list(event.review_proof_lines),
     }
 
 
@@ -264,6 +273,9 @@ def _candidate_dict(candidate: SecurityFindingCandidate) -> dict[str, Any]:
         "evidence": candidate.evidence,
         "review_verdict": candidate.review_verdict,
         "review_reason": candidate.review_reason,
+        "review_safety_proof": candidate.review_safety_proof,
+        "review_proof_kind": candidate.review_proof_kind,
+        "review_proof_lines": list(candidate.review_proof_lines),
         "history": [_candidate_event_dict(event) for event in candidate.history],
     }
     if candidate.threat_trace_id:
@@ -517,7 +529,24 @@ def _candidate_event(stage: str, finding: Any) -> SecurityCandidateEvent:
         evidence=metadata.get("security_evidence") or HYPOTHESIS_EVIDENCE,
         review_verdict=metadata.get("review_verdict"),
         review_reason=metadata.get("review_reason"),
+        review_safety_proof=metadata.get("review_safety_proof"),
+        review_proof_kind=metadata.get("review_proof_kind"),
+        review_proof_lines=_metadata_int_list(metadata.get("review_proof_lines")),
     )
+
+
+def _metadata_int_list(value: Any) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    items = []
+    for raw in value:
+        try:
+            item = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if item >= 1:
+            items.append(item)
+    return items
 
 
 def _build_candidate_ledger(findings: list[Any]) -> list[SecurityFindingCandidate]:
@@ -567,6 +596,9 @@ def _update_candidate_ledger(
         candidate.evidence = event.evidence
         candidate.review_verdict = event.review_verdict
         candidate.review_reason = event.review_reason
+        candidate.review_safety_proof = event.review_safety_proof
+        candidate.review_proof_kind = event.review_proof_kind
+        candidate.review_proof_lines = list(event.review_proof_lines)
         threat_trace = _finding_threat_trace(finding)
         if threat_trace is not None:
             candidate.threat_trace_id = str(threat_trace.get("trace_id") or "")

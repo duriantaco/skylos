@@ -39,6 +39,9 @@ _PRIVATE_METADATA_KEYS = (
     "_security_evidence",
     "_review_verdict",
     "_review_reason",
+    "_review_safety_proof",
+    "_review_proof_kind",
+    "_review_proof_lines",
 )
 
 

@@ -140,7 +140,11 @@ RULES:
 2. Provide the exact line number
 3. Use standard rule IDs: SKY-D200+ for dangerous calls, SKY-D211 SQL injection, SKY-D212 command injection, SKY-D215 path traversal, SKY-D216 SSRF, SKY-D226-228 XSS, SKY-S101 secrets
 4. Output ONLY valid JSON OBJECT (no markdown, no extra text)
-5. If no issues found, output empty array: []
+5. For each security finding, explain how an attacker could use the vulnerable code and what impact that could have
+6. Provide a concrete fix in `suggestion`, naming the safer API, validation, or pattern when possible
+7. For security findings, set `security_details` with attack_path, impact, fix, evidence_lines, and unsafe_if
+8. For non-security findings, set `security_details` to null
+9. If no issues found, output: {{"findings": []}}
 
 {INLINE_CRITIC}
 
@@ -298,7 +302,10 @@ RULES:
 1. Output ONLY valid JSON object: {{"findings":[...]}}
 2. Findings must be HIGH confidence.
 3. Provide precise line numbers.
-4. If no issues found: {{"findings": []}}
+4. For each finding, use `explanation` to describe the attack path and likely impact in this code.
+5. Use `suggestion` to describe the concrete secure fix.
+6. Set `security_details` with attack_path, impact, fix, evidence_lines, and unsafe_if.
+7. If no issues found: {{"findings": []}}
 """
 
 
@@ -328,8 +335,17 @@ def user_analyze(context, issue_types, include_examples=True):
         "If graph grounding is present, do not invent callers, callees, traces, tests, or reachability beyond those facts; if it is partial or absent, lower confidence instead of guessing."
     )
     prompt_parts.append(
-        "Each finding should include: rule_id, issue_type, severity, message, line, end_line, explanation, suggestion, confidence, and symbol when identifiable."
+        "Each finding should include: rule_id, issue_type, severity, message, line, end_line, explanation, suggestion, confidence, symbol when identifiable, and security_details."
     )
+    if "security" in issue_types:
+        prompt_parts.append(
+            "For security findings, `explanation` must describe how an attacker could exploit the shown code and the likely impact; `suggestion` must describe a concrete secure fix."
+        )
+        prompt_parts.append(
+            "`security_details` must be an object with `attack_path`, `impact`, `fix`, `evidence_lines`, and `unsafe_if`. Use `evidence_lines` for exact lines that prove source, sink, or missing guard. `unsafe_if` should state what condition keeps the finding exploitable or what proof would be needed to refute it."
+        )
+    else:
+        prompt_parts.append("For non-security findings, set `security_details` to null.")
     prompt_parts.append('OUTPUT: JSON object only: {"findings": [...]}')
     prompt_parts.append('If no issues: {"findings": []}')
 

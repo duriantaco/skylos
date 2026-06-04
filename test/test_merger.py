@@ -97,6 +97,13 @@ def test_deduplicate_input_findings_removes_nearby_duplicates(tmp_path):
 
 def test_merge_findings_static_llm_match_becomes_high(tmp_path):
     file = tmp_path / "a.py"
+    security_details = {
+        "attack_path": "request arg reaches SQL query",
+        "impact": "user data disclosure",
+        "fix": "use bound parameters",
+        "evidence_lines": [50, 52],
+        "unsafe_if": "argument is user controlled",
+    }
 
     static_findings = [
         _f(
@@ -114,7 +121,10 @@ def test_merge_findings_static_llm_match_becomes_high(tmp_path):
             "SQL injection vulnerability due to string formatting",
             rule_id="SKY-L003",
             cat="security",
-            extra={"suggestion": "Use parameterized queries"},
+            extra={
+                "suggestion": "Use parameterized queries",
+                "security_details": security_details,
+            },
         ),
     ]
 
@@ -126,6 +136,8 @@ def test_merge_findings_static_llm_match_becomes_high(tmp_path):
     assert m["_confidence"] == "high"
     assert "suggestion" not in m
     assert m["_llm_suggestion"] == "Use parameterized queries"
+    assert m["_llm_security_details"] == security_details
+    assert m["security_details"] == security_details
 
 
 def test_merge_findings_static_only_medium(tmp_path):

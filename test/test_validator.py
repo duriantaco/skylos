@@ -22,6 +22,7 @@ def mk_finding(
     confidence=Confidence.MEDIUM,
     explanation=None,
     suggestion=None,
+    security_details=None,
 ):
     return Finding(
         rule_id=rule,
@@ -32,6 +33,7 @@ def mk_finding(
         location=CodeLocation(file=file, line=line),
         explanation=explanation,
         suggestion=suggestion,
+        security_details=security_details,
     )
 
 
@@ -140,6 +142,29 @@ def test_validator_security_pattern_unverified_lowers_confidence():
     assert result.adjusted_finding is not None
     assert result.adjusted_finding.confidence == Confidence.LOW
     assert "pattern_not_verified" in (result.adjusted_finding.explanation or "")
+
+
+def test_validator_preserves_security_details():
+    src = 'query = f"select * from users where id={user_id}"\ncursor.execute(query)\n'
+    details = {
+        "attack_path": "user_id reaches query",
+        "impact": "data disclosure",
+        "fix": "use bound parameters",
+        "evidence_lines": [1, 2],
+        "unsafe_if": "user_id is request controlled",
+    }
+    v = CodeValidator(strict=False)
+
+    f = mk_finding(
+        line=2,
+        issue_type=IssueType.SECURITY,
+        msg="Possible SQL injection",
+        security_details=details,
+    )
+    result = v.validate(f, src, "file.py")
+
+    assert result.valid is True
+    assert result.adjusted_finding.security_details == details
 
 
 def test_result_validator_filters_by_min_confidence():
