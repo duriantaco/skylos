@@ -6,6 +6,9 @@ from skylos.benchmarks.verify_benchmark import (
     format_report,
     main,
 )
+from skylos.benchmarks.verify_benchmark_runner import (
+    tool_environment as _tool_environment,
+)
 
 
 if __name__ == "__main__":
