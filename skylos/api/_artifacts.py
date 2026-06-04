@@ -179,7 +179,7 @@ def upload_artifact(
     timeout = instruction.get("timeout_seconds") or UPLOAD_TIMEOUT
     last_err = None
 
-    for _attempt in range(3):
+    for _ in range(3):
         try:
             response = _send_artifact_upload(
                 artifact,

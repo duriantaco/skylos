@@ -944,8 +944,6 @@ _AUTH_EVIDENCE_PATTERNS = tuple(
 
 _MUTATING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 
-_NEXTJS_ROUTE_PATTERNS = ("/app/", "/pages/api/")
-
 _SERVER_ACTION_SQL_CALL_PATTERN = re.compile(
     r"\.(\$?(?:query|exec|execute|raw|sql|queryRaw|executeRaw|queryRawUnsafe|executeRawUnsafe))\s*"
     r"\(\s*`([^`]*\$\{[^`]*)`",

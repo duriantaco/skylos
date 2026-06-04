@@ -222,10 +222,6 @@ _JAVA_SQL_SINK_ARGS = {
 _JAVA_LDAP_SINK_ARGS = {
     ".search(": (1,),
 }
-_JAVA_XPATH_SINK_ARGS = {
-    ".evaluate(": (0,),
-    ".compile(": (0,),
-}
 _JAVA_XSS_WRITER_METHODS = (".print(", ".println(", ".printf(", ".format(", ".write(")
 _JAVA_XSS_SANITIZER_HINTS = (
     "encodeForHTML(",
