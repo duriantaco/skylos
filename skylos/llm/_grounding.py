@@ -154,7 +154,8 @@ def _parse_file(file_path: Path, module: str, root: Path) -> _ParsedFile | None:
 
 def _collect_defs(parsed: _ParsedFile, tree: ast.AST) -> dict[str, str]:
     symbols: dict[str, str] = {}
-    for name, _line, _end_line, _kind in _iter_defs(parsed, tree):
+    for definition in _iter_defs(parsed, tree):
+        name = definition[0]
         short = name.removeprefix(f"{parsed.module}.")
         symbols[short] = name
         symbols[short.split(".")[-1]] = name

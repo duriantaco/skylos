@@ -120,7 +120,15 @@ nesting = 3
 max_args = 5
 max_lines = 50
 model = "gpt-4.1"
-exclude = []
+exclude = [
+    "benchmarks",
+    "corpus",
+    "docs/repo-map",
+    "editors/vscode/out",
+    "manual",
+    "skylos-demo",
+    "test/fixtures",
+]
 ignore = []
 
 [tool.skylos.masking]

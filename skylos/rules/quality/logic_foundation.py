@@ -308,7 +308,7 @@ class DuplicateBranchRule(SkylosRule):
         seen = {}
         findings = []
 
-        for condition, _body, line in branches:
+        for condition, _, line in branches:
             if condition is None:
                 continue
             key = _semantic_ast_key(condition)
@@ -342,7 +342,7 @@ class DuplicateBranchRule(SkylosRule):
         seen = {}
         findings = []
 
-        for _condition, body, line in branches:
+        for _, body, line in branches:
             if _is_empty_branch_body(body):
                 continue
             if _substantive_branch_statement_count(body) < 2:

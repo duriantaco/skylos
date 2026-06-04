@@ -186,12 +186,6 @@ class SecurityTodoRule(SkylosRule):
         return findings if findings else None
 
 
-_DISABLED_SECURITY_PATTERNS = DEFAULT_VIBE_DICTIONARY.disabled_security_patterns
-_DANGEROUS_CALLS = DEFAULT_VIBE_DICTIONARY.dangerous_calls
-_DANGEROUS_DECORATORS = DEFAULT_VIBE_DICTIONARY.dangerous_decorators
-_DANGEROUS_ASSIGNMENTS = DEFAULT_VIBE_DICTIONARY.dangerous_assignments
-
-
 class DisabledSecurityRule(SkylosRule):
     rule_id = "SKY-L011"
     name = "Disabled Security Control"
@@ -344,9 +338,6 @@ class DisabledSecurityRule(SkylosRule):
         return findings if findings else None
 
 
-_PHANTOM_SECURITY_NAMES = DEFAULT_VIBE_DICTIONARY.phantom_security_names
-
-
 class PhantomCallRule(SkylosRule):
     rule_id = "SKY-L012"
     name = "Phantom Function Call"
@@ -430,9 +421,6 @@ class PhantomCallRule(SkylosRule):
                 "ai_likelihood": "high",
             }
         ]
-
-
-_PHANTOM_SECURITY_DECORATORS = DEFAULT_VIBE_DICTIONARY.phantom_security_decorators
 
 
 class PhantomDecoratorRule(SkylosRule):
@@ -716,9 +704,6 @@ class UndefinedConfigRule(SkylosRule):
         return None
 
 
-_WELL_KNOWN_ENV_VARS = DEFAULT_VIBE_DICTIONARY.well_known_env_vars
-
-
 class StaleMockRule(SkylosRule):
     rule_id = "SKY-L024"
     name = "Stale Mock"
@@ -898,10 +883,6 @@ class StaleMockRule(SkylosRule):
         return None
 
 
-_SECURITY_VAR_KEYWORDS = DEFAULT_VIBE_DICTIONARY.security_var_keywords
-_INSECURE_RANDOM_FUNCS = DEFAULT_VIBE_DICTIONARY.insecure_random_funcs
-
-
 def _var_name_is_security(name, vibe_dictionary=None):
     vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
     lower = name.lower()
@@ -983,14 +964,10 @@ class InsecureRandomRule(SkylosRule):
         return None
 
 
-_CREDENTIAL_VAR_NAMES = DEFAULT_VIBE_DICTIONARY.credential_var_names
-_CREDENTIAL_VAR_SUFFIXES = DEFAULT_VIBE_DICTIONARY.credential_var_suffixes
-
 _CREDENTIAL_DSN_RE = re.compile(
     r"[a-zA-Z][a-zA-Z0-9+.-]*://[^:]+:[^@]+@",
 )
 
-_PLACEHOLDER_VALUES = DEFAULT_VIBE_DICTIONARY.placeholder_values
 _MOCK_CONTEXT_WORDS = {
     "mock",
     "fake",
@@ -1541,10 +1518,6 @@ class ErrorDisclosureRule(SkylosRule):
             "line": node.lineno,
             "col": node.col_offset,
         }
-
-
-_SENSITIVE_FILE_KEYWORDS = DEFAULT_VIBE_DICTIONARY.sensitive_file_keywords
-_NETWORK_TIMEOUT_CALLS = DEFAULT_VIBE_DICTIONARY.network_timeout_calls
 
 
 def _is_sensitive_filename(name, vibe_dictionary=None):

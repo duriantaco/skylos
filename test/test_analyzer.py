@@ -49,6 +49,7 @@ def mock_definition():
         mock.complexity = 1
         mock.why_confidence_reduced = []
         mock.conditional_import = False
+        mock.base_classes = []
         mock.to_dict.return_value = {
             "name": name,
             "type": type,
@@ -412,6 +413,96 @@ class TestHeuristics:
         assert mock_init.references == 1
         assert mock_enter.references == 1
 
+    def test_visitor_alias_hooks_get_references(self, mock_definition):
+        """class-level NodeVisitor aliases are dispatch hooks, not dead variables."""
+        skylos = Skylos()
+        mock_class = mock_definition(
+            name="ScopeCollector",
+            simple_name="ScopeCollector",
+            type="class",
+            references=1,
+        )
+        mock_alias = mock_definition(
+            name="ScopeCollector._collect_scope_info.visit_AsyncFor",
+            simple_name="visit_AsyncFor",
+            type="variable",
+            references=0,
+        )
+        mock_method = mock_definition(
+            name="ScopeCollector._collect_scope_info.visit_Import",
+            simple_name="visit_Import",
+            type="method",
+            references=0,
+        )
+        skylos.defs = {
+            "ScopeCollector": mock_class,
+            "ScopeCollector._collect_scope_info.visit_AsyncFor": mock_alias,
+            "ScopeCollector._collect_scope_info.visit_Import": mock_method,
+        }
+
+        skylos._apply_heuristics()
+
+        assert mock_alias.references == 1
+        assert mock_method.references == 1
+
+    def test_http_handler_metadata_gets_references(self, mock_definition):
+        """BaseHTTPRequestHandler reads metadata attributes dynamically."""
+        skylos = Skylos()
+        mock_class = mock_definition(
+            name="AgentServiceHandler",
+            simple_name="AgentServiceHandler",
+            type="class",
+            references=0,
+        )
+        mock_class.base_classes = ["http.server.BaseHTTPRequestHandler"]
+        mock_variable = mock_definition(
+            name="AgentServiceHandler.server_version",
+            simple_name="server_version",
+            type="variable",
+            references=0,
+        )
+        skylos.defs = {
+            "AgentServiceHandler": mock_class,
+            "AgentServiceHandler.server_version": mock_variable,
+        }
+
+        skylos._apply_heuristics()
+
+        assert mock_variable.references == 1
+
+    def test_textual_app_runtime_hooks_get_references(self, mock_definition):
+        """Textual App subclasses consume metadata and action methods dynamically."""
+        skylos = Skylos()
+        mock_class = mock_definition(
+            name="SkylosApp",
+            simple_name="SkylosApp",
+            type="class",
+            references=0,
+        )
+        mock_class.base_classes = ["textual.app.App"]
+        mock_binding = mock_definition(
+            name="SkylosApp.BINDINGS",
+            simple_name="BINDINGS",
+            type="variable",
+            references=0,
+        )
+        mock_action = mock_definition(
+            name="SkylosApp.action_go_category",
+            simple_name="action_go_category",
+            type="method",
+            references=0,
+        )
+        skylos.defs = {
+            "SkylosApp": mock_class,
+            "SkylosApp.BINDINGS": mock_binding,
+            "SkylosApp.action_go_category": mock_action,
+        }
+
+        skylos._apply_heuristics()
+
+        assert mock_binding.references == 1
+        assert mock_action.references == 1
+
 
 class TestAnalyze:
     def test_architecture_iad_strict_requires_explicit_iad_opt_in(self):
@@ -450,6 +541,39 @@ class TestAnalyze:
 
         assert ("api.py", "action") not in unused
         assert ("payload.py", "action") not in unused
+
+    def test_mcp_decorated_tools_and_resources_are_live(self, tmp_path):
+        (tmp_path / "server.py").write_text(
+            "class FakeMCP:\n"
+            "    def tool(self):\n"
+            "        def decorate(fn):\n"
+            "            return fn\n"
+            "        return decorate\n\n"
+            "    def resource(self, _uri):\n"
+            "        def decorate(fn):\n"
+            "            return fn\n"
+            "        return decorate\n\n"
+            "mcp = FakeMCP()\n\n"
+            "@mcp.tool()\n"
+            "def registered_tool():\n"
+            "    return 'tool'\n\n"
+            "@mcp.resource('skylos://latest')\n"
+            "def registered_resource():\n"
+            "    return 'resource'\n\n"
+            "def plain_dead():\n"
+            "    return 'dead'\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused = {
+            (Path(item["file"]).name, item["simple_name"])
+            for item in result.get("unused_functions", [])
+        }
+
+        assert ("server.py", "registered_tool") not in unused
+        assert ("server.py", "registered_resource") not in unused
+        assert ("server.py", "plain_dead") in unused
 
     def test_package_scan_resolves_relative_and_module_import_styles(self, tmp_path):
         package = tmp_path / "pkg"

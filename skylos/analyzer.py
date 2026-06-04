@@ -1454,6 +1454,12 @@ class Skylos:
                     class_methods[cls].append(definition)
 
         for cls, methods in class_methods.items():
+            class_def = self.defs[cls]
+            base_classes = getattr(class_def, "base_classes", [])
+            is_textual_app = any(
+                str(base).split(".")[-1] == "App" for base in base_classes
+            )
+
             if self.defs[cls].references > 0:
                 for method in methods:
                     if method.simple_name in AUTO_CALLED:
@@ -1468,6 +1474,85 @@ class Skylos:
 
                     if method.simple_name == "format" and cls.endswith("Formatter"):
                         method.references += 1
+
+            if is_textual_app:
+                for method in methods:
+                    if method.simple_name == "compose":
+                        method.references += 1
+                    elif method.simple_name.startswith("action_"):
+                        method.references += 1
+
+        referenced_class_prefixes = tuple(
+            f"{name}."
+            for name, definition in self.defs.items()
+            if definition.type == "class" and definition.references > 0
+        )
+        for definition in self.defs.values():
+            if definition.type not in ("method", "variable"):
+                continue
+
+            if definition.references > 0:
+                continue
+
+            if not (
+                definition.simple_name.startswith("visit_")
+                or definition.simple_name.startswith("leave_")
+                or definition.simple_name.startswith("transform_")
+            ):
+                continue
+
+            if referenced_class_prefixes and definition.name.startswith(
+                referenced_class_prefixes
+            ):
+                definition.references += 1
+
+        http_handler_metadata = {
+            "protocol_version",
+            "server_version",
+            "sys_version",
+        }
+        for definition in self.defs.values():
+            if definition.type != "variable":
+                continue
+
+            if definition.simple_name not in http_handler_metadata:
+                continue
+
+            if "." not in definition.name:
+                continue
+
+            cls = definition.name.rsplit(".", 1)[0]
+            class_def = self.defs.get(cls)
+            if class_def is None or class_def.type != "class":
+                continue
+
+            base_classes = getattr(class_def, "base_classes", [])
+            for base in base_classes:
+                if str(base).split(".")[-1] == "BaseHTTPRequestHandler":
+                    definition.references += 1
+                    break
+
+        textual_app_metadata = {"BINDINGS", "CSS", "TITLE", "SUB_TITLE"}
+        for definition in self.defs.values():
+            if definition.type != "variable":
+                continue
+
+            if definition.simple_name not in textual_app_metadata:
+                continue
+
+            if "." not in definition.name:
+                continue
+
+            cls = definition.name.rsplit(".", 1)[0]
+            class_def = self.defs.get(cls)
+            if class_def is None or class_def.type != "class":
+                continue
+
+            base_classes = getattr(class_def, "base_classes", [])
+            for base in base_classes:
+                if str(base).split(".")[-1] == "App":
+                    definition.references += 1
+                    break
 
         registry_bases = set()
         for name, defn in self.defs.items():
@@ -2684,10 +2769,7 @@ class Skylos:
             if class_name in self._global_protocol_implementers:
                 continue
 
-            for (
-                protocol_name,
-                protocol_methods,
-            ) in self._global_protocol_method_names.items():
+            for protocol_methods in self._global_protocol_method_names.values():
                 if not protocol_methods or len(protocol_methods) < 3:
                     continue
 

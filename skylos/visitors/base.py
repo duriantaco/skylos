@@ -771,6 +771,9 @@ class Visitor(ast.NodeVisitor):
             "endpoint",
             "hook",
             "signal",
+            "tool",
+            "resource",
+            "prompt",
             "event",
             "job",
             "worker",
@@ -962,7 +965,6 @@ class Visitor(ast.NodeVisitor):
     def _visit_comprehension_scope(
         self,
         node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp],
-        comp_type: str,
     ) -> None:
         self._comprehension_scope_stack.append({})
 
@@ -991,16 +993,16 @@ class Visitor(ast.NodeVisitor):
                 self._bind_comprehension_target(elt, lineno)
 
     def visit_ListComp(self, node: ast.ListComp) -> None:
-        self._visit_comprehension_scope(node, "listcomp")
+        self._visit_comprehension_scope(node)
 
     def visit_SetComp(self, node: ast.SetComp) -> None:
-        self._visit_comprehension_scope(node, "setcomp")
+        self._visit_comprehension_scope(node)
 
     def visit_DictComp(self, node: ast.DictComp) -> None:
-        self._visit_comprehension_scope(node, "dictcomp")
+        self._visit_comprehension_scope(node)
 
     def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
-        self._visit_comprehension_scope(node, "genexp")
+        self._visit_comprehension_scope(node)
 
     def visit_Match(self, node: ast.Match) -> None:
         self.visit(node.subject)

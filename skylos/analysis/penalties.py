@@ -649,7 +649,7 @@ def _check_abstract_overrides(def_obj, analyzer, framework):
     class_name = parts[-2] if len(parts) >= 2 else None
     if class_name:
         class_def = None
-        for dname, dobj in all_defs.items():
+        for dobj in all_defs.values():
             if (
                 dobj.type == "class"
                 and dobj.simple_name == class_name
