@@ -2415,7 +2415,10 @@ ignore = []
         real_subprocess_run = subprocess.run
 
         def selective_subprocess_run(*args, **kwargs):
-            cmd = args[0] if args else kwargs.get("args")
+            if args:
+                cmd = args[0]
+            else:
+                cmd = kwargs.get("args")
             if cmd[:4] == ["git", "diff", "HEAD", "--"]:
                 return diff_result
             return real_subprocess_run(*args, **kwargs)
@@ -2833,6 +2836,36 @@ def handler(request):
 
         assert len(quality) == 1
         assert quality[0]["name"] == "security.require_auth"
+
+    def test_analyze_flags_stale_bare_call_resembling_local_symbol(self, tmp_path):
+        pkg = tmp_path / "billing"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "totals.py").write_text(
+            """
+def calculate_total(items):
+    return sum(items)
+""".strip(),
+            encoding="utf-8",
+        )
+        (pkg / "workflow.py").write_text(
+            """
+from billing.totals import calculate_total
+
+def create_invoice(order):
+    return compute_total(order["items"])
+""".strip(),
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
+        quality = [
+            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ]
+
+        assert len(quality) == 1
+        assert quality[0]["name"] == "compute_total"
+        assert quality[0]["vibe_category"] == "hallucinated_reference"
 
     def test_danger_scan_does_not_run_sca_without_enable_sca(
         self, tmp_path, monkeypatch

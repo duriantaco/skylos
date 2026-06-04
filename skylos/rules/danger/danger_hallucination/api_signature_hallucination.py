@@ -11,7 +11,7 @@ from skylos.core.safe_cache_io import read_text_no_symlink
 
 RULE_ID_API_SIGNATURE = "SKY-D224"
 SEV_HIGH = "HIGH"
-DEFAULT_API_SIGNATURE_ALLOWLIST = ("requests", "pandas", "boto3")
+DEFAULT_API_SIGNATURE_ALLOWLIST = ("requests", "pandas", "boto3", "openai")
 VIBE_CATEGORY = "api_signature_hallucination"
 AI_LIKELIHOOD = "high"
 MAX_PYTHON_API_SIGNATURE_SOURCE_BYTES = 1_000_000
@@ -123,6 +123,13 @@ class _ApiSignatureChecker(ast.NodeVisitor):
     def _current_instances(self) -> dict[str, tuple[str, str]]:
         return self.instance_stack[-1]
 
+    def _instance_type(self, name: str) -> tuple[str, str] | None:
+        for instances in reversed(self.instance_stack):
+            instance_type = instances.get(name)
+            if instance_type is not None:
+                return instance_type
+        return None
+
     def _surface(self, module_name: str) -> dict[str, Any] | None:
         if module_name not in self.surfaces:
             self.surfaces[module_name] = self.surface_loader(
@@ -192,6 +199,10 @@ class _ApiSignatureChecker(ast.NodeVisitor):
 
     def _attribute_call_target(self, func: ast.Attribute) -> _CallTarget | None:
         value = func.value
+        resource_target = self._instance_resource_method_target(func)
+        if resource_target is not None:
+            return resource_target
+
         if isinstance(value, ast.Name):
             module_target = self._module_attribute_target(value.id, func.attr)
             if module_target is not None:
@@ -202,6 +213,41 @@ class _ApiSignatureChecker(ast.NodeVisitor):
                 return instance_target
 
         return None
+
+    def _instance_resource_method_target(
+        self,
+        func: ast.Attribute,
+    ) -> _CallTarget | None:
+        chain = _flatten_attribute_chain(func)
+        if chain is None:
+            return None
+        if len(chain) < 3:
+            return None
+
+        instance_type = self._instance_type(chain[0])
+        if instance_type is None:
+            return None
+
+        module_name, class_name = instance_type
+        current_entry = self._module_member(module_name, class_name)
+        if current_entry is None:
+            return None
+
+        for property_name in chain[1:-1]:
+            properties = _entry_properties(current_entry)
+            property_entry = properties.get(property_name)
+            if not isinstance(property_entry, dict):
+                label = f"{module_name}.{class_name}.{'.'.join(chain[1:])}"
+                return _CallTarget(module_name, label, None, "method")
+            current_entry = property_entry
+
+        method_name = chain[-1]
+        methods = _entry_methods(current_entry)
+        method = methods.get(method_name)
+        label = f"{module_name}.{class_name}.{'.'.join(chain[1:])}"
+        if not isinstance(method, dict):
+            return _CallTarget(module_name, label, None, "method")
+        return _CallTarget(module_name, label, method, "")
 
     def _module_attribute_target(
         self,
@@ -223,7 +269,7 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         instance_name: str,
         method_name: str,
     ) -> _CallTarget | None:
-        instance_type = self._current_instances().get(instance_name)
+        instance_type = self._instance_type(instance_name)
         if instance_type is None:
             return None
 
@@ -421,6 +467,22 @@ def _assigned_names(target: ast.AST) -> list[str]:
     return names
 
 
+def _flatten_attribute_chain(expr: ast.AST) -> list[str] | None:
+    parts: list[str] = []
+    current = expr
+
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+
+    if not isinstance(current, ast.Name):
+        return None
+
+    parts.append(current.id)
+    parts.reverse()
+    return parts
+
+
 def _local_module_roots(project_root: Path, py_files: list[Path]) -> set[str]:
     roots: set[str] = set()
     for root_name in _top_level_python_modules(project_root):
@@ -514,6 +576,16 @@ def _entry_methods(entry: dict[str, Any] | None) -> dict[str, Any]:
     methods = entry.get("methods")
     if isinstance(methods, dict):
         return methods
+    return {}
+
+
+def _entry_properties(entry: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(entry, dict):
+        return {}
+
+    properties = entry.get("properties")
+    if isinstance(properties, dict):
+        return properties
     return {}
 
 

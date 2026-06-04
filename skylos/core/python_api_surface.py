@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import inspect
 import json
+import re
 import site
 import sys
 import time
@@ -221,6 +222,7 @@ def _class_entry(value: type) -> dict[str, Any]:
         "signature": _signature_for(value),
         "parameters": _parameters_for(value),
         "methods": _class_methods(value),
+        "properties": _class_properties(value),
     }
 
 
@@ -241,6 +243,123 @@ def _class_methods(value: type) -> dict[str, Any]:
             "parameters": _parameters_for(member),
         }
     return methods
+
+
+def _class_properties(value: type) -> dict[str, Any]:
+    properties: dict[str, Any] = {}
+    for name in _public_names(value, MAX_CLASS_MEMBERS):
+        try:
+            member = getattr(value, name)
+        except Exception:
+            continue
+
+        resource_class = _property_resource_class(member, value)
+        if resource_class is None:
+            continue
+        properties[name] = {
+            "kind": "property",
+            "class": resource_class.__name__,
+            "methods": _class_methods(resource_class),
+        }
+    return properties
+
+
+def _property_resource_class(member: Any, owner: type) -> type | None:
+    getter = _property_getter(member)
+    if getter is None:
+        return None
+
+    resource_class = _property_annotation_class(getter)
+    if resource_class is not None:
+        return resource_class
+    return _property_source_import_class(getter, owner)
+
+
+def _property_getter(member: Any) -> Any | None:
+    getter = getattr(member, "fget", None)
+    if getter is not None:
+        return getter
+
+    getter = getattr(member, "func", None)
+    if getter is not None:
+        return getter
+    return None
+
+
+def _property_annotation_class(getter: Any) -> type | None:
+    annotations = getattr(getter, "__annotations__", {})
+    if not isinstance(annotations, dict):
+        return None
+
+    return_value = annotations.get("return")
+    if inspect.isclass(return_value):
+        return return_value
+    return None
+
+
+def _property_source_import_class(getter: Any, owner: type) -> type | None:
+    try:
+        source = inspect.getsource(getter)
+    except (OSError, TypeError):
+        return None
+
+    return_name = _return_annotation_name(getter)
+    if return_name is None:
+        return None
+
+    import_module = _source_import_module(source, return_name, owner)
+    if import_module is None:
+        return None
+
+    try:
+        module = importlib.import_module(import_module)
+        candidate = getattr(module, return_name)
+    except (AttributeError, ImportError, ValueError):
+        return None
+
+    if inspect.isclass(candidate):
+        return candidate
+    return None
+
+
+def _return_annotation_name(getter: Any) -> str | None:
+    annotations = getattr(getter, "__annotations__", {})
+    if not isinstance(annotations, dict):
+        return None
+
+    return_value = annotations.get("return")
+    if not isinstance(return_value, str):
+        return None
+    if not return_value.isidentifier():
+        return None
+    return return_value
+
+
+def _source_import_module(source: str, class_name: str, owner: type) -> str | None:
+    pattern = re.compile(
+        r"from\s+([.\w]+)\s+import\s+" + re.escape(class_name) + r"\b"
+    )
+    match = pattern.search(source)
+    if match is None:
+        return None
+
+    module_name = match.group(1)
+    if module_name.startswith("."):
+        package = _owner_package(owner)
+        try:
+            return importlib.util.resolve_name(module_name, package)
+        except (ImportError, ValueError):
+            return None
+    return module_name
+
+
+def _owner_package(owner: type) -> str:
+    module_name = getattr(owner, "__module__", "")
+    if not isinstance(module_name, str):
+        return ""
+    if "." not in module_name:
+        return module_name
+    return module_name.rsplit(".", 1)[0]
 
 
 def _callable_entry(value: Any) -> dict[str, Any]:
@@ -264,7 +383,7 @@ def _callable_member(value: Any) -> bool:
 def _signature_for(value: Any) -> str:
     try:
         signature = inspect.signature(value)
-    except (TypeError, ValueError):
+    except Exception:
         return ""
     return str(signature)
 
@@ -272,7 +391,7 @@ def _signature_for(value: Any) -> str:
 def _parameters_for(value: Any) -> list[dict[str, Any]]:
     try:
         signature = inspect.signature(value)
-    except (TypeError, ValueError):
+    except Exception:
         return []
 
     parameters: list[dict[str, Any]] = []

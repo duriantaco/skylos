@@ -1014,6 +1014,28 @@ class TestPhantomCall:
         assert l012[0]["name"] == "security.require_auth"
         assert l012[0]["simple_name"] == "require_auth"
 
+    def test_repo_local_module_attribute_call_phantom_for_stale_helper(self):
+        findings = scan_repo_code(
+            {
+                "billing/__init__.py": "",
+                "billing/totals.py": """
+                    def calculate_total(items):
+                        return sum(items)
+                """,
+                "billing/workflow.py": """
+                    from billing import totals
+
+                    def create_invoice(items):
+                        return totals.compute_total(items)
+                """,
+            }
+        )
+
+        l012 = [f for f in findings if f["rule_id"] == "SKY-L012"]
+        assert len(l012) == 1
+        assert l012[0]["name"] == "totals.compute_total"
+        assert l012[0]["simple_name"] == "compute_total"
+
     def test_repo_dynamic_module_not_flagged(self):
         findings = scan_repo_code(
             {

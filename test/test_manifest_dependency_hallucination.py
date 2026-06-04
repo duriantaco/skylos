@@ -10,7 +10,11 @@ from skylos.rules.danger.danger_hallucination.manifest_dependency_hallucination 
     STATUS_MISSING_VERSION,
     scan_manifest_dependency_hallucinations,
 )
-from skylos.rules.sca.vulnerability_scanner import ECOSYSTEM_GO, ECOSYSTEM_NPM
+from skylos.rules.sca.vulnerability_scanner import (
+    ECOSYSTEM_GO,
+    ECOSYSTEM_NPM,
+    ECOSYSTEM_PYPI,
+)
 
 
 def _status_checker(statuses, calls):
@@ -104,6 +108,34 @@ def test_scan_go_mod_flags_missing_go_module_and_version(tmp_path):
     assert any("github.com/no/module" in message for message in messages)
     assert any("github.com/real/pkg@9.9.9" in message for message in messages)
     assert (ECOSYSTEM_GO, "github.com/real/pkg", "1.2.3") in calls
+
+
+def test_scan_requirements_txt_flags_missing_pypi_version(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text(
+        "\n".join(
+            [
+                "requests==999.0.0",
+                "click==8.1.7",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+    statuses = {
+        (ECOSYSTEM_PYPI, "requests", "999.0.0"): STATUS_MISSING_VERSION,
+    }
+
+    findings = scan_manifest_dependency_hallucinations(
+        repo,
+        status_checker=_status_checker(statuses, calls),
+    )
+
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == RULE_ID_VERSION_HALLUCINATION
+    assert "requests@999.0.0" in findings[0]["message"]
+    assert (ECOSYSTEM_PYPI, "click", "8.1.7") in calls
 
 
 def test_scan_manifest_dependency_statuses_are_cached(tmp_path):
