@@ -13,8 +13,11 @@ from skylos.core.safe_cache_io import load_project_json_cache, save_project_json
 from skylos.rules.sca.vulnerability_scanner import (
     ECOSYSTEM_GO,
     ECOSYSTEM_NPM,
+    ECOSYSTEM_PYPI,
     parse_go_mod,
     parse_package_json,
+    parse_pyproject_toml,
+    parse_requirements_txt,
 )
 
 
@@ -34,7 +37,9 @@ MAX_VERSION_CACHE_BYTES = 5_000_000
 MAX_REGISTRY_RESPONSE_BYTES = 1_000_000
 NPM_REGISTRY_ORIGIN = "https://registry.npmjs.org"
 GO_PROXY_ORIGIN = "https://proxy.golang.org"
+PYPI_JSON_ORIGIN = "https://pypi.org/pypi"
 ALLOWED_REGISTRY_HOSTS = {
+    "pypi.org",
     "registry.npmjs.org",
     "proxy.golang.org",
 }
@@ -90,6 +95,8 @@ def check_dependency_version_status(
     version: str,
     cache: dict[str, Any],
 ) -> str:
+    if ecosystem == ECOSYSTEM_PYPI:
+        return _check_pypi_version(name, version)
     if ecosystem == ECOSYSTEM_NPM:
         return _check_npm_version(name, version)
     if ecosystem == ECOSYSTEM_GO:
@@ -115,6 +122,8 @@ def _status_checker(status_checker: StatusChecker | None) -> StatusChecker:
 def _collect_manifest_dependencies(root: Path) -> list[dict[str, Any]]:
     dependencies: list[dict[str, Any]] = []
     parsers = {
+        "requirements.txt": parse_requirements_txt,
+        "pyproject.toml": parse_pyproject_toml,
         "package.json": parse_package_json,
         "go.mod": parse_go_mod,
     }
@@ -307,11 +316,41 @@ def _finding(
 
 
 def _registry_label(ecosystem: str) -> str:
+    if ecosystem == ECOSYSTEM_PYPI:
+        return "PyPI"
     if ecosystem == ECOSYSTEM_NPM:
         return "the npm registry"
     if ecosystem == ECOSYSTEM_GO:
         return "the Go module proxy"
     return "the package registry"
+
+
+def _check_pypi_version(name: str, version: str) -> str:
+    package_path = _safe_pypi_package_path(name)
+    if package_path is None:
+        return STATUS_UNKNOWN
+
+    safe_version = quote(version.strip(), safe="")
+    version_url = f"{PYPI_JSON_ORIGIN}/{package_path}/{safe_version}/json"
+    try:
+        _fetch_json(version_url, user_agent="skylos-pypi-dep-scanner/1.0")
+        return STATUS_EXISTS
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            return STATUS_UNKNOWN
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return STATUS_UNKNOWN
+
+    package_url = f"{PYPI_JSON_ORIGIN}/{package_path}/json"
+    try:
+        _fetch_json(package_url, user_agent="skylos-pypi-dep-scanner/1.0")
+        return STATUS_MISSING_VERSION
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return STATUS_MISSING_PACKAGE
+        return STATUS_UNKNOWN
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return STATUS_UNKNOWN
 
 
 def _check_npm_version(name: str, version: str) -> str:
@@ -370,6 +409,27 @@ def _go_version(version: str) -> str:
     if version.startswith("v"):
         return version
     return f"v{version}"
+
+
+def _safe_pypi_package_path(name: str) -> str | None:
+    raw = name.strip()
+    if not raw:
+        return None
+    if raw.startswith("."):
+        return None
+    if "/" in raw:
+        return None
+    if "\\" in raw:
+        return None
+    if ".." in raw:
+        return None
+    for char in raw:
+        if char.isalnum():
+            continue
+        if char in ("-", "_", "."):
+            continue
+        return None
+    return quote(raw, safe="")
 
 
 def _safe_npm_package_path(name: str) -> str | None:

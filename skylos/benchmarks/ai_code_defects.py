@@ -506,7 +506,7 @@ def _prepared_case_path(
     scan: dict[str, Any],
 ) -> tuple[Path, tempfile.TemporaryDirectory[str] | None]:
     dependency_statuses = _dependency_status_entries(scan)
-    if not dependency_statuses:
+    if not dependency_statuses and not _include_danger_scan(scan):
         return case_path, None
 
     temp_case = tempfile.TemporaryDirectory(prefix="skylos-ai-defect-")
@@ -517,7 +517,8 @@ def _prepared_case_path(
         prepared_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(case_path, prepared_path)
 
-    _write_dependency_status_cache(prepared_path, dependency_statuses)
+    if dependency_statuses:
+        _write_dependency_status_cache(prepared_path, dependency_statuses)
     return prepared_path, temp_case
 
 

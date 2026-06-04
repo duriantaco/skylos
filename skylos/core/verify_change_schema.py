@@ -19,7 +19,6 @@ AI_VIBE_CATEGORIES = {
 AI_RULE_DEFAULTS = {
     "SKY-L011": ("disabled_security_control", "medium"),
     "SKY-D222": ("dependency_hallucination", "high"),
-    "SKY-D223": ("dependency_hallucination", "medium"),
     "SKY-D224": ("api_signature_hallucination", "high"),
     "SKY-D225": ("dependency_hallucination", "high"),
 }

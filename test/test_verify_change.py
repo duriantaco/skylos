@@ -122,6 +122,26 @@ def test_build_verify_change_response_applies_version_hallucination_defaults(tmp
     assert finding["ai_likelihood"] == "high"
 
 
+def test_build_verify_change_response_skips_dependency_import_defaults(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("import requests\n", encoding="utf-8")
+    result = {
+        "danger": [
+            {
+                "rule_id": "SKY-D223",
+                "severity": "MEDIUM",
+                "file": str(app),
+                "line": 1,
+                "message": "Undeclared import 'requests'.",
+            }
+        ]
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    assert payload["findings"] == []
+
+
 def test_build_verify_change_response_filters_target_file_and_range(tmp_path):
     app = tmp_path / "app.py"
     other = tmp_path / "other.py"

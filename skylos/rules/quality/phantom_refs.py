@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ast
+import builtins
 from collections import defaultdict
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
@@ -11,6 +13,7 @@ from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
 @dataclass
 class _ScopeInfo:
     shadowed_names: set[str]
+    bound_names: set[str]
     local_imports: dict[str, list[tuple[int, str]]]
 
 
@@ -45,6 +48,8 @@ def scan_repo_phantom_security_references(
     local_modules = set(module_to_file)
     if not local_modules:
         return []
+
+    builtin_names = set(dir(builtins))
 
     def _store_module_facts(module_name, tree):
         members, has_dynamic_getattr, exported_modules = _collect_module_facts(
@@ -82,6 +87,11 @@ def scan_repo_phantom_security_references(
     findings = []
 
     for file_path, current_module in file_to_module.items():
+        _ensure_module_loaded(current_module)
+
+    repo_member_names = _repo_member_names(module_members)
+
+    for file_path, current_module in file_to_module.items():
         if target_paths and file_path not in target_paths:
             continue
         try:
@@ -95,6 +105,21 @@ def scan_repo_phantom_security_references(
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    bare_finding = _bare_call_finding(
+                        file_path=file_path,
+                        node=node.func,
+                        tree=tree,
+                        parent_map=parent_map,
+                        scope_infos=scope_infos,
+                        repo_member_names=repo_member_names,
+                        builtin_names=builtin_names,
+                        phantom_security_names=vibe_dictionary.phantom_security_names,
+                    )
+                    if bare_finding is not None:
+                        findings.append(bare_finding)
+                    continue
+
                 resolved = _resolve_local_module_member(
                     expr=node.func,
                     node=node,
@@ -109,8 +134,6 @@ def scan_repo_phantom_security_references(
                     continue
 
                 target_module, member_name, expr_text = resolved
-                if member_name not in vibe_dictionary.phantom_security_names:
-                    continue
                 if not _ensure_module_loaded(target_module):
                     continue
                 if target_module in dynamic_modules:
@@ -135,7 +158,7 @@ def scan_repo_phantom_security_references(
                 continue
 
             for deco in node.decorator_list:
-                deco_target = deco.func if isinstance(deco, ast.Call) else deco
+                deco_target = _decorator_target(deco)
                 resolved = _resolve_local_module_member(
                     expr=deco_target,
                     node=deco_target,
@@ -170,6 +193,73 @@ def scan_repo_phantom_security_references(
                 )
 
     return findings
+
+
+def _repo_member_names(module_members):
+    names = set()
+    for members in module_members.values():
+        names.update(members)
+    return names
+
+
+def _bare_call_finding(
+    file_path,
+    node,
+    tree,
+    parent_map,
+    scope_infos,
+    repo_member_names,
+    builtin_names,
+    phantom_security_names,
+):
+    name = node.id
+    if name in builtin_names:
+        return None
+    if name in phantom_security_names:
+        return None
+    if _bare_name_is_bound(name, node, tree, parent_map, scope_infos):
+        return None
+    if not _resembles_local_symbol(name, repo_member_names):
+        return None
+    return _build_bare_call_finding(file_path, node, name)
+
+
+def _bare_name_is_bound(name, node, tree, parent_map, scope_infos):
+    for scope in _enclosing_scopes(node, tree, parent_map):
+        info = scope_infos.get(scope)
+        if not info:
+            continue
+        if name in info.bound_names:
+            return True
+    return False
+
+
+def _resembles_local_symbol(name, repo_member_names):
+    for candidate in repo_member_names:
+        if candidate == name:
+            continue
+        if _shared_suffix_token(name, candidate):
+            return True
+        similarity = SequenceMatcher(None, name, candidate).ratio()
+        if similarity >= 0.82:
+            return True
+    return False
+
+
+def _shared_suffix_token(left, right):
+    left_parts = left.split("_")
+    right_parts = right.split("_")
+    if len(left_parts) < 2:
+        return False
+    if len(right_parts) < 2:
+        return False
+    return left_parts[-1] == right_parts[-1]
+
+
+def _decorator_target(decorator):
+    if isinstance(decorator, ast.Call):
+        return decorator.func
+    return decorator
 
 
 def _module_name(root: Path, file_path: Path) -> str:
@@ -230,7 +320,10 @@ def _collect_module_facts(tree, current_module, local_modules):
                     continue
                 bound_name = alias.asname or alias.name
                 members.add(bound_name)
-                full_name = f"{base}.{alias.name}" if base else alias.name
+                if base:
+                    full_name = f"{base}.{alias.name}"
+                else:
+                    full_name = alias.name
                 if full_name in local_modules:
                     exported_modules[bound_name] = full_name
 
@@ -257,10 +350,13 @@ def _build_scope_infos(tree, current_module, local_modules):
 
 def _collect_scope_info(scope_node, current_module, local_modules):
     shadowed = set()
+    bound = set()
     local_imports = defaultdict(list)
 
     if isinstance(scope_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        shadowed.update(_extract_args_names(scope_node.args))
+        arg_names = _extract_args_names(scope_node.args)
+        shadowed.update(arg_names)
+        bound.update(arg_names)
 
     class ScopeCollector(ast.NodeVisitor):
         def generic_visit(self, node):
@@ -270,7 +366,11 @@ def _collect_scope_info(scope_node, current_module, local_modules):
         def visit_Import(self, node):
             for alias in node.names:
                 bound_name = alias.asname or alias.name.split(".", 1)[0]
-                full_name = alias.name if alias.asname else alias.name.split(".", 1)[0]
+                bound.add(bound_name)
+                if alias.asname:
+                    full_name = alias.name
+                else:
+                    full_name = alias.name.split(".", 1)[0]
                 if full_name in local_modules:
                     local_imports[bound_name].append((node.lineno, full_name))
 
@@ -279,7 +379,11 @@ def _collect_scope_info(scope_node, current_module, local_modules):
             for alias in node.names:
                 if alias.name == "*":
                     continue
-                full_name = f"{base}.{alias.name}" if base else alias.name
+                bound.add(alias.asname or alias.name)
+                if base:
+                    full_name = f"{base}.{alias.name}"
+                else:
+                    full_name = alias.name
                 if full_name in local_modules:
                     local_imports[alias.asname or alias.name].append(
                         (node.lineno, full_name)
@@ -287,24 +391,34 @@ def _collect_scope_info(scope_node, current_module, local_modules):
 
         def visit_Assign(self, node):
             for target in node.targets:
-                shadowed.update(_extract_target_names(target))
+                names = _extract_target_names(target)
+                shadowed.update(names)
+                bound.update(names)
             self.generic_visit(node.value)
 
         def visit_AnnAssign(self, node):
-            shadowed.update(_extract_target_names(node.target))
+            names = _extract_target_names(node.target)
+            shadowed.update(names)
+            bound.update(names)
             if node.value:
                 self.generic_visit(node.value)
 
         def visit_AugAssign(self, node):
-            shadowed.update(_extract_target_names(node.target))
+            names = _extract_target_names(node.target)
+            shadowed.update(names)
+            bound.update(names)
             self.generic_visit(node.value)
 
         def visit_NamedExpr(self, node):
-            shadowed.update(_extract_target_names(node.target))
+            names = _extract_target_names(node.target)
+            shadowed.update(names)
+            bound.update(names)
             self.generic_visit(node.value)
 
         def visit_For(self, node):
-            shadowed.update(_extract_target_names(node.target))
+            names = _extract_target_names(node.target)
+            shadowed.update(names)
+            bound.update(names)
             self.generic_visit(node.iter)
             for stmt in node.body:
                 self.visit(stmt)
@@ -316,7 +430,9 @@ def _collect_scope_info(scope_node, current_module, local_modules):
         def visit_With(self, node):
             for item in node.items:
                 if item.optional_vars is not None:
-                    shadowed.update(_extract_target_names(item.optional_vars))
+                    names = _extract_target_names(item.optional_vars)
+                    shadowed.update(names)
+                    bound.update(names)
                 self.visit(item.context_expr)
             for stmt in node.body:
                 self.visit(stmt)
@@ -326,6 +442,7 @@ def _collect_scope_info(scope_node, current_module, local_modules):
         def visit_ExceptHandler(self, node):
             if node.name:
                 shadowed.add(node.name)
+                bound.add(node.name)
             if node.type:
                 self.visit(node.type)
             for stmt in node.body:
@@ -333,11 +450,13 @@ def _collect_scope_info(scope_node, current_module, local_modules):
 
         def visit_FunctionDef(self, node):
             shadowed.add(node.name)
+            bound.add(node.name)
 
         visit_AsyncFunctionDef = visit_FunctionDef
 
         def visit_ClassDef(self, node):
             shadowed.add(node.name)
+            bound.add(node.name)
 
         def visit_Lambda(self, node):
             return
@@ -354,6 +473,7 @@ def _collect_scope_info(scope_node, current_module, local_modules):
 
     return _ScopeInfo(
         shadowed_names=shadowed,
+        bound_names=bound,
         local_imports={k: sorted(v) for k, v in local_imports.items()},
     )
 
@@ -455,12 +575,16 @@ def _is_decorator_expression(child, parent):
 
 def _resolve_import_from_base(current_module, node):
     module = node.module or ""
-    cur_pkg = (
-        current_module.rsplit(".", 1)[0] if "." in current_module else current_module
-    )
+    if "." in current_module:
+        cur_pkg = current_module.rsplit(".", 1)[0]
+    else:
+        cur_pkg = current_module
 
     if node.level and node.level > 0:
-        parts = cur_pkg.split(".") if cur_pkg else []
+        if cur_pkg:
+            parts = cur_pkg.split(".")
+        else:
+            parts = []
         up = node.level - 1
 
         if up > len(parts):
@@ -469,7 +593,10 @@ def _resolve_import_from_base(current_module, node):
             base = ".".join(parts[: len(parts) - up])
 
         if module:
-            base = f"{base}.{module}" if base else module
+            if base:
+                base = f"{base}.{module}"
+            else:
+                base = module
         return base
 
     return module
@@ -530,6 +657,30 @@ def _build_call_finding(file_path, node, expr_text, target_module, member_name):
             f"Call to '{expr_text}()' resolves to local module '{target_module}', "
             f"but '{member_name}' is not defined or re-exported there. "
             f"AI-generated code often hallucinates security helpers on local modules."
+        ),
+        "file": str(file_path),
+        "basename": file_path.name,
+        "line": node.lineno,
+        "col": node.col_offset,
+        "vibe_category": "hallucinated_reference",
+        "ai_likelihood": "high",
+    }
+
+
+def _build_bare_call_finding(file_path, node, name):
+    return {
+        "rule_id": "SKY-L012",
+        "kind": "logic",
+        "severity": "CRITICAL",
+        "type": "call",
+        "name": name,
+        "simple_name": name,
+        "value": "phantom",
+        "threshold": 0,
+        "message": (
+            f"Call to '{name}()' is not defined or imported, but it resembles "
+            "another local project symbol. AI-generated code often leaves stale "
+            "function names after partial refactors."
         ),
         "file": str(file_path),
         "basename": file_path.name,

@@ -428,6 +428,29 @@ def test_ai_code_defect_runner_seeds_dependency_status_cache():
     assert not prepared_paths[0].exists()
 
 
+def test_ai_code_defect_runner_isolates_danger_cases_without_status_cache():
+    prepared_paths = []
+
+    def fake_verify(case_path, **_kwargs):
+        prepared_path = Path(case_path)
+        prepared_paths.append(prepared_path)
+        cache_path = prepared_path / ".skylos" / "cache" / "dependency_versions.json"
+        assert not cache_path.exists()
+        return {"findings": []}
+
+    summary = run_manifest(
+        MANIFEST_PATH,
+        selected_cases={"clean-api-signature"},
+        verify_func=fake_verify,
+    )
+
+    assert summary["case_count"] == 1
+    assert summary["pass_count"] == 1
+    assert prepared_paths
+    assert prepared_paths[0].parent.name.startswith("skylos-ai-defect-")
+    assert not prepared_paths[0].exists()
+
+
 def test_ai_code_defect_runner_reports_missing_expectation(monkeypatch):
     def fake_verify(_case_path, **_kwargs):
         return {"findings": []}
