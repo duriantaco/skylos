@@ -1,0 +1,2 @@
+requests==999.0.0
+openai==2.23.0

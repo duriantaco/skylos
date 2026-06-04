@@ -1,0 +1,282 @@
+{
+  "version": 1,
+  "name": "Skylos Verify Benchmark v0.1",
+  "description": "Neutral-label benchmark for black-box evaluation of AI-code verification tools.",
+  "methodology_sources": [
+    {
+      "name": "OWASP Benchmark",
+      "url": "https://owasp.org/www-project-benchmark/",
+      "principle": "Per-case expected true/false labels and scoreable tool output."
+    },
+    {
+      "name": "NIST SAMATE/SARD",
+      "url": "https://www.nist.gov/itl/csd/secure-systems-and-applications/samate",
+      "principle": "Known-bad and known-good artifacts with documented weaknesses."
+    },
+    {
+      "name": "SWE-bench",
+      "url": "https://arxiv.org/abs/2310.06770",
+      "principle": "Realistic software-engineering task framing from repository context."
+    }
+  ],
+  "cases": [
+    {
+      "id": "stale-helper-after-auth-refactor",
+      "title": "Stale helper name after an auth refactor",
+      "path": "fixtures/stale_helper_after_auth_refactor",
+      "scenario": "A generated request handler calls an auth helper that sounds plausible but was never implemented after a refactor.",
+      "origin": {
+        "type": "synthetic_mutation",
+        "basis": "Common agent edit pattern: renamed helper in one module, stale reference in another."
+      },
+      "scan": {
+        "project_context": true,
+        "confidence": 60
+      },
+      "expected_findings": [
+        {
+          "kind": "phantom_reference",
+          "file_contains": "service/handlers.py",
+          "evidence": ["require_step_up"]
+        }
+      ],
+      "forbidden_findings": []
+    },
+    {
+      "id": "requests-strict-keyword-drift",
+      "title": "Invented keyword arguments on a strict installed API",
+      "path": "fixtures/requests_strict_keyword_drift",
+      "scenario": "Generated code uses real requests APIs with invented retry/body keyword arguments.",
+      "origin": {
+        "type": "synthetic_mutation",
+        "basis": "Known SDK drift pattern: valid package and callable, invalid call signature."
+      },
+      "scan": {
+        "project_context": true,
+        "dependency_hallucinations": true,
+        "confidence": 60
+      },
+      "expected_findings": [
+        {
+          "kind": "api_signature",
+          "file_contains": "client.py",
+          "evidence": ["retry_policy"]
+        },
+        {
+          "kind": "api_signature",
+          "file_contains": "client.py",
+          "evidence": ["json_body"]
+        }
+      ],
+      "forbidden_findings": []
+    },
+    {
+      "id": "openai-sdk-member-drift",
+      "title": "Invented method on an installed SDK client",
+      "path": "fixtures/openai_sdk_member_drift",
+      "scenario": "Generated code calls a plausible OpenAI SDK convenience method that is not part of the installed SDK surface.",
+      "origin": {
+        "type": "synthetic_mutation",
+        "basis": "Common agent failure: method is plausible from product concepts but absent in the installed package."
+      },
+      "scan": {
+        "project_context": true,
+        "dependency_hallucinations": true,
+        "confidence": 60
+      },
+      "expected_findings": [
+        {
+          "kind": "api_signature",
+          "file_contains": "summarizer.py",
+          "evidence": ["parse_json"]
+        }
+      ],
+      "forbidden_findings": []
+    },
+    {
+      "id": "python-requirements-version-drift",
+      "title": "Python dependency version does not exist",
+      "path": "fixtures/python_requirements_version_drift",
+      "scenario": "Generated requirements pin a real package to a version that does not exist.",
+      "origin": {
+        "type": "synthetic_mutation",
+        "basis": "Dependency hallucination pattern: package exists, version is invented."
+      },
+      "scan": {
+        "dependency_hallucinations": true,
+        "confidence": 60
+      },
+      "expected_findings": [
+        {
+          "kind": "dependency_version",
+          "file_contains": "requirements.txt",
+          "evidence": ["requests", "999.0.0"]
+        }
+      ],
+      "forbidden_findings": []
+    },
+    {
+      "id": "npm-workspace-version-drift",
+      "title": "Nested npm workspace pins a real package to an invented version",
+      "path": "fixtures/npm_workspace_version_drift",
+      "scenario": "A nested workspace manifest pins lodash to a version that should not exist.",
+      "origin": {
+        "type": "synthetic_mutation",
+        "basis": "Monorepo package edit with a plausible but invalid version."
+      },
+      "scan": {
+        "dependency_hallucinations": true,
+        "confidence": 60
+      },
+      "expected_findings": [
+        {
+          "kind": "dependency_version",
+          "file_contains": "packages/web/package.json",
+          "evidence": ["lodash", "99.99.99"]
+        }
+      ],
+      "forbidden_findings": []
+    },
+    {
+      "id": "compound-partial-agent-edit",
+      "title": "Compound partial edit with stale symbol, unfinished function, and SDK drift",
+      "path": "fixtures/compound_partial_agent_edit",
+      "scenario": "A generated billing edit mixes a stale local function name, an unfinished stub, and an invalid requests keyword.",
+      "origin": {
+        "type": "synthetic_mutation",
+        "basis": "Common multi-turn agent failure: several plausible edits are half-applied."
+      },
+      "scan": {
+        "project_context": true,
+        "dependency_hallucinations": true,
+        "confidence": 60
+      },
+      "expected_findings": [
+        {
+          "kind": "phantom_reference",
+          "file_contains": "billing/workflow.py",
+          "evidence": ["compute_total"]
+        },
+        {
+          "kind": "incomplete_generation",
+          "file_contains": "billing/workflow.py",
+          "evidence": ["send_receipt"]
+        },
+        {
+          "kind": "api_signature",
+          "file_contains": "billing/workflow.py",
+          "evidence": ["backoff_policy"]
+        }
+      ],
+      "forbidden_findings": []
+    },
+    {
+      "id": "range-selected-clean-region",
+      "title": "Selected range is clean although later generated code is broken",
+      "path": "fixtures/range_selected_clean_region",
+      "scenario": "The file contains a later phantom call, but the selected range covers only a clean helper.",
+      "origin": {
+        "type": "synthetic_mutation",
+        "basis": "Diff-scoped verification precision case."
+      },
+      "scan": {
+        "range": "1:7",
+        "project_context": true,
+        "confidence": 60
+      },
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "kind": "phantom_reference",
+          "file_contains": "view.py",
+          "evidence": ["normalize_payload"]
+        }
+      ]
+    },
+    {
+      "id": "file-scoped-multi-module",
+      "title": "File scope should suppress unrelated module defects",
+      "path": "fixtures/file_scoped_multi_module",
+      "scenario": "A project has defects in two modules, but verification is scoped to the edited API module.",
+      "origin": {
+        "type": "synthetic_mutation",
+        "basis": "File-scoped verification precision case."
+      },
+      "scan": {
+        "file": "src/api.py",
+        "project_context": true,
+        "confidence": 60
+      },
+      "expected_findings": [
+        {
+          "kind": "phantom_reference",
+          "file_contains": "src/api.py",
+          "evidence": ["require_admin"]
+        }
+      ],
+      "forbidden_findings": [
+        {
+          "kind": "incomplete_generation",
+          "file_contains": "src/jobs.py",
+          "evidence": ["rebuild_index"]
+        }
+      ]
+    },
+    {
+      "id": "clean-requests-service",
+      "title": "Clean generated requests service",
+      "path": "fixtures/clean_requests_service",
+      "scenario": "Generated service code uses local helpers and requests with accepted arguments.",
+      "origin": {
+        "type": "clean_control",
+        "basis": "False-positive guard for common requests usage."
+      },
+      "scan": {
+        "project_context": true,
+        "confidence": 60
+      },
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "kind": "phantom_reference",
+          "file_contains": "service.py"
+        },
+        {
+          "kind": "api_signature",
+          "file_contains": "service.py"
+        },
+        {
+          "kind": "incomplete_generation",
+          "file_contains": "service.py"
+        }
+      ]
+    },
+    {
+      "id": "clean-npm-workspace",
+      "title": "Clean nested npm workspace",
+      "path": "fixtures/clean_npm_workspace",
+      "scenario": "Nested workspace manifest uses a known-good lodash version.",
+      "origin": {
+        "type": "clean_control",
+        "basis": "False-positive guard for dependency version checks."
+      },
+      "scan": {
+        "dependency_hallucinations": true,
+        "confidence": 60
+      },
+      "expected_findings": [],
+      "forbidden_findings": [
+        {
+          "kind": "dependency_version",
+          "file_contains": "packages/web/package.json",
+          "evidence": ["lodash"]
+        },
+        {
+          "kind": "dependency_package",
+          "file_contains": "packages/web/package.json",
+          "evidence": ["lodash"]
+        }
+      ]
+    }
+  ]
+}

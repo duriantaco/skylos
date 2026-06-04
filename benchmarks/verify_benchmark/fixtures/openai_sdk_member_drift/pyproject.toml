@@ -1,0 +1,6 @@
+[project]
+name = "openai-sdk-member-drift"
+version = "0.1.0"
+dependencies = [
+  "openai==2.23.0",
+]

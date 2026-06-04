@@ -1,0 +1,7 @@
+{
+  "name": "@example/web",
+  "private": true,
+  "dependencies": {
+    "lodash": "99.99.99"
+  }
+}
