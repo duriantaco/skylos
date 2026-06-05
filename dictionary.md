@@ -123,6 +123,9 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D252 | MEDIUM | Insecure cookie flags | TS/JS, Go, Java | CWE-614 |
 | D253 | MEDIUM | Timing-unsafe comparison | TS/JS, Java | CWE-208 |
 | D260 | HIGH-CRITICAL | Prompt injection scanner | Text, config, prompt, and source files | AI supply-chain |
+| D261 | HIGH | Untrusted input to LLM prompt | Python | OWASP LLM01 |
+| D262 | CRITICAL | Unsafe LLM output handling | Python | OWASP LLM05 |
+| D263 | HIGH | Sensitive data sent to LLM | Python | OWASP LLM02 |
 | D270 | MEDIUM | Sensitive data in `localStorage` / `sessionStorage` | TS/JS | CWE-922 |
 | D271 | MEDIUM | Error information disclosure in HTTP responses | TS/JS | CWE-209 |
 | D280 | HIGH | Next.js mutating API route missing auth checks | TS/JS | A01 |
@@ -143,6 +146,14 @@ Finding types:
 - `obfuscated_payload`: encoded string that decodes to injection content.
 - `mixed_script`: Cyrillic or Greek homoglyphs mixed with Latin text.
 - `risky_placement`: injection in a high-risk README, prompt field, YAML, or JSON field.
+
+### AI Application Security
+
+| ID | Severity | Name | Languages | Details |
+|:---|:---|:---|:---|:---|
+| D261 | HIGH | Untrusted input to LLM prompt | Python | Request-controlled data reaches an LLM prompt or message without a clear instruction/data boundary |
+| D262 | CRITICAL | Unsafe LLM output handling | Python | Model output flows into code execution, shell, SQL, or network sinks without validation |
+| D263 | HIGH | Sensitive data sent to LLM | Python | Secrets, credential fields, or sensitive environment values flow into LLM or embedding API input |
 
 ### MCP Server Security
 
