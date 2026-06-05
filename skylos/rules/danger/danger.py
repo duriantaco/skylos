@@ -15,6 +15,7 @@ from .danger_jwt.jwt_flow import scan as scan_jwt
 from .danger_access.access_flow import scan as scan_access
 from .danger_mcp.mcp_flow import scan as scan_mcp
 from .danger_webhook.webhook_flow import scan as scan_webhook
+from .danger_agent.tool_privilege import scan as scan_agent_tool_privilege
 from .danger_llm.llm_flow import scan as scan_llm
 from .danger_ml.model_deserialization import scan as scan_ml_model_load
 from .danger_hallucination.dependency_hallucination import (
@@ -344,6 +345,25 @@ _LLM_TOKENS = (
     "generatetext",
     "streamtext",
 )
+_AGENT_TOOL_TOKENS = (
+    "agentexecutor",
+    "code_interpreter",
+    "computer_use_preview",
+    "create_openai_functions_agent",
+    "create_openai_tools_agent",
+    "create_react_agent",
+    "create_structured_chat_agent",
+    "crewai",
+    "initialize_agent",
+    "load_tools",
+    "pythonastrepltool",
+    "pythonrepltool",
+    "shelltool",
+    "structuredtool",
+    "tool(",
+    "tools=",
+    "tools =",
+)
 _ML_MODEL_LOAD_TOKENS = (
     "torch.load",
     "weights_only",
@@ -464,6 +484,7 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_access(tree, file_path, findings)
         scan_mcp(tree, file_path, findings)
         scan_webhook(tree, file_path, findings)
+        scan_agent_tool_privilege(tree, file_path, findings)
         scan_llm(tree, file_path, findings)
         scan_ml_model_load(tree, file_path, findings)
         _PythonCommandExfilChecker(file_path, findings).visit(tree)
@@ -496,6 +517,8 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         str(file_path).lower(), _WEBHOOK_TOKENS
     ):
         scan_webhook(tree, file_path, findings, source=source)
+    if _has_any(source_lower, _AGENT_TOOL_TOKENS):
+        scan_agent_tool_privilege(tree, file_path, findings)
     if _has_any(source_lower, _LLM_TOKENS):
         scan_llm(tree, file_path, findings)
     if _has_any(source_lower, _ML_MODEL_LOAD_TOKENS):

@@ -126,6 +126,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D261 | HIGH | Untrusted input to LLM prompt | Python | OWASP LLM01 |
 | D262 | CRITICAL | Unsafe LLM output handling | Python | OWASP LLM05 |
 | D263 | HIGH | Sensitive data sent to LLM | Python | OWASP LLM02 |
+| D264 | HIGH | Excessive agent tool privilege | Python | OWASP LLM06 |
 | D265 | HIGH-CRITICAL | Unsafe ML model deserialization | Python | OWASP LLM04 |
 | D266 | CRITICAL | AI config instruction injection | Agent config and instruction files | OWASP LLM01 |
 | D270 | MEDIUM | Sensitive data in `localStorage` / `sessionStorage` | TS/JS | CWE-922 |
@@ -156,6 +157,7 @@ Finding types:
 | D261 | HIGH | Untrusted input to LLM prompt | Python | Request-controlled data reaches an LLM prompt or message without a clear instruction/data boundary |
 | D262 | CRITICAL | Unsafe LLM output handling | Python | Model output flows into code execution, shell, SQL, or network sinks without validation |
 | D263 | HIGH | Sensitive data sent to LLM | Python | Secrets, credential fields, or sensitive environment values flow into LLM or embedding API input |
+| D264 | HIGH | Excessive agent tool privilege | Python | Agent frameworks are granted shell, code execution, unrestricted HTTP, or broad file-management tools |
 | D265 | HIGH-CRITICAL | Unsafe ML model deserialization | Python | Pickle-backed model/checkpoint loading such as `torch.load`, `joblib.load`, or `numpy.load(..., allow_pickle=True)` |
 | D266 | CRITICAL | AI config instruction injection | Agent config and instruction files | D260-style hidden, obfuscated, or instruction-override payloads in AI assistant rule/config files |
 
