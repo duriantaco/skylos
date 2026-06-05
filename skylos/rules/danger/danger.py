@@ -15,6 +15,7 @@ from .danger_jwt.jwt_flow import scan as scan_jwt
 from .danger_access.access_flow import scan as scan_access
 from .danger_mcp.mcp_flow import scan as scan_mcp
 from .danger_webhook.webhook_flow import scan as scan_webhook
+from .danger_llm.llm_flow import scan as scan_llm
 from .danger_hallucination.dependency_hallucination import (
     scan_python_dependency_hallucinations,
 )
@@ -318,6 +319,30 @@ _CORS_TOKENS = (
 _JWT_TOKENS = ("jwt", "verify_signature", "algorithms")
 _MCP_TOKENS = ("mcp", "fastmcp")
 _WEBHOOK_TOKENS = ("webhook", "webhooks")
+_LLM_TOKENS = (
+    "openai",
+    "anthropic",
+    "litellm",
+    "chatopenai",
+    "llmchain",
+    "langchain",
+    "llama_index",
+    "huggingface_hub",
+    "inferenceclient",
+    "genai",
+    "generativeai",
+    "cohere",
+    "bedrock",
+    "invoke_model",
+    "chat.completions.create",
+    "responses.create",
+    "embeddings.create",
+    "messages.create",
+    "generate_text",
+    "stream_text",
+    "generatetext",
+    "streamtext",
+)
 _HTTP_UPLOAD_CALLS = {
     "httpx.patch",
     "httpx.post",
@@ -421,6 +446,7 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_access(tree, file_path, findings)
         scan_mcp(tree, file_path, findings)
         scan_webhook(tree, file_path, findings)
+        scan_llm(tree, file_path, findings)
         _PythonCommandExfilChecker(file_path, findings).visit(tree)
         return
 
@@ -451,6 +477,8 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         str(file_path).lower(), _WEBHOOK_TOKENS
     ):
         scan_webhook(tree, file_path, findings, source=source)
+    if _has_any(source_lower, _LLM_TOKENS):
+        scan_llm(tree, file_path, findings)
     if _has_any(
         source_lower,
         (
