@@ -2891,15 +2891,15 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
 
-            # --- SKY-D260: Prompt injection scanner (multi-file) ---
-            if "SKY-D260" not in project_ignore:
+            # --- SKY-D260/D266: Prompt injection scanner (multi-file) ---
+            if {"SKY-D260", "SKY-D266"} - set(project_ignore):
                 if progress_callback:
                     progress_callback(0, 1, Path("PHASE: prompt injection scan"))
                 try:
                     from skylos.security.injection_scanner import (
                         MAX_SCAN_FILES as _INJECTION_MAX_SCAN_FILES,
                         MAX_SCAN_FINDINGS as _INJECTION_MAX_SCAN_FINDINGS,
-                        SCANNABLE_EXTENSIONS,
+                        is_scannable_path as _injection_is_scannable_path,
                         scan_file as _injection_scan_file,
                     )
 
@@ -2921,6 +2921,11 @@ class Skylos:
                         "prompts.md",
                         "prompts.yaml",
                         "prompts.yml",
+                        "AGENTS.md",
+                        "CLAUDE.md",
+                        ".cursorrules",
+                        ".clinerules",
+                        ".windsurfrules",
                     )
                     high_priority_injection_dirs = (
                         "",
@@ -2929,6 +2934,13 @@ class Skylos:
                         "prompts",
                         "config",
                         "configs",
+                        ".github",
+                        ".continue",
+                    )
+                    agent_instruction_globs = (
+                        ".cursor/rules/*.mdc",
+                        ".continue/**/*",
+                        ".aider*",
                     )
 
                     def _add_injection_candidate(candidate):
@@ -2937,7 +2949,14 @@ class Skylos:
                         candidate_path = Path(candidate)
                         if not candidate_path.is_absolute():
                             candidate_path = injection_root / candidate_path
-                        if candidate_path.suffix.lower() not in SCANNABLE_EXTENSIONS:
+                        rel_hint = None
+                        try:
+                            rel_hint = candidate_path.relative_to(injection_root)
+                        except ValueError:
+                            pass
+                        if not _injection_is_scannable_path(
+                            candidate_path, rel_hint or candidate_path
+                        ):
                             return False
                         try:
                             resolved_path = candidate_path.resolve()
@@ -2969,6 +2988,16 @@ class Skylos:
                                 _add_injection_candidate(
                                     injection_root / base_dir / filename
                                 )
+                        for pattern in agent_instruction_globs:
+                            if len(injection_candidates) >= _INJECTION_MAX_SCAN_FILES:
+                                break
+                            for candidate in injection_root.glob(pattern):
+                                if (
+                                    len(injection_candidates)
+                                    >= _INJECTION_MAX_SCAN_FILES
+                                ):
+                                    break
+                                _add_injection_candidate(candidate)
                         if injection_root.is_dir():
                             pending_dirs = [injection_root]
                             excluded_dirs = set(exclude_folders or [])
@@ -3004,10 +3033,7 @@ class Skylos:
                                         except OSError:
                                             continue
 
-                                        if (
-                                            Path(entry.name).suffix.lower()
-                                            in SCANNABLE_EXTENSIONS
-                                        ):
+                                        if _injection_is_scannable_path(entry.path):
                                             _add_injection_candidate(entry.path)
                                 finally:
                                     entries.close()
@@ -3022,7 +3048,11 @@ class Skylos:
                         inj_hits = _injection_scan_file(f, scan_path=scan_path)
                         if inj_hits:
                             remaining = _INJECTION_MAX_SCAN_FINDINGS - injection_findings
-                            bounded_hits = inj_hits[:remaining]
+                            bounded_hits = [
+                                hit
+                                for hit in inj_hits
+                                if hit.get("rule_id") not in project_ignore
+                            ][:remaining]
                             all_dangers.extend(bounded_hits)
                             injection_findings += len(bounded_hits)
                 except Exception:

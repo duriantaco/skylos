@@ -12,6 +12,11 @@ from skylos.security.canonicalize import (
     strip_zero_width,
 )
 from skylos.constants import DEFAULT_EXCLUDE_FOLDERS
+from skylos.security.agent_instruction_paths import (
+    agent_rule_id,
+    agent_severity,
+    is_agent_instruction_path,
+)
 
 RULE_ID = "SKY-D260"
 
@@ -109,12 +114,19 @@ def scan_file(
     if not filepath.is_file():
         return []
 
-    ext = filepath.suffix.lower()
-    if ext not in SCANNABLE_EXTENSIONS:
+    if scan_path is not None:
+        display_path = Path(scan_path)
+    else:
+        display_path = filepath
+    is_agent_instruction = is_agent_instruction_path(display_path)
+    if not is_scannable_path(filepath, display_path):
         return []
 
+    ext = filepath.suffix.lower()
     basename = filepath.name
-    if any(basename.startswith(p) for p in _SKIP_PREFIXES):
+    if not is_agent_instruction and any(
+        basename.startswith(p) for p in _SKIP_PREFIXES
+    ):
         return []
 
     try:
@@ -139,22 +151,26 @@ def scan_file(
                 filepath,
                 line_no,
                 "hidden_char",
-                "HIGH",
+                agent_severity("HIGH", is_agent_instruction),
                 char_hex,
                 char_hex,
                 f"Invisible Unicode character {char_hex} found. "
                 f"Zero-width characters in source code can hide "
                 f"prompt injection payloads from human reviewers.",
+                rule_id=agent_rule_id(is_agent_instruction, RULE_ID),
             )
         )
         if len(findings) >= MAX_FINDINGS_PER_FILE:
             return findings
 
-    _add_source_homoglyph_findings(findings, filepath, source)
+    _add_source_homoglyph_findings(findings, filepath, source, is_agent_instruction)
     if len(findings) >= MAX_FINDINGS_PER_FILE:
         return findings
 
-    segments = _extract_segments(source, ext, filepath)
+    segment_ext = ext
+    if is_agent_instruction and ext not in SCANNABLE_EXTENSIONS:
+        segment_ext = ".md"
+    segments = _extract_segments(source, segment_ext, filepath)
 
     is_high_risk_file = basename.lower() in _HIGH_RISK_FILENAMES
     seen_findings: set[tuple[int, str]] = set()
@@ -167,6 +183,7 @@ def scan_file(
                 severity = _adjust_severity(
                     base_severity, segment_type, is_high_risk_file
                 )
+                severity = agent_severity(severity, is_agent_instruction)
 
                 finding_type = "literal_payload"
                 if segment_type == "html_comment":
@@ -193,6 +210,7 @@ def scan_file(
                         "prompt_injection",
                         f"Prompt injection pattern in {segment_type}: '{snippet}'. "
                         f"This may attempt to manipulate AI agents processing this content.",
+                        rule_id=agent_rule_id(is_agent_instruction, RULE_ID),
                     )
                 )
                 if len(findings) >= MAX_FINDINGS_PER_FILE:
@@ -210,12 +228,13 @@ def scan_file(
                         filepath,
                         line_no,
                         "obfuscated_payload",
-                        "HIGH",
+                        agent_severity("HIGH", is_agent_instruction),
                         "prompt_injection",
                         "base64",
                         f"Base64-encoded string decodes to prompt injection: '{snippet}'. "
                         f"Encoded payloads bypass human review while remaining effective "
                         f"against AI agents.",
+                        rule_id=agent_rule_id(is_agent_instruction, RULE_ID),
                     )
                 )
                 if len(findings) >= MAX_FINDINGS_PER_FILE:
@@ -238,12 +257,16 @@ def scan_directory(
             break
         if not filepath.is_file():
             continue
-        if filepath.suffix.lower() not in SCANNABLE_EXTENSIONS:
-            continue
 
         rel = filepath.relative_to(root)
+        if not is_scannable_path(filepath, rel):
+            continue
         parts = rel.parts
-        if any(p in all_excludes or p.startswith(".") for p in parts[:-1]):
+        if any(p in all_excludes for p in parts[:-1]):
+            continue
+        if any(p.startswith(".") for p in parts[:-1]) and not is_agent_instruction_path(
+            rel
+        ):
             continue
 
         files_scanned += 1
@@ -375,6 +398,7 @@ def _add_path_homoglyph_findings(
     findings: list[dict], filepath: Path, scan_path: str | Path
 ) -> None:
     path_text = Path(scan_path).as_posix()
+    is_agent_instruction = is_agent_instruction_path(scan_path)
     for char, ascii_like, _line_no in detect_homoglyphs(path_text):
         char_hex = f"U+{ord(char):04X}"
         findings.append(
@@ -382,19 +406,23 @@ def _add_path_homoglyph_findings(
                 filepath,
                 1,
                 "mixed_script_path",
-                "MEDIUM",
+                agent_severity("MEDIUM", is_agent_instruction),
                 char_hex,
                 f"{char}→{ascii_like}",
                 f"Non-ASCII character '{char}' (U+{ord(char):04X}) in path "
                 f"'{path_text}' visually resembles ASCII '{ascii_like}'. "
                 f"Mixed-script paths can hide lookalike modules from human reviewers.",
+                rule_id=agent_rule_id(is_agent_instruction, RULE_ID),
             )
         )
         return
 
 
 def _add_source_homoglyph_findings(
-    findings: list[dict], filepath: Path, source: str
+    findings: list[dict],
+    filepath: Path,
+    source: str,
+    is_agent_instruction: bool,
 ) -> None:
     seen_lines: set[int] = set()
     for char, ascii_like, line_no in detect_homoglyphs(source):
@@ -409,12 +437,13 @@ def _add_source_homoglyph_findings(
                 filepath,
                 line_no,
                 "mixed_script",
-                "MEDIUM",
+                agent_severity("MEDIUM", is_agent_instruction),
                 char_hex,
                 f"{char}→{ascii_like}",
                 f"Non-ASCII character '{char}' (U+{ord(char):04X}) visually resembles "
                 f"ASCII '{ascii_like}'. Mixed-script text can hide instructions "
                 f"from human reviewers while remaining readable to AI agents.",
+                rule_id=agent_rule_id(is_agent_instruction, RULE_ID),
             )
         )
 
@@ -443,9 +472,11 @@ def _make_finding(
     name: str,
     simple_name: str,
     message: str,
+    *,
+    rule_id: str = RULE_ID,
 ) -> dict:
     return {
-        "rule_id": RULE_ID,
+        "rule_id": rule_id,
         "kind": "security",
         "severity": severity,
         "type": finding_type,
@@ -459,3 +490,13 @@ def _make_finding(
         "line": line_no,
         "col": 0,
     }
+
+
+def is_scannable_path(filepath: str | Path, scan_path: str | Path | None = None) -> bool:
+    if scan_path is not None:
+        path = Path(scan_path)
+    else:
+        path = Path(filepath)
+    if Path(filepath).suffix.lower() in SCANNABLE_EXTENSIONS:
+        return True
+    return is_agent_instruction_path(path)
