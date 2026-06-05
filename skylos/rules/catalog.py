@@ -154,6 +154,13 @@ _RULES = (
         aliases=("llm data leakage", "sensitive disclosure"),
     ),
     RuleCatalogEntry(
+        "SKY-D264",
+        "Excessive agent tool privilege",
+        "security",
+        "HIGH",
+        aliases=("excessive agency", "dangerous agent tool"),
+    ),
+    RuleCatalogEntry(
         "SKY-D265",
         "Unsafe ML model deserialization",
         "security",
