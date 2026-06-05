@@ -1511,6 +1511,20 @@ class Skylos:
             "server_version",
             "sys_version",
         }
+        http_handler_override_methods = {
+            "do_CONNECT",
+            "do_DELETE",
+            "do_GET",
+            "do_HEAD",
+            "do_OPTIONS",
+            "do_PATCH",
+            "do_POST",
+            "do_PUT",
+            "end_headers",
+            "log_message",
+            "send_error",
+            "version_string",
+        }
         for definition in self.defs.values():
             if definition.type != "variable":
                 continue
@@ -1529,6 +1543,30 @@ class Skylos:
             base_classes = getattr(class_def, "base_classes", [])
             for base in base_classes:
                 if str(base).split(".")[-1] == "BaseHTTPRequestHandler":
+                    definition.references += 1
+                    break
+
+        for definition in self.defs.values():
+            if definition.type != "method":
+                continue
+
+            if definition.simple_name not in http_handler_override_methods:
+                continue
+
+            if "." not in definition.name:
+                continue
+
+            cls = definition.name.rsplit(".", 1)[0]
+            class_def = self.defs.get(cls)
+            if class_def is None or class_def.type != "class":
+                continue
+
+            base_classes = getattr(class_def, "base_classes", [])
+            for base in base_classes:
+                if str(base).split(".")[-1] in {
+                    "BaseHTTPRequestHandler",
+                    "SimpleHTTPRequestHandler",
+                }:
                     definition.references += 1
                     break
 
@@ -3181,6 +3219,21 @@ class Skylos:
         self._all_used_attr_context = all_used_attr_context
         self._param_method_refs = all_param_method_refs
         self._call_arg_types = all_call_arg_types
+
+        try:
+            from skylos.deadcode.browser_refs import (
+                collect_browser_event_handler_refs,
+            )
+
+            browser_handler_refs = collect_browser_event_handler_refs(
+                Path(root),
+                files,
+                exclude_folders=exclude_folders,
+            )
+            self.refs.extend(browser_handler_refs)
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error("Browser event handler liveness scan failed", exc_info=True)
 
         for top_level_ref in all_top_level_refs:
             defn = self.defs.get(top_level_ref)

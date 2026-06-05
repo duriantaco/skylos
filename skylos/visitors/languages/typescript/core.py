@@ -36,6 +36,29 @@ _LIFECYCLE_METHODS: set[str] = {
     "ngAfterViewInit",
 }
 
+_BUNDLER_PLUGIN_HOOK_METHODS: set[str] = {
+    "buildEnd",
+    "buildStart",
+    "closeBundle",
+    "closeWatcher",
+    "configurePreviewServer",
+    "configureServer",
+    "generateBundle",
+    "handleHotUpdate",
+    "load",
+    "moduleParsed",
+    "options",
+    "renderChunk",
+    "renderError",
+    "renderStart",
+    "resolveDynamicImport",
+    "resolveFileUrl",
+    "resolveId",
+    "transform",
+    "watchChange",
+    "writeBundle",
+}
+
 _ROUTE_ATTACHMENT_METHODS: set[str] = {
     "all",
     "delete",
@@ -82,6 +105,8 @@ _REFS_PATTERN = """
 (assignment_expression right: (identifier) @ref)
 (spread_element (identifier) @ref)
 (member_expression object: (identifier) @ref)
+(subscript_expression object: (identifier) @ref)
+(subscript_expression index: (identifier) @ref)
 (pair value: (identifier) @ref)
 (unary_expression (identifier) @ref)
 (template_substitution (identifier) @ref)
@@ -310,8 +335,12 @@ class TypeScriptCore:
     def _add_def(self, node, type_name: str) -> None:
         name = self._get_text(node)
 
-        if type_name == "method" and name in _LIFECYCLE_METHODS:
-            return
+        if type_name == "method":
+            if name in _LIFECYCLE_METHODS:
+                return
+            if name in _BUNDLER_PLUGIN_HOOK_METHODS:
+                if self._is_object_literal_method(node):
+                    return
 
         if type_name == "method":
             class_name = self._find_containing_class(node)
@@ -441,6 +470,16 @@ class TypeScriptCore:
                 current = current.parent
                 continue
             return False
+        return False
+
+    def _is_object_literal_method(self, node) -> bool:
+        current = node.parent
+        while current:
+            if current.type == "object":
+                return True
+            if current.type in {"class_body", "class_declaration", "program"}:
+                return False
+            current = current.parent
         return False
 
     def _is_exported(self, node) -> bool:

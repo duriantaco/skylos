@@ -470,6 +470,31 @@ class TestHeuristics:
 
         assert mock_variable.references == 1
 
+    def test_http_handler_override_methods_get_references(self, mock_definition):
+        """SimpleHTTPRequestHandler calls override methods dynamically."""
+        skylos = Skylos()
+        mock_class = mock_definition(
+            name="NoCacheHandler",
+            simple_name="NoCacheHandler",
+            type="class",
+            references=0,
+        )
+        mock_class.base_classes = ["http.server.SimpleHTTPRequestHandler"]
+        mock_method = mock_definition(
+            name="NoCacheHandler.log_message",
+            simple_name="log_message",
+            type="method",
+            references=0,
+        )
+        skylos.defs = {
+            "NoCacheHandler": mock_class,
+            "NoCacheHandler.log_message": mock_method,
+        }
+
+        skylos._apply_heuristics()
+
+        assert mock_method.references == 1
+
     def test_textual_app_runtime_hooks_get_references(self, mock_definition):
         """Textual App subclasses consume metadata and action methods dynamically."""
         skylos = Skylos()
