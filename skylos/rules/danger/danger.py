@@ -16,6 +16,7 @@ from .danger_access.access_flow import scan as scan_access
 from .danger_mcp.mcp_flow import scan as scan_mcp
 from .danger_webhook.webhook_flow import scan as scan_webhook
 from .danger_llm.llm_flow import scan as scan_llm
+from .danger_ml.model_deserialization import scan as scan_ml_model_load
 from .danger_hallucination.dependency_hallucination import (
     scan_python_dependency_hallucinations,
 )
@@ -343,6 +344,23 @@ _LLM_TOKENS = (
     "generatetext",
     "streamtext",
 )
+_ML_MODEL_LOAD_TOKENS = (
+    "torch.load",
+    "weights_only",
+    "joblib.load",
+    "numpy.load",
+    "allow_pickle",
+    "load_model",
+    "hf_hub_download",
+    "snapshot_download",
+    "huggingface_hub",
+    ".pt",
+    ".pth",
+    ".ckpt",
+    ".joblib",
+    ".pkl",
+    ".pickle",
+)
 _HTTP_UPLOAD_CALLS = {
     "httpx.patch",
     "httpx.post",
@@ -447,6 +465,7 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_mcp(tree, file_path, findings)
         scan_webhook(tree, file_path, findings)
         scan_llm(tree, file_path, findings)
+        scan_ml_model_load(tree, file_path, findings)
         _PythonCommandExfilChecker(file_path, findings).visit(tree)
         return
 
@@ -479,6 +498,8 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_webhook(tree, file_path, findings, source=source)
     if _has_any(source_lower, _LLM_TOKENS):
         scan_llm(tree, file_path, findings)
+    if _has_any(source_lower, _ML_MODEL_LOAD_TOKENS):
+        scan_ml_model_load(tree, file_path, findings)
     if _has_any(
         source_lower,
         (
