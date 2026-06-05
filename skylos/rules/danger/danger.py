@@ -16,6 +16,7 @@ from .danger_access.access_flow import scan as scan_access
 from .danger_mcp.mcp_flow import scan as scan_mcp
 from .danger_webhook.webhook_flow import scan as scan_webhook
 from .danger_agent.tool_privilege import scan as scan_agent_tool_privilege
+from .danger_llm.consumption import scan as scan_llm_consumption
 from .danger_llm.llm_flow import scan as scan_llm
 from .danger_ml.model_deserialization import scan as scan_ml_model_load
 from .danger_hallucination.dependency_hallucination import (
@@ -485,6 +486,7 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_mcp(tree, file_path, findings)
         scan_webhook(tree, file_path, findings)
         scan_agent_tool_privilege(tree, file_path, findings)
+        scan_llm_consumption(tree, file_path, findings)
         scan_llm(tree, file_path, findings)
         scan_ml_model_load(tree, file_path, findings)
         _PythonCommandExfilChecker(file_path, findings).visit(tree)
@@ -519,6 +521,10 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
         scan_webhook(tree, file_path, findings, source=source)
     if _has_any(source_lower, _AGENT_TOOL_TOKENS):
         scan_agent_tool_privilege(tree, file_path, findings)
+    if _has_any(source_lower, _LLM_TOKENS) or _has_any(
+        source_lower, _AGENT_TOOL_TOKENS
+    ):
+        scan_llm_consumption(tree, file_path, findings)
     if _has_any(source_lower, _LLM_TOKENS):
         scan_llm(tree, file_path, findings)
     if _has_any(source_lower, _ML_MODEL_LOAD_TOKENS):

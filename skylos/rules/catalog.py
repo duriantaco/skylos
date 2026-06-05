@@ -174,6 +174,13 @@ _RULES = (
         "CRITICAL",
         aliases=("rules file backdoor", "agent instruction injection"),
     ),
+    RuleCatalogEntry(
+        "SKY-D267",
+        "Unbounded LLM consumption",
+        "security",
+        "MEDIUM",
+        aliases=("llm cost blowup", "unbounded consumption"),
+    ),
     RuleCatalogEntry("SKY-D270", "Sensitive data in storage", "security", "MEDIUM"),
     RuleCatalogEntry("SKY-D271", "Error information disclosure over HTTP", "security", "MEDIUM"),
     RuleCatalogEntry("SKY-D282", "Webhook signature verification issue", "security", "HIGH"),

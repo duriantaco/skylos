@@ -129,6 +129,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D264 | HIGH | Excessive agent tool privilege | Python | OWASP LLM06 |
 | D265 | HIGH-CRITICAL | Unsafe ML model deserialization | Python | OWASP LLM04 |
 | D266 | CRITICAL | AI config instruction injection | Agent config and instruction files | OWASP LLM01 |
+| D267 | MEDIUM | Unbounded LLM consumption | Python | OWASP LLM10 |
 | D270 | MEDIUM | Sensitive data in `localStorage` / `sessionStorage` | TS/JS | CWE-922 |
 | D271 | MEDIUM | Error information disclosure in HTTP responses | TS/JS | CWE-209 |
 | D280 | HIGH | Next.js mutating API route missing auth checks | TS/JS | A01 |
@@ -160,6 +161,7 @@ Finding types:
 | D264 | HIGH | Excessive agent tool privilege | Python | Agent frameworks are granted shell, code execution, unrestricted HTTP, or broad file-management tools |
 | D265 | HIGH-CRITICAL | Unsafe ML model deserialization | Python | Pickle-backed model/checkpoint loading such as `torch.load`, `joblib.load`, or `numpy.load(..., allow_pickle=True)` |
 | D266 | CRITICAL | AI config instruction injection | Agent config and instruction files | D260-style hidden, obfuscated, or instruction-override payloads in AI assistant rule/config files |
+| D267 | MEDIUM | Unbounded LLM consumption | Python | LLM calls or agent executors lack token, timeout, iteration, or obvious loop bounds |
 
 ### MCP Server Security
 
