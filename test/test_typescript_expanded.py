@@ -394,6 +394,287 @@ class TestTSDeadCodeFalsePositives:
         defs, refs, _, _ = _scan_ts(tmp_path, code)
         assert "helper" not in _unused(defs, refs)
 
+    def test_bracket_lookup_counts_object_reference(self, tmp_path):
+        code = (
+            "const STAT_LABEL = { ready: 'READY' };\n"
+            "function statusLabel(status) {\n"
+            "    return STAT_LABEL[status] || status.toUpperCase();\n"
+            "}\n"
+            "statusLabel('ready');\n"
+        )
+        defs, refs, _, _ = _scan_ts(tmp_path, code)
+        assert "STAT_LABEL" not in _unused(defs, refs)
+
+    def test_bundler_plugin_hook_object_methods_are_framework_live(self, tmp_path):
+        code = (
+            "function copyLegacyAssets() {\n"
+            "    return {\n"
+            "        name: 'copy-legacy-assets',\n"
+            "        closeBundle() {\n"
+            "            return true;\n"
+            "        },\n"
+            "        orphanHook() {\n"
+            "            return false;\n"
+            "        },\n"
+            "    };\n"
+            "}\n"
+            "copyLegacyAssets();\n"
+        )
+        defs, _, _, _ = _scan_ts_file(tmp_path, "vite.config.js", code)
+        names = _def_names(defs)
+        assert "closeBundle" not in names
+        assert "orphanHook" in names
+
+    def test_html_inline_handlers_mark_global_js_functions_live(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "index.html").write_text(
+            """
+<button onclick="switchSite('base')">Switch</button>
+<select onchange="set3DDensity(this.value)"></select>
+<button onclick="return confirmNFZ()">Confirm</button>
+<button onclick="window.cancelNFZ()">Cancel</button>
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "app.js").write_text(
+            """
+function switchSite(siteId) {
+    return siteId;
+}
+
+const set3DDensity = (value) => {
+    return value;
+};
+
+function confirmNFZ() {
+    return true;
+}
+
+function cancelNFZ() {
+    return false;
+}
+
+function unusedHelper() {
+    return 1;
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused = {item["name"] for item in result.get("unused_functions", [])}
+
+        assert "switchSite" not in unused
+        assert "set3DDensity" not in unused
+        assert "confirmNFZ" not in unused
+        assert "cancelNFZ" not in unused
+        assert "unusedHelper" in unused
+
+    def test_generated_inline_handlers_mark_js_functions_live(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "app.js").write_text(
+            """
+function deployDroneTo(id) {
+    return id;
+}
+
+function toggleDroneFeed(id) {
+    return id;
+}
+
+function renderMenu(id) {
+    menu.innerHTML = `
+        <button onclick="deployDroneTo('${id}')">Deploy</button>
+        <button onclick="toggleDroneFeed('${id}')">Feed</button>
+    `;
+}
+
+renderMenu("drone-1");
+
+function orphanedHandler() {
+    return "unused";
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused = {item["name"] for item in result.get("unused_functions", [])}
+
+        assert "deployDroneTo" not in unused
+        assert "toggleDroneFeed" not in unused
+        assert "orphanedHandler" in unused
+
+    def test_legacy_string_dispatch_marks_global_js_functions_live(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        legacy_dir = tmp_path / "src" / "legacy"
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "actions.js").write_text(
+            """
+export function callLegacy(name, ...args) {
+    const fn = window[name];
+    return fn(...args);
+}
+
+export function legacyClick(name, ...args) {
+    return () => callLegacy(name, ...args);
+}
+""",
+            encoding="utf-8",
+        )
+        components_dir = tmp_path / "src" / "components"
+        components_dir.mkdir()
+        (components_dir / "Header.jsx").write_text(
+            """
+import { callLegacy, legacyClick } from "../legacy/actions";
+
+export function Header() {
+    return (
+        <>
+            <button onClick={legacyClick('toggleFleetPanel')}>Fleet</button>
+            <select onChange={(event) => callLegacy('switchSite', event.target.value)} />
+        </>
+    );
+}
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "app.js").write_text(
+            """
+function switchSite(siteId) {
+    return siteId;
+}
+
+function toggleFleetPanel() {
+    return true;
+}
+
+function unusedLegacyAction() {
+    return false;
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused = {item["name"] for item in result.get("unused_functions", [])}
+
+        assert "switchSite" not in unused
+        assert "toggleFleetPanel" not in unused
+        assert "unusedLegacyAction" in unused
+
+    def test_legacy_action_config_marks_global_js_functions_live(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "index.html").write_text(
+            '<script src="/app.js"></script>',
+            encoding="utf-8",
+        )
+        legacy_dir = tmp_path / "src" / "legacy"
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "actions.js").write_text(
+            """
+export function legacyClick(name) {
+    return () => window[name]();
+}
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "Toolbar.jsx").write_text(
+            """
+import { legacyClick } from "./legacy/actions";
+
+const config = {
+    confirmAction: 'confirmNFZ',
+    cancelAction: 'cancelNFZ',
+};
+
+export function Toolbar() {
+    return (
+        <>
+            <button onClick={legacyClick(config.confirmAction)}>Confirm</button>
+            <button onClick={legacyClick(config.cancelAction)}>Cancel</button>
+        </>
+    );
+}
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "app.js").write_text(
+            """
+function confirmNFZ() {
+    return true;
+}
+
+function cancelNFZ() {
+    return false;
+}
+
+function unusedToolbarAction() {
+    return false;
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused = {item["name"] for item in result.get("unused_functions", [])}
+
+        assert "confirmNFZ" not in unused
+        assert "cancelNFZ" not in unused
+        assert "unusedToolbarAction" in unused
+
+    def test_legacy_dispatch_prefers_top_level_loaded_script_function(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "index.html").write_text(
+            """
+<script src="/app.js"></script>
+<script src="/map2d.js"></script>
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "Header.jsx").parent.mkdir()
+        (tmp_path / "src" / "Header.jsx").write_text(
+            """
+import { legacyClick } from "./legacy/actions";
+
+export function Header() {
+    return <button onClick={legacyClick('toggleSatellite')}>Satellite</button>;
+}
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "app.js").write_text(
+            """
+function toggleSatellite() {
+    return true;
+}
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "map2d.js").write_text(
+            """
+(function () {
+    function toggleSatellite() {
+        return false;
+    }
+})();
+""",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused = {
+            (item["name"], Path(item["file"]).name)
+            for item in result.get("unused_functions", [])
+        }
+
+        assert ("toggleSatellite", "app.js") not in unused
+
     def test_stored_in_array(self, tmp_path):
         code = (
             "function a() { return 1; }\n"
