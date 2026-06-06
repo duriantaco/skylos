@@ -365,11 +365,22 @@ func Extract(root string) (*Result, error) {
 		return nil
 	})
 
-	defNames := symbolDefNames(result.Defs)
-	typedRefs, typedCalls := collectTypedSelectorRefs(root, resolvedRoot, modulePath, pkgDirs, defNames)
-	appendUniqueTypedSymbols(result, typedRefs, typedCalls)
+	if hasMethodDefs(result.Defs) {
+		defNames := symbolDefNames(result.Defs)
+		typedRefs, typedCalls := collectTypedSelectorRefs(root, resolvedRoot, modulePath, pkgDirs, defNames)
+		appendUniqueTypedSymbols(result, typedRefs, typedCalls)
+	}
 
 	return result, err
+}
+
+func hasMethodDefs(defs []Def) bool {
+	for _, def := range defs {
+		if def.Type == "method" {
+			return true
+		}
+	}
+	return false
 }
 
 func symbolDefNames(defs []Def) map[string]bool {

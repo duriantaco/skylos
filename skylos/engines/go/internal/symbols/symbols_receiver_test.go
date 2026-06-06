@@ -140,6 +140,21 @@ func serve(r runner) {
 	expectNoCall(t, result, "serve", "runner.run")
 }
 
+func TestHasMethodDefsOnlyMatchesMethods(t *testing.T) {
+	defs := []Def{
+		{Name: "main", Type: "function"},
+		{Name: "unused", Type: "function"},
+	}
+	if hasMethodDefs(defs) {
+		t.Fatal("function-only package should not require typed selector resolution")
+	}
+
+	defs = append(defs, Def{Name: "worker.run", Type: "method"})
+	if !hasMethodDefs(defs) {
+		t.Fatal("method package should use typed selector resolution")
+	}
+}
+
 func TestExtractRespectsImportedSelectorWhenLocalNameIsNotTyped(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/demo\n\ngo 1.22\n")
