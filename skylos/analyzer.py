@@ -4,6 +4,7 @@ import sys
 import json
 import logging
 import os
+import re
 import traceback
 from pathlib import Path
 from collections import Counter, defaultdict
@@ -186,6 +187,48 @@ _PYTHON_SOURCE_ROOT_NAMES = {"src", "lib", "python"}
 
 _TRY_NODE_TYPES = (ast.Try, getattr(ast, "TryStar", ast.Try))
 
+_HTML_PARSER_CALLBACKS = {
+    "handle_starttag",
+    "handle_startendtag",
+    "handle_endtag",
+    "handle_data",
+    "handle_entityref",
+    "handle_charref",
+    "handle_comment",
+    "handle_decl",
+    "handle_pi",
+    "unknown_decl",
+}
+
+_URLLIB_REQUEST_HANDLER_BASES = {
+    "BaseHandler",
+    "HTTPDefaultErrorHandler",
+    "HTTPRedirectHandler",
+    "HTTPCookieProcessor",
+    "ProxyHandler",
+    "HTTPPasswordMgr",
+    "HTTPPasswordMgrWithDefaultRealm",
+    "AbstractBasicAuthHandler",
+    "HTTPBasicAuthHandler",
+    "ProxyBasicAuthHandler",
+    "AbstractDigestAuthHandler",
+    "HTTPDigestAuthHandler",
+    "ProxyDigestAuthHandler",
+    "HTTPHandler",
+    "HTTPSHandler",
+    "FileHandler",
+    "FTPHandler",
+    "CacheFTPHandler",
+    "UnknownHandler",
+    "HTTPErrorProcessor",
+    "DataHandler",
+}
+
+_URLLIB_REQUEST_PROTOCOL_HOOK_RE = re.compile(
+    r"^(?:[a-z][a-z0-9+.-]*_(?:open|request|response)|"
+    r"http_error(?:_[0-9]{3})?|default_open|unknown_open|redirect_request)$"
+)
+
 
 def _entrypoint_module_name(qname: str) -> str | None:
     if not isinstance(qname, str) or "." not in qname:
@@ -201,6 +244,17 @@ def _architecture_iad_strict(architecture_cfg) -> bool:
         if key in architecture_cfg:
             return bool(architecture_cfg.get(key))
     return False
+
+
+def _base_class_leaf_names(class_def) -> set[str]:
+    leaves: set[str] = set()
+    for base in getattr(class_def, "base_classes", []):
+        leaves.add(str(base).split(".")[-1])
+    return leaves
+
+
+def _class_has_base_leaf(class_def, leaf_names: set[str]) -> bool:
+    return bool(_base_class_leaf_names(class_def) & leaf_names)
 
 
 def _expand_reexported_entrypoint_modules(
@@ -1573,6 +1627,42 @@ class Skylos:
                 }:
                     definition.references += 1
                     break
+
+        for definition in self.defs.values():
+            if definition.type != "method":
+                continue
+
+            if definition.simple_name not in _HTML_PARSER_CALLBACKS:
+                continue
+
+            if "." not in definition.name:
+                continue
+
+            cls = definition.name.rsplit(".", 1)[0]
+            class_def = self.defs.get(cls)
+            if class_def is None or class_def.type != "class":
+                continue
+
+            if _class_has_base_leaf(class_def, {"HTMLParser"}):
+                definition.references += 1
+
+        for definition in self.defs.values():
+            if definition.type != "method":
+                continue
+
+            if not _URLLIB_REQUEST_PROTOCOL_HOOK_RE.match(definition.simple_name):
+                continue
+
+            if "." not in definition.name:
+                continue
+
+            cls = definition.name.rsplit(".", 1)[0]
+            class_def = self.defs.get(cls)
+            if class_def is None or class_def.type != "class":
+                continue
+
+            if _class_has_base_leaf(class_def, _URLLIB_REQUEST_HANDLER_BASES):
+                definition.references += 1
 
         textual_app_metadata = {"BINDINGS", "CSS", "TITLE", "SUB_TITLE"}
         for definition in self.defs.values():

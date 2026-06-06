@@ -495,6 +495,80 @@ class TestHeuristics:
 
         assert mock_method.references == 1
 
+    def test_html_parser_callbacks_get_references(self, mock_definition):
+        """HTMLParser.feed() dispatches handle_* callbacks dynamically."""
+        skylos = Skylos()
+        mock_class = mock_definition(
+            name="HtmlRouteExtractor",
+            simple_name="HtmlRouteExtractor",
+            type="class",
+            references=1,
+        )
+        mock_class.base_classes = ["html.parser.HTMLParser"]
+        mock_start = mock_definition(
+            name="HtmlRouteExtractor.handle_starttag",
+            simple_name="handle_starttag",
+            type="method",
+            references=0,
+        )
+        mock_data = mock_definition(
+            name="HtmlRouteExtractor.handle_data",
+            simple_name="handle_data",
+            type="method",
+            references=0,
+        )
+        mock_helper = mock_definition(
+            name="HtmlRouteExtractor.helper",
+            simple_name="helper",
+            type="method",
+            references=0,
+        )
+        skylos.defs = {
+            "HtmlRouteExtractor": mock_class,
+            "HtmlRouteExtractor.handle_starttag": mock_start,
+            "HtmlRouteExtractor.handle_data": mock_data,
+            "HtmlRouteExtractor.helper": mock_helper,
+        }
+
+        skylos._apply_heuristics()
+
+        assert mock_start.references == 1
+        assert mock_data.references == 1
+        assert mock_helper.references == 0
+
+    def test_urllib_request_handler_hooks_get_references(self, mock_definition):
+        """urllib opener dispatches protocol hook methods by naming convention."""
+        skylos = Skylos()
+        mock_class = mock_definition(
+            name="_PinnedHTTPHandler",
+            simple_name="_PinnedHTTPHandler",
+            type="class",
+            references=1,
+        )
+        mock_class.base_classes = ["urllib.request.HTTPHandler"]
+        mock_open = mock_definition(
+            name="_PinnedHTTPHandler.http_open",
+            simple_name="http_open",
+            type="method",
+            references=0,
+        )
+        mock_helper = mock_definition(
+            name="_PinnedHTTPHandler.connection_factory",
+            simple_name="connection_factory",
+            type="method",
+            references=0,
+        )
+        skylos.defs = {
+            "_PinnedHTTPHandler": mock_class,
+            "_PinnedHTTPHandler.http_open": mock_open,
+            "_PinnedHTTPHandler.connection_factory": mock_helper,
+        }
+
+        skylos._apply_heuristics()
+
+        assert mock_open.references == 1
+        assert mock_helper.references == 0
+
     def test_textual_app_runtime_hooks_get_references(self, mock_definition):
         """Textual App subclasses consume metadata and action methods dynamically."""
         skylos = Skylos()
@@ -566,6 +640,22 @@ class TestAnalyze:
 
         assert ("api.py", "action") not in unused
         assert ("payload.py", "action") not in unused
+
+    def test_cast_string_type_reference_keeps_import_live(self, tmp_path):
+        (tmp_path / "app.py").write_text(
+            "from typing import cast\n"
+            "from models import AgentActionName\n\n"
+            "def normalize(action):\n"
+            "    return cast(\"AgentActionName\", action)\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused_imports = {
+            item["simple_name"] for item in result.get("unused_imports", [])
+        }
+
+        assert "AgentActionName" not in unused_imports
 
     def test_mcp_decorated_tools_and_resources_are_live(self, tmp_path):
         (tmp_path / "server.py").write_text(
