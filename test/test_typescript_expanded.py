@@ -47,10 +47,28 @@ class TestTSDangerRules:
         assert "SKY-D201" in ids
 
     def test_innerhtml_detected(self, tmp_path):
-        code = 'document.getElementById("x")!.innerHTML = "<b>xss</b>";'
+        code = "const msg = req.query.msg;\ndocument.getElementById('x')!.innerHTML = msg;"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D226" in ids
+
+    def test_static_innerhtml_is_not_flagged(self, tmp_path):
+        code = 'document.getElementById("x")!.innerHTML = "<b>status</b>";'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D226" not in ids
+
+    def test_innerhtml_static_executable_markup_is_flagged(self, tmp_path):
+        code = 'document.getElementById("x")!.innerHTML = "<img src=x onerror=alert(1)>";'
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D226" in ids
+
+    def test_innerhtml_sanitizer_is_not_flagged(self, tmp_path):
+        code = "el.innerHTML = DOMPurify.sanitize(userHtml);"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D226" not in ids
 
     def test_new_function_detected(self, tmp_path):
         code = 'const f = new Function("return 1");'
@@ -71,7 +89,7 @@ class TestTSDangerRules:
         assert "SKY-D202" in ids
 
     def test_outerhtml_detected(self, tmp_path):
-        code = 'document.getElementById("x")!.outerHTML = "<div>replaced</div>";'
+        code = "document.getElementById('x')!.outerHTML = renderUserHtml(user);"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D226" in ids
@@ -163,6 +181,17 @@ class TestTSDangerRules:
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D216" not in ids
 
+    def test_fetch_static_url_identifier_is_safe(self, tmp_path):
+        code = (
+            "const SITE_REGISTRY_URL = '/data/sites.json';\n"
+            "export function fetchSites() {\n"
+            "  return fetch(SITE_REGISTRY_URL);\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D216" not in ids
+
     def test_fetch_split_fixed_host_variable_path_is_safe(self, tmp_path):
         code = (
             "export function fetchAvatar(userId: string) {\n"
@@ -223,6 +252,16 @@ class TestTSDangerRules:
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D216" in ids
+
+    def test_browser_asset_fetch_variable_url_is_not_ssrf(self, tmp_path):
+        code = (
+            "const site = getSelectedSite();\n"
+            "document.addEventListener('DOMContentLoaded', () => {});\n"
+            "fetch(site.config);\n"
+        )
+        _, _, _, danger = _scan_ts_file(tmp_path, "public/app.js", code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D216" not in ids
 
 
 class TestTSQualityRules:
@@ -1685,17 +1724,52 @@ class TestNewQualityRules:
 class TestInsecureRandomness:
     """SKY-D250: Math.random() is not cryptographically secure."""
 
-    def test_math_random_flagged(self, tmp_path):
-        code = "const id = Math.random().toString(36);\n"
+    def test_math_random_security_token_flagged(self, tmp_path):
+        code = "const sessionToken = Math.random().toString(36);\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D250" in ids
 
-    def test_math_random_in_expression(self, tmp_path):
-        code = "const roll = Math.floor(Math.random() * 6) + 1;\n"
+    def test_math_random_cookie_value_flagged(self, tmp_path):
+        code = "document.cookie = 'sid=' + Math.random().toString(36);\n"
         _, _, _, danger = _scan_ts(tmp_path, code)
         ids = {f["rule_id"] for f in danger}
         assert "SKY-D250" in ids
+
+    def test_math_random_otp_code_flagged(self, tmp_path):
+        code = "const otpCode = Math.floor(Math.random() * 1000000);\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D250" in ids
+
+    def test_math_random_inside_token_generator_flagged(self, tmp_path):
+        code = (
+            "function generateSessionToken() {\n"
+            "  return Math.random().toString(36);\n"
+            "}\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D250" in ids
+
+    def test_math_random_in_non_security_expression_is_safe(self, tmp_path):
+        code = "const roll = Math.floor(Math.random() * 6) + 1;\n"
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D250" not in ids
+
+    def test_math_random_visual_coordinate_expression_is_safe(self, tmp_path):
+        code = (
+            "ctx.fillRect(\n"
+            "  x0 + Math.random() * wPix,\n"
+            "  py(zTop) + Math.random() * (py(zBot) - py(zTop)),\n"
+            "  2,\n"
+            "  2,\n"
+            ");\n"
+        )
+        _, _, _, danger = _scan_ts(tmp_path, code)
+        ids = {f["rule_id"] for f in danger}
+        assert "SKY-D250" not in ids
 
     def test_crypto_random_safe(self, tmp_path):
         """crypto.getRandomValues() should NOT trigger SKY-D250."""

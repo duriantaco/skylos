@@ -201,6 +201,85 @@ _ERROR_DISCLOSURE_PROPS = {"stack", "sql", "sqlMessage", "sqlState"}
 
 _RESPONSE_METHODS = {"json", "send", "write", "end"}
 
+_HTML_EXECUTABLE_RE = re.compile(
+    r"<\s*(?:script|iframe|object|embed)\b|"
+    r"\bon[a-z0-9_-]+\s*=|"
+    r"javascript\s*:",
+    re.IGNORECASE,
+)
+
+_SAFE_HTML_SANITIZER_CALLEES = {
+    "DOMPurify.sanitize",
+    "sanitizeHtml",
+    "sanitizeHTML",
+}
+
+_RANDOM_SECURITY_TERMS = (
+    "token",
+    "nonce",
+    "csrf",
+    "xsrf",
+    "session",
+    "secret",
+    "password",
+    "passwd",
+    "credential",
+    "apikey",
+    "privatekey",
+    "jwt",
+    "bearer",
+    "cookie",
+    "signature",
+    "hmac",
+    "salt",
+    "otpcode",
+    "otptoken",
+    "otpsecret",
+    "totp",
+    "hotp",
+    "mfacode",
+    "mfatoken",
+    "authorization",
+    "oauth",
+    "resetcode",
+    "resetlink",
+    "invitecode",
+    "magiclink",
+    "verificationcode",
+)
+
+_SERVER_PATH_HINTS = (
+    "/api/",
+    "/app/",
+    "/pages/api/",
+    "/server/",
+    "/backend/",
+    "/routes/",
+    "/controllers/",
+    "/handlers/",
+    "/lambda/",
+    "/functions/",
+)
+
+_BROWSER_PATH_HINTS = (
+    "/public/",
+    "/static/",
+    "/assets/",
+    "/client/",
+    "/browser/",
+    "/frontend/",
+    "/js/",
+)
+
+_BROWSER_GLOBAL_RE = re.compile(
+    r"\b(?:document|window|navigator|localStorage|sessionStorage)\b"
+)
+
+_SERVER_GLOBAL_RE = re.compile(
+    r"\b(?:process\.env|require\s*\(|module\.exports|exports\.|"
+    r"createServer|express\s*\(|fastify\s*\(|app\.(?:get|post|put|patch|delete))\b"
+)
+
 _WEBHOOK_PROVIDER_HINTS = (
     "stripe",
     "github",
@@ -331,6 +410,154 @@ def _first_static_call_arg(call_node, source_bytes: bytes) -> str | None:
     if args is None:
         return None
     return _static_string_value(_first_real_arg(args), source_bytes)
+
+
+def _callee_name(call_node, source_bytes: bytes) -> str | None:
+    if call_node is None or call_node.type != "call_expression":
+        return None
+
+    function_node = call_node.child_by_field_name("function")
+    if function_node is None:
+        return None
+    if function_node.type == "identifier":
+        return _get_text(source_bytes, function_node)
+    if function_node.type != "member_expression":
+        return None
+
+    object_node = function_node.child_by_field_name("object")
+    property_node = function_node.child_by_field_name("property")
+    if object_node is None or property_node is None:
+        return None
+
+    object_name = _get_text(source_bytes, object_node)
+    property_name = _get_text(source_bytes, property_node)
+    return f"{object_name}.{property_name}"
+
+
+def _is_safe_html_sanitizer_call(node, source_bytes: bytes) -> bool:
+    unwrapped = _unwrap_ts_expression(node)
+    if unwrapped.type != "call_expression":
+        return False
+
+    callee = _callee_name(unwrapped, source_bytes)
+    return callee in _SAFE_HTML_SANITIZER_CALLEES
+
+
+def _html_literal_can_execute(value: str) -> bool:
+    return bool(_HTML_EXECUTABLE_RE.search(value))
+
+
+def _html_assignment_rhs_requires_finding(rhs_node, source_bytes: bytes) -> bool:
+    if rhs_node is None:
+        return True
+
+    unwrapped = _unwrap_ts_expression(rhs_node)
+    literal_value = _static_string_value(unwrapped, source_bytes)
+    if literal_value is not None:
+        return _html_literal_can_execute(literal_value)
+
+    if _is_safe_html_sanitizer_call(unwrapped, source_bytes):
+        return False
+
+    return True
+
+
+def _assignment_rhs_for_property_capture(prop_node):
+    member_node = prop_node.parent
+    current = member_node.parent if member_node is not None else None
+    while current is not None:
+        if current.type == "assignment_expression":
+            return current.child_by_field_name("right")
+        if current.type in {
+            "expression_statement",
+            "call_expression",
+            "statement_block",
+            "program",
+        }:
+            return None
+        current = current.parent
+    return None
+
+
+def _html_property_capture_requires_finding(prop_node, source_bytes: bytes) -> bool:
+    rhs_node = _assignment_rhs_for_property_capture(prop_node)
+    return _html_assignment_rhs_requires_finding(rhs_node, source_bytes)
+
+
+def _document_write_requires_finding(prop_node, source_bytes: bytes) -> bool:
+    member_node = prop_node.parent
+    call_node = member_node.parent if member_node is not None else None
+    if call_node is None or call_node.type != "call_expression":
+        return True
+
+    args_node = call_node.child_by_field_name("arguments")
+    first_arg = _first_real_arg(args_node) if args_node is not None else None
+    return _html_assignment_rhs_requires_finding(first_arg, source_bytes)
+
+
+def _nearest_statement_text(node, source_bytes: bytes) -> str:
+    current = node
+    while current is not None:
+        if current.type in {
+            "expression_statement",
+            "lexical_declaration",
+            "variable_declaration",
+            "return_statement",
+            "assignment_expression",
+        }:
+            return _get_text(source_bytes, current)
+        current = current.parent
+    return _get_text(source_bytes, node)
+
+
+def _text_has_random_security_context(text: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", text.lower())
+    return any(term in normalized for term in _RANDOM_SECURITY_TERMS)
+
+
+def _node_name_text(node, source_bytes: bytes) -> str | None:
+    name_node = node.child_by_field_name("name")
+    if name_node is not None:
+        return _get_text(source_bytes, name_node)
+    return None
+
+
+def _math_random_requires_finding(prop_node, source_bytes: bytes) -> bool:
+    statement_text = _nearest_statement_text(prop_node, source_bytes)
+    if _text_has_random_security_context(statement_text):
+        return True
+
+    current = prop_node.parent
+    while current is not None:
+        if current.type in {
+            "function_declaration",
+            "function_expression",
+            "method_definition",
+            "variable_declarator",
+        }:
+            name = _node_name_text(current, source_bytes)
+            if name and _text_has_random_security_context(name):
+                return True
+        current = current.parent
+
+    return False
+
+
+def _collect_static_string_bindings(root_node, source_bytes: bytes) -> dict[str, str]:
+    bindings: dict[str, str] = {}
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "variable_declarator":
+            name_node = node.child_by_field_name("name")
+            value_node = node.child_by_field_name("value")
+            if name_node is not None and value_node is not None:
+                if name_node.type == "identifier":
+                    value = _static_string_value(value_node, source_bytes)
+                    if value is not None:
+                        bindings[_get_text(source_bytes, name_node)] = value
+        stack.extend(reversed(node.children))
+    return bindings
 
 
 def _child_process_aliases(root_node, lang: Language, source_bytes: bytes) -> set[str]:
@@ -471,9 +698,38 @@ def _prefix_has_fixed_http_host(prefix: str) -> bool:
     return bool(match and match.group(1))
 
 
-def _url_arg_is_ssrf_relevant(node, source_bytes: bytes) -> bool:
+def _has_server_path_hint(file_path: str) -> bool:
+    normalized = str(file_path).replace(os.sep, "/").lower()
+    return any(hint in normalized for hint in _SERVER_PATH_HINTS)
+
+
+def _is_likely_browser_asset(file_path: str, source_bytes: bytes) -> bool:
+    if _has_server_path_hint(file_path):
+        return False
+
+    normalized = str(file_path).replace(os.sep, "/").lower()
+    if any(hint in normalized for hint in _BROWSER_PATH_HINTS):
+        return True
+
+    source_text = source_bytes.decode("utf-8", errors="replace")
+    if _SERVER_GLOBAL_RE.search(source_text):
+        return False
+
+    return bool(_BROWSER_GLOBAL_RE.search(source_text))
+
+
+def _url_arg_is_ssrf_relevant(
+    node,
+    source_bytes: bytes,
+    file_path: str | None = None,
+    static_string_bindings: dict[str, str] | None = None,
+) -> bool:
     if node.type == "string":
         return False
+    if node.type == "identifier" and static_string_bindings is not None:
+        name = _get_text(source_bytes, node)
+        if name in static_string_bindings:
+            return False
     if node.type == "template_string" and not _has_dynamic_url_part(node):
         return False
 
@@ -487,6 +743,9 @@ def _url_arg_is_ssrf_relevant(node, source_bytes: bytes) -> bool:
             return False
         if lower_prefix.startswith(("http://", "https://", "//")):
             return True
+        return False
+
+    if file_path and _is_likely_browser_asset(file_path, source_bytes):
         return False
 
     return True
@@ -526,12 +785,25 @@ def scan_danger(
     jsx_captures = _run_batch(root_node, lang, "danger_jsx", _JSX_PATTERN)
     complex_captures = _run_batch(root_node, lang, "danger_complex", _COMPLEX_PATTERN)
     child_process_aliases = _child_process_aliases(root_node, lang, source_bytes)
+    static_string_bindings = _collect_static_string_bindings(root_node, source_bytes)
 
     for k, v in jsx_captures.items():
         simple_captures.setdefault(k, []).extend(v)
 
     for cap_name, (rule_id, severity, message) in _SIMPLE_MAP.items():
         for node in simple_captures.get(cap_name, []):
+            if cap_name in {"innerHTML", "outerHTML"} and not (
+                _html_property_capture_requires_finding(node, source_bytes)
+            ):
+                continue
+            if cap_name == "doc_write" and not _document_write_requires_finding(
+                node, source_bytes
+            ):
+                continue
+            if cap_name == "math_random" and not _math_random_requires_finding(
+                node, source_bytes
+            ):
+                continue
             findings.append(
                 {
                     "rule_id": rule_id,
@@ -638,7 +910,9 @@ def scan_danger(
     # --- fetch SSRF (SKY-D216) ---
     for node in complex_captures.get("fetch_args", []):
         first_arg = _first_real_arg(node)
-        if first_arg and _url_arg_is_ssrf_relevant(first_arg, source_bytes):
+        if first_arg and _url_arg_is_ssrf_relevant(
+            first_arg, source_bytes, str(file_path), static_string_bindings
+        ):
             findings.append(
                 {
                     "rule_id": "SKY-D216",
@@ -653,7 +927,9 @@ def scan_danger(
     # --- axios SSRF (SKY-D216) ---
     for node in complex_captures.get("axios_args", []):
         first_arg = _first_real_arg(node)
-        if first_arg and _url_arg_is_ssrf_relevant(first_arg, source_bytes):
+        if first_arg and _url_arg_is_ssrf_relevant(
+            first_arg, source_bytes, str(file_path), static_string_bindings
+        ):
             findings.append(
                 {
                     "rule_id": "SKY-D216",
