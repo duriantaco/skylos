@@ -1578,6 +1578,12 @@ class Visitor(ast.NodeVisitor):
             ):
                 self.type_alias_names.add(node.args[0].value)
 
+        if callee in {"typing.cast", "typing_extensions.cast"} and node.args:
+            first_arg = node.args[0]
+            annotation_str = self._annotation_string_value(first_arg)
+            if annotation_str is not None:
+                self.visit_string_annotation(annotation_str)
+
         if (
             isinstance(node.func, ast.Name)
             and node.func.id in ("getattr", "hasattr", "setattr", "delattr")
