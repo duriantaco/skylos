@@ -339,6 +339,10 @@ class JavaCore:
             return False
         return "abstract" in self._get_text(modifiers)
 
+    @staticmethod
+    def _is_class_like_receiver(name: str) -> bool:
+        return bool(name) and name[0].isupper()
+
     def scan(self) -> None:
         if not self.root_node:
             self.raw_imports: list[dict] = []
@@ -455,7 +459,10 @@ class JavaCore:
                     object_node = node.parent.child_by_field_name("object")
                     if object_node is not None:
                         object_name = self._get_text(object_node)
-                        if object_name not in {"this", "super"}:
+                        if (
+                            object_name not in {"this", "super"}
+                            and self._is_class_like_receiver(object_name)
+                        ):
                             qualified_ref = f"{object_name}.{name}"
                             key = (qualified_ref, node.start_byte)
                             if key not in seen:
@@ -588,6 +595,21 @@ class JavaCore:
             if node.type == "method_invocation":
                 name_node = node.child_by_field_name("name")
                 if name_node:
-                    self.call_pairs.append((caller, self._get_text(name_node)))
+                    callee = self._method_invocation_callee_name(node, name_node)
+                    if callee:
+                        self.call_pairs.append((caller, callee))
             for child in node.children:
                 stack.append(child)
+
+    def _method_invocation_callee_name(self, invocation_node, name_node) -> str | None:
+        name = self._get_text(name_node)
+        object_node = invocation_node.child_by_field_name("object")
+        if object_node is None:
+            return name
+
+        object_name = self._get_text(object_node)
+        if object_name in {"this", "super"}:
+            return name
+        if self._is_class_like_receiver(object_name):
+            return f"{object_name}.{name}"
+        return name
