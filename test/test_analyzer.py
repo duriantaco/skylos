@@ -973,6 +973,28 @@ class TestAnalyze:
         }
         mock_log_info.assert_any_call("Analyzing 2 files...")
 
+    def test_analyze_rust_public_reexports_stay_live(self, tmp_path):
+        (tmp_path / "lib.rs").write_text(
+            """
+mod internal {
+    pub fn public_api() {}
+    pub fn stale_api() {}
+}
+
+pub use crate::internal::public_api;
+use crate::internal::stale_api;
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unused_imports = {item["simple_name"] for item in result["unused_imports"]}
+
+        assert "public_api" not in unused_imports
+        assert "stale_api" in unused_imports
+
     @patch("skylos.analyzer.logger.info")
     def test_analyze_mixed_languages_includes_csharp_in_summary(self, mock_log_info):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2483,6 +2505,165 @@ public class Api {
 
         assert "Api.publicEndpoint" not in unreachable
         assert "Api.privateHelper" in unreachable
+
+    def test_analyze_java_serialization_hooks_stay_live(self, tmp_path):
+        (tmp_path / "SerializableValue.java").write_text(
+            """
+import java.io.IOException;
+import java.io.InvalidObjectException;
+import java.io.ObjectInputStream;
+import java.io.ObjectStreamException;
+
+public class SerializableValue {
+    private Object writeReplace() throws ObjectStreamException {
+        return this;
+    }
+
+    private void readObject(ObjectInputStream in) throws IOException {
+        throw new InvalidObjectException("unsupported");
+    }
+
+    private String staleHelper() {
+        return "stale";
+    }
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+
+        assert "SerializableValue.writeReplace" not in unreachable
+        assert "SerializableValue.readObject" not in unreachable
+        assert "SerializableValue.staleHelper" in unreachable
+
+    def test_analyze_java_abstract_methods_stay_live(self, tmp_path):
+        (tmp_path / "RecordStrategy.java").write_text(
+            """
+public abstract class RecordStrategy {
+    abstract String componentName(Class<?> raw);
+
+    private String staleHelper() {
+        return "stale";
+    }
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+
+        assert "RecordStrategy.componentName" not in unreachable
+        assert "RecordStrategy.staleHelper" in unreachable
+
+    def test_analyze_java_method_call_disambiguates_field_with_same_name(
+        self, tmp_path
+    ):
+        (tmp_path / "Adapter.java").write_text(
+            """
+public class Adapter {
+    public static void main(String[] args) {
+        new Worker().read();
+    }
+}
+
+class Worker {
+    private String delegate;
+
+    void read() {
+        delegate();
+    }
+
+    private String delegate() {
+        return delegate;
+    }
+
+    private String staleHelper() {
+        return "stale";
+    }
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+
+        assert "Worker.delegate" not in unreachable
+        assert "Worker.staleHelper" in unreachable
+
+    def test_analyze_java_class_for_name_marks_literal_class_live(self, tmp_path):
+        (tmp_path / "App.java").write_text(
+            """
+public class App {
+    public static void main(String[] args) throws Exception {
+        Class.forName("com.example.Plugin");
+    }
+}
+
+class Plugin {
+    void run() {
+    }
+}
+
+class StalePlugin {
+    void run() {
+    }
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable_classes = {item["name"] for item in result["unused_classes"]}
+
+        assert "Plugin" not in unreachable_classes
+        assert "StalePlugin" in unreachable_classes
+
+    def test_analyze_java_qualified_call_does_not_rescue_same_class_method(
+        self, tmp_path
+    ):
+        (tmp_path / "App.java").write_text(
+            """
+public class App {
+    public static void main(String[] args) {
+        new Worker().read();
+    }
+}
+
+class Other {
+    static void delegate() {
+    }
+}
+
+class Worker {
+    void read() {
+        Other.delegate();
+    }
+
+    private void delegate() {
+    }
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["name"] for item in result["unused_functions"]}
+
+        assert "Worker.delegate" in unreachable
 
     def test_analyze_typescript_transitive_dead_uses_file_scoped_callers(
         self, tmp_path

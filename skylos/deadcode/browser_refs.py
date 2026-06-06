@@ -23,6 +23,9 @@ _HTML_TEMPLATE_SUFFIXES = {
     ".svelte",
     ".astro",
 }
+_MDX_SUFFIXES = {
+    ".mdx",
+}
 
 _QUOTED_EVENT_HANDLER_RE = re.compile(
     r"""\bon[a-zA-Z]+\s*=\s*\\?(?P<quote>["'])(?P<handler>.*?)\\?(?P=quote)""",
@@ -43,6 +46,22 @@ _LEGACY_STRING_DISPATCH_RE = re.compile(
 _ACTION_PROPERTY_RE = re.compile(
     r"""\b[A-Za-z_$][\w$]*Action\s*:\s*(?P<quote>["'])(?P<name>[A-Za-z_$][\w$]*)(?P=quote)"""
 )
+_MDX_IMPORT_RE = re.compile(
+    r"""^\s*import\s+(?P<clause>[\s\S]*?)\s+from\s+"""
+    r"""(?P<quote>["'])(?P<source>[^"']+)(?P=quote)\s*;?""",
+    re.MULTILINE,
+)
+_MDX_NAMED_IMPORT_RE = re.compile(r"""\{(?P<body>[^}]*)\}""", re.DOTALL)
+_MDX_NAMESPACE_IMPORT_RE = re.compile(
+    r"""\*\s+as\s+(?P<name>[A-Za-z_$][\w$]*)"""
+)
+_MDX_COMPONENT_TAG_RE = re.compile(
+    r"""</?\s*(?P<name>[A-Z][A-Za-z0-9_$]*)(?:\s|/|>|[.])"""
+)
+_MARKDOWN_CODE_BLOCK_RE = re.compile(
+    r"""(```[\s\S]*?```|~~~[\s\S]*?~~~)"""
+)
+_MARKDOWN_INLINE_CODE_RE = re.compile(r"""`[^`\n]*`""")
 _SCRIPT_TAG_RE = re.compile(r"""<script\b(?P<attrs>[^>]*)>""", re.IGNORECASE)
 _SRC_ATTR_RE = re.compile(
     r"""\bsrc\s*=\s*(?P<quote>["'])(?P<value>.*?)(?P=quote)""",
@@ -79,6 +98,87 @@ def extract_browser_event_handler_names(source: str) -> set[str]:
     return names
 
 
+def extract_mdx_component_refs(
+    root: Path,
+    mdx_file: Path,
+    source: str,
+    monorepo_resolver,
+) -> list[tuple[str, Path]]:
+    clean_source = _strip_markdown_code(source)
+    rendered_components = _extract_mdx_rendered_components(clean_source)
+    if not rendered_components:
+        return []
+
+    imported_components = _extract_mdx_imported_components(clean_source)
+    refs: list[tuple[str, Path]] = []
+    seen: set[tuple[str, Path]] = set()
+    for name in sorted(rendered_components):
+        imported = imported_components.get(name)
+        if not imported:
+            continue
+        import_source, exported_name = imported
+
+        target_file = _resolve_mdx_component_file(
+            root,
+            mdx_file,
+            import_source,
+            monorepo_resolver,
+        )
+        if target_file is None:
+            continue
+
+        key = (exported_name, target_file)
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append(key)
+    return refs
+
+
+def collect_mdx_ts_imports(
+    project_root: Path,
+    source_files,
+    *,
+    exclude_folders=None,
+) -> dict[Path, list[dict[str, object]]]:
+    root = Path(project_root).resolve()
+    source_cache: dict[Path, str] = {}
+    raw_imports: dict[Path, list[dict[str, object]]] = {}
+
+    for file_path in _iter_mdx_reference_files(root, source_files, exclude_folders):
+        source = _read_text(root, file_path, source_cache)
+        if source is None:
+            continue
+
+        clean_source = _strip_markdown_code(source)
+        rendered_components = _extract_mdx_rendered_components(clean_source)
+        if not rendered_components:
+            continue
+
+        imported_components = _extract_mdx_imported_components(clean_source)
+        imports_by_source: dict[str, list[str]] = {}
+        for local_name in sorted(rendered_components):
+            imported = imported_components.get(local_name)
+            if not imported:
+                continue
+            import_source, exported_name = imported
+            imports_by_source.setdefault(import_source, []).append(exported_name)
+
+        entries: list[dict[str, object]] = []
+        for import_source, names in imports_by_source.items():
+            entries.append(
+                {
+                    "source": import_source,
+                    "names": names,
+                    "line": 1,
+                }
+            )
+        if entries:
+            raw_imports[file_path] = entries
+
+    return raw_imports
+
+
 def collect_browser_event_handler_refs(
     project_root: Path,
     source_files,
@@ -91,6 +191,7 @@ def collect_browser_event_handler_refs(
     seen_names: set[str] = set()
     source_cache: dict[Path, str] = {}
     template_files: list[Path] = []
+    monorepo_resolver = _build_ts_monorepo_resolver(root)
 
     reference_files = list(
         _iter_browser_reference_files(root, source_files, exclude_folders)
@@ -102,6 +203,15 @@ def collect_browser_event_handler_refs(
 
         if file_path.suffix.lower() in _HTML_TEMPLATE_SUFFIXES:
             template_files.append(file_path)
+
+        if file_path.suffix.lower() in _MDX_SUFFIXES:
+            for name, target_file in extract_mdx_component_refs(
+                root,
+                file_path,
+                source,
+                monorepo_resolver,
+            ):
+                _append_ref(refs, seen_refs, name, target_file)
 
         for name in extract_browser_event_handler_names(source):
             seen_names.add(name)
@@ -117,6 +227,111 @@ def collect_browser_event_handler_refs(
                 _append_ref(refs, seen_refs, name, script_file)
 
     return refs
+
+
+def _strip_markdown_code(source: str) -> str:
+    without_blocks = _MARKDOWN_CODE_BLOCK_RE.sub("", source)
+    return _MARKDOWN_INLINE_CODE_RE.sub("", without_blocks)
+
+
+def _extract_mdx_rendered_components(source: str) -> set[str]:
+    names: set[str] = set()
+    for match in _MDX_COMPONENT_TAG_RE.finditer(source):
+        names.add(match.group("name"))
+    return names
+
+
+def _extract_mdx_imported_components(source: str) -> dict[str, tuple[str, str]]:
+    imported: dict[str, tuple[str, str]] = {}
+    for match in _MDX_IMPORT_RE.finditer(source):
+        clause = match.group("clause").strip()
+        import_source = match.group("source").strip()
+        for local_name, exported_name in _extract_import_clause_local_names(
+            clause
+        ).items():
+            imported[local_name] = (import_source, exported_name)
+    return imported
+
+
+def _extract_import_clause_local_names(clause: str) -> dict[str, str]:
+    names: dict[str, str] = {}
+
+    namespace_match = _MDX_NAMESPACE_IMPORT_RE.search(clause)
+    if namespace_match:
+        namespace_name = namespace_match.group("name")
+        names[namespace_name] = namespace_name
+
+    named_spans: list[tuple[int, int]] = []
+    for match in _MDX_NAMED_IMPORT_RE.finditer(clause):
+        named_spans.append(match.span())
+        for part in match.group("body").split(","):
+            parsed = _names_from_import_part(part)
+            if parsed:
+                local_name, exported_name = parsed
+                names[local_name] = exported_name
+
+    default_clause = clause
+    for start, end in reversed(named_spans):
+        default_clause = default_clause[:start] + default_clause[end:]
+    default_clause = default_clause.split(",", 1)[0].strip()
+    if default_clause and not default_clause.startswith("*"):
+        parsed = _names_from_import_part(default_clause)
+        if parsed:
+            local_name, exported_name = parsed
+            names[local_name] = exported_name
+
+    return names
+
+
+def _names_from_import_part(part: str) -> tuple[str, str] | None:
+    cleaned = part.strip()
+    if not cleaned:
+        return None
+
+    pieces = re.split(r"\s+as\s+", cleaned)
+    exported_name = pieces[0].strip()
+    local_name = pieces[-1].strip()
+    if not re.fullmatch(r"[A-Za-z_$][\w$]*", exported_name):
+        return None
+    if re.fullmatch(r"[A-Za-z_$][\w$]*", local_name):
+        return local_name, exported_name
+    return None
+
+
+def _resolve_mdx_component_file(
+    root: Path,
+    mdx_file: Path,
+    import_source: str,
+    monorepo_resolver,
+) -> Path | None:
+    if import_source.startswith(("http://", "https://", "//")):
+        return None
+
+    try:
+        from skylos.visitors.languages.typescript.analysis import resolve_ts_module
+    except ImportError:
+        return None
+
+    resolved = resolve_ts_module(
+        import_source,
+        str(mdx_file),
+        monorepo_resolver=monorepo_resolver,
+    )
+    if not resolved:
+        return None
+
+    target_file = Path(resolved)
+    if target_file.suffix.lower() not in _JS_SOURCE_SUFFIXES:
+        return None
+    return _resolve_readable_project_file(root, target_file)
+
+
+def _build_ts_monorepo_resolver(root: Path):
+    try:
+        from skylos.visitors.languages.typescript.resolve import MonorepoResolver
+    except ImportError:
+        return None
+    return MonorepoResolver(str(root))
 
 
 def _iter_event_handler_values(source: str):
@@ -346,6 +561,43 @@ def _iter_browser_reference_files(
         exclude_folders=exclude_folders,
     )
     for file_path in template_files:
+        if file_path in seen:
+            continue
+        seen.add(file_path)
+        yield file_path
+
+    for file_path in _iter_mdx_reference_files(root, source_files, exclude_folders):
+        if file_path in seen:
+            continue
+        seen.add(file_path)
+        yield file_path
+
+
+def _iter_mdx_reference_files(
+    root: Path,
+    source_files,
+    exclude_folders,
+):
+    seen: set[Path] = set()
+
+    for raw_file in source_files:
+        file_path = Path(raw_file).resolve()
+        if file_path.suffix.lower() not in _MDX_SUFFIXES:
+            continue
+        if file_path in seen:
+            continue
+        seen.add(file_path)
+        yield file_path
+
+    if not root.exists() or not root.is_dir():
+        return
+
+    mdx_files = discover_source_files(
+        root,
+        _MDX_SUFFIXES,
+        exclude_folders=exclude_folders,
+    )
+    for file_path in mdx_files:
         if file_path in seen:
             continue
         seen.add(file_path)

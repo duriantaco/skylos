@@ -476,6 +476,7 @@ class RustCore:
     def _scan_use_imports(self, node) -> None:
         line = node.start_point[0] + 1
         source = self._get_text(node).strip()
+        is_public_reexport = self._is_public(node)
         source = source.removeprefix("use").strip().rstrip(";")
         if "*" in source:
             self.raw_imports.append({"source": source, "names": ["*"], "line": line})
@@ -486,6 +487,7 @@ class RustCore:
             if not name:
                 continue
             d = Definition(name, "import", self.file_path, line)
+            d.is_exported = is_public_reexport
             self.defs.append(d)
             self.imports.append(
                 {"name": name, "file": str(self.file_path), "line": line}
