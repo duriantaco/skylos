@@ -107,6 +107,18 @@ _PROMPT_KEYS_RE = re.compile(
 )
 
 
+def _is_allowed_json_bom(
+    source: str, ext: str, char_hex: str, line_no: int, is_agent_instruction: bool
+) -> bool:
+    return (
+        not is_agent_instruction
+        and ext == ".json"
+        and char_hex == "U+FEFF"
+        and line_no == 1
+        and source.startswith("\ufeff")
+    )
+
+
 def scan_file(
     filepath: str | Path, *, scan_path: str | Path | None = None
 ) -> list[dict]:
@@ -146,6 +158,10 @@ def scan_file(
 
     _, zero_width_hits = strip_zero_width(source, max_hits=MAX_ZERO_WIDTH_HITS)
     for char_hex, line_no in zero_width_hits:
+        if _is_allowed_json_bom(
+            source, ext, char_hex, line_no, is_agent_instruction
+        ):
+            continue
         findings.append(
             _make_finding(
                 filepath,

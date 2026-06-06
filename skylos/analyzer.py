@@ -20,7 +20,11 @@ from skylos.analysis.circular_deps import (
     _resolve_from_import_targets,
 )
 
-from skylos.constants import AUTO_CALLED, MARKREFS_TICK_DEFAULT
+from skylos.constants import (
+    AUTO_CALLED,
+    DEFAULT_EXCLUDE_FOLDERS,
+    MARKREFS_TICK_DEFAULT,
+)
 
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
@@ -3038,7 +3042,13 @@ class Skylos:
                                 _add_injection_candidate(candidate)
                         if injection_root.is_dir():
                             pending_dirs = [injection_root]
-                            excluded_dirs = set(exclude_folders or [])
+                            excluded_dirs = {
+                                folder
+                                for folder in DEFAULT_EXCLUDE_FOLDERS
+                                if "*" not in folder
+                            }
+                            excluded_dirs.add("site-packages")
+                            excluded_dirs.update(exclude_folders or [])
                             while (
                                 pending_dirs
                                 and len(injection_candidates)
