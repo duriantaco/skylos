@@ -49,6 +49,11 @@ class ExplodingExecutor:
         return fut
 
 
+class ShouldNotRunExecutor:
+    def __init__(self, max_workers=None):
+        raise AssertionError("parallel executor should not be used")
+
+
 def fake_as_completed(futs):
     fs = list(futs)
     fs.reverse()
@@ -77,6 +82,60 @@ def test_parallel_path_preserves_order(monkeypatch, tmp_path):
     assert out[0] == ("ok", str(files[0]), "mx")
     assert out[1] == ("ok", str(files[1]), "my")
     assert out[2] == ("ok", str(files[2]), "mz")
+
+
+def test_go_files_use_serial_path_to_keep_module_cache_effective(monkeypatch, tmp_path):
+    monkeypatch.setattr(ps, "ProcessPoolExecutor", ShouldNotRunExecutor)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    calls = []
+
+    def fake_proc_file(file_path, mod, extra_visitors=None, full_scan=True, **kwargs):
+        calls.append(str(file_path))
+        return ("go-ok", str(file_path), mod)
+
+    import skylos.analyzer
+
+    monkeypatch.setattr(skylos.analyzer, "proc_file", fake_proc_file)
+
+    files = [tmp_path / "a.go", tmp_path / "b.go"]
+    modmap = {files[0]: "m", files[1]: "m"}
+
+    out = ps.run_proc_file_parallel(files, modmap, jobs=2)
+
+    assert out == [("go-ok", str(files[0]), "m"), ("go-ok", str(files[1]), "m")]
+    assert calls == [str(files[0]), str(files[1])]
+
+
+def test_mixed_files_keep_non_go_parallel_and_preserve_order(monkeypatch, tmp_path):
+    monkeypatch.setattr(ps, "ProcessPoolExecutor", DummyExecutor)
+    monkeypatch.setattr(ps, "as_completed", fake_as_completed)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    def fake_proc_file(file_path, mod, extra_visitors=None, full_scan=True, **kwargs):
+        return ("mixed-ok", str(file_path), mod)
+
+    import skylos.analyzer
+
+    monkeypatch.setattr(skylos.analyzer, "proc_file", fake_proc_file)
+
+    files = [tmp_path / "a.py", tmp_path / "b.go", tmp_path / "c.ts"]
+    modmap = {files[0]: "py", files[1]: "go", files[2]: "ts"}
+    progress = []
+
+    out = ps.run_proc_file_parallel(
+        files,
+        modmap,
+        jobs=2,
+        progress_callback=lambda done, total, path: progress.append(
+            (done, total, path.name)
+        ),
+    )
+
+    assert out[0] == ("mixed-ok", str(files[0]), "py")
+    assert out[1] == ("mixed-ok", str(files[1]), "go")
+    assert out[2] == ("mixed-ok", str(files[2]), "ts")
+    assert progress == [(1, 3, "c.ts"), (2, 3, "a.py"), (3, 3, "b.go")]
 
 
 def test_parallel_path_retries_parent_process_when_worker_result_fails(
