@@ -60,30 +60,36 @@ def run_proc_file_parallel(
         jobs = 1
 
     if jobs <= 1:
-        outs = []
-        total = len(files)
-        for i, f in enumerate(files, 1):
-            if progress_callback:
-                progress_callback(i, total or 1, f)
+        return _run_proc_files_serial(
+            files,
+            modmap,
+            extra_visitors=extra_visitors,
+            progress_callback=progress_callback,
+            changed_files=changed_files,
+            collect_clone_fragments=collect_clone_fragments,
+            clone_cfg=clone_cfg,
+            collect_architecture_metrics=collect_architecture_metrics,
+            enable_quality_rules=enable_quality_rules,
+            enable_danger_rules=enable_danger_rules,
+            config_file=config_file,
+        )
 
-            from skylos.analyzer import proc_file
-
-            full_scan = changed_files is None or str(f) in changed_files
-            out = proc_file(
-                f,
-                modmap[f],
-                extra_visitors=extra_visitors,
-                full_scan=full_scan,
-                collect_clone_fragments=collect_clone_fragments,
-                clone_cfg=clone_cfg,
-                collect_architecture_metrics=collect_architecture_metrics,
-                enable_quality_rules=enable_quality_rules,
-                enable_danger_rules=enable_danger_rules,
-                config_file=config_file,
-            )
-            outs.append(out)
-
-        return outs
+    if any(str(f).endswith(".go") for f in files):
+        return _run_mixed_files_with_serial_go(
+            files,
+            modmap,
+            extra_visitors=extra_visitors,
+            jobs=jobs,
+            progress_callback=progress_callback,
+            custom_rules_data=custom_rules_data,
+            changed_files=changed_files,
+            collect_clone_fragments=collect_clone_fragments,
+            clone_cfg=clone_cfg,
+            collect_architecture_metrics=collect_architecture_metrics,
+            enable_quality_rules=enable_quality_rules,
+            enable_danger_rules=enable_danger_rules,
+            config_file=config_file,
+        )
 
     pending = []
     for f in files:
@@ -160,3 +166,114 @@ def run_proc_file_parallel(
         ordered.append(results.get(str(f)))
 
     return ordered
+
+
+def _run_mixed_files_with_serial_go(
+    files,
+    modmap,
+    extra_visitors=None,
+    jobs=0,
+    progress_callback=None,
+    custom_rules_data=None,
+    changed_files=None,
+    collect_clone_fragments=False,
+    clone_cfg=None,
+    collect_architecture_metrics=False,
+    enable_quality_rules=True,
+    enable_danger_rules=True,
+    config_file=None,
+):
+    go_files = []
+    other_files = []
+    for f in files:
+        if str(f).endswith(".go"):
+            go_files.append(f)
+        else:
+            other_files.append(f)
+
+    completed = 0
+    total = len(files)
+
+    def child_progress(_done, _total, file_path):
+        nonlocal completed
+        completed += 1
+        if progress_callback:
+            progress_callback(completed, total or 1, file_path)
+
+    results = {}
+    if other_files:
+        other_outs = run_proc_file_parallel(
+            other_files,
+            modmap,
+            extra_visitors=extra_visitors,
+            jobs=jobs,
+            progress_callback=child_progress,
+            custom_rules_data=custom_rules_data,
+            changed_files=changed_files,
+            collect_clone_fragments=collect_clone_fragments,
+            clone_cfg=clone_cfg,
+            collect_architecture_metrics=collect_architecture_metrics,
+            enable_quality_rules=enable_quality_rules,
+            enable_danger_rules=enable_danger_rules,
+            config_file=config_file,
+        )
+        for f, out in zip(other_files, other_outs):
+            results[str(f)] = out
+
+    if go_files:
+        go_outs = _run_proc_files_serial(
+            go_files,
+            modmap,
+            extra_visitors=extra_visitors,
+            progress_callback=child_progress,
+            changed_files=changed_files,
+            collect_clone_fragments=collect_clone_fragments,
+            clone_cfg=clone_cfg,
+            collect_architecture_metrics=collect_architecture_metrics,
+            enable_quality_rules=enable_quality_rules,
+            enable_danger_rules=enable_danger_rules,
+            config_file=config_file,
+        )
+        for f, out in zip(go_files, go_outs):
+            results[str(f)] = out
+
+    return [results.get(str(f)) for f in files]
+
+
+def _run_proc_files_serial(
+    files,
+    modmap,
+    extra_visitors=None,
+    progress_callback=None,
+    changed_files=None,
+    collect_clone_fragments=False,
+    clone_cfg=None,
+    collect_architecture_metrics=False,
+    enable_quality_rules=True,
+    enable_danger_rules=True,
+    config_file=None,
+):
+    outs = []
+    total = len(files)
+    for i, f in enumerate(files, 1):
+        if progress_callback:
+            progress_callback(i, total or 1, f)
+
+        from skylos.analyzer import proc_file
+
+        full_scan = changed_files is None or str(f) in changed_files
+        out = proc_file(
+            f,
+            modmap[f],
+            extra_visitors=extra_visitors,
+            full_scan=full_scan,
+            collect_clone_fragments=collect_clone_fragments,
+            clone_cfg=clone_cfg,
+            collect_architecture_metrics=collect_architecture_metrics,
+            enable_quality_rules=enable_quality_rules,
+            enable_danger_rules=enable_danger_rules,
+            config_file=config_file,
+        )
+        outs.append(out)
+
+    return outs

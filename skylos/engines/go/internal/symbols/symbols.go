@@ -365,7 +365,47 @@ func Extract(root string) (*Result, error) {
 		return nil
 	})
 
+	defNames := symbolDefNames(result.Defs)
+	typedRefs, typedCalls := collectTypedSelectorRefs(root, resolvedRoot, modulePath, pkgDirs, defNames)
+	appendUniqueTypedSymbols(result, typedRefs, typedCalls)
+
 	return result, err
+}
+
+func symbolDefNames(defs []Def) map[string]bool {
+	names := map[string]bool{}
+	for _, def := range defs {
+		names[def.Name] = true
+	}
+	return names
+}
+
+func appendUniqueTypedSymbols(result *Result, refs []Ref, calls []CallPair) {
+	seenRefs := map[string]bool{}
+	for _, ref := range result.Refs {
+		seenRefs[ref.File+"\x00"+ref.Name] = true
+	}
+	for _, ref := range refs {
+		key := ref.File + "\x00" + ref.Name
+		if seenRefs[key] {
+			continue
+		}
+		seenRefs[key] = true
+		result.Refs = append(result.Refs, ref)
+	}
+
+	seenCalls := map[string]bool{}
+	for _, call := range result.CallPairs {
+		seenCalls[call.Caller+"\x00"+call.Callee] = true
+	}
+	for _, call := range calls {
+		key := call.Caller + "\x00" + call.Callee
+		if seenCalls[key] {
+			continue
+		}
+		seenCalls[key] = true
+		result.CallPairs = append(result.CallPairs, call)
+	}
 }
 
 func isPathWithinRoot(root, path string) bool {
@@ -439,6 +479,10 @@ func typeExprName(expr ast.Expr) string {
 		if ident, ok := e.X.(*ast.Ident); ok {
 			return ident.Name + "." + e.Sel.Name
 		}
+	case *ast.IndexExpr:
+		return typeExprName(e.X)
+	case *ast.IndexListExpr:
+		return typeExprName(e.X)
 	}
 	return ""
 }
