@@ -3310,6 +3310,19 @@ class Skylos:
         from skylos.visitors.languages.typescript.resolve import MonorepoResolver
 
         monorepo_resolver = MonorepoResolver(str(self._project_root))
+        try:
+            from skylos.deadcode.browser_refs import collect_mdx_ts_imports
+
+            mdx_raw_imports = collect_mdx_ts_imports(
+                Path(root),
+                files,
+                exclude_folders=exclude_folders,
+            )
+            ts_raw_imports.update(mdx_raw_imports)
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error("MDX component import graph scan failed", exc_info=True)
+
         self._build_ts_import_graph(ts_raw_imports, monorepo_resolver)
 
         self._global_type_map = {}

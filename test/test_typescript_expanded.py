@@ -510,6 +510,67 @@ function unusedHelper() {
         assert "cancelNFZ" not in unused
         assert "unusedHelper" in unused
 
+    def test_mdx_imported_components_mark_target_tsx_file_live(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        (tmp_path / "tsconfig.json").write_text(
+            '{"compilerOptions":{"paths":{"@/*":["./*"]}}}',
+            encoding="utf-8",
+        )
+        (tmp_path / "content").mkdir()
+        (tmp_path / "components").mkdir()
+        (tmp_path / "content" / "page.mdx").write_text(
+            """
+import { UsedPanel } from "@/components/used";
+
+<UsedPanel />
+
+```mdx
+<DeadPanel />
+```
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "components" / "used.tsx").write_text(
+            """
+export function UsedPanel() {
+    return null;
+}
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "components" / "duplicate.tsx").write_text(
+            """
+export function UsedPanel() {
+    return null;
+}
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "components" / "dead.tsx").write_text(
+            """
+export function DeadPanel() {
+    return null;
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused = {
+            (Path(item["file"]).name, item["name"])
+            for item in result.get("unused_functions", [])
+        }
+        unused_files = {
+            Path(item["file"]).name for item in result.get("unused_files", [])
+        }
+
+        assert ("used.tsx", "UsedPanel") not in unused
+        assert ("duplicate.tsx", "UsedPanel") in unused
+        assert ("dead.tsx", "DeadPanel") in unused
+        assert "used.tsx" not in unused_files
+        assert "duplicate.tsx" in unused_files
+
     def test_generated_inline_handlers_mark_js_functions_live(self, tmp_path):
         from skylos.analyzer import analyze
 

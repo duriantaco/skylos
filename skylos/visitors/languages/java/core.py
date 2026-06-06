@@ -52,6 +52,17 @@ _LIFECYCLE_METHODS: set[str] = {
     "onViewCreated",
 }
 
+_SERIALIZATION_HOOKS_WITHOUT_ARGS: set[str] = {
+    "readObjectNoData",
+    "readResolve",
+    "writeReplace",
+}
+
+_SERIALIZATION_HOOKS_WITH_STREAM: dict[str, str] = {
+    "readObject": "ObjectInputStream",
+    "writeObject": "ObjectOutputStream",
+}
+
 _DEFS_PATTERN = """
 (class_declaration name: (identifier) @class_def)
 (interface_declaration name: (identifier) @iface_def)
@@ -156,6 +167,17 @@ class JavaCore:
                 name_node = current.child_by_field_name("name")
                 if name_node:
                     return self._get_text(name_node)
+            current = current.parent
+        return None
+
+    def _find_containing_method(self, node) -> str | None:
+        current = node.parent
+        while current:
+            if current.type == "method_declaration":
+                name_node = current.child_by_field_name("name")
+                if name_node:
+                    return self._get_text(name_node)
+                return None
             current = current.parent
         return None
 
@@ -278,6 +300,45 @@ class JavaCore:
                             return True
         return False
 
+    def _method_parameter_texts(self, method_node) -> list[str]:
+        parameters = method_node.child_by_field_name(
+            "parameters"
+        ) or self._find_child_by_type(method_node, "formal_parameters")
+        if parameters is None:
+            return []
+
+        result: list[str] = []
+        for child in parameters.children:
+            if child.type in {"formal_parameter", "spread_parameter"}:
+                result.append(self._get_text(child))
+        return result
+
+    def _is_java_serialization_hook(self, name: str, name_node) -> bool:
+        method_node = name_node.parent
+        if method_node is None or method_node.type != "method_declaration":
+            return False
+
+        parameters = self._method_parameter_texts(method_node)
+        if name in _SERIALIZATION_HOOKS_WITHOUT_ARGS:
+            return len(parameters) == 0
+
+        stream_type = _SERIALIZATION_HOOKS_WITH_STREAM.get(name)
+        if stream_type is None or len(parameters) != 1:
+            return False
+        return stream_type in parameters[0]
+
+    def _is_abstract_method(self, name_node) -> bool:
+        method_node = name_node.parent
+        if method_node is None or method_node.type != "method_declaration":
+            return False
+
+        modifiers = method_node.child_by_field_name(
+            "modifiers"
+        ) or self._find_child_by_type(method_node, "modifiers")
+        if modifiers is None:
+            return False
+        return "abstract" in self._get_text(modifiers)
+
     def scan(self) -> None:
         if not self.root_node:
             self.raw_imports: list[dict] = []
@@ -288,6 +349,7 @@ class JavaCore:
 
         self._scan_defs()
         self._scan_refs()
+        self._scan_reflection_refs()
         self._scan_imports()
         self.raw_imports = []
         self._build_call_graph()
@@ -324,6 +386,12 @@ class JavaCore:
         name = self._get_text(node)
 
         if type_name == "method" and name in _LIFECYCLE_METHODS:
+            return
+
+        if type_name == "method" and self._is_java_serialization_hook(name, node):
+            return
+
+        if type_name == "method" and self._is_abstract_method(node):
             return
 
         if type_name == "method":
@@ -383,10 +451,28 @@ class JavaCore:
         for node in c.get("ref", []):
             name = self._get_text(node)
             if not self._is_self_ref(node, name):
+                if node.parent and node.parent.type == "method_invocation":
+                    object_node = node.parent.child_by_field_name("object")
+                    if object_node is not None:
+                        object_name = self._get_text(object_node)
+                        if object_name not in {"this", "super"}:
+                            qualified_ref = f"{object_name}.{name}"
+                            key = (qualified_ref, node.start_byte)
+                            if key not in seen:
+                                seen.add(key)
+                                self.refs.append((qualified_ref, self.file_path))
+                            continue
+
                 key = (name, node.start_byte)
                 if key not in seen:
                     seen.add(key)
                     self.refs.append((name, self.file_path))
+                    if node.parent and node.parent.type == "method_invocation":
+                        class_name = self._find_containing_class(node)
+                        method_name = self._find_containing_method(node)
+                        if class_name and method_name != name:
+                            qualified_name = f"{class_name}.{name}"
+                            self.refs.append((qualified_name, self.file_path))
 
         for node in c.get("type_ref", []):
             parent = node.parent
@@ -413,6 +499,48 @@ class JavaCore:
             if key not in seen:
                 seen.add(key)
                 self.refs.append((name, self.file_path))
+
+    def _scan_reflection_refs(self) -> None:
+        if self.root_node is None:
+            return
+
+        for node in self._walk_nodes(self.root_node):
+            if node.type != "method_invocation":
+                continue
+
+            name_node = node.child_by_field_name("name")
+            object_node = node.child_by_field_name("object")
+            if name_node is None or object_node is None:
+                continue
+            if self._get_text(name_node) != "forName":
+                continue
+            if self._get_text(object_node) != "Class":
+                continue
+
+            class_name = self._first_string_argument(node)
+            if class_name:
+                self.refs.append((class_name, self.file_path))
+
+    def _first_string_argument(self, invocation_node) -> str | None:
+        arguments = invocation_node.child_by_field_name(
+            "arguments"
+        ) or self._find_child_by_type(invocation_node, "argument_list")
+        if arguments is None:
+            return None
+
+        for child in self._walk_nodes(arguments):
+            if child.type != "string_literal":
+                continue
+            raw = self._get_text(child).strip()
+            if len(raw) < 2:
+                continue
+            if raw[0] not in {'"', "'"} or raw[-1] != raw[0]:
+                continue
+            value = raw[1:-1].strip()
+            if value:
+                return value
+            return None
+        return None
 
     def _scan_imports(self) -> None:
         c = self._defs_captures
