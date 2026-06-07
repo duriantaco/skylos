@@ -44,11 +44,13 @@ _BRACE_LANG_EXTS = {
     ".rs": "rust",
     ".java": "java",
     ".dart": "dart",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
 }
 
 
 def _find_brace_block_end(lines: list[str], start_idx: int) -> int:
-    """Find the end of a brace-delimited block (TS/Go/Java/Rust).
+    """Find the end of a brace-delimited block.
 
     Scans from *start_idx* forward, tracking ``{`` / ``}`` nesting.
     Returns the 0-indexed line of the closing ``}``.
@@ -161,7 +163,7 @@ def _validate_file(file_path: str, content: str) -> list[str]:
         return _validate_go_syntax(file_path, content)
     if ext == ".rs":
         return _validate_rust_syntax(file_path, content)
-    if ext in {".java", ".dart"}:
+    if ext in {".java", ".dart", ".kt", ".kts"}:
         return _check_brace_balance(file_path, content)
     return []
 
