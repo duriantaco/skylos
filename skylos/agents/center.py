@@ -46,6 +46,8 @@ SUPPORTED_EXTENSIONS = {
     ".php",
     ".rs",
     ".dart",
+    ".kt",
+    ".kts",
 }
 
 

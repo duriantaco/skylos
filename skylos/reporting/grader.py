@@ -66,6 +66,8 @@ _COMMENT_PREFIXES: dict[str, str] = {
     ".php": "//",
     ".rs": "//",
     ".dart": "//",
+    ".kt": "//",
+    ".kts": "//",
 }
 
 

@@ -74,6 +74,7 @@ SUPPORTED_LANGUAGES = {
     "rust",
     "dart",
     "csharp",
+    "kotlin",
 }
 SCANNER_LANGUAGE_SUPPORT = {
     "skylos": SUPPORTED_LANGUAGES,

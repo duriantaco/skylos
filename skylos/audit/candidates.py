@@ -45,6 +45,8 @@ DEEP_AUDIT_EXTENSIONS = (
     ".rs",
     ".dart",
     ".cs",
+    ".kt",
+    ".kts",
     ".env",
     ".yaml",
     ".yml",

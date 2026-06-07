@@ -43,6 +43,8 @@ CODE_EXTENSIONS = {
     ".java",
     ".php",
     ".dart",
+    ".kt",
+    ".kts",
 }
 
 MAX_FILE_SIZE = 100_000  # bytes
