@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "description": "Pinned real-repo framework corpus for manual and nightly Skylos dead-code accuracy checks. Checkouts are static inputs only; the runner does not install dependencies or execute target code.",
+  "targets": [
+    {
+      "id": "fastapi",
+      "repo": "https://github.com/fastapi/fastapi",
+      "ref": "5cdf820c8046edaf83c306ebd7435f038fc4a75a",
+      "checkout": "fastapi",
+      "license": "MIT",
+      "languages": ["python"],
+      "scan_paths": ["fastapi"],
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "baseline": {
+        "counts": {
+          "unused_functions": 1,
+          "unused_imports": 0,
+          "unused_classes": 0,
+          "unused_variables": 4,
+          "unused_parameters": 1
+        },
+        "max_delta": 0,
+        "notes": "Baseline captured from the pinned checkout after Python registration-decorator, same-name re-export, and annotation-metadata precision fixes."
+      }
+    },
+    {
+      "id": "starlette",
+      "repo": "https://github.com/encode/starlette",
+      "ref": "70a3bd4276712f0ee11b161c8b14225a84316df1",
+      "checkout": "starlette",
+      "license": "BSD-3-Clause",
+      "languages": ["python"],
+      "scan_paths": ["starlette"],
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "baseline": {
+        "counts": {
+          "unused_functions": 2,
+          "unused_imports": 0,
+          "unused_classes": 0,
+          "unused_variables": 0,
+          "unused_parameters": 0
+        },
+        "max_delta": 0,
+        "notes": "Baseline captured from the pinned checkout."
+      }
+    },
+    {
+      "id": "pydantic",
+      "repo": "https://github.com/pydantic/pydantic",
+      "ref": "718ef06e1062892128907f4f28e15f76ff1a38f9",
+      "checkout": "pydantic",
+      "license": "MIT",
+      "languages": ["python"],
+      "scan_paths": ["pydantic"],
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "baseline": {
+        "counts": {
+          "unused_functions": 5,
+          "unused_imports": 3,
+          "unused_classes": 1,
+          "unused_variables": 8,
+          "unused_parameters": 2
+        },
+        "max_delta": 0,
+        "notes": "Baseline captured from the pinned checkout after annotation metadata precision fixes."
+      }
+    },
+    {
+      "id": "typer",
+      "repo": "https://github.com/fastapi/typer",
+      "ref": "4e10334990db4e7e1e9a71aff363bcae7f7fc76d",
+      "checkout": "typer",
+      "license": "MIT",
+      "languages": ["python"],
+      "scan_paths": ["typer"],
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "baseline": {
+        "counts": {
+          "unused_functions": 1,
+          "unused_imports": 0,
+          "unused_classes": 1,
+          "unused_variables": 26,
+          "unused_parameters": 1
+        },
+        "max_delta": 0,
+        "notes": "Baseline captured from the pinned checkout."
+      }
+    },
+    {
+      "id": "click",
+      "repo": "https://github.com/pallets/click",
+      "ref": "8a1b1a33d739be05b7e91251e3c0dde77c5e152f",
+      "checkout": "click",
+      "license": "BSD-3-Clause",
+      "languages": ["python"],
+      "scan_paths": ["src/click"],
+      "scan": {
+        "confidence": 60,
+        "grep_verify": true
+      },
+      "baseline": {
+        "counts": {
+          "unused_functions": 2,
+          "unused_imports": 1,
+          "unused_classes": 0,
+          "unused_variables": 7,
+          "unused_parameters": 1
+        },
+        "max_delta": 0,
+        "notes": "Baseline captured from the pinned checkout after same-name re-export precision fixes."
+      }
+    }
+  ]
+}
