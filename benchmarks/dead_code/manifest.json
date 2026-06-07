@@ -92,6 +92,97 @@
       }
     },
     {
+      "id": "local-registration-decorator-entrypoints",
+      "path": "fixtures/local_registration_decorator",
+      "description": "Locally defined decorators that register and return functions should keep decorated entrypoints alive while unregistered helpers are still reported.",
+      "taxonomy": ["dynamic_dispatch", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "Apache-2.0",
+        "notes": "Distilled from real Python framework code that registers handlers through project-local decorators."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "app.py", "symbol": "dispatch"},
+          {"kind": "function", "file": "app.py", "symbol": "unused_action"}
+        ],
+        "used": [
+          {"kind": "function", "file": "app.py", "symbol": "action"},
+          {"kind": "function", "file": "app.py", "symbol": "on_startup"},
+          {"kind": "function", "file": "app.py", "symbol": "resize_image"},
+          {"kind": "function", "file": "app.py", "symbol": "archive_image"},
+          {"kind": "function", "file": "app.py", "symbol": "warm_cache"}
+        ]
+      }
+    },
+    {
+      "id": "explicit-same-name-reexports",
+      "path": "fixtures/explicit_reexports",
+      "description": "Python explicit same-name aliases are public re-export signals and should not be reported as unused imports.",
+      "taxonomy": ["package_entrypoint", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pallets/click",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from package API modules that expose imports with `name as name` re-export aliases."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "import", "file": "app.py", "symbol": "json"},
+          {"kind": "function", "file": "app.py", "symbol": "unused_helper"}
+        ],
+        "used": [
+          {"kind": "import", "file": "app.py", "symbol": "pathlib"},
+          {"kind": "import", "file": "app.py", "symbol": "PathLike"}
+        ]
+      }
+    },
+    {
+      "id": "annotation-metadata-import-scope",
+      "path": "fixtures/annotation_metadata_scope",
+      "description": "Annotation metadata should bind to imported decorators even when a function parameter has the same leaf name.",
+      "taxonomy": ["pydantic", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/pydantic/pydantic",
+        "license": "MIT",
+        "notes": "Distilled from Annotated metadata patterns used by Pydantic and FastAPI."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "import", "file": "app.py", "symbol": "json"},
+          {"kind": "function", "file": "app.py", "symbol": "unused_builder"},
+          {"kind": "variable", "file": "app.py", "symbol": "RESULT"}
+        ],
+        "used": [
+          {"kind": "import", "file": "app.py", "symbol": "deprecated"},
+          {"kind": "function", "file": "app.py", "symbol": "build_path"}
+        ]
+      }
+    },
+    {
       "id": "sqlalchemy-mixed-models",
       "path": "fixtures/sqlalchemy_mixed_models",
       "description": "A realistic model module should report only the unreferenced SQLAlchemy model while keeping used models and ORM columns quiet.",
