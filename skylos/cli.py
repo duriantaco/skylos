@@ -4228,6 +4228,8 @@ def main() -> None:
                     ".php",
                     ".rs",
                     ".dart",
+                    ".kt",
+                    ".kts",
                 }
                 config_exts = {
                     ".yaml",

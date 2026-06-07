@@ -88,6 +88,8 @@ def language_for_path(path: str | Path) -> str:
         ".rs": "rust",
         ".dart": "dart",
         ".cs": "csharp",
+        ".kt": "kotlin",
+        ".kts": "kotlin",
         ".env": "env",
         ".yaml": "yaml",
         ".yml": "yaml",

@@ -59,6 +59,8 @@ SOURCE_EXTENSIONS = {
     ".php",
     ".rs",
     ".dart",
+    ".kt",
+    ".kts",
 }
 
 RELEVANT_FILENAMES = {
