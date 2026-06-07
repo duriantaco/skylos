@@ -44,6 +44,8 @@ ALLOWED_FILE_SUFFIXES = (
     ".php",
     ".rs",
     ".dart",
+    ".kt",
+    ".kts",
 )
 
 PROVIDER_PATTERNS = [
