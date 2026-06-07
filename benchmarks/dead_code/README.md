@@ -100,3 +100,14 @@ pytest fixtures, Pydantic validators, Alembic revisions, importlib plugins, and
 package console-script entrypoints. The cross-language cases currently cover Go
 HTTP handler reachability, Java application entrypoints and stale methods, and
 mixed TypeScript/JavaScript package reachability.
+
+For larger accuracy discovery against pinned upstream framework repositories,
+use `benchmarks/framework_corpus`:
+
+```bash
+python scripts/framework_corpus.py --checkout-root /private/tmp/skylos-biglib-scan
+```
+
+That runner is a manual/nightly drift signal, not the blocking CI suite. Promote
+confirmed real-repo false positives and false negatives into small fixtures here
+so the normal benchmark keeps exact TP/FP/FN/TN coverage.
