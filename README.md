@@ -28,7 +28,7 @@
 ## What Is Skylos?
 
 Skylos is an open-source static analysis CLI for Python, TypeScript,
-JavaScript, Java, Go, PHP, Rust, Dart, C#, Shell, and deployment config. It
+JavaScript, Java, Go, Kotlin, PHP, Rust, Dart, C#, Shell, and deployment config. It
 runs locally by default and can also be used as a CI/CD PR gate.
 
 Use Skylos when you want one command to check a repo or pull request for:
