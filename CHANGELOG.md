@@ -1,5 +1,41 @@
 ## Changelog
 
+## [4.24.0](https://github.com/duriantaco/skylos/compare/v4.23.1...v4.24.0) (2026-06-07)
+
+
+### Features
+
+* **corpus:** add pinned framework corpus runner ([#559](https://github.com/duriantaco/skylos/issues/559)) ([ad00c62](https://github.com/duriantaco/skylos/commit/ad00c62786f39dc3fd7b84edd20491c98b6bf430))
+* **dead-code:** add Kotlin grep verification support ([#554](https://github.com/duriantaco/skylos/issues/554)) ([4352ab6](https://github.com/duriantaco/skylos/commit/4352ab6dc3a3ff661cef88de0874fe6b1cba0ba5))
+* **dead-code:** add Kotlin thin scanner layer ([#553](https://github.com/duriantaco/skylos/issues/553)) ([583a723](https://github.com/duriantaco/skylos/commit/583a7230842b4d1d53b5f864b7bed53b2ae31b94))
+* **kotlin:** wire workflow registries ([#556](https://github.com/duriantaco/skylos/issues/556)) ([b8ae490](https://github.com/duriantaco/skylos/commit/b8ae490c7715ca91e26fd10c95f2e7b659195ae2))
+* **llm:** add critical AI security rules ([#544](https://github.com/duriantaco/skylos/issues/544)) ([dd6963a](https://github.com/duriantaco/skylos/commit/dd6963a608ae7af259461fe26c1999d13ad8ce2d))
+* **llm:** detect excessive agent tool privilege ([#545](https://github.com/duriantaco/skylos/issues/545)) ([1df383a](https://github.com/duriantaco/skylos/commit/1df383a2a79c7f38f308565b3b351e1c3fcc8f51))
+* **llm:** detect unbounded LLM consumption ([#546](https://github.com/duriantaco/skylos/issues/546)) ([59e9d64](https://github.com/duriantaco/skylos/commit/59e9d6499610158304407703a6c1bb15fa9de0e5))
+* **llm:** detect unsafe LLM app flows ([#543](https://github.com/duriantaco/skylos/issues/543)) ([f953830](https://github.com/duriantaco/skylos/commit/f953830851498164ea866bb468311d21ca1beb0d))
+* **secrets:** scan Kotlin source files ([#555](https://github.com/duriantaco/skylos/issues/555)) ([7624b6d](https://github.com/duriantaco/skylos/commit/7624b6d0e3ab9052b6dff7c0ce446087e832365c))
+
+
+### Bug Fixes
+
+* **analyzer:** reduce quality scan false positives ([#536](https://github.com/duriantaco/skylos/issues/536)) ([c414818](https://github.com/duriantaco/skylos/commit/c41481817f8d69603ea8db2935a364757fd71609))
+* **cloud:** split sync setup helpers ([#540](https://github.com/duriantaco/skylos/issues/540)) ([7bbf4c4](https://github.com/duriantaco/skylos/commit/7bbf4c485b8ebd97e0e36f08f6a1f796dad811f2))
+* **dead-code:** qualify Java static call graph refs ([#552](https://github.com/duriantaco/skylos/issues/552)) ([4e79aeb](https://github.com/duriantaco/skylos/commit/4e79aebea6123dae17d5d0322958afb559289eeb))
+* **dead-code:** recognize stdlib callback hooks ([#549](https://github.com/duriantaco/skylos/issues/549)) ([0e69311](https://github.com/duriantaco/skylos/commit/0e69311779c431dc009ba2cc994bf04fdcdd7959))
+* **dead-code:** reduce language false positives ([#551](https://github.com/duriantaco/skylos/issues/551)) ([55e9ced](https://github.com/duriantaco/skylos/commit/55e9ced515cad5b0f27344cef43e4d0f775f8de3))
+* **dead-code:** reduce Python framework false positives ([#558](https://github.com/duriantaco/skylos/issues/558)) ([40a94a4](https://github.com/duriantaco/skylos/commit/40a94a490f841ce42363b7f6631a0c41dfc95f2a))
+* **dead-code:** resolve Go receiver method refs ([#550](https://github.com/duriantaco/skylos/issues/550)) ([b4813dd](https://github.com/duriantaco/skylos/commit/b4813dd7b0894d1a5f80cc22a43d8291ec9a4946))
+* **dead-code:** track browser handler liveness ([#547](https://github.com/duriantaco/skylos/issues/547)) ([0961f30](https://github.com/duriantaco/skylos/commit/0961f3090c2e130020a79301e422178377333336))
+* **llm:** harden security finding explanations ([#541](https://github.com/duriantaco/skylos/issues/541)) ([6855f73](https://github.com/duriantaco/skylos/commit/6855f7360d618114ea374f3806f17ab6a44d5ae9))
+* **quality:** reduce quality scan false positives ([#538](https://github.com/duriantaco/skylos/issues/538)) ([72172c5](https://github.com/duriantaco/skylos/commit/72172c58e62151cf56a5dacdd817a8104eee9db6))
+* **security:** reduce browser scanner noise ([#548](https://github.com/duriantaco/skylos/issues/548)) ([253f6ae](https://github.com/duriantaco/skylos/commit/253f6ae5481c36e5a37bb127f33d6568ec9f8f9a))
+* **upload:** require explicit scan uploads ([#539](https://github.com/duriantaco/skylos/issues/539)) ([6a00673](https://github.com/duriantaco/skylos/commit/6a00673397417cece0ee815950329eaf44c38f43))
+
+
+### Documentation
+
+* **kotlin:** list Kotlin in public metadata ([#557](https://github.com/duriantaco/skylos/issues/557)) ([9634e34](https://github.com/duriantaco/skylos/commit/9634e34d5732377b496d95c473274c3059cfd2d6))
+
 ## [4.23.1](https://github.com/duriantaco/skylos/compare/v4.23.0...v4.23.1) (2026-06-04)
 
 
