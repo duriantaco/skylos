@@ -247,6 +247,8 @@ class TestSkylos:
                 ".rs",
                 ".dart",
                 ".cs",
+                ".kt",
+                ".kts",
                 *SHELL_SOURCE_EXTS,
             },
             exclude_folders=None,
