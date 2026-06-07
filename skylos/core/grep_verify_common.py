@@ -18,6 +18,7 @@ _JAVA_EXTS = {".java"}
 _PHP_EXTS = {".php"}
 _RUST_EXTS = {".rs"}
 _DART_EXTS = {".dart"}
+_KOTLIN_EXTS = {".kt", ".kts"}
 
 _ALL_SOURCE_GLOBS = [
     "*.py",
@@ -33,6 +34,8 @@ _ALL_SOURCE_GLOBS = [
     "*.php",
     "*.rs",
     "*.dart",
+    "*.kt",
+    "*.kts",
     "*.rst",
     "*.md",
     "*.yaml",
@@ -51,6 +54,7 @@ _LANG_GLOBS: dict[str, list[str]] = {
     "php": ["*.php"],
     "rust": ["*.rs"],
     "dart": ["*.dart"],
+    "kotlin": ["*.kt", "*.kts"],
 }
 
 _IGNORED_GREP_PATH_PARTS = (
@@ -95,6 +99,8 @@ def detect_language(file_path: str) -> str:
         return "rust"
     if ext in _DART_EXTS:
         return "dart"
+    if ext in _KOTLIN_EXTS:
+        return "kotlin"
     return "python"
 
 
@@ -274,6 +280,21 @@ def module_candidates(file_path: str, project_root: str | Path) -> list[str]:
             parts = parts[1:]
         return ["::".join(parts)] if parts else []
 
+    elif lang == "kotlin":
+        if rel.endswith(".kts"):
+            stem = rel[:-4]
+        elif rel.endswith(".kt"):
+            stem = rel[:-3]
+        else:
+            return []
+        parts = [p for p in stem.split("/") if p]
+        for prefix in ("src/main/kotlin", "src/test/kotlin", "src"):
+            prefix_parts = prefix.split("/")
+            if parts[: len(prefix_parts)] == prefix_parts:
+                parts = parts[len(prefix_parts) :]
+                break
+        return [".".join(parts)] if parts else []
+
     return []
 
 
@@ -357,6 +378,13 @@ def is_definition_line(grep_line: str, finding: dict) -> bool:
         f"trait {simple_name}",
         f"pub trait {simple_name}",
         f"impl {simple_name}",
+        # Kotlin
+        f"fun {simple_name}",
+        f"private fun {simple_name}",
+        f"class {simple_name}",
+        f"object {simple_name}",
+        f"interface {simple_name}",
+        f"enum class {simple_name}",
     ]
     for pattern in definition_patterns:
         if pattern in content:

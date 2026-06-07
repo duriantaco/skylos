@@ -618,6 +618,10 @@ class TestDetectLanguage:
     def test_rust(self):
         assert detect_language("lib.rs") == "rust"
 
+    def test_kotlin(self):
+        assert detect_language("Main.kt") == "kotlin"
+        assert detect_language("build.gradle.kts") == "kotlin"
+
     def test_unknown_defaults_python(self):
         assert detect_language("data.csv") == "python"
         assert detect_language("") == "python"
@@ -760,6 +764,15 @@ class TestDeterministicSuppressMultiLang:
         }
         assert _deterministic_suppress_multilang(finding)
 
+    def test_kotlin_test_annotation(self):
+        finding = {
+            "file": "UserTest.kt",
+            "simple_name": "loadsUser",
+            "type": "function",
+            "decorators": ["@Test"],
+        }
+        assert _deterministic_suppress_multilang(finding)
+
     def test_python_not_suppressed(self):
         finding = {
             "file": "main.py",
@@ -787,6 +800,11 @@ class TestSourceGlobs:
     def test_php_globs(self):
         globs = source_globs_for_language("php")
         assert "*.php" in globs
+
+    def test_kotlin_globs(self):
+        globs = source_globs_for_language("kotlin")
+        assert "*.kt" in globs
+        assert "*.kts" in globs
 
     def test_unknown_defaults_python(self):
         globs = source_globs_for_language("unknown")
