@@ -316,6 +316,74 @@ p = Permission.READ | Permission.WRITE
         assert "EXECUTE" not in unused
 
 
+class TestLocalRegistrationDecorators:
+    def _get_unused_functions(self, code):
+        from skylos.analyzer import Skylos
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "mod.py"
+            p.write_text(code)
+            s = Skylos()
+            result = json.loads(s.analyze(tmpdir, thr=0, grep_verify=False))
+            return {item["simple_name"] for item in result["unused_functions"]}
+
+    def test_decorator_factory_registration_marks_function_used(self):
+        unused = self._get_unused_functions("""
+RESOLVERS = {}
+
+def resolves(kind):
+    def inner(func):
+        RESOLVERS[kind] = func
+        return func
+    return inner
+
+@resolves(str)
+def resolve_string(value):
+    return str(value)
+
+def unused_helper():
+    return None
+""")
+
+        assert "resolve_string" not in unused
+        assert "unused_helper" in unused
+
+    def test_direct_registration_decorator_marks_function_used(self):
+        unused = self._get_unused_functions("""
+COMMANDS = {}
+
+def command(func):
+    COMMANDS[func.__name__] = func
+    return func
+
+@command
+def serve():
+    return "ok"
+
+def unused_helper():
+    return None
+""")
+
+        assert "serve" not in unused
+        assert "unused_helper" in unused
+
+    def test_plain_wrapper_decorator_does_not_mask_unused_function(self):
+        unused = self._get_unused_functions("""
+def wraps(flag):
+    def inner(func):
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+        return wrapper
+    return inner
+
+@wraps(True)
+def still_dead():
+    return None
+""")
+
+        assert "still_dead" in unused
+
+
 class TestDefinitionReasonFields:
     def test_definition_has_new_fields(self):
         d = Definition("test.func", "function", "test.py", 1)

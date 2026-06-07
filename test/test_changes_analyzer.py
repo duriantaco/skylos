@@ -170,6 +170,38 @@ def regular_func(_param: str):
             "Parameter in test file should be suppressed"
         )
 
+    def test_explicit_same_name_import_alias_is_exported(self):
+        code = """
+from os import PathLike as PathLike
+import pathlib as pathlib
+import json
+"""
+        result = self._analyze(code)
+
+        import_names = {i["simple_name"] for i in result["unused_imports"]}
+
+        assert "PathLike" not in import_names
+        assert "pathlib" not in import_names
+        assert "json" in import_names
+
+    def test_annotation_metadata_uses_import_over_parameter_name(self):
+        code = """
+from __future__ import annotations
+from typing import Annotated, Any
+from typing_extensions import deprecated
+
+def path(
+    example: Annotated[Any | None, deprecated("use examples")] = None,
+    deprecated: bool = False,
+):
+    return deprecated
+"""
+        result = self._analyze(code)
+
+        import_names = {i["simple_name"] for i in result["unused_imports"]}
+
+        assert "deprecated" not in import_names
+
     def _analyze(self, code: str, filename: str = "example.py") -> dict:
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = Path(temp_dir) / filename
