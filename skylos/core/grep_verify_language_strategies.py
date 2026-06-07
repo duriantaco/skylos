@@ -82,6 +82,18 @@ def _deterministic_suppress_rust(finding: dict) -> bool:
     return False
 
 
+def _deterministic_suppress_kotlin(finding: dict) -> bool:
+    decorators = finding.get("decorators", [])
+    if not isinstance(decorators, list):
+        return False
+
+    root_annotations = {"@Test", "@Override", "@Composable"}
+    for decorator in decorators:
+        if str(decorator).strip() in root_annotations:
+            return True
+    return False
+
+
 def _deterministic_suppress_multilang(finding: dict) -> bool:
     lang = detect_language(finding.get("file", ""))
     if lang == "typescript":
@@ -94,6 +106,8 @@ def _deterministic_suppress_multilang(finding: dict) -> bool:
         return _deterministic_suppress_php(finding)
     elif lang == "rust":
         return _deterministic_suppress_rust(finding)
+    elif lang == "kotlin":
+        return _deterministic_suppress_kotlin(finding)
     return False
 
 
