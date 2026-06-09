@@ -29,7 +29,9 @@ _LIFECYCLE_METHODS: set[str] = {
     "componentDidUpdate",
     "shouldComponentUpdate",
     "getDerivedStateFromProps",
+    "getDerivedStateFromError",
     "getSnapshotBeforeUpdate",
+    "componentDidCatch",
     "ngOnInit",
     "ngOnDestroy",
     "ngOnChanges",
@@ -103,12 +105,15 @@ _REFS_PATTERN = """
 (binary_expression right: (identifier) @ref)
 (binary_expression left: (identifier) @ref)
 (assignment_expression right: (identifier) @ref)
+(assignment_pattern right: (identifier) @ref)
+(update_expression (identifier) @ref)
 (spread_element (identifier) @ref)
 (member_expression object: (identifier) @ref)
 (subscript_expression object: (identifier) @ref)
 (subscript_expression index: (identifier) @ref)
 (pair value: (identifier) @ref)
 (unary_expression (identifier) @ref)
+(await_expression (identifier) @ref)
 (template_substitution (identifier) @ref)
 (shorthand_property_identifier) @ref
 (decorator (identifier) @ref)
@@ -167,6 +172,7 @@ class TypeScriptCore:
 
         self._suffix = Path(str(file_path)).suffix.lower()
         self._uses_jsx_parser = self._suffix in _JSX_EXTENSIONS
+        self._is_declaration_file = str(file_path).endswith(".d.ts")
 
         if self._uses_jsx_parser and TSX_LANG:
             self.lang: Language | None = TSX_LANG
@@ -322,6 +328,22 @@ class TypeScriptCore:
                 continue
             self._add_ref(node)
 
+        self._scan_default_parameter_refs()
+
+    def _scan_default_parameter_refs(self) -> None:
+        if not self.root_node:
+            return
+        for node in self._iter_nodes(self.root_node):
+            if node.type != "required_parameter":
+                continue
+            seen_default = False
+            for child in node.children:
+                if child.type == "=":
+                    seen_default = True
+                    continue
+                if seen_default and child.type == "identifier":
+                    self._add_ref(child)
+
     def _find_containing_class(self, node) -> str | None:
         current = node.parent
         while current:
@@ -336,11 +358,18 @@ class TypeScriptCore:
         name = self._get_text(node)
 
         if type_name == "method":
-            if name in _LIFECYCLE_METHODS:
-                return
-            if name in _BUNDLER_PLUGIN_HOOK_METHODS:
-                if self._is_object_literal_method(node):
+            object_node = self._containing_object_literal(node)
+            if object_node is not None:
+                if self._is_bundler_plugin_object(object_node) and (
+                    name not in _BUNDLER_PLUGIN_HOOK_METHODS
+                ):
+                    pass
+                else:
                     return
+            elif name in _LIFECYCLE_METHODS:
+                return
+            elif name in _BUNDLER_PLUGIN_HOOK_METHODS:
+                return
 
         if type_name == "method":
             class_name = self._find_containing_class(node)
@@ -349,10 +378,13 @@ class TypeScriptCore:
 
         line = node.start_point[0] + 1
 
-        is_exported = self._is_exported(node)
+        is_ambient = self._is_ambient_declaration(node)
+        is_exported = self._is_exported(node) or self._is_declaration_file or is_ambient
 
         d = Definition(name, type_name, self.file_path, line)
         d.is_exported = is_exported
+        if self._is_declaration_file or is_ambient:
+            d.framework_signals.append("ambient declaration")
         if (
             type_name == "function"
             and d.is_exported
@@ -472,15 +504,48 @@ class TypeScriptCore:
             return False
         return False
 
-    def _is_object_literal_method(self, node) -> bool:
+    def _containing_object_literal(self, node):
         current = node.parent
         while current:
             if current.type == "object":
-                return True
+                return current
             if current.type in {"class_body", "class_declaration", "program"}:
-                return False
+                return None
             current = current.parent
+        return None
+
+    def _is_bundler_plugin_object(self, object_node) -> bool:
+        has_name = False
+        has_hook = False
+
+        for child in object_node.named_children:
+            if child.type == "pair" and self._pair_has_string_name(child):
+                has_name = True
+            elif child.type == "method_definition":
+                name_node = child.child_by_field_name("name")
+                if (
+                    name_node
+                    and self._get_text(name_node) in _BUNDLER_PLUGIN_HOOK_METHODS
+                ):
+                    has_hook = True
+
+            if has_name and has_hook:
+                return True
+
         return False
+
+    def _pair_has_string_name(self, pair_node) -> bool:
+        if len(pair_node.named_children) < 2:
+            return False
+
+        key_node = pair_node.named_children[0]
+        value_node = pair_node.named_children[1]
+        if key_node.type not in {"property_identifier", "identifier", "string"}:
+            return False
+
+        raw_key = self._get_text(key_node)
+        key = raw_key.strip("'\"")
+        return key == "name" and value_node.type == "string"
 
     def _is_exported(self, node) -> bool:
         try:
@@ -495,12 +560,50 @@ class TypeScriptCore:
             pass
         return False
 
+    def _is_ambient_declaration(self, node) -> bool:
+        current = node.parent
+        while current:
+            if current.type == "ambient_declaration":
+                return True
+            if current.type == "program":
+                return False
+            current = current.parent
+        return False
+
     def _scan_imports(self) -> None:
         c = self._imports_captures
 
         for node in c.get("import_name", []):
+            if self._is_aliased_import_original(node):
+                continue
             name = self._get_text(node)
             line = node.start_point[0] + 1
+            d = Definition(name, "import", self.file_path, line)
+            self.defs.append(d)
+            self.imports.append(
+                {"name": name, "file": str(self.file_path), "line": line}
+            )
+        self._scan_aliased_imports()
+
+    def _is_aliased_import_original(self, node) -> bool:
+        parent = node.parent
+        if parent is None or parent.type != "import_specifier":
+            return False
+        identifiers = [child for child in parent.children if child.type == "identifier"]
+        return len(identifiers) >= 2 and identifiers[0] == node
+
+    def _scan_aliased_imports(self) -> None:
+        if not self.root_node:
+            return
+        for node in self._iter_nodes(self.root_node):
+            if node.type != "import_specifier":
+                continue
+            identifiers = [child for child in node.children if child.type == "identifier"]
+            if len(identifiers) < 2:
+                continue
+            alias_node = identifiers[-1]
+            name = self._get_text(alias_node)
+            line = alias_node.start_point[0] + 1
             d = Definition(name, "import", self.file_path, line)
             self.defs.append(d)
             self.imports.append(
@@ -517,13 +620,14 @@ class TypeScriptCore:
             import_stmt = src_node.parent
             if import_stmt:
                 names = self._extract_import_names_from_stmt(import_stmt)
-                self.raw_imports.append(
-                    {
-                        "source": source_path,
-                        "names": names,
-                        "line": src_node.start_point[0] + 1,
-                    }
-                )
+                raw_import = {
+                    "source": source_path,
+                    "names": names,
+                    "line": src_node.start_point[0] + 1,
+                }
+                if any(name.startswith("* as ") for name in names):
+                    raw_import["consume_all_exports"] = True
+                self.raw_imports.append(raw_import)
 
         for src_node in c.get("export_src", []):
             source_path = self._get_text(src_node).strip("'\"")
@@ -560,7 +664,18 @@ class TypeScriptCore:
                     elif clause_child.type == "identifier":
                         names.append(self._get_text(clause_child))
                     elif clause_child.type == "namespace_import":
-                        names.append("*")
+                        alias_node = next(
+                            (
+                                ns_child
+                                for ns_child in clause_child.children
+                                if ns_child.type == "identifier"
+                            ),
+                            None,
+                        )
+                        if alias_node is not None:
+                            names.append(f"* as {self._get_text(alias_node)}")
+                        else:
+                            names.append("*")
         return names
 
     def _extract_export_names_from_stmt(self, export_stmt) -> list[str]:
