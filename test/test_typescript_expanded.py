@@ -464,6 +464,17 @@ class TestTSDeadCodeFalsePositives:
         assert "closeBundle" not in names
         assert "orphanHook" in names
 
+    def test_regular_object_literal_methods_remain_untracked(self, tmp_path):
+        code = (
+            "const helpers = {\n"
+            "    formatName(value) {\n"
+            "        return value.trim();\n"
+            "    },\n"
+            "};\n"
+        )
+        defs, _, _, _ = _scan_ts(tmp_path, code)
+        assert "formatName" not in _def_names(defs)
+
     def test_html_inline_handlers_mark_global_js_functions_live(self, tmp_path):
         from skylos.analyzer import analyze
 

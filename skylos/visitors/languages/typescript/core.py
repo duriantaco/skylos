@@ -358,11 +358,17 @@ class TypeScriptCore:
         name = self._get_text(node)
 
         if type_name == "method":
-            if self._is_object_literal_method(node):
+            object_node = self._containing_object_literal(node)
+            if object_node is not None:
+                if self._is_bundler_plugin_object(object_node) and (
+                    name not in _BUNDLER_PLUGIN_HOOK_METHODS
+                ):
+                    pass
+                else:
+                    return
+            elif name in _LIFECYCLE_METHODS:
                 return
-            if name in _LIFECYCLE_METHODS:
-                return
-            if name in _BUNDLER_PLUGIN_HOOK_METHODS:
+            elif name in _BUNDLER_PLUGIN_HOOK_METHODS:
                 return
 
         if type_name == "method":
@@ -498,15 +504,48 @@ class TypeScriptCore:
             return False
         return False
 
-    def _is_object_literal_method(self, node) -> bool:
+    def _containing_object_literal(self, node):
         current = node.parent
         while current:
             if current.type == "object":
-                return True
+                return current
             if current.type in {"class_body", "class_declaration", "program"}:
-                return False
+                return None
             current = current.parent
+        return None
+
+    def _is_bundler_plugin_object(self, object_node) -> bool:
+        has_name = False
+        has_hook = False
+
+        for child in object_node.named_children:
+            if child.type == "pair" and self._pair_has_string_name(child):
+                has_name = True
+            elif child.type == "method_definition":
+                name_node = child.child_by_field_name("name")
+                if (
+                    name_node
+                    and self._get_text(name_node) in _BUNDLER_PLUGIN_HOOK_METHODS
+                ):
+                    has_hook = True
+
+            if has_name and has_hook:
+                return True
+
         return False
+
+    def _pair_has_string_name(self, pair_node) -> bool:
+        if len(pair_node.named_children) < 2:
+            return False
+
+        key_node = pair_node.named_children[0]
+        value_node = pair_node.named_children[1]
+        if key_node.type not in {"property_identifier", "identifier", "string"}:
+            return False
+
+        raw_key = self._get_text(key_node)
+        key = raw_key.strip("'\"")
+        return key == "name" and value_node.type == "string"
 
     def _is_exported(self, node) -> bool:
         try:
