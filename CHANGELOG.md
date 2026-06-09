@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.24.1](https://github.com/duriantaco/skylos/compare/v4.24.0...v4.24.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* **dead-code:** reduce Rust and TypeScript false positives ([#560](https://github.com/duriantaco/skylos/issues/560)) ([4d92fd5](https://github.com/duriantaco/skylos/commit/4d92fd5daec75d1cecc6bd8bcef4eb451b671ac8))
+
 ## [4.24.0](https://github.com/duriantaco/skylos/compare/v4.23.1...v4.24.0) (2026-06-07)
 
 
