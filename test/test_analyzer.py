@@ -997,6 +997,54 @@ use crate::internal::stale_api;
         assert "public_api" not in unused_imports
         assert "stale_api" in unused_imports
 
+    def test_analyze_rust_namespaced_associated_constructor_is_live(self, tmp_path):
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "tls.rs").write_text(
+            """
+struct VerifyCaCertVerifier;
+
+impl VerifyCaCertVerifier {
+    fn new() -> Self { Self }
+}
+
+fn build_verifier() {
+    VerifyCaCertVerifier::new();
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(src_dir), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable = {item["full_name"] for item in result["unused_functions"]}
+
+        assert "tls.VerifyCaCertVerifier.new" not in unreachable
+        assert "tls.build_verifier" in unreachable
+
+    def test_analyze_rust_external_trait_import_methods_are_live(self, tmp_path):
+        (tmp_path / "lib.rs").write_text(
+            """
+use futures::StreamExt;
+use crate::traits::WidgetExt;
+
+fn run(stream: StreamLike, widget: Widget) {
+    stream.next();
+    widget.next();
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unused_imports = {item["simple_name"] for item in result["unused_imports"]}
+
+        assert "StreamExt" not in unused_imports
+        assert "WidgetExt" in unused_imports
+
     @patch("skylos.analyzer.logger.info")
     def test_analyze_mixed_languages_includes_csharp_in_summary(self, mock_log_info):
         with tempfile.TemporaryDirectory() as temp_dir:

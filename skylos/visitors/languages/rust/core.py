@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from tree_sitter import Language, Parser
@@ -59,6 +60,210 @@ _IMPLICIT_METHODS = {
     "call_mut",
 }
 
+_ATTR_PATH_REF_RE = re.compile(
+    r'(?:default|serialize_with|deserialize_with|with)\s*=\s*"([A-Za-z_][A-Za-z0-9_:]*)"'
+)
+_RUST_KEYWORDS = {
+    "as",
+    "async",
+    "await",
+    "break",
+    "const",
+    "continue",
+    "crate",
+    "dyn",
+    "else",
+    "enum",
+    "extern",
+    "false",
+    "fn",
+    "for",
+    "if",
+    "impl",
+    "in",
+    "let",
+    "loop",
+    "match",
+    "mod",
+    "move",
+    "mut",
+    "pub",
+    "ref",
+    "return",
+    "self",
+    "Self",
+    "static",
+    "struct",
+    "super",
+    "trait",
+    "true",
+    "type",
+    "unsafe",
+    "use",
+    "where",
+    "while",
+}
+_REGISTRATION_MACROS = {
+    "generate_handler",
+    "tauri::generate_handler",
+    "routes",
+    "router",
+}
+
+_RUST_EXTERNAL_TRAIT_IMPORTS = {
+    "Read": {
+        "sources": ("std::io",),
+        "methods": ("read", "read_exact", "read_to_end", "read_to_string"),
+        "associated": (),
+    },
+    "Write": {
+        "sources": ("std::io",),
+        "methods": ("flush", "write", "write_all", "write_fmt"),
+        "associated": (),
+    },
+    "BufRead": {
+        "sources": ("std::io",),
+        "methods": ("consume", "fill_buf", "lines", "read_line", "split"),
+        "associated": (),
+    },
+    "AsyncReadExt": {
+        "sources": ("tokio::io",),
+        "methods": ("read", "read_exact", "read_to_end", "read_to_string"),
+        "associated": (),
+    },
+    "AsyncWriteExt": {
+        "sources": ("tokio::io",),
+        "methods": ("flush", "shutdown", "write", "write_all"),
+        "associated": (),
+    },
+    "AsyncBufReadExt": {
+        "sources": ("tokio::io",),
+        "methods": ("lines", "read_line", "split"),
+        "associated": (),
+    },
+    "StreamExt": {
+        "sources": ("futures", "futures::stream", "futures_util", "tokio_stream"),
+        "methods": (
+            "buffer_unordered",
+            "chunks",
+            "collect",
+            "filter",
+            "for_each",
+            "map",
+            "next",
+            "then",
+        ),
+        "associated": (),
+    },
+    "TryStreamExt": {
+        "sources": ("futures", "futures::stream", "futures_util", "tokio_stream"),
+        "methods": ("map_err", "map_ok", "try_collect", "try_for_each", "try_next"),
+        "associated": (),
+    },
+    "Row": {
+        "sources": ("sqlx",),
+        "methods": ("columns", "get", "try_get", "try_get_raw"),
+        "associated": (),
+    },
+    "Column": {
+        "sources": ("sqlx",),
+        "methods": ("name", "ordinal", "type_info"),
+        "associated": (),
+    },
+    "TypeInfo": {
+        "sources": ("sqlx",),
+        "methods": ("is_null", "name", "type_compatible"),
+        "associated": (),
+    },
+    "ValueRef": {
+        "sources": ("sqlx",),
+        "methods": ("is_null", "to_owned", "type_info"),
+        "associated": (),
+    },
+    "Executor": {
+        "sources": ("sqlx",),
+        "methods": ("execute", "fetch", "fetch_all", "fetch_one", "fetch_optional"),
+        "associated": (),
+    },
+    "Connection": {
+        "sources": ("sqlx",),
+        "methods": ("close",),
+        "associated": ("connect", "connect_with"),
+    },
+    "Emitter": {
+        "sources": ("tauri",),
+        "methods": ("emit", "emit_filter", "emit_str", "emit_to"),
+        "associated": (),
+    },
+    "Manager": {
+        "sources": ("tauri",),
+        "methods": (
+            "app_handle",
+            "get_webview_window",
+            "manage",
+            "path",
+            "state",
+            "webview_windows",
+        ),
+        "associated": (),
+    },
+    "UpdaterExt": {
+        "sources": ("tauri_plugin_updater",),
+        "methods": ("updater",),
+        "associated": (),
+    },
+    "Watcher": {
+        "sources": ("notify",),
+        "methods": ("unwatch", "watch"),
+        "associated": (),
+    },
+    "Digest": {
+        "sources": ("sha2", "digest"),
+        "methods": ("finalize", "update"),
+        "associated": ("digest", "new"),
+    },
+    "Engine": {
+        "sources": ("base64",),
+        "methods": ("decode", "decode_slice", "encode", "encode_string"),
+        "associated": (),
+    },
+    "FromStr": {
+        "sources": ("std::str",),
+        "methods": (),
+        "associated": ("from_str",),
+    },
+    "BinExt": {
+        "sources": ("gtk::prelude", "gtk4::prelude"),
+        "methods": ("child",),
+        "associated": (),
+    },
+    "Cast": {
+        "sources": ("glib", "glib::prelude", "gtk::prelude", "gtk4::prelude"),
+        "methods": ("downcast", "dynamic_cast", "upcast"),
+        "associated": (),
+    },
+    "GtkWindowExt": {
+        "sources": ("gtk::prelude", "gtk4::prelude"),
+        "methods": ("set_titlebar",),
+        "associated": (),
+    },
+    "HeaderBarExt": {
+        "sources": ("gtk::prelude", "gtk4::prelude"),
+        "methods": ("pack_end", "pack_start", "set_show_close_button"),
+        "associated": (),
+    },
+    "BuilderVerifierExt": {
+        "sources": ("rustls_platform_verifier",),
+        "methods": ("with_platform_verifier",),
+        "associated": (),
+    },
+    "PermissionsExt": {
+        "sources": ("std::os::unix::fs",),
+        "methods": ("mode", "set_mode"),
+        "associated": (),
+    },
+}
+
 
 def _get_parser(lang: Language) -> Parser:
     lang_id = id(lang)
@@ -108,7 +313,10 @@ class RustCore:
         self.lang: Language | None = RUST_LANG
         self.is_test_file = _is_test_path(file_path)
         self.root_namespace = _module_namespace_for_path(file_path)
+        self.import_aliases: dict[str, set[str]] = {}
+        self._module_scoped_callables: set[str] = set()
         self._seen_refs: set[tuple[str, int]] = set()
+        self._trait_call_usage: tuple[set[str], set[tuple[str, str]]] | None = None
 
         if self.lang:
             self.parser = _get_parser(self.lang)
@@ -151,6 +359,40 @@ class RustCore:
                 return True
         return False
 
+    def _add_attr_refs(self, attrs: list, *, current_callable: str | None) -> None:
+        for attr in attrs:
+            text = self._get_text(attr).strip()
+            if not text:
+                continue
+            path_match = re.match(
+                r"#\[\s*([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)",
+                text,
+            )
+            if path_match:
+                path = path_match.group(1)
+                if path not in {"cfg", "allow", "warn", "deny", "derive"}:
+                    self._add_ref(
+                        path,
+                        attr.start_byte + path_match.start(1),
+                        current_callable=current_callable,
+                        preserve_qualified=True,
+                    )
+            if text.startswith("#[derive"):
+                for name in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", text):
+                    self._add_ref(
+                        name,
+                        attr.start_byte + text.find(name),
+                        current_callable=current_callable,
+                    )
+            if text.startswith("#[serde"):
+                for path in _ATTR_PATH_REF_RE.findall(text):
+                    self._add_ref(
+                        path,
+                        attr.start_byte + text.find(path),
+                        current_callable=current_callable,
+                        preserve_qualified=True,
+                    )
+
     def _is_test_function(self, name: str, attrs: list, line: int) -> bool:
         if self._has_attr_prefix(
             attrs, ("#[test", "#[tokio::test", "#[async_std::test")
@@ -186,6 +428,34 @@ class RustCore:
             return
         if current_callable and ref_name == current_callable.split(".")[-1]:
             return
+        self._record_ref(ref_name, start_byte, current_callable=current_callable)
+
+        if preserve_qualified:
+            return
+
+        for qualified_ref in self.import_aliases.get(ref_name, ()):
+            if qualified_ref != ref_name:
+                self._record_ref(
+                    qualified_ref,
+                    start_byte,
+                    current_callable=current_callable,
+                )
+
+        sibling_ref = self._sibling_ref(ref_name, current_callable=current_callable)
+        if sibling_ref and sibling_ref != ref_name:
+            self._record_ref(
+                sibling_ref,
+                start_byte,
+                current_callable=current_callable,
+            )
+
+    def _record_ref(
+        self,
+        ref_name: str,
+        start_byte: int,
+        *,
+        current_callable: str | None,
+    ) -> None:
         key = (ref_name, start_byte)
         if key in self._seen_refs:
             return
@@ -193,6 +463,16 @@ class RustCore:
         self.refs.append((ref_name, self.file_path))
         if current_callable:
             self.call_pairs.append((current_callable, ref_name))
+
+    def _sibling_ref(
+        self, ref_name: str, *, current_callable: str | None
+    ) -> str | None:
+        if not current_callable or "." in ref_name:
+            return None
+        if current_callable not in self._module_scoped_callables:
+            return None
+        namespace = current_callable.rsplit(".", 1)[0]
+        return f"{namespace}.{ref_name}" if namespace else None
 
     def scan(self) -> None:
         if not self.root_node:
@@ -251,6 +531,10 @@ class RustCore:
                 )
                 attrs = []
                 continue
+
+            if attrs:
+                self._add_attr_refs(attrs, current_callable=current_callable)
+                attrs = []
 
             self._scan_refs_in_node(child, current_callable=current_callable)
             self._scan_block(
@@ -322,6 +606,7 @@ class RustCore:
         return sources
 
     def _scan_type_item(self, node, *, namespace: str, attrs: list) -> None:
+        self._add_attr_refs(attrs, current_callable=None)
         name_node = self._child_by_type(node, "type_identifier")
         name = self._node_name_text(name_node)
         if not name:
@@ -333,9 +618,40 @@ class RustCore:
         d.decorators = self._attrs_text(attrs)
         self.defs.append(d)
 
+        if node.type == "type_item":
+            self._scan_type_alias_rhs(node, namespace=namespace)
+
         decl_list = self._child_by_type(node, "declaration_list")
+        if decl_list is None:
+            decl_list = self._child_by_type(node, "field_declaration_list")
         if decl_list is not None and node.type == "trait_item":
             self._scan_trait_members(decl_list, current_type=qualified)
+        elif decl_list is not None:
+            self._scan_block(
+                decl_list,
+                namespace=namespace,
+                current_type=qualified,
+                current_callable=None,
+                pending_attrs=[],
+            )
+
+    def _scan_type_alias_rhs(self, node, *, namespace: str) -> None:
+        seen_equals = False
+        for child in node.children:
+            if child.type == "=":
+                seen_equals = True
+                continue
+            if not seen_equals:
+                continue
+            if child.type == ";":
+                break
+            self._scan_block(
+                child,
+                namespace=namespace,
+                current_type=None,
+                current_callable=None,
+                pending_attrs=[],
+            )
 
     def _scan_trait_members(self, node, *, current_type: str) -> None:
         attrs: list = []
@@ -358,6 +674,12 @@ class RustCore:
             d.is_exported = True
             d.decorators = self._attrs_text(attrs)
             self.defs.append(d)
+            self._scan_signature_refs(
+                child,
+                namespace="",
+                current_type=current_type,
+                current_callable=qualified,
+            )
             body = self._child_by_type(child, "block")
             if body is not None:
                 self._scan_block(
@@ -370,6 +692,7 @@ class RustCore:
             attrs = []
 
     def _scan_impl(self, node, *, namespace: str, attrs: list) -> None:
+        self._add_attr_refs(attrs, current_callable=None)
         type_names = self._impl_header_type_names(node)
         if not type_names:
             return
@@ -438,6 +761,7 @@ class RustCore:
         attrs: list,
         trait_impl: bool,
     ) -> None:
+        self._add_attr_refs(attrs, current_callable=None)
         name_node = self._child_by_type(node, "identifier")
         name = self._node_name_text(name_node)
         if not name:
@@ -452,6 +776,8 @@ class RustCore:
         d = Definition(
             qualified, "method" if current_type else "function", self.file_path, line
         )
+        if current_type is None:
+            self._module_scoped_callables.add(qualified)
         d.is_exported = (
             self._is_public(node)
             or trait_impl
@@ -463,6 +789,13 @@ class RustCore:
         d.decorators = self._attrs_text(attrs)
         self.defs.append(d)
 
+        self._scan_signature_refs(
+            node,
+            namespace=namespace,
+            current_type=current_type,
+            current_callable=qualified,
+        )
+
         body = self._child_by_type(node, "block")
         if body is not None:
             self._scan_block(
@@ -470,6 +803,61 @@ class RustCore:
                 namespace=namespace,
                 current_type=current_type,
                 current_callable=qualified,
+                pending_attrs=[],
+            )
+
+    def _scan_signature_refs(
+        self,
+        node,
+        *,
+        namespace: str,
+        current_type: str | None,
+        current_callable: str,
+    ) -> None:
+        type_parameters = self._child_by_type(node, "type_parameters")
+        if type_parameters is not None:
+            self._scan_block(
+                type_parameters,
+                namespace=namespace,
+                current_type=current_type,
+                current_callable=current_callable,
+                pending_attrs=[],
+            )
+
+        parameters = self._child_by_type(node, "parameters")
+        if parameters is not None:
+            self._scan_block(
+                parameters,
+                namespace=namespace,
+                current_type=current_type,
+                current_callable=current_callable,
+                pending_attrs=[],
+            )
+
+        where_clause = self._child_by_type(node, "where_clause")
+        if where_clause is not None:
+            self._scan_block(
+                where_clause,
+                namespace=namespace,
+                current_type=current_type,
+                current_callable=current_callable,
+                pending_attrs=[],
+            )
+
+        in_return_type = False
+        for child in node.children:
+            if child.type == "->":
+                in_return_type = True
+                continue
+            if not in_return_type:
+                continue
+            if child.type == "block":
+                break
+            self._scan_block(
+                child,
+                namespace=namespace,
+                current_type=current_type,
+                current_callable=current_callable,
                 pending_attrs=[],
             )
 
@@ -483,51 +871,238 @@ class RustCore:
             return
 
         names: list[str] = []
-        for name in self._extract_use_names(node):
-            if not name:
+        for local_name, original_name in self._extract_use_bindings(node):
+            if not local_name:
                 continue
-            d = Definition(name, "import", self.file_path, line)
+            d = Definition(local_name, "import", self.file_path, line)
             d.is_exported = is_public_reexport
             self.defs.append(d)
             self.imports.append(
-                {"name": name, "file": str(self.file_path), "line": line}
+                {"name": local_name, "file": str(self.file_path), "line": line}
             )
-            names.append(name)
+            names.append(local_name)
+            qualified_import = self._qualify_use_import(
+                source,
+                local_name=local_name,
+                original_name=original_name,
+            )
+            if qualified_import:
+                self.import_aliases.setdefault(local_name, set()).add(qualified_import)
+            if self._external_trait_import_is_used(
+                source,
+                local_name=local_name,
+                original_name=original_name,
+            ):
+                self._record_ref(local_name, node.start_byte, current_callable=None)
         self.raw_imports.append({"source": source, "names": names, "line": line})
 
     def _extract_use_names(self, node) -> list[str]:
+        return [local_name for local_name, _ in self._extract_use_bindings(node)]
+
+    def _extract_use_bindings(self, node) -> list[tuple[str, str]]:
         if node.type == "use_as_clause":
-            identifiers = [
-                child for child in node.children if child.type == "identifier"
-            ]
-            if identifiers:
-                return [self._get_text(identifiers[-1]).strip()]
+            return self._extract_use_as_binding(node)
         if node.type == "scoped_use_list":
             use_list = self._child_by_type(node, "use_list")
             if use_list is not None:
-                return self._extract_use_names(use_list)
+                return self._extract_use_bindings(use_list)
         if node.type in {"identifier", "type_identifier"}:
-            return [self._get_text(node).strip()]
+            name = self._get_text(node).strip()
+            return [(name, name)]
         if node.type == "scoped_identifier":
-            identifiers = [
-                child
-                for child in node.children
-                if child.type in {"identifier", "type_identifier"}
-            ]
-            if identifiers:
-                return [self._get_text(identifiers[-1]).strip()]
+            return self._extract_scoped_leaf_binding(node)
 
-        names: list[str] = []
+        bindings: list[tuple[str, str]] = []
         for child in node.children:
-            names.extend(self._extract_use_names(child))
+            bindings.extend(self._extract_use_bindings(child))
+        return self._dedupe_use_bindings(bindings)
+
+    def _extract_use_as_binding(self, node) -> list[tuple[str, str]]:
+        identifiers = [child for child in node.children if child.type == "identifier"]
+        if len(identifiers) >= 2:
+            original = self._get_text(identifiers[0]).strip()
+            alias = self._get_text(identifiers[-1]).strip()
+            return [(alias, original)]
+        if identifiers:
+            name = self._get_text(identifiers[-1]).strip()
+            return [(name, name)]
+        return []
+
+    def _extract_scoped_leaf_binding(self, node) -> list[tuple[str, str]]:
+        identifiers = [
+            child
+            for child in node.children
+            if child.type in {"identifier", "type_identifier"}
+        ]
+        if not identifiers:
+            return []
+        name = self._get_text(identifiers[-1]).strip()
+        return [(name, name)]
+
+    def _dedupe_use_bindings(
+        self, bindings: list[tuple[str, str]]
+    ) -> list[tuple[str, str]]:
         seen: set[str] = set()
-        unique: list[str] = []
-        for name in names:
-            if name in {"crate", "self", "super"} or name in seen:
+        unique: list[tuple[str, str]] = []
+        for local_name, original_name in bindings:
+            if local_name in {"crate", "self", "super"} or local_name in seen:
                 continue
-            seen.add(name)
-            unique.append(name)
+            seen.add(local_name)
+            unique.append((local_name, original_name))
         return unique
+
+    def _qualify_use_import(
+        self,
+        source: str,
+        *,
+        local_name: str,
+        original_name: str,
+    ) -> str | None:
+        target = source.strip()
+        if "{" in target:
+            base = target.split("{", 1)[0].rstrip(":").strip()
+            if not base:
+                return None
+            target = f"{base}::{original_name}"
+        else:
+            target = target.split(" as ", 1)[0].strip()
+        if not target or "::" not in target:
+            return None
+        parts = [part for part in target.split("::") if part and part != local_name]
+        if not parts:
+            return None
+        if parts[-1] != original_name:
+            parts.append(original_name)
+        qualified = self._resolve_rust_path(parts)
+        return qualified if qualified and "." in qualified else None
+
+    def _resolve_rust_path(self, parts: list[str]) -> str | None:
+        if not parts:
+            return None
+
+        namespace_parts = [part for part in self.root_namespace.split(".") if part]
+        resolved: list[str]
+        index = 0
+
+        first = parts[0]
+        if first == "crate":
+            resolved = []
+            index = 1
+        elif first == "self":
+            resolved = list(namespace_parts)
+            index = 1
+        elif first == "super":
+            resolved = list(namespace_parts)
+            while index < len(parts) and parts[index] == "super":
+                if resolved:
+                    resolved.pop()
+                index += 1
+        else:
+            resolved = list(namespace_parts)
+
+        resolved.extend(parts[index:])
+        return ".".join(part for part in resolved if part)
+
+    def _external_trait_import_is_used(
+        self,
+        source: str,
+        *,
+        local_name: str,
+        original_name: str,
+    ) -> bool:
+        trait_name = original_name if original_name != "_" else local_name
+        spec = _RUST_EXTERNAL_TRAIT_IMPORTS.get(trait_name)
+        if not spec:
+            return False
+
+        base = self._use_import_base(source)
+        if not base:
+            return False
+        if base.split("::", 1)[0] in {"crate", "self", "super"}:
+            return False
+        if not self._source_matches_trait_spec(base, spec["sources"]):
+            return False
+
+        method_names, associated_calls = self._collect_trait_call_usage()
+        if set(spec["methods"]) & method_names:
+            return True
+
+        associated_names = set(spec["associated"])
+        if associated_names:
+            for owner, method in associated_calls:
+                if method in associated_names and owner[:1].isupper():
+                    return True
+
+        return False
+
+    def _use_import_base(self, source: str) -> str:
+        target = source.strip()
+        if "{" in target:
+            return target.split("{", 1)[0].rstrip(":").strip()
+        target = target.split(" as ", 1)[0].strip()
+        parts = [part for part in target.split("::") if part]
+        if len(parts) <= 1:
+            return ""
+        return "::".join(parts[:-1])
+
+    def _source_matches_trait_spec(self, base: str, sources: tuple[str, ...]) -> bool:
+        return any(base == source or base.startswith(f"{source}::") for source in sources)
+
+    def _collect_trait_call_usage(self) -> tuple[set[str], set[tuple[str, str]]]:
+        if self._trait_call_usage is not None:
+            return self._trait_call_usage
+
+        method_names: set[str] = set()
+        associated_calls: set[tuple[str, str]] = set()
+
+        if self.root_node is None:
+            self._trait_call_usage = (method_names, associated_calls)
+            return self._trait_call_usage
+
+        for node in self._iter_nodes(self.root_node):
+            method_name = self._trait_method_name_from_node(node)
+            if method_name:
+                method_names.add(method_name)
+                continue
+
+            associated_call = self._trait_associated_call_from_node(node)
+            if associated_call is not None:
+                associated_calls.add(associated_call)
+
+        self._trait_call_usage = (method_names, associated_calls)
+        return self._trait_call_usage
+
+    def _call_parent(self, node):
+        parent = node.parent
+        if parent is not None and parent.type == "generic_function":
+            parent = parent.parent
+        return parent if parent is not None and parent.type == "call_expression" else None
+
+    def _trait_method_name_from_node(self, node) -> str | None:
+        if node.type != "field_expression" or self._call_parent(node) is None:
+            return None
+        name_node = self._child_by_type(node, "field_identifier")
+        name = self._node_name_text(name_node)
+        return name or None
+
+    def _trait_associated_call_from_node(self, node) -> tuple[str, str] | None:
+        if node.type != "scoped_identifier" or self._call_parent(node) is None:
+            return None
+        identifiers = [
+            self._node_name_text(child)
+            for child in node.children
+            if child.type in {"identifier", "type_identifier"}
+        ]
+        if len(identifiers) < 2:
+            return None
+        return identifiers[-2], identifiers[-1]
+
+    def _iter_nodes(self, root_node):
+        stack = [root_node]
+        while stack:
+            node = stack.pop()
+            yield node
+            stack.extend(reversed(node.children))
 
     def _scan_refs_in_node(self, node, *, current_callable: str | None) -> None:
         if node.type == "call_expression":
@@ -537,11 +1112,17 @@ class RustCore:
 
         if node.type == "macro_invocation":
             name_node = self._child_by_type(node, "identifier")
+            macro_name = self._node_name_text(name_node)
             self._add_ref(
-                self._node_name_text(name_node),
+                macro_name,
                 node.start_byte,
                 current_callable=current_callable,
             )
+            if macro_name in _REGISTRATION_MACROS:
+                self._scan_registration_macro_refs(
+                    node,
+                    current_callable=current_callable,
+                )
             return
 
         if node.type == "struct_expression":
@@ -562,11 +1143,36 @@ class RustCore:
             )
             return
 
+        if node.type == "identifier" and self._is_reference_identifier(node):
+            self._add_ref(
+                self._node_name_text(node),
+                node.start_byte,
+                current_callable=current_callable,
+            )
+            return
+
         if node.type == "type_identifier" and not self._is_definition_name(node):
             self._add_ref(
                 self._node_name_text(node),
                 node.start_byte,
                 current_callable=current_callable,
+            )
+
+    def _scan_registration_macro_refs(
+        self, node, *, current_callable: str | None
+    ) -> None:
+        text = self._get_text(node)
+        for match in re.finditer(r"\b[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\b", text):
+            name = match.group(0)
+            if name in _RUST_KEYWORDS or name == self._node_name_text(
+                self._child_by_type(node, "identifier")
+            ):
+                continue
+            self._add_ref(
+                name,
+                node.start_byte + match.start(),
+                current_callable=current_callable,
+                preserve_qualified=True,
             )
 
     def _add_callee_refs(self, callee, *, current_callable: str | None) -> None:
@@ -615,6 +1221,30 @@ class RustCore:
             ) or self._child_by_type(parent, "identifier")
             return name_node is node
         return False
+
+    def _is_reference_identifier(self, node) -> bool:
+        name = self._node_name_text(node)
+        if not name or name in _RUST_KEYWORDS:
+            return False
+        if self._is_definition_name(node):
+            return False
+        parent = node.parent
+        if parent is None:
+            return False
+        if parent.type in {
+            "use_declaration",
+            "field_declaration",
+            "field_identifier",
+            "let_declaration",
+            "parameter",
+            "self_parameter",
+            "for",
+            "visibility_modifier",
+        }:
+            return False
+        if parent.type in _DEF_CONTAINER_TYPES:
+            return False
+        return True
 
     def _build_call_graph(self) -> None:
         name_to_def: dict[str, Definition] = {}

@@ -11,6 +11,7 @@ from skylos.visitors.languages.typescript.workspace import (
 )
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
+    demote_unconsumed_ts_exports,
     find_unused_ts_exports,
     find_dead_ts_files,
     _is_nextjs_convention_file,
@@ -27,6 +28,33 @@ def _make_def(name, typ, filename, line=1, exported=False):
 
 def _scan_raw_imports(*paths: Path) -> dict[str, list[dict]]:
     return {str(path): scan_typescript_file(str(path))[12] for path in paths}
+
+
+# ---------- Export demotion exceptions ----------
+
+
+class TestExportDemotion:
+    def test_declaration_file_exports_are_not_demoted(self, tmp_path):
+        types_file = tmp_path / "types.d.ts"
+        ambient = _make_def("Window", "class", str(types_file), exported=True)
+
+        demoted = demote_unconsumed_ts_exports(
+            {f"{types_file}:Window": ambient},
+            {},
+        )
+
+        assert demoted == []
+        assert ambient.is_exported is True
+
+    def test_ambient_declaration_exports_are_not_demoted(self, tmp_path):
+        host_file = tmp_path / "host.ts"
+        ambient = _make_def("Window", "class", str(host_file), exported=True)
+        ambient.framework_signals.append("ambient declaration")
+
+        demoted = demote_unconsumed_ts_exports({f"{host_file}:Window": ambient}, {})
+
+        assert demoted == []
+        assert ambient.is_exported is True
 
 
 # ---------- Aliased import consumption ----------
@@ -334,6 +362,44 @@ class TestWildcardPassthrough:
         assert "helper" in consumed[str(mod_file)]
 
 
+class TestNamespaceImportConsumption:
+    def test_namespace_import_conservatively_consumes_source_exports(self, tmp_path):
+        api_file = tmp_path / "pluginApi.ts"
+        host_file = tmp_path / "PluginSlotProvider.tsx"
+
+        api_file.write_text(
+            """
+export function defineSlot() {}
+export function usePluginToast() {}
+""",
+            encoding="utf-8",
+        )
+        host_file.write_text(
+            """
+import * as pluginApi from "./pluginApi";
+
+(window as unknown as Record<string, unknown>).__TABULARIS_API__ = pluginApi;
+""",
+            encoding="utf-8",
+        )
+
+        defs = {
+            f"{api_file}:defineSlot": _make_def(
+                "defineSlot", "function", str(api_file), exported=True
+            ),
+            f"{api_file}:usePluginToast": _make_def(
+                "usePluginToast", "function", str(api_file), exported=True
+            ),
+        }
+
+        raw_imports = _scan_raw_imports(host_file)
+        consumed, _, _ = build_ts_import_graph(raw_imports, defs)
+
+        assert {"defineSlot", "usePluginToast"} <= consumed[str(api_file)]
+        assert defs[f"{api_file}:defineSlot"].references >= 1
+        assert defs[f"{api_file}:usePluginToast"].references >= 1
+
+
 class TestTypeScriptDeadFiles:
     def test_main_tsx_is_treated_as_entrypoint(self, tmp_path):
         main_file = tmp_path / "src" / "main.tsx"
@@ -570,6 +636,44 @@ export default defineConfig({
             [vite_config, lib_entry, worker_entry, helper_file],
             [],
             {str(helper_file): {str(lib_entry)}},
+            {},
+            project_root=str(tmp_path),
+            workspace_inventory=inventory,
+        )
+
+        assert dead_files == []
+
+    def test_tsup_config_is_config_entry_and_keeps_entries_live(self, tmp_path):
+        tsup_config = tmp_path / "packages" / "create-plugin" / "tsup.config.ts"
+        cli_file = tmp_path / "packages" / "create-plugin" / "src" / "cli.ts"
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"@repo/root","workspaces":["packages/*"]}',
+            encoding="utf-8",
+        )
+        tsup_config.parent.mkdir(parents=True, exist_ok=True)
+        cli_file.parent.mkdir(parents=True, exist_ok=True)
+        (tsup_config.parent / "package.json").write_text(
+            '{"name":"@repo/create-plugin","scripts":{"build":"tsup"}}',
+            encoding="utf-8",
+        )
+        tsup_config.write_text(
+            """
+import { defineConfig } from "tsup";
+
+export default defineConfig({
+  entry: { cli: "src/cli.ts" },
+});
+""",
+            encoding="utf-8",
+        )
+        cli_file.write_text("export function main() {}\n", encoding="utf-8")
+
+        inventory = discover_workspace_inventory(tmp_path)
+        dead_files = find_dead_ts_files(
+            [tsup_config, cli_file],
+            [],
+            {},
             {},
             project_root=str(tmp_path),
             workspace_inventory=inventory,

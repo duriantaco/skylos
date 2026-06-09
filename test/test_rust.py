@@ -249,6 +249,192 @@ fn main() {
     assert {"api", "route"} <= ref_names
 
 
+def test_rust_use_imports_emit_project_qualified_refs(tmp_path):
+    file_path = tmp_path / "src" / "drivers" / "mysql" / "query.rs"
+    file_path.parent.mkdir(parents=True)
+    file_path.write_text(
+        """
+use super::helpers::{escape_identifier as escape, is_wkt_geometry};
+
+fn run() {
+    escape("table");
+    is_wkt_geometry("point");
+}
+""",
+        encoding="utf-8",
+    )
+
+    _, refs, *_ = scan_rust_file(str(file_path), {})
+    ref_names = {r[0] for r in refs}
+
+    assert "drivers.mysql.helpers.escape_identifier" in ref_names
+    assert "drivers.mysql.helpers.is_wkt_geometry" in ref_names
+
+
+def test_rust_function_signatures_scan_type_parameters_and_return_types(tmp_path):
+    _, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+use tauri::{AppHandle, Runtime};
+use crate::models::RoutineInfo;
+
+pub async fn get_routines<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<Vec<RoutineInfo>, String> {
+    todo!()
+}
+""",
+    )
+
+    ref_names = {r[0] for r in refs}
+
+    assert {"Runtime", "AppHandle", "RoutineInfo"} <= ref_names
+
+
+def test_rust_trait_signatures_and_attribute_macros_are_refs(tmp_path):
+    _, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+use async_trait::async_trait;
+use crate::models::{ConnectionParams, RoutineInfo};
+
+#[async_trait]
+pub trait DatabaseDriver {
+    async fn get_routines(
+        &self,
+        params: &ConnectionParams,
+    ) -> Result<Vec<RoutineInfo>, String>;
+}
+""",
+    )
+
+    ref_names = {r[0] for r in refs}
+
+    assert {"async_trait", "ConnectionParams", "RoutineInfo"} <= ref_names
+
+
+def test_rust_impl_attribute_macros_are_refs(tmp_path):
+    _, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+use async_trait::async_trait;
+
+trait Service {
+    fn run(&self);
+}
+
+struct Driver;
+
+#[async_trait]
+impl Service for Driver {
+    fn run(&self) {}
+}
+""",
+    )
+
+    ref_names = {r[0] for r in refs}
+
+    assert "async_trait" in ref_names
+
+
+def test_rust_external_trait_import_method_usage_marks_import_live(tmp_path):
+    _, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+use futures::StreamExt;
+use sqlx::{Column, Row, ValueRef};
+use std::io::{Read, Write};
+use tauri::{Emitter, Manager};
+
+fn run(stream: &mut Stream, row: RowLike, column: ColumnLike, value: ValueLike) {
+    stream.next();
+    row.try_get_raw(0);
+    column.type_info();
+    value.is_null();
+    file.read_to_end(&mut bytes);
+    out.write_all(&bytes);
+    app.emit("event", ());
+    app.path();
+}
+""",
+    )
+
+    ref_names = {r[0] for r in refs}
+
+    assert {"StreamExt", "Row", "Column", "ValueRef", "Read", "Write"} <= ref_names
+    assert {"Emitter", "Manager"} <= ref_names
+
+
+def test_rust_generic_trait_method_calls_mark_trait_import_live(tmp_path):
+    _, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+use sqlx::Row;
+
+fn run(row: RowLike, index: usize) {
+    row.try_get::<Vec<u8>, _>(index);
+}
+""",
+    )
+
+    ref_names = {r[0] for r in refs}
+
+    assert "Row" in ref_names
+
+
+def test_rust_type_alias_rhs_is_scanned_for_trait_objects(tmp_path):
+    _, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+use tokio_postgres::types::ToSql;
+
+type PgParam = Box<dyn ToSql + Send + Sync>;
+""",
+    )
+
+    ref_names = {r[0] for r in refs}
+
+    assert "ToSql" in ref_names
+
+
+def test_rust_local_extension_trait_import_not_rescued_by_method_name(tmp_path):
+    _, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+use crate::traits::WidgetExt;
+
+fn run(widget: Widget) {
+    widget.next();
+}
+""",
+    )
+
+    ref_names = {r[0] for r in refs}
+
+    assert "next" in ref_names
+    assert "WidgetExt" not in ref_names
+
+
+def test_rust_inline_module_calls_emit_sibling_refs(tmp_path):
+    _, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+mod tls_tests {
+    fn params_with_ssl() {}
+
+    #[test]
+    fn test_tls_connector_disable() {
+        params_with_ssl();
+    }
+}
+""",
+    )
+
+    ref_names = {r[0] for r in refs}
+
+    assert "tls_tests.params_with_ssl" in ref_names
+
+
 def test_rust_restricted_visibility_is_not_exported(tmp_path):
     defs, *_ = _scan_rust(
         tmp_path,
@@ -351,3 +537,65 @@ use crate::handlers::*;
 
     assert {d.type for d in defs} == set()
     assert raw_imports == [{"source": "crate::handlers::*", "names": ["*"], "line": 2}]
+
+
+def test_rust_serde_attrs_and_field_types_are_references(tmp_path):
+    _, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ModelList {
+    models: Vec<Model>,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+struct Model {
+    id: String,
+}
+
+fn default_true() -> bool { true }
+""",
+    )
+
+    ref_names = {r[0] for r in refs}
+
+    assert {"Serialize", "Deserialize", "Model", "default_true"} <= ref_names
+
+
+def test_rust_callback_methods_and_registration_macros_are_references(tmp_path):
+    _, refs, *_ = _scan_rust(
+        tmp_path,
+        """
+struct StatementStream;
+
+impl StatementStream {
+    fn next_statement(&mut self) -> Option<String> { None }
+}
+
+fn parse_json_number(_: &serde_json::Value) -> Option<f64> { None }
+fn refresh_and_collect_system_stats() {}
+fn is_debug_mode() -> bool { true }
+fn close_devtools() {}
+
+fn run(value: Option<&serde_json::Value>, stream: &mut StatementStream) {
+    value.and_then(parse_json_number);
+    tokio::task::spawn_blocking(refresh_and_collect_system_stats);
+    stream.next_statement();
+    tauri::generate_handler![is_debug_mode, close_devtools];
+}
+""",
+    )
+
+    ref_names = {r[0] for r in refs}
+
+    assert {
+        "parse_json_number",
+        "refresh_and_collect_system_stats",
+        "next_statement",
+        "is_debug_mode",
+        "close_devtools",
+    } <= ref_names

@@ -66,6 +66,11 @@ _PLAYWRIGHT_CONFIG_FILES = frozenset(
         "playwright.config.js",
         "playwright.config.mts",
         "playwright.config.mjs",
+        "tsup.config.ts",
+        "tsup.config.mts",
+        "tsup.config.js",
+        "tsup.config.mjs",
+        "tsup.config.cjs",
     }
 )
 
@@ -81,7 +86,7 @@ except Exception:
 
 _ENTRY_PARSER_CACHE: dict[int, Parser] = {}
 _CONFIG_OBJECT_CALLS = frozenset({"defineConfig", "defineProject", "defineWorkspace"})
-_RUNNER_CONFIG_TOOLS = frozenset({"vite", "vitest", "playwright"})
+_RUNNER_CONFIG_TOOLS = frozenset({"vite", "vitest", "playwright", "tsup"})
 _STRING_FRAGMENT_TYPES = frozenset({"string_fragment", "escape_sequence"})
 
 
@@ -318,6 +323,10 @@ def demote_unconsumed_ts_exports(defs, consumed_exports, lifecycle_entry_points=
         if not str(defn.filename).endswith(_TS_JS_EXTENSIONS):
             continue
         if defn.type == "import":
+            continue
+        if str(defn.filename).endswith(".d.ts"):
+            continue
+        if "ambient declaration" in getattr(defn, "framework_signals", ()):
             continue
         if (
             os.path.realpath(str(defn.filename)) in lifecycle_entry_points
@@ -813,6 +822,26 @@ def _discover_vitest_config_entries(
     return matches
 
 
+def _discover_tsup_config_entries(
+    config_path: str, ts_files: set[str], default_base_dir: str
+) -> set[str]:
+    source, root_node = _load_entry_config_ast(config_path)
+    if source is None or root_node is None:
+        return set()
+
+    objects = _find_config_root_objects(source, root_node)
+    if not objects:
+        return set()
+
+    base_dir = _resolve_config_root_base(source, objects, default_base_dir)
+    return _literal_entries_from_nodes(
+        source,
+        _find_object_path_values(source, objects, ("entry",)),
+        base_dir,
+        ts_files,
+    )
+
+
 def _discover_playwright_config_entries(
     config_path: str, ts_files: set[str]
 ) -> set[str]:
@@ -1028,7 +1057,13 @@ def _iter_entry_discoveries(
                     "playwright"
                     if os.path.basename(candidate) in _PLAYWRIGHT_CONFIG_FILES
                     else (
-                        "vitest" if "vitest" in os.path.basename(candidate) else "vite"
+                        "vitest"
+                        if "vitest" in os.path.basename(candidate)
+                        else (
+                            "tsup"
+                            if os.path.basename(candidate).startswith("tsup.config.")
+                            else "vite"
+                        )
                     ),
                     str(package_root),
                 )
@@ -1051,6 +1086,10 @@ def _iter_entry_discoveries(
             )
         elif tool == "playwright":
             entry_files = _discover_playwright_config_entries(config_path, ts_files)
+        elif tool == "tsup":
+            entry_files = _discover_tsup_config_entries(
+                config_path, ts_files, base_dir
+            )
         else:
             entry_files = _discover_vite_config_entries(config_path, ts_files, base_dir)
         for entry_file in sorted(entry_files):

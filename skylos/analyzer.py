@@ -1200,6 +1200,9 @@ class Skylos:
             if d.type in ("method", "variable") and "." in d.name:
                 parts = d.name.rsplit(".", 1)
                 type_def_lookup[parts[0]].append((parts[1], d))
+                simple_owner = parts[0].split(".")[-1]
+                if simple_owner != parts[0]:
+                    type_def_lookup[simple_owner].append((parts[1], d))
 
         simple_to_keys = defaultdict(list)
         for k, d in non_import_defs.items():
@@ -1247,6 +1250,26 @@ class Skylos:
         for d in self.defs.values():
             if d.type == "method":
                 _methods_by_file_and_name[(str(d.filename), d.simple_name)].append(d)
+
+        def _matching_type_members(
+            type_name: str, member_name: str, ref_file: str
+        ) -> list:
+            matches = [
+                member_def
+                for candidate_member_name, member_def in type_def_lookup.get(
+                    type_name, []
+                )
+                if candidate_member_name == member_name
+            ]
+            if len(matches) <= 1:
+                return matches
+
+            same_file = [
+                member_def
+                for member_def in matches
+                if str(member_def.filename) == str(ref_file)
+            ]
+            return same_file or matches
 
         total_refs = len(self.refs)
         tick_every = int(os.getenv("SKYLOS_MARKREFS_TICK", str(MARKREFS_TICK_DEFAULT)))
@@ -1328,20 +1351,20 @@ class Skylos:
 
             # when ref_mod is a type we know about ..look up members of that type directly
             if ref_mod and ref_mod not in ("self", "cls") and len(candidates) != 1:
-                type_members = type_def_lookup.get(ref_mod)
-                if type_members:
-                    for member_name, member_def in type_members:
-                        if member_name == simple:
-                            member_def.references += 1
+                matched_members = _matching_type_members(ref_mod, simple, ref_file)
+                if matched_members:
+                    for member_def in matched_members:
+                        member_def.references += 1
                     continue
 
                 resolved_type = self._global_type_map.get(ref_mod)
                 if resolved_type:
-                    type_members = type_def_lookup.get(resolved_type)
-                    if type_members:
-                        for member_name, member_def in type_members:
-                            if member_name == simple:
-                                member_def.references += 1
+                    matched_members = _matching_type_members(
+                        resolved_type, simple, ref_file
+                    )
+                    if matched_members:
+                        for member_def in matched_members:
+                            member_def.references += 1
                         continue
 
             non_import_defs_fallback = []
