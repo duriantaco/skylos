@@ -247,14 +247,31 @@ jobs:
             )
           fi
 
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            "${tags[@]}" \
-            --label "org.opencontainers.image.title=skylos" \
-            --label "org.opencontainers.image.description=Open-source AI code security and static analysis for Python, TypeScript, and Go." \
-            --label "org.opencontainers.image.url=https://github.com/${{ github.repository }}" \
-            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
-            --label "org.opencontainers.image.version=${VERSION}" \
-            --label "org.opencontainers.image.revision=${revision}" \
-            --push \
-            .
+          build_and_push() {
+            docker buildx build \
+              --platform linux/amd64,linux/arm64 \
+              "${tags[@]}" \
+              --label "org.opencontainers.image.title=skylos" \
+              --label "org.opencontainers.image.description=Open-source AI code security and static analysis for Python, TypeScript, and Go." \
+              --label "org.opencontainers.image.url=https://github.com/${{ github.repository }}" \
+              --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+              --label "org.opencontainers.image.version=${VERSION}" \
+              --label "org.opencontainers.image.revision=${revision}" \
+              --push \
+              .
+          }
+
+          for attempt in 1 2 3; do
+            if build_and_push; then
+              exit 0
+            fi
+
+            if [[ "$attempt" == "3" ]]; then
+              echo "Docker image push failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+
+            sleep_seconds=$((attempt * 30))
+            echo "Docker image push failed; retrying in ${sleep_seconds}s" >&2
+            sleep "$sleep_seconds"
+          done
