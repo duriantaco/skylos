@@ -312,6 +312,13 @@ def _resolve_namespace_reexports(
 _VSCODE_EXTENSION_LIFECYCLE_EXPORTS = frozenset({"activate", "deactivate"})
 
 
+# The automatic/precompile JSX transforms emit calls to these in *user* code,
+# so a jsx-runtime module's exports are protocol surface, never dead.
+_JSX_RUNTIME_PROTOCOL_EXPORTS = frozenset(
+    {"jsx", "jsxs", "jsxDEV", "jsxTemplate", "jsxAttr", "jsxEscape", "Fragment", "JSX"}
+)
+
+
 def demote_unconsumed_ts_exports(defs, consumed_exports, lifecycle_entry_points=None):
     lifecycle_entry_points = {
         os.path.realpath(str(path)) for path in lifecycle_entry_points or ()
@@ -326,7 +333,16 @@ def demote_unconsumed_ts_exports(defs, consumed_exports, lifecycle_entry_points=
             continue
         if str(defn.filename).endswith(".d.ts"):
             continue
-        if "ambient declaration" in getattr(defn, "framework_signals", ()):
+        signals = getattr(defn, "framework_signals", ())
+        if "ambient declaration" in signals:
+            continue
+        if "deprecated export" in signals:
+            continue
+        if "type-only declaration" in signals:
+            continue
+        if defn.simple_name in _JSX_RUNTIME_PROTOCOL_EXPORTS and os.path.basename(
+            str(defn.filename)
+        ).startswith(("jsx-runtime.", "jsx-dev-runtime.")):
             continue
         if (
             os.path.realpath(str(defn.filename)) in lifecycle_entry_points
@@ -432,9 +448,17 @@ _TS_ENTRY_FILES = frozenset(
 def _is_ts_entry_or_infra(sf: str) -> bool:
     if sf.endswith(_TEST_SUFFIXES) or "/__tests__/" in sf:
         return True
-    if "/test/" in sf or "/tests/" in sf:
+    if "/test/" in sf or "/tests/" in sf or "/testdata/" in sf:
+        return True
+    if "/integration/" in sf:
+        return True
+    if "/_static/" in sf or "/static/" in sf or "/public/" in sf:
         return True
     if "/bench/" in sf or "/benchmark/" in sf or "/benchmarks/" in sf:
+        return True
+    if "/perf/" in sf or "/perf-measures/" in sf or "/performance/" in sf:
+        return True
+    if "/example/" in sf or "/examples/" in sf:
         return True
     if sf.endswith(".d.ts"):
         return True
@@ -453,9 +477,17 @@ def _is_ts_entry_or_infra(sf: str) -> bool:
 def _is_ts_dev_or_test_root(sf: str) -> bool:
     if sf.endswith(_TEST_SUFFIXES) or "/__tests__/" in sf:
         return True
-    if "/test/" in sf or "/tests/" in sf:
+    if "/test/" in sf or "/tests/" in sf or "/testdata/" in sf:
+        return True
+    if "/integration/" in sf:
+        return True
+    if "/_static/" in sf or "/static/" in sf or "/public/" in sf:
         return True
     if "/bench/" in sf or "/benchmark/" in sf or "/benchmarks/" in sf:
+        return True
+    if "/perf/" in sf or "/perf-measures/" in sf or "/performance/" in sf:
+        return True
+    if "/example/" in sf or "/examples/" in sf:
         return True
     if sf.endswith(".d.ts"):
         return True

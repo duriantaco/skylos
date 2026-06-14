@@ -115,6 +115,17 @@ def test_typescript_scan_result_is_parallel_worker_picklable(tmp_path):
     pickle.dumps(result)
 
 
+def test_minified_js_scan_result_keeps_tuple_shape(tmp_path):
+    p = tmp_path / "app.min.js"
+    p.write_text("function run(){return 1}\n", encoding="utf-8")
+
+    result = scan_typescript_file(str(p))
+
+    assert len(result) == 13
+    assert result[0] == []
+    assert result[12] == []
+
+
 def test_react_error_boundary_lifecycle_methods_are_not_dead_defs(tmp_path):
     p = tmp_path / "Boundary.tsx"
     p.write_text(

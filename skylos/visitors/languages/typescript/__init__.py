@@ -19,6 +19,39 @@ class DummyVisitor:
         self.framework_decorated_lines: set[int] = set()
 
 
+_MINIFIED_LINE_THRESHOLD = 3000
+
+
+def _empty_typescript_scan_result(config: dict) -> tuple:
+    return (
+        [],
+        [],
+        set(),
+        set(),
+        DummyVisitor(),
+        DummyVisitor(),
+        [],
+        [],
+        [],
+        None,
+        None,
+        config,
+        [],
+    )
+
+
+def is_minified_js_source(file_path: str, source: bytes) -> bool:
+    base = file_path.rsplit("/", 1)[-1]
+    if ".min." in base:
+        return True
+    if len(source) < 5000:
+        return False
+    for line in source.split(b"\n", 200)[:200]:
+        if len(line) > _MINIFIED_LINE_THRESHOLD:
+            return True
+    return False
+
+
 def scan_typescript_file(
     file_path: str,
     config: dict | None = None,
@@ -33,20 +66,10 @@ def scan_typescript_file(
         with open(file_path, "rb") as f:
             source = f.read()
     except Exception:
-        return (
-            [],
-            [],
-            set(),
-            set(),
-            DummyVisitor(),
-            DummyVisitor(),
-            [],
-            [],
-            [],
-            None,
-            None,
-            config,
-        )
+        return _empty_typescript_scan_result(config)
+
+    if is_minified_js_source(str(file_path), source):
+        return _empty_typescript_scan_result(config)
 
     complexity_limit: int = config.get("complexity", 10)
 

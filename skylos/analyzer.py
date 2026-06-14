@@ -1277,6 +1277,16 @@ class Skylos:
         for i, (ref, ref_file) in enumerate(self.refs, 1):
             if progress_callback and (i == 1 or i % tick_every == 0 or i == total_refs):
                 progress_callback(i, total_refs or 1, Path("PHASE: mark refs"))
+
+            if ref.startswith("~."):
+                # Property access (`x.foo`): dynamic dispatch can reach any
+                # method of this name, so credit them all, then resolve the
+                # bare name normally for functions attached as properties.
+                ref = ref[2:]
+                for d in simple_name_lookup.get(ref, []):
+                    if d.type == "method":
+                        d.references += 1
+
             file_key = f"{ref_file}:{ref}"
 
             if file_key in self.defs:

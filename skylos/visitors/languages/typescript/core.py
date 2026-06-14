@@ -97,7 +97,7 @@ _DEFS_TS_ONLY_PATTERN = "(method_definition name: (identifier) @method_ident_def
 _REFS_PATTERN = """
 (call_expression function: (identifier) @ref)
 (new_expression constructor: (identifier) @ref)
-(member_expression property: (property_identifier) @ref)
+(member_expression property: (property_identifier) @prop_ref)
 (arguments (identifier) @ref)
 (variable_declarator value: (identifier) @ref)
 (array (identifier) @ref)
@@ -115,6 +115,13 @@ _REFS_PATTERN = """
 (unary_expression (identifier) @ref)
 (await_expression (identifier) @ref)
 (template_substitution (identifier) @ref)
+(for_in_statement right: (identifier) @ref)
+(computed_property_name (identifier) @ref)
+(augmented_assignment_expression left: (identifier) @ref)
+(augmented_assignment_expression right: (identifier) @ref)
+(type_query (identifier) @ref)
+(nested_type_identifier module: (identifier) @ref)
+(public_field_definition value: (identifier) @ref)
 (shorthand_property_identifier) @ref
 (decorator (identifier) @ref)
 (decorator (call_expression function: (identifier) @ref))
@@ -262,13 +269,13 @@ class TypeScriptCore:
             self._add_def(node, "class")
 
         for node in c.get("iface_def", []):
-            self._add_def(node, "class")
+            self._add_def(node, "class", extra_signal="type-only declaration")
 
         for node in c.get("enum_def", []):
             self._add_def(node, "class")
 
         for node in c.get("type_def", []):
-            self._add_def(node, "class")
+            self._add_def(node, "class", extra_signal="type-only declaration")
 
         for node in c.get("dec_ident", []):
             class_node = node.parent
@@ -322,6 +329,17 @@ class TypeScriptCore:
         for node in c.get("ref", []):
             self._add_ref(node)
 
+        # `x.foo` / `x[k].foo()` — emit the plain name (so functions/exports
+        # attached as properties still resolve) AND a `~.` marker so the
+        # analyzer also credits same-named methods on any class, since the
+        # receiver type is unknown and dispatch may reach any of them.
+        for node in c.get("prop_ref", []):
+            name = self._get_text(node)
+            if self._is_self_ref(node, name):
+                continue
+            self.refs.append((name, self.file_path))
+            self.refs.append((f"~.{name}", self.file_path))
+
         for node in c.get("type_ref", []):
             parent = node.parent
             if parent and parent.type in self._TYPE_DEF_PARENTS:
@@ -354,27 +372,37 @@ class TypeScriptCore:
             current = current.parent
         return None
 
-    def _add_def(self, node, type_name: str) -> None:
+    def _has_deprecated_jsdoc(self, node) -> bool:
+        current = node
+        while current.parent and current.parent.type != "program":
+            current = current.parent
+        sibling = current.prev_named_sibling
+        if sibling is not None and sibling.type == "comment":
+            return "@deprecated" in self._get_text(sibling)
+        return False
+
+    def _should_skip_method_def(self, node, name: str) -> bool:
+        object_node = self._containing_object_literal(node)
+        if object_node is not None:
+            return not (
+                self._is_bundler_plugin_object(object_node)
+                and name not in _BUNDLER_PLUGIN_HOOK_METHODS
+            )
+        return name in _LIFECYCLE_METHODS or name in _BUNDLER_PLUGIN_HOOK_METHODS
+
+    def _qualified_method_name(self, node, name: str) -> str:
+        class_name = self._find_containing_class(node)
+        if class_name:
+            return f"{class_name}.{name}"
+        return name
+
+    def _add_def(self, node, type_name: str, extra_signal: str | None = None) -> None:
         name = self._get_text(node)
 
         if type_name == "method":
-            object_node = self._containing_object_literal(node)
-            if object_node is not None:
-                if self._is_bundler_plugin_object(object_node) and (
-                    name not in _BUNDLER_PLUGIN_HOOK_METHODS
-                ):
-                    pass
-                else:
-                    return
-            elif name in _LIFECYCLE_METHODS:
+            if self._should_skip_method_def(node, name):
                 return
-            elif name in _BUNDLER_PLUGIN_HOOK_METHODS:
-                return
-
-        if type_name == "method":
-            class_name = self._find_containing_class(node)
-            if class_name:
-                name = f"{class_name}.{name}"
+            name = self._qualified_method_name(node, name)
 
         line = node.start_point[0] + 1
 
@@ -385,6 +413,10 @@ class TypeScriptCore:
         d.is_exported = is_exported
         if self._is_declaration_file or is_ambient:
             d.framework_signals.append("ambient declaration")
+        if extra_signal:
+            d.framework_signals.append(extra_signal)
+        if is_exported and self._has_deprecated_jsdoc(node):
+            d.framework_signals.append("deprecated export")
         if (
             type_name == "function"
             and d.is_exported
@@ -786,6 +818,14 @@ class TypeScriptCore:
             line = node.start_point[0] + 1
 
             if function_node.type == "import":
+                for source_path in self._string_sources_from_node(first_arg):
+                    self._append_raw_import(source_path, line, consume_all_exports=True)
+                continue
+
+            if (
+                function_node.type == "identifier"
+                and self._get_text(function_node) == "require"
+            ):
                 for source_path in self._string_sources_from_node(first_arg):
                     self._append_raw_import(source_path, line, consume_all_exports=True)
                 continue
