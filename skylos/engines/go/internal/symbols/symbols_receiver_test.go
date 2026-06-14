@@ -140,6 +140,28 @@ func serve(r runner) {
 	expectNoCall(t, result, "serve", "runner.run")
 }
 
+func TestExtractDoesNotExportMethodsJustBecauseInterfaceDeclaresSameName(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/demo\n\ngo 1.22\n")
+	writeTestFile(t, root, "demo.go", `package demo
+
+type runner interface {
+	run()
+}
+
+type worker struct{}
+
+func (w worker) run() {}
+`)
+
+	result, err := Extract(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectDefExported(t, result, "worker.run", false)
+}
+
 func TestHasMethodDefsOnlyMatchesMethods(t *testing.T) {
 	defs := []Def{
 		{Name: "main", Type: "function"},
@@ -235,4 +257,18 @@ func expectNoCall(t *testing.T, result *Result, caller string, callee string) {
 			t.Fatalf("did not expect call %q -> %q in %#v", caller, callee, result.CallPairs)
 		}
 	}
+}
+
+func expectDefExported(t *testing.T, result *Result, name string, exported bool) {
+	t.Helper()
+
+	for _, def := range result.Defs {
+		if def.Name == name {
+			if def.IsExported != exported {
+				t.Fatalf("expected def %q exported=%v, got %v", name, exported, def.IsExported)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected def %q in %#v", name, result.Defs)
 }

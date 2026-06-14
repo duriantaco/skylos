@@ -26,6 +26,7 @@ from skylos.analysis.known_patterns import (
     DRF_SERIALIZER_BASES,
     DRF_PERMISSION_METHODS,
     DRF_PERMISSION_BASES,
+    DOCUTILS_DIRECTIVE_ATTRS,
     STARLETTE_MIDDLEWARE_METHODS,
     STARLETTE_MIDDLEWARE_BASES,
     STARLETTE_ENDPOINT_METHODS,
@@ -836,6 +837,17 @@ def _check_data_model_fields(def_obj, analyzer, framework):
                 def_obj,
                 "Enum member" if def_obj.type == "variable" else "Enum method",
             )
+
+    if (
+        def_obj.type == "variable"
+        and "." in def_obj.name
+        and simple_name in DOCUTILS_DIRECTIVE_ATTRS
+    ):
+        prefix = def_obj.name.rsplit(".", 1)[0]
+        parent_simple = prefix.split(".")[-1]
+        class_bases = _class_base_names(parent_simple, framework)
+        if any(base.endswith("Directive") for base in class_bases):
+            return _suppress(def_obj, "docutils directive option")
 
     if def_obj.type == "variable" and "." in def_obj.name:
         parts = def_obj.name.split(".")

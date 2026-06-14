@@ -243,6 +243,11 @@ func Extract(root string) (*Result, error) {
 					}
 				case *ast.TypeSpec:
 					walkExprForRefs(s.Type, pkgDir, importMap, modulePath, root, pkgDirs, path, result)
+					if s.TypeParams != nil {
+						for _, field := range s.TypeParams.List {
+							walkExprForRefs(field.Type, pkgDir, importMap, modulePath, root, pkgDirs, path, result)
+						}
+					}
 				}
 			}
 		}
@@ -260,6 +265,11 @@ func Extract(root string) (*Result, error) {
 				}
 				if funcDecl.Type.Results != nil {
 					for _, field := range funcDecl.Type.Results.List {
+						walkExprForRefs(field.Type, pkgDir, importMap, modulePath, root, pkgDirs, path, result)
+					}
+				}
+				if funcDecl.Type.TypeParams != nil {
+					for _, field := range funcDecl.Type.TypeParams.List {
 						walkExprForRefs(field.Type, pkgDir, importMap, modulePath, root, pkgDirs, path, result)
 					}
 				}

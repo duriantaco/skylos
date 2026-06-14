@@ -330,6 +330,16 @@ DRF_SERIALIZER_BASES = {
 DRF_PERMISSION_METHODS = {"has_permission", "has_object_permission"}
 DRF_PERMISSION_BASES = {"BasePermission"}
 
+# docutils/Sphinx Directive subclasses declare these as class attributes;
+# the framework reads them, never the user's code.
+DOCUTILS_DIRECTIVE_ATTRS = {
+    "has_content",
+    "required_arguments",
+    "optional_arguments",
+    "final_argument_whitespace",
+    "option_spec",
+}
+
 STARLETTE_MIDDLEWARE_METHODS = {"dispatch"}
 STARLETTE_MIDDLEWARE_BASES = {
     "BaseHTTPMiddleware",
