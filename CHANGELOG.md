@@ -1,5 +1,13 @@
 ## Changelog
 
+## [4.24.2](https://github.com/duriantaco/skylos/compare/v4.24.1...v4.24.2) (2026-06-14)
+
+
+### Bug Fixes
+
+* **dead-code:** reduce TS and Go false positives ([#565](https://github.com/duriantaco/skylos/issues/565)) ([92431bc](https://github.com/duriantaco/skylos/commit/92431bc4d360d402e8a61aceacc5500780e1e83b))
+* **release:** retry GHCR image publish ([#562](https://github.com/duriantaco/skylos/issues/562)) ([4858863](https://github.com/duriantaco/skylos/commit/48588634d994192c7486c7364aefaa84e290b6af))
+
 ## [4.24.1](https://github.com/duriantaco/skylos/compare/v4.24.0...v4.24.1) (2026-06-09)
 
 
