@@ -532,16 +532,16 @@ pub fn analyze_coupling(
     py: Python<'_>,
     source: &str,
     filename: &str,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyDict>> {
     let parsed = rustpython_parser::parse(source, rustpython_parser::Mode::Module, filename);
     let stmts = match parsed {
         Ok(ast::Mod::Module(m)) => m.body,
         _ => {
             // Parse failure — return empty result
-            let result = PyDict::new_bound(py);
-            result.set_item("classes", PyDict::new_bound(py))?;
-            result.set_item("coupling_graph", PyDict::new_bound(py))?;
-            return Ok(result.into());
+            let result = PyDict::new(py);
+            result.set_item("classes", PyDict::new(py))?;
+            result.set_item("coupling_graph", PyDict::new(py))?;
+            return Ok(result.unbind());
         }
     };
 
@@ -603,8 +603,8 @@ pub fn analyze_coupling(
     }
 
     // Build result dicts
-    let result = PyDict::new_bound(py);
-    let classes_dict = PyDict::new_bound(py);
+    let result = PyDict::new(py);
+    let classes_dict = PyDict::new(py);
 
     for (class_name, info) in &classes {
         let breakdown = coupling_graph.get(class_name).unwrap();
@@ -618,7 +618,7 @@ pub fn analyze_coupling(
         let total = ce + ca;
         let instability = if total > 0 { ce as f64 / total as f64 } else { 0.0 };
 
-        let cls_dict = PyDict::new_bound(py);
+        let cls_dict = PyDict::new(py);
         cls_dict.set_item("efferent_coupling", ce)?;
         cls_dict.set_item("afferent_coupling", ca)?;
         cls_dict.set_item("total_coupling", total)?;
@@ -626,7 +626,7 @@ pub fn analyze_coupling(
         cls_dict.set_item("afferent_classes",
             afferent.get(class_name).map_or(Vec::new(), |a| a.iter().cloned().collect()))?;
 
-        let breakdown_dict = PyDict::new_bound(py);
+        let breakdown_dict = PyDict::new(py);
         for (k, v) in breakdown {
             breakdown_dict.set_item(k.as_str(), v.iter().cloned().collect::<Vec<_>>())?;
         }
@@ -641,7 +641,7 @@ pub fn analyze_coupling(
         classes_dict.set_item(class_name.as_str(), cls_dict)?;
     }
 
-    let graph_dict = PyDict::new_bound(py);
+    let graph_dict = PyDict::new(py);
     for (name, breakdown) in &coupling_graph {
         let mut combined: BTreeSet<String> = BTreeSet::new();
         for deps in breakdown.values() {
@@ -653,7 +653,7 @@ pub fn analyze_coupling(
     result.set_item("classes", classes_dict)?;
     result.set_item("coupling_graph", graph_dict)?;
 
-    Ok(result.into())
+    Ok(result.unbind())
 }
 
 /// Second pass: find ClassDef nodes and walk their bodies for dependency extraction
