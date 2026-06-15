@@ -346,15 +346,6 @@ STARLETTE_MIDDLEWARE_BASES = {
     "HTTPMiddleware",
 }
 
-FASTAPI_CBVROUTER_METHODS = {
-    "get",
-    "post",
-    "put",
-    "patch",
-    "delete",
-    "head",
-    "options",
-}
 FASTAPI_CBVROUTER_BASES = {"APIRouter", "CBVRouter"}
 
 CELERY_TASK_METHODS = {"run"}

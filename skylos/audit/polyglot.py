@@ -23,17 +23,6 @@ class PolyglotSignalRule:
     regex: re.Pattern[str]
 
 
-POLYGLOT_LANGUAGES = {
-    "typescript",
-    "javascript",
-    "go",
-    "java",
-    "php",
-    "rust",
-    "dart",
-    "csharp",
-}
-
 _TS_JS_RULES = (
     PolyglotSignalRule(
         rule_id="SKY-D201",

@@ -429,10 +429,6 @@ def _parse_callback_request(path: str, *, expected_state: str | None):
     )
 
 
-def _whoami_url(base_url: str) -> str:
-    return _safe_whoami_url(base_url)
-
-
 def _safe_whoami_url(base_url: str) -> str:
     normalized = (base_url or DEFAULT_BASE_URL).strip().rstrip("/")
     parsed = urlparse(normalized)

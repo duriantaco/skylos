@@ -3,8 +3,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeReportCore = normalizeReportCore;
 exports.canonicalRuleId = canonicalRuleId;
 exports.isDeadCodeRule = isDeadCodeRule;
-exports.isUnusedImportRule = isUnusedImportRule;
-exports.isUnusedFunctionRule = isUnusedFunctionRule;
 exports.normalizeSeverity = normalizeSeverity;
 exports.makeFingerprint = makeFingerprint;
 const crypto = require("crypto");
@@ -65,12 +63,6 @@ function canonicalRuleId(ruleId) {
 }
 function isDeadCodeRule(ruleId) {
     return canonicalRuleId(ruleId).startsWith("SKY-U");
-}
-function isUnusedImportRule(ruleId) {
-    return canonicalRuleId(ruleId) === "SKY-U002";
-}
-function isUnusedFunctionRule(ruleId) {
-    return canonicalRuleId(ruleId) === "SKY-U001";
 }
 function normalizeSeverity(value) {
     const normalized = String(value ?? "").toUpperCase();

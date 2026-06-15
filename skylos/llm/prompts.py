@@ -367,31 +367,6 @@ REQUIREMENTS:
 Output ONLY the JSON, no markdown formatting."""
 
 
-def user_audit(context):
-    return f"""Perform a comprehensive security audit.
-
-=== BEGIN UNTRUSTED CODE CONTEXT ===
-{context}
-=== END UNTRUSTED CODE CONTEXT ===
-
-Look for:
-1. Security vulnerabilities (SQL injection, XSS, hardcoded secrets, command injection)
-2. Logic errors and bugs
-3. HALLUCINATIONS: Function/method calls to things that DON'T EXIST in:
-   - The [PROJECT INDEX] above
-   - Python standard library
-   - Imported third-party packages
-   If code calls a function not in these sources, flag as issue_type="hallucination"
-
-OUTPUT: JSON object with findings. Format:
-{{"findings": [{{"rule_id": "SKY-XXXX", "issue_type": "...", "severity": "...", "message": "...", "line": N, "confidence": "...", "suggestion": "..."}}]}}
-
-issue_type must be one of: security, quality, bug, performance, hallucination
-Use SKY-D* for security, SKY-Q*/SKY-C*/SKY-L*/SKY-P* for quality, SKY-S* for secrets
-
-If code is clean, output: {{"findings": []}}"""
-
-
 def build_security_prompt(
     context, include_examples=True, templates=None, template_root=None
 ):
@@ -531,13 +506,3 @@ def _string_field(item: dict, key: str) -> str:
 
 def _markdown_table_text(value: str) -> str:
     return value.replace("|", "\\|").replace("\n", " ")
-
-
-RULE_RANGES = {
-    "security": ("SKY-D200", "SKY-D299"),
-    "quality": ("SKY-Q301", "SKY-Q499"),
-    "logic": ("SKY-L001", "SKY-L009"),
-    "performance": ("SKY-P401", "SKY-P499"),
-    "secrets": ("SKY-S101", "SKY-S199"),
-    "structure": ("SKY-C303", "SKY-C399"),
-}
