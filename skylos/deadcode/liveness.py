@@ -8,6 +8,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from skylos.deadcode.plugin_registry import find_literal_plugin_registry_targets
+from skylos.deadcode.python_ast import ParsedPythonFile, parse_python_files
+
 
 SENTINEL_CALLER = "<skylos.deadcode.liveness>"
 DOC_EXTS = {".md", ".rst", ".txt"}
@@ -70,17 +73,19 @@ class LivenessReport:
     rescued: list[LivenessRescue] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "rescued_count": len(self.rescued),
-            "rescued": [
+        rescued_items: list[dict[str, Any]] = []
+        for rescue in self.rescued:
+            rescued_items.append(
                 {
                     "name": rescue.name,
                     "reason": rescue.reason,
                     "file": rescue.file,
                     "line": rescue.line,
                 }
-                for rescue in self.rescued
-            ],
+            )
+        return {
+            "rescued_count": len(self.rescued),
+            "rescued": rescued_items,
         }
 
 
@@ -105,8 +110,9 @@ def apply_dead_code_liveness(
 
     root = Path(project_root).resolve()
     py_files = _python_files(root, files)
+    parsed_files = parse_python_files(py_files)
     docs_text = _read_public_docs(root)
-    attr_calls = _collect_attr_calls(py_files)
+    attr_calls = _collect_attr_calls(parsed_files)
 
     classes: dict[str, Any] = {}
     class_methods: dict[str, list[Any]] = defaultdict(list)
@@ -121,6 +127,8 @@ def apply_dead_code_liveness(
     _rescue_optional_import_fallbacks(definitions, refs, report)
     _rescue_protocol_overrides(classes, class_methods, report)
     _rescue_registration_methods(classes, class_methods, report)
+    for target in find_literal_plugin_registry_targets(definitions, parsed_files):
+        _mark(target, "literal_plugin_registry", report)
     _rescue_documented_public_methods(classes, class_methods, docs_text, report)
     _rescue_unique_external_attr_calls(classes, class_methods, attr_calls, report)
     return report
@@ -149,11 +157,13 @@ def _mark(defn: Any, reason: str, report: LivenessReport) -> None:
 
 
 def _is_live_class(defn: Any) -> bool:
-    return bool(
-        getattr(defn, "references", 0) > 0
-        or getattr(defn, "is_exported", False)
-        or _is_public_name(getattr(defn, "simple_name", ""))
-    )
+    if getattr(defn, "references", 0) > 0:
+        return True
+    if getattr(defn, "is_exported", False):
+        return True
+    if _is_public_name(getattr(defn, "simple_name", "")):
+        return True
+    return False
 
 
 def _is_public_name(name: str) -> bool:
@@ -162,26 +172,46 @@ def _is_public_name(name: str) -> bool:
 
 def _owner_live(classes: dict[str, Any], owner: str) -> bool:
     class_def = classes.get(owner)
-    return bool(class_def and _is_live_class(class_def))
+    if not class_def:
+        return False
+    return _is_live_class(class_def)
 
 
 def _is_support_file(defn: Any) -> bool:
     try:
-        parts = {part.lower() for part in Path(getattr(defn, "filename", "")).parts}
+        path_parts = Path(getattr(defn, "filename", "")).parts
     except TypeError:
         return False
-    return bool(parts & {"test", "tests", "docs", "examples"})
+    for part in path_parts:
+        if part.lower() in {"test", "tests", "docs", "examples"}:
+            return True
+    return False
 
 
 def _python_files(root: Path, files: Iterable[str | Path] | None) -> list[Path]:
     if files is not None:
-        return [Path(f) for f in files if Path(f).suffix == ".py"]
+        explicit_files: list[Path] = []
+        for file in files:
+            path = Path(file)
+            if path.suffix == ".py":
+                explicit_files.append(path)
+        return explicit_files
     if not root.exists():
         return []
     ignored = {".git", ".venv", "venv", "__pycache__"}
-    return [
-        path for path in root.rglob("*.py") if not any(p in ignored for p in path.parts)
-    ]
+    python_files: list[Path] = []
+    for path in root.rglob("*.py"):
+        if _path_has_ignored_part(path, ignored):
+            continue
+        python_files.append(path)
+    return python_files
+
+
+def _path_has_ignored_part(path: Path, ignored: set[str]) -> bool:
+    for part in path.parts:
+        if part in ignored:
+            return True
+    return False
 
 
 def _read_public_docs(root: Path) -> str:
@@ -192,7 +222,7 @@ def _read_public_docs(root: Path) -> str:
     parts: list[str] = []
     seen_bytes = 0
     for path in root.rglob("*"):
-        if not path.is_file() or any(part in ignored for part in path.parts):
+        if not path.is_file() or _path_has_ignored_part(path, ignored):
             continue
         if path.suffix.lower() not in DOC_EXTS and path.stem.upper() not in DOC_NAMES:
             continue
@@ -212,20 +242,16 @@ def _read_public_docs(root: Path) -> str:
     return "\n".join(parts)
 
 
-def _collect_attr_calls(files: Iterable[Path]) -> list[_AttrCall]:
+def _collect_attr_calls(files: Iterable[ParsedPythonFile]) -> list[_AttrCall]:
     calls: list[_AttrCall] = []
-    for path in files:
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except (OSError, SyntaxError, UnicodeDecodeError):
-            continue
-        for node in ast.walk(tree):
+    for parsed in files:
+        for node in ast.walk(parsed.tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 calls.append(
                     _AttrCall(
                         node.func.attr,
                         _attr_call_base_name(node.func),
-                        path,
+                        parsed.path,
                         getattr(node, "lineno", 0),
                     )
                 )
@@ -248,16 +274,20 @@ def _rescue_optional_import_fallbacks(
     refs: Iterable[tuple[str, Any]],
     report: LivenessReport,
 ) -> None:
-    conditional_imports = [
-        defn
-        for defn in definitions.values()
-        if getattr(defn, "type", None) == "import"
-        and getattr(defn, "conditional_import", False)
-    ]
+    conditional_imports = []
+    for defn in definitions.values():
+        if getattr(defn, "type", None) != "import":
+            continue
+        if not getattr(defn, "conditional_import", False):
+            continue
+        conditional_imports.append(defn)
     if not conditional_imports:
         return
 
-    referenced_simples = {str(ref).rsplit(".", 1)[-1] for ref, _ref_file in refs}
+    referenced_simples: set[str] = set()
+    for ref, _ref_file in refs:
+        referenced_simples.add(str(ref).rsplit(".", 1)[-1])
+
     conditional_by_file: dict[tuple[str, str], bool] = {}
     for imp in conditional_imports:
         simple = getattr(imp, "simple_name", "")
@@ -284,12 +314,7 @@ def _rescue_protocol_overrides(
         class_def = classes.get(owner)
         if not class_def:
             continue
-        base_names = {
-            base
-            for base in getattr(class_def, "base_classes", [])
-            if isinstance(base, str)
-        }
-        base_names.update(base.rsplit(".", 1)[-1] for base in list(base_names))
+        base_names = _base_names_for_class(class_def)
         live_methods: set[str] = set()
         for base in base_names:
             live_methods.update(PROTOCOL_METHODS_BY_BASE.get(base, set()))
@@ -312,22 +337,49 @@ def _rescue_registration_methods(
             name = getattr(method, "simple_name", "")
             if not _is_public_name(name):
                 continue
-            decorators = {
-                str(deco).rsplit(".", 1)[-1].lower()
-                for deco in getattr(method, "decorators", [])
-            }
-            looks_registered = any(
-                word in name.lower() for word in REGISTRATION_WORDS
-            ) or bool(decorators & {"setupmethod", "route", "command", "receiver"})
-            if looks_registered and _stores_and_returns_callable(method):
-                _mark(method, "registration_api", report)
+            decorators = _decorator_leaf_names(method)
+            if not _looks_registered_method(name, decorators):
+                continue
+            if not _stores_and_returns_callable(method):
+                continue
+            _mark(method, "registration_api", report)
+
+
+def _base_names_for_class(class_def: Any) -> set[str]:
+    base_names: set[str] = set()
+    for base in getattr(class_def, "base_classes", []):
+        if not isinstance(base, str):
+            continue
+        base_names.add(base)
+        base_names.add(base.rsplit(".", 1)[-1])
+    return base_names
+
+
+def _decorator_leaf_names(method: Any) -> set[str]:
+    decorators: set[str] = set()
+    for decorator in getattr(method, "decorators", []):
+        decorators.add(str(decorator).rsplit(".", 1)[-1].lower())
+    return decorators
+
+
+def _looks_registered_method(name: str, decorators: set[str]) -> bool:
+    lowered_name = name.lower()
+    for word in REGISTRATION_WORDS:
+        if word in lowered_name:
+            return True
+    for decorator in decorators:
+        if decorator in {"setupmethod", "route", "command", "receiver"}:
+            return True
+    return False
 
 
 def _stores_and_returns_callable(method: Any) -> bool:
     node = getattr(method, "node", None)
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return False
-    params = [arg.arg for arg in node.args.args]
+    params: list[str] = []
+    for arg in node.args.args:
+        params.append(arg.arg)
     if params and params[0] in {"self", "cls"}:
         params = params[1:]
     if not params:
@@ -337,23 +389,35 @@ def _stores_and_returns_callable(method: Any) -> bool:
     returns_param = False
     for child in ast.walk(node):
         if isinstance(child, ast.Call):
-            func = child.func
-            if (
-                isinstance(func, ast.Attribute)
-                and func.attr in REGISTRATION_MUTATORS
-                and isinstance(func.value, ast.Attribute)
-                and isinstance(func.value.value, ast.Name)
-                and func.value.value.id in {"self", "cls"}
-                and any(
-                    isinstance(arg, ast.Name) and arg.id == first_param
-                    for arg in child.args
-                )
-            ):
+            if _call_stores_param_on_self_or_cls(child, first_param):
                 stores_param = True
         elif isinstance(child, ast.Return):
             if isinstance(child.value, ast.Name) and child.value.id == first_param:
                 returns_param = True
     return stores_param and returns_param
+
+
+def _call_stores_param_on_self_or_cls(call: ast.Call, param_name: str) -> bool:
+    func = call.func
+    if not isinstance(func, ast.Attribute):
+        return False
+    if func.attr not in REGISTRATION_MUTATORS:
+        return False
+    if not isinstance(func.value, ast.Attribute):
+        return False
+    receiver = func.value.value
+    if not isinstance(receiver, ast.Name):
+        return False
+    if receiver.id not in {"self", "cls"}:
+        return False
+    return _call_has_arg_name(call, param_name)
+
+
+def _call_has_arg_name(call: ast.Call, name: str) -> bool:
+    for arg in call.args:
+        if isinstance(arg, ast.Name) and arg.id == name:
+            return True
+    return False
 
 
 def _rescue_documented_public_methods(
@@ -388,7 +452,10 @@ def _docs_reference_method(text: str, class_name: str, method_name: str) -> bool
     ]
     if "_" in method_name and len(method_name) >= 10:
         patterns.append(rf"\.[ \t]*{escaped_method}\(")
-    return any(re.search(pattern, text) for pattern in patterns)
+    for pattern in patterns:
+        if re.search(pattern, text):
+            return True
+    return False
 
 
 def _rescue_unique_external_attr_calls(
@@ -411,26 +478,33 @@ def _rescue_unique_external_attr_calls(
             if _is_public_name(name):
                 method_by_simple[name].append((owner, method))
 
-    call_count = Counter(call.attr for call in attr_calls)
+    call_count: Counter[str] = Counter()
     calls_by_attr: dict[str, list[_AttrCall]] = defaultdict(list)
     for call in attr_calls:
+        call_count[call.attr] += 1
         calls_by_attr[call.attr].append(call)
 
     for method_name, owner_methods in method_by_simple.items():
         if len(owner_methods) != 1:
             continue
-        if (
-            method_name in COMMON_UNTYPED_ATTR_CALLS
-            or call_count.get(method_name, 0) == 0
-        ):
+        if method_name in COMMON_UNTYPED_ATTR_CALLS:
+            continue
+        if call_count.get(method_name, 0) == 0:
             continue
         _owner, method = owner_methods[0]
         method_file = Path(getattr(method, "filename", "")).resolve()
-        external_calls = [
-            call
-            for call in calls_by_attr[method_name]
-            if call.file.resolve() != method_file
-            and call.base_name in FRAMEWORK_PROXY_NAMES
-        ]
-        if external_calls:
+        if _has_external_framework_proxy_call(calls_by_attr[method_name], method_file):
             _mark(method, "unique_external_attr_call", report)
+
+
+def _has_external_framework_proxy_call(
+    calls: list[_AttrCall],
+    method_file: Path,
+) -> bool:
+    for call in calls:
+        if call.file.resolve() == method_file:
+            continue
+        if call.base_name not in FRAMEWORK_PROXY_NAMES:
+            continue
+        return True
+    return False
