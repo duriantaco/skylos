@@ -2715,6 +2715,88 @@ class Worker {
 
         assert "Worker.delegate" in unreachable
 
+    def test_analyze_java_framework_annotations_mark_classes_live(self, tmp_path):
+        (tmp_path / "Components.java").write_text(
+            """
+import jakarta.persistence.Entity;
+import jakarta.ws.rs.Path;
+import org.springframework.stereotype.Service;
+
+@Service
+class PackagePrivateService {
+    void staleHelper() {
+    }
+}
+
+@Entity
+class AuditRecord {
+    private Long id;
+}
+
+@Path("/orders")
+class OrderResource {
+}
+
+class TrulyUnused {
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable_classes = {item["name"] for item in result["unused_classes"]}
+        unreachable_functions = {
+            item["name"] for item in result["unused_functions"]
+        }
+
+        assert "PackagePrivateService" not in unreachable_classes
+        assert "AuditRecord" not in unreachable_classes
+        assert "OrderResource" not in unreachable_classes
+        assert "TrulyUnused" in unreachable_classes
+        assert "PackagePrivateService.staleHelper" in unreachable_functions
+
+    def test_analyze_java_junit5_annotations_mark_tests_live(self, tmp_path):
+        (tmp_path / "BillingTest.java").write_text(
+            """
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+
+class BillingTest {
+    @ParameterizedTest
+    @ValueSource(strings = {"basic", "pro"})
+    void acceptsPlan(String plan) {
+        plan.trim();
+    }
+
+    @AfterAll
+    static void cleanup() {
+    }
+}
+
+class LegacySuite {
+    void stale() {
+    }
+}
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable_classes = {item["name"] for item in result["unused_classes"]}
+        unreachable_functions = {
+            item["name"] for item in result["unused_functions"]
+        }
+
+        assert "BillingTest" not in unreachable_classes
+        assert "BillingTest.acceptsPlan" not in unreachable_functions
+        assert "BillingTest.cleanup" not in unreachable_functions
+        assert "LegacySuite" in unreachable_classes
+
     def test_analyze_typescript_transitive_dead_uses_file_scoped_callers(
         self, tmp_path
     ):

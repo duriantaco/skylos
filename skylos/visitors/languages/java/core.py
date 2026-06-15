@@ -63,6 +63,92 @@ _SERIALIZATION_HOOKS_WITH_STREAM: dict[str, str] = {
     "writeObject": "ObjectOutputStream",
 }
 
+_CLASS_ENTRYPOINT_ANNOTATIONS: set[str] = {
+    "ApplicationPath",
+    "ApplicationScoped",
+    "Component",
+    "Configuration",
+    "ConfigurationProperties",
+    "Controller",
+    "ControllerAdvice",
+    "DataJpaTest",
+    "Dependent",
+    "Document",
+    "Embeddable",
+    "Entity",
+    "ExtendWith",
+    "Factory",
+    "HiltAndroidApp",
+    "MappedSuperclass",
+    "MessageDriven",
+    "MicronautTest",
+    "Named",
+    "Path",
+    "QuarkusTest",
+    "Repository",
+    "RequestScoped",
+    "RestController",
+    "RestControllerAdvice",
+    "RunWith",
+    "Service",
+    "SessionScoped",
+    "SpringBootApplication",
+    "SpringBootTest",
+    "Stateful",
+    "Stateless",
+    "Testcontainers",
+    "WebFilter",
+    "WebListener",
+    "WebMvcTest",
+    "WebServlet",
+}
+
+_METHOD_ENTRYPOINT_ANNOTATIONS: set[str] = {
+    "After",
+    "AfterAll",
+    "AfterClass",
+    "AfterEach",
+    "Bean",
+    "Before",
+    "BeforeAll",
+    "BeforeClass",
+    "BeforeEach",
+    "DeleteMapping",
+    "DgsData",
+    "DgsMutation",
+    "DgsQuery",
+    "EventListener",
+    "ExceptionHandler",
+    "GET",
+    "GetMapping",
+    "GraphQLMutation",
+    "GraphQLQuery",
+    "JmsListener",
+    "KafkaListener",
+    "MessageMapping",
+    "MutationMapping",
+    "PATCH",
+    "POST",
+    "PUT",
+    "ParameterizedTest",
+    "PatchMapping",
+    "Path",
+    "PostConstruct",
+    "PostMapping",
+    "PreDestroy",
+    "PutMapping",
+    "QueryMapping",
+    "RabbitListener",
+    "RepeatedTest",
+    "RequestMapping",
+    "Scheduled",
+    "SchemaMapping",
+    "SubscribeMapping",
+    "Test",
+    "TestFactory",
+    "TestTemplate",
+}
+
 _DEFS_PATTERN = """
 (class_declaration name: (identifier) @class_def)
 (interface_declaration name: (identifier) @iface_def)
@@ -274,31 +360,74 @@ class JavaCore:
                 return child
         return None
 
-    def _has_annotation(self, node, annotation_name: str) -> bool:
-        decl = node.parent
+    _ANNOTATED_DECL_TYPES: set[str] = {
+        "annotation_type_declaration",
+        "class_declaration",
+        "enum_declaration",
+        "field_declaration",
+        "interface_declaration",
+        "method_declaration",
+        "constructor_declaration",
+        "record_declaration",
+    }
+
+    def _declaration_for_node(self, node):
+        decl = node
         while decl:
-            if decl.type in (
-                "class_declaration",
-                "method_declaration",
-                "field_declaration",
-                "constructor_declaration",
-            ):
-                break
+            if decl.type in self._ANNOTATED_DECL_TYPES:
+                return decl
             decl = decl.parent
+        return None
+
+    def _annotation_names(self, node) -> set[str]:
+        decl = self._declaration_for_node(node)
         if not decl:
-            return False
+            return set()
+
+        names: set[str] = set()
         for child in decl.children:
             if child.type == "modifiers":
                 for mod_child in child.children:
-                    if mod_child.type == "marker_annotation":
+                    if (
+                        mod_child.type == "marker_annotation"
+                        or "annotation" in mod_child.type
+                    ):
                         name = mod_child.child_by_field_name("name")
-                        if name and self._get_text(name) == annotation_name:
-                            return True
-                    elif mod_child.type == "annotation":
-                        name = mod_child.child_by_field_name("name")
-                        if name and self._get_text(name) == annotation_name:
-                            return True
+                        if name:
+                            annotation = self._get_text(name)
+                            names.add(annotation)
+                            names.add(annotation.rsplit(".", 1)[-1])
+        return names
+
+    def _has_annotation(self, node, annotation_name: str) -> bool:
+        return annotation_name in self._annotation_names(node)
+
+    def _has_any_annotation(self, node, annotation_names: set[str]) -> bool:
+        return bool(self._annotation_names(node) & annotation_names)
+
+    def _class_contains_annotated_method(
+        self, class_node, annotation_names: set[str]
+    ) -> bool:
+        for child in self._walk_nodes(class_node):
+            if child is class_node:
+                continue
+            if child.type == "class_declaration":
+                continue
+            if child.type == "method_declaration" and self._has_any_annotation(
+                child, annotation_names
+            ):
+                return True
         return False
+
+    def _is_java_class_entrypoint(self, name_node) -> bool:
+        class_node = self._declaration_for_node(name_node)
+        if class_node is None:
+            return False
+        if self._has_any_annotation(class_node, _CLASS_ENTRYPOINT_ANNOTATIONS):
+            return True
+        return self._class_contains_annotated_method(
+            class_node, _METHOD_ENTRYPOINT_ANNOTATIONS
+        )
 
     def _method_parameter_texts(self, method_node) -> list[str]:
         parameters = method_node.child_by_field_name(
@@ -389,6 +518,9 @@ class JavaCore:
     def _add_def(self, node, type_name: str) -> None:
         name = self._get_text(node)
 
+        if type_name == "class" and self._is_java_class_entrypoint(node):
+            return
+
         if type_name == "method" and name in _LIFECYCLE_METHODS:
             return
 
@@ -401,40 +533,8 @@ class JavaCore:
         if type_name == "method":
             if self._has_annotation(node, "Override"):
                 return
-            if self._has_annotation(node, "Bean"):
+            if self._has_any_annotation(node, _METHOD_ENTRYPOINT_ANNOTATIONS):
                 return
-            if self._has_annotation(node, "Test"):
-                return
-            if self._has_annotation(node, "Before"):
-                return
-            if self._has_annotation(node, "After"):
-                return
-            if self._has_annotation(node, "BeforeEach"):
-                return
-            if self._has_annotation(node, "AfterEach"):
-                return
-            if self._has_annotation(node, "PostConstruct"):
-                return
-            if self._has_annotation(node, "PreDestroy"):
-                return
-            if self._has_annotation(node, "EventListener"):
-                return
-            if self._has_annotation(node, "Scheduled"):
-                return
-            if self._has_annotation(node, "ExceptionHandler"):
-                return
-
-        if type_name == "method":
-            for ann in (
-                "GetMapping",
-                "PostMapping",
-                "PutMapping",
-                "DeleteMapping",
-                "PatchMapping",
-                "RequestMapping",
-            ):
-                if self._has_annotation(node, ann):
-                    return
 
         if type_name == "method":
             class_name = self._find_containing_class(node)
