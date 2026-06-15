@@ -61,7 +61,7 @@ def run_pr_review(
         return
 
     if grade and previous_grade is None:
-        previous_grade = _fetch_previous_grade(repo, diff_base)
+        previous_grade = _fetch_previous_grade(diff_base)
 
     all_findings = _flatten_findings(results)
 
@@ -73,7 +73,6 @@ def run_pr_review(
     if not summary_only:
         changed_ranges = get_changed_line_ranges(diff_base)
         findings = filter_findings_to_diff(all_findings, changed_ranges)
-        # Regression findings ARE the diff — no need to filter them
         findings.extend(regression_findings)
     else:
         findings = all_findings + regression_findings
@@ -850,7 +849,7 @@ def _post_summary_comment(
         console.print(f"[yellow]Failed to post summary comment: {e.stderr}[/yellow]")
 
 
-def _fetch_previous_grade(repo: str, base_branch: str = "origin/main") -> dict | None:
+def _fetch_previous_grade(base_branch: str = "origin/main") -> dict | None:
     try:
         from skylos.api import BASE_URL, get_project_token
 

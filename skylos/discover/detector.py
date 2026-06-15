@@ -215,17 +215,6 @@ OUTPUT_VALIDATION_CALLS = {
     "ast.literal_eval",
 }
 
-OUTPUT_VALIDATION_SIMPLE = {
-    "loads",
-    "load",
-    "validate",
-    "model_validate",
-    "parse_obj",
-    "parse_raw",
-    "validate_python",
-    "validate_json",
-    "literal_eval",
-}
 
 LENGTH_CHECK_FUNCTIONS = {"len", "length", "size"}
 

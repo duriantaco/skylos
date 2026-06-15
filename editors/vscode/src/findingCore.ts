@@ -197,14 +197,6 @@ export function isDeadCodeRule(ruleId: string): boolean {
   return canonicalRuleId(ruleId).startsWith("SKY-U");
 }
 
-export function isUnusedImportRule(ruleId: string): boolean {
-  return canonicalRuleId(ruleId) === "SKY-U002";
-}
-
-export function isUnusedFunctionRule(ruleId: string): boolean {
-  return canonicalRuleId(ruleId) === "SKY-U001";
-}
-
 export function normalizeSeverity(value?: string): CoreSeverity {
   const normalized = String(value ?? "").toUpperCase();
   if (normalized === "CRITICAL") return "CRITICAL";

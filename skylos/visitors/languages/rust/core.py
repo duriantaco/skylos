@@ -896,9 +896,6 @@ class RustCore:
                 self._record_ref(local_name, node.start_byte, current_callable=None)
         self.raw_imports.append({"source": source, "names": names, "line": line})
 
-    def _extract_use_names(self, node) -> list[str]:
-        return [local_name for local_name, _ in self._extract_use_bindings(node)]
-
     def _extract_use_bindings(self, node) -> list[tuple[str, str]]:
         if node.type == "use_as_clause":
             return self._extract_use_as_binding(node)
