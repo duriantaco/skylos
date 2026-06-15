@@ -1125,7 +1125,7 @@ max_args = false
         assert result["unused_functions"]
         assert "SKY-D201" in {f.get("rule_id") for f in result.get("danger", [])}
 
-    @patch("skylos.analyzer.scan_typescript_file")
+    @patch("skylos.analysis.file_processing.scan_typescript_file")
     def test_proc_file_dispatches_js_to_typescript_scanner(self, mock_scan):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
             f.write("export function run() { return 1; }\n")
@@ -1490,7 +1490,7 @@ max_args = false
         assert ("SKY-Q803", "mini_pkg.core") not in architecture_rules
         assert ("SKY-Q803", "tests.test_core") not in architecture_rules
 
-    @patch("skylos.analyzer.scan_typescript_file")
+    @patch("skylos.analysis.file_processing.scan_typescript_file")
     def test_proc_file_dispatches_mjs_to_typescript_scanner(self, mock_scan):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".mjs", delete=False) as f:
             f.write("export function run() { return 1; }\n")
@@ -1506,7 +1506,7 @@ max_args = false
         mock_scan.assert_called_once()
         assert result == tuple(range(13))
 
-    @patch("skylos.analyzer.scan_php_file")
+    @patch("skylos.analysis.file_processing.scan_php_file")
     def test_proc_file_dispatches_php_to_php_scanner(self, mock_scan):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".php", delete=False) as f:
             f.write("<?php function run() { return 1; }\n")
@@ -1522,7 +1522,7 @@ max_args = false
         mock_scan.assert_called_once()
         assert result == tuple(range(13))
 
-    @patch("skylos.analyzer.scan_rust_file")
+    @patch("skylos.analysis.file_processing.scan_rust_file")
     def test_proc_file_dispatches_rust_to_rust_scanner(self, mock_scan):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".rs", delete=False) as f:
             f.write("pub fn run() { }\n")

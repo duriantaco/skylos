@@ -29,10 +29,7 @@ from skylos.constants import (
 
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.visitors.test_aware import TestAwareVisitor
-from skylos.visitors.languages.php import scan_php_file
-from skylos.visitors.languages.dart import scan_dart_file
-from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS, scan_shell_file
-from skylos.visitors.languages.typescript import scan_typescript_file
+from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS
 from skylos.visitors.languages.typescript.analysis import (
     build_ts_import_graph,
     demote_unconsumed_ts_exports,
@@ -40,11 +37,7 @@ from skylos.visitors.languages.typescript.analysis import (
     find_dead_ts_files,
     find_unused_ts_exports,
 )
-from skylos.visitors.languages.go import scan_go_file, clear_go_cache
-from skylos.visitors.languages.java import scan_java_file
-from skylos.visitors.languages.rust import scan_rust_file
-from skylos.visitors.languages.csharp import scan_csharp_file
-from skylos.visitors.languages.kotlin import scan_kotlin_file
+from skylos.visitors.languages.go import clear_go_cache
 
 from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 
@@ -60,53 +53,9 @@ from skylos.core.file_discovery import (
 
 from skylos.core.linter import LinterVisitor
 
-from skylos.rules.quality.complexity import ComplexityRule, CognitiveComplexityRule
-from skylos.rules.quality.nesting import NestingRule
-from skylos.rules.quality.structure import ArgCountRule, FunctionLengthRule
-from skylos.rules.quality.logic import (
-    MutableDefaultRule,
-    BareExceptRule,
-    DangerousComparisonRule,
-    DuplicateBranchRule,
-    TryBlockPatternsRule,
-    UnusedExceptVarRule,
-    ReturnConsistencyRule,
-    EmptyErrorHandlerRule,
-    MissingResourceCleanupRule,
-    DebugLeftoverRule,
-    SecurityTodoRule,
-    DisabledSecurityRule,
-    PhantomCallRule,
-    InsecureRandomRule,
-    HardcodedCredentialRule,
-    MockPlaceholderDataRule,
-    ErrorDisclosureRule,
-    BroadFilePermissionsRule,
-    PhantomDecoratorRule,
-    UnfinishedGenerationRule,
-    UndefinedConfigRule,
-    StaleMockRule,
-    DuplicateStringLiteralRule,
-    TooManyReturnsRule,
-    BooleanTrapRule,
-    BroadExceptionRule,
-    MissingNetworkTimeoutRule,
-    NoEffectStatementRule,
-)
-from skylos.rules.quality.practices import (
-    FrameworkPracticeRule,
-    TypeAnnotationPracticeRule,
-)
-from skylos.rules.quality._readability import OpaqueIdentifierRule
 from skylos.rules.quality.policy import analyze_repo_policy
 from skylos.rules.quality.phantom_refs import scan_repo_phantom_security_references
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
-from skylos.rules.quality.performance import PerformanceRule
-from skylos.rules.quality.unreachable import UnreachableCodeRule
-from skylos.rules.quality.async_blocking import AsyncBlockingRule
-from skylos.rules.quality.class_size import GodClassRule, GodFileRule
-from skylos.rules.quality.coupling import CBORule
-from skylos.rules.quality.cohesion import LCOMRule
 from skylos.rules.quality.clones import (
     CloneConfig,
     GroupingMode,
@@ -117,9 +66,14 @@ from skylos.rules.quality.clones import (
 )
 
 from skylos.analysis.penalties import apply_penalties
+from skylos.analysis.file_processing import (
+    collect_python_raw_imports,
+    scan_python_quality,
+    scan_non_python_file,
+    set_linter_node_types,
+)
 
 from skylos.scale.parallel_static import run_proc_file_parallel
-from skylos.rules.custom import load_custom_rules, load_community_rules
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -186,8 +140,6 @@ _CSHARP_SOURCE_EXTS = (".cs",)
 _KOTLIN_SOURCE_EXTS = (".kt", ".kts")
 _SHELL_SOURCE_EXTS = SHELL_SOURCE_EXTS
 _PYTHON_SOURCE_ROOT_NAMES = {"src", "lib", "python"}
-
-_TRY_NODE_TYPES = (ast.Try, getattr(ast, "TryStar", ast.Try))
 
 _HTML_PARSER_CALLBACKS = {
     "handle_starttag",
@@ -316,84 +268,6 @@ def _find_package_boundary_modules(
                     modules.add(target)
 
     return modules
-
-
-_LINTER_RULE_NODE_TYPES = {
-    ComplexityRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    CognitiveComplexityRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    NestingRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    AsyncBlockingRule: (
-        ast.Import,
-        ast.ImportFrom,
-        ast.AsyncFunctionDef,
-        ast.FunctionDef,
-        ast.Lambda,
-        ast.Call,
-    ),
-    ArgCountRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    FunctionLengthRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    MutableDefaultRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    BareExceptRule: (ast.ExceptHandler,),
-    DangerousComparisonRule: (ast.Compare,),
-    DuplicateBranchRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    TryBlockPatternsRule: (ast.Try,),
-    UnusedExceptVarRule: (ast.ExceptHandler,),
-    ReturnConsistencyRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    EmptyErrorHandlerRule: (ast.ExceptHandler, ast.With),
-    MissingResourceCleanupRule: (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef),
-    DebugLeftoverRule: (ast.Call,),
-    SecurityTodoRule: (ast.Module,),
-    DisabledSecurityRule: (ast.Call, ast.FunctionDef, ast.AsyncFunctionDef, ast.Assign),
-    PhantomCallRule: (ast.Module, ast.Call),
-    InsecureRandomRule: (ast.Assign,),
-    HardcodedCredentialRule: (ast.Assign, ast.FunctionDef, ast.AsyncFunctionDef),
-    ErrorDisclosureRule: (ast.ExceptHandler,),
-    BroadFilePermissionsRule: (ast.Call,),
-    UndefinedConfigRule: (ast.Module, ast.Call),
-    StaleMockRule: (ast.Module, ast.Call),
-    PhantomDecoratorRule: (
-        ast.Module,
-        ast.FunctionDef,
-        ast.AsyncFunctionDef,
-        ast.ClassDef,
-    ),
-    UnfinishedGenerationRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    DuplicateStringLiteralRule: (ast.Module,),
-    TooManyReturnsRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    BooleanTrapRule: (ast.FunctionDef, ast.AsyncFunctionDef),
-    BroadExceptionRule: (ast.ExceptHandler,),
-    MissingNetworkTimeoutRule: (ast.Call,),
-    NoEffectStatementRule: (ast.Expr,),
-    GodFileRule: (ast.Module,),
-    GodClassRule: (ast.ClassDef,),
-    CBORule: (ast.ClassDef,),
-    LCOMRule: (ast.ClassDef,),
-    UnreachableCodeRule: (
-        ast.Module,
-        ast.FunctionDef,
-        ast.AsyncFunctionDef,
-        ast.ClassDef,
-        ast.If,
-        ast.For,
-        ast.AsyncFor,
-        ast.While,
-        ast.With,
-        ast.AsyncWith,
-        *_TRY_NODE_TYPES,
-    ),
-    PerformanceRule: (ast.Call, ast.For),
-    TypeAnnotationPracticeRule: (ast.Module,),
-    FrameworkPracticeRule: (ast.Module,),
-    OpaqueIdentifierRule: (ast.Module,),
-    DangerousCallsRule: (ast.Module, ast.Import, ast.ImportFrom, ast.Assign, ast.Call),
-}
-
-
-def _set_linter_node_types(rules):
-    for rule in rules:
-        node_types = _LINTER_RULE_NODE_TYPES.get(type(rule))
-        if node_types:
-            rule.node_types = node_types
 
 
 def _is_secret_config_candidate(path: Path) -> bool:
@@ -3528,93 +3402,14 @@ def proc_file(
 
     cfg = load_config(file, config_file=config_file)
 
-    if str(file).endswith(_TS_JS_SOURCE_EXTS):
-        out = scan_typescript_file(
-            file,
-            cfg,
-            enable_quality_rules=enable_quality_rules,
-            enable_danger_rules=enable_danger_rules,
-        )
-        if isinstance(out, tuple) and len(out) < 13:
-            return (*out, *([None] * (13 - len(out))))
-        return out[:13]
-
-    if str(file).endswith(".go"):
-        out = scan_go_file(file, cfg)
-        if isinstance(out, tuple) and len(out) < 13:
-            return (*out, *([None] * (13 - len(out))))
-        return out[:13]
-
-    if str(file).endswith(".java"):
-        out = scan_java_file(
-            file,
-            cfg,
-            enable_quality_rules=enable_quality_rules,
-            enable_danger_rules=enable_danger_rules,
-        )
-        if isinstance(out, tuple) and len(out) < 13:
-            return (*out, *([None] * (13 - len(out))))
-        return out[:13]
-
-    if str(file).endswith(".php"):
-        out = scan_php_file(
-            file,
-            cfg,
-            enable_danger_rules=enable_danger_rules,
-        )
-        if isinstance(out, tuple) and len(out) < 13:
-            return (*out, *([None] * (13 - len(out))))
-        return out[:13]
-
-    if str(file).endswith(".rs"):
-        out = scan_rust_file(
-            file,
-            cfg,
-            enable_danger_rules=enable_danger_rules,
-        )
-        if isinstance(out, tuple) and len(out) < 13:
-            return (*out, *([None] * (13 - len(out))))
-        return out[:13]
-
-    if str(file).endswith(".dart"):
-        out = scan_dart_file(
-            file,
-            cfg,
-            enable_danger_rules=enable_danger_rules,
-        )
-        if isinstance(out, tuple) and len(out) < 13:
-            return (*out, *([None] * (13 - len(out))))
-        return out[:13]
-
-    if str(file).endswith(".cs"):
-        out = scan_csharp_file(
-            file,
-            cfg,
-            enable_danger_rules=enable_danger_rules,
-        )
-        if isinstance(out, tuple) and len(out) < 13:
-            return (*out, *([None] * (13 - len(out))))
-        return out[:13]
-
-    if str(file).endswith(_KOTLIN_SOURCE_EXTS):
-        out = scan_kotlin_file(
-            file,
-            cfg,
-            enable_danger_rules=enable_danger_rules,
-        )
-        if isinstance(out, tuple) and len(out) < 13:
-            return (*out, *([None] * (13 - len(out))))
-        return out[:13]
-
-    if str(file).endswith(_SHELL_SOURCE_EXTS):
-        out = scan_shell_file(
-            file,
-            cfg,
-            enable_danger_rules=enable_danger_rules,
-        )
-        if isinstance(out, tuple) and len(out) < 13:
-            return (*out, *([None] * (13 - len(out))))
-        return out[:13]
+    non_python_out = scan_non_python_file(
+        file,
+        cfg,
+        enable_quality_rules=enable_quality_rules,
+        enable_danger_rules=enable_danger_rules,
+    )
+    if non_python_out is not None:
+        return non_python_out
 
     try:
         source = Path(file).read_text(encoding="utf-8")
@@ -3622,51 +3417,7 @@ def proc_file(
 
         tree = ast.parse(source)
 
-        raw_imports = []
-        is_init = Path(file).name == "__init__.py"
-        cur_pkg = (
-            mod
-            if is_init
-            else (mod.rsplit(".", 1)[0] if mod and "." in mod else (mod or ""))
-        )
-        for node in ast.iter_child_nodes(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    raw_imports.append(
-                        (
-                            alias.name,
-                            node.lineno,
-                            "import",
-                            [alias.asname or alias.name],
-                        )
-                    )
-            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-                names = [a.name for a in node.names if a.name != "*"]
-                raw_imports.append((node.module, node.lineno, "from_import", names))
-            elif isinstance(node, ast.ImportFrom) and node.level and node.level > 0:
-                if cur_pkg:
-                    parts = cur_pkg.split(".")
-                else:
-                    parts = []
-
-                up = node.level - 1
-                if up <= len(parts):
-                    base = ".".join(parts[: len(parts) - up])
-                    if node.module:
-                        if base:
-                            resolved = f"{base}.{node.module}"
-                        else:
-                            resolved = node.module
-                    else:
-                        resolved = base
-                    if resolved:
-                        names = []
-                        for a in node.names:
-                            if a.name != "*":
-                                names.append(a.name)
-                        raw_imports.append(
-                            (resolved, node.lineno, "from_import", names)
-                        )
+        raw_imports = collect_python_raw_imports(tree, file, mod)
 
         empty_file_finding = None
 
@@ -3702,176 +3453,11 @@ def proc_file(
         danger_findings = []
 
         if full_scan and enable_quality_rules:
-            vibe_dictionary = build_vibe_dictionary(cfg.get("vibe"))
-            q_rules = []
-            if "SKY-Q301" not in cfg["ignore"]:
-                q_rules.append(ComplexityRule(threshold=cfg["complexity"]))
-            if "SKY-Q306" not in cfg["ignore"]:
-                q_rules.append(CognitiveComplexityRule())
-            if "SKY-Q302" not in cfg["ignore"]:
-                q_rules.append(NestingRule(threshold=cfg["nesting"]))
-            if "SKY-Q401" not in cfg["ignore"]:
-                q_rules.append(AsyncBlockingRule())
-            if "SKY-C303" not in cfg["ignore"]:
-                q_rules.append(ArgCountRule(max_args=cfg["max_args"]))
-            if "SKY-C304" not in cfg["ignore"]:
-                q_rules.append(FunctionLengthRule(max_lines=cfg["max_lines"]))
-
-            if "SKY-L001" not in cfg["ignore"]:
-                q_rules.append(MutableDefaultRule())
-            if "SKY-L002" not in cfg["ignore"]:
-                q_rules.append(BareExceptRule())
-            if "SKY-L003" not in cfg["ignore"]:
-                q_rules.append(DangerousComparisonRule())
-            if "SKY-Q305" not in cfg["ignore"]:
-                q_rules.append(DuplicateBranchRule())
-            if "SKY-L004" not in cfg["ignore"]:
-                q_rules.append(TryBlockPatternsRule(max_lines=15))
-            if "SKY-L005" not in cfg["ignore"]:
-                q_rules.append(UnusedExceptVarRule())
-            if "SKY-L006" not in cfg["ignore"]:
-                q_rules.append(ReturnConsistencyRule())
-            if "SKY-L007" not in cfg["ignore"]:
-                q_rules.append(EmptyErrorHandlerRule())
-            if "SKY-L008" not in cfg["ignore"]:
-                q_rules.append(MissingResourceCleanupRule())
-            if "SKY-L009" not in cfg["ignore"]:
-                q_rules.append(DebugLeftoverRule())
-            if "SKY-L010" not in cfg["ignore"]:
-                q_rules.append(SecurityTodoRule())
-            if "SKY-L011" not in cfg["ignore"]:
-                q_rules.append(DisabledSecurityRule(vibe_dictionary=vibe_dictionary))
-            if "SKY-L012" not in cfg["ignore"]:
-                q_rules.append(PhantomCallRule(vibe_dictionary=vibe_dictionary))
-            if "SKY-L013" not in cfg["ignore"]:
-                q_rules.append(InsecureRandomRule(vibe_dictionary=vibe_dictionary))
-            if "SKY-L014" not in cfg["ignore"]:
-                q_rules.append(HardcodedCredentialRule(vibe_dictionary=vibe_dictionary))
-            if "SKY-L032" not in cfg["ignore"]:
-                q_rules.append(MockPlaceholderDataRule(vibe_dictionary=vibe_dictionary))
-            if "SKY-L017" not in cfg["ignore"]:
-                q_rules.append(ErrorDisclosureRule())
-            if "SKY-L020" not in cfg["ignore"]:
-                q_rules.append(
-                    BroadFilePermissionsRule(vibe_dictionary=vibe_dictionary)
-                )
-            if "SKY-L016" not in cfg["ignore"]:
-                q_rules.append(UndefinedConfigRule(vibe_dictionary=vibe_dictionary))
-            if "SKY-L024" not in cfg["ignore"]:
-                q_rules.append(StaleMockRule())
-            if "SKY-L023" not in cfg["ignore"]:
-                q_rules.append(PhantomDecoratorRule(vibe_dictionary=vibe_dictionary))
-            if "SKY-L026" not in cfg["ignore"]:
-                q_rules.append(UnfinishedGenerationRule())
-            if "SKY-L027" not in cfg["ignore"]:
-                q_rules.append(
-                    DuplicateStringLiteralRule(
-                        threshold=cfg.get("duplicate_strings", 3)
-                    )
-                )
-            if "SKY-L028" not in cfg["ignore"]:
-                q_rules.append(TooManyReturnsRule())
-            if "SKY-L029" not in cfg["ignore"]:
-                q_rules.append(BooleanTrapRule())
-            if "SKY-L030" not in cfg["ignore"]:
-                q_rules.append(BroadExceptionRule())
-            if "SKY-L031" not in cfg["ignore"]:
-                q_rules.append(
-                    MissingNetworkTimeoutRule(vibe_dictionary=vibe_dictionary)
-                )
-            if "SKY-L033" not in cfg["ignore"]:
-                q_rules.append(NoEffectStatementRule())
-            # SKY-D260 (prompt injection) is now handled by injection_scanner..
-            if "SKY-Q502" not in cfg["ignore"]:
-                q_rules.append(
-                    GodFileRule(
-                        max_lines=cfg.get("god_file_max_lines", 500),
-                        max_definitions=cfg.get("god_file_max_definitions", 40),
-                        max_top_level_definitions=cfg.get(
-                            "god_file_max_top_level_definitions",
-                            25,
-                        ),
-                    )
-                )
-            if "SKY-Q501" not in cfg["ignore"]:
-                q_rules.append(GodClassRule())
-            if "SKY-Q701" not in cfg["ignore"]:
-                q_rules.append(CBORule())
-            if "SKY-Q702" not in cfg["ignore"]:
-                q_rules.append(LCOMRule())
-            if "SKY-T101" not in cfg["ignore"] or "SKY-T102" not in cfg["ignore"]:
-                q_rules.append(TypeAnnotationPracticeRule())
-            if "SKY-F101" not in cfg["ignore"] or "SKY-F102" not in cfg["ignore"]:
-                q_rules.append(FrameworkPracticeRule())
-            if "SKY-Q806" not in cfg["ignore"]:
-                q_rules.append(OpaqueIdentifierRule())
-
-            if "SKY-U001" not in cfg["ignore"]:
-                q_rules.append(UnreachableCodeRule())
-
-            q_rules.append(PerformanceRule(ignore_list=cfg["ignore"]))
-
-            custom_rules = []
-            custom_rules_json = os.getenv("SKYLOS_CUSTOM_RULES")
-            if os.getenv("SKYLOS_DEBUG"):
-                logger.info(
-                    f"[DBG] {file}: SKYLOS_CUSTOM_RULES present={bool(custom_rules_json)} "
-                    f"size={len(custom_rules_json) if custom_rules_json else 0}"
-                )
-
-            if custom_rules_json:
-                try:
-                    custom_rules_data = json.loads(custom_rules_json)
-                    custom_rules = load_custom_rules(custom_rules_data)
-                    if os.getenv("SKYLOS_DEBUG"):
-                        logger.info(
-                            f"[DBG] {file}: load_custom_rules -> {len(custom_rules)} rules"
-                        )
-                        if custom_rules:
-                            logger.info(
-                                f"[DBG] {file}: custom rule ids = {[r.rule_id for r in custom_rules]}"
-                            )
-                    q_rules.extend(custom_rules)
-                except Exception as e:
-                    logger.error(f"[DBG] {file}: FAILED to load custom rules: {e}")
-                    if os.getenv("SKYLOS_DEBUG"):
-                        logger.error(traceback.format_exc())
-
-            try:
-                community_rules_data = load_community_rules()
-                if community_rules_data:
-                    community_rules = load_custom_rules(community_rules_data)
-                    if os.getenv("SKYLOS_DEBUG"):
-                        logger.info(
-                            f"[DBG] {file}: community rules -> {len(community_rules)} rules"
-                        )
-                    q_rules.extend(community_rules)
-            except Exception:
-                pass
-
-            _set_linter_node_types(q_rules)
-            linter_q = LinterVisitor(q_rules, str(file))
-            linter_q.context["source"] = source
-            linter_q.visit(tree)
-            quality_findings = [
-                f for f in linter_q.findings if f.get("rule_id") not in cfg["ignore"]
-            ]
-
-            if os.getenv("SKYLOS_DEBUG"):
-                custom_hits = [
-                    f
-                    for f in quality_findings
-                    if str(f.get("rule_id", "")).startswith("CUSTOM-")
-                ]
-                logger.info(
-                    f"[DBG] {file}: quality_findings={len(quality_findings)} custom_hits={len(custom_hits)}"
-                )
-                if custom_hits:
-                    logger.info(f"[DBG] {file}: first_custom_hit={custom_hits[0]}")
+            quality_findings = scan_python_quality(tree, source, file, cfg)
 
         if full_scan and enable_danger_rules:
             d_rules = [DangerousCallsRule()]
-            _set_linter_node_types(d_rules)
+            set_linter_node_types(d_rules)
             linter_d = LinterVisitor(d_rules, str(file))
             linter_d.visit(tree)
             danger_findings = linter_d.findings
