@@ -1,11 +1,11 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
+    "module": "Node16",
     "target": "es2020",
     "lib": ["es2020"],
     "outDir": "out",
     "rootDir": "src",
-    "moduleResolution": "node",
+    "moduleResolution": "node16",
     "types": ["node", "vscode"],
     "strict": true,
     "skipLibCheck": true
