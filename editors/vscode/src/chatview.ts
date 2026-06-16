@@ -266,7 +266,7 @@ Reference OWASP, CWE, PCI DSS when relevant. Be concise.${contextBlock}`;
     const doc = editor.document;
     const line = Math.max(0, this.currentFinding.line - 1);
 
-    const { extractFunctions } = await import("./ai");
+    const { extractFunctions } = await import("./ai.js");
     const functions = extractFunctions(doc.getText(), doc.languageId);
     const targetFn = functions.find(
       (fn) => line >= fn.startLine && line <= fn.endLine,

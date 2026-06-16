@@ -2,6 +2,7 @@ import ast
 from typing import Any, Optional
 from skylos.constants import PENALTIES, get_non_library_dir_kind, is_test_path
 from skylos.config import is_whitelisted
+from skylos.deadcode.config_entrypoints import configured_entrypoint_reason
 from skylos.analysis.known_patterns import (
     HARD_ENTRYPOINTS,
     PYTEST_HOOKS,
@@ -316,6 +317,13 @@ def _check_config_whitelist(def_obj, cfg):
         return _suppress(def_obj, reason)
     if conf_reduction > 0:
         return -conf_reduction
+    return None
+
+
+def _check_configured_entrypoint(def_obj, analyzer, cfg):
+    reason = configured_entrypoint_reason(def_obj, analyzer, cfg)
+    if reason:
+        return _suppress(def_obj, reason, code="configured_entrypoint")
     return None
 
 
@@ -1080,6 +1088,9 @@ def apply_penalties(
         return
     if isinstance(result, int):
         confidence += result
+
+    if _check_configured_entrypoint(def_obj, analyzer, cfg) is True:
+        return
 
     if _check_hard_entrypoint(def_obj) is True:
         return

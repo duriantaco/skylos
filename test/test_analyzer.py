@@ -9,6 +9,7 @@ from collections import defaultdict
 from skylos.visitors.test_aware import TestAwareVisitor
 from skylos.visitors.framework_aware import FrameworkAwareVisitor
 from skylos.analysis.penalties import apply_penalties
+from skylos.deadcode.config_entrypoints import configured_entrypoint_reason
 
 from skylos.analyzer import (
     Skylos,
@@ -2016,6 +2017,155 @@ class TestApplyPenalties:
             skylos, mock_def, mock_test_aware_visitor, mock_framework_aware_visitor
         )
         assert mock_def.confidence == 0
+
+
+class TestConfiguredDeadCodeEntrypoints:
+    @patch("skylos.analysis.penalties.detect_framework_usage")
+    def test_configured_class_entrypoint_matches_path_and_base(
+        self,
+        mock_detect_framework,
+        mock_definition,
+        mock_test_aware_visitor,
+        mock_framework_aware_visitor,
+    ):
+        mock_detect_framework.return_value = None
+        skylos = Skylos()
+        skylos._project_root = Path("/repo")
+        cfg = {
+            "dead_code": {
+                "entrypoints": [
+                    {
+                        "type": "class",
+                        "name": "_Main",
+                        "path": "app/main.py",
+                        "base_classes": ["Application"],
+                        "reason": "custom app entrypoint",
+                    }
+                ]
+            }
+        }
+        mock_def = mock_definition(
+            name="app.main._Main",
+            simple_name="_Main",
+            type="class",
+            confidence=100,
+        )
+        mock_def.filename = Path("/repo/app/main.py")
+        mock_def.base_classes = ["framework.Application"]
+
+        apply_penalties(
+            skylos,
+            mock_def,
+            mock_test_aware_visitor,
+            mock_framework_aware_visitor,
+            cfg,
+        )
+
+        assert mock_def.confidence == 0
+        assert mock_def.skip_reason == "custom app entrypoint"
+        assert mock_def.suppression_code == "configured_entrypoint"
+
+    def test_configured_method_entrypoint_matches_parent_base(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text(
+            """
+[tool.skylos]
+ignore = []
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+name = ["create"]
+parent = { name = "Main", base_classes = ["Application"] }
+reason = "custom framework lifecycle method"
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "main.py").write_text(
+            """
+class Application:
+    pass
+
+class Main(Application):
+    def create(self):
+        return None
+
+    def stale(self):
+        return None
+
+app = Main()
+""",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0))
+        unused_methods = {
+            item["full_name"].rsplit(".", 1)[-1]
+            for item in result["unused_functions"]
+        }
+
+        assert "create" not in unused_methods
+        assert "stale" in unused_methods
+
+    def test_configured_function_entrypoint_matches_decorator(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text(
+            """
+[tool.skylos]
+ignore = []
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "function"
+decorators = ["runtime_hook"]
+reason = "custom decorator entrypoint"
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "hooks.py").write_text(
+            """
+def runtime_hook(fn):
+    return fn
+
+@runtime_hook
+def boot():
+    return None
+
+def orphan():
+    return None
+""",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0))
+        unused_functions = {
+            item["simple_name"] for item in result["unused_functions"]
+        }
+
+        assert "boot" not in unused_functions
+        assert "orphan" in unused_functions
+
+    def test_malformed_entrypoint_rule_does_not_suppress_broadly(
+        self, mock_definition
+    ):
+        skylos = Skylos()
+        skylos._project_root = Path("/repo")
+        cfg = {
+            "dead_code": {
+                "entrypoints": [
+                    {
+                        "type": "function",
+                        "path": "main.py",
+                        "reason": "too broad",
+                    }
+                ]
+            }
+        }
+        mock_def = mock_definition(
+            name="main.orphan",
+            simple_name="orphan",
+            type="function",
+            confidence=100,
+        )
+        mock_def.filename = Path("/repo/main.py")
+
+        assert configured_entrypoint_reason(mock_def, skylos, cfg) is None
 
 
 class TestIgnorePragmas:

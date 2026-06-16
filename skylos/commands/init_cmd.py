@@ -26,6 +26,22 @@ names = []
 decorators = []
 bases = []
 
+[tool.skylos.dead_code]
+entrypoints = []
+
+# [[tool.skylos.dead_code.entrypoints]]
+# type = "class"
+# name = "Main"
+# path = "**/main.py"
+# base_classes = ["Application"]
+# reason = "framework entrypoint"
+#
+# [[tool.skylos.dead_code.entrypoints]]
+# type = "method"
+# name = ["create", "pre_hook", "post_hook"]
+# parent = { name = "Main", base_classes = ["Application"] }
+# reason = "framework lifecycle method"
+
 [tool.skylos.templates]
 # security = ".skylos/templates/security.md"
 # quality = ".skylos/templates/quality.md"
