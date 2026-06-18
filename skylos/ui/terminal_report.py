@@ -102,6 +102,7 @@ def render_pretty_results(
     summary = _summary_line(result)
     if summary.plain:
         console.print(summary)
+    _print_directory_rollups(console, result)
     console.print()
 
     if not findings:
@@ -281,6 +282,68 @@ def _summary_line(result: dict) -> Text:
     for part in parts:
         line.append(part)
     return line
+
+
+def _print_directory_rollups(console: Console, result: dict) -> None:
+    rollups = (result.get("analysis_summary") or {}).get("by_directory") or []
+    if not isinstance(rollups, list):
+        return
+
+    visible = [item for item in rollups if isinstance(item, dict)][:5]
+    if not visible:
+        return
+
+    console.print(Text("  Hot directories", style="bold"))
+    for item in visible:
+        path = _sanitize_terminal_text(str(item.get("path") or "."))
+        total = _safe_int(item.get("total"))
+        files = _safe_int(item.get("files"))
+        detail = _directory_rollup_detail(item, total)
+
+        segments = [
+            (_truncate(path, 64), "bold"),
+            (_plural_count(total, "issue"), "dim"),
+            (_plural_count(files, "file"), "dim"),
+            (detail, "dim"),
+        ]
+        line = Text("    ")
+        for index, segment in enumerate(segments):
+            if index:
+                line.append(" · ", style="dim")
+            text, style = segment
+            line.append(text, style=style)
+        console.print(line)
+
+
+def _directory_rollup_detail(item: dict, total: int) -> str:
+    parts = []
+    categories = (
+        ("dead_code", "dead"),
+        ("quality", "quality"),
+        ("security", "security"),
+        ("secrets", "secrets"),
+        ("dependencies", "deps"),
+    )
+    for key, label in categories:
+        count = _safe_int(item.get(key))
+        if count:
+            parts.append(f"{label}: {count}")
+    if parts:
+        return ", ".join(parts)
+    return _plural_count(total, "issue")
+
+
+def _plural_count(count: int, noun: str) -> str:
+    if count == 1:
+        return f"{count} {noun}"
+    return f"{count} {noun}s"
+
+
+def _safe_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _summary_badge(severity: str, count: int) -> Text:
