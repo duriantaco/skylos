@@ -16,10 +16,7 @@ except ImportError:
 
 from skylos.visitors.base import Visitor
 
-from skylos.analysis.circular_deps import (
-    CircularDependencyRule,
-    _resolve_from_import_targets,
-)
+from skylos.analysis.circular_deps import _resolve_from_import_targets
 
 from skylos.constants import (
     AUTO_CALLED,
@@ -64,8 +61,6 @@ from skylos.rules.quality.clones import (
     detect_pairs,
     group_pairs,
 )
-from skylos.reporting.rollups import attach_directory_rollups
-
 from skylos.analysis.penalties import apply_penalties
 from skylos.analysis.file_processing import (
     collect_python_raw_imports,
@@ -1816,359 +1811,35 @@ class Skylos:
         pyproject_entrypoint_modules=None,
         config_file=None,
     ):
-        """Assemble the final result dict from analysis outputs."""
-        architecture_main_guard_modules = set(architecture_main_guard_modules or ())
-        pyproject_entrypoint_qnames = set(pyproject_entrypoint_qnames or ())
-        pyproject_entrypoint_modules = set(pyproject_entrypoint_modules or ())
+        from skylos.reporting.result_builder import build_analysis_result
 
-        evidence_root = getattr(self, "_project_root", None)
-        if evidence_root is None:
-            evidence_root = Path(path[0] if isinstance(path, (list, tuple)) else path)
-            if evidence_root.is_file():
-                evidence_root = evidence_root.parent
-        from skylos.deadcode.evidence import build_dead_code_evidence
-
-        dead_code_ledger = build_dead_code_evidence(
-            self.defs,
-            project_root=evidence_root,
+        return build_analysis_result(
+            self,
+            files,
+            thr,
+            exclude_folders,
+            enable_secrets,
+            enable_danger,
+            enable_quality,
+            enable_sca,
+            all_secrets,
+            all_dangers,
+            all_quality,
+            all_sca,
+            all_suppressed,
+            empty_files,
+            modmap,
+            all_raw_imports,
+            path,
+            unused_ts_exports=unused_ts_exports,
+            workspace_inventory=workspace_inventory,
+            architecture_abstractness=architecture_abstractness,
+            architecture_loc=architecture_loc,
+            architecture_main_guard_modules=architecture_main_guard_modules,
             pyproject_entrypoint_qnames=pyproject_entrypoint_qnames,
-        )
-        dead_code_evidence = dead_code_ledger.to_dict(evidence_root)
-        evidence_by_name = {
-            entry["qualified_name"]: entry
-            for entry in dead_code_evidence.get("symbols", [])
-        }
-
-        def attach_evidence(target: dict, definition) -> None:
-            entry = evidence_by_name.get(getattr(definition, "name", ""))
-            if not entry:
-                return
-            target["dead_code_classification"] = entry["classification"]
-            target["dead_code_evidence"] = list(entry.get("evidence") or [])
-
-        unused = []
-        dead_class_keys = {
-            key
-            for key, definition in self.defs.items()
-            if definition.type in ("class", "type")
-            and definition.references == 0
-            and not definition.is_exported
-            and definition.confidence > 0
-            and definition.confidence >= thr
-        }
-        class_key_by_name_file = {}
-        for key, definition in self.defs.items():
-            if definition.type in ("class", "type"):
-                class_key_by_name_file[
-                    (definition.name, str(Path(definition.filename).resolve()))
-                ] = key
-
-        for definition in self.defs.values():
-            if (
-                definition.references == 0
-                and not definition.is_exported
-                and definition.confidence > 0
-                and definition.confidence >= thr
-            ):
-                if definition.type == "method" and "." in definition.name:
-                    owner = definition.name.rsplit(".", 1)[0]
-                    owner_key = class_key_by_name_file.get(
-                        (owner, str(Path(definition.filename).resolve()))
-                    )
-                    if owner_key in dead_class_keys:
-                        continue
-                item = definition.to_dict()
-                attach_evidence(item, definition)
-                unused.append(item)
-
-        context_map = {}
-        for name, d in self.defs.items():
-            if d.type in ("class", "function", "method") and not name.startswith("_"):
-                loc = 1
-                node = getattr(d, "node", None)
-                if node is not None:
-                    start = getattr(node, "lineno", None)
-                    end = getattr(node, "end_lineno", None)
-                    if start is not None and end is not None:
-                        loc = max(1, end - start + 1)
-
-                is_dead = (
-                    d.references == 0
-                    and not d.is_exported
-                    and d.confidence > 0
-                    and d.confidence >= thr
-                )
-
-                context_entry = {
-                    "name": d.name,
-                    "file": str(d.filename),
-                    "line": d.line,
-                    "type": d.type,
-                    "loc": loc,
-                    "complexity": getattr(d, "complexity", 1),
-                    "calls": sorted(d.calls) if d.calls else [],
-                    "called_by": sorted(d.called_by) if d.called_by else [],
-                    "dead": is_dead,
-                }
-                attach_evidence(context_entry, d)
-                context_map[name] = context_entry
-
-        whitelisted = []
-        for d in self.defs.values():
-            reason = getattr(d, "skip_reason", None)
-            if reason:
-                entry = {
-                    "name": d.simple_name,
-                    "file": str(d.filename),
-                    "line": d.line,
-                    "reason": d.skip_reason,
-                    "category": "dead_code",
-                    "suppression_code": getattr(d, "suppression_code", None),
-                    "folder_role": getattr(d, "folder_role", None),
-                }
-                whitelisted.append(entry)
-                if reason == "inline ignore comment":
-                    all_suppressed.append(entry)
-
-        result = {
-            "definitions": context_map,
-            "unused_functions": [],
-            "unused_imports": [],
-            "unused_classes": [],
-            "unused_variables": [],
-            "unused_parameters": [],
-            "unused_files": [],
-            "whitelisted": whitelisted,
-            "suppressed": all_suppressed,
-            "dead_code_evidence": dead_code_evidence,
-            "analysis_summary": {
-                "total_files": len(files),
-                "excluded_folders": exclude_folders or [],
-                "languages": self._count_languages(files),
-                "dead_code_evidence": dead_code_ledger.summary(),
-            },
-        }
-
-        liveness_report = getattr(self, "_dead_code_liveness_report", None)
-        if liveness_report is not None:
-            result["analysis_summary"]["dead_code_liveness"] = liveness_report.to_dict()
-
-        grep_verify_report = getattr(self, "_grep_verify_report", None)
-        if grep_verify_report is not None:
-            result["analysis_summary"]["grep_verify"] = dict(grep_verify_report)
-
-        if workspace_inventory is not None:
-            project_root = (
-                self._project_root
-                if hasattr(self, "_project_root")
-                else Path(
-                    path[0] if isinstance(path, (list, tuple)) else path
-                ).resolve()
-            )
-            result["workspaces"] = workspace_inventory.to_dict(project_root)
-            result["analysis_summary"]["monorepo_detected"] = (
-                workspace_inventory.is_monorepo
-            )
-            result["analysis_summary"]["workspace_count"] = len(
-                workspace_inventory.packages
-            )
-            result["analysis_summary"]["workspace_total_packages"] = (
-                workspace_inventory.total_packages
-            )
-            result["analysis_summary"]["workspace_diagnostic_count"] = len(
-                workspace_inventory.diagnostics
-            )
-
-        if enable_secrets and all_secrets:
-            result["secrets"] = all_secrets
-            result["analysis_summary"]["secrets_count"] = len(all_secrets)
-
-        if enable_danger and all_dangers:
-            result["danger"] = all_dangers
-            result["analysis_summary"]["danger_count"] = len(all_dangers)
-
-        if enable_sca:
-            result["dependency_vulnerabilities"] = all_sca
-            result["analysis_summary"]["sca_count"] = len(all_sca)
-
-        if enable_quality and all_quality:
-            custom_hits = []
-            core_quality = []
-
-            for f in all_quality:
-                rid = str(f.get("rule_id", ""))
-                if rid.startswith("CUSTOM-"):
-                    custom_hits.append(f)
-                else:
-                    core_quality.append(f)
-
-            if core_quality:
-                from skylos.rules.quality.standards import enrich_finding
-
-                for f in core_quality:
-                    enrich_finding(f)
-                result["quality"] = core_quality
-                result["analysis_summary"]["quality_count"] = len(core_quality)
-
-            if custom_hits:
-                result["custom_rules"] = custom_hits
-                result["analysis_summary"]["custom_rules_count"] = len(custom_hits)
-
-        if empty_files:
-            result["unused_files"] = empty_files
-            result["analysis_summary"]["unused_files_count"] = len(empty_files)
-
-        if enable_danger and result.get("danger"):
-            from skylos.rules.compliance import enrich_findings_with_compliance
-
-            result["danger"] = enrich_findings_with_compliance(result["danger"])
-
-        for u in unused:
-            if u["type"] in ("function", "method"):
-                result["unused_functions"].append(u)
-            elif u["type"] == "import":
-                result["unused_imports"].append(u)
-            elif u["type"] in ("class", "type"):
-                result["unused_classes"].append(u)
-            elif u["type"] in ("variable", "constant"):
-                result["unused_variables"].append(u)
-            elif u["type"] == "parameter":
-                result["unused_parameters"].append(u)
-
-        if unused_ts_exports:
-            if "unused_exports" not in result:
-                result["unused_exports"] = []
-            result["unused_exports"].extend(unused_ts_exports)
-            result["analysis_summary"]["unused_exports_count"] = len(unused_ts_exports)
-
-        project_cfg = load_config(
-            path[0] if isinstance(path, (list, tuple)) else path,
+            pyproject_entrypoint_modules=pyproject_entrypoint_modules,
             config_file=config_file,
         )
-        if project_cfg.get("check_circular", True):
-            circular_rule = CircularDependencyRule()
-
-            for file in files:
-                if not str(file).endswith(".py"):
-                    continue
-                mod = modmap.get(file, "")
-                raw_imp = all_raw_imports.get(file, [])
-                circular_rule.add_file_imports(str(file), mod, raw_imp)
-
-            try:
-                circular_findings = circular_rule.analyze()
-                if circular_findings:
-                    result["circular_dependencies"] = circular_findings
-
-                if enable_quality:
-                    try:
-                        from skylos.analysis.architecture import (
-                            get_architecture_findings,
-                        )
-
-                        dep_graph = dict(
-                            circular_rule._analyzer.architecture_dependencies
-                        )
-                        mod_files = dict(circular_rule._analyzer.modules)
-                        entrypoint_modules = (
-                            pyproject_entrypoint_modules
-                            | architecture_main_guard_modules
-                        )
-                        entrypoint_modules = _expand_reexported_entrypoint_modules(
-                            pyproject_entrypoint_qnames,
-                            entrypoint_modules,
-                            all_raw_imports,
-                            modmap,
-                            mod_files,
-                        )
-                        package_boundary_modules = _find_package_boundary_modules(
-                            all_raw_imports,
-                            modmap,
-                            mod_files,
-                        )
-
-                        mod_trees = {}
-                        if not architecture_abstractness:
-                            for file in files:
-                                if not str(file).endswith(".py"):
-                                    continue
-                                mod = modmap.get(file, "")
-                                try:
-                                    src = Path(file).read_text(
-                                        encoding="utf-8", errors="ignore"
-                                    )
-                                    mod_trees[mod] = ast.parse(src)
-                                except (OSError, SyntaxError):
-                                    pass
-
-                        arch_findings, arch_summary = get_architecture_findings(
-                            dependency_graph=dep_graph,
-                            module_files=mod_files,
-                            module_trees=mod_trees,
-                            module_abstractness=architecture_abstractness,
-                            module_loc=architecture_loc,
-                            entrypoint_modules=entrypoint_modules,
-                            package_boundary_modules=package_boundary_modules,
-                            layer_policy=project_cfg.get("architecture"),
-                            iad_findings_advisory=not _architecture_iad_strict(
-                                project_cfg.get("architecture")
-                            ),
-                        )
-                        ignored_rules = set(project_cfg.get("ignore", []))
-                        if arch_findings:
-                            arch_findings = [
-                                f
-                                for f in arch_findings
-                                if f.get("rule_id") not in ignored_rules
-                            ]
-                        if arch_findings:
-                            all_quality.extend(arch_findings)
-                            from skylos.rules.quality.standards import enrich_finding
-
-                            for finding in arch_findings:
-                                enrich_finding(finding)
-                            result.setdefault("quality", []).extend(arch_findings)
-                            result["analysis_summary"]["quality_count"] = len(
-                                result.get("quality", []) or []
-                            )
-                        if arch_summary:
-                            result["architecture_metrics"] = arch_summary
-                    except Exception:
-                        if os.getenv("SKYLOS_DEBUG"):
-                            traceback.print_exc()
-
-            except Exception:
-                if os.getenv("SKYLOS_DEBUG"):
-                    traceback.print_exc()
-
-        try:
-            from skylos.reporting.grader import count_lines_of_code, compute_grade
-
-            total_loc = count_lines_of_code(files)
-            grade_categories = []
-            if enable_danger:
-                grade_categories.append("security")
-            if enable_quality:
-                grade_categories.append("quality")
-            grade_categories.append("dead_code")
-            if enable_sca:
-                grade_categories.append("dependencies")
-            if enable_secrets:
-                grade_categories.append("secrets")
-            result["analysis_summary"]["total_loc"] = total_loc
-            result["analysis_summary"]["grade_categories"] = grade_categories
-            result["grade"] = compute_grade(
-                result,
-                total_loc,
-                included_categories=grade_categories,
-            )
-        except Exception:
-            if os.getenv("SKYLOS_DEBUG"):
-                traceback.print_exc()
-
-        attach_directory_rollups(result, getattr(self, "_project_root", None))
-
-        return result
 
     def analyze(
         self,
