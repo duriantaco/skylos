@@ -64,6 +64,7 @@ from skylos.rules.quality.clones import (
     detect_pairs,
     group_pairs,
 )
+from skylos.reporting.rollups import attach_directory_rollups
 
 from skylos.analysis.penalties import apply_penalties
 from skylos.analysis.file_processing import (
@@ -2164,6 +2165,8 @@ class Skylos:
         except Exception:
             if os.getenv("SKYLOS_DEBUG"):
                 traceback.print_exc()
+
+        attach_directory_rollups(result, getattr(self, "_project_root", None))
 
         return result
 

@@ -207,6 +207,39 @@ class TestSkylos:
         assert "root_traced" in names
         assert "unused" in names
 
+    def test_analysis_summary_includes_directory_rollups(self, tmp_path):
+        source = tmp_path / "src" / "api" / "views.py"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            "def used():\n"
+            "    return 1\n\n"
+            "def unused_handler():\n"
+            "    return 2\n\n"
+            "def very_long():\n"
+            + "".join(f"    value_{i} = {i}\n" for i in range(55))
+            + "    return value_0\n\n"
+            "used()\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(
+            analyze(
+                str(tmp_path),
+                conf=0,
+                enable_quality=True,
+                grep_verify=False,
+                trace_file=False,
+            )
+        )
+
+        rollups = result["analysis_summary"]["by_directory"]
+        api_rollup = next(item for item in rollups if item["path"] == "src/api")
+        assert api_rollup["total"] >= 2
+        assert api_rollup["files"] == 1
+        assert api_rollup["dead_code"] >= 1
+        assert api_rollup["quality"] >= 1
+        assert api_rollup["rules"]["SKY-C304"] == 1
+
     @patch("skylos.analyzer.Path")
     def test_get_python_files_single_file(self, mock_path, skylos):
         mock_file = Mock()

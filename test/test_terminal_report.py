@@ -135,3 +135,36 @@ def test_collect_pretty_findings_applies_per_category_limit(tmp_path):
         "too complex",
         "Unused function: old_a",
     ]
+
+
+def test_pretty_renderer_prints_directory_rollups(tmp_path):
+    result = {
+        "analysis_summary": {
+            "total_files": 2,
+            "by_directory": [
+                {
+                    "path": "src/api",
+                    "total": 3,
+                    "files": 2,
+                    "quality": 1,
+                    "dead_code": 2,
+                }
+            ],
+        },
+        "quality": [
+            {
+                "rule_id": "SKY-C304",
+                "severity": "MEDIUM",
+                "message": "Function too long",
+                "file": str(tmp_path / "src" / "api" / "views.py"),
+                "line": 1,
+            }
+        ],
+    }
+
+    console = _recording_console()
+    render_pretty_results(console, result, root_path=tmp_path)
+    output = console.export_text()
+
+    assert "Hot directories" in output
+    assert "src/api · 3 issues · 2 files · dead: 2, quality: 1" in output
