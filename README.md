@@ -96,6 +96,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Goal | Command | What You Get | More Detail |
 |:---|:---|:---|:---|
 | First dead-code scan | `skylos .` | Finds unused functions, classes, imports, files, and framework entrypoint mistakes | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
+| Deterministic cleanup preview | `skylos clean . --dry-run --types import,function --confidence 80` | Shows safe import/function removals before writing; add `--apply` to edit files | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
 | Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, config, and quality checks | [Security docs](https://docs.skylos.dev/security-analysis) |
 | PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
 | Readable terminal report | `skylos . --format pretty` | Groups findings by file with severity badges, snippets, and copyable `file:line` locations | [CLI output modes](./docs/cli-output.md) |

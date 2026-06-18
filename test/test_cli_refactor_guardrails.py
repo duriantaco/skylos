@@ -292,6 +292,24 @@ def test_cli_guardrail_clean_dispatch_preserves_argv(monkeypatch):
     mock_clean.assert_called_once_with(["pkg"])
 
 
+def test_cli_guardrail_clean_help_lists_noninteractive_flags(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["skylos", "clean", "--help"])
+
+    with (
+        patch("skylos.commands.clean_cmd.run_clean_command") as mock_clean,
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    mock_clean.assert_not_called()
+    output = capsys.readouterr().out
+    assert "skylos clean [--dry-run|--apply]" in output
+    assert "--confidence N" in output
+    assert "--types import,function" in output
+    assert "--comment-out" in output
+
+
 def test_cli_guardrail_whoami_dispatch_exits_zero(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["skylos", "whoami"])
 
