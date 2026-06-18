@@ -65,6 +65,15 @@ def run_early_command_help(
     for item in matches:
         console.print(f"  {item['desc']}")
 
+    detail_lines = []
+    for item in matches:
+        for detail in item.get("details", []):
+            detail_lines.append(detail)
+    if detail_lines:
+        console.print("\n[bold]Options:[/bold]")
+        for detail in detail_lines:
+            console.print(f"  {detail}")
+
     console.print("\nRun [bold]skylos commands[/bold] for all commands.")
     return 0
 

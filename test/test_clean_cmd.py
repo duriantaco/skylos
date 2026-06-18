@@ -156,3 +156,167 @@ def test_clean_command_skips_unsupported_findings_from_prompt(tmp_path):
     )
     assert "Skipping 1 unsupported dead code item" in printed
     assert target.read_text(encoding="utf-8") == "value = 1\n"
+
+
+def test_clean_command_dry_run_writes_nothing_and_uses_default_confidence(tmp_path):
+    target = tmp_path / "sample.py"
+    original = "import os\nimport sys\n"
+    target.write_text(original, encoding="utf-8")
+    result = {
+        "unused_imports": [
+            {
+                "name": "os",
+                "file": str(target),
+                "line": 1,
+                "confidence": 95,
+            }
+        ]
+    }
+    console = Mock()
+
+    with (
+        patch("skylos.commands.clean_cmd.Console", return_value=console),
+        patch("skylos.commands.clean_cmd.run_analyze", return_value=json.dumps(result)) as analyze,
+        patch("skylos.commands.clean_cmd.remove_unused_import_cst") as remove_import,
+    ):
+        exit_code = clean_cmd.run_clean_command([str(tmp_path), "--dry-run"])
+
+    assert exit_code == 0
+    analyze.assert_called_once_with(str(tmp_path), conf=80)
+    remove_import.assert_not_called()
+    assert target.read_text(encoding="utf-8") == original
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "Dry run" in printed
+    assert "os" in printed
+
+
+def test_clean_command_apply_removes_without_prompt(tmp_path):
+    target = tmp_path / "sample.py"
+    target.write_text("import os\nimport sys\n", encoding="utf-8")
+    result = {
+        "unused_imports": [
+            {
+                "name": "os",
+                "file": str(target),
+                "line": 1,
+                "confidence": 95,
+            }
+        ]
+    }
+    console = Mock()
+
+    with (
+        patch("skylos.commands.clean_cmd.Console", return_value=console),
+        patch("skylos.commands.clean_cmd.run_analyze", return_value=json.dumps(result)),
+        patch("builtins.input", side_effect=AssertionError("should not prompt")),
+    ):
+        exit_code = clean_cmd.run_clean_command([str(tmp_path), "--apply"])
+
+    assert exit_code == 0
+    assert target.read_text(encoding="utf-8") == "import sys\n"
+
+
+def test_clean_command_apply_filters_by_confidence(tmp_path):
+    target = tmp_path / "sample.py"
+    target.write_text("import os\nimport sys\n", encoding="utf-8")
+    result = {
+        "unused_imports": [
+            {
+                "name": "os",
+                "file": str(target),
+                "line": 1,
+                "confidence": 70,
+            },
+            {
+                "name": "sys",
+                "file": str(target),
+                "line": 2,
+                "confidence": 95,
+            },
+        ]
+    }
+    console = Mock()
+
+    with (
+        patch("skylos.commands.clean_cmd.Console", return_value=console),
+        patch("skylos.commands.clean_cmd.run_analyze", return_value=json.dumps(result)),
+    ):
+        exit_code = clean_cmd.run_clean_command(
+            [str(tmp_path), "--apply", "--confidence", "80"]
+        )
+
+    assert exit_code == 0
+    assert target.read_text(encoding="utf-8") == "import os\n"
+
+
+def test_clean_command_apply_filters_by_type(tmp_path):
+    target = tmp_path / "sample.py"
+    target.write_text(
+        "import os\n\ndef unused():\n    return 1\n",
+        encoding="utf-8",
+    )
+    result = {
+        "unused_imports": [
+            {
+                "name": "os",
+                "file": str(target),
+                "line": 1,
+                "confidence": 95,
+            }
+        ],
+        "unused_functions": [
+            {
+                "name": "unused",
+                "file": str(target),
+                "line": 3,
+                "confidence": 95,
+            }
+        ],
+    }
+    console = Mock()
+
+    with (
+        patch("skylos.commands.clean_cmd.Console", return_value=console),
+        patch("skylos.commands.clean_cmd.run_analyze", return_value=json.dumps(result)),
+    ):
+        exit_code = clean_cmd.run_clean_command(
+            [str(tmp_path), "--apply", "--types", "imports"]
+        )
+
+    assert exit_code == 0
+    assert target.read_text(encoding="utf-8") == "\ndef unused():\n    return 1\n"
+
+
+def test_clean_command_apply_comment_out_uses_comment_transform(tmp_path):
+    target = tmp_path / "sample.py"
+    original = "def unused():\n    return 1\n"
+    target.write_text(original, encoding="utf-8")
+    result = {
+        "unused_functions": [
+            {
+                "name": "unused",
+                "file": str(target),
+                "line": 1,
+                "confidence": 95,
+            }
+        ]
+    }
+    console = Mock()
+
+    with (
+        patch("skylos.commands.clean_cmd.Console", return_value=console),
+        patch("skylos.commands.clean_cmd.run_analyze", return_value=json.dumps(result)),
+        patch(
+            "skylos.commands.clean_cmd.comment_out_unused_function_cst",
+            return_value=("# SKYLOS DEADCODE\npass\n", True),
+        ) as comment_out,
+    ):
+        exit_code = clean_cmd.run_clean_command(
+            [str(tmp_path), "--apply", "--comment-out"]
+        )
+
+    assert exit_code == 0
+    comment_out.assert_called_once_with(original, "unused", 1)
+    assert target.read_text(encoding="utf-8") == "# SKYLOS DEADCODE\npass\n"

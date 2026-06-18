@@ -125,8 +125,15 @@ COMMANDS = [
     },
     {"name": "skylos doctor", "desc": "Check installation health", "group": "Utility"},
     {
-        "name": "skylos clean",
-        "desc": "Interactively remove dead code",
+        "name": "skylos clean [--dry-run|--apply]",
+        "desc": "Preview or apply safe dead-code cleanup",
+        "details": [
+            "--dry-run: show import/function cleanup edits without writing files",
+            "--apply: apply matching cleanup edits without prompting",
+            "--confidence N: minimum confidence, default 80 in noninteractive mode",
+            "--types import,function: comma-separated cleanup types",
+            "--comment-out: comment out findings instead of removing them",
+        ],
         "group": "Utility",
     },
     {
