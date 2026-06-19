@@ -137,6 +137,68 @@ def test_requests_verify_false(tmp_path):
     assert "SKY-D210" in _rule_ids(out)
 
 
+def test_ssl_unverified_context_flags_tls_disabled(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_ssl.py",
+        "import ssl\nctx = ssl._create_unverified_context()\n",
+    )
+    assert "SKY-D210" in _rule_ids(out)
+
+
+def test_trojan_source_bidi_control_flags(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_bidi.py",
+        "is_admin = False  # \u202e hidden control\n",
+    )
+    assert "SKY-D344" in _rule_ids(out)
+
+
+def test_flask_debug_mode_flags(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_flask_debug.py",
+        (
+            "from flask import Flask\n"
+            "app = Flask(__name__)\n"
+            "app.run(debug=True)\n"
+        ),
+    )
+    assert "SKY-D346" in _rule_ids(out)
+
+
+def test_flask_debug_false_does_not_flag(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_flask_debug_false.py",
+        (
+            "from flask import Flask\n"
+            "app = Flask(__name__)\n"
+            "app.run(debug=False)\n"
+        ),
+    )
+    assert "SKY-D346" not in _rule_ids(out)
+
+
+def test_logging_config_listen_flags(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_logging_listen.py",
+        "from logging.config import listen\nlisten(9999)\n",
+    )
+    assert "SKY-D347" in _rule_ids(out)
+
+
+def test_tempfile_mktemp_flags(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_mktemp.py",
+        "import tempfile\nname = tempfile.mktemp()\n",
+    )
+    assert "SKY-D348" in _rule_ids(out)
+
+
 def test_symlink_following_write_flags_attacker_controlled_output(tmp_path):
     out = _scan_one(
         tmp_path,

@@ -1645,6 +1645,10 @@ def _qualified_call_name(func_node):
     return None
 
 
+def _is_none_constant(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value is None
+
+
 class MissingNetworkTimeoutRule(SkylosRule):
     rule_id = "SKY-L031"
     name = "Missing Network Timeout"
@@ -1664,10 +1668,12 @@ class MissingNetworkTimeoutRule(SkylosRule):
         if call_name not in self.vibe_dictionary.network_timeout_calls:
             return None
 
-        if any(kw.arg == "timeout" for kw in node.keywords):
+        timeout_kw = next((kw for kw in node.keywords if kw.arg == "timeout"), None)
+        if timeout_kw is not None and not _is_none_constant(timeout_kw.value):
             return None
 
         basename = Path(filename).name
+        value = "timeout_none" if timeout_kw is not None else "no_timeout"
         return [
             {
                 "rule_id": self.rule_id,
@@ -1676,7 +1682,7 @@ class MissingNetworkTimeoutRule(SkylosRule):
                 "type": "call",
                 "name": call_name,
                 "simple_name": call_name,
-                "value": "no_timeout",
+                "value": value,
                 "threshold": 0,
                 "message": (
                     f"Network call '{call_name}()' has no timeout. "

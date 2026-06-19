@@ -30,6 +30,47 @@ REMOTE_MODEL_CALLS = {
     "wget.download",
 }
 
+HUGGINGFACE_ARTIFACT_CALLS = {
+    "datasets.load_dataset",
+    "hf_hub_download",
+    "huggingface_hub.hf_hub_download",
+    "huggingface_hub.snapshot_download",
+    "load_dataset",
+    "snapshot_download",
+}
+
+HUGGINGFACE_PRETRAINED_PREFIXES = (
+    "diffusers.",
+    "sentence_transformers.",
+    "transformers.",
+)
+
+HUGGINGFACE_PRETRAINED_CLASSES = {
+    "AutoConfig",
+    "AutoFeatureExtractor",
+    "AutoImageProcessor",
+    "AutoModel",
+    "AutoModelForCausalLM",
+    "AutoModelForImageClassification",
+    "AutoModelForMaskedLM",
+    "AutoModelForQuestionAnswering",
+    "AutoModelForSeq2SeqLM",
+    "AutoModelForSequenceClassification",
+    "AutoModelForTokenClassification",
+    "AutoProcessor",
+    "AutoTokenizer",
+    "StableDiffusionPipeline",
+}
+
+MUTABLE_HF_REVISIONS = {
+    "develop",
+    "dev",
+    "head",
+    "latest",
+    "main",
+    "master",
+}
+
 KERAS_LOAD_MODEL_CALLS = {
     "keras.models.load_model",
     "tensorflow.keras.models.load_model",
@@ -99,6 +140,10 @@ class _ModelDeserializationChecker(TaintVisitor):
         self.generic_visit(node)
 
     def _check_model_load_call(self, node: ast.Call, name: str) -> None:
+        if _is_huggingface_artifact_call(name):
+            if _call_uses_missing_or_mutable_revision(node):
+                self._append_huggingface_revision_finding(node, name)
+
         if name == "torch.load":
             if self._kw_is_true(node, "weights_only"):
                 return
@@ -120,6 +165,31 @@ class _ModelDeserializationChecker(TaintVisitor):
 
         if name == "pickle.load" and self._call_uses_model_path(node):
             self._append_model_load_finding(node, "pickle.load on model artifact")
+
+    def _append_huggingface_revision_finding(self, node: ast.Call, call_name: str) -> None:
+        line = int(getattr(node, "lineno", 1) or 1)
+        col = int(getattr(node, "col_offset", 0) or 0)
+        key = (line, col, "huggingface-revision")
+        if key in self._emitted:
+            return
+        self._emitted.add(key)
+
+        self.findings.append(
+            {
+                "rule_id": "SKY-D345",
+                "severity": "HIGH",
+                "message": (
+                    f"Hugging Face artifact download via {call_name} uses a "
+                    "missing or mutable revision; pin revision to an immutable "
+                    "commit SHA."
+                ),
+                "file": str(self.file_path),
+                "line": line,
+                "col": col,
+                "symbol": self._current_symbol(),
+                "metadata": {"huggingface_revision": "mutable_or_missing"},
+            }
+        )
 
     def _append_model_load_finding(self, node: ast.Call, loader: str) -> None:
         line = int(getattr(node, "lineno", 1) or 1)
@@ -203,6 +273,47 @@ def _is_remote_path(value: str) -> bool:
 
 def _looks_like_model_artifact(value: str) -> bool:
     return value.lower().endswith(MODEL_ARTIFACT_SUFFIXES)
+
+
+def _is_huggingface_artifact_call(name: str) -> bool:
+    if name in HUGGINGFACE_ARTIFACT_CALLS:
+        return True
+    if not name.endswith(".from_pretrained"):
+        return False
+    receiver = name.rsplit(".", 1)[0]
+    if receiver.startswith(HUGGINGFACE_PRETRAINED_PREFIXES):
+        return True
+    return receiver.rsplit(".", 1)[-1] in HUGGINGFACE_PRETRAINED_CLASSES
+
+
+def _call_uses_missing_or_mutable_revision(node: ast.Call) -> bool:
+    revision = _keyword_value(node, "revision")
+    if revision is None:
+        return True
+    if isinstance(revision, ast.Constant):
+        if revision.value is None:
+            return True
+        if isinstance(revision.value, str):
+            return not _is_immutable_commit_revision(revision.value)
+    return False
+
+
+def _keyword_value(node: ast.Call, name: str) -> ast.AST | None:
+    for keyword in node.keywords:
+        if keyword.arg == name:
+            return keyword.value
+    return None
+
+
+def _is_immutable_commit_revision(value: str) -> bool:
+    revision = value.strip()
+    if revision.lower() in MUTABLE_HF_REVISIONS:
+        return False
+    if revision.startswith(("refs/heads/", "refs/pr/")):
+        return False
+    return len(revision) == 40 and all(
+        char in "0123456789abcdefABCDEF" for char in revision
+    )
 
 
 def scan(tree, file_path, findings):

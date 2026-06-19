@@ -1682,6 +1682,17 @@ class TestMissingNetworkTimeout:
         l031 = [f for f in findings if f["rule_id"] == "SKY-L031"]
         assert len(l031) == 0
 
+    def test_timeout_none_is_flagged(self):
+        code = """
+        import requests
+        def fetch():
+            return requests.get("https://api.example.com/data", timeout=None)
+        """
+        findings = check_code(MissingNetworkTimeoutRule(), code, filename="app.py")
+        l031 = [f for f in findings if f["rule_id"] == "SKY-L031"]
+        assert l031
+        assert l031[0]["value"] == "timeout_none"
+
     def test_test_file_not_flagged(self):
         code = """
         import requests
