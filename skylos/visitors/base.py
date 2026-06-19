@@ -231,6 +231,7 @@ class Definition:
         "conditional_import",
         "suppression_code",
         "folder_role",
+        "suppression_lines",
     )
 
     def __init__(
@@ -272,6 +273,7 @@ class Definition:
         self.conditional_import = False
         self.suppression_code = None
         self.folder_role = None
+        self.suppression_lines = {line}
 
     def to_dict(self) -> dict[str, Any]:
         if self.type == "method" and "." in self.name:
@@ -407,10 +409,14 @@ class Visitor(ast.NodeVisitor):
                     d.node = node
                 for k, v in extra.items():
                     if hasattr(d, k):
-                        setattr(d, k, v)
-                if t == "import" and name in self._conditional_import_targets:
-                    d.conditional_import = True
-                break
+                        if k == "suppression_lines":
+                            d.suppression_lines.update(v)
+                        else:
+                            setattr(d, k, v)
+            if t == "import" and name in self._conditional_import_targets:
+                d.conditional_import = True
+            d.suppression_lines.add(line)
+            break
         if not found:
             defn = Definition(name, t, self.file, line, node=node)
             for k, v in extra.items():
@@ -495,12 +501,14 @@ class Visitor(ast.NodeVisitor):
                 alias_name = head
                 target = head
 
+            line = getattr(a, "lineno", node.lineno)
             self.alias[alias_name] = target
             self.add_def(
                 target,
                 "import",
-                getattr(a, "lineno", node.lineno),
+                line,
                 is_exported=a.asname == a.name if a.asname else False,
+                suppression_lines={line, node.lineno, getattr(node, "end_lineno", line)},
             )
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
@@ -549,12 +557,14 @@ class Visitor(ast.NodeVisitor):
             else:
                 full = a.name
 
+            line = getattr(a, "lineno", node.lineno)
             self.alias[alias_name] = full
             self.add_def(
                 full,
                 "import",
-                getattr(a, "lineno", node.lineno),
+                line,
                 is_exported=a.asname == a.name if a.asname else False,
+                suppression_lines={line, node.lineno, getattr(node, "end_lineno", line)},
             )
 
     def visit_If(self, node: ast.If) -> None:

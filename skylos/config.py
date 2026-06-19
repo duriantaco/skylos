@@ -757,7 +757,7 @@ def get_expired_whitelists(cfg) -> list[tuple[str, str, str]]:
     return expired
 
 
-_NOQA_RE = re.compile(r"#\s*noqa(?::\s*([^#]+))?", re.IGNORECASE)
+_NOQA_RE = re.compile(r"#\s*noqa\b(?::\s*([^#]+))?", re.IGNORECASE)
 
 
 def get_noqa_codes_by_line(source) -> dict[int, set[str]]:
@@ -770,7 +770,10 @@ def get_noqa_codes_by_line(source) -> dict[int, set[str]]:
         if raw_codes is None:
             codes_by_line[i] = set()
             continue
-        codes = {code.upper() for code in re.findall(r"\b[A-Z]+\d+\b", raw_codes)}
+        codes = {
+            code.upper()
+            for code in re.findall(r"\b[A-Z]+\d+\b", raw_codes, re.IGNORECASE)
+        }
         if codes:
             codes_by_line[i] = codes
     return codes_by_line

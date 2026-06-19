@@ -275,11 +275,31 @@ def _is_alembic_revision_path(filename: str) -> bool:
     return "/versions/" in normalized and normalized.endswith(".py")
 
 
+def _coerce_line_set(value, fallback) -> set[int]:
+    if value is None or isinstance(value, (str, bytes)):
+        return {fallback}
+    try:
+        return {int(line) for line in value}
+    except (TypeError, ValueError):
+        return {fallback}
+
+
 def _check_inline_ignore(def_obj, visitor):
-    if getattr(visitor, "ignore_lines", None) and def_obj.line in visitor.ignore_lines:
+    suppression_lines = _coerce_line_set(
+        getattr(def_obj, "suppression_lines", None),
+        def_obj.line,
+    )
+    ignore_lines = _coerce_line_set(getattr(visitor, "ignore_lines", None), -1)
+    if suppression_lines & ignore_lines:
         return _suppress(def_obj, "inline ignore comment")
     noqa_codes_by_line = getattr(visitor, "noqa_codes_by_line", None) or {}
-    noqa_codes = noqa_codes_by_line.get(def_obj.line)
+    if not isinstance(noqa_codes_by_line, dict):
+        noqa_codes_by_line = {}
+    noqa_codes = None
+    for line in sorted(suppression_lines):
+        if line in noqa_codes_by_line:
+            noqa_codes = noqa_codes_by_line[line]
+            break
     if noqa_codes is None:
         return None
     if not noqa_codes:
