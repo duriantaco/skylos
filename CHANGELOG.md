@@ -1,5 +1,22 @@
 ## Changelog
 
+## [4.25.0](https://github.com/duriantaco/skylos/compare/v4.24.2...v4.25.0) (2026-06-19)
+
+
+### Features
+
+* **clean:** add deterministic apply mode ([#581](https://github.com/duriantaco/skylos/issues/581)) ([5544437](https://github.com/duriantaco/skylos/commit/5544437190bea764a311539e87acd1f2d133fe8c))
+* **dead-code:** add configurable entrypoints ([#572](https://github.com/duriantaco/skylos/issues/572)) ([dae8e96](https://github.com/duriantaco/skylos/commit/dae8e9659d9d3abcce1cb6e556fa8c3dd63c314d))
+* **reporting:** add directory rollups ([#582](https://github.com/duriantaco/skylos/issues/582)) ([9087bc0](https://github.com/duriantaco/skylos/commit/9087bc09d62771683891f73148fe92f0bbee4f8b))
+* **security:** add Python security rule gaps ([#587](https://github.com/duriantaco/skylos/issues/587)) ([34aac34](https://github.com/duriantaco/skylos/commit/34aac34c4c2f7d181883323095424f6b3b7a28b4))
+
+
+### Bug Fixes
+
+* **analyzer:** harden noqa import suppression lines ([#585](https://github.com/duriantaco/skylos/issues/585)) ([61f9c1a](https://github.com/duriantaco/skylos/commit/61f9c1a77964df783c54b771a8db2ae0cb65c039))
+* **analyzer:** make noqa suppressions code-specific ([#584](https://github.com/duriantaco/skylos/issues/584)) ([0effa8e](https://github.com/duriantaco/skylos/commit/0effa8ec44851d8d12a3ccdf6fff09878786d546))
+* **analyzer:** scope suppression state correctly ([#586](https://github.com/duriantaco/skylos/issues/586)) ([830ba43](https://github.com/duriantaco/skylos/commit/830ba434777e7b85a1b852b2e6dbe6337cfa5b8b))
+
 ## [4.24.2](https://github.com/duriantaco/skylos/compare/v4.24.1...v4.24.2) (2026-06-15)
 
 
