@@ -11,6 +11,8 @@ from skylos.config import (
     is_whitelisted,
     get_expired_whitelists,
     get_all_ignore_lines,
+    get_noqa_codes_by_line,
+    get_skylos_ignore_lines,
     suggest_pattern,
 )
 from skylos.core.contribution_settings import load_contribution_settings
@@ -854,3 +856,33 @@ lower_confidence = "boom"
 
         self.assertIn(1, ignore_lines)
         self.assertNotIn(2, ignore_lines)
+
+    def test_get_skylos_ignore_lines_excludes_code_specific_noqa(self):
+        source = "\n".join(
+            [
+                "import pandas  # noqa: F401",
+                "import os  # noqa",
+                "x = 1  # skylos: ignore",
+            ]
+        )
+
+        ignore_lines = get_skylos_ignore_lines(source)
+
+        self.assertNotIn(1, ignore_lines)
+        self.assertIn(2, ignore_lines)
+        self.assertIn(3, ignore_lines)
+
+    def test_get_noqa_codes_by_line_parses_specific_and_blanket(self):
+        source = "\n".join(
+            [
+                "import pandas  # noqa: F401, F402 - import ordering",
+                "import os  # noqa",
+                "import sys  # noqa: something",
+            ]
+        )
+
+        codes_by_line = get_noqa_codes_by_line(source)
+
+        self.assertEqual(codes_by_line[1], {"F401", "F402"})
+        self.assertEqual(codes_by_line[2], set())
+        self.assertNotIn(3, codes_by_line)

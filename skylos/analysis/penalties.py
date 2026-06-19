@@ -200,6 +200,12 @@ _FUTURE_IMPORTS = {
     "generator_stop",
 }
 
+_NOQA_DEAD_CODE_CODES_BY_TYPE = {
+    "import": {"F401"},
+    "variable": {"F841"},
+    "constant": {"F841"},
+}
+
 
 def _suppress(def_obj, reason=None, code=None, folder_role=None):
     def_obj.confidence = 0
@@ -272,6 +278,19 @@ def _is_alembic_revision_path(filename: str) -> bool:
 def _check_inline_ignore(def_obj, visitor):
     if getattr(visitor, "ignore_lines", None) and def_obj.line in visitor.ignore_lines:
         return _suppress(def_obj, "inline ignore comment")
+    noqa_codes_by_line = getattr(visitor, "noqa_codes_by_line", None) or {}
+    noqa_codes = noqa_codes_by_line.get(def_obj.line)
+    if noqa_codes is None:
+        return None
+    if not noqa_codes:
+        return _suppress(def_obj, "inline ignore comment", code="noqa")
+    matching_codes = _NOQA_DEAD_CODE_CODES_BY_TYPE.get(def_obj.type, set())
+    if noqa_codes & matching_codes:
+        return _suppress(
+            def_obj,
+            "inline ignore comment",
+            code="noqa:" + ",".join(sorted(noqa_codes & matching_codes)),
+        )
     return None
 
 
