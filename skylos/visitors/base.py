@@ -499,7 +499,7 @@ class Visitor(ast.NodeVisitor):
             self.add_def(
                 target,
                 "import",
-                node.lineno,
+                getattr(a, "lineno", node.lineno),
                 is_exported=a.asname == a.name if a.asname else False,
             )
 
@@ -553,7 +553,7 @@ class Visitor(ast.NodeVisitor):
             self.add_def(
                 full,
                 "import",
-                node.lineno,
+                getattr(a, "lineno", node.lineno),
                 is_exported=a.asname == a.name if a.asname else False,
             )
 

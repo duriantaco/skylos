@@ -1,6 +1,7 @@
 import copy
 import fnmatch
 import os
+import re
 from pathlib import Path
 
 CONFIG_FILE_ENV_VAR = "SKYLOS_CONFIG_FILE"
@@ -756,7 +757,26 @@ def get_expired_whitelists(cfg) -> list[tuple[str, str, str]]:
     return expired
 
 
-def get_all_ignore_lines(source) -> set[int]:
+_NOQA_RE = re.compile(r"#\s*noqa(?::\s*([^#]+))?", re.IGNORECASE)
+
+
+def get_noqa_codes_by_line(source) -> dict[int, set[str]]:
+    codes_by_line: dict[int, set[str]] = {}
+    for i, line in enumerate(source.splitlines(), start=1):
+        match = _NOQA_RE.search(line)
+        if not match:
+            continue
+        raw_codes = match.group(1)
+        if raw_codes is None:
+            codes_by_line[i] = set()
+            continue
+        codes = {code.upper() for code in re.findall(r"\b[A-Z]+\d+\b", raw_codes)}
+        if codes:
+            codes_by_line[i] = codes
+    return codes_by_line
+
+
+def _collect_ignore_lines(source, *, include_code_specific_noqa: bool) -> set[int]:
     ignore_lines = set()
     in_ignore_block = False
 
@@ -789,16 +809,32 @@ def get_all_ignore_lines(source) -> set[int]:
                 "#skylos:ignore",
                 "# noqa: skylos",
                 "pragma: no skylos",
-                "# noqa",
-                "#noqa",
             ]
         ):
             ignore_lines.add(i)
             stripped = line.strip()
             if stripped.startswith("@"):
                 ignore_lines.add(i + 1)
+            continue
+
+        match = _NOQA_RE.search(line)
+        if not match:
+            continue
+        if include_code_specific_noqa or match.group(1) is None:
+            ignore_lines.add(i)
+            stripped = line.strip()
+            if stripped.startswith("@"):
+                ignore_lines.add(i + 1)
 
     return ignore_lines
+
+
+def get_all_ignore_lines(source) -> set[int]:
+    return _collect_ignore_lines(source, include_code_specific_noqa=True)
+
+
+def get_skylos_ignore_lines(source) -> set[int]:
+    return _collect_ignore_lines(source, include_code_specific_noqa=False)
 
 
 def suggest_pattern(name) -> str | None:

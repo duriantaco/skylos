@@ -693,6 +693,47 @@ class TestAnalyze:
 
         assert "AgentActionName" not in unused_imports
 
+    def test_noqa_f401_suppresses_only_matching_unused_import(self, tmp_path):
+        (tmp_path / "constants.py").write_text(
+            "USED_FOR_COMPAT = 1\n"
+            "PLAIN_UNUSED = 2\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "facade.py").write_text(
+            "from constants import (\n"
+            "    USED_FOR_COMPAT,  # noqa: F401 - compatibility re-export\n"
+            "    PLAIN_UNUSED,\n"
+            ")\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused_imports = {
+            item["simple_name"] for item in result.get("unused_imports", [])
+        }
+        suppressed = {
+            item["name"]
+            for item in result.get("suppressed", [])
+            if item.get("suppression_code") == "noqa:F401"
+        }
+
+        assert "USED_FOR_COMPAT" not in unused_imports
+        assert "PLAIN_UNUSED" in unused_imports
+        assert "USED_FOR_COMPAT" in suppressed
+
+    def test_noqa_f401_does_not_suppress_unused_variable(self, tmp_path):
+        (tmp_path / "app.py").write_text(
+            "unused_value = 1  # noqa: F401\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused_variables = {
+            item["simple_name"] for item in result.get("unused_variables", [])
+        }
+
+        assert "unused_value" in unused_variables
+
     def test_mcp_decorated_tools_and_resources_are_live(self, tmp_path):
         (tmp_path / "server.py").write_text(
             "class FakeMCP:\n"

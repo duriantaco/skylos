@@ -41,7 +41,7 @@ from skylos.rules.secrets import scan_ctx as _secrets_scan_ctx
 from skylos.rules.danger.calls import DangerousCallsRule
 
 
-from skylos.config import get_all_ignore_lines, load_config
+from skylos.config import get_noqa_codes_by_line, get_skylos_ignore_lines, load_config
 from skylos.core.file_discovery import (
     discover_source_files,
     find_git_root,
@@ -3087,7 +3087,8 @@ def proc_file(
 
     try:
         source = Path(file).read_text(encoding="utf-8")
-        ignore_lines = get_all_ignore_lines(source)
+        ignore_lines = get_skylos_ignore_lines(source)
+        noqa_codes_by_line = get_noqa_codes_by_line(source)
 
         tree = ast.parse(source)
 
@@ -3174,6 +3175,7 @@ def proc_file(
         tv = TestAwareVisitor(filename=file)
         tv.visit(tree)
         tv.ignore_lines = ignore_lines
+        tv.noqa_codes_by_line = noqa_codes_by_line
 
         fv = FrameworkAwareVisitor(filename=file)
         fv.visit(tree)
