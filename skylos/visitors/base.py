@@ -413,10 +413,10 @@ class Visitor(ast.NodeVisitor):
                             d.suppression_lines.update(v)
                         else:
                             setattr(d, k, v)
-            if t == "import" and name in self._conditional_import_targets:
-                d.conditional_import = True
-            d.suppression_lines.add(line)
-            break
+                if t == "import" and name in self._conditional_import_targets:
+                    d.conditional_import = True
+                d.suppression_lines.add(line)
+                break
         if not found:
             defn = Definition(name, t, self.file, line, node=node)
             for k, v in extra.items():

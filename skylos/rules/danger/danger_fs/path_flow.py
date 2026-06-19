@@ -137,6 +137,7 @@ class _PathFlowChecker(TaintVisitor):
     def __init__(self, file_path, findings, sanitizers=None):
         super().__init__(file_path, findings, sanitizers=sanitizers)
         self.path_like_stack = [{}]
+        self.basename_sanitized_stack = [{}]
         self.symlink_sensitive_stack = [{}]
         self.os_open_write_flags_stack = [{}]
         self.safety_stack = [
@@ -154,6 +155,7 @@ class _PathFlowChecker(TaintVisitor):
     def _push(self):
         super()._push()
         self.path_like_stack.append({})
+        self.basename_sanitized_stack.append({})
         self.symlink_sensitive_stack.append({})
         self.os_open_write_flags_stack.append({})
         self.safety_stack.append(
@@ -171,6 +173,8 @@ class _PathFlowChecker(TaintVisitor):
         super()._pop()
         if self.path_like_stack:
             self.path_like_stack.pop()
+        if self.basename_sanitized_stack:
+            self.basename_sanitized_stack.pop()
         if self.symlink_sensitive_stack:
             self.symlink_sensitive_stack.pop()
         if self.os_open_write_flags_stack:
@@ -185,6 +189,17 @@ class _PathFlowChecker(TaintVisitor):
 
     def _get_path_like(self, name):
         for env in reversed(self.path_like_stack):
+            if name in env:
+                return env[name]
+        return False
+
+    def _set_basename_sanitized(self, name, basename_sanitized):
+        if not self.basename_sanitized_stack:
+            self.basename_sanitized_stack.append({})
+        self.basename_sanitized_stack[-1][name] = bool(basename_sanitized)
+
+    def _get_basename_sanitized(self, name):
+        for env in reversed(self.basename_sanitized_stack):
             if name in env:
                 return env[name]
         return False
@@ -274,6 +289,32 @@ class _PathFlowChecker(TaintVisitor):
                 return self._is_symlink_sensitive_expr(node.func.value)
         return False
 
+    def _is_basename_sanitized_expr(self, node):
+        if _is_path_name_projection(node):
+            return True
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "name"
+            and isinstance(node.value, ast.Call)
+        ):
+            qn = _qualified_name(node.value)
+            if qn in {"PurePath", "pathlib.PurePath"}:
+                return True
+        if isinstance(node, ast.Name):
+            return self._get_basename_sanitized(node.id)
+        return False
+
+    def _is_fixed_base_with_sanitized_name(self, node):
+        if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
+            return False
+        if not self._is_basename_sanitized_expr(node.right):
+            return False
+        return (
+            self._is_path_like_expr(node.left)
+            and not self.is_tainted(node.left)
+            and not self._is_symlink_sensitive_expr(node.left)
+        )
+
     def is_tainted(self, node):
         if _is_path_name_projection(node):
             return False
@@ -293,6 +334,9 @@ class _PathFlowChecker(TaintVisitor):
             if isinstance(tgt, ast.Name):
                 self._set(tgt.id, t)
                 self._set_path_like(tgt.id, path_like)
+                self._set_basename_sanitized(
+                    tgt.id, self._is_basename_sanitized_expr(node.value)
+                )
                 self._set_symlink_sensitive(
                     tgt.id, self._is_symlink_sensitive_expr(node.value)
                 )
@@ -309,6 +353,9 @@ class _PathFlowChecker(TaintVisitor):
             if isinstance(node.target, ast.Name):
                 self._set(node.target.id, t)
                 self._set_path_like(node.target.id, path_like)
+                self._set_basename_sanitized(
+                    node.target.id, self._is_basename_sanitized_expr(node.value)
+                )
                 self._set_symlink_sensitive(
                     node.target.id, self._is_symlink_sensitive_expr(node.value)
                 )
@@ -444,6 +491,8 @@ class _PathFlowChecker(TaintVisitor):
         )
 
     def _flag_symlink_read_if_unsafe(self, node, path_expr):
+        if self._is_fixed_base_with_sanitized_name(path_expr):
+            return
         if not self._path_needs_symlink_protection(path_expr):
             return
         if self._has_symlink_read_guard():

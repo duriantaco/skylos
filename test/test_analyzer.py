@@ -769,6 +769,24 @@ class TestAnalyze:
         assert "COMPAT_ONE" not in unused_imports
         assert "COMPAT_TWO" not in unused_imports
 
+    def test_noqa_f401_on_second_import_does_not_suppress_first_import(
+        self, tmp_path
+    ):
+        (tmp_path / "app.py").write_text(
+            "import os\n"
+            "import sys  # noqa: F401 - compatibility re-export\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused_imports = {
+            item["simple_name"] for item in result.get("unused_imports", [])
+        }
+        suppressed = {item["name"] for item in result.get("suppressed", [])}
+
+        assert "os" in unused_imports
+        assert "sys" in suppressed
+
     def test_noqa_f401_does_not_suppress_unused_variable(self, tmp_path):
         (tmp_path / "app.py").write_text(
             "unused_value = 1  # noqa: F401\n",

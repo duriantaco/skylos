@@ -127,6 +127,17 @@ def test_requests_fixed_host_urljoin_path_ok(tmp_path):
     assert "SKY-D216" not in _rule_ids(out)
 
 
+def test_requests_urljoin_direct_tainted_filename_can_override_host(tmp_path):
+    code = (
+        "from urllib.parse import urljoin\n"
+        "import requests\n"
+        "def f(user_id):\n"
+        "    return requests.get(urljoin('https://cdn.example.com/', f'{user_id}.png'), timeout=3)\n"
+    )
+    out = _scan_one(tmp_path, "ssrf_urljoin_direct_filename.py", code)
+    assert "SKY-D216" in _rule_ids(out)
+
+
 def test_requests_urljoin_bare_tainted_target_flags(tmp_path):
     code = (
         "from urllib.parse import urljoin\n"
