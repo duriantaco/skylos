@@ -180,6 +180,25 @@ def load_sidecar(raw_path):
     assert "SKY-D325" in _rule_ids(out)
 
 
+def test_fixed_base_basename_read_suppresses_symlink_read(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_fixed_base_basename.py",
+        """
+from pathlib import Path
+from flask import request
+
+BASE = Path("/srv/uploads")
+
+def load_upload():
+    safe_name = Path(request.args["name"]).name
+    return (BASE / safe_name).read_text(encoding="utf-8")
+""",
+    )
+    assert "SKY-D215" not in _rule_ids(out)
+    assert "SKY-D325" not in _rule_ids(out)
+
+
 def test_bounded_nofollow_read_is_not_symlink_finding(tmp_path):
     out = _scan_one(
         tmp_path,
