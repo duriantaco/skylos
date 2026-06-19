@@ -137,7 +137,7 @@ class _PathFlowChecker(TaintVisitor):
     def __init__(self, file_path, findings, sanitizers=None):
         super().__init__(file_path, findings, sanitizers=sanitizers)
         self.path_like_stack = [{}]
-        self.basename_sanitized_stack = [set()]
+        self.basename_sanitized_stack = [{}]
         self.symlink_sensitive_stack = [{}]
         self.os_open_write_flags_stack = [{}]
         self.safety_stack = [
@@ -155,7 +155,7 @@ class _PathFlowChecker(TaintVisitor):
     def _push(self):
         super()._push()
         self.path_like_stack.append({})
-        self.basename_sanitized_stack.append(set())
+        self.basename_sanitized_stack.append({})
         self.symlink_sensitive_stack.append({})
         self.os_open_write_flags_stack.append({})
         self.safety_stack.append(
@@ -195,15 +195,14 @@ class _PathFlowChecker(TaintVisitor):
 
     def _set_basename_sanitized(self, name, basename_sanitized):
         if not self.basename_sanitized_stack:
-            self.basename_sanitized_stack.append(set())
-        if basename_sanitized:
-            self.basename_sanitized_stack[-1].add(name)
-        else:
-            for env in self.basename_sanitized_stack:
-                env.discard(name)
+            self.basename_sanitized_stack.append({})
+        self.basename_sanitized_stack[-1][name] = bool(basename_sanitized)
 
     def _get_basename_sanitized(self, name):
-        return any(name in env for env in reversed(self.basename_sanitized_stack))
+        for env in reversed(self.basename_sanitized_stack):
+            if name in env:
+                return env[name]
+        return False
 
     def _set_symlink_sensitive(self, name, symlink_sensitive):
         if not self.symlink_sensitive_stack:

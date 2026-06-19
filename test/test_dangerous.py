@@ -199,6 +199,31 @@ def load_upload():
     assert "SKY-D325" not in _rule_ids(out)
 
 
+def test_nested_unsanitized_name_does_not_clear_outer_basename_read(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "a_nested_fixed_base_basename.py",
+        """
+from pathlib import Path
+from flask import request
+
+BASE = Path("/srv/uploads")
+
+def load_upload():
+    safe_name = Path(request.args["name"]).name
+
+    def shadow():
+        safe_name = request.args["other"]
+        return safe_name
+
+    shadow()
+    return (BASE / safe_name).read_text(encoding="utf-8")
+""",
+    )
+    assert "SKY-D215" not in _rule_ids(out)
+    assert "SKY-D325" not in _rule_ids(out)
+
+
 def test_bounded_nofollow_read_is_not_symlink_finding(tmp_path):
     out = _scan_one(
         tmp_path,
