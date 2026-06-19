@@ -195,6 +195,11 @@ Finding types:
 | D341 | HIGH | Untrusted package-managed tool execution | Shell, Python, TS/JS, GitHub Actions, GitLab CI, Dockerfile |
 | D342 | HIGH | Dockerfile remote ADD without checksum | Dockerfile |
 | D343 | HIGH | Dockerfile literal secret build value | Dockerfile |
+| D344 | HIGH | Trojan Source bidirectional Unicode | Python |
+| D345 | HIGH | Mutable Hugging Face artifact revision | Python |
+| D346 | HIGH | Flask debug mode enabled | Python |
+| D347 | MEDIUM | Unsafe logging config listener | Python |
+| D348 | HIGH | Insecure temporary filename | Python |
 
 ### Config And Deployment Security
 

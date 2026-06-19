@@ -73,6 +73,32 @@ DANGEROUS_CALLS = {
         "requests call with verify=False",
         {"kw_equals": {"verify": False}},
     ),
+    "ssl._create_unverified_context": (
+        "SKY-D210",
+        "HIGH",
+        "TLS context disables certificate verification",
+    ),
+    "flask.Flask.run": (
+        "SKY-D346",
+        "HIGH",
+        "Flask debug mode enabled",
+        {"kw_equals": {"debug": True}},
+    ),
+    "logging.config.listen": (
+        "SKY-D347",
+        "MEDIUM",
+        "logging.config.listen() starts an unauthenticated config listener",
+    ),
+    "logging.config.config.listen": (
+        "SKY-D347",
+        "MEDIUM",
+        "logging.config.listen() starts an unauthenticated config listener",
+    ),
+    "tempfile.mktemp": (
+        "SKY-D348",
+        "HIGH",
+        "tempfile.mktemp() creates a race-prone temporary filename",
+    ),
     "marshal.loads": (
         "SKY-D233",
         "CRITICAL",

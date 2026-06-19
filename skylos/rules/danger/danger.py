@@ -42,6 +42,18 @@ from .calls import (
 
 ALLOWED_SUFFIXES = (".py", ".pyi", ".pyw")
 
+_BIDI_CONTROL_CHARS = {
+    "\u202a",
+    "\u202b",
+    "\u202c",
+    "\u202d",
+    "\u202e",
+    "\u2066",
+    "\u2067",
+    "\u2068",
+    "\u2069",
+}
+
 
 class _DangerousCallsChecker(ast.NodeVisitor):
     def __init__(self, file_path, findings):
@@ -375,6 +387,10 @@ _ML_MODEL_LOAD_TOKENS = (
     "hf_hub_download",
     "snapshot_download",
     "huggingface_hub",
+    "from_pretrained",
+    "load_dataset",
+    "transformers",
+    "datasets",
     ".pt",
     ".pth",
     ".ckpt",
@@ -470,6 +486,29 @@ def _has_any(source: str, tokens: tuple[str, ...]) -> bool:
     return any(token in source for token in tokens)
 
 
+def _scan_trojan_source_text(src: str, file_path: Path, findings: list[dict]) -> None:
+    for line_no, line in enumerate(src.splitlines(), start=1):
+        for col, char in enumerate(line):
+            if char not in _BIDI_CONTROL_CHARS:
+                continue
+            findings.append(
+                {
+                    "rule_id": "SKY-D344",
+                    "severity": "HIGH",
+                    "message": (
+                        "Bidirectional Unicode control character can disguise "
+                        "source code logic."
+                    ),
+                    "file": str(file_path),
+                    "line": line_no,
+                    "col": col,
+                    "symbol": "<module>",
+                    "metadata": {"unicode_codepoint": f"U+{ord(char):04X}"},
+                }
+            )
+            break
+
+
 def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None):
     """Run taint-flow scanners on an already-parsed AST (no re-read/re-parse)."""
     if source is None:
@@ -546,6 +585,7 @@ def scan_file_with_tree(tree, file_path, findings, *, source: str | None = None)
 
 def _scan_file(file_path: Path, findings):
     src = file_path.read_text(encoding="utf-8", errors="ignore")
+    _scan_trojan_source_text(src, file_path, findings)
     tree = ast.parse(src)
 
     scan_file_with_tree(tree, file_path, findings, source=src)

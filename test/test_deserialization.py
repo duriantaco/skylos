@@ -79,6 +79,50 @@ model = torch.load(path)
     assert findings[0]["severity"] == "CRITICAL"
 
 
+def test_huggingface_download_without_revision_flags_d345(tmp_path):
+    code = """
+from huggingface_hub import hf_hub_download
+
+path = hf_hub_download(repo_id="owner/model", filename="model.pt")
+"""
+    out = _scan_one(tmp_path, "model_hf_unpinned.py", code)
+    assert "SKY-D345" in _rule_ids(out)
+
+
+def test_huggingface_download_mutable_revision_flags_d345(tmp_path):
+    code = """
+from huggingface_hub import snapshot_download
+
+path = snapshot_download(repo_id="owner/model", revision="main")
+"""
+    out = _scan_one(tmp_path, "model_hf_main.py", code)
+    assert "SKY-D345" in _rule_ids(out)
+
+
+def test_huggingface_download_commit_revision_is_not_d345(tmp_path):
+    code = """
+from huggingface_hub import hf_hub_download
+
+path = hf_hub_download(
+    repo_id="owner/model",
+    filename="model.pt",
+    revision="0123456789abcdef0123456789abcdef01234567",
+)
+"""
+    out = _scan_one(tmp_path, "model_hf_pinned.py", code)
+    assert "SKY-D345" not in _rule_ids(out)
+
+
+def test_transformers_from_pretrained_without_revision_flags_d345(tmp_path):
+    code = """
+from transformers import AutoModel
+
+model = AutoModel.from_pretrained("owner/model")
+"""
+    out = _scan_one(tmp_path, "model_transformers_unpinned.py", code)
+    assert "SKY-D345" in _rule_ids(out)
+
+
 def test_numpy_allow_pickle_flags_d265(tmp_path):
     code = """
 import numpy as np
