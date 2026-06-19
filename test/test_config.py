@@ -875,9 +875,10 @@ lower_confidence = "boom"
     def test_get_noqa_codes_by_line_parses_specific_and_blanket(self):
         source = "\n".join(
             [
-                "import pandas  # noqa: F401, F402 - import ordering",
+                "import pandas  # noqa: f401, F402 - import ordering",
                 "import os  # noqa",
                 "import sys  # noqa: something",
+                "value = 'noquality'",
             ]
         )
 
@@ -886,3 +887,4 @@ lower_confidence = "boom"
         self.assertEqual(codes_by_line[1], {"F401", "F402"})
         self.assertEqual(codes_by_line[2], set())
         self.assertNotIn(3, codes_by_line)
+        self.assertNotIn(4, codes_by_line)

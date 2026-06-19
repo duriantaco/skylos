@@ -721,6 +721,54 @@ class TestAnalyze:
         assert "PLAIN_UNUSED" in unused_imports
         assert "USED_FOR_COMPAT" in suppressed
 
+    def test_noqa_f401_on_multiline_import_statement_suppresses_aliases(
+        self, tmp_path
+    ):
+        (tmp_path / "constants.py").write_text(
+            "COMPAT_ONE = 1\n"
+            "COMPAT_TWO = 2\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "facade.py").write_text(
+            "from constants import (  # noqa: F401 - compatibility re-export\n"
+            "    COMPAT_ONE,\n"
+            "    COMPAT_TWO,\n"
+            ")\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused_imports = {
+            item["simple_name"] for item in result.get("unused_imports", [])
+        }
+
+        assert "COMPAT_ONE" not in unused_imports
+        assert "COMPAT_TWO" not in unused_imports
+
+    def test_noqa_f401_on_multiline_import_close_suppresses_aliases(
+        self, tmp_path
+    ):
+        (tmp_path / "constants.py").write_text(
+            "COMPAT_ONE = 1\n"
+            "COMPAT_TWO = 2\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "facade.py").write_text(
+            "from constants import (\n"
+            "    COMPAT_ONE,\n"
+            "    COMPAT_TWO,\n"
+            ")  # noqa: F401 - compatibility re-export\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+        unused_imports = {
+            item["simple_name"] for item in result.get("unused_imports", [])
+        }
+
+        assert "COMPAT_ONE" not in unused_imports
+        assert "COMPAT_TWO" not in unused_imports
+
     def test_noqa_f401_does_not_suppress_unused_variable(self, tmp_path):
         (tmp_path / "app.py").write_text(
             "unused_value = 1  # noqa: F401\n",
