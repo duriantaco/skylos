@@ -29,6 +29,21 @@ def main() -> int:
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional path to write the full JSON summary.",
+    )
+    parser.add_argument(
+        "--progress-jsonl",
+        default=None,
+        help="Optional path to append per-case progress JSONL.",
+    )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Print per-case progress to stderr.",
+    )
     args = parser.parse_args()
 
     provider, api_key, base_url, is_local = resolve_llm_runtime(
@@ -52,6 +67,24 @@ def main() -> int:
             print(message)
         return 2
 
+    progress_path = Path(args.progress_jsonl) if args.progress_jsonl else None
+
+    def progress_callback(record: dict) -> None:
+        case = record.get("case", {}) or {}
+        if args.progress:
+            status = "PASS" if not case.get("failures") else "FAIL"
+            print(
+                f"{status} {case.get('id', '<unknown>')} "
+                f"score={case.get('scores', {}).get('overall_score', 0.0)} "
+                f"tokens={case.get('tokens_used', 0)}",
+                file=sys.stderr,
+                flush=True,
+            )
+        if progress_path:
+            progress_path.parent.mkdir(parents=True, exist_ok=True)
+            with progress_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+
     summary = run_manifest(
         args.manifest,
         model=args.model,
@@ -59,7 +92,15 @@ def main() -> int:
         provider=provider,
         base_url=base_url,
         selected_cases=set(args.case),
+        progress_callback=progress_callback
+        if args.progress or progress_path is not None
+        else None,
     )
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     if args.json:
         print(json.dumps(summary, indent=2))

@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 import skylos.benchmarks.agent_review as benchmark
 from skylos.benchmarks.agent_review import (
+    ALLOWED_AGENT_ROUTES,
     ALLOWED_SCAN_ISSUE_TYPES,
     AGENT_REVIEW_TAXONOMY,
     SECURITY_BENCHMARK_CLASSES,
@@ -135,6 +136,8 @@ def test_agent_review_runner_reports_symbol_and_budget_failures(tmp_path, monkey
 
     assert summary["failure_count"] == 2
     assert summary["total_tokens_used"] == 17
+    assert summary["cases"][0]["diagnostics"]["missed_present"] == ["demo"]
+    assert summary["cases"][0]["diagnostics"]["absent_violations"] == []
     failures = summary["cases"][0]["failures"]
     assert {failure["failure_type"] for failure in failures} == {
         "expectation",
@@ -157,6 +160,7 @@ def test_format_summary_includes_agent_metrics():
         },
         "total_tokens_used": 99,
         "avg_tokens_per_case": 99.0,
+        "route_counts": {"static_only": 1},
         "security_scorecard": {
             "sql_injection": {
                 "description": SECURITY_BENCHMARK_CLASSES["sql_injection"],
@@ -165,6 +169,17 @@ def test_format_summary_includes_agent_metrics():
                 "failed_case_count": 0,
                 "pass_rate": 1.0,
                 "weighted_score": 100.0,
+            }
+        },
+        "taxonomy_scorecard": {
+            "security": {
+                "case_count": 1,
+                "weighted_score": 100.0,
+                "missed_present": 0,
+                "noise": 0,
+                "total_tokens_used": 99,
+                "static_only_routes": 1,
+                "full_harness_routes": 0,
             }
         },
         "cases": [
@@ -186,7 +201,12 @@ def test_format_summary_includes_agent_metrics():
     assert "Agent review benchmark score: 100.0/100" in rendered
     assert "Agent review benchmark model: gpt-4.1" in rendered
     assert "Agent review benchmark total tokens: 99" in rendered
+    assert "Agent review benchmark routes: static_only=1" in rendered
     assert "sql_injection: cases=1 pass=1 fail=0 score=100.0" in rendered
+    assert (
+        "security: cases=1 score=100.0 missed=0 noise=0 tokens=99 "
+        "routes=static:1/full:0"
+    ) in rendered
     assert "symbols: parse_payload" in rendered
 
 
@@ -247,10 +267,21 @@ def test_run_manifest_builds_security_scorecard(tmp_path, monkeypatch):
     ticks = iter([0.0, 0.1, 0.2, 0.3])
     monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
 
-    summary = run_manifest(manifest_path, model="gpt-4.1", api_key="KEY")
+    progress_records = []
+
+    summary = run_manifest(
+        manifest_path,
+        model="gpt-4.1",
+        api_key="KEY",
+        progress_callback=progress_records.append,
+    )
 
     assert summary["pass_count"] == 1
     assert summary["failure_count"] == 1
+    assert [record["case"]["id"] for record in progress_records] == [
+        "pickle-case",
+        "archive-case",
+    ]
     assert summary["security_scorecard"]["deserialization"] == {
         "description": SECURITY_BENCHMARK_CLASSES["deserialization"],
         "case_count": 1,
@@ -267,6 +298,16 @@ def test_run_manifest_builds_security_scorecard(tmp_path, monkeypatch):
         "pass_rate": 0.5,
         "weighted_score": 75.0,
     }
+    assert summary["cases"][1]["diagnostics"]["missed_present"] == [
+        "extract_bundle"
+    ]
+    assert summary["cases"][1]["diagnostics"]["missed_by_category"] == {
+        "security": ["extract_bundle"]
+    }
+    assert summary["taxonomy_scorecard"]["security"]["missed_present"] == 1
+    assert summary["taxonomy_scorecard"]["security"]["noise"] == 0
+    assert summary["security_diagnostics"]["archive_extraction"]["missed_present"] == 1
+    assert summary["security_diagnostics"]["archive_extraction"]["total_tokens_used"] == 22
 
 
 def test_precision_guard_allows_expected_positive_findings(tmp_path, monkeypatch):
@@ -368,6 +409,11 @@ def test_precision_guard_still_rejects_findings_for_clean_case(tmp_path, monkeyp
 
     assert summary["pass_count"] == 0
     assert summary["failure_count"] == 2
+    assert summary["cases"][0]["diagnostics"]["absent_violations"] == [
+        "normalize_name"
+    ]
+    assert summary["cases"][0]["diagnostics"]["precision_guard_noise"] is True
+    assert summary["taxonomy_scorecard"]["precision_guard"]["noise"] == 2
     assert {failure["mode"] for failure in summary["cases"][0]["failures"]} == {
         "absent",
         "precision_guard",
@@ -427,16 +473,24 @@ def test_scan_case_passes_issue_types_into_analyzer(tmp_path, monkeypatch):
         "prepare_case_scan",
         lambda case_path, max_files=benchmark.DEFAULT_SCAN_MAX_FILES: {
             "project_root": tmp_path,
-            "files": [fixture],
+            "files": [fixture, tmp_path / "tests" / "test_app.py"],
             "repo_context_map": {},
             "full_file_review": True,
         },
     )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_app.py").write_text(
+        "def test_app():\n    pass\n",
+        encoding="utf-8",
+    )
 
     seen: dict[str, object] = {}
 
-    class FakeAnalyzer:
+    RealAnalyzer = benchmark.SkylosLLM
+
+    class FakeAnalyzer(RealAnalyzer):
         def __init__(self, config):
+            super().__init__(config)
             seen["config"] = config
 
         def analyze_files(
@@ -444,7 +498,12 @@ def test_scan_case_passes_issue_types_into_analyzer(tmp_path, monkeypatch):
         ):
             seen["files"] = list(files)
             seen["issue_types"] = list(issue_types or [])
-            return AnalysisResult(findings=[], summary="No issues found", tokens_used=0)
+            return AnalysisResult(
+                findings=[],
+                summary="No issues found",
+                tokens_used=0,
+                route_counts={"static_only": 1},
+            )
 
     monkeypatch.setattr(benchmark, "SkylosLLM", FakeAnalyzer)
 
@@ -460,6 +519,157 @@ def test_scan_case_passes_issue_types_into_analyzer(tmp_path, monkeypatch):
     assert result["finding_count"] == 0
     assert seen["files"] == [fixture]
     assert seen["issue_types"] == ["security_audit"]
+    assert seen["config"].agent_route == "static_first"
+    assert result["context_files"] == [str(tmp_path / "tests" / "test_app.py")]
+    assert result["route_counts"] == {"static_only": 1}
+
+
+def test_scan_case_static_first_keeps_non_test_files(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.py"
+    app = tmp_path / "app.py"
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    test_file = tests / "test_app.py"
+
+    ledger.write_text(
+        "def branchy_handler(flag_a, flag_b, flag_c):\n"
+        "    if flag_a:\n"
+        "        if flag_b:\n"
+        "            return 1\n"
+        "        return 2\n"
+        "    if flag_c:\n"
+        "        return 3\n"
+        "    return 4\n",
+        encoding="utf-8",
+    )
+    app.write_text(
+        "from ledger import branchy_handler\n\n"
+        "def handle():\n"
+        "    return branchy_handler(True, False, False)\n",
+        encoding="utf-8",
+    )
+    test_file.write_text("def test_app():\n    pass\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        benchmark,
+        "prepare_case_scan",
+        lambda case_path, max_files=benchmark.DEFAULT_SCAN_MAX_FILES: {
+            "project_root": tmp_path,
+            "files": [app, ledger, test_file],
+            "repo_context_map": {},
+            "full_file_review": True,
+        },
+    )
+
+    seen: dict[str, object] = {}
+    RealAnalyzer = benchmark.SkylosLLM
+
+    class FakeAnalyzer(RealAnalyzer):
+        def __init__(self, config):
+            super().__init__(config)
+            seen["config"] = config
+
+        def analyze_files(
+            self, files, defs_map=None, static_findings=None, issue_types=None
+        ):
+            seen["files"] = list(files)
+            return AnalysisResult(
+                findings=[],
+                summary="No issues found",
+                tokens_used=0,
+                route_counts={"static_only": 1},
+            )
+
+    monkeypatch.setattr(benchmark, "SkylosLLM", FakeAnalyzer)
+
+    benchmark._scan_case(
+        tmp_path,
+        model="gpt-4.1",
+        api_key="KEY",
+        provider=None,
+        base_url=None,
+        case={"scan": {"agent_route": "static_first"}},
+    )
+
+    assert seen["files"] == [app, ledger]
+    assert seen["config"].agent_route == "static_first"
+
+
+def test_scan_case_static_only_routes_to_static_evidence_file(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.py"
+    app = tmp_path / "app.py"
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    test_file = tests / "test_app.py"
+
+    ledger.write_text(
+        "def branchy_handler(flag_a, flag_b, flag_c):\n"
+        "    if flag_a:\n"
+        "        if flag_b:\n"
+        "            return 1\n"
+        "        return 2\n"
+        "    if flag_c:\n"
+        "        return 3\n"
+        "    return 4\n",
+        encoding="utf-8",
+    )
+    app.write_text(
+        "from ledger import branchy_handler\n\n"
+        "def handle():\n"
+        "    return branchy_handler(True, False, False)\n",
+        encoding="utf-8",
+    )
+    test_file.write_text("def test_app():\n    pass\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        benchmark,
+        "prepare_case_scan",
+        lambda case_path, max_files=benchmark.DEFAULT_SCAN_MAX_FILES: {
+            "project_root": tmp_path,
+            "files": [app, ledger, test_file],
+            "repo_context_map": {},
+            "full_file_review": True,
+        },
+    )
+
+    seen: dict[str, object] = {}
+    RealAnalyzer = benchmark.SkylosLLM
+
+    class FakeAnalyzer(RealAnalyzer):
+        def __init__(self, config):
+            super().__init__(config)
+            seen["config"] = config
+
+        def analyze_files(
+            self, files, defs_map=None, static_findings=None, issue_types=None
+        ):
+            seen["files"] = list(files)
+            seen["issue_types"] = list(issue_types or [])
+            return AnalysisResult(
+                findings=[],
+                summary="No issues found",
+                tokens_used=0,
+                route_counts={"static_only": 1},
+            )
+
+    monkeypatch.setattr(benchmark, "SkylosLLM", FakeAnalyzer)
+
+    result = benchmark._scan_case(
+        tmp_path,
+        model="gpt-4.1",
+        api_key="KEY",
+        provider=None,
+        base_url=None,
+        case={
+            "scan": {"agent_route": "static_only"},
+            "expect": {"present": {"quality": ["branchy_handler"]}, "absent": {}},
+        },
+    )
+
+    assert seen["files"] == [ledger]
+    assert seen["issue_types"] == ["quality"]
+    assert seen["config"].agent_route == "static_only"
+    assert result["context_files"] == [str(app), str(test_file)]
 
 
 def test_validate_manifest_rejects_unknown_scan_issue_type(tmp_path):
@@ -492,6 +702,40 @@ def test_validate_manifest_rejects_unknown_scan_issue_type(tmp_path):
 
     assert "unsupported scan.issue_types value" in str(exc.value)
     for allowed in ALLOWED_SCAN_ISSUE_TYPES:
+        assert allowed in str(exc.value)
+
+
+def test_validate_manifest_rejects_unknown_agent_route(tmp_path):
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text("def demo():\n    return 1\n", encoding="utf-8")
+
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "bad-route",
+                "path": "fixture.py",
+                "taxonomy": ["security"],
+                "importance": "critical",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                    "notes": "test only",
+                },
+                "security_classes": ["command_injection"],
+                "scan": {"agent_route": "cheap-but-wrong"},
+                "expect": {"present": {"security": ["demo"]}, "absent": {}},
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc:
+        validate_manifest(load_manifest(manifest_path), manifest_path)
+
+    assert "scan.agent_route" in str(exc.value)
+    for allowed in ALLOWED_AGENT_ROUTES:
         assert allowed in str(exc.value)
 
 

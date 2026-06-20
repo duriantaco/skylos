@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from skylos.core.file_discovery import discover_source_files
-from skylos.llm.analyzer import AnalyzerConfig, SkylosLLM
+from skylos.llm.analyzer import AnalyzerConfig, SECURITY_AUDIT_ISSUE, SkylosLLM
 from skylos.llm.repo_activation import build_repo_activation_index
 
 
@@ -48,6 +49,7 @@ IMPORTANCE_WEIGHTS = {
 
 DEFAULT_SCAN_MAX_FILES = 8
 ALLOWED_SCAN_ISSUE_TYPES = {"quality", "security", "security_audit"}
+ALLOWED_AGENT_ROUTES = {"full", "static_first", "static_only"}
 SCAN_ISSUE_TYPES_FIELD = "issue_types"
 
 
@@ -167,6 +169,13 @@ def validate_manifest(
                 raise ValueError(
                     f"agent review benchmark case {case_id} scan.max_files must be a positive integer"
                 )
+        if isinstance(scan_cfg, dict) and "agent_route" in scan_cfg:
+            route = scan_cfg.get("agent_route")
+            if not isinstance(route, str) or route not in ALLOWED_AGENT_ROUTES:
+                allowed = ", ".join(sorted(ALLOWED_AGENT_ROUTES))
+                raise ValueError(
+                    f"agent review benchmark case {case_id} scan.agent_route must be one of: {allowed}"
+                )
         if isinstance(scan_cfg, dict) and SCAN_ISSUE_TYPES_FIELD in scan_cfg:
             issue_types = scan_cfg.get(SCAN_ISSUE_TYPES_FIELD)
             if not isinstance(issue_types, list) or not issue_types:
@@ -240,6 +249,81 @@ def _normalize_symbol(value: str | None) -> str:
     return value
 
 
+def _is_test_file(path: str | Path) -> bool:
+    path = Path(path)
+    name = path.name.lower()
+    return (
+        name.startswith("test_")
+        or name.endswith("_test.py")
+        or "tests" in path.parts
+    )
+
+
+def _review_target_files(files: list[Path]) -> list[Path]:
+    targets = [path for path in files if not _is_test_file(path)]
+    return targets or files
+
+
+def _case_agent_route(case: dict[str, Any] | None) -> str:
+    if not isinstance(case, dict):
+        return "full"
+    route = str((case.get("scan") or {}).get("agent_route") or "static_first")
+    return route if route in {"full", "static_first", "static_only"} else "full"
+
+
+def _case_issue_types(case: dict[str, Any] | None) -> list[str]:
+    if not isinstance(case, dict):
+        return []
+
+    scan_cfg = case.get("scan") or {}
+    explicit = list(scan_cfg.get(SCAN_ISSUE_TYPES_FIELD) or [])
+    if explicit:
+        return explicit
+
+    expect = case.get("expect", {}) or {}
+    categories = set((expect.get("present", {}) or {}).keys())
+    categories.update((expect.get("absent", {}) or {}).keys())
+
+    issue_types: list[str] = []
+    if "security" in categories:
+        issue_types.append(SECURITY_AUDIT_ISSUE)
+    if categories & {"quality", "bug", "performance", "style", "hallucination"}:
+        issue_types.append("quality")
+    return issue_types
+
+
+def _static_route_target_files(
+    files: list[Path],
+    *,
+    issue_types: list[str],
+) -> list[Path]:
+    analyzer = SkylosLLM(
+        AnalyzerConfig(
+            quiet=True,
+            enable_security=True,
+            enable_quality=True,
+            agent_route="static_first",
+        )
+    )
+    routed = []
+    for path in files:
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        static_findings = analyzer._collect_static_agent_findings(
+            source,
+            str(path),
+            issue_types=issue_types or None,
+        )
+        if analyzer._static_route_complete(
+            static_findings,
+            issue_types=issue_types or None,
+        ):
+            routed.append(path)
+    return routed
+
+
 def prepare_case_scan(
     case_path: str | Path,
     *,
@@ -296,8 +380,17 @@ def _scan_case(
 ) -> dict[str, Any]:
     scan_cfg = case.get("scan") if isinstance(case, dict) else {}
     max_files = int((scan_cfg or {}).get("max_files") or DEFAULT_SCAN_MAX_FILES)
-    issue_types = list((scan_cfg or {}).get(SCAN_ISSUE_TYPES_FIELD) or [])
+    issue_types = _case_issue_types(case)
     prepared = prepare_case_scan(case_path, max_files=max_files)
+    reviewed_files = _review_target_files(list(prepared["files"]))
+    route = _case_agent_route(case)
+    if route == "static_only":
+        static_targets = _static_route_target_files(
+            reviewed_files,
+            issue_types=issue_types,
+        )
+        if static_targets:
+            reviewed_files = static_targets
 
     config = AnalyzerConfig(
         model=model,
@@ -311,9 +404,10 @@ def _scan_case(
         full_file_review=prepared["full_file_review"],
         smart_filter=False,
         repo_context_map=prepared["repo_context_map"],
+        agent_route=route,
     )
     analyzer = SkylosLLM(config)
-    result = analyzer.analyze_files(prepared["files"], issue_types=issue_types or None)
+    result = analyzer.analyze_files(reviewed_files, issue_types=issue_types or None)
 
     symbols = {
         _normalize_symbol(getattr(finding, "symbol", None))
@@ -325,7 +419,11 @@ def _scan_case(
         "symbols": sorted(symbols),
         "summary": result.summary,
         "tokens_used": int(result.tokens_used or 0),
-        "reviewed_files": [str(path) for path in prepared["files"]],
+        "reviewed_files": [str(path) for path in reviewed_files],
+        "context_files": [
+            str(path) for path in prepared["files"] if path not in reviewed_files
+        ],
+        "route_counts": dict(getattr(result, "route_counts", {}) or {}),
     }
 
 
@@ -344,13 +442,73 @@ def _dedupe_labels(labels: list[str] | None) -> list[str]:
     return ordered
 
 
+def _normalized_expectation_map(case: dict[str, Any], mode: str) -> dict[str, list[str]]:
+    expect = case.get("expect", {}) or {}
+    expectation_map = expect.get(mode, {}) or {}
+    normalized: dict[str, list[str]] = {}
+    for category, symbols in expectation_map.items():
+        values = [
+            _normalize_symbol(symbol)
+            for symbol in symbols
+            if _normalize_symbol(symbol)
+        ]
+        if values:
+            normalized[category] = values
+    return normalized
+
+
+def _flatten_expectations(expectations: dict[str, list[str]]) -> set[str]:
+    return {symbol for symbols in expectations.values() for symbol in symbols}
+
+
+def _is_clean_precision_guard(case: dict[str, Any]) -> bool:
+    present = case.get("expect", {}).get("present", {}) or {}
+    return "precision_guard" in (case.get("taxonomy") or []) and not present
+
+
+def _expectation_diagnostics(
+    case: dict[str, Any],
+    symbols: set[str],
+    finding_count: int,
+) -> dict[str, Any]:
+    present_by_category = _normalized_expectation_map(case, "present")
+    absent_by_category = _normalized_expectation_map(case, "absent")
+    expected_present = _flatten_expectations(present_by_category)
+    expected_absent = _flatten_expectations(absent_by_category)
+
+    missed_by_category = {
+        category: sorted(set(expected) - symbols)
+        for category, expected in present_by_category.items()
+        if set(expected) - symbols
+    }
+    absent_violations_by_category = {
+        category: sorted(set(expected) & symbols)
+        for category, expected in absent_by_category.items()
+        if set(expected) & symbols
+    }
+
+    precision_guard_noise = (
+        _is_clean_precision_guard(case) and int(finding_count or 0) > 0
+    )
+
+    return {
+        "expected_present": sorted(expected_present),
+        "expected_absent": sorted(expected_absent),
+        "missed_present": sorted(expected_present - symbols),
+        "absent_violations": sorted(expected_absent & symbols),
+        "missed_by_category": missed_by_category,
+        "absent_violations_by_category": absent_violations_by_category,
+        "precision_guard_noise": precision_guard_noise,
+        "finding_count": int(finding_count or 0),
+        "reported_symbol_count": len(symbols),
+    }
+
+
 def _evaluate_expectations(case: dict[str, Any], symbols: set[str], finding_count: int):
     expect = case.get("expect", {})
     present = expect.get("present", {}) or {}
     absent = expect.get("absent", {}) or {}
-    is_clean_precision_guard = "precision_guard" in (
-        case.get("taxonomy") or []
-    ) and not (present)
+    is_clean_precision_guard = _is_clean_precision_guard(case)
 
     failures: list[AgentReviewBenchmarkFailure] = []
     present_total = _count_expectations(present)
@@ -478,12 +636,17 @@ def run_case(
         "importance": case.get("importance", "high"),
         "taxonomy": list(case.get("taxonomy") or []),
         "security_classes": _dedupe_labels(case.get("security_classes")),
+        "scan_issue_types": list(
+            (case.get("scan") or {}).get(SCAN_ISSUE_TYPES_FIELD) or []
+        ),
         "elapsed_seconds": round(elapsed_seconds, 4),
         "finding_count": scan_result["finding_count"],
         "symbols": scan_result["symbols"],
         "summary": scan_result["summary"],
         "tokens_used": scan_result.get("tokens_used", 0),
         "reviewed_files": scan_result.get("reviewed_files", []),
+        "context_files": scan_result.get("context_files", []),
+        "route_counts": scan_result.get("route_counts", {}),
         "scores": _score_case(
             present_total=present_total,
             present_matched=present_matched,
@@ -491,6 +654,11 @@ def run_case(
             absent_violations=absent_violations,
             elapsed_seconds=elapsed_seconds,
             max_seconds=max_seconds,
+        ),
+        "diagnostics": _expectation_diagnostics(
+            case,
+            set(scan_result["symbols"]),
+            scan_result["finding_count"],
         ),
         "failures": [failure.to_dict() for failure in failures],
     }
@@ -545,6 +713,92 @@ def _build_security_scorecard(
     return scorecard
 
 
+def _build_dimension_scorecard(
+    case_results: list[dict[str, Any]],
+    *,
+    field: str,
+    descriptions: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    totals: dict[str, dict[str, float]] = {}
+
+    for case in case_results:
+        labels = _dedupe_labels(case.get(field))
+        if not labels:
+            continue
+
+        weight = IMPORTANCE_WEIGHTS[case["importance"]]
+        diagnostics = case.get("diagnostics", {}) or {}
+        missed_count = len(diagnostics.get("missed_present", []) or [])
+        noise_count = len(diagnostics.get("absent_violations", []) or [])
+        if diagnostics.get("precision_guard_noise"):
+            noise_count += 1
+
+        for label in labels:
+            bucket = totals.setdefault(
+                label,
+                {
+                    "case_count": 0.0,
+                    "pass_count": 0.0,
+                    "failed_case_count": 0.0,
+                    "weight": 0.0,
+                    "overall_score": 0.0,
+                    "recall": 0.0,
+                    "absence_guard": 0.0,
+                    "latency_score": 0.0,
+                    "tokens": 0.0,
+                    "elapsed_seconds": 0.0,
+                    "missed_present": 0.0,
+                    "noise": 0.0,
+                    "static_only_routes": 0.0,
+                    "full_harness_routes": 0.0,
+                },
+            )
+            failed = bool(case.get("failures"))
+            bucket["case_count"] += 1
+            bucket["pass_count"] += 0.0 if failed else 1.0
+            bucket["failed_case_count"] += 1.0 if failed else 0.0
+            bucket["weight"] += weight
+            bucket["tokens"] += int(case.get("tokens_used", 0) or 0)
+            bucket["elapsed_seconds"] += float(case.get("elapsed_seconds", 0.0) or 0.0)
+            bucket["missed_present"] += missed_count
+            bucket["noise"] += noise_count
+            route_counts = case.get("route_counts", {}) or {}
+            bucket["static_only_routes"] += int(route_counts.get("static_only", 0) or 0)
+            bucket["full_harness_routes"] += int(
+                route_counts.get("full_harness", 0) or 0
+            ) + int(route_counts.get("static_first_escalated", 0) or 0)
+            for score_name in (
+                "overall_score",
+                "recall",
+                "absence_guard",
+                "latency_score",
+            ):
+                bucket[score_name] += case["scores"][score_name] * weight
+
+    scorecard = {}
+    for label, bucket in sorted(totals.items()):
+        case_count = int(bucket["case_count"])
+        weight = bucket["weight"] or 1.0
+        scorecard[label] = {
+            "description": descriptions.get(label, ""),
+            "case_count": case_count,
+            "pass_count": int(bucket["pass_count"]),
+            "failed_case_count": int(bucket["failed_case_count"]),
+            "weighted_score": round(bucket["overall_score"] / weight, 2),
+            "recall": round(bucket["recall"] / weight, 4),
+            "absence_guard": round(bucket["absence_guard"] / weight, 4),
+            "latency_score": round(bucket["latency_score"] / weight, 4),
+            "total_tokens_used": int(bucket["tokens"]),
+            "total_elapsed_seconds": round(bucket["elapsed_seconds"], 4),
+            "missed_present": int(bucket["missed_present"]),
+            "noise": int(bucket["noise"]),
+            "static_only_routes": int(bucket["static_only_routes"]),
+            "full_harness_routes": int(bucket["full_harness_routes"]),
+        }
+
+    return scorecard
+
+
 def run_manifest(
     manifest_path: str | Path,
     *,
@@ -553,6 +807,7 @@ def run_manifest(
     provider: str | None = None,
     base_url: str | None = None,
     selected_cases: set[str] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     manifest = load_manifest(manifest_path)
     cases = validate_manifest(manifest, manifest_path)
@@ -581,6 +836,8 @@ def run_manifest(
             base_url=base_url,
         )
         case_results.append(result)
+        if progress_callback is not None:
+            progress_callback({"status": "completed", "case": result})
         weight = IMPORTANCE_WEIGHTS[result["importance"]]
         total_weight += weight
         total_elapsed += result["elapsed_seconds"]
@@ -602,6 +859,10 @@ def run_manifest(
         }
 
     pass_count = sum(1 for case in case_results if not case["failures"])
+    route_counts: dict[str, int] = {}
+    for case in case_results:
+        for route, count in (case.get("route_counts", {}) or {}).items():
+            route_counts[route] = route_counts.get(route, 0) + int(count or 0)
     return {
         "manifest": str(Path(manifest_path).resolve()),
         "model": model,
@@ -613,8 +874,19 @@ def run_manifest(
         "avg_tokens_per_case": round(total_tokens / len(case_results), 2)
         if case_results
         else 0.0,
+        "route_counts": route_counts,
         "scores": scores,
         "security_scorecard": _build_security_scorecard(case_results),
+        "taxonomy_scorecard": _build_dimension_scorecard(
+            case_results,
+            field="taxonomy",
+            descriptions=AGENT_REVIEW_TAXONOMY,
+        ),
+        "security_diagnostics": _build_dimension_scorecard(
+            case_results,
+            field="security_classes",
+            descriptions=SECURITY_BENCHMARK_CLASSES,
+        ),
         "cases": case_results,
     }
 
@@ -635,12 +907,26 @@ def format_summary(summary: dict[str, Any]) -> str:
         f"Agent review benchmark avg tokens/case: {summary.get('avg_tokens_per_case', 0.0)}",
         f"Agent review benchmark total time: {summary['total_elapsed_seconds']:.4f}s",
     ]
+    if summary.get("route_counts"):
+        rendered_routes = ", ".join(
+            f"{name}={count}" for name, count in sorted(summary["route_counts"].items())
+        )
+        lines.append(f"Agent review benchmark routes: {rendered_routes}")
     if summary.get("security_scorecard"):
         lines.append("Security classes:")
         for label, bucket in sorted(summary["security_scorecard"].items()):
             lines.append(
                 f"  {label}: cases={bucket['case_count']} pass={bucket['pass_count']} "
                 f"fail={bucket['failed_case_count']} score={bucket['weighted_score']}"
+            )
+    if summary.get("taxonomy_scorecard"):
+        lines.append("Taxonomy diagnostics:")
+        for label, bucket in sorted(summary["taxonomy_scorecard"].items()):
+            lines.append(
+                f"  {label}: cases={bucket['case_count']} score={bucket['weighted_score']} "
+                f"missed={bucket['missed_present']} noise={bucket['noise']} "
+                f"tokens={bucket['total_tokens_used']} "
+                f"routes=static:{bucket['static_only_routes']}/full:{bucket['full_harness_routes']}"
             )
     for case in summary["cases"]:
         status = "PASS" if not case["failures"] else "FAIL"
@@ -653,6 +939,17 @@ def format_summary(summary: dict[str, Any]) -> str:
         if case.get("reviewed_files"):
             reviewed = ", ".join(Path(path).name for path in case["reviewed_files"])
             lines.append(f"  reviewed files: {reviewed}")
+        diagnostics = case.get("diagnostics") or {}
+        if diagnostics.get("missed_present"):
+            lines.append(
+                f"  missed present: {', '.join(diagnostics['missed_present'])}"
+            )
+        if diagnostics.get("absent_violations"):
+            lines.append(
+                f"  absent violations: {', '.join(diagnostics['absent_violations'])}"
+            )
+        if diagnostics.get("precision_guard_noise"):
+            lines.append("  precision guard noise: yes")
         for failure in case["failures"]:
             found = ", ".join(failure["found"]) if failure["found"] else "none"
             lines.append(
