@@ -1,3 +1,9 @@
+"""Deliberately vulnerable Flask fixture.
+
+This file intentionally contains insecure patterns for Skylos demos and
+benchmark coverage. Do not copy these examples into production code.
+"""
+
 from flask import Flask, request
 import sqlite3, os, subprocess, requests, hashlib, pickle, yaml
 import pandas as pd

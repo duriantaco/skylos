@@ -121,6 +121,7 @@ max_args = 5
 max_lines = 50
 model = "gpt-4.1"
 exclude = [
+    # Benchmarks include deliberately vulnerable demo and scanner fixtures.
     "benchmarks",
     "corpus",
     "docs/repo-map",
