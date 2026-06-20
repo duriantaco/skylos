@@ -1,6 +1,22 @@
 # CLI Output Modes
 
+CLI output modes control how Skylos displays scan results in the terminal. Each mode is designed for a different workflow such as human review, automation, CI pipelines, or AI-assisted processing.
+
+If you're unsure which mode to use, the table below provides a quick reference.
+
 Skylos keeps the default terminal output stable for existing scripts and copy/paste workflows, then offers opt-in formats for more focused use cases.
+
+## Choosing an Output Mode
+
+| Mode     | Best For |
+|----------|----------|
+| rich     | Full detailed terminal output for deep inspection |
+| pretty   | Human-readable summaries for quick review |
+| concise  | CI pipelines, scripts, and automation tools |
+| json     | Programmatic use and external tool integration |
+| llm      | AI/agent workflows and structured reasoning systems |
+| github   | GitHub PR annotations and review comments |
+| tui      | Interactive exploration of findings in terminal |
 
 ## Human Terminal Output
 
@@ -85,3 +101,13 @@ The TUI uses a category sidebar plus a selectable finding list and detail pane. 
 | `q` | Quit |
 
 `--tui` requires an interactive terminal and is screen-only, so it cannot be combined with `--output`. For saved reports, CI, scripts, and logs, prefer `--format concise`, `--format json`, or `--format pretty`.
+
+## Common Workflows
+
+- Local development review → `pretty`
+- CI/CD checks → `concise`
+- Debugging full scan results → `rich`
+- Tooling and integrations → `json`
+- AI-assisted workflows → `llm`
+- GitHub pull request reviews → `github`
+- Deep interactive investigation → `tui`
