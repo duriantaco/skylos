@@ -32,6 +32,10 @@ These must be enabled for predictable releases:
    - Require status checks to pass.
    - Include PR title validation and core CI checks.
    - Change merge strategy to squash merges for clean release semantics/changelogs.
+   - Keep the publish workflow's required release checks in sync with branch
+     protection. `publish.yml` blocks PyPI/GHCR publish unless `test`,
+     `analyzer-speed`, `corpus`, `quality-benchmark`, and `scan` have passed
+     for the release commit.
 
 2. **PR title policy enabled**
    - Workflow: `.github/workflows/pr-title.yml`

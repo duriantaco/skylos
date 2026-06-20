@@ -34,6 +34,7 @@ jobs:
     uses: ./.github/workflows/publish.yml
     permissions:
       contents: read
+      checks: read
       packages: write
     with:
       ref: ${{ needs.release-please.outputs.tag_name }}

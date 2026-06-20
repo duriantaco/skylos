@@ -83,6 +83,60 @@ jobs:
         run: |
           .venv/bin/skylos cicd gate --input "$REPORT" --summary --advisory
 
+      - name: Block new high-risk security findings
+        if: steps.scan.outcome == 'success'
+        env:
+          REPORT: ${{ steps.scan.outputs.REPORT }}
+        run: |
+          python - "$REPORT" <<'PY'
+          import json
+          import os
+          import sys
+
+          severity_rank = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+          report_path = sys.argv[1]
+          with open(report_path, encoding="utf-8") as fh:
+              report = json.load(fh)
+
+          blocking = []
+          for category in ("danger", "secrets"):
+              for finding in report.get(category, []) or []:
+                  severity = str(
+                      finding.get("severity") or ("HIGH" if category == "secrets" else "")
+                  ).upper()
+                  if severity_rank.get(severity, 0) >= severity_rank["HIGH"]:
+                      blocking.append((category, severity, finding))
+
+          if not blocking:
+              print("No new high-risk security findings.")
+              sys.exit(0)
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          lines = [
+              "## Blocking Skylos findings",
+              "",
+              "New HIGH/CRITICAL security or secret findings were detected in this diff.",
+              "",
+          ]
+
+          for category, severity, finding in blocking[:20]:
+              file_path = finding.get("file") or finding.get("file_path") or "unknown"
+              line = finding.get("line") or finding.get("line_number") or 1
+              rule = finding.get("rule_id") or finding.get("rule") or category
+              message = finding.get("message") or "High-risk finding"
+              print(f"::error file={file_path},line={line},title=Skylos {rule}::{severity} {message}")
+              lines.append(f"- `{severity}` `{rule}` {file_path}:{line} - {message}")
+
+          if len(blocking) > 20:
+              lines.append(f"- ...and {len(blocking) - 20} more finding(s)")
+
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fh:
+                  fh.write("\n".join(lines) + "\n")
+
+          raise SystemExit(1)
+          PY
+
       - name: GitHub annotations
         if: always()
         env:
