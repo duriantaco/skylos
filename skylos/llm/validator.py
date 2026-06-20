@@ -36,7 +36,10 @@ class CodeValidator:
             location=location,
             suggestion=finding.suggestion,
             explanation=finding.explanation,
+            code_snippet=getattr(finding, "code_snippet", None),
+            references=list(getattr(finding, "references", None) or []),
             symbol=getattr(finding, "symbol", None),
+            metadata=dict(getattr(finding, "metadata", None) or {}),
             security_details=getattr(finding, "security_details", None),
         )
 

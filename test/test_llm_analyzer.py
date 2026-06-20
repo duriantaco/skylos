@@ -951,6 +951,49 @@ def test_agent_remaps_weak_security_symbol_to_handler(tmp_path, monkeypatch):
     assert "filename" not in symbols
 
 
+def test_agent_static_hint_does_not_duplicate_security_finding(tmp_path, monkeypatch):
+    fp = tmp_path / "app.py"
+    fp.write_text(
+        "from pathlib import Path\n"
+        "from flask import Flask, request\n\n"
+        "app = Flask(__name__)\n"
+        "UPLOAD_DIR = Path('/srv/uploads')\n\n"
+        "@app.post('/upload')\n"
+        "def upload_file():\n"
+        "    upload = request.files['file']\n"
+        "    filename = upload.filename\n"
+        "    target = UPLOAD_DIR / filename\n"
+        "    with open(target, 'wb') as handle:\n"
+        "        handle.write(upload.read())\n"
+        "    return 'ok'\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True)
+    llm = SkylosLLM(cfg)
+
+    def fake_llm_finding(*args, **kwargs):
+        return [
+            Finding(
+                rule_id="SKY-D215",
+                issue_type=IssueType.SECURITY,
+                severity=Severity.CRITICAL,
+                confidence=Confidence.HIGH,
+                message="Possible path traversal: tainted filesystem path.",
+                location=CodeLocation(file=str(fp), line=13),
+                symbol="upload_file",
+            )
+        ]
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_llm_finding)
+
+    findings = llm.analyze_file(fp, issue_types=["security_audit"])
+
+    assert [(finding.rule_id, finding.message) for finding in findings] == [
+        ("SKY-D215", "Possible path traversal: tainted filesystem path.")
+    ]
+
+
 def test_small_quality_file_analyzes_all_functions(tmp_path, monkeypatch):
     fp = tmp_path / "quality.py"
     fp.write_text(

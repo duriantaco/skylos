@@ -158,6 +158,101 @@ class AgentReviewRoutingMixin(
             "SKY-Q401",
         }
 
+    @staticmethod
+    def _is_static_agent_hint(finding):
+        metadata = getattr(finding, "metadata", None) or {}
+        return metadata.get("source") == "static_agent_hint"
+
+    @staticmethod
+    def _finding_line_set(finding):
+        lines = set()
+        line = getattr(getattr(finding, "location", None), "line", None)
+        if isinstance(line, int) and line > 0:
+            lines.add(line)
+
+        security_details = getattr(finding, "security_details", None) or {}
+        for evidence_line in security_details.get("evidence_lines") or []:
+            if isinstance(evidence_line, int) and evidence_line > 0:
+                lines.add(evidence_line)
+
+        return lines
+
+    @staticmethod
+    def _static_finding_line(static_finding):
+        if not isinstance(static_finding, dict):
+            return 0
+        if "line" in static_finding:
+            return static_finding.get("line", 0) or 0
+        return static_finding.get("lineno", 0) or 0
+
+    @staticmethod
+    def _static_finding_rule(static_finding):
+        if not isinstance(static_finding, dict):
+            return ""
+        return static_finding.get("rule_id") or static_finding.get("code") or ""
+
+    @staticmethod
+    def _lines_overlap(first_lines, second_lines, *, tolerance=2):
+        return any(
+            abs(first - second) <= tolerance
+            for first in first_lines
+            for second in second_lines
+        )
+
+    def _findings_overlap_static_hint(self, hint, other):
+        if getattr(hint, "rule_id", None) != getattr(other, "rule_id", None):
+            return False
+
+        hint_symbol = getattr(hint, "symbol", None)
+        other_symbol = getattr(other, "symbol", None)
+        if hint_symbol and other_symbol and hint_symbol == other_symbol:
+            return True
+
+        return self._lines_overlap(
+            self._finding_line_set(hint),
+            self._finding_line_set(other),
+        )
+
+    def _static_finding_overlaps_hint(self, hint, static_finding):
+        if getattr(hint, "rule_id", None) != self._static_finding_rule(static_finding):
+            return False
+
+        static_line = self._static_finding_line(static_finding)
+        if not isinstance(static_line, int) or static_line <= 0:
+            return False
+
+        return self._lines_overlap(self._finding_line_set(hint), {static_line})
+
+    def _drop_duplicate_static_agent_hints(self, findings, static_findings=None):
+        non_hint_findings = [
+            finding
+            for finding in findings
+            if not self._is_static_agent_hint(finding)
+        ]
+        static_findings = static_findings or []
+        unique = []
+
+        for finding in findings:
+            if not self._is_static_agent_hint(finding):
+                unique.append(finding)
+                continue
+
+            if any(
+                self._findings_overlap_static_hint(finding, other)
+                for other in non_hint_findings
+            ):
+                continue
+
+            if any(
+                self._static_finding_overlaps_hint(finding, static_finding)
+                for static_finding in static_findings
+            ):
+                continue
+
+            unique.append(finding)
+
+        return unique
+
     def _static_route_complete(self, static_agent_findings, issue_types=None):
         if self._agent_route() != "static_first":
             return False
@@ -194,6 +289,9 @@ class AgentReviewRoutingMixin(
         validated = self._filter_refuted_agent_findings(
             validated, source, issue_types=issue_types
         )
+        validated = self._drop_duplicate_static_agent_hints(
+            validated, static_findings=static_findings
+        )
 
         if static_findings:
             validated = merge_findings(validated, static_findings, str(file_path))
@@ -228,4 +326,3 @@ class AgentReviewRoutingMixin(
             "quality" in modes
             and self._should_analyze_quality_function(func_name, def_data)
         )
-
