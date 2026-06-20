@@ -8,13 +8,13 @@ from .agents import AgentConfig, create_agent
 from .finding_evidence import filter_findings_with_evidence
 from .validator import ResultValidator, deduplicate_findings, merge_findings
 from .ui import SkylosUI, estimate_cost
+from .agent_review_routing import AgentReviewRoutingMixin, SECURITY_AUDIT_ISSUE
 
-from .schemas import Confidence, AnalysisResult
+from .schemas import AnalysisResult, Confidence
 from skylos.config import load_config
 from skylos.llm.graph import CodeGraph
 from skylos.core.file_discovery import discover_source_files
 
-SECURITY_AUDIT_ISSUE = "security_audit"
 
 
 def _norm_path(path) -> str:
@@ -64,6 +64,7 @@ class AnalyzerConfig:
         force_full_file_paths=None,
         prompt_templates=None,
         prompt_template_root=None,
+        agent_route="full",
     ):
         self.model = model
         self.api_key = api_key
@@ -97,9 +98,10 @@ class AnalyzerConfig:
         }
         self.prompt_templates = prompt_templates or {}
         self.prompt_template_root = prompt_template_root
+        self.agent_route = agent_route
 
 
-class SkylosLLM:
+class SkylosLLM(AgentReviewRoutingMixin):
     def __init__(self, config=None):
         self.config = config or AnalyzerConfig()
 
@@ -125,12 +127,22 @@ class SkylosLLM:
         self.agent_config.prompt_template_root = self.config.prompt_template_root
 
         self._agents = {}
+        self._route_counts: dict[str, int] = {}
 
     def _reset_usage_counters(self):
         for agent in self._agents.values():
             adapter = getattr(agent, "_adapter", None)
             if adapter and hasattr(adapter, "reset_usage"):
                 adapter.reset_usage()
+
+    def _reset_route_counts(self):
+        self._route_counts = {}
+
+    def _record_route(self, route):
+        self._route_counts[route] = self._route_counts.get(route, 0) + 1
+
+    def _route_counts_snapshot(self):
+        return dict(self._route_counts)
 
     def _total_tokens_used(self):
         total = 0
@@ -146,218 +158,6 @@ class SkylosLLM:
         if agent_type not in self._agents:
             self._agents[agent_type] = create_agent(agent_type, self.agent_config)
         return self._agents[agent_type]
-
-    def _estimate_complexity(self, node):
-        import ast
-
-        complexity = 1
-        for child in ast.walk(node):
-            if isinstance(
-                child,
-                (
-                    ast.If,
-                    ast.While,
-                    ast.For,
-                    ast.ExceptHandler,
-                    ast.With,
-                    ast.Assert,
-                    ast.comprehension,
-                ),
-            ):
-                complexity += 1
-            elif isinstance(child, ast.BoolOp):
-                complexity += len(child.values) - 1
-        return complexity
-
-    def _function_length(self, node):
-        start = getattr(node, "lineno", None)
-        end = getattr(node, "end_lineno", None)
-        if start is None:
-            return 0
-        if end is None:
-            end = start
-        return max(end - start + 1, 0)
-
-    def _function_parameter_count(self, node):
-        if node is None:
-            return 0
-
-        args = getattr(node, "args", None)
-        if args is None:
-            return 0
-
-        count = 0
-        for arg in getattr(args, "posonlyargs", []) or []:
-            if getattr(arg, "arg", None) not in ("self", "cls"):
-                count += 1
-        for arg in getattr(args, "args", []) or []:
-            if getattr(arg, "arg", None) not in ("self", "cls"):
-                count += 1
-        count += len(getattr(args, "kwonlyargs", []) or [])
-        return count
-
-    def _return_site_count(self, node):
-        import ast
-
-        if node is None:
-            return 0
-        return sum(1 for child in ast.walk(node) if isinstance(child, ast.Return))
-
-    def _control_flow_count(self, node):
-        import ast
-
-        if node is None:
-            return 0
-        return sum(
-            1
-            for child in ast.walk(node)
-            if isinstance(
-                child,
-                (
-                    ast.If,
-                    ast.For,
-                    ast.AsyncFor,
-                    ast.While,
-                    ast.Try,
-                    ast.With,
-                    ast.Match,
-                ),
-            )
-        )
-
-    def _has_exception_handling(self, node):
-        import ast
-
-        if node is None:
-            return False
-        return any(
-            isinstance(child, (ast.Try, ast.TryStar)) for child in ast.walk(node)
-        )
-
-    def _should_analyze_security_function(self, func_name, def_data, graph):
-        taint_paths = graph.find_taint_paths(func_name)
-        if taint_paths:
-            return True
-
-        node = def_data.get("node")
-        if node:
-            complexity = self._estimate_complexity(node)
-            if complexity >= self.config.complexity_threshold:
-                return True
-
-        sensitive = [
-            "auth",
-            "login",
-            "password",
-            "token",
-            "secret",
-            "sql",
-            "query",
-            "execute",
-            "eval",
-            "exec",
-            "shell",
-            "command",
-            "system",
-            "pickle",
-            "yaml",
-            "upload",
-            "file",
-            "path",
-        ]
-        func_lower = func_name.lower()
-        for pattern in sensitive:
-            if pattern in func_lower:
-                return True
-
-        return False
-
-    def _should_analyze_quality_function(self, func_name, def_data):
-        node = def_data.get("node")
-        if node is None:
-            return False
-
-        complexity = self._estimate_complexity(node)
-        if complexity >= self.config.complexity_threshold:
-            return True
-
-        if self._function_length(node) >= 12:
-            return True
-
-        if self._function_parameter_count(node) >= 4:
-            return True
-
-        if self._return_site_count(node) >= 2:
-            return True
-
-        if self._control_flow_count(node) >= 3:
-            return True
-
-        if self._has_exception_handling(node):
-            return True
-
-        func_lower = func_name.lower()
-        quality_signals = (
-            "build",
-            "format",
-            "normalize",
-            "parse",
-            "render",
-            "resolve",
-            "validate",
-        )
-        return any(token in func_lower for token in quality_signals)
-
-    def _active_review_modes(self, issue_types=None):
-        if not issue_types:
-            modes = set()
-            if self.config.enable_security:
-                modes.add("security")
-            if self.config.enable_quality:
-                modes.add("quality")
-            return modes
-
-        modes = set()
-        for issue_type in issue_types:
-            name = str(issue_type).lower().strip()
-            if name in {"security", SECURITY_AUDIT_ISSUE}:
-                modes.add("security")
-            if name == "quality":
-                modes.add("quality")
-        return modes
-
-    @staticmethod
-    def _normalized_issue_types(issue_types=None):
-        return {str(t).lower().strip() for t in (issue_types or []) if str(t).strip()}
-
-    def _should_use_whole_file_review(self, file_norm, issue_types=None):
-        if (
-            self.config.full_file_review
-            or file_norm in self.config.force_full_file_paths
-        ):
-            return True
-        return SECURITY_AUDIT_ISSUE in self._normalized_issue_types(issue_types)
-
-    def _should_analyze_function(
-        self, func_name, def_data, graph, *, issue_types=None, total_functions=0
-    ):
-        if not self.config.smart_filter:
-            return True
-
-        modes = self._active_review_modes(issue_types)
-        if not modes:
-            return True
-
-        if "quality" in modes and total_functions and total_functions <= 3:
-            return True
-
-        return (
-            "security" in modes
-            and self._should_analyze_security_function(func_name, def_data, graph)
-        ) or (
-            "quality" in modes
-            and self._should_analyze_quality_function(func_name, def_data)
-        )
 
     def _build_batched_context(self, functions_data, graph, file_path, defs_map=None):
         return self._build_batched_context_for_modes(
@@ -515,7 +315,37 @@ class SkylosLLM:
 
         all_findings = []
         file_norm = _norm_path(file_path)
+        static_agent_findings = self._collect_static_agent_findings(
+            source,
+            str(file_path),
+            issue_types=issue_types,
+        )
+        if self._should_use_static_only_route():
+            self._record_route("static_only")
+            return self._finalize_file_findings(
+                static_agent_findings,
+                source,
+                str(file_path),
+                static_findings=static_findings,
+                issue_types=issue_types,
+            )
+        if self._static_route_complete(
+            static_agent_findings,
+            issue_types=issue_types,
+        ):
+            self._record_route("static_only")
+            return self._finalize_file_findings(
+                static_agent_findings,
+                source,
+                str(file_path),
+                static_findings=static_findings,
+                issue_types=issue_types,
+            )
 
+        if static_agent_findings and self._agent_route() == "static_first":
+            self._record_route("static_first_escalated")
+        else:
+            self._record_route("full_harness")
         if self._should_use_whole_file_review(file_norm, issue_types):
             all_findings = self._analyze_whole_file(
                 source,
@@ -638,14 +468,14 @@ class SkylosLLM:
                     source, str(file_path), defs_map, issue_types=issue_types
                 )
 
-        validated, _ = self.validator.validate(all_findings, source, str(file_path))
-
-        if static_findings:
-            validated = merge_findings(validated, static_findings, str(file_path))
-
-        validated = deduplicate_findings(validated)
-
-        return validated
+        all_findings.extend(static_agent_findings)
+        return self._finalize_file_findings(
+            all_findings,
+            source,
+            str(file_path),
+            static_findings=static_findings,
+            issue_types=issue_types,
+        )
 
     def _count_lines(self, file_path):
         try:
@@ -684,6 +514,7 @@ class SkylosLLM:
         all_findings = []
         total_lines = 0
         self._reset_usage_counters()
+        self._reset_route_counts()
 
         files = [Path(f) for f in files]
 
@@ -760,6 +591,7 @@ class SkylosLLM:
             analysis_time_ms=elapsed_ms,
             model_used=self.config.model,
             tokens_used=self._total_tokens_used(),
+            route_counts=self._route_counts_snapshot(),
         )
         result.summary = self._generate_summary(result)
 

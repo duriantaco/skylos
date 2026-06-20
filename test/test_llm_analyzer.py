@@ -400,6 +400,600 @@ def render_report(value):
     assert llm._should_analyze_quality_function("render_report", {"node": node}) is True
 
 
+def test_quality_selector_flags_async_blocking_calls():
+    cfg = AnalyzerConfig(quiet=True, enable_security=False, enable_quality=True)
+    llm = SkylosLLM(cfg)
+
+    node = ast.parse(
+        """
+async def fetch_profile(user_id):
+    time.sleep(0.1)
+    response = requests.get(f"https://example.test/users/{user_id}")
+    return response.json()
+"""
+    ).body[0]
+
+    assert llm._should_analyze_quality_function("fetch_profile", {"node": node}) is True
+
+
+def test_agent_static_findings_add_async_blocking_when_llm_misses(tmp_path, monkeypatch):
+    fp = tmp_path / "app.py"
+    fp.write_text(
+        "import requests\n"
+        "import time\n\n"
+        "async def fetch_profile(user_id):\n"
+        "    time.sleep(0.1)\n"
+        "    response = requests.get(f'https://example.test/users/{user_id}')\n"
+        "    return response.json()\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True, enable_security=False, enable_quality=True)
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", lambda *args, **kwargs: [])
+
+    findings = llm.analyze_file(fp)
+
+    assert [(f.rule_id, f.symbol) for f in findings] == [
+        ("SKY-Q401", "fetch_profile")
+    ]
+
+
+def test_agent_static_findings_add_upload_traversal_when_llm_misses(
+    tmp_path, monkeypatch
+):
+    fp = tmp_path / "app.py"
+    fp.write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "from flask import Flask, request\n\n"
+        "app = Flask(__name__)\n"
+        "UPLOAD_DIR = Path('/srv/uploads')\n\n"
+        "@app.post('/upload')\n"
+        "def upload_file():\n"
+        "    upload = request.files['file']\n"
+        "    filename = upload.filename\n"
+        "    target = UPLOAD_DIR / filename\n"
+        "    with open(target, 'wb') as handle:\n"
+        "        handle.write(upload.read())\n"
+        "    return 'ok'\n\n"
+        "@app.post('/upload-safe')\n"
+        "def upload_safe():\n"
+        "    upload = request.files['file']\n"
+        "    safe_name = os.path.basename(upload.filename)\n"
+        "    target = UPLOAD_DIR / safe_name\n"
+        "    with open(target, 'wb') as handle:\n"
+        "        handle.write(upload.read())\n"
+        "    return 'ok'\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True)
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", lambda *args, **kwargs: [])
+
+    findings = llm.analyze_file(fp, issue_types=["security_audit"])
+
+    assert [(f.rule_id, f.symbol) for f in findings] == [
+        ("SKY-D215", "upload_file")
+    ]
+
+
+def test_agent_static_findings_add_archive_extraction_when_llm_misses(
+    tmp_path, monkeypatch
+):
+    fp = tmp_path / "app.py"
+    fp.write_text(
+        "import tarfile\n"
+        "from pathlib import Path\n"
+        "from flask import Flask, request\n\n"
+        "app = Flask(__name__)\n"
+        "EXTRACT_ROOT = Path('/srv/bundles')\n\n"
+        "@app.post('/extract-bundle')\n"
+        "def extract_bundle():\n"
+        "    upload = request.files['bundle']\n"
+        "    archive_path = EXTRACT_ROOT / upload.filename\n"
+        "    upload.save(archive_path)\n"
+        "    with tarfile.open(archive_path) as bundle:\n"
+        "        bundle.extractall(EXTRACT_ROOT)\n"
+        "    return 'ok'\n\n"
+        "@app.post('/extract-bundle-safe')\n"
+        "def extract_bundle_safe():\n"
+        "    upload = request.files['bundle']\n"
+        "    archive_path = EXTRACT_ROOT / upload.filename\n"
+        "    upload.save(archive_path)\n"
+        "    root = EXTRACT_ROOT.resolve()\n"
+        "    with tarfile.open(archive_path) as bundle:\n"
+        "        safe_members = [member for member in bundle.getmembers()]\n"
+        "        bundle.extractall(root, members=safe_members)\n"
+        "    return 'ok'\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True)
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", lambda *args, **kwargs: [])
+
+    findings = llm.analyze_file(fp, issue_types=["security_audit"])
+
+    assert [(f.rule_id, f.symbol) for f in findings] == [
+        ("SKY-D326", "extract_bundle"),
+    ]
+
+
+def test_agent_static_findings_add_branch_hotspot_when_llm_misses(
+    tmp_path, monkeypatch
+):
+    fp = tmp_path / "app.py"
+    fp.write_text(
+        "def branchy_handler(flag_a, flag_b, flag_c):\n"
+        "    if flag_a:\n"
+        "        if flag_b:\n"
+        "            return 1\n"
+        "        return 2\n"
+        "    if flag_c:\n"
+        "        return 3\n"
+        "    return 4\n\n"
+        "def simple_handler():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True, enable_security=False, enable_quality=True)
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", lambda *args, **kwargs: [])
+
+    findings = llm.analyze_file(fp, issue_types=["quality"])
+
+    assert [(f.rule_id, f.symbol) for f in findings] == [
+        ("SKY-Q301", "branchy_handler")
+    ]
+
+
+def test_agent_static_first_route_skips_llm_for_branch_hotspot(tmp_path, monkeypatch):
+    fp = tmp_path / "app.py"
+    fp.write_text(
+        "def branchy_handler(flag_a, flag_b, flag_c):\n"
+        "    if flag_a:\n"
+        "        if flag_b:\n"
+        "            return 1\n"
+        "        return 2\n"
+        "    if flag_c:\n"
+        "        return 3\n"
+        "    return 4\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(
+        quiet=True,
+        enable_security=False,
+        enable_quality=True,
+        agent_route="static_first",
+    )
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("static route should skip the LLM harness")
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fail_if_called)
+
+    findings = llm.analyze_file(fp, issue_types=["quality"])
+
+    assert [(f.rule_id, f.symbol) for f in findings] == [
+        ("SKY-Q301", "branchy_handler")
+    ]
+    assert findings[0].metadata["route_complete"] is True
+    assert findings[0].metadata["route_mode"] == "quality"
+    assert findings[0].metadata["route_reason"]
+    assert llm._route_counts_snapshot() == {"static_only": 1}
+
+
+def test_agent_static_first_escalates_when_multiple_modes_are_in_scope(
+    tmp_path, monkeypatch
+):
+    fp = tmp_path / "app.py"
+    fp.write_text(
+        "def branchy_handler(flag_a, flag_b, flag_c):\n"
+        "    if flag_a:\n"
+        "        if flag_b:\n"
+        "            return 1\n"
+        "        return 2\n"
+        "    if flag_c:\n"
+        "        return 3\n"
+        "    return 4\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(
+        quiet=True,
+        enable_security=True,
+        enable_quality=True,
+        agent_route="static_first",
+    )
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+    calls = {"count": 0}
+
+    def fake_llm(*args, **kwargs):
+        calls["count"] += 1
+        return []
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_llm)
+
+    findings = llm.analyze_file(fp)
+
+    assert calls["count"] == 1
+    assert [(f.rule_id, f.symbol) for f in findings] == [
+        ("SKY-Q301", "branchy_handler")
+    ]
+    assert llm._route_counts_snapshot() == {"static_first_escalated": 1}
+
+
+def test_agent_full_route_still_calls_llm_with_static_findings(tmp_path, monkeypatch):
+    fp = tmp_path / "app.py"
+    fp.write_text(
+        "def branchy_handler(flag_a, flag_b, flag_c):\n"
+        "    if flag_a:\n"
+        "        if flag_b:\n"
+        "            return 1\n"
+        "        return 2\n"
+        "    if flag_c:\n"
+        "        return 3\n"
+        "    return 4\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(
+        quiet=True,
+        enable_security=False,
+        enable_quality=True,
+        agent_route="full",
+    )
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+    calls = {"count": 0}
+
+    def fake_llm(*args, **kwargs):
+        calls["count"] += 1
+        return []
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_llm)
+
+    findings = llm.analyze_file(fp, issue_types=["quality"])
+
+    assert calls["count"] == 1
+    assert [(f.rule_id, f.symbol) for f in findings] == [
+        ("SKY-Q301", "branchy_handler")
+    ]
+    assert llm._route_counts_snapshot() == {"full_harness": 1}
+
+
+def test_agent_static_findings_add_debt_hotspot_when_llm_misses(
+    tmp_path, monkeypatch
+):
+    fp = tmp_path / "ledger.py"
+    fp.write_text(
+        "def reconcile_account(\n"
+        "    account,\n"
+        "    mode,\n"
+        "    include_pending=False,\n"
+        "    dry_run=False,\n"
+        "    emit_metrics=False,\n"
+        "    fallback_currency='USD',\n"
+        "):\n"
+        "    actions = []\n"
+        "    try:\n"
+        "        if account is None:\n"
+        "            return actions\n"
+        "        if mode == 'dashboard':\n"
+        "            actions.append('dashboard')\n"
+        "        elif mode == 'nightly':\n"
+        "            actions.append('nightly')\n"
+        "        elif mode == 'close':\n"
+        "            actions.append('close')\n"
+        "        if include_pending and account.get('pending_items'):\n"
+        "            actions.append('pending')\n"
+        "        if emit_metrics and account.get('id'):\n"
+        "            actions.append('metric')\n"
+        "        if dry_run:\n"
+        "            return actions\n"
+        "        return actions\n"
+        "    except Exception:\n"
+        "        return []\n\n"
+        "def summarize_account(account):\n"
+        "    if not account:\n"
+        "        return {'status': 'unknown'}\n"
+        "    return {'status': account.get('status', 'active')}\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True, enable_security=False, enable_quality=True)
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", lambda *args, **kwargs: [])
+
+    findings = llm.analyze_file(fp, issue_types=["quality"])
+
+    assert [(f.rule_id, f.symbol) for f in findings] == [
+        ("SKY-Q301", "reconcile_account")
+    ]
+    assert "params" in findings[0].metadata
+
+
+def test_agent_refutes_clean_async_and_small_helper_noise(tmp_path, monkeypatch):
+    fp = tmp_path / "module.py"
+    fp.write_text(
+        "async def fetch_status(client, user_id):\n"
+        "    response = await client.get(f'/users/{user_id}')\n"
+        "    if response.status == 404:\n"
+        "        return None\n"
+        "    response.raise_for_status()\n"
+        "    return await response.json()\n\n"
+        "def normalize_headers(headers=None):\n"
+        "    current = headers or {}\n"
+        "    return {key.lower(): value for key, value in current.items()}\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True, enable_security=False, enable_quality=True)
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    def fake_llm_findings(*args, **kwargs):
+        return [
+            Finding(
+                rule_id="SKY-L001",
+                issue_type=IssueType.PERFORMANCE,
+                severity=Severity.MEDIUM,
+                confidence=Confidence.MEDIUM,
+                message="Potential missing await or blocking async helper issue",
+                location=CodeLocation(file=str(fp), line=2),
+                symbol="fetch_status",
+            ),
+            Finding(
+                rule_id="SKY-L001",
+                issue_type=IssueType.QUALITY,
+                severity=Severity.MEDIUM,
+                confidence=Confidence.MEDIUM,
+                message="Potential normalization issue",
+                location=CodeLocation(file=str(fp), line=9),
+                symbol="normalize_headers",
+            ),
+            Finding(
+                rule_id="SKY-L212",
+                issue_type=IssueType.SECURITY,
+                severity=Severity.MEDIUM,
+                confidence=Confidence.MEDIUM,
+                message="Potential SSRF issue",
+                location=CodeLocation(file=str(fp), line=2),
+                symbol="fetch_status",
+            ),
+        ]
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_llm_findings)
+
+    assert llm.analyze_file(fp, issue_types=["quality"]) == []
+
+
+def test_agent_keeps_security_finding_on_clean_async_owner(tmp_path, monkeypatch):
+    fp = tmp_path / "app.py"
+    fp.write_text(
+        "async def fetch_url(client, url):\n"
+        "    response = await client.get(url)\n"
+        "    return await response.text()\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True, enable_security=True, enable_quality=False)
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    def fake_llm_findings(*args, **kwargs):
+        return [
+            Finding(
+                rule_id="SKY-L210",
+                issue_type=IssueType.SECURITY,
+                severity=Severity.HIGH,
+                confidence=Confidence.HIGH,
+                message="SSRF via user-controlled URL",
+                location=CodeLocation(file=str(fp), line=2),
+                symbol="fetch_url",
+            )
+        ]
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_llm_findings)
+
+    findings = llm.analyze_file(fp, issue_types=["security_audit"])
+
+    assert [(finding.rule_id, finding.symbol) for finding in findings] == [
+        ("SKY-L210", "fetch_url")
+    ]
+
+
+def test_agent_refutes_safe_subprocess_allowlist_noise(tmp_path, monkeypatch):
+    fp = tmp_path / "hooks.py"
+    fp.write_text(
+        "import subprocess\n\n"
+        "ALLOWED = {\n"
+        "    'status': ['git', 'status', '--short'],\n"
+        "    'fetch': ['git', 'fetch', 'origin'],\n"
+        "}\n\n"
+        "def run_named_hook(name, repo_path):\n"
+        "    cmd = f'cd {repo_path} && {name}'\n"
+        "    return subprocess.run(cmd, shell=True, capture_output=True, text=True)\n\n"
+        "def run_builtin(name):\n"
+        "    return subprocess.run(ALLOWED[name], check=False, capture_output=True, text=True)\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True)
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    def fake_llm_findings(*args, **kwargs):
+        return [
+            Finding(
+                rule_id="SKY-L212",
+                issue_type=IssueType.SECURITY,
+                severity=Severity.HIGH,
+                confidence=Confidence.MEDIUM,
+                message="Command injection via subprocess.run shell=True",
+                location=CodeLocation(file=str(fp), line=10),
+                symbol="run_named_hook",
+            ),
+            Finding(
+                rule_id="SKY-L212",
+                issue_type=IssueType.QUALITY,
+                severity=Severity.MEDIUM,
+                confidence=Confidence.MEDIUM,
+                message="Command injection via subprocess.run",
+                location=CodeLocation(file=str(fp), line=13),
+                symbol="run_builtin",
+            ),
+        ]
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_llm_findings)
+
+    findings = llm.analyze_file(fp)
+
+    assert [(finding.rule_id, finding.symbol) for finding in findings] == [
+        ("SKY-L212", "run_named_hook")
+    ]
+
+
+def test_agent_keeps_command_injection_when_function_has_mixed_subprocess_calls(
+    tmp_path, monkeypatch
+):
+    fp = tmp_path / "hooks.py"
+    fp.write_text(
+        "import subprocess\n\n"
+        "def run_hook(user_cmd):\n"
+        "    subprocess.run(['git', 'status'], check=False)\n"
+        "    return subprocess.run(user_cmd, shell=True)\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True)
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    def fake_llm_findings(*args, **kwargs):
+        return [
+            Finding(
+                rule_id="SKY-L212",
+                issue_type=IssueType.SECURITY,
+                severity=Severity.HIGH,
+                confidence=Confidence.HIGH,
+                message="Command injection via subprocess.run shell=True",
+                location=CodeLocation(file=str(fp), line=5),
+                symbol="run_hook",
+            )
+        ]
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_llm_findings)
+
+    findings = llm.analyze_file(fp, issue_types=["security_audit"])
+
+    assert [(finding.rule_id, finding.symbol) for finding in findings] == [
+        ("SKY-L212", "run_hook")
+    ]
+
+
+def test_agent_remaps_weak_security_symbol_to_handler(tmp_path, monkeypatch):
+    fp = tmp_path / "app.py"
+    fp.write_text(
+        "from pathlib import Path\n"
+        "from flask import Flask, request\n\n"
+        "app = Flask(__name__)\n"
+        "UPLOAD_DIR = Path('/srv/uploads')\n\n"
+        "@app.post('/upload')\n"
+        "def upload_file():\n"
+        "    upload = request.files['file']\n"
+        "    filename = upload.filename\n"
+        "    target = UPLOAD_DIR / filename\n"
+        "    return str(target)\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True)
+    llm = SkylosLLM(cfg)
+    llm.validator = DummyValidator()
+
+    def fake_llm_finding(*args, **kwargs):
+        return [
+            Finding(
+                rule_id="SKY-D215",
+                issue_type=IssueType.SECURITY,
+                severity=Severity.HIGH,
+                confidence=Confidence.HIGH,
+                message="Path traversal through filename",
+                location=CodeLocation(file=str(fp), line=11),
+                symbol="filename",
+            )
+        ]
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_llm_finding)
+
+    findings = llm.analyze_file(fp, issue_types=["security_audit"])
+    symbols = {finding.symbol for finding in findings}
+
+    assert "upload_file" in symbols
+    assert "filename" not in symbols
+
+
+def test_agent_static_hint_does_not_duplicate_security_finding(tmp_path, monkeypatch):
+    fp = tmp_path / "app.py"
+    fp.write_text(
+        "from pathlib import Path\n"
+        "from flask import Flask, request\n\n"
+        "app = Flask(__name__)\n"
+        "UPLOAD_DIR = Path('/srv/uploads')\n\n"
+        "@app.post('/upload')\n"
+        "def upload_file():\n"
+        "    upload = request.files['file']\n"
+        "    filename = upload.filename\n"
+        "    target = UPLOAD_DIR / filename\n"
+        "    with open(target, 'wb') as handle:\n"
+        "        handle.write(upload.read())\n"
+        "    return 'ok'\n",
+        encoding="utf-8",
+    )
+
+    cfg = AnalyzerConfig(quiet=True)
+    llm = SkylosLLM(cfg)
+
+    def fake_llm_finding(*args, **kwargs):
+        return [
+            Finding(
+                rule_id="SKY-D215",
+                issue_type=IssueType.SECURITY,
+                severity=Severity.CRITICAL,
+                confidence=Confidence.HIGH,
+                message="Possible path traversal: tainted filesystem path.",
+                location=CodeLocation(file=str(fp), line=13),
+                symbol="upload_file",
+            )
+        ]
+
+    monkeypatch.setattr(llm, "_analyze_whole_file", fake_llm_finding)
+
+    findings = llm.analyze_file(fp, issue_types=["security_audit"])
+
+    assert [(finding.rule_id, finding.message) for finding in findings] == [
+        ("SKY-D215", "Possible path traversal: tainted filesystem path.")
+    ]
+
+
 def test_small_quality_file_analyzes_all_functions(tmp_path, monkeypatch):
     fp = tmp_path / "quality.py"
     fp.write_text(

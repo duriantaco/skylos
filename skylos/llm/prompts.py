@@ -171,6 +171,9 @@ CAPABILITIES:
 - Error handling issues
 - Code smell detection
 - Performance anti-patterns
+- Async correctness/performance issues, including blocking sync calls such as
+  time.sleep(), requests.get/post(), subprocess.run(), or synchronous file/network
+  I/O inside async def handlers
 {_custom_template_section(templates, "quality", template_root)}
 
 RULES:
@@ -207,6 +210,8 @@ GOAL:
 IMPORTANT REVIEW PATTERNS:
 - inconsistent return behavior, especially value-vs-None paths in the same function
 - swallowed exceptions or handlers that silently pass
+- blocking synchronous calls inside async functions, especially time.sleep(),
+  requests.*, subprocess.*, or sync file/network I/O in async web handlers
 - branch-heavy handlers with multiple return paths that are hard to reason about
 - mutable default arguments that retain shared state across calls
 - repo activation evidence such as entrypoints, runtime registrations, import fan-in, and related tests
@@ -291,6 +296,10 @@ FIND SECURITY ISSUES LIKE:
 - Command injection (os.system, subprocess shell=True, etc.)
 - SSRF (requests.get(url_from_user))
 - Path traversal / arbitrary file read
+- File upload traversal, especially request.files/user filenames joined into
+  server-side paths without basename/resolve/allowlist validation
+- Unsafe archive extraction / zip slip / tar slip, especially extractall() or
+  archive member writes without member path validation under the extraction root
 - Insecure deserialization (pickle.loads, yaml.load)
 - eval/exec / dynamic code execution
 - Weak crypto (md5/sha1), missing TLS verification, auth bypass
@@ -305,7 +314,8 @@ RULES:
 4. For each finding, use `explanation` to describe the attack path and likely impact in this code.
 5. Use `suggestion` to describe the concrete secure fix.
 6. Set `security_details` with attack_path, impact, fix, evidence_lines, and unsafe_if.
-7. If no issues found: {{"findings": []}}
+7. For request handlers, upload handlers, and archive handlers, prefer the enclosing handler function as `symbol` over a local variable such as filename, path, member, archive, upload, or request.
+8. If no issues found: {{"findings": []}}
 """
 
 

@@ -181,6 +181,7 @@ class AnalysisResult:
         analysis_time_ms: int = 0,
         model_used: str = "",
         tokens_used: int = 0,
+        route_counts: dict[str, int] | None = None,
     ) -> None:
         self.findings = findings or []
         self.summary = summary
@@ -189,6 +190,7 @@ class AnalysisResult:
         self.analysis_time_ms = analysis_time_ms
         self.model_used = model_used
         self.tokens_used = tokens_used
+        self.route_counts = route_counts or {}
 
     def to_dict(self) -> dict[str, Any]:
         out_findings = []
@@ -204,6 +206,7 @@ class AnalysisResult:
                 "analysis_time_ms": self.analysis_time_ms,
                 "model_used": self.model_used,
                 "tokens_used": self.tokens_used,
+                "route_counts": dict(self.route_counts),
             },
         }
 

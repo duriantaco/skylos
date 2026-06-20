@@ -36,6 +36,8 @@ def test_quality_prompt_treats_context_as_untrusted():
     )
     assert "=== BEGIN UNTRUSTED CODE CONTEXT ===" in user
     assert "=== END UNTRUSTED CODE CONTEXT ===" in user
+    assert "blocking sync calls" in system
+    assert "time.sleep()" in system
 
 
 def test_quality_prompt_appends_custom_template_without_replacing_safety(tmp_path):
@@ -92,6 +94,9 @@ def test_security_audit_prompt_treats_context_as_untrusted():
     assert "how an attacker could exploit the shown code" in user
     assert "concrete secure fix" in user
     assert "security_details" in user
+    assert "File upload traversal" in system
+    assert "Unsafe archive extraction" in system
+    assert "enclosing handler function" in system
 
 
 def test_few_shot_examples_match_strict_finding_schema_fields():
@@ -111,6 +116,7 @@ def test_review_prompt_tells_model_how_to_use_review_hints():
 
     assert "expert code reviewer for Python repositories" in system
     assert "mutable default arguments that retain shared state across calls" in system
+    assert "blocking synchronous calls inside async functions" in system
     assert "graph grounding evidence" in system
     assert "allowlisted argv-list subprocess calls" in system
     assert (
