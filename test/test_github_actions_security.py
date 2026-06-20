@@ -19,6 +19,10 @@ def _publish_workflow():
     return yaml.safe_load(Path(".github/workflows/publish.yml").read_text())
 
 
+def _release_please_workflow():
+    return yaml.safe_load(Path(".github/workflows/release-please.yml").read_text())
+
+
 def _tests_workflow():
     return yaml.safe_load(Path(".github/workflows/tests.yaml").read_text())
 
@@ -436,6 +440,30 @@ def test_publish_workflow_validates_strict_semver_release_tags():
     assert "(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)" in resolve_step["run"]
 
 
+def test_publish_workflow_verifies_required_checks_before_publish():
+    workflow = _publish_workflow()
+    release_please = _release_please_workflow()
+
+    assert workflow["jobs"]["build"]["permissions"]["checks"] == "read"
+    assert release_please["jobs"]["publish-release"]["permissions"]["checks"] == "read"
+
+    build_steps = workflow["jobs"]["build"]["steps"]
+    check_step = next(s for s in build_steps if s.get("name") == "Verify required release checks")
+    check_index = build_steps.index(check_step)
+    setup_index = next(
+        i for i, step in enumerate(build_steps) if step.get("name") == "Set up Python"
+    )
+
+    assert check_index < setup_index
+    assert check_step["env"]["REQUIRED_RELEASE_CHECKS"] == (
+        '["test", "analyzer-speed", "corpus", "quality-benchmark", "scan"]'
+    )
+    assert "gh api" in check_step["run"]
+    assert "check-runs?per_page=100" in check_step["run"]
+    assert "Required release checks failed" in check_step["run"]
+    assert "Required release checks are not complete yet" in check_step["run"]
+
+
 def test_tests_workflow_pins_codecov_and_limits_permissions():
     workflow = _tests_workflow()
     assert workflow["permissions"] == {"contents": "read"}
@@ -481,6 +509,18 @@ def test_skylos_pr_workflow_uses_trusted_scanner_package():
     scan_step = next(s for s in steps if s.get("name") == "Run Skylos")
     assert "python -m skylos.cli" not in scan_step["run"]
     assert ".venv/bin/skylos" in scan_step["run"]
+
+    advisory_step = next(s for s in steps if s.get("name") == "Report findings (advisory)")
+    assert "--advisory" in advisory_step["run"]
+
+    blocker_step = next(
+        s for s in steps if s.get("name") == "Block new high-risk security findings"
+    )
+    assert blocker_step["if"] == "steps.scan.outcome == 'success'"
+    assert "HIGH" in blocker_step["run"]
+    assert "CRITICAL" in blocker_step["run"]
+    assert 'for category in ("danger", "secrets")' in blocker_step["run"]
+    assert "raise SystemExit(1)" in blocker_step["run"]
 
 
 def test_composite_action_validates_and_quotes_max_comments_input():

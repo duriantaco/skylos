@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      checks: read
     outputs:
       release_tag: ${{ steps.release_ref.outputs.tag }}
 
@@ -113,6 +114,76 @@ jobs:
                   f"release-please manifest version {manifest_version!r} does not match release tag {expected!r}"
               )
           PY
+
+      - name: Verify required release checks
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRED_RELEASE_CHECKS: '["test", "analyzer-speed", "corpus", "quality-benchmark", "scan"]'
+        run: |
+          set -euo pipefail
+          release_sha="$(git rev-parse HEAD)"
+
+          for attempt in {1..30}; do
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${GITHUB_REPOSITORY}/commits/${release_sha}/check-runs?per_page=100" \
+              > /tmp/skylos-release-checks.json
+
+            set +e
+            python - "$REQUIRED_RELEASE_CHECKS" /tmp/skylos-release-checks.json <<'PY'
+          import json
+          import sys
+
+          required = json.loads(sys.argv[1])
+          data_path = sys.argv[2]
+          data = json.load(open(data_path, encoding="utf-8"))
+          runs = data.get("check_runs", [])
+
+          failures = []
+          pending = []
+          for name in required:
+              matches = [run for run in runs if run.get("name") == name]
+              if not matches:
+                  pending.append(f"{name}: missing")
+                  continue
+              if any(run.get("conclusion") == "success" for run in matches):
+                  continue
+              active = [run for run in matches if run.get("status") != "completed"]
+              if active:
+                  pending.append(f"{name}: {active[0].get('status')}")
+                  continue
+              conclusions = sorted(
+                  {str(run.get("conclusion") or "unknown") for run in matches}
+              )
+              failures.append(f"{name}: {', '.join(conclusions)}")
+
+          if failures:
+              print("Required release checks failed:")
+              for item in failures:
+                  print(f"- {item}")
+              sys.exit(1)
+          if pending:
+              print("Required release checks are not complete yet:")
+              for item in pending:
+                  print(f"- {item}")
+              sys.exit(2)
+
+          print("Required release checks passed.")
+          PY
+            status=$?
+            set -e
+
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$status" -ne 2 ] || [ "$attempt" -eq 30 ]; then
+              exit "$status"
+            fi
+
+            echo "Required release checks pending; retrying in 20s (attempt ${attempt}/30)."
+            sleep 20
+          done
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
