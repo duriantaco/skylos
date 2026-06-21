@@ -3,20 +3,22 @@
 CLI output modes control how Skylos displays scan results in the terminal. Each mode is designed for a different workflow such as human review, automation, CI pipelines, or AI-assisted processing.
 
 If you're unsure which mode to use, the table below provides a quick reference.
+Most entries are `--format` values; the TUI is a separate `--tui` mode because
+it opens an interactive screen instead of printing a report.
 
 Skylos keeps the default terminal output stable for existing scripts and copy/paste workflows, then offers opt-in formats for more focused use cases.
 
 ## Choosing an Output Mode
 
-| Mode     | Best For |
-|----------|----------|
-| rich     | Full detailed terminal output for deep inspection |
-| pretty   | Human-readable summaries for quick review |
-| concise  | CI pipelines, scripts, and automation tools |
-| json     | Programmatic use and external tool integration |
-| llm      | AI/agent workflows and structured reasoning systems |
-| github   | GitHub PR annotations and review comments |
-| tui      | Interactive exploration of findings in terminal |
+| Need | Command | Best For |
+|------|---------|----------|
+| Full terminal report | `skylos .` or `skylos . --format rich` | Deep inspection and existing terminal workflows |
+| Compact human report | `skylos . --format pretty` | Quick local review and PR discussion |
+| Copyable plain output | `skylos . --format concise` | CI logs, scripts, editors, and automation |
+| Machine-readable results | `skylos . --format json` | Programmatic use and external integrations |
+| AI-ready report | `skylos . --format llm` | Agent workflows and structured reasoning systems |
+| GitHub Actions annotations | `skylos . --format github` | Inline workflow annotations in GitHub checks |
+| Interactive terminal triage | `skylos . --tui` | Keyboard-driven exploration of findings |
 
 ## Human Terminal Output
 
@@ -104,10 +106,10 @@ The TUI uses a category sidebar plus a selectable finding list and detail pane. 
 
 ## Common Workflows
 
-- Local development review → `pretty`
-- CI/CD checks → `concise`
-- Debugging full scan results → `rich`
-- Tooling and integrations → `json`
-- AI-assisted workflows → `llm`
-- GitHub pull request reviews → `github`
-- Deep interactive investigation → `tui`
+- Local development review: `skylos . --format pretty`
+- CI logs and scripts: `skylos . --format concise`
+- Debugging full scan results: `skylos .`
+- Tooling and integrations: `skylos . --format json`
+- AI-assisted workflows: `skylos . --format llm`
+- GitHub Actions annotations: `skylos . --format github`
+- Deep interactive investigation: `skylos . --tui`
