@@ -1,5 +1,4 @@
 import json
-import os
 import sqlite3
 
 from skylos.analyzer import analyze
@@ -26,20 +25,6 @@ def _event_kinds(entry):
 
 def _event_roles(entry):
     return {event["role"] for event in entry["evidence"]}
-
-
-def _write_fixture(path, text: str) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(path, flags, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            fd = None
-            handle.write(text)
-    finally:
-        if fd is not None:
-            os.close(fd)
 
 
 def test_evidence_ledger_uses_paper_classification_precedence():
@@ -166,8 +151,7 @@ def test_analyzer_outputs_dead_code_evidence_without_changing_findings(tmp_path)
 
 def test_uncertain_dead_code_decision_leads_with_uncertainty(tmp_path):
     module = tmp_path / "app.py"
-    _write_fixture(
-        module,
+    module.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
         "\n".join(
             [
                 "def format_admin_status():",
@@ -175,6 +159,7 @@ def test_uncertain_dead_code_decision_leads_with_uncertainty(tmp_path):
                 "",
             ]
         ),
+        encoding="utf-8",
     )
 
     result = json.loads(

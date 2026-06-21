@@ -315,6 +315,38 @@ def load(path):
     assert "SKY-D325" not in _rule_ids(out)
 
 
+def test_pytest_tmp_path_literal_fixture_write_is_not_path_finding(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "test_tmp_path_fixture.py",
+        """
+def test_build_fixture(tmp_path):
+    module = tmp_path / "app.py"
+    module.write_text("x = 1", encoding="utf-8")
+""",
+    )
+    ids = _rule_ids(out)
+    assert "SKY-D215" not in ids
+    assert "SKY-D324" not in ids
+
+
+def test_non_test_tmp_path_parameter_still_flags_path_finding(tmp_path):
+    out = _scan_one(
+        tmp_path,
+        "app.py",
+        """
+from pathlib import Path
+
+def save(tmp_path):
+    module = Path(tmp_path) / "app.py"
+    module.write_text("x = 1", encoding="utf-8")
+""",
+    )
+    ids = _rule_ids(out)
+    assert "SKY-D215" in ids
+    assert "SKY-D324" in ids
+
+
 def test_unsafe_archive_extractall_flags(tmp_path):
     out = _scan_one(
         tmp_path,
