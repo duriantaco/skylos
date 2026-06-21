@@ -19,7 +19,7 @@ def _sorted_values(values):
     return sorted(values)
 
 
-def dead_code_evidence(analyzer, path, pyproject_entrypoint_qnames):
+def dead_code_evidence(analyzer, path, pyproject_entrypoint_qnames, threshold=None):
     evidence_root = getattr(analyzer, "_project_root", None)
     if evidence_root is None:
         evidence_root = Path(_primary_path(path))
@@ -32,8 +32,13 @@ def dead_code_evidence(analyzer, path, pyproject_entrypoint_qnames):
         analyzer.defs,
         project_root=evidence_root,
         pyproject_entrypoint_qnames=pyproject_entrypoint_qnames,
+        threshold=threshold,
     )
-    return ledger, ledger.to_dict(evidence_root)
+    return ledger, ledger.to_dict(
+        evidence_root,
+        definitions=analyzer.defs,
+        threshold=threshold,
+    )
 
 
 def _evidence_by_name(dead_code_evidence_payload):
@@ -49,6 +54,11 @@ def _attach_evidence(target: dict, definition, evidence_by_name) -> None:
         return
     target["dead_code_classification"] = entry["classification"]
     target["dead_code_evidence"] = list(entry.get("evidence") or [])
+    decision = entry.get("decision") or {}
+    if isinstance(decision, dict):
+        target["dead_code_decision"] = dict(decision)
+        target["dead_code_reason"] = decision.get("primary_reason")
+        target["dead_code_reason_tags"] = list(decision.get("reason_tags") or [])
 
 
 def _is_dead_definition(definition, thr):

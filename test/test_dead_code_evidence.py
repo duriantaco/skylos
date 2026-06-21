@@ -23,6 +23,10 @@ def _event_kinds(entry):
     return {event["kind"] for event in entry["evidence"]}
 
 
+def _event_roles(entry):
+    return {event["role"] for event in entry["evidence"]}
+
+
 def test_evidence_ledger_uses_paper_classification_precedence():
     symbol = SymbolKey(
         file="app.py",
@@ -106,19 +110,70 @@ def test_analyzer_outputs_dead_code_evidence_without_changing_findings(tmp_path)
     assert by_name["app.used"]["classification"] == "alive"
     assert _event_kinds(by_name["app.used"]) >= {"top_level_execution"}
     assert "reachable_from_root" not in _event_kinds(by_name["app.used"])
+    assert "supports_dead" not in _event_roles(by_name["app.used"])
 
     assert by_name["app.unused"]["classification"] == "likely_dead"
-    assert by_name["app.unused"]["evidence"] == []
+    assert _event_kinds(by_name["app.unused"]) >= {
+        "no_static_references",
+        "not_exported",
+        "no_entrypoint",
+    }
+    assert _event_roles(by_name["app.unused"]) >= {"supports_dead"}
+    assert by_name["app.unused"]["decision"]["reason_tags"][:3] == [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+    ]
 
     unused_finding = next(
         item for item in result["unused_functions"] if item["name"] == "unused"
     )
     assert unused_finding["dead_code_classification"] == "likely_dead"
-    assert unused_finding["dead_code_evidence"] == []
+    assert unused_finding["dead_code_reason_tags"][:3] == [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+    ]
+    assert unused_finding["dead_code_reason"].startswith("No static references")
+    assert {event["role"] for event in unused_finding["dead_code_evidence"]} >= {
+        "supports_dead"
+    }
 
     collected = collect_dead_code_findings(result)
     collected_unused = next(item for item in collected if item["name"] == "unused")
     assert collected_unused["dead_code_classification"] == "likely_dead"
+    assert collected_unused["dead_code_reason_tags"][:3] == [
+        "no_refs",
+        "not_exported",
+        "no_entrypoint",
+    ]
+
+
+def test_uncertain_dead_code_decision_leads_with_uncertainty(tmp_path):
+    module = tmp_path / "app.py"
+    module.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        "\n".join(
+            [
+                "def format_admin_status():",
+                "    return 'ok'",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = json.loads(
+        analyze(str(tmp_path), conf=0, grep_verify=False, trace_file=False)
+    )
+
+    finding = next(
+        item
+        for item in result["unused_functions"]
+        if item["name"] == "format_admin_status"
+    )
+    assert finding["dead_code_classification"] == "uncertain"
+    assert finding["dead_code_reason_tags"][0] == "uncertainty"
+    assert finding["dead_code_reason"].startswith("Uncertainty evidence present")
 
 
 def test_pyproject_entrypoint_is_reported_as_package_evidence(tmp_path):

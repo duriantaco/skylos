@@ -8,6 +8,7 @@ SYMLINK_WRITE_RULE = "SKY-D324"
 SYMLINK_READ_RULE = "SKY-D325"
 ARCHIVE_EXTRACTION_RULE = "SKY-D326"
 OS_OPEN_WRITE_FLAGS = {"O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND"}
+PYTEST_TMP_FIXTURE_NAMES = {"tmp_path", "tmpdir"}
 
 
 def _qualified_name(node):
@@ -113,6 +114,25 @@ def _is_path_name_projection(node):
         and node.attr == "name"
         and _is_path_constructor_call(node.value)
     )
+
+
+def _is_probable_test_file(file_path):
+    normalized = str(file_path).replace("\\", "/")
+    name = normalized.rsplit("/", 1)[-1]
+    return (
+        name.startswith("test_")
+        or name.endswith("_test.py")
+        or "/test/" in f"/{normalized}/"
+        or "/tests/" in f"/{normalized}/"
+    )
+
+
+def _is_pytest_fixture_function(fn: ast.AST):
+    for decorator in getattr(fn, "decorator_list", []) or []:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if _expr_name(target) in {"pytest.fixture", "fixture"}:
+            return True
+    return False
 
 
 class _PathFlowChecker(TaintVisitor):
@@ -241,8 +261,23 @@ class _PathFlowChecker(TaintVisitor):
 
         for arg in args:
             name = getattr(arg, "arg", None)
-            if name and name not in {"self", "cls"}:
+            if not name or name in {"self", "cls"}:
+                continue
+            if self._is_pytest_tmp_fixture_param(name, fn):
+                self._set(name, False)
+                self._set_path_like(name, True)
+                self._set_basename_sanitized(name, False)
+                self._set_symlink_sensitive(name, False)
+            else:
                 self._set_path_like(name, False)
+
+    def _is_pytest_tmp_fixture_param(self, name: str, fn: ast.AST) -> bool:
+        if name not in PYTEST_TMP_FIXTURE_NAMES:
+            return False
+        if not _is_probable_test_file(self.file_path):
+            return False
+        function_name = getattr(fn, "name", "")
+        return function_name.startswith("test_") or _is_pytest_fixture_function(fn)
 
     def _is_path_like_expr(self, node):
         if _is_path_constructor_call(node):
