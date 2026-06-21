@@ -768,6 +768,52 @@ def test_render_results_unused_table_includes_confidence_column_and_formats():
     assert conf_cells[2] == "[dim]50%[/dim]"
 
 
+def test_render_results_unused_table_includes_compact_dead_code_reason():
+    console = Mock()
+
+    result = {
+        "analysis_summary": {"total_files": 1},
+        "unused_functions": [
+            {
+                "name": "old_helper",
+                "file": "/root/a.py",
+                "line": 10,
+                "confidence": 95,
+                "dead_code_reason_tags": [
+                    "uncertainty",
+                    "no_refs",
+                    "not_exported",
+                    "no_entrypoint",
+                    "confidence_ge_threshold",
+                ],
+            }
+        ],
+        "unused_imports": [],
+        "unused_parameters": [],
+        "unused_variables": [],
+        "unused_classes": [],
+        "quality": [],
+        "danger": [],
+        "secrets": [],
+    }
+
+    cli.render_results(console, result, tree=False, root_path="/root")
+
+    tables = [
+        call.args[0]
+        for call in console.print.call_args_list
+        if call.args and isinstance(call.args[0], Table)
+    ]
+    assert tables
+
+    table = tables[0]
+    headers = [column.header for column in table.columns]
+    assert "Why" in headers
+
+    why_col = next(column for column in table.columns if column.header == "Why")
+    assert list(why_col._cells) == ["uncertain · no refs · not exported · +1"]
+
+
 def test_render_results_shows_grep_verify_summary():
     console = Mock()
     result = {

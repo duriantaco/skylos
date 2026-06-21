@@ -63,6 +63,7 @@ def build_analysis_result(
         analyzer,
         path,
         pyproject_entrypoint_qnames,
+        threshold=thr,
     )
     unused = unused_definitions(analyzer, thr, evidence)
     context_map = definition_context(analyzer, thr, evidence)

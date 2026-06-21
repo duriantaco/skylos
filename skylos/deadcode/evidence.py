@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-CLASSIFICATION_POLICY = "base-ledger-with-reference-safe-abstentions"
+CLASSIFICATION_POLICY = "dead-code-evidence-v2"
 
 
 class EvidenceKind(str, Enum):
@@ -23,6 +23,10 @@ class EvidenceKind(str, Enum):
     VALIDATION_PASS = "validation_pass"
     VALIDATION_FAIL = "validation_fail"
     UNCERTAINTY = "uncertainty"
+    NO_STATIC_REFERENCES = "no_static_references"
+    NOT_EXPORTED = "not_exported"
+    NO_ENTRYPOINT = "no_entrypoint"
+    CONFIDENCE_GATE = "confidence_gate"
 
 
 class CandidateClassification(str, Enum):
@@ -31,6 +35,56 @@ class CandidateClassification(str, Enum):
     LIKELY_DEAD = "likely_dead"
     VALIDATED_DEAD = "validated_dead"
     UNCERTAIN = "uncertain"
+
+
+ALIVE_EVIDENCE_KINDS = {
+    EvidenceKind.STATIC_REFERENCE,
+    EvidenceKind.REACHABLE_FROM_ROOT,
+    EvidenceKind.TOP_LEVEL_EXECUTION,
+    EvidenceKind.FRAMEWORK_ROOT,
+    EvidenceKind.PACKAGE_ENTRYPOINT,
+    EvidenceKind.TEST_ENTRYPOINT,
+    EvidenceKind.DYNAMIC_PATTERN,
+    EvidenceKind.COVERAGE_HIT,
+    EvidenceKind.TRACE_HIT,
+    EvidenceKind.GREP_RESCUE,
+}
+
+ENTRYPOINT_EVIDENCE_KINDS = {
+    EvidenceKind.REACHABLE_FROM_ROOT,
+    EvidenceKind.TOP_LEVEL_EXECUTION,
+    EvidenceKind.FRAMEWORK_ROOT,
+    EvidenceKind.PACKAGE_ENTRYPOINT,
+    EvidenceKind.TEST_ENTRYPOINT,
+}
+
+DEAD_EVIDENCE_KINDS = {
+    EvidenceKind.NO_STATIC_REFERENCES,
+    EvidenceKind.NOT_EXPORTED,
+    EvidenceKind.NO_ENTRYPOINT,
+    EvidenceKind.CONFIDENCE_GATE,
+}
+
+DECISION_REASON_LABELS = {
+    "validated_dead": "Validator confirmed no live use",
+    "validation_failed": "Validator found live use",
+    "static_reference": "Static references found",
+    "reachable_from_root": "Reachable from root",
+    "top_level_execution": "Called during module import",
+    "framework_root": "Framework entrypoint",
+    "package_entrypoint": "Package entrypoint",
+    "test_entrypoint": "Test entrypoint",
+    "dynamic_pattern": "Dynamic reference matched",
+    "coverage_hit": "Coverage hit",
+    "trace_hit": "Trace hit",
+    "grep_rescue": "Grep verification found usage",
+    "no_refs": "No static references",
+    "not_exported": "Not exported",
+    "no_entrypoint": "No entrypoint evidence",
+    "confidence_ge_threshold": "Confidence meets threshold",
+    "uncertainty": "Uncertainty evidence present",
+    "no_liveness_evidence": "No liveness evidence",
+}
 
 
 @dataclass(frozen=True, order=True)
@@ -96,11 +150,39 @@ class EvidenceEvent:
     def to_dict(self) -> dict[str, Any]:
         return {
             "kind": self.kind.value,
+            "role": _event_role(self.kind),
             "reason": self.reason,
             "source": self.source,
             "confidence": self.confidence,
             "details": dict(self.details),
         }
+
+
+@dataclass(frozen=True)
+class EvidenceDecision:
+    classification: CandidateClassification
+    primary_reason: str
+    reason_tags: tuple[str, ...]
+    confidence: int | None = None
+    threshold: int | None = None
+    live_evidence_count: int = 0
+    dead_evidence_count: int = 0
+    uncertainty_count: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "classification": self.classification.value,
+            "primary_reason": self.primary_reason,
+            "reason_tags": list(self.reason_tags),
+            "live_evidence_count": self.live_evidence_count,
+            "dead_evidence_count": self.dead_evidence_count,
+            "uncertainty_count": self.uncertainty_count,
+        }
+        if self.confidence is not None:
+            payload["confidence"] = self.confidence
+        if self.threshold is not None:
+            payload["threshold"] = self.threshold
+        return payload
 
 
 @dataclass
@@ -132,25 +214,49 @@ class EvidenceLedger:
         if any(event.kind == EvidenceKind.VALIDATION_FAIL for event in events):
             return CandidateClassification.ALIVE
 
-        alive_kinds = {
-            EvidenceKind.STATIC_REFERENCE,
-            EvidenceKind.REACHABLE_FROM_ROOT,
-            EvidenceKind.TOP_LEVEL_EXECUTION,
-            EvidenceKind.FRAMEWORK_ROOT,
-            EvidenceKind.PACKAGE_ENTRYPOINT,
-            EvidenceKind.TEST_ENTRYPOINT,
-            EvidenceKind.DYNAMIC_PATTERN,
-            EvidenceKind.COVERAGE_HIT,
-            EvidenceKind.TRACE_HIT,
-            EvidenceKind.GREP_RESCUE,
-        }
-        if any(event.kind in alive_kinds for event in events):
+        if any(event.kind in ALIVE_EVIDENCE_KINDS for event in events):
             return CandidateClassification.ALIVE
 
         if any(event.kind == EvidenceKind.UNCERTAINTY for event in events):
             return CandidateClassification.UNCERTAIN
 
         return CandidateClassification.LIKELY_DEAD
+
+    def decision(
+        self,
+        symbol: SymbolKey,
+        *,
+        definition: Any | None = None,
+        threshold: int | None = None,
+    ) -> EvidenceDecision:
+        events = self.events(symbol)
+        classification = self.classify(symbol)
+        reason_tags = _decision_reason_tags(
+            events,
+            classification,
+            definition=definition,
+        )
+        confidence = _safe_int(getattr(definition, "confidence", None))
+        threshold_value = _safe_int(threshold)
+        return EvidenceDecision(
+            classification=classification,
+            primary_reason=_primary_reason(reason_tags, classification),
+            reason_tags=tuple(reason_tags),
+            confidence=confidence,
+            threshold=threshold_value,
+            live_evidence_count=sum(
+                1
+                for event in events
+                if event.kind in ALIVE_EVIDENCE_KINDS
+                or event.kind == EvidenceKind.VALIDATION_FAIL
+            ),
+            dead_evidence_count=sum(
+                1 for event in events if event.kind in DEAD_EVIDENCE_KINDS
+            ),
+            uncertainty_count=sum(
+                1 for event in events if event.kind == EvidenceKind.UNCERTAINTY
+            ),
+        )
 
     def summary(self) -> dict[str, Any]:
         counts: dict[str, int] = {}
@@ -163,10 +269,22 @@ class EvidenceLedger:
             "classifications": counts,
         }
 
-    def to_dict(self, root: str | Path | None = None) -> dict[str, Any]:
+    def to_dict(
+        self,
+        root: str | Path | None = None,
+        *,
+        definitions: dict[str, Any] | None = None,
+        threshold: int | None = None,
+    ) -> dict[str, Any]:
         symbols = []
+        definitions_by_name = _definitions_by_qualified_name(definitions)
         for symbol in sorted(self.events_by_symbol):
             file_name = symbol.file if root is None else symbol.repo_relative_file(root)
+            decision = self.decision(
+                symbol,
+                definition=definitions_by_name.get(symbol.qualified_name),
+                threshold=threshold,
+            )
             symbols.append(
                 {
                     "file": file_name,
@@ -174,6 +292,7 @@ class EvidenceLedger:
                     "kind": symbol.kind,
                     "line": symbol.line,
                     "classification": self.classify(symbol).value,
+                    "decision": decision.to_dict(),
                     "evidence": [event.to_dict() for event in self.events(symbol)],
                 }
             )
@@ -191,6 +310,7 @@ def build_dead_code_evidence(
     *,
     project_root: str | Path | None = None,
     pyproject_entrypoint_qnames: Iterable[str] | None = None,
+    threshold: int | None = None,
 ) -> EvidenceLedger:
     ledger = EvidenceLedger()
     entrypoints = set(pyproject_entrypoint_qnames or ())
@@ -205,6 +325,7 @@ def build_dead_code_evidence(
         _add_signal_evidence(ledger, symbol, definition)
         _add_uncertainty_evidence(ledger, symbol, definition)
         _add_reference_evidence(ledger, symbol, definition)
+        _add_deadness_evidence(ledger, symbol, definition, threshold=threshold)
 
     return ledger
 
@@ -320,6 +441,68 @@ def _add_reference_evidence(
             details={"references": reference_count},
         ),
     )
+
+
+def _add_deadness_evidence(
+    ledger: EvidenceLedger,
+    symbol: SymbolKey,
+    definition: Any,
+    *,
+    threshold: int | None,
+) -> None:
+    references = _safe_int(getattr(definition, "references", 0)) or 0
+    confidence = _safe_int(getattr(definition, "confidence", None))
+    threshold_value = _safe_int(threshold)
+
+    if references > 0:
+        return
+
+    if references <= 0:
+        ledger.add(
+            symbol,
+            EvidenceEvent(
+                kind=EvidenceKind.NO_STATIC_REFERENCES,
+                reason="no static references were found",
+                source="analyzer",
+                details={"references": references},
+            ),
+        )
+
+    if not bool(getattr(definition, "is_exported", False)):
+        ledger.add(
+            symbol,
+            EvidenceEvent(
+                kind=EvidenceKind.NOT_EXPORTED,
+                reason="symbol is not exported as public API",
+                source="analyzer",
+            ),
+        )
+
+    if not ledger.has_kind(symbol, *ENTRYPOINT_EVIDENCE_KINDS):
+        ledger.add(
+            symbol,
+            EvidenceEvent(
+                kind=EvidenceKind.NO_ENTRYPOINT,
+                reason="no package, framework, test, or root entrypoint evidence",
+                source="analyzer",
+            ),
+        )
+
+    if (
+        confidence is not None
+        and threshold_value is not None
+        and confidence >= threshold_value
+    ):
+        ledger.add(
+            symbol,
+            EvidenceEvent(
+                kind=EvidenceKind.CONFIDENCE_GATE,
+                reason="confidence meets the configured reporting threshold",
+                source="confidence",
+                confidence=_confidence_float(confidence),
+                details={"confidence": confidence, "threshold": threshold_value},
+            ),
+        )
 
 
 def _add_uncertainty_evidence(
@@ -476,6 +659,153 @@ def _confidence_float(value: Any) -> float:
     if numeric > 1:
         return max(0.0, min(numeric / 100.0, 1.0))
     return max(0.0, min(numeric, 1.0))
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _definitions_by_qualified_name(
+    definitions: dict[str, Any] | None,
+) -> dict[str, Any]:
+    by_name: dict[str, Any] = {}
+    if not definitions:
+        return by_name
+    for definition in definitions.values():
+        name = str(getattr(definition, "name", ""))
+        if name:
+            by_name[name] = definition
+    return by_name
+
+
+def _event_role(kind: EvidenceKind) -> str:
+    if kind in DEAD_EVIDENCE_KINDS or kind == EvidenceKind.VALIDATION_PASS:
+        return "supports_dead"
+    if kind in ALIVE_EVIDENCE_KINDS or kind == EvidenceKind.VALIDATION_FAIL:
+        return "supports_live"
+    if kind == EvidenceKind.UNCERTAINTY:
+        return "uncertainty"
+    return "context"
+
+
+def _decision_reason_tags(
+    events: list[EvidenceEvent],
+    classification: CandidateClassification,
+    *,
+    definition: Any | None,
+) -> list[str]:
+    if classification == CandidateClassification.VALIDATED_DEAD:
+        return ["validated_dead"]
+
+    if any(event.kind == EvidenceKind.VALIDATION_FAIL for event in events):
+        return ["validation_failed"]
+
+    live_tags = _live_reason_tags(events)
+    if live_tags:
+        return live_tags
+
+    dead_tags = _dead_reason_tags(events, definition)
+
+    if any(event.kind == EvidenceKind.UNCERTAINTY for event in events):
+        return _dedupe(["uncertainty", *dead_tags])
+
+    if dead_tags:
+        return _dedupe(dead_tags)
+
+    return ["no_liveness_evidence"]
+
+
+def _live_reason_tags(events: list[EvidenceEvent]) -> list[str]:
+    tags = [
+        _event_reason_tag(event.kind)
+        for event in events
+        if event.kind in ALIVE_EVIDENCE_KINDS
+    ]
+    return _dedupe(tag for tag in tags if tag)
+
+
+def _dead_reason_tags(
+    events: list[EvidenceEvent],
+    definition: Any | None,
+) -> list[str]:
+    tags: list[str] = []
+    if _has_no_static_refs(events, definition):
+        tags.append("no_refs")
+    if _is_not_exported(events, definition):
+        tags.append("not_exported")
+    if _has_event_kind(events, EvidenceKind.NO_ENTRYPOINT):
+        tags.append("no_entrypoint")
+    if _has_event_kind(events, EvidenceKind.CONFIDENCE_GATE):
+        tags.append("confidence_ge_threshold")
+    return _dedupe(tags)
+
+
+def _has_no_static_refs(
+    events: list[EvidenceEvent],
+    definition: Any | None,
+) -> bool:
+    if _has_event_kind(events, EvidenceKind.NO_STATIC_REFERENCES):
+        return True
+    if definition is None:
+        return False
+    return (_safe_int(getattr(definition, "references", 0)) or 0) <= 0
+
+
+def _is_not_exported(
+    events: list[EvidenceEvent],
+    definition: Any | None,
+) -> bool:
+    if _has_event_kind(events, EvidenceKind.NOT_EXPORTED):
+        return True
+    if definition is None:
+        return False
+    return not bool(getattr(definition, "is_exported", False))
+
+
+def _has_event_kind(events: list[EvidenceEvent], kind: EvidenceKind) -> bool:
+    return any(event.kind == kind for event in events)
+
+
+def _event_reason_tag(kind: EvidenceKind) -> str:
+    return {
+        EvidenceKind.STATIC_REFERENCE: "static_reference",
+        EvidenceKind.REACHABLE_FROM_ROOT: "reachable_from_root",
+        EvidenceKind.TOP_LEVEL_EXECUTION: "top_level_execution",
+        EvidenceKind.FRAMEWORK_ROOT: "framework_root",
+        EvidenceKind.PACKAGE_ENTRYPOINT: "package_entrypoint",
+        EvidenceKind.TEST_ENTRYPOINT: "test_entrypoint",
+        EvidenceKind.DYNAMIC_PATTERN: "dynamic_pattern",
+        EvidenceKind.COVERAGE_HIT: "coverage_hit",
+        EvidenceKind.TRACE_HIT: "trace_hit",
+        EvidenceKind.GREP_RESCUE: "grep_rescue",
+    }.get(kind, "")
+
+
+def _primary_reason(
+    reason_tags: list[str],
+    classification: CandidateClassification,
+) -> str:
+    labels = [
+        DECISION_REASON_LABELS.get(tag, tag.replace("_", " "))
+        for tag in reason_tags
+    ]
+    if labels:
+        return "; ".join(labels[:3])
+    return DECISION_REASON_LABELS.get(classification.value, classification.value)
+
+
+def _dedupe(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _reference_safe_uncertainty_reasons(definition: Any) -> Iterable[str]:

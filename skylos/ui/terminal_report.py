@@ -79,6 +79,7 @@ class PrettyFinding:
     title: str
     snippet: str
     fix: str
+    why: str = ""
 
 
 def render_pretty_results(
@@ -187,6 +188,9 @@ def _make_pretty_finding(
         _snippet(item, category, root_path=root_path, source_cache=source_cache)
     )
     fix = _sanitize_terminal_text(_fix(item, category))
+    why = _sanitize_terminal_text(
+        _dead_code_why(item) if category in DEAD_CODE_TYPES else ""
+    )
     return PrettyFinding(
         category=category,
         category_label=category_label,
@@ -198,6 +202,7 @@ def _make_pretty_finding(
         title=title,
         snippet=snippet,
         fix=fix,
+        why=why,
     )
 
 
@@ -224,6 +229,14 @@ def _print_finding(console: Console, finding: PrettyFinding, short_path: str) ->
         (f"{short_path}:{finding.line}", "dim"),
     )
     console.print(meta)
+
+    if finding.why:
+        console.print(
+            Text.assemble(
+                ("      why: ", "dim"),
+                (_truncate(finding.why, 140), "dim"),
+            )
+        )
 
     if finding.snippet:
         console.print(
@@ -486,6 +499,55 @@ def _fix(item: dict, category: str) -> str:
         return f"Remove the unused {DEAD_CODE_TYPES[category]} if it is not public API."
 
     return ""
+
+
+_DEAD_CODE_REASON_LABELS = {
+    "no_refs": "no refs",
+    "not_exported": "not exported",
+    "no_entrypoint": "no entrypoint",
+    "static_reference": "has refs",
+    "reachable_from_root": "root reachable",
+    "top_level_execution": "import-time call",
+    "framework_root": "framework entry",
+    "package_entrypoint": "package entry",
+    "test_entrypoint": "test entry",
+    "dynamic_pattern": "dynamic ref",
+    "coverage_hit": "coverage hit",
+    "trace_hit": "trace hit",
+    "grep_rescue": "grep usage",
+    "uncertainty": "uncertain",
+    "validated_dead": "validated dead",
+    "validation_failed": "live use found",
+    "no_liveness_evidence": "no live evidence",
+}
+
+
+def _dead_code_why(item: dict) -> str:
+    decision = item.get("dead_code_decision") or {}
+    tags = item.get("dead_code_reason_tags")
+    if tags is None and isinstance(decision, dict):
+        tags = decision.get("reason_tags")
+
+    if isinstance(tags, (list, tuple)):
+        visible = []
+        for raw_tag in tags:
+            tag = str(raw_tag)
+            if tag == "confidence_ge_threshold":
+                continue
+            label = _DEAD_CODE_REASON_LABELS.get(tag)
+            if label:
+                visible.append(label)
+        if visible:
+            shown = visible[:3]
+            suffix = ""
+            if len(visible) > len(shown):
+                suffix = f" · +{len(visible) - len(shown)}"
+            return " · ".join(shown) + suffix
+
+    reason = item.get("dead_code_reason")
+    if reason is None and isinstance(decision, dict):
+        reason = decision.get("primary_reason")
+    return str(reason or "")
 
 
 def _read_source_line(
