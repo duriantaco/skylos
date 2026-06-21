@@ -16,12 +16,13 @@ adoption claims by the listed projects.
 | NetworkX | [networkx/networkx#8572](https://github.com/networkx/networkx/pull/8572) | Merged | 5 files, 1 addition, 31 deletions | unused private function and imports |
 | Optuna | [optuna/optuna#6547](https://github.com/optuna/optuna/pull/6547) | Merged | 5 files, 2 additions, 37 deletions | unused helper functions, method, constant, and unpacked variables |
 | beets | [beetbox/beets#6473](https://github.com/beetbox/beets/pull/6473) | Merged | 4 files, 0 additions, 38 deletions | unused plugin helpers and dead database type |
+| react-error-boundary | [bvaughn/react-error-boundary#243](https://github.com/bvaughn/react-error-boundary/pull/243) | Merged | 7 files, 0 additions, 102 deletions | unused docs and Vite integration helpers |
 
 Total final GitHub diff across the merged PRs above:
 
 | PRs | Files Changed | Additions | Deletions | Net Change |
 |---:|---:|---:|---:|---:|
-| 8 | 39 | 5 | 270 | -265 |
+| 9 | 46 | 5 | 372 | -367 |
 
 ## Why This Matters
 
