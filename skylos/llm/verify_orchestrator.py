@@ -48,6 +48,20 @@ from .verify_types import (
     SurvivorVerdict as SurvivorVerdict,
     VerifyStats,
 )
+from .verification.phases import (
+    VerificationOps,
+    VerificationRuntime,
+    run_candidate_selection_phase,
+    run_entry_discovery_phase,
+    run_haiku_prefilter_phase,
+    run_suppression_audit_phase,
+    run_verify_findings_phase,
+)
+from .verification.completion_phases import (
+    run_finalize_phase,
+    run_propagate_alive_phase,
+    run_survivor_challenge_phase,
+)
 
 from skylos.core.grep_verify import (
     _run_grep,
@@ -2477,6 +2491,36 @@ def _attach_feedback_summary(output: dict[str, Any], log) -> None:
         logger.debug(f"Feedback recording failed: {e}")
 
 
+def _entry_discovery_planned_llm_calls(
+    project_root: Path,
+    _known_entry_points: list[str],
+    repo_facts: RepoFacts,
+) -> int:
+    configs = repo_facts.config_files
+    if not configs:
+        return 0
+
+    cache_path = _entry_point_cache_path(project_root)
+    if cache_path.exists():
+        try:
+            from skylos.core.safe_cache_io import load_project_json_cache
+
+            cached = load_project_json_cache(project_root, cache_path)
+            if cached.get("hash") == _config_files_hash(configs):
+                return 0
+        except (
+            OSError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            AttributeError,
+        ) as exc:
+            logger.debug("Ignoring invalid entry point cache %s: %s", cache_path, exc)
+
+    return 1
+
+
+
 def run_verification(
     findings: list[dict],
     defs_map: dict[str, Any],
@@ -2498,6 +2542,8 @@ def run_verification(
     verification_mode: str = VERIFICATION_MODE_PRODUCTION,
     grep_workers: int = 4,
     parallel_grep: bool = False,
+    harness_runner: Any | None = None,
+    harness_budget: Any | None = None,
 ) -> dict[str, Any]:
     from skylos.llm.agents import AgentConfig
 
@@ -2543,372 +2589,138 @@ def run_verification(
     source_cache = _build_source_cache(findings, defs_map)
     repo_facts = _build_repo_facts(config_root)
 
-    discovered_eps = []
-    if enable_entry_discovery:
-        log("Pass 1: Discovering hidden entry points...")
-        known_eps = []
-        for name, info in defs_map.items():
-            if isinstance(info, dict) and info.get("type") in ("function", "method"):
-                known_eps.append(name)
+    def phase(name: str, input_summary: dict[str, Any] | None = None):
+        return _verification_harness_phase(harness_runner, name, input_summary)
 
-        discovered_eps = discover_entry_points(agent, config_root, known_eps[:100])
-        stats.entry_points_discovered = len(discovered_eps)
-        stats.llm_calls += 1
-
-        if discovered_eps:
-            log(f"  Found {len(discovered_eps)} new entry points:")
-            for ep in discovered_eps:
-                log(f"    - {ep.name} (from {ep.source})")
-        else:
-            log("  No new entry points found.")
-
-    lo, hi = confidence_range
-    to_verify = []
-    for f in findings:
-        conf = _parse_confidence(f.get("confidence", 60))
-        refs = _parse_int(f.get("references", 0))
-        should_judge = refs == 0 and (judge_all_mode or lo <= conf <= hi)
-        if should_judge:
-            full_name = f.get("full_name", f.get("name", ""))
-            matched_ep = next(
-                (ep for ep in discovered_eps if ep.name == full_name), None
-            )
-            if matched_ep is not None:
-                if judge_all_mode:
-                    f["_judge_discovered_entry_point"] = (
-                        f"{matched_ep.source}: {matched_ep.reason}"
-                    )
-                    _record_prefilter_fact(
-                        f,
-                        code="discovered_entry_point",
-                        rationale="Project configuration references this symbol as an entry point",
-                        evidence=[
-                            f"source={matched_ep.source}",
-                            f"reason={matched_ep.reason}",
-                        ],
-                    )
-                    to_verify.append(f)
-                else:
-                    f["_llm_verdict"] = Verdict.FALSE_POSITIVE.value
-                    f["_llm_rationale"] = "Discovered as entry point in project config"
-                    f["_verified_by_llm"] = True
-                    f["_adjusted_confidence"] = 20
-                    stats.verified_false_positive += 1
-            else:
-                decision = _deterministic_suppress(
-                    f,
-                    source_cache,
-                    project_root=grep_root,
-                    repo_facts=repo_facts,
-                    defs_map=defs_map,
-                    grep_cache=grep_cache,
-                )
-                if decision is not None:
-                    if judge_all_mode and not decision.hard:
-                        _record_prefilter_fact(
-                            f,
-                            code=decision.code,
-                            rationale=decision.rationale,
-                            evidence=decision.evidence,
-                        )
-                        to_verify.append(f)
-                    else:
-                        f["_llm_verdict"] = Verdict.FALSE_POSITIVE.value
-                        f["_llm_rationale"] = decision.rationale
-                        f["_suppression_reason"] = decision.code
-                        f["_suppression_evidence"] = list(decision.evidence)
-                        f["_suppression_hard"] = bool(decision.hard)
-                        f["_deterministically_suppressed"] = True
-                        f["_verified_by_llm"] = False
-                        f["_adjusted_confidence"] = 20
-                        stats.deterministic_suppressed += 1
-                else:
-                    to_verify.append(f)
-        else:
-            if refs > 0:
-                f["_llm_verdict"] = "SKIPPED_HAS_REFS"
-                f["_llm_rationale"] = f"Has {refs} references"
-            elif conf > hi:
-                f["_llm_verdict"] = "SKIPPED_HIGH_CONF"
-                f["_llm_rationale"] = "High confidence from static; skipped LLM"
-            else:
-                f["_llm_verdict"] = "SKIPPED_LOW_CONF"
-                f["_llm_rationale"] = "Below threshold"
-
-    to_verify = to_verify[:max_verify]
-
-    if to_verify:
-        haiku_key = config.api_key or os.environ.get("ANTHROPIC_API_KEY")
-
-        exported_candidates = [
-            f
-            for f in to_verify
-            if f.get("is_exported") and _parse_confidence(f.get("confidence", 0)) >= 80
-        ]
-        if exported_candidates and haiku_key:
-            log(
-                f"Pass 1.5: Haiku pre-filter for {len(exported_candidates)} exported symbols..."
-            )
-            try:
-                haiku_agent = _create_haiku_agent(haiku_key)
-                kept, dismissed = _haiku_prefilter_exports(
-                    haiku_agent,
-                    exported_candidates,
-                    source_cache,
-                )
-                stats.haiku_prefiltered = len(dismissed)
-                stats.verified_false_positive += len(dismissed)
-                stats.llm_calls += max(
-                    1,
-                    (len(exported_candidates) + HAIKU_PREFILTER_MAX_BATCH - 1)
-                    // HAIKU_PREFILTER_MAX_BATCH,
-                )
-                dismissed_set = {id(f) for f in dismissed}
-                to_verify = [f for f in to_verify if id(f) not in dismissed_set]
-                if dismissed:
-                    log(
-                        f"  Haiku dismissed {len(dismissed)} exported symbols as public API"
-                    )
-            except Exception as e:
-                logger.warning(f"Haiku pre-filter setup failed: {e}")
-
-    if batch_mode and len(to_verify) > 1:
-        log(
-            f"Pass 2: Batch-verifying {len(to_verify)} findings "
-            f"({_estimate_batches(to_verify, defs_map, source_cache, repo_facts=repo_facts)} LLM calls)..."
-        )
-        batch_results = _batch_verify_findings(
-            agent,
-            to_verify,
-            defs_map,
-            source_cache,
-            project_root=grep_root,
-            repo_facts=repo_facts,
-        )
-        stats.llm_calls += max(
-            1,
-            (
-                len(
-                    [
-                        r
-                        for r in batch_results
-                        if r.rationale
-                        != f"Has {_parse_int(r.finding.get('references', 0))} references; skipped"
-                    ]
-                )
-                + 4
-            )
-            // 5,
+    def check_llm_budget(planned_calls: int, phase_name: str) -> None:
+        _enforce_verification_llm_budget(
+            current_calls=stats.llm_calls,
+            planned_calls=planned_calls,
+            harness_budget=harness_budget,
+            phase=phase_name,
         )
 
-        for finding, result in zip(to_verify, batch_results):
-            finding["_llm_verdict"] = result.verdict.value
-            finding["_llm_rationale"] = result.rationale
-            finding["_verified_by_llm"] = result.verdict != Verdict.UNCERTAIN
-            finding["_original_confidence"] = result.original_confidence
-            finding["_adjusted_confidence"] = result.adjusted_confidence
+    def decision_target(finding: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "fingerprint": finding.get("fingerprint"),
+            "name": finding.get("full_name") or finding.get("name"),
+            "file": finding.get("file"),
+            "line": finding.get("line"),
+            "type": finding.get("type"),
+        }
 
-            if result.verdict == Verdict.TRUE_POSITIVE:
-                stats.verified_true_positive += 1
-            elif result.verdict == Verdict.FALSE_POSITIVE:
-                stats.verified_false_positive += 1
-                finding["_llm_challenged"] = True
-            else:
-                stats.uncertain += 1
+    def record_decision(
+        phase_name: str,
+        code: str,
+        finding: dict[str, Any],
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        if harness_runner is None:
+            return
+        harness_runner.record_decision(
+            phase=phase_name,
+            code=code,
+            target=decision_target(finding),
+            details=details or {},
+        )
 
-        reverify_candidates = []
-        for finding in to_verify:
-            if finding.get("_llm_verdict") != "TRUE_POSITIVE":
-                continue
-            ctx = _build_graph_context(
-                finding,
-                defs_map,
-                source_cache,
-                project_root=grep_root,
-                repo_facts=repo_facts,
-                grep_cache=grep_cache,
-            )
-            has_rich_context = (
-                "class_usage" in ctx.lower()
-                or "Inheritance Context" in ctx
-                or "CONFIRMED" in ctx
-                or "cast(" in ctx
-                or "pragma: no cover" in ctx
-                or "Collectible pytest test class: yes" in ctx
-                or "MkDocs hook registration: yes" in ctx
-                or "Definition side effect: yes" in ctx
-                or "Repo-relative file path references" in ctx
-            )
-            if has_rich_context:
-                reverify_candidates.append(finding)
+    def add_llm_calls(count: int) -> None:
+        if count <= 0:
+            return
+        stats.llm_calls += count
+        if harness_runner is not None:
+            harness_runner.update_usage(llm_calls=count)
 
-        if reverify_candidates:
-            log(
-                f"  Re-verifying {len(reverify_candidates)} batch TPs with rich evidence (individual mode)..."
-            )
-            for finding in reverify_candidates:
-                result = verify_with_graph_context(
-                    agent,
-                    finding,
-                    defs_map,
-                    source_cache,
-                    project_root=grep_root,
-                    repo_facts=repo_facts,
-                )
-                stats.llm_calls += 1
-                if result.verdict != Verdict.TRUE_POSITIVE:
-                    finding["_llm_verdict"] = result.verdict.value
-                    finding["_llm_rationale"] = f"[re-verified] {result.rationale}"
-                    finding["_verified_by_llm"] = result.verdict != Verdict.UNCERTAIN
-                    finding["_adjusted_confidence"] = result.adjusted_confidence
-                    if result.verdict == Verdict.FALSE_POSITIVE:
-                        stats.verified_true_positive -= 1
-                        stats.verified_false_positive += 1
-                        finding["_llm_challenged"] = True
-                        log(f"    Flipped: {finding.get('full_name', '')} TP → FP")
-                    elif result.verdict == Verdict.UNCERTAIN:
-                        stats.verified_true_positive -= 1
-                        stats.uncertain += 1
-    else:
-        log(f"Pass 2: Verifying {len(to_verify)} findings with graph context...")
-        for i, finding in enumerate(to_verify):
-            result = verify_with_graph_context(
-                agent,
-                finding,
-                defs_map,
-                source_cache,
-                project_root=grep_root,
-                repo_facts=repo_facts,
-            )
-            stats.llm_calls += 1
+    def run_tool(
+        name: str,
+        fn,
+        *,
+        input_summary: dict[str, Any] | None = None,
+        output_summary=None,
+    ):
+        if harness_runner is None:
+            return fn()
+        return harness_runner.run_tool(
+            name,
+            fn,
+            input_summary=input_summary,
+            output_summary=output_summary,
+        )
 
-            finding["_llm_verdict"] = result.verdict.value
-            finding["_llm_rationale"] = result.rationale
-            finding["_verified_by_llm"] = result.verdict != Verdict.UNCERTAIN
-            finding["_original_confidence"] = result.original_confidence
-            finding["_adjusted_confidence"] = result.adjusted_confidence
+    ops = VerificationOps(
+        discover_entry_points=discover_entry_points,
+        entry_discovery_planned_llm_calls=_entry_discovery_planned_llm_calls,
+        record_prefilter_fact=_record_prefilter_fact,
+        deterministic_suppress=_deterministic_suppress,
+        create_haiku_agent=_create_haiku_agent,
+        haiku_prefilter_exports=_haiku_prefilter_exports,
+        estimate_batches=_estimate_batches,
+        batch_verify_findings=_batch_verify_findings,
+        build_graph_context=_build_graph_context,
+        verify_with_graph_context=verify_with_graph_context,
+        should_audit_suppression=_should_audit_suppression,
+        audit_suppressed_finding=audit_suppressed_finding,
+        find_local_on_emit_survivors=_find_local_on_emit_survivors,
+        find_survivors=_find_survivors,
+        build_source_cache=_build_source_cache,
+        batch_challenge_survivors=_batch_challenge_survivors,
+        challenge_survivor=challenge_survivor,
+        build_verification_output=_build_verification_output,
+        attach_feedback_summary=_attach_feedback_summary,
+    )
 
-            if result.verdict == Verdict.TRUE_POSITIVE:
-                stats.verified_true_positive += 1
-            elif result.verdict == Verdict.FALSE_POSITIVE:
-                stats.verified_false_positive += 1
-                finding["_llm_challenged"] = True
-            else:
-                stats.uncertain += 1
+    ctx = VerificationRuntime(
+        agent=agent,
+        defs_map=defs_map,
+        grep_root=grep_root,
+        config_root=config_root,
+        grep_cache=grep_cache,
+        source_cache=source_cache,
+        repo_facts=repo_facts,
+        stats=stats,
+        log=log,
+        phase=phase,
+        check_llm_budget=check_llm_budget,
+        record_decision=record_decision,
+        add_llm_calls=add_llm_calls,
+        run_tool=run_tool,
+        ops=ops,
+    )
 
-            if (i + 1) % 10 == 0:
-                log(f"  Verified {i + 1}/{len(to_verify)}...")
+    discovered_eps = run_entry_discovery_phase(
+        ctx,
+        enable_entry_discovery=enable_entry_discovery,
+    )
 
-    if enable_suppression_challenge:
-        suppression_candidates = [
-            finding for finding in findings if _should_audit_suppression(finding)
-        ][:max_suppression_audit]
-        stats.suppression_challenged = len(suppression_candidates)
+    to_verify = run_candidate_selection_phase(
+        ctx,
+        findings,
+        discovered_eps,
+        max_verify=max_verify,
+        confidence_range=confidence_range,
+        judge_all_mode=judge_all_mode,
+    )
 
-        if suppression_candidates:
-            log(
-                "Pass 3: Auditing "
-                f"{len(suppression_candidates)} FALSE_POSITIVE decisions for false negatives..."
-            )
-            for finding in suppression_candidates:
-                result = audit_suppressed_finding(
-                    agent,
-                    finding,
-                    defs_map,
-                    source_cache,
-                    project_root=grep_root,
-                    repo_facts=repo_facts,
-                )
-                stats.llm_calls += 1
-                finding["_suppression_audited"] = True
-                finding["_suppression_audit_verdict"] = result.verdict.value
-                finding["_suppression_audit_rationale"] = result.rationale
+    to_verify = run_haiku_prefilter_phase(
+        ctx,
+        to_verify,
+        config=config,
+    )
 
-                if result.verdict == Verdict.TRUE_POSITIVE:
-                    finding["_llm_verdict"] = Verdict.TRUE_POSITIVE.value
-                    finding["_llm_rationale"] = (
-                        f"[suppression-audit] {result.rationale}"
-                    )
-                    finding["_verified_by_llm"] = True
-                    finding["_adjusted_confidence"] = result.adjusted_confidence
-                    finding["_llm_challenged"] = True
-                    finding["_suppression_reopened"] = True
+    run_verify_findings_phase(
+        ctx,
+        to_verify,
+        batch_mode=batch_mode,
+    )
 
-                    if finding.get("_deterministically_suppressed"):
-                        stats.deterministic_suppressed -= 1
-                        finding["_deterministically_suppressed"] = False
-                        if finding.get("_suppression_reason"):
-                            finding["_suppression_overruled_reason"] = finding.get(
-                                "_suppression_reason"
-                            )
-                            finding.pop("_suppression_reason", None)
-                        if finding.get("_suppression_evidence"):
-                            finding["_suppression_overruled_evidence"] = finding.get(
-                                "_suppression_evidence"
-                            )
-                            finding.pop("_suppression_evidence", None)
-                    else:
-                        stats.verified_false_positive -= 1
+    run_suppression_audit_phase(
+        ctx,
+        findings,
+        enable_suppression_challenge=enable_suppression_challenge,
+        max_suppression_audit=max_suppression_audit,
+    )
 
-                    stats.verified_true_positive += 1
-                    stats.suppression_reclassified_dead += 1
-                elif result.verdict == Verdict.FALSE_POSITIVE:
-                    if finding.get("_deterministically_suppressed"):
-                        finding["_verified_by_llm"] = True
-
-    fp_names = set()
-    tp_findings = []
-    for f in findings:
-        verdict = f.get("_llm_verdict", "")
-        full_name = f.get("full_name", f.get("name", ""))
-        if verdict == "FALSE_POSITIVE":
-            fp_names.add(full_name)
-        elif verdict == "TRUE_POSITIVE":
-            tp_findings.append(f)
-
-    propagated = 0
-    for f in tp_findings:
-        full_name = f.get("full_name", f.get("name", ""))
-        called_by = f.get("called_by", [])
-        calls = f.get("calls", [])
-
-        alive_callers = [c for c in called_by if c in fp_names]
-        if alive_callers:
-            f["_llm_verdict"] = "FALSE_POSITIVE"
-            f["_llm_rationale"] = (
-                f"Transitive alive: called by {alive_callers[0]} which is confirmed alive (FALSE_POSITIVE). "
-                f"Original rationale: {f.get('_llm_rationale', '')}"
-            )
-            f["_llm_challenged"] = True
-            f["_adjusted_confidence"] = 50
-            fp_names.add(full_name)
-            stats.verified_true_positive -= 1
-            stats.verified_false_positive += 1
-            propagated += 1
-            continue
-
-        for callee in calls:
-            if callee in fp_names:
-                for other_f in findings:
-                    if other_f.get("full_name", "") == callee:
-                        if full_name in other_f.get("called_by", []):
-                            f["_llm_verdict"] = "FALSE_POSITIVE"
-                            f["_llm_rationale"] = (
-                                f"Transitive alive: mutual dependency with {callee} which is alive. "
-                                f"Original rationale: {f.get('_llm_rationale', '')}"
-                            )
-                            f["_llm_challenged"] = True
-                            f["_adjusted_confidence"] = 50
-                            fp_names.add(full_name)
-                            stats.verified_true_positive -= 1
-                            stats.verified_false_positive += 1
-                            propagated += 1
-                            break
-                if f.get("_llm_verdict") == "FALSE_POSITIVE":
-                    break
-
-    if propagated:
-        log(f"  Transitive alive propagation: {propagated} findings reclassified as FP")
+    run_propagate_alive_phase(ctx, findings)
 
     haiku_note = (
         f", {stats.haiku_prefiltered} haiku-prefiltered"
@@ -2923,142 +2735,22 @@ def run_verification(
         f"{stats.uncertain} uncertain"
     )
 
-    new_dead = []
-    if enable_survivor_challenge:
-        log("Pass 4: Challenging survivors with heuristic refs...")
-
-        local_on_emit_survivors = _find_local_on_emit_survivors(
-            defs_map,
-            findings,
-            grep_root,
-        )
-        if local_on_emit_survivors:
-            stats.survivors_challenged += len(local_on_emit_survivors)
-            stats.survivors_reclassified_dead += len(local_on_emit_survivors)
-            for surv in local_on_emit_survivors:
-                owner = surv.get("_registry_owner", "registry")
-                event_name = surv.get("_event_name", "")
-                new_dead.append(
-                    {
-                        "name": surv["name"],
-                        "simple_name": surv["simple_name"],
-                        "full_name": surv["full_name"],
-                        "file": surv["file"],
-                        "line": surv["line"],
-                        "type": surv.get("type", "function"),
-                        "confidence": min(
-                            95, int(surv.get("confidence", 50) or 50) + 25
-                        ),
-                        "references": 0,
-                        "message": f"Unused {surv.get('type', 'function')}: {surv['name']}",
-                        "_category": "dead_code",
-                        "_llm_verdict": "TRUE_POSITIVE",
-                        "_llm_rationale": (
-                            f"Registered via @{owner}.on('{event_name}') but no "
-                            f"{owner}.emit('{event_name}') call exists in app/tests."
-                        ),
-                        "_source": "registry_survivor_challenge",
-                    }
-                )
-            log(
-                f"  Reclassified {len(local_on_emit_survivors)} local on/emit listeners as dead"
-            )
-
-        survivors = _find_survivors(defs_map, findings)
-        survivors = survivors[:max_challenge]
-        stats.survivors_challenged += len(survivors)
-
-        if survivors:
-            survivor_cache = _build_source_cache([], defs_map, survivors)
-            source_cache.update(survivor_cache)
-
-            if batch_mode and len(survivors) > 1:
-                batch_results = _batch_challenge_survivors(
-                    agent, survivors, defs_map, source_cache
-                )
-                stats.llm_calls += max(1, (len(survivors) + 4) // 5)
-
-                for surv, sv in zip(survivors, batch_results):
-                    if sv.verdict == Verdict.TRUE_POSITIVE:
-                        stats.survivors_reclassified_dead += 1
-                        new_dead.append(
-                            {
-                                "name": sv.name,
-                                "full_name": sv.full_name,
-                                "file": sv.file,
-                                "line": sv.line,
-                                "type": surv.get("type", "function"),
-                                "confidence": sv.suggested_confidence,
-                                "references": 0,
-                                "heuristic_refs": sv.heuristic_refs,
-                                "message": f"Unused {surv.get('type', 'function')}: {sv.name}",
-                                "_category": "dead_code",
-                                "_llm_verdict": "TRUE_POSITIVE",
-                                "_llm_rationale": sv.rationale,
-                                "_source": "llm_survivor_challenge",
-                            }
-                        )
-            else:
-                for surv in survivors:
-                    sv = challenge_survivor(agent, surv, defs_map, source_cache)
-                    stats.llm_calls += 1
-
-                    if sv.verdict == Verdict.TRUE_POSITIVE:
-                        stats.survivors_reclassified_dead += 1
-                        new_dead.append(
-                            {
-                                "name": sv.name,
-                                "full_name": sv.full_name,
-                                "file": sv.file,
-                                "line": sv.line,
-                                "type": surv.get("type", "function"),
-                                "confidence": sv.suggested_confidence,
-                                "references": 0,
-                                "heuristic_refs": sv.heuristic_refs,
-                                "message": f"Unused {surv.get('type', 'function')}: {sv.name}",
-                                "_category": "dead_code",
-                                "_llm_verdict": "TRUE_POSITIVE",
-                                "_llm_rationale": sv.rationale,
-                                "_source": "llm_survivor_challenge",
-                            }
-                        )
-
-            log(
-                f"  Challenged {len(survivors)}, "
-                f"reclassified {stats.survivors_reclassified_dead} as dead"
-            )
-        else:
-            log("  No survivors with heuristic refs to challenge.")
-
-    stats.elapsed_seconds = round(time.time() - start_time, 1)
-
-    try:
-        usage = (
-            getattr(agent.get_adapter(), "total_usage", {}) or {}
-            if stats.llm_calls
-            else {}
-        )
-    except (AttributeError, ImportError, RuntimeError, TypeError):
-        usage = {}
-    stats.prompt_tokens = int(usage.get("prompt_tokens") or 0)
-    stats.completion_tokens = int(usage.get("completion_tokens") or 0)
-    stats.total_tokens = int(usage.get("total_tokens") or 0)
-
-    log(f"\nDone in {stats.elapsed_seconds}s ({stats.llm_calls} LLM calls)")
-
-    output = _build_verification_output(
-        findings=findings,
-        new_dead=new_dead,
-        discovered_eps=discovered_eps,
-        stats=stats,
-        verification_mode=verification_mode,
+    new_dead = run_survivor_challenge_phase(
+        ctx,
+        findings,
+        enable_survivor_challenge=enable_survivor_challenge,
+        max_challenge=max_challenge,
+        batch_mode=batch_mode,
     )
 
-    _attach_feedback_summary(output, log)
-
-    grep_cache.save(grep_root)
-
-    return output
+    return run_finalize_phase(
+        ctx,
+        findings,
+        new_dead,
+        discovered_eps,
+        start_time=start_time,
+        verification_mode=verification_mode,
+    )
 
 
 def _estimate_batches(
@@ -3107,3 +2799,47 @@ def _logger(quiet: bool):
         print(msg, file=sys.stderr)
 
     return _log
+
+
+class _NoopHarnessPhase:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def set_output_summary(self, **summary: Any) -> None:
+        return None
+
+
+def _verification_harness_phase(
+    harness_runner: Any | None,
+    name: str,
+    input_summary: dict[str, Any] | None = None,
+):
+    if harness_runner is None:
+        return _NoopHarnessPhase()
+    return harness_runner.step(name, input_summary=input_summary)
+
+
+def _enforce_verification_llm_budget(
+    *,
+    current_calls: int,
+    planned_calls: int,
+    harness_budget: Any | None,
+    phase: str,
+) -> None:
+    if planned_calls <= 0:
+        return
+    max_calls = getattr(harness_budget, "max_llm_calls", None)
+    if max_calls is None:
+        return
+    if current_calls + planned_calls <= max_calls:
+        return
+
+    from skylos.llm.harness.types import HarnessBudgetExceeded
+
+    raise HarnessBudgetExceeded(
+        "harness LLM call budget exceeded before "
+        f"{phase}: {current_calls}+{planned_calls}>{max_calls}"
+    )

@@ -644,9 +644,9 @@ class DeadCodeAgent:
         quiet=False,
         verification_mode="production",
     ):
-        from skylos.llm.verify_orchestrator import run_verification
+        from skylos.llm.harness import run_verification_harness
 
-        result = run_verification(
+        harness_result = run_verification_harness(
             findings=findings,
             defs_map=defs_map,
             project_root=str(project_root),
@@ -659,7 +659,7 @@ class DeadCodeAgent:
             quiet=quiet,
             verification_mode=verification_mode,
         )
-        return result
+        return harness_result.output
 
     def challenge_survivors(
         self,
@@ -669,12 +669,12 @@ class DeadCodeAgent:
         max_challenge=20,
         quiet=False,
     ):
-        from skylos.llm.verify_orchestrator import run_verification
+        from skylos.llm.harness import run_verification_harness
 
         for s in survivors:
             s["_is_survivor"] = True
 
-        result = run_verification(
+        harness_result = run_verification_harness(
             findings=survivors,
             defs_map=defs_map,
             project_root=str(project_root),
@@ -683,11 +683,12 @@ class DeadCodeAgent:
             provider=getattr(self.config, "provider", None),
             base_url=getattr(self.config, "base_url", None),
             max_verify=max_challenge,
+            max_challenge=max_challenge,
             enable_survivor_challenge=True,
             batch_mode=True,
             quiet=quiet,
         )
-        return result
+        return harness_result.output
 
 
 def create_dead_code_agent(

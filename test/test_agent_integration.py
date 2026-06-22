@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import re
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -366,6 +367,93 @@ def test_agent_scan_can_opt_into_dead_code_verification(tmp_path):
     assert exc.value.code == 0
     args = mock_pipeline.call_args.kwargs["agent_args"]
     assert args.skip_verification is False
+
+
+def test_agent_verify_json_uses_harness_and_writes_metadata(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text("def old_func():\n    pass\n")
+    output_path = tmp_path / "verify.json"
+    finding = {
+        "name": "old_func",
+        "full_name": "sample.old_func",
+        "file": str(sample),
+        "line": 1,
+        "confidence": 75,
+        "references": 0,
+        "type": "function",
+    }
+    verification_output = {
+        "verified_findings": [finding],
+        "new_dead_code": [],
+        "entry_points": [],
+        "stats": {
+            "total_findings": 1,
+            "verified_true_positive": 1,
+            "verified_false_positive": 0,
+            "uncertain": 0,
+            "entry_points_discovered": 0,
+            "survivors_challenged": 0,
+            "survivors_reclassified_dead": 0,
+            "llm_calls": 1,
+            "elapsed_seconds": 0.1,
+        },
+    }
+    run_summary = {
+        "run_id": "cli-run",
+        "status": "completed",
+        "state_path": str(tmp_path / ".skylos" / "runs" / "cli-run" / "state.json"),
+        "summary_path": str(
+            tmp_path / ".skylos" / "runs" / "cli-run" / "summary.json"
+        ),
+        "trace_path": str(
+            tmp_path / ".skylos" / "runs" / "cli-run" / "events.jsonl"
+        ),
+    }
+
+    with (
+        patch("skylos.analyzer.analyze", return_value=json.dumps({"definitions": {}})),
+        patch(
+            "skylos.deadcode.collect.collect_dead_code_findings",
+            return_value=[finding],
+        ),
+        patch("skylos.llm.harness.run_verification_harness") as mock_harness,
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            return_value=("openai", "fake-key", None, False),
+        ),
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "verify",
+                str(sample),
+                "--format",
+                "json",
+                "--output",
+                str(output_path),
+            ],
+        ),
+    ):
+        mock_harness.return_value = SimpleNamespace(
+            output=verification_output,
+            run=SimpleNamespace(summary_dict=lambda: run_summary),
+        )
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+    payload = json.loads(output_path.read_text())
+    assert payload["harness"]["run_id"] == "cli-run"
+    assert payload["harness"]["state_path"].endswith("state.json")
+    mock_harness.assert_called_once()
+    kwargs = mock_harness.call_args.kwargs
+    assert kwargs["findings"] == [finding]
+    assert kwargs["project_root"] == str(sample.parent)
+    assert kwargs["api_key"] == "fake-key"
+    assert kwargs["verification_mode"] == "judge_all"
 
 
 def test_agent_analyze_strict_exits_one_when_findings_exist(tmp_path):
