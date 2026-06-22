@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -15,6 +16,7 @@ from skylos.llm.harness import (
     load_harness_replay,
     run_verification_harness,
 )
+from skylos.llm.harness.trace import write_json_artifact, write_jsonl_trace
 from skylos.llm.agents import AgentConfig, DeadCodeAgent
 
 
@@ -363,6 +365,63 @@ def test_runner_sanitizes_trace_run_id(tmp_path):
     assert (tmp_path / "runs" / "bad_id" / "events.jsonl").exists()
     assert (tmp_path / "runs" / "bad_id" / "state.json").exists()
     assert (tmp_path / "runs" / "bad_id" / "summary.json").exists()
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink not supported")
+def test_trace_writer_rejects_symlinked_trace_root_component(tmp_path):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(outside, repo_root / ".skylos")
+
+    result = write_json_artifact(
+        repo_root / ".skylos" / "runs",
+        "run-one",
+        "state.json",
+        {"status": "bad"},
+    )
+
+    assert result is None
+    assert not (outside / "runs" / "run-one" / "state.json").exists()
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink not supported")
+def test_trace_writer_rejects_symlinked_run_directory(tmp_path):
+    trace_root = tmp_path / "runs"
+    trace_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(outside, trace_root / "run-one")
+
+    result = write_jsonl_trace(
+        trace_root,
+        "run-one",
+        [{"event": "run_started", "run_id": "run-one"}],
+    )
+
+    assert result is None
+    assert not (outside / "events.jsonl").exists()
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink not supported")
+def test_trace_writer_rejects_existing_artifact_symlink(tmp_path):
+    trace_root = tmp_path / "runs"
+    run_dir = trace_root / "run-one"
+    run_dir.mkdir(parents=True)
+    target = tmp_path / "target.json"
+    target.write_text("do-not-overwrite", encoding="utf-8")
+    os.symlink(target, run_dir / "state.json")
+
+    result = write_json_artifact(
+        trace_root,
+        "run-one",
+        "state.json",
+        {"status": "bad"},
+    )
+
+    assert result is None
+    assert target.read_text(encoding="utf-8") == "do-not-overwrite"
 
 
 def test_verification_harness_wraps_existing_verifier(tmp_path):
