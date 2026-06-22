@@ -371,7 +371,9 @@ def test_agent_scan_can_opt_into_dead_code_verification(tmp_path):
 
 def test_agent_verify_json_uses_harness_and_writes_metadata(tmp_path):
     sample = tmp_path / "sample.py"
-    sample.write_text("def old_func():\n    pass\n")
+    sample.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        "def old_func():\n    pass\n"
+    )
     output_path = tmp_path / "verify.json"
     finding = {
         "name": "old_func",

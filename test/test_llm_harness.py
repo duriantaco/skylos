@@ -330,7 +330,9 @@ def test_harness_replay_reports_corrupted_summary(tmp_path):
     summary_path = trace_root / "replay-corrupt" / "summary.json"
     summary = _read_json(summary_path)
     summary["phase_count"] = 99
-    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    summary_path.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        json.dumps(summary), encoding="utf-8"
+    )
 
     replay = load_harness_replay(trace_root / "replay-corrupt")
 
@@ -410,7 +412,9 @@ def test_trace_writer_rejects_existing_artifact_symlink(tmp_path):
     run_dir = trace_root / "run-one"
     run_dir.mkdir(parents=True)
     target = tmp_path / "target.json"
-    target.write_text("do-not-overwrite", encoding="utf-8")
+    target.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        "do-not-overwrite", encoding="utf-8"
+    )
     os.symlink(target, run_dir / "state.json")
 
     result = write_json_artifact(
@@ -573,7 +577,9 @@ def test_verification_harness_traces_verifier_exception(tmp_path):
 def test_verification_harness_blocks_entry_discovery_before_llm_call(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
-    (project / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
+    (project / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        "[project]\nname = 'demo'\n"
+    )
 
     with patch("skylos.llm.verify_orchestrator.DeadCodeVerifierAgent") as MockAgent:
         with pytest.raises(HarnessBudgetExceeded, match="before entry_discovery"):
@@ -634,9 +640,13 @@ def test_verification_harness_allows_no_config_entry_discovery_with_zero_llm_bud
 def test_verification_harness_runs_real_verifier_with_mocked_agent(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
-    (project / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
+    (project / "pyproject.toml").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        "[project]\nname = 'demo'\n"
+    )
     source_file = project / "main.py"
-    source_file.write_text("def old_func():\n    pass\n")
+    source_file.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        "def old_func():\n    pass\n"
+    )
 
     findings = [
         {
