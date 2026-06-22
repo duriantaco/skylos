@@ -4449,9 +4449,9 @@ def main() -> None:
 
             console.print("\n[brand]Step 2/2: LLM verification (4-pass)...[/brand]")
 
-            from skylos.llm.verify_orchestrator import run_verification
+            from skylos.llm.harness import run_verification_harness
 
-            result = run_verification(
+            harness_result = run_verification_harness(
                 findings=all_findings,
                 defs_map=defs_map,
                 project_root=str(path if path.is_dir() else path.parent),
@@ -4469,6 +4469,14 @@ def main() -> None:
                 parallel_grep=getattr(agent_args, "parallel_grep", False)
                 or getattr(agent_args, "fix", False),
             )
+            result = harness_result.output
+            harness_summary = harness_result.run.summary_dict()
+            result["harness"] = harness_summary
+            harness_artifact = None
+            if harness_summary.get("state_path"):
+                harness_artifact = str(
+                    pathlib.Path(harness_summary["state_path"]).parent
+                )
 
             stats = result["stats"]
             verified = result["verified_findings"]
@@ -4509,6 +4517,8 @@ def main() -> None:
                 summary_table.add_row("LLM calls", str(stats["llm_calls"]))
                 summary_table.add_row("Time", f"{stats['elapsed_seconds']}s")
                 console.print(summary_table)
+                if harness_artifact:
+                    console.print(f"\n[dim]Harness run: {harness_artifact}[/dim]")
 
                 fps = [f for f in verified if f.get("_llm_verdict") == "FALSE_POSITIVE"]
                 if fps:

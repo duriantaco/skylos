@@ -124,7 +124,9 @@ jobs:
               line = finding.get("line") or finding.get("line_number") or 1
               rule = finding.get("rule_id") or finding.get("rule") or category
               message = finding.get("message") or "High-risk finding"
-              print(f"::error file={file_path},line={line},title=Skylos {rule}::{severity} {message}")
+              detail = f"{severity} {rule} {file_path}:{line} - {message}"
+              print(detail)
+              print(f"::error file={file_path},line={line},title=Skylos {rule}::{detail}")
               lines.append(f"- `{severity}` `{rule}` {file_path}:{line} - {message}")
 
           if len(blocking) > 20:
