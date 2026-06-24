@@ -6,6 +6,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
 
+from skylos.config import load_config
+from skylos.constants import parse_exclude_folders
 from skylos.remediation.codemods import (
     comment_out_unused_function_cst,
     comment_out_unused_import_cst,
@@ -90,6 +92,26 @@ def _build_parser():
         action="store_true",
         help="Use comment-out transforms instead of removal in noninteractive mode.",
     )
+    parser.add_argument(
+        "--exclude",
+        "--exclude-folder",
+        nargs="+",
+        action="extend",
+        dest="exclude_folders",
+        default=None,
+        help="Additional folders to exclude from analysis.",
+    )
+    parser.add_argument(
+        "--include-folder",
+        action="append",
+        dest="include_folders",
+        help="Force include a folder that would otherwise be excluded.",
+    )
+    parser.add_argument(
+        "--no-default-excludes",
+        action="store_true",
+        help="Do not exclude default folders; only exclude folders from config or --exclude.",
+    )
     return parser
 
 
@@ -121,10 +143,11 @@ def _effective_confidence(args, noninteractive):
     return None
 
 
-def _analyze(path, confidence):
-    if confidence is None:
-        return json.loads(run_analyze(path))
-    return json.loads(run_analyze(path, conf=confidence))
+def _analyze(path, confidence, exclude_folders):
+    kwargs = {"exclude_folders": sorted(exclude_folders)}
+    if confidence is not None:
+        kwargs["conf"] = confidence
+    return json.loads(run_analyze(path, **kwargs))
 
 
 def _collect_all_findings(result):
@@ -344,6 +367,12 @@ def run_clean_command(argv: list[str]) -> int:
     scan_root = Path(path).resolve()
     if scan_root.is_file():
         scan_root = scan_root.parent
+    exclude_folders = parse_exclude_folders(
+        user_exclude_folders=args.exclude_folders,
+        config_exclude_folders=load_config(scan_root).get("exclude"),
+        use_defaults=not args.no_default_excludes,
+        include_folders=args.include_folders,
+    )
 
     console.print(
         Panel(
@@ -354,7 +383,7 @@ def run_clean_command(argv: list[str]) -> int:
     console.print(f"Scanning [bold]{path}[/bold]...\n")
 
     confidence = _effective_confidence(args, noninteractive)
-    result = _analyze(path, confidence)
+    result = _analyze(path, confidence, exclude_folders)
     all_findings = _collect_all_findings(result)
 
     if not all_findings:

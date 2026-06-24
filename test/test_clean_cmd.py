@@ -182,7 +182,10 @@ def test_clean_command_dry_run_writes_nothing_and_uses_default_confidence(tmp_pa
         exit_code = clean_cmd.run_clean_command([str(tmp_path), "--dry-run"])
 
     assert exit_code == 0
-    analyze.assert_called_once_with(str(tmp_path), conf=80)
+    analyze.assert_called_once()
+    assert analyze.call_args.args == (str(tmp_path),)
+    assert analyze.call_args.kwargs["conf"] == 80
+    assert ".git" in analyze.call_args.kwargs["exclude_folders"]
     remove_import.assert_not_called()
     assert target.read_text(encoding="utf-8") == original
     printed = " ".join(
@@ -190,6 +193,45 @@ def test_clean_command_dry_run_writes_nothing_and_uses_default_confidence(tmp_pa
     )
     assert "Dry run" in printed
     assert "os" in printed
+
+
+def test_clean_command_merges_config_and_cli_excludes(tmp_path):
+    result = {
+        "unused_imports": [],
+        "unused_functions": [],
+    }
+    console = Mock()
+
+    with (
+        patch("skylos.commands.clean_cmd.Console", return_value=console),
+        patch(
+            "skylos.commands.clean_cmd.load_config",
+            return_value={"exclude": ["generated", "vendor"]},
+        ),
+        patch(
+            "skylos.commands.clean_cmd.run_analyze", return_value=json.dumps(result)
+        ) as analyze,
+    ):
+        exit_code = clean_cmd.run_clean_command(
+            [
+                str(tmp_path),
+                "--dry-run",
+                "--no-default-excludes",
+                "--exclude",
+                "build",
+                "--exclude-folder",
+                "legacy",
+                "--include-folder",
+                "vendor",
+            ]
+        )
+
+    assert exit_code == 0
+    assert set(analyze.call_args.kwargs["exclude_folders"]) == {
+        "build",
+        "generated",
+        "legacy",
+    }
 
 
 def test_clean_command_apply_removes_without_prompt(tmp_path):

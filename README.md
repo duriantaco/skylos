@@ -182,6 +182,9 @@ container usage, and optional dependencies.
 Run `skylos init` to add these sections to `pyproject.toml`:
 
 ```toml
+[tool.skylos]
+exclude = ["node_modules", "dist"]
+
 [tool.skylos.templates]
 # security = ".skylos/templates/security.md"
 # quality = ".skylos/templates/quality.md"
@@ -228,7 +231,10 @@ By default Skylos discovers `[tool.skylos]` in `pyproject.toml` by walking up
 from the scan path. To use a dedicated TOML config, pass `--config-file PATH`
 or set `SKYLOS_CONFIG_FILE`; standalone files may use either `[tool.skylos]`
 or top-level `[skylos]`. Synced Skylos Cloud policy keeps its protected
-precedence over repository-controlled config.
+precedence over repository-controlled config. The top-level
+`[tool.skylos].exclude` list applies to the main scan and commands such as
+`skylos debt` and `skylos clean`; pass `--exclude` for command-local additions
+or `--include-folder` to override an excluded folder.
 
 ## Language Support
 

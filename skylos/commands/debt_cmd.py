@@ -181,9 +181,22 @@ def run_debt_command(
     )
     debt_parser.add_argument(
         "--exclude",
+        "--exclude-folder",
         nargs="+",
+        action="extend",
         default=None,
         help="Additional folders to exclude",
+    )
+    debt_parser.add_argument(
+        "--include-folder",
+        action="append",
+        dest="include_folders",
+        help="Force include a folder that would otherwise be excluded",
+    )
+    debt_parser.add_argument(
+        "--no-default-excludes",
+        action="store_true",
+        help="Do not exclude default folders; only exclude folders from config or --exclude.",
     )
     debt_args = debt_parser.parse_args(argv)
     console = console_factory()
@@ -265,12 +278,12 @@ def run_debt_command(
 
     exclude = set(
         parse_exclude_folders_func(
-            use_defaults=True,
+            use_defaults=not debt_args.no_default_excludes,
             config_exclude_folders=load_config_func(target).get("exclude"),
+            user_exclude_folders=debt_args.exclude,
+            include_folders=debt_args.include_folders,
         )
     )
-    if debt_args.exclude:
-        exclude.update(debt_args.exclude)
 
     policy = None
     try:
