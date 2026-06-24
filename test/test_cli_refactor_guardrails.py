@@ -11,7 +11,6 @@ from rich.console import Console
 import skylos.cli as cli
 from skylos.cli_core.dispatch import EARLY_COMMAND_HANDLERS
 from skylos.cli_core.main_parser import build_main_parser
-from skylos.commands.run_cmd import run_run_command
 from skylos.commands.scan_cmd import run_scan_command
 from skylos.debt.result import DebtHotspot, DebtScore, DebtSnapshot
 
@@ -71,7 +70,6 @@ def test_cli_public_entrypoint_stays_compatibility_facade():
     assert callable(cli.main)
     assert cli.EARLY_COMMAND_HANDLERS is EARLY_COMMAND_HANDLERS
     assert build_main_parser.__module__ == "skylos.cli_core.main_parser"
-    assert run_run_command.__module__ == "skylos.commands.run_cmd"
     assert run_scan_command.__module__ == "skylos.commands.scan_cmd"
 
 
@@ -369,6 +367,30 @@ def test_cli_guardrail_removed_city_command_exits_with_error(monkeypatch):
 
     assert exc.value.code == 2
     assert mock_console.return_value.print.call_count == 2
+
+
+def test_cli_guardrail_removed_run_command_exits_with_error(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["skylos", "run"],
+    )
+
+    with (
+        patch("skylos.cli.Console") as mock_console,
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 2
+    printed = " ".join(
+        str(call.args[0])
+        for call in mock_console.return_value.print.call_args_list
+        if call.args
+    )
+    assert "`skylos run` has been removed" in printed
+    assert "skylos . -a" in printed
+    assert "skylos suite ." in printed
 
 
 def test_cli_guardrail_discover_dispatch_preserves_argv(monkeypatch):

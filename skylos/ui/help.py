@@ -162,11 +162,6 @@ COMMANDS = [
         "desc": "Detect AI-authored code in PR changes",
         "group": "Utility",
     },
-    {
-        "name": "skylos run",
-        "desc": "Deprecated local web dashboard; use skylos . -a or skylos suite .",
-        "group": "Utility",
-    },
     {"name": "skylos commands", "desc": "List all commands (flat)", "group": "Utility"},
     {"name": "skylos tour", "desc": "Guided tour of capabilities", "group": "Utility"},
 ]

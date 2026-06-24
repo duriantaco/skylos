@@ -1784,15 +1784,14 @@ def _run_discover_command(argv):
     return run_discover_command(argv)
 
 
-def _run_web_server_command(argv):
-    from skylos.commands.run_cmd import run_run_command
-
-    return run_run_command(
-        argv,
-        console_factory=Console,
-        load_config_func=load_config,
-        parse_exclude_folders_func=parse_exclude_folders,
+def _run_removed_run_command(_argv):
+    console = Console()
+    console.print("[bold red]Error:[/bold red] `skylos run` has been removed.")
+    console.print(
+        "[dim]Use[/dim] [bold]skylos . -a[/bold] [dim]for local analysis or[/dim] "
+        "[bold]skylos suite .[/bold] [dim]for the full local bundle.[/dim]"
     )
+    raise SystemExit(2)
 
 
 def _run_scan_command(argv):
@@ -3177,7 +3176,7 @@ def main() -> None:
 
     Calls: skylos/cli_core/dispatch.py _dispatch_early_command;
         skylos/cli.py _build_agent_parser; skylos/cli.py _run_scan_command;
-        skylos/cli.py _run_web_server_command; skylos/cli.py run_pipeline.
+        skylos/cli.py _run_removed_run_command; skylos/cli.py run_pipeline.
 
     Called from: pyproject.toml skylos; skylos/cli.py __main__.
     """
@@ -4808,7 +4807,7 @@ def main() -> None:
                 )
 
     if len(sys.argv) > 1 and sys.argv[1] == "run":
-        _run_web_server_command(sys.argv[2:])
+        _run_removed_run_command(sys.argv[2:])
         return
 
     _run_scan_command(sys.argv[1:])
