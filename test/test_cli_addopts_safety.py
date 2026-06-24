@@ -22,6 +22,8 @@ def test_sanitize_addopts_keeps_safe_scan_options_only():
             "--confidence",
             "80",
             "--severity=high",
+            "--exclude",
+            "generated",
             "--exclude-folder",
             "vendor",
             "--trace",
@@ -41,9 +43,24 @@ def test_sanitize_addopts_keeps_safe_scan_options_only():
         "--confidence",
         "80",
         "--severity=high",
+        "--exclude",
+        "generated",
         "--exclude-folder",
         "vendor",
     ]
+
+
+def test_parse_main_cli_args_accepts_uniform_exclude_flag_and_compat_alias():
+    parser = build_main_parser(version="test")
+
+    args = parse_main_cli_args(
+        parser,
+        [".", "--exclude", "generated", "--exclude-folder", "vendor"],
+        addopts_loader=list,
+    )
+
+    assert args.path == ["."]
+    assert args.exclude_folders == ["generated", "vendor"]
 
 
 def test_parse_main_cli_args_never_gets_command_from_addopts():

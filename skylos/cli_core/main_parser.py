@@ -157,13 +157,19 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     parser.add_argument("--dry-run", action="store_true", help="Show what would be removed")
 
     parser.add_argument(
-        "--exclude-folder",
+        "--exclude",
         action="append",
         dest="exclude_folders",
         help=(
-            "Exclude a folder from analysis (can be used multiple times). By default, common folders like __pycache__, "
+            "Exclude folders from analysis. Can be repeated. By default, common folders like __pycache__, "
             ".git, venv are excluded. Use --no-default-excludes to disable default exclusions."
         ),
+    )
+    parser.add_argument(
+        "--exclude-folder",
+        action="append",
+        dest="exclude_folders",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--include-folder",
@@ -177,7 +183,7 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
     parser.add_argument(
         "--no-default-excludes",
         action="store_true",
-        help="Do not exclude default folders (__pycache__, .git, venv, etc.). Only exclude folders with --exclude-folder.",
+        help="Do not exclude default folders (__pycache__, .git, venv, etc.). Only exclude folders from config or --exclude.",
     )
     parser.add_argument(
         "--list-default-excludes",

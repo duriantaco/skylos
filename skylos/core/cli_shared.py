@@ -34,6 +34,7 @@ _SAFE_ADDOPTS_VALUE_OPTIONS = frozenset(
         "--format",
         "--confidence",
         "-c",
+        "--exclude",
         "--exclude-folder",
         "--include-folder",
         "--diff-base",

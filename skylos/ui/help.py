@@ -132,6 +132,7 @@ COMMANDS = [
             "--apply: apply matching cleanup edits without prompting",
             "--confidence N: minimum confidence, default 80 in noninteractive mode",
             "--types import,function: comma-separated cleanup types",
+            "--exclude FOLDER: exclude a folder from analysis",
             "--comment-out: comment out findings instead of removing them",
         ],
         "group": "Utility",

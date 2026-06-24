@@ -307,6 +307,7 @@ def test_cli_guardrail_clean_help_lists_noninteractive_flags(monkeypatch, capsys
     assert "skylos clean [--dry-run|--apply]" in output
     assert "--confidence N" in output
     assert "--types import,function" in output
+    assert "--exclude FOLDER" in output
     assert "--comment-out" in output
 
 
@@ -1270,6 +1271,50 @@ def test_cli_guardrail_debt_changed_json_keeps_project_scope(tmp_path, monkeypat
     assert payload["summary"]["scope"]["score"] == "project"
     assert payload["summary"]["scope"]["hotspots"] == "changed"
     assert payload["hotspots"][0]["priority_score"] == 38.87
+
+
+def test_cli_guardrail_debt_uses_uniform_exclude_flags_and_config(
+    tmp_path, monkeypatch
+):
+    snapshot = _debt_snapshot(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "skylos",
+            "debt",
+            str(tmp_path),
+            "--no-default-excludes",
+            "--exclude",
+            "build",
+            "dist",
+            "--exclude-folder",
+            "legacy",
+            "--include-folder",
+            "vendor",
+        ],
+    )
+
+    with (
+        patch(
+            "skylos.cli.load_config",
+            return_value={"exclude": ["generated", "vendor"]},
+        ),
+        patch("skylos.debt.run_debt_analysis", return_value=snapshot) as mock_debt,
+        patch("skylos.debt.load_policy", return_value=None),
+        patch("skylos.debt.format_debt_table", return_value="ok"),
+        patch("skylos.cli.Console", return_value=Mock()),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.main()
+
+    assert exc.value.code == 0
+    assert set(mock_debt.call_args.kwargs["exclude_folders"]) == {
+        "build",
+        "dist",
+        "generated",
+        "legacy",
+    }
 
 
 def test_cli_guardrail_debt_subdir_save_baseline_rejected(tmp_path, monkeypatch):
