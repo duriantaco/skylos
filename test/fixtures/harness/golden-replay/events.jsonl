@@ -1,0 +1,6 @@
+{"event":"run_started","kind":"verification","run_id":"golden-fixture","schema_version":1,"timestamp":"2026-01-01T00:00:00Z"}
+{"event":"step_started","kind":"verification","name":"candidate_selection","run_id":"golden-fixture","schema_version":1,"status":"running","timestamp":"2026-01-01T00:00:01Z"}
+{"event":"step_completed","kind":"verification","name":"candidate_selection","run_id":"golden-fixture","schema_version":1,"status":"completed","timestamp":"2026-01-01T00:00:02Z"}
+{"event":"step_started","kind":"verification","name":"verify_findings","run_id":"golden-fixture","schema_version":1,"status":"running","timestamp":"2026-01-01T00:00:03Z"}
+{"event":"step_completed","kind":"verification","name":"verify_findings","run_id":"golden-fixture","schema_version":1,"status":"completed","timestamp":"2026-01-01T00:00:04Z"}
+{"event":"run_completed","kind":"verification","run_id":"golden-fixture","schema_version":1,"status":"completed","timestamp":"2026-01-01T00:00:05Z"}

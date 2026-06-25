@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from skylos.llm.harness import (
+    HARNESS_SCHEMA_VERSION,
     HarnessBudget,
     HarnessBudgetExceeded,
     HarnessReplayError,
@@ -64,6 +65,9 @@ def test_runner_records_step_and_writes_jsonl_trace(tmp_path):
 
     state = _read_json(trace_root / "run-one" / "state.json")
     summary = _read_json(trace_root / "run-one" / "summary.json")
+    assert events[0]["schema_version"] == HARNESS_SCHEMA_VERSION
+    assert state["schema_version"] == HARNESS_SCHEMA_VERSION
+    assert summary["schema_version"] == HARNESS_SCHEMA_VERSION
     assert state["current_phase"] is None
     assert state["completed_phases"] == ["verify"]
     assert summary["status"] == "completed"
@@ -340,6 +344,41 @@ def test_harness_replay_reports_corrupted_summary(tmp_path):
     assert any(issue.code == "phase_count_mismatch" for issue in replay.issues)
     with pytest.raises(HarnessReplayError, match="phase_count_mismatch"):
         replay.assert_valid()
+
+
+def test_harness_replay_reports_missing_schema_version(tmp_path):
+    trace_root = tmp_path / "runs"
+    runner = HarnessRunner(
+        kind="verification",
+        project_root=tmp_path,
+        run_id="old-schema",
+        trace_root=trace_root,
+    )
+    runner.run_step("verify", lambda: {})
+    runner.finish()
+
+    state_path = trace_root / "old-schema" / "state.json"
+    state = _read_json(state_path)
+    state.pop("schema_version")
+    state_path.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        json.dumps(state), encoding="utf-8"
+    )
+
+    replay = load_harness_replay(trace_root / "old-schema")
+
+    assert not replay.ok
+    assert any(issue.code == "schema_version_mismatch" for issue in replay.issues)
+
+
+def test_harness_replay_loads_checked_in_golden_fixture():
+    fixture = Path(__file__).parent / "fixtures" / "harness" / "golden-replay"
+
+    replay = load_harness_replay(fixture)
+
+    replay.assert_valid()
+    assert replay.summary["schema_version"] == HARNESS_SCHEMA_VERSION
+    assert replay.phase_sequence() == ["candidate_selection", "verify_findings"]
+    assert replay.decision_codes() == ["sent_to_llm", "verified_true_positive"]
 
 
 def test_runner_enforces_step_budget(tmp_path):

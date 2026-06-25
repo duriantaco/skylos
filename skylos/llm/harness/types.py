@@ -13,6 +13,7 @@ SAFE_RUN_ID_CHARS = frozenset(
     "._-"
 )
 MAX_RUN_ID_LENGTH = 96
+HARNESS_SCHEMA_VERSION = 1
 
 
 def utc_now_iso() -> str:
@@ -142,6 +143,7 @@ class HarnessRun:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": HARNESS_SCHEMA_VERSION,
             "run_id": self.run_id,
             "kind": self.kind,
             "project_root": self.project_root,
@@ -170,6 +172,7 @@ class HarnessRun:
 
     def summary_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": HARNESS_SCHEMA_VERSION,
             "run_id": self.run_id,
             "kind": self.kind,
             "project_root": self.project_root,

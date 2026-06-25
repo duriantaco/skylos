@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .trace import EVENTS_FILENAME, STATE_FILENAME, SUMMARY_FILENAME
+from .types import HARNESS_SCHEMA_VERSION
 
 MAX_REPLAY_EVENTS_BYTES = 5_000_000
 MAX_REPLAY_ARTIFACT_BYTES = 1_000_000
@@ -279,12 +280,41 @@ def _validate_replay(replay: HarnessReplay) -> list[HarnessReplayIssue]:
             )
         )
 
+    _validate_schema_version(events, state, summary, issues)
     _validate_run_completion(events, state, summary, issues)
     _validate_steps(events, state, summary, issues)
     _validate_tool_calls(events, state, summary, issues)
     _validate_decisions(state, summary, issues)
     _validate_budget(state, summary, issues)
     return issues
+
+
+def _validate_schema_version(
+    events: list[dict[str, Any]],
+    state: dict[str, Any],
+    summary: dict[str, Any],
+    issues: list[HarnessReplayIssue],
+) -> None:
+    expected = HARNESS_SCHEMA_VERSION
+    for artifact_name, payload in (("state.json", state), ("summary.json", summary)):
+        version = payload.get("schema_version")
+        if version != expected:
+            issues.append(
+                HarnessReplayIssue(
+                    "schema_version_mismatch",
+                    f"{artifact_name} schema_version={version!r}, expected {expected}",
+                )
+            )
+
+    for index, event in enumerate(events, 1):
+        version = event.get("schema_version")
+        if version != expected:
+            issues.append(
+                HarnessReplayIssue(
+                    "schema_version_mismatch",
+                    f"{EVENTS_FILENAME}:{index} schema_version={version!r}, expected {expected}",
+                )
+            )
 
 
 def _validate_run_completion(
