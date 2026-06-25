@@ -2961,6 +2961,10 @@ def _build_agent_parser():
         add_base_url_arg=_add_agent_base_url_arg,
     )
 
+    from skylos.commands.agent_replay_cmd import add_agent_replay_parser
+
+    add_agent_replay_parser(agent_sub)
+
     p_watch = agent_sub.add_parser(
         "watch",
         help="Continuously maintain active-agent state for a repository",
@@ -3131,6 +3135,11 @@ def main() -> None:
             agent_args.agent_cmd = "audit"
             agent_args.security_workflow_alias = "security-deep"
             cmd = "audit"
+
+        if cmd == "replay":
+            from skylos.commands.agent_replay_cmd import run_agent_replay_command
+
+            sys.exit(run_agent_replay_command(agent_args, console))
 
         if cmd in {"watch", "pre-commit", "triage", "status", "serve"}:
             from skylos.agents.center import (

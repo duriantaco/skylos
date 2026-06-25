@@ -458,6 +458,101 @@ def test_agent_verify_json_uses_harness_and_writes_metadata(tmp_path):
     assert kwargs["verification_mode"] == "judge_all"
 
 
+def _write_sample_harness_run(tmp_path):
+    from skylos.llm.harness.runner import HarnessRunner
+
+    runner = HarnessRunner(
+        kind="verification",
+        project_root=tmp_path,
+        run_id="cli-replay",
+        trace_root=tmp_path / "runs",
+    )
+    with runner.step(
+        "candidate_selection",
+        input_summary={"finding_count": 1},
+    ) as step:
+        runner.run_tool(
+            "grep_refs",
+            lambda: ["sample.old_func"],
+            input_summary={"name": "old_func"},
+            output_summary=lambda hits: {"matches": len(hits)},
+        )
+        step.set_output_summary(to_verify=1)
+    runner.record_decision(
+        phase="candidate_selection",
+        code="selected_for_verification",
+        target={"name": "old_func", "file": "sample.py", "line": 1},
+    )
+    runner.finish()
+    return tmp_path / "runs" / "cli-replay"
+
+
+def test_agent_replay_json_validates_harness_run_without_llm_runtime(tmp_path, capsys):
+    run_dir = _write_sample_harness_run(tmp_path)
+
+    with (
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            side_effect=AssertionError("replay must not resolve LLM runtime"),
+        ),
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "replay",
+                str(run_dir),
+                "--format",
+                "json",
+            ],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["schema_version"] == 1
+    assert payload["run_id"] == "cli-replay"
+    assert payload["phase_count"] == 1
+    assert payload["tool_call_count"] == 1
+    assert payload["decision_count"] == 1
+    assert payload["phases"][0]["name"] == "candidate_selection"
+    assert payload["tool_calls"][0]["name"] == "grep_refs"
+
+
+def test_agent_replay_json_exits_one_for_invalid_harness_run(tmp_path, capsys):
+    with (
+        patch(
+            "skylos.cli.resolve_llm_runtime",
+            side_effect=AssertionError("replay must not resolve LLM runtime"),
+        ),
+        patch(
+            "sys.argv",
+            [
+                "skylos",
+                "agent",
+                "replay",
+                str(tmp_path / "missing-run"),
+                "--format",
+                "json",
+            ],
+        ),
+    ):
+        from skylos.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+    assert exc.value.code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert any(issue["code"] == "missing_artifact" for issue in payload["issues"])
+
+
 def test_agent_analyze_strict_exits_one_when_findings_exist(tmp_path):
     sample = tmp_path / "sample.py"
     sample.write_text("print('hi')\n")
