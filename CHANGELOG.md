@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.26.1](https://github.com/duriantaco/skylos/compare/v4.26.0...v4.26.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* **sca:** skip non-PyPI pyproject sources ([#607](https://github.com/duriantaco/skylos/issues/607)) ([93ce91d](https://github.com/duriantaco/skylos/commit/93ce91d56ce414ebb62e35b3cf0c455117e47170))
+
 ## [4.26.0](https://github.com/duriantaco/skylos/compare/v4.25.0...v4.26.0) (2026-06-25)
 
 
