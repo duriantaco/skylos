@@ -1,0 +1,111 @@
+{
+  "budget": {
+    "max_findings": null,
+    "max_fixes": null,
+    "max_llm_calls": null,
+    "max_seconds": null,
+    "max_steps": null
+  },
+  "budget_remaining": {
+    "findings": null,
+    "fixes": null,
+    "llm_calls": null,
+    "seconds": null,
+    "steps": null
+  },
+  "budget_used": {
+    "findings": 2,
+    "fixes": 0,
+    "llm_calls": 1,
+    "seconds": 0.005,
+    "steps": 2
+  },
+  "completed_phases": [
+    "candidate_selection",
+    "verify_findings"
+  ],
+  "current_phase": null,
+  "decisions": [
+    {
+      "code": "sent_to_llm",
+      "details": {
+        "verdict": null
+      },
+      "phase": "candidate_selection",
+      "target": {
+        "file": "app.py",
+        "fingerprint": "fp-old",
+        "line": 1,
+        "name": "app.old",
+        "type": "function"
+      },
+      "timestamp": "2026-01-01T00:00:01Z"
+    },
+    {
+      "code": "verified_true_positive",
+      "details": {
+        "verdict": "TRUE_POSITIVE"
+      },
+      "phase": "verify_findings",
+      "target": {
+        "file": "app.py",
+        "fingerprint": "fp-old",
+        "line": 1,
+        "name": "app.old",
+        "type": "function"
+      },
+      "timestamp": "2026-01-01T00:00:03Z"
+    }
+  ],
+  "duration_ms": 5,
+  "ended_at": "2026-01-01T00:00:05Z",
+  "error": null,
+  "failed_phase": null,
+  "kind": "verification",
+  "metadata": {
+    "fixture": "golden"
+  },
+  "project_root": "/repo",
+  "run_id": "golden-fixture",
+  "schema_version": 1,
+  "started_at": "2026-01-01T00:00:00Z",
+  "state_path": "test/fixtures/harness/golden-replay/state.json",
+  "status": "completed",
+  "steps": [
+    {
+      "duration_ms": 1,
+      "ended_at": "2026-01-01T00:00:02Z",
+      "error": null,
+      "input_summary": {
+        "finding_count": 2,
+        "max_verify": 1
+      },
+      "name": "candidate_selection",
+      "output_summary": {
+        "llm_calls": 0,
+        "to_verify": 1
+      },
+      "started_at": "2026-01-01T00:00:01Z",
+      "status": "completed"
+    },
+    {
+      "duration_ms": 1,
+      "ended_at": "2026-01-01T00:00:04Z",
+      "error": null,
+      "input_summary": {
+        "batch_mode": false,
+        "candidate_count": 1
+      },
+      "name": "verify_findings",
+      "output_summary": {
+        "llm_calls": 1,
+        "verified_true_positive": 1
+      },
+      "started_at": "2026-01-01T00:00:03Z",
+      "status": "completed"
+    }
+  ],
+  "summary_path": "test/fixtures/harness/golden-replay/summary.json",
+  "tool_calls": [],
+  "trace_path": "test/fixtures/harness/golden-replay/events.jsonl"
+}

@@ -11,6 +11,7 @@ from .tools import (
     default_verification_tool_registry,
 )
 from .types import (
+    HARNESS_SCHEMA_VERSION,
     HarnessBudget,
     HarnessBudgetExceeded,
     HarnessDecision,
@@ -35,6 +36,7 @@ __all__ = [
     "HarnessTool",
     "HarnessToolCall",
     "HarnessToolRegistry",
+    "HARNESS_SCHEMA_VERSION",
     "default_verification_tool_registry",
     "load_harness_replay",
     "run_verification_harness",

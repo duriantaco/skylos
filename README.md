@@ -109,6 +109,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Security agent quick scan | `skylos agent security-quick .` | One-shot LLM security audit; compatibility alias for `skylos agent scan . --security` | [AI features](https://docs.skylos.dev/ai-features) |
 | Security agent deep scan | `skylos agent security-deep .` | Three-stage security workflow with threat-model context, static threat traces, discovery/validation, and remediation handoff | [AI features](https://docs.skylos.dev/ai-features) |
 | AI-assisted review | `skylos agent scan .` | Static analysis plus optional LLM review and fix suggestions | [AI features](https://docs.skylos.dev/ai-features) |
+| Agent harness replay | `skylos agent replay .skylos/runs/<run-id>` | Validates and summarizes saved agent verification phases, tool calls, decisions, and budgets | [Agent harness artifacts](#agent-harness-artifacts) |
 | Verification-backed remediation | `skylos agent scan . --fix` | Re-scans fixed security findings and records proof-test metadata for supported fixes | [AI features](https://docs.skylos.dev/ai-features) |
 | MCP agent verification | `verify_change` MCP tool | Lets Claude, Cursor, and other MCP clients verify an edited file/range with the same schema as `skylos verify` | [MCP server](https://docs.skylos.dev/mcp-server) |
 | LLM app defense | `skylos defend .` | Finds missing AI app guardrails mapped to OWASP LLM risks | [AI defense](https://docs.skylos.dev/ai-defense) |
@@ -153,6 +154,28 @@ repo and PR checker that puts several common review checks behind one CLI.
   sensitive-file, and timeout dictionaries from config.
 - **One command surface:** dead code, security, secrets, dependency, quality,
   technical debt, agent review, and AI defense commands share the same CLI.
+
+## Agent Harness Artifacts
+
+`skylos agent verify .` records replayable verification artifacts under
+`.skylos/runs/<run-id>` and prints the run directory in table output. JSON
+output includes the same harness summary under the `harness` key.
+
+Use `skylos agent replay .skylos/runs/<run-id>` to validate and inspect a saved
+run without making LLM calls. Add `--format json` when another agent or CI job
+needs machine-readable status. A valid replay exits `0`; an invalid or corrupt
+artifact set exits `1` with issue codes. Replay output includes
+`schema_version` so CI and agents can detect artifact-contract changes.
+
+Each run directory contains:
+
+- `events.jsonl`: chronological run, phase, and tool-call events.
+- `state.json`: full observable state, including phases, tool calls, decisions,
+  and budget usage.
+- `summary.json`: compact status, counts, budget, and artifact paths.
+
+The current harness state is observable and replay-validated. It is not yet a
+resume mechanism for continuing interrupted verification runs.
 
 ## Install Options
 

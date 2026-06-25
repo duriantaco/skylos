@@ -7,7 +7,6 @@ import re
 import logging
 import os
 import secrets as secrets_lib
-import shutil
 import tempfile
 from types import SimpleNamespace
 from skylos.cli_core.dispatch import (
@@ -2951,84 +2950,20 @@ def _build_agent_parser():
     _add_agent_provider_arg(p_remediate)
     _add_agent_base_url_arg(p_remediate)
 
-    p_verify = agent_sub.add_parser(
-        "verify",
-        help="LLM-verify dead code findings (reduce false positives, catch more dead code)",
+    from skylos.commands.agent_verify_cmd import add_agent_verify_parser
+
+    add_agent_verify_parser(
+        agent_sub,
+        add_model_arg=_add_agent_model_arg,
+        add_output_arg=_add_agent_output_arg,
+        add_quiet_arg=_add_agent_quiet_arg,
+        add_provider_arg=_add_agent_provider_arg,
+        add_base_url_arg=_add_agent_base_url_arg,
     )
-    p_verify.add_argument("path", help="File or directory to analyze")
-    _add_agent_model_arg(p_verify)
-    p_verify.add_argument(
-        "--conf", type=int, default=60, help="Static analysis confidence threshold"
-    )
-    p_verify.add_argument(
-        "--max-verify",
-        type=int,
-        default=50,
-        help="Max findings to verify with LLM (default: 50)",
-    )
-    p_verify.add_argument(
-        "--max-challenge",
-        type=int,
-        default=20,
-        help="Max survivors to challenge with LLM (default: 20)",
-    )
-    p_verify.add_argument(
-        "--no-entry-discovery",
-        action="store_true",
-        help="Skip entry point discovery pass",
-    )
-    p_verify.add_argument(
-        "--no-survivor-challenge",
-        action="store_true",
-        help="Skip survivor challenge pass",
-    )
-    p_verify.add_argument(
-        "--verification-mode",
-        choices=["judge_all", "production"],
-        default="judge_all",
-        help="Dead-code verifier mode: judge_all sends nearly every refs==0 candidate to the LLM",
-    )
-    p_verify.add_argument(
-        "--format",
-        choices=["table", "json"],
-        default="table",
-    )
-    _add_agent_output_arg(p_verify)
-    _add_agent_quiet_arg(p_verify)
-    _add_agent_provider_arg(p_verify)
-    _add_agent_base_url_arg(p_verify)
-    p_verify.add_argument(
-        "--grep-workers",
-        type=int,
-        default=4,
-        help="Number of parallel grep workers (default: 4)",
-    )
-    p_verify.add_argument(
-        "--parallel-grep",
-        action="store_true",
-        help="Enable parallel grep execution for faster verification",
-    )
-    p_verify.add_argument(
-        "--fix",
-        action="store_true",
-        help="Generate removal patches for confirmed dead code",
-    )
-    p_verify.add_argument(
-        "--fix-mode",
-        choices=["delete", "comment"],
-        default="delete",
-        help="Fix mode: delete removes code, comment comments it out (default: delete)",
-    )
-    p_verify.add_argument(
-        "--apply",
-        action="store_true",
-        help="Apply generated patches (use with --fix)",
-    )
-    p_verify.add_argument(
-        "--pr",
-        action="store_true",
-        help="Create a branch, apply patches, and commit (use with --fix)",
-    )
+
+    from skylos.commands.agent_replay_cmd import add_agent_replay_parser
+
+    add_agent_replay_parser(agent_sub)
 
     p_watch = agent_sub.add_parser(
         "watch",
@@ -3200,6 +3135,11 @@ def main() -> None:
             agent_args.agent_cmd = "audit"
             agent_args.security_workflow_alias = "security-deep"
             cmd = "audit"
+
+        if cmd == "replay":
+            from skylos.commands.agent_replay_cmd import run_agent_replay_command
+
+            sys.exit(run_agent_replay_command(agent_args, console))
 
         if cmd in {"watch", "pre-commit", "triage", "status", "serve"}:
             from skylos.agents.center import (
@@ -4415,290 +4355,20 @@ def main() -> None:
             sys.exit(0)
 
         if cmd == "verify":
-            path = pathlib.Path(agent_args.path)
-            if not path.exists():
-                console.print(f"[bad]Path not found: {path}[/bad]")
-                sys.exit(1)
+            from skylos.commands.agent_verify_cmd import run_agent_verify_command
 
-            console.print("[brand]Step 1/2: Running static analysis...[/brand]")
-
-            from skylos.analyzer import analyze as run_static
-
-            raw = run_static(
-                str(path),
-                conf=agent_args.conf,
-                enable_danger=False,
-                enable_quality=False,
-                enable_secrets=False,
-                exclude_folders=agent_exclude_folders,
+            sys.exit(
+                run_agent_verify_command(
+                    agent_args,
+                    console,
+                    model=model,
+                    api_key=api_key,
+                    provider=provider,
+                    base_url=base_url,
+                    exclude_folders=agent_exclude_folders,
+                    upload_agent_run=_upload_agent_run_best_effort,
+                )
             )
-            static_result = json.loads(raw) if isinstance(raw, str) else raw
-
-            from skylos.deadcode.collect import collect_dead_code_findings
-
-            all_findings = collect_dead_code_findings(static_result)
-
-            defs_map = static_result.get("definitions", {})
-
-            if not all_findings:
-                console.print("[good]No dead code findings to verify![/good]")
-                sys.exit(0)
-
-            console.print(f"  Found {len(all_findings)} dead code findings")
-
-            console.print("\n[brand]Step 2/2: LLM verification (4-pass)...[/brand]")
-
-            from skylos.llm.harness import run_verification_harness
-
-            harness_result = run_verification_harness(
-                findings=all_findings,
-                defs_map=defs_map,
-                project_root=str(path if path.is_dir() else path.parent),
-                model=model,
-                api_key=api_key,
-                provider=provider,
-                base_url=base_url,
-                max_verify=agent_args.max_verify,
-                max_challenge=agent_args.max_challenge,
-                enable_entry_discovery=not agent_args.no_entry_discovery,
-                enable_survivor_challenge=not agent_args.no_survivor_challenge,
-                quiet=getattr(agent_args, "quiet", False),
-                verification_mode=getattr(agent_args, "verification_mode", "judge_all"),
-                grep_workers=getattr(agent_args, "grep_workers", 4),
-                parallel_grep=getattr(agent_args, "parallel_grep", False)
-                or getattr(agent_args, "fix", False),
-            )
-            result = harness_result.output
-            harness_summary = harness_result.run.summary_dict()
-            result["harness"] = harness_summary
-            harness_artifact = None
-            if harness_summary.get("state_path"):
-                harness_artifact = str(
-                    pathlib.Path(harness_summary["state_path"]).parent
-                )
-
-            stats = result["stats"]
-            verified = result["verified_findings"]
-            new_dead = result["new_dead_code"]
-
-            if agent_args.format == "json":
-                output = json.dumps(result, indent=2, default=str)
-                if agent_args.output:
-                    pathlib.Path(agent_args.output).write_text(output)
-                    console.print(f"[dim]Written to {agent_args.output}[/dim]")
-                else:
-                    print(output)
-            else:
-                console.print("\n[brand]Verification Summary[/brand]")
-                summary_table = Table(expand=False)
-                summary_table.add_column("Metric", style="cyan")
-                summary_table.add_column("Value", style="bold")
-                summary_table.add_row("Total findings", str(stats["total_findings"]))
-                summary_table.add_row(
-                    "Confirmed dead (TRUE_POSITIVE)",
-                    f"[red]{stats['verified_true_positive']}[/red]",
-                )
-                summary_table.add_row(
-                    "False positives removed",
-                    f"[green]{stats['verified_false_positive']}[/green]",
-                )
-                summary_table.add_row("Uncertain", str(stats["uncertain"]))
-                summary_table.add_row(
-                    "Entry points discovered", str(stats["entry_points_discovered"])
-                )
-                summary_table.add_row(
-                    "Survivors challenged", str(stats["survivors_challenged"])
-                )
-                summary_table.add_row(
-                    "New dead code found",
-                    f"[red]{stats['survivors_reclassified_dead']}[/red]",
-                )
-                summary_table.add_row("LLM calls", str(stats["llm_calls"]))
-                summary_table.add_row("Time", f"{stats['elapsed_seconds']}s")
-                console.print(summary_table)
-                if harness_artifact:
-                    console.print(f"\n[dim]Harness run: {harness_artifact}[/dim]")
-
-                fps = [f for f in verified if f.get("_llm_verdict") == "FALSE_POSITIVE"]
-                if fps:
-                    console.print(
-                        f"\n[green]False positives removed ({len(fps)}):[/green]"
-                    )
-                    fp_table = Table(expand=True)
-                    fp_table.add_column("Name", style="green")
-                    fp_table.add_column("File", style="dim")
-                    fp_table.add_column("Rationale", overflow="fold")
-                    for f in fps[:30]:
-                        fp_table.add_row(
-                            f.get("name", "?"),
-                            f"{f.get('file', '?')}:{f.get('line', '?')}",
-                            f.get("_llm_rationale", "")[:100],
-                        )
-                    console.print(fp_table)
-
-                if new_dead:
-                    console.print(
-                        f"\n[red]New dead code discovered ({len(new_dead)}):[/red]"
-                    )
-                    nd_table = Table(expand=True)
-                    nd_table.add_column("Name", style="red")
-                    nd_table.add_column("File", style="dim")
-                    nd_table.add_column("Rationale", overflow="fold")
-                    for d in new_dead[:30]:
-                        nd_table.add_row(
-                            d.get("full_name", d.get("name", "?")),
-                            f"{d.get('file', '?')}:{d.get('line', '?')}",
-                            d.get("_llm_rationale", "")[:100],
-                        )
-                    console.print(nd_table)
-
-                eps = result.get("entry_points", [])
-                if eps:
-                    console.print(
-                        f"\n[cyan]Entry points discovered ({len(eps)}):[/cyan]"
-                    )
-                    for ep in eps:
-                        console.print(f"  - {ep['name']} (from {ep['source']})")
-
-            total_removed = stats["verified_false_positive"]
-            total_added = stats["survivors_reclassified_dead"]
-            net = stats["total_findings"] - total_removed + total_added
-
-            console.print(
-                f"\n[brand]Net result:[/brand] {stats['total_findings']} findings "
-                f"→ [green]-{total_removed} FP[/green] "
-                f"[red]+{total_added} new[/red] "
-                f"= {net} verified findings"
-            )
-
-            if getattr(agent_args, "fix", False):
-                from skylos.remediation.fixgen import (
-                    generate_removal_plan,
-                    generate_unified_diff,
-                    apply_patches,
-                    validate_patches,
-                    generate_fix_summary,
-                )
-
-                dead_findings = [
-                    f for f in verified if f.get("_llm_verdict") == "TRUE_POSITIVE"
-                ] + (new_dead or [])
-
-                if dead_findings:
-                    fix_mode = getattr(agent_args, "fix_mode", "delete")
-                    project_root_str = str(path if path.is_dir() else path.parent)
-                    patches = generate_removal_plan(
-                        dead_findings,
-                        defs_map,
-                        project_root_str,
-                        mode=fix_mode,
-                    )
-
-                    if patches:
-                        errors = validate_patches(patches, project_root_str)
-                        if errors:
-                            console.print("\n[warn]Patch validation warnings:[/warn]")
-                            for err in errors:
-                                console.print(f"  [yellow]! {err}[/yellow]")
-
-                        summary = generate_fix_summary(patches)
-                        console.print("\n[brand]Fix Plan:[/brand]")
-                        console.print(f"  Patches: {summary['total_patches']}")
-                        console.print(f"  Files affected: {summary['files_affected']}")
-                        console.print(
-                            f"  Lines to remove: {summary['total_lines_removed']}"
-                        )
-                        console.print(f"  Avg safety: {summary['avg_safety_score']}")
-
-                        diff = generate_unified_diff(patches, project_root_str)
-                        if diff:
-                            console.print("\n[brand]Unified Diff:[/brand]")
-                            print(diff)
-
-                        if getattr(agent_args, "pr", False) and not errors:
-                            import time as _time
-
-                            branch_name = f"skylos/fix-deadcode-{int(_time.time())}"
-                            try:
-                                subprocess.run(
-                                    ["git", "checkout", "-b", branch_name],
-                                    cwd=project_root_str,
-                                    check=True,
-                                    capture_output=True,
-                                    text=True,
-                                )
-                                apply_patches(patches, project_root_str, dry_run=False)
-                                subprocess.run(
-                                    ["git", "add", "-A"],
-                                    cwd=project_root_str,
-                                    check=True,
-                                    capture_output=True,
-                                    text=True,
-                                )
-                                commit_msg = (
-                                    f"fix: remove {summary['total_patches']} dead code items "
-                                    f"({summary['total_lines_removed']} lines)"
-                                )
-                                subprocess.run(
-                                    ["git", "commit", "-m", commit_msg],
-                                    cwd=project_root_str,
-                                    check=True,
-                                    capture_output=True,
-                                    text=True,
-                                )
-                                console.print(
-                                    f"\n[good]Branch created: {branch_name}[/good]"
-                                )
-                                console.print(f"[good]Committed: {commit_msg}[/good]")
-                                if shutil.which("gh"):
-                                    console.print(
-                                        f"\n[brand]Create PR with:[/brand]\n"
-                                        f'  gh pr create --title "{commit_msg}" '
-                                        f'--body "Automated dead code removal by Skylos"'
-                                    )
-                                else:
-                                    console.print(
-                                        f"\n[dim]Push and create PR:[/dim]\n"
-                                        f"  git push -u origin {branch_name}\n"
-                                        f"  # then open PR on GitHub"
-                                    )
-                            except subprocess.CalledProcessError as e:
-                                console.print(
-                                    f"\n[warn]Git operation failed: {e.stderr or e}[/warn]"
-                                )
-                        elif getattr(agent_args, "apply", False) and not errors:
-                            apply_patches(patches, project_root_str, dry_run=False)
-                            console.print(
-                                "\n[good]Patches applied successfully![/good]"
-                            )
-                        elif (
-                            getattr(agent_args, "apply", False)
-                            or getattr(agent_args, "pr", False)
-                        ) and errors:
-                            console.print(
-                                "\n[warn]Skipping apply due to validation errors[/warn]"
-                            )
-                    else:
-                        console.print("\n[dim]No patches generated[/dim]")
-                else:
-                    console.print("\n[dim]No confirmed dead code to fix[/dim]")
-
-            _upload_agent_run_best_effort(
-                "verify",
-                {
-                    "total_findings": stats["total_findings"],
-                    "verified_true_positive": stats["verified_true_positive"],
-                    "verified_false_positive": stats["verified_false_positive"],
-                    "entry_points_discovered": stats["entry_points_discovered"],
-                    "llm_calls": stats["llm_calls"],
-                    "elapsed_seconds": stats["elapsed_seconds"],
-                },
-                model=model,
-                provider=provider,
-                duration_seconds=stats.get("elapsed_seconds"),
-            )
-
-            sys.exit(0)
 
         if cmd == "remediate":
             standards_raw = getattr(agent_args, "standards", None)

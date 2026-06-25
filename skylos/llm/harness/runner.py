@@ -19,6 +19,7 @@ from .tools import HarnessToolRegistry
 from .types import (
     HarnessBudget,
     HarnessDecision,
+    HARNESS_SCHEMA_VERSION,
     HarnessRun,
     HarnessStep,
     HarnessToolCall,
@@ -253,6 +254,7 @@ class HarnessRunner:
                 "kind": self.run.kind,
                 "timestamp": utc_now_iso(),
                 **payload,
+                "schema_version": HARNESS_SCHEMA_VERSION,
             }
         )
         self._persist_events()
