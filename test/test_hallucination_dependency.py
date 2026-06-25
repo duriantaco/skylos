@@ -89,6 +89,39 @@ dependencies = [
     assert "google-genai" in deps
 
 
+def test_uv_source_dependency_counts_as_declared_for_d223(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        """
+[project]
+dependencies = [
+  "private-pkg>=1.0.0",
+]
+
+[tool.uv.sources]
+private-pkg = { git = "https://github.com/example/private-pkg" }
+""".strip(),
+        encoding="utf-8",
+    )
+    source = _write_py(repo / "app.py", "import private_pkg\n")
+
+    monkeypatch.setattr(dep, "_get_stdlib_modules", lambda: set())
+    monkeypatch.setattr(dep, "_collect_local_modules", lambda root: set())
+    monkeypatch.setattr(dep, "_load_private_allowlist", lambda: set())
+    monkeypatch.setattr(dep, "_build_installed_module_mapping", lambda: {})
+    monkeypatch.setattr(dep, "_load_import_to_dist_mapping", lambda: {})
+
+    def fail_pypi_check(name, cache):
+        raise AssertionError(f"{name} should be treated as declared")
+
+    monkeypatch.setattr(dep, "_check_pypi_status", fail_pypi_check)
+
+    findings = dep.scan_python_dependency_hallucinations(repo, [source])
+
+    assert _extract_single(findings, dep.RULE_ID_UNDECLARED) == []
+
+
 def test_parse_pyproject_toml_poetry_block(tmp_path):
     py = tmp_path / "pyproject.toml"
     py.write_text(

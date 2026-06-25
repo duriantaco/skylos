@@ -138,6 +138,104 @@ def test_scan_requirements_txt_flags_missing_pypi_version(tmp_path):
     assert (ECOSYSTEM_PYPI, "click", "8.1.7") in calls
 
 
+def test_scan_pyproject_skips_uv_non_pypi_sources(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        "\n".join(
+            [
+                "[project]",
+                'name = "uv-source-demo"',
+                "dependencies = [",
+                '  "git-pkg>=1.0.0",',
+                '  "url-pkg==2.0.0",',
+                '  "path-pkg>=3.0.0",',
+                '  "workspace-pkg>=4.0.0",',
+                '  "index-pkg>=5.0.0",',
+                '  "normal-pkg>=6.0.0",',
+                "]",
+                "",
+                "[tool.uv.sources]",
+                'git-pkg = { git = "https://github.com/example/git-pkg" }',
+                'url-pkg = { url = "https://example.com/url-pkg.whl" }',
+                'path-pkg = { path = "../path-pkg" }',
+                "workspace-pkg = { workspace = true }",
+                'index-pkg = { index = "internal" }',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    findings = scan_manifest_dependency_hallucinations(
+        repo,
+        status_checker=_status_checker({}, calls),
+    )
+
+    assert findings == []
+    assert calls == [(ECOSYSTEM_PYPI, "normal-pkg", "6.0.0")]
+
+
+def test_scan_pyproject_skips_pep508_direct_references(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        "\n".join(
+            [
+                "[project]",
+                'name = "direct-ref-demo"',
+                "dependencies = [",
+                '  "direct-git @ git+https://github.com/example/direct-git@v1.0.0",',
+                '  "direct-url @ https://example.com/direct-url-1.0.0.whl",',
+                '  "direct-path @ ../direct-path",',
+                '  "normal-pkg==2.0.0",',
+                "]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    findings = scan_manifest_dependency_hallucinations(
+        repo,
+        status_checker=_status_checker({}, calls),
+    )
+
+    assert findings == []
+    assert calls == [(ECOSYSTEM_PYPI, "normal-pkg", "2.0.0")]
+
+
+def test_scan_pyproject_skips_poetry_non_pypi_sources(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        "\n".join(
+            [
+                "[tool.poetry.dependencies]",
+                'python = "^3.11"',
+                'git-pkg = { git = "https://github.com/example/git-pkg", rev = "1.0.0" }',
+                'path-pkg = { path = "../path-pkg" }',
+                'url-pkg = { url = "https://example.com/url-pkg-1.0.0.whl" }',
+                'source-pkg = { version = "1.2.3", source = "internal" }',
+                'normal-pkg = "^6.0.0"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    findings = scan_manifest_dependency_hallucinations(
+        repo,
+        status_checker=_status_checker({}, calls),
+    )
+
+    assert findings == []
+    assert calls == [(ECOSYSTEM_PYPI, "normal-pkg", "6.0.0")]
+
+
 def test_scan_manifest_dependency_statuses_are_cached(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
