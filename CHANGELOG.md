@@ -1,5 +1,28 @@
 ## Changelog
 
+## [4.26.0](https://github.com/duriantaco/skylos/compare/v4.25.0...v4.26.0) (2026-06-25)
+
+
+### Features
+
+* **agent:** add harness replay CLI ([#604](https://github.com/duriantaco/skylos/issues/604)) ([3081522](https://github.com/duriantaco/skylos/commit/30815228ef497439d9d2032bf93216f748e17b0d))
+* **dead-code:** explain unused-code evidence in output ([#597](https://github.com/duriantaco/skylos/issues/597)) ([4457cdc](https://github.com/duriantaco/skylos/commit/4457cdc5924a07db4d0aa6a89a4c52b265683bb4))
+* **llm:** add agent review routing ([#592](https://github.com/duriantaco/skylos/issues/592)) ([c60f7f9](https://github.com/duriantaco/skylos/commit/c60f7f9b62c22ff61ffe8071327cc59d6a82e4e3))
+* **llm:** add replayable verification harness ([#599](https://github.com/duriantaco/skylos/issues/599)) ([fb0cf5d](https://github.com/duriantaco/skylos/commit/fb0cf5d64b7eab7079987a9cd1dfe783f7ebc3c3))
+
+
+### Bug Fixes
+
+* **cli:** remove run web dashboard ([#603](https://github.com/duriantaco/skylos/issues/603)) ([093c79d](https://github.com/duriantaco/skylos/commit/093c79d166bb5500466f5db4d4e7d9163005f670))
+* **cli:** unify exclude options ([#602](https://github.com/duriantaco/skylos/issues/602)) ([1d812aa](https://github.com/duriantaco/skylos/commit/1d812aa4d5d84a456ae36e1ae39f861c844cc0b0))
+* **security:** move vulnerable app into fixture ([#594](https://github.com/duriantaco/skylos/issues/594)) ([a8255dc](https://github.com/duriantaco/skylos/commit/a8255dc2ef535dbf18ccd879f71de51188a27bc3))
+
+
+### Documentation
+
+* **cli:** clarify output mode guide ([#596](https://github.com/duriantaco/skylos/issues/596)) ([de3be38](https://github.com/duriantaco/skylos/commit/de3be38083821db1efe7adf8f9e79704b253307e))
+* **results:** update real-world results ([#598](https://github.com/duriantaco/skylos/issues/598)) ([2ce22ad](https://github.com/duriantaco/skylos/commit/2ce22ada040845b699f8c6408f59420b719fec00))
+
 ## [4.25.0](https://github.com/duriantaco/skylos/compare/v4.24.2...v4.25.0) (2026-06-19)
 
 
