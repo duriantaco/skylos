@@ -1170,58 +1170,6 @@ def _print_upload_cta(console: Console, project_root: Path):
         )
 
 
-def _print_feature_hints(console: Console, args):
-    """Print contextual hints about features the user hasn't used yet."""
-    if _is_ci():
-        return
-
-    hints = []
-
-    ran_all = getattr(args, "all_checks", False)
-    ran_danger = getattr(args, "danger", False)
-    ran_secrets = getattr(args, "secrets", False)
-    ran_quality = getattr(args, "quality", False)
-
-    if not ran_all and not (ran_danger and ran_secrets and ran_quality):
-        extras = []
-        if not ran_danger:
-            extras.append("security")
-        if not ran_secrets:
-            extras.append("secrets")
-        if not ran_quality:
-            extras.append("quality")
-        hints.append(
-            f"[dim]Add {' + '.join(extras)} scanning:[/dim] [bold]skylos . -a[/bold]"
-        )
-
-    hint_file = Path.home() / ".skylos" / ".hint_index"
-    try:
-        idx = int(hint_file.read_text().strip()) if hint_file.exists() else 0
-    except (ValueError, OSError):
-        idx = 0
-
-    rotating_hints = [
-        "[dim]Run the full local bundle:[/dim] [bold]skylos suite .[/bold]",
-        "[dim]Scan for AI/LLM guardrails:[/dim] [bold]skylos defend .[/bold]",
-        "[dim]Map LLM integrations:[/dim] [bold]skylos discover .[/bold]",
-        "[dim]LLM-verified dead code (100% accuracy):[/dim] [bold]skylos agent verify .[/bold]",
-        "[dim]Auto-fix dead code interactively:[/dim] [bold]skylos . -i[/bold]",
-    ]
-
-    hints.append(rotating_hints[idx % len(rotating_hints)])
-
-    try:
-        hint_file.parent.mkdir(parents=True, exist_ok=True)
-        hint_file.write_text(str(idx + 1))
-    except OSError:
-        pass
-
-    if hints:
-        console.print()
-        for hint in hints:
-            console.print(f"  {hint}")
-
-
 def interactive_selection(
     console: Console, unused_functions, unused_imports, root_path=None
 ):
