@@ -23,9 +23,10 @@ GRADE_TABLE: list[tuple[str, int, int]] = [
 ]
 
 CATEGORY_WEIGHTS: dict[str, float] = {
-    "security": 0.35,
+    "security": 0.30,
     "quality": 0.25,
-    "dead_code": 0.20,
+    "dead_code": 0.15,
+    "ai_defects": 0.10,
     "dependencies": 0.10,
     "secrets": 0.10,
 }
@@ -151,6 +152,10 @@ def score_quality(findings: list[dict], total_loc: int) -> tuple[int, str]:
     return _score_severity_based(findings, normalize_per_1k=True, total_loc=total_loc)
 
 
+def score_ai_defects(findings: list[dict]) -> tuple[int, str]:
+    return _score_severity_based(findings, normalize_per_1k=False)
+
+
 def _interpolate_dead_code_score(density: float) -> int:
     if density <= 0:
         return 100
@@ -246,11 +251,13 @@ def compute_grade(
         result.get("dependency_vulnerabilities") or []
     )
     secrets_score, secrets_issue = score_secrets(result.get("secrets") or [])
+    ai_score, ai_issue = score_ai_defects(result.get("ai_defects") or [])
 
     category_scores = {
         "security": (sec_score, sec_issue),
         "quality": (qual_score, qual_issue),
         "dead_code": (dc_score, dc_issue),
+        "ai_defects": (ai_score, ai_issue),
         "dependencies": (dep_score, dep_issue),
         "secrets": (secrets_score, secrets_issue),
     }

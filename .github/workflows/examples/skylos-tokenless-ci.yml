@@ -41,4 +41,4 @@ jobs:
         run: skylos sync pull
 
       - name: Scan and upload
-        run: skylos . --danger --quality --secrets --upload --force --sha "${{ github.sha }}"
+        run: skylos . --danger --quality --secrets --ai-defects --upload --force --sha "${{ github.sha }}"

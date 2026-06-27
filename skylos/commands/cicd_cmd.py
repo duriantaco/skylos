@@ -149,8 +149,18 @@ def run_cicd_command(
     p_ci_init.add_argument(
         "--analysis",
         nargs="+",
-        default=["dead-code", "security", "quality", "secrets", "dependency"],
-        help="Analysis types to run",
+        default=[
+            "dead-code",
+            "security",
+            "quality",
+            "ai-defects",
+            "secrets",
+            "dependency",
+        ],
+        help=(
+            "Analysis types to run: dead-code, security, quality, ai-defects, "
+            "secrets, dependency"
+        ),
     )
     p_ci_init.add_argument("--no-baseline", action="store_true")
     p_ci_init.add_argument(

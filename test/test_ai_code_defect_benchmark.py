@@ -29,6 +29,7 @@ EXPECTED_CASE_IDS = {
     "multiple-phantom-references",
     "range-scoped-mixed-edit",
     "file-scoped-multi-module",
+    "assertion-weakening",
     "incomplete-generation",
     "unfinished-generated-class",
     "api-signature-hallucination",
@@ -53,6 +54,7 @@ EXPECTED_CASE_PATH_NAMES = [
     "multiple_phantom_references",
     "range_scoped_mixed_edit",
     "file_scoped_multi_module",
+    "assertion_weakening",
     "incomplete_generation",
     "unfinished_generated_class",
     "api_signature_hallucination",
@@ -129,6 +131,7 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 "hallucinated_reference",
                 message="Call to 'sanitize_input()' but this function is never defined.",
                 start_line=12,
+                category="ai_defect",
             ),
         ]
     if case_name == "file_scoped_multi_module":
@@ -139,6 +142,19 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 message="Call to 'validate_token()' but this function is never defined.",
                 file_path="app/routes.py",
                 start_line=2,
+            ),
+        ]
+    if case_name == "assertion_weakening":
+        return [
+            _finding(
+                "SKY-A101",
+                "assertion_weakening",
+                message="Specific assertion was replaced with a broad truthiness/null check",
+                file_path="tests/test_payments.py",
+                start_line=12,
+                category="ai_defect",
+                severity="MEDIUM",
+                ai_likelihood="medium",
             ),
         ]
     if case_name == "incomplete_generation":
@@ -177,14 +193,14 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 "SKY-D224",
                 "api_signature_hallucination",
                 message="Installed package 'requests' does not expose requests.fetch_json",
-                category="security",
+                category="ai_defect",
                 severity="HIGH",
             ),
             _finding(
                 "SKY-D224",
                 "api_signature_hallucination",
                 message="Installed package 'requests' does not expose requests.open_stream",
-                category="security",
+                category="ai_defect",
                 severity="HIGH",
             ),
         ]
@@ -195,7 +211,7 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 "api_signature_hallucination",
                 message="Installed package 'requests' rejects keyword retry_policy",
                 start_line=6,
-                category="security",
+                category="ai_defect",
                 severity="HIGH",
             ),
             _finding(
@@ -203,7 +219,7 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 "api_signature_hallucination",
                 message="Installed package 'requests' rejects keyword json_body",
                 start_line=15,
-                category="security",
+                category="ai_defect",
                 severity="HIGH",
             ),
         ]
@@ -213,7 +229,7 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 "SKY-D222",
                 "dependency_hallucination",
                 message="Hallucinated npm dependency skylos-ai-ghost-sdk",
-                category="security",
+                category="ai_defect",
             ),
         ]
     if case_name == "compound_ai_failure_edit":
@@ -230,7 +246,7 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                         "requests.fetch_json"
                     ),
                     start_line=6,
-                    category="security",
+                    category="ai_defect",
                     severity="HIGH",
                 ),
             ]
@@ -253,20 +269,20 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 "api_signature_hallucination",
                 message="Installed package 'requests' does not expose requests.fetch_json",
                 start_line=6,
-                category="security",
+                category="ai_defect",
                 severity="HIGH",
             ),
             _finding(
                 "SKY-D222",
                 "dependency_hallucination",
                 message="Hallucinated npm dependency skylos-compound-ghost-sdk",
-                category="security",
+                category="ai_defect",
             ),
             _finding(
                 "SKY-D225",
                 "dependency_hallucination",
                 message="Hallucinated npm dependency version left-pad@99.99.99",
-                category="security",
+                category="ai_defect",
                 severity="HIGH",
             ),
         ]
@@ -277,14 +293,14 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 "dependency_hallucination",
                 message="Hallucinated npm dependency skylos-nested-ghost-sdk",
                 file_path="packages/api/package.json",
-                category="security",
+                category="ai_defect",
             ),
             _finding(
                 "SKY-D225",
                 "dependency_hallucination",
                 message="Hallucinated npm dependency version left-pad@99.99.99",
                 file_path="packages/api/package.json",
-                category="security",
+                category="ai_defect",
                 severity="HIGH",
             ),
         ]
@@ -293,7 +309,7 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
             _finding(
                 "SKY-D225",
                 "dependency_hallucination",
-                category="security",
+                category="ai_defect",
                 severity="HIGH",
             ),
         ]
@@ -303,7 +319,7 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 "SKY-D225",
                 "dependency_hallucination",
                 message="github.com/gin-gonic/gin@99.99.99 does not exist",
-                category="security",
+                category="ai_defect",
                 severity="HIGH",
             ),
         ]
@@ -313,20 +329,20 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 "SKY-D222",
                 "dependency_hallucination",
                 message="Hallucinated npm dependency skylos-enterprise-agent",
-                category="security",
+                category="ai_defect",
             ),
             _finding(
                 "SKY-D225",
                 "dependency_hallucination",
                 message="Hallucinated npm dependency version left-pad@99.99.99",
-                category="security",
+                category="ai_defect",
                 severity="HIGH",
             ),
             _finding(
                 "SKY-D222",
                 "dependency_hallucination",
                 message="Hallucinated npm dependency skylos-agent-testkit",
-                category="security",
+                category="ai_defect",
             ),
         ]
     if case_name == "clean_api_signature":
@@ -358,12 +374,12 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
 
     summary = run_manifest(MANIFEST_PATH, verify_func=fake_verify)
 
-    assert summary["case_count"] == 20
-    assert summary["pass_count"] == 20
+    assert summary["case_count"] == 21
+    assert summary["pass_count"] == 21
     assert summary["failure_count"] == 0
     assert summary["scores"]["overall_score"] == pytest.approx(100.0)
 
-    danger_case_names = {
+    dependency_hallucination_case_names = {
         "api_signature_hallucination",
         "api_keyword_hallucination",
         "dependency_package_hallucination",
@@ -377,7 +393,7 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
         "clean_generated_code",
     }
     for case_name, kwargs in seen:
-        if case_name not in danger_case_names:
+        if case_name not in dependency_hallucination_case_names:
             continue
         assert kwargs["include_dependency_hallucinations"] is True
 
@@ -391,7 +407,7 @@ def test_ai_code_defect_runner_empty_selection_runs_all_cases(monkeypatch):
 
     summary = run_manifest(MANIFEST_PATH, selected_cases=None, verify_func=fake_verify)
 
-    assert summary["case_count"] == 20
+    assert summary["case_count"] == 21
     assert seen == EXPECTED_CASE_PATH_NAMES
 
 
@@ -428,7 +444,7 @@ def test_ai_code_defect_runner_seeds_dependency_status_cache():
     assert not prepared_paths[0].exists()
 
 
-def test_ai_code_defect_runner_isolates_danger_cases_without_status_cache():
+def test_ai_code_defect_runner_isolates_dependency_hallucination_cases_without_status_cache():
     prepared_paths = []
 
     def fake_verify(case_path, **_kwargs):
@@ -441,6 +457,33 @@ def test_ai_code_defect_runner_isolates_danger_cases_without_status_cache():
     summary = run_manifest(
         MANIFEST_PATH,
         selected_cases={"clean-api-signature"},
+        verify_func=fake_verify,
+    )
+
+    assert summary["case_count"] == 1
+    assert summary["pass_count"] == 1
+    assert prepared_paths
+    assert prepared_paths[0].parent.name.startswith("skylos-ai-defect-")
+    assert not prepared_paths[0].exists()
+
+
+def test_ai_code_defect_runner_prepares_git_baseline():
+    prepared_paths = []
+
+    def fake_verify(case_path, **kwargs):
+        prepared_path = Path(case_path)
+        prepared_paths.append(prepared_path)
+        assert (prepared_path / ".git").is_dir()
+        test_file = prepared_path / "tests" / "test_payments.py"
+        current = test_file.read_text(encoding="utf-8")
+        assert "assert result is not None" in current
+        assert kwargs["file"] == "tests/test_payments.py"
+        assert kwargs["include_dependency_hallucinations"] is False
+        return {"findings": _fake_findings_for_case(case_path, kwargs)}
+
+    summary = run_manifest(
+        MANIFEST_PATH,
+        selected_cases={"assertion-weakening"},
         verify_func=fake_verify,
     )
 
@@ -517,4 +560,34 @@ def test_validate_manifest_rejects_unknown_taxonomy(tmp_path):
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(ValueError, match="unknown taxonomy"):
+        validate_manifest(load_manifest(manifest_path), manifest_path)
+
+
+def test_validate_manifest_rejects_legacy_danger_scan_flag(tmp_path):
+    fixture = tmp_path / "case.py"
+    fixture.write_text("pass\n", encoding="utf-8")
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "legacy-danger",
+                "path": "case.py",
+                "taxonomy": ["dependency_hallucination"],
+                "importance": "high",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                },
+                "scan": {"danger": True},
+                "expect": {
+                    "present": [{"rule_id": "SKY-D222"}],
+                    "absent": [],
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="scan\\.danger"):
         validate_manifest(load_manifest(manifest_path), manifest_path)

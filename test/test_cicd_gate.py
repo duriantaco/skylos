@@ -176,6 +176,7 @@ def test_summary_markdown_mixed_output_is_stable():
         "| Security (critical) | 1 | ❌ |\n"
         "| Security (high) | 6 | ⚠️ |\n"
         "| Security (total) | 11 | ⚠️ |\n"
+        "| AI defects | 0 | ✅ |\n"
         "| Quality | 11 | ⚠️ |\n"
         "| Secrets | 1 | ❌ |\n"
         "| Dependency vulnerabilities | 1 | ❌ |\n"

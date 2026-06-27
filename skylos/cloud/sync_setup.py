@@ -91,7 +91,7 @@ jobs:
       
       - name: Run Skylos Scan & Upload
         run: |
-          skylos . --danger --secrets --quality --upload
+          skylos . --danger --secrets --quality --ai-defects --upload
         env:
           SKYLOS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
           SKYLOS_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}

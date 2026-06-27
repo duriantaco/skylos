@@ -54,13 +54,11 @@ advisory checks first.
 | Debug leftover | SKY-L009 | `print()` / `breakpoint()` in production code |
 | Security TODO | SKY-L010 | Comments that defer auth/security fixes |
 | Disabled security control | SKY-L011 | Calls/settings that disable TLS, CSRF, or validation |
-| Phantom reference | SKY-L012 | Calls to undefined/hallucinated functions |
 | Insecure random | SKY-L013 | Security-sensitive use of weak random sources |
 | Hardcoded credential | SKY-L014 | Credential-looking constants in source |
 | Undefined config | SKY-L016 | Environment/config references with no declared default |
 | Error disclosure | SKY-L017 | Exception details returned from handlers |
 | Broad file permissions | SKY-L020 | World-writable or overly broad file modes |
-| Phantom decorator | SKY-L023 | Decorators that are not defined or imported |
 | Stale mock | SKY-L024 | Tests mocking symbols that no longer exist |
 | Unfinished generation | SKY-L026 | Placeholder/generated functions left incomplete |
 | Duplicate string literal | SKY-L027 | Repeated long literals that should be named constants |
@@ -85,6 +83,13 @@ advisory checks first.
 | God file | SKY-Q502 | Files with too many code lines or too many responsibilities |
 | Coupling | SKY-Q701 | Classes coupled to too many other classes |
 | Low cohesion | SKY-Q702 | Classes whose methods do not share state or responsibilities |
+| **AI Defects** | | |
+| Test assertion weakening | SKY-A101 | Specific or exception assertion replaced with a broad truthiness/null check, skip, or xfail |
+| Phantom reference | SKY-L012 | Calls to undefined/hallucinated security helpers |
+| Phantom decorator | SKY-L023 | Security decorators that are not defined or imported |
+| Hallucinated dependency | SKY-D222 | Imported package does not exist in the package registry |
+| API signature hallucination | SKY-D224 | Real package called with an invented API or keyword |
+| Dependency version hallucination | SKY-D225 | Manifest pins a package version that does not exist |
 | **Architecture** | | |
 | High instability | SKY-Q801 | Module dependency instability is above policy |
 | High main-sequence distance | SKY-Q802 | Module architecture is far from abstractness/instability balance |

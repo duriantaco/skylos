@@ -8,6 +8,7 @@ import ast
 from difflib import SequenceMatcher
 
 from skylos.rules.quality import clones as clones_mod
+from skylos.rules.ai_defect import PhantomCallRule
 from skylos.rules.quality.logic import (
     TryBlockPatternsRule,
     UnusedExceptVarRule,
@@ -17,7 +18,6 @@ from skylos.rules.quality.logic import (
     DebugLeftoverRule,
     SecurityTodoRule,
     DisabledSecurityRule,
-    PhantomCallRule,
     InsecureRandomRule,
     HardcodedCredentialRule,
     MockPlaceholderDataRule,

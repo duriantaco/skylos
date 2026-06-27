@@ -109,6 +109,30 @@ def _extend_unsuppressed_danger_findings(
 
         all_dangers.append(finding)
 
+
+def _extend_unsuppressed_ai_defect_findings(
+    findings,
+    *,
+    project_ignore,
+    per_file_ignore_lines,
+    all_ai_defects,
+    all_suppressed,
+):
+    for finding in findings:
+        if finding.get("rule_id") in project_ignore:
+            continue
+
+        file_key = str(finding.get("file", ""))
+        f_ignore = per_file_ignore_lines.get(file_key, set())
+        if finding.get("line") in f_ignore:
+            suppressed = dict(finding)
+            suppressed["category"] = "ai_defect"
+            suppressed["reason"] = "inline ignore comment"
+            all_suppressed.append(suppressed)
+            continue
+
+        all_ai_defects.append(finding)
+
 _SECRET_CONFIG_SUFFIXES = {
     ".yaml",
     ".yml",
@@ -1792,10 +1816,12 @@ class Skylos:
         enable_secrets,
         enable_danger,
         enable_quality,
+        enable_ai_defects,
         enable_sca,
         all_secrets,
         all_dangers,
         all_quality,
+        all_ai_defects,
         all_sca,
         all_suppressed,
         empty_files,
@@ -1821,10 +1847,12 @@ class Skylos:
             enable_secrets,
             enable_danger,
             enable_quality,
+            enable_ai_defects,
             enable_sca,
             all_secrets,
             all_dangers,
             all_quality,
+            all_ai_defects,
             all_sca,
             all_suppressed,
             empty_files,
@@ -1849,6 +1877,8 @@ class Skylos:
         enable_secrets=False,
         enable_danger=False,
         enable_quality=False,
+        enable_ai_defects=False,
+        enable_dependency_hallucinations=True,
         extra_visitors=None,
         progress_callback=None,
         custom_rules_data=None,
@@ -1912,61 +1942,55 @@ class Skylos:
                 },
                 "workspaces": workspace_inventory.to_dict(project_root),
             }
-            if enable_danger:
+            if enable_danger or enable_ai_defects:
                 danger_findings = []
+                ai_defect_findings = []
                 try:
                     from skylos.rules.config import scan_config_files
 
-                    config_findings = scan_config_files(
-                        no_source_scan_target,
-                        changed_files=changed_files,
-                        ignore=project_ignore,
-                    )
-                    if config_findings:
-                        danger_findings.extend(config_findings)
+                    if enable_danger:
+                        config_findings = scan_config_files(
+                            no_source_scan_target,
+                            changed_files=changed_files,
+                            ignore=project_ignore,
+                        )
+                        if config_findings:
+                            danger_findings.extend(config_findings)
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("Config scan failed", exc_info=True)
 
-                try:
-                    from skylos.rules.ai_defect.manifest_dependency_hallucination import (
-                        scan_manifest_dependency_hallucinations,
-                    )
+                if enable_ai_defects and enable_dependency_hallucinations:
+                    try:
+                        from skylos.rules.ai_defect.manifest_dependency_hallucination import (
+                            scan_manifest_dependency_hallucinations,
+                        )
 
-                    manifest_findings = scan_manifest_dependency_hallucinations(
-                        no_source_manifest_root,
-                    )
-                    for finding in manifest_findings:
-                        if finding.get("rule_id") in project_ignore:
-                            continue
-                        danger_findings.append(finding)
-                except Exception:
-                    if os.getenv("SKYLOS_DEBUG"):
-                        logger.error("Manifest dependency scan failed", exc_info=True)
+                        manifest_findings = scan_manifest_dependency_hallucinations(
+                            no_source_manifest_root,
+                        )
+                        for finding in manifest_findings:
+                            if finding.get("rule_id") in project_ignore:
+                                continue
+                            ai_defect_findings.append(finding)
+                    except Exception:
+                        if os.getenv("SKYLOS_DEBUG"):
+                            logger.error(
+                                "Manifest dependency scan failed", exc_info=True
+                            )
 
                 if danger_findings:
-                    from skylos.reporting.result_builder import AI_DEFECT_RULE_IDS
                     from skylos.rules.compliance import (
                         enrich_findings_with_compliance,
                     )
 
-                    ai_defects = []
-                    core_danger = []
-                    for finding in danger_findings:
-                        if str(finding.get("rule_id", "")) in AI_DEFECT_RULE_IDS:
-                            ai_defects.append(finding)
-                        else:
-                            core_danger.append(finding)
-                    if core_danger:
-                        result["danger"] = enrich_findings_with_compliance(
-                            core_danger
-                        )
-                        result["analysis_summary"]["danger_count"] = len(core_danger)
-                    if ai_defects:
-                        result["ai_defects"] = ai_defects
-                        result["analysis_summary"]["ai_defects_count"] = len(
-                            ai_defects
-                        )
+                    result["danger"] = enrich_findings_with_compliance(danger_findings)
+                    result["analysis_summary"]["danger_count"] = len(danger_findings)
+                if ai_defect_findings:
+                    result["ai_defects"] = ai_defect_findings
+                    result["analysis_summary"]["ai_defects_count"] = len(
+                        ai_defect_findings
+                    )
             return json.dumps(result)
 
         logger.info(f"Analyzing {len(files)} files...")
@@ -2034,6 +2058,7 @@ class Skylos:
         all_secrets = []
         all_dangers = []
         all_quality = []
+        all_ai_defects = []
         all_suppressed = []
         empty_files = []
         file_contexts = []
@@ -2347,7 +2372,9 @@ class Skylos:
                     }
                 )
 
-        if changed_files is None and (enable_quality or enable_danger):
+        if changed_files is None and (
+            enable_quality or enable_danger or enable_ai_defects
+        ):
             try:
                 import subprocess
 
@@ -2547,86 +2574,6 @@ class Skylos:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error("Config scan failed", exc_info=True)
 
-            try:
-                from skylos.rules.ai_defect.dependency_hallucination import (
-                    scan_python_dependency_hallucinations,
-                )
-
-                py_files = [
-                    f for f in files if str(f).endswith((".py", ".pyi", ".pyw"))
-                ]
-                if py_files:
-                    dep_findings = scan_python_dependency_hallucinations(
-                        project_root, py_files
-                    )
-                    if dep_findings:
-                        dep_findings = [
-                            f
-                            for f in dep_findings
-                            if f.get("rule_id") not in project_ignore
-                        ]
-                        unsuppressed_dep_findings = []
-                        for finding in dep_findings:
-                            f_ignore = per_file_ignore_lines.get(
-                                str(finding.get("file", "")), set()
-                            )
-                            if finding.get("line") in f_ignore:
-                                all_suppressed.append(
-                                    {
-                                        **finding,
-                                        "category": "danger",
-                                        "reason": "inline ignore comment",
-                                    }
-                                )
-                                continue
-                            unsuppressed_dep_findings.append(finding)
-                        dep_findings = unsuppressed_dep_findings
-                        all_dangers.extend(dep_findings)
-            except Exception:
-                if os.getenv("SKYLOS_DEBUG"):
-                    logger.error(traceback.format_exc())
-
-            try:
-                from skylos.rules.ai_defect.api_signature_hallucination import (
-                    scan_python_api_signature_hallucinations,
-                )
-
-                py_files = _python_signature_files(files)
-                if py_files:
-                    api_findings = scan_python_api_signature_hallucinations(
-                        project_root,
-                        py_files,
-                    )
-                    _extend_unsuppressed_danger_findings(
-                        api_findings,
-                        project_ignore=project_ignore,
-                        per_file_ignore_lines=per_file_ignore_lines,
-                        all_dangers=all_dangers,
-                        all_suppressed=all_suppressed,
-                    )
-            except Exception:
-                if os.getenv("SKYLOS_DEBUG"):
-                    logger.error(traceback.format_exc())
-
-            try:
-                from skylos.rules.ai_defect.manifest_dependency_hallucination import (
-                    scan_manifest_dependency_hallucinations,
-                )
-
-                manifest_findings = scan_manifest_dependency_hallucinations(
-                    project_root,
-                )
-                _extend_unsuppressed_danger_findings(
-                    manifest_findings,
-                    project_ignore=project_ignore,
-                    per_file_ignore_lines=per_file_ignore_lines,
-                    all_dangers=all_dangers,
-                    all_suppressed=all_suppressed,
-                )
-            except Exception:
-                if os.getenv("SKYLOS_DEBUG"):
-                    logger.error(traceback.format_exc())
-
             # --- SKY-D260/D266: Prompt injection scanner (multi-file) ---
             if {"SKY-D260", "SKY-D266"} - set(project_ignore):
                 if progress_callback:
@@ -2801,6 +2748,195 @@ class Skylos:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
 
+        if enable_ai_defects:
+            if progress_callback:
+                progress_callback(0, 1, Path("PHASE: AI defect scan"))
+
+            if enable_dependency_hallucinations:
+                try:
+                    from skylos.rules.ai_defect.dependency_hallucination import (
+                        scan_python_dependency_hallucinations,
+                    )
+
+                    py_files = [
+                        f for f in files if str(f).endswith((".py", ".pyi", ".pyw"))
+                    ]
+                    if py_files:
+                        dep_findings = scan_python_dependency_hallucinations(
+                            project_root, py_files
+                        )
+                        _extend_unsuppressed_ai_defect_findings(
+                            dep_findings,
+                            project_ignore=project_ignore,
+                            per_file_ignore_lines=per_file_ignore_lines,
+                            all_ai_defects=all_ai_defects,
+                            all_suppressed=all_suppressed,
+                        )
+                except Exception:
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error(traceback.format_exc())
+
+                try:
+                    from skylos.rules.ai_defect.api_signature_hallucination import (
+                        scan_python_api_signature_hallucinations,
+                    )
+
+                    py_files = _python_signature_files(files)
+                    if py_files:
+                        api_findings = scan_python_api_signature_hallucinations(
+                            project_root,
+                            py_files,
+                        )
+                        _extend_unsuppressed_ai_defect_findings(
+                            api_findings,
+                            project_ignore=project_ignore,
+                            per_file_ignore_lines=per_file_ignore_lines,
+                            all_ai_defects=all_ai_defects,
+                            all_suppressed=all_suppressed,
+                        )
+                except Exception:
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error(traceback.format_exc())
+
+                try:
+                    from skylos.rules.ai_defect.manifest_dependency_hallucination import (
+                        scan_manifest_dependency_hallucinations,
+                    )
+
+                    manifest_findings = scan_manifest_dependency_hallucinations(
+                        project_root,
+                    )
+                    _extend_unsuppressed_ai_defect_findings(
+                        manifest_findings,
+                        project_ignore=project_ignore,
+                        per_file_ignore_lines=per_file_ignore_lines,
+                        all_ai_defects=all_ai_defects,
+                        all_suppressed=all_suppressed,
+                    )
+                except Exception:
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error(traceback.format_exc())
+
+            try:
+                _ai_py_files = [
+                    f for f in files if str(f).endswith((".py", ".pyi", ".pyw"))
+                ]
+                if (
+                    _ai_py_files
+                    and (
+                        "SKY-L012" not in project_ignore
+                        or "SKY-L023" not in project_ignore
+                    )
+                    and project_root.exists()
+                ):
+                    repo_py_files = discover_source_files(
+                        project_root,
+                        {".py"},
+                        exclude_folders=exclude_folders,
+                    )
+                    phantom_findings = scan_repo_phantom_security_references(
+                        project_root,
+                        repo_py_files,
+                        target_files=_ai_py_files,
+                        vibe_dictionary=build_vibe_dictionary(project_cfg.get("vibe")),
+                    )
+                    _extend_unsuppressed_ai_defect_findings(
+                        phantom_findings,
+                        project_ignore=project_ignore,
+                        per_file_ignore_lines=per_file_ignore_lines,
+                        all_ai_defects=all_ai_defects,
+                        all_suppressed=all_suppressed,
+                    )
+                    from skylos.rules.ai_defect import (
+                        PhantomCallRule,
+                        PhantomDecoratorRule,
+                    )
+
+                    vibe_dictionary = build_vibe_dictionary(project_cfg.get("vibe"))
+                    fallback_rules = []
+                    if "SKY-L012" not in project_ignore:
+                        fallback_rules.append(
+                            PhantomCallRule(vibe_dictionary=vibe_dictionary)
+                        )
+                    if "SKY-L023" not in project_ignore:
+                        fallback_rules.append(
+                            PhantomDecoratorRule(vibe_dictionary=vibe_dictionary)
+                        )
+                    for py_file in _ai_py_files:
+                        source = Path(py_file).read_text(
+                            encoding="utf-8",
+                            errors="ignore",
+                        )
+                        tree = ast.parse(source)
+                        linter = LinterVisitor(fallback_rules, str(py_file))
+                        linter.context["source"] = source
+                        linter.visit(tree)
+                        _extend_unsuppressed_ai_defect_findings(
+                            linter.findings,
+                            project_ignore=project_ignore,
+                            per_file_ignore_lines=per_file_ignore_lines,
+                            all_ai_defects=all_ai_defects,
+                            all_suppressed=all_suppressed,
+                        )
+            except Exception:
+                if os.getenv("SKYLOS_DEBUG"):
+                    logger.error(traceback.format_exc())
+
+            if changed_files and "SKY-A101" not in project_ignore:
+                try:
+                    import subprocess
+
+                    from skylos.rules.ai_defect.assertion_weakening import (
+                        detect_assertion_weakening,
+                    )
+                    from skylos.security.contracts import resolve_diff_base_ref
+
+                    diff_base = resolve_diff_base_ref(root)
+                    for cf in changed_files:
+                        rel_cf = (
+                            str(Path(cf).resolve().relative_to(root))
+                            if Path(cf).is_absolute()
+                            else str(cf)
+                        )
+                        diff_cmd = (
+                            ["git", "diff", f"{diff_base}...HEAD", "--", rel_cf]
+                            if diff_base
+                            else ["git", "diff", "HEAD", "--", rel_cf]
+                        )
+                        diff_result = subprocess.run(
+                            diff_cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                            cwd=str(root),
+                        )
+                        if (
+                            diff_result.returncode != 0
+                            or not diff_result.stdout.strip()
+                        ) and diff_base:
+                            diff_result = subprocess.run(
+                                ["git", "diff", "HEAD", "--", rel_cf],
+                                capture_output=True,
+                                text=True,
+                                timeout=10,
+                                cwd=str(root),
+                            )
+                        if diff_result.returncode == 0 and diff_result.stdout.strip():
+                            assertion_findings = detect_assertion_weakening(
+                                diff_result.stdout,
+                                cf,
+                            )
+                            _extend_unsuppressed_ai_defect_findings(
+                                assertion_findings,
+                                project_ignore=project_ignore,
+                                per_file_ignore_lines=per_file_ignore_lines,
+                                all_ai_defects=all_ai_defects,
+                                all_suppressed=all_suppressed,
+                            )
+                except Exception:
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error("Assertion weakening scan failed", exc_info=True)
+
         if enable_quality:
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: dependency quality scan"))
@@ -2831,46 +2967,6 @@ class Skylos:
                         if ud_findings:
                             all_quality.extend(ud_findings)
 
-                    if (
-                        "SKY-L012" not in project_ignore
-                        or "SKY-L023" not in project_ignore
-                    ) and project_root.exists():
-                        repo_py_files = discover_source_files(
-                            project_root,
-                            {".py"},
-                            exclude_folders=exclude_folders,
-                        )
-                        phantom_findings = scan_repo_phantom_security_references(
-                            project_root,
-                            repo_py_files,
-                            target_files=_ud_py_files,
-                            vibe_dictionary=build_vibe_dictionary(
-                                project_cfg.get("vibe")
-                            ),
-                        )
-                        if phantom_findings:
-                            phantom_findings = [
-                                f
-                                for f in phantom_findings
-                                if f.get("rule_id") not in project_ignore
-                            ]
-                            unsuppressed_findings = []
-                            for finding in phantom_findings:
-                                f_ignore = per_file_ignore_lines.get(
-                                    str(finding.get("file", "")), set()
-                                )
-                                if finding.get("line") in f_ignore:
-                                    all_suppressed.append(
-                                        {
-                                            **finding,
-                                            "category": "quality",
-                                            "reason": "inline ignore comment",
-                                        }
-                                    )
-                                    continue
-                                unsuppressed_findings.append(finding)
-                            phantom_findings = unsuppressed_findings
-                            all_quality.extend(phantom_findings)
             except Exception:
                 if os.getenv("SKYLOS_DEBUG"):
                     logger.error(traceback.format_exc())
@@ -3030,10 +3126,12 @@ class Skylos:
             enable_secrets,
             enable_danger,
             enable_quality,
+            enable_ai_defects,
             enable_sca,
             all_secrets,
             all_dangers,
             all_quality,
+            all_ai_defects,
             all_sca,
             all_suppressed,
             empty_files,
@@ -3330,6 +3428,8 @@ def analyze(
     enable_secrets=False,
     enable_danger=False,
     enable_quality=False,
+    enable_ai_defects=False,
+    enable_dependency_hallucinations=True,
     extra_visitors=None,
     progress_callback=None,
     custom_rules_data=None,
@@ -3346,6 +3446,8 @@ def analyze(
         enable_secrets=enable_secrets,
         enable_danger=enable_danger,
         enable_quality=enable_quality,
+        enable_ai_defects=enable_ai_defects,
+        enable_dependency_hallucinations=enable_dependency_hallucinations,
         extra_visitors=extra_visitors,
         progress_callback=progress_callback,
         custom_rules_data=custom_rules_data,
@@ -3361,11 +3463,12 @@ if __name__ == "__main__":
     enable_secrets = "--secrets" in sys.argv
     enable_danger = "--danger" in sys.argv
     enable_quality = "--quality" in sys.argv
+    enable_ai_defects = "--ai-defects" in sys.argv
 
     positional = [a for a in sys.argv[1:] if not a.startswith("--")]
     if not positional:
         print(
-            "Usage: python Skylos.py <path> [confidence_threshold] [--secrets] [--danger] [--quality]"
+            "Usage: python Skylos.py <path> [confidence_threshold] [--secrets] [--danger] [--quality] [--ai-defects]"
         )
         sys.exit(2)
     p = positional[0]
@@ -3377,6 +3480,7 @@ if __name__ == "__main__":
         enable_secrets=enable_secrets,
         enable_danger=enable_danger,
         enable_quality=enable_quality,
+        enable_ai_defects=enable_ai_defects,
     )
     data = json.loads(result)
     print("\n Python Static Analysis Results")

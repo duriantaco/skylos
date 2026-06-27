@@ -56,8 +56,14 @@ def test_workflow_analysis_flags():
     content = generate_workflow(analysis_types=["security", "quality"])
     assert "--danger" in content
     assert "--quality" in content
+    assert "--ai-defects" not in content
     assert "--secrets" not in content
     assert "--sca" not in content
+
+
+def test_workflow_includes_ai_defects_by_default():
+    content = generate_workflow()
+    assert "--ai-defects" in content
 
 
 def test_workflow_includes_dependency_scan_by_default():

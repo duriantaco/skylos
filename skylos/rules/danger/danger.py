@@ -1,6 +1,5 @@
 from __future__ import annotations
 import ast
-import os
 import sys
 from pathlib import Path
 from .danger_sql.sql_flow import scan as scan_sql
@@ -19,12 +18,6 @@ from .danger_agent.tool_privilege import scan as scan_agent_tool_privilege
 from .danger_llm.consumption import scan as scan_llm_consumption
 from .danger_llm.llm_flow import scan as scan_llm
 from .danger_ml.model_deserialization import scan as scan_ml_model_load
-from skylos.rules.ai_defect.dependency_hallucination import (
-    scan_python_dependency_hallucinations,
-)
-from skylos.rules.ai_defect.api_signature_hallucination import (
-    scan_python_api_signature_hallucinations,
-)
 from skylos.security.command_guard import (
     findings_for_command,
     is_external_url,
@@ -596,35 +589,14 @@ def _scan_file(file_path: Path, findings):
 
 def scan_ctx(_, files):
     findings = []
-    py_files = []
 
     for file_path in files:
         if file_path.suffix.lower() not in ALLOWED_SUFFIXES:
             continue
 
-        py_files.append(file_path)
-
         try:
             _scan_file(file_path, findings)
         except Exception as e:
             print(f"Scan failed for {file_path}: {e}", file=sys.stderr)
-
-    try:
-        if py_files:
-            repo_root = Path(os.path.commonpath([str(p.resolve()) for p in py_files]))
-
-            if repo_root.is_file():
-                repo_root = repo_root.parent
-
-            dep_findings = scan_python_dependency_hallucinations(repo_root, py_files)
-            if dep_findings:
-                findings.extend(dep_findings)
-
-            api_findings = scan_python_api_signature_hallucinations(repo_root, py_files)
-            if api_findings:
-                findings.extend(api_findings)
-
-    except Exception as e:
-        print(f"Dependency hallucination scan failed: {e}", file=sys.stderr)
 
     return findings

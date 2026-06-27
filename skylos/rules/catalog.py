@@ -27,6 +27,7 @@ _RULES = (
     RuleCatalogEntry("SKY-U006", "Unused parameter", "dead_code"),
     RuleCatalogEntry("SKY-UC001", "Unreachable Python code", "dead_code"),
     RuleCatalogEntry("SKY-UC002", "Unreachable statement", "dead_code"),
+    RuleCatalogEntry("SKY-A101", "Test assertion weakening", "ai_defect", "MEDIUM"),
     RuleCatalogEntry("SKY-C401", "Duplicated code clone", "quality"),
     RuleCatalogEntry("SKY-CIRC", "Circular dependency", "quality"),
     RuleCatalogEntry("SKY-Q301", "Cyclomatic complexity", "quality"),

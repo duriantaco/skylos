@@ -12,6 +12,7 @@ Rule IDs use a stable public prefix:
 | `SKY-S` | Secrets findings |
 | `SKY-SCA` | Software composition / dependency vulnerability findings |
 | `SKY-SC` | Security contract regression findings |
+| `SKY-A` | AI-defect verification findings |
 | `SKY-L` | Logic, AI-code mistake, and resilience findings |
 | `SKY-Q` | Quality, complexity, coupling, and architecture findings |
 | `SKY-C` | Structure and clone findings |
@@ -31,11 +32,12 @@ Rule IDs use a stable public prefix:
 | Skylos | Local-first static analysis and PR gate for dead code, security, secrets, quality, dependency, and AI-code issues. |
 | Local-first | Core static analysis runs on the developer machine or CI runner without requiring cloud upload or LLM calls. |
 | Core scan | `skylos .`; dead-code focused scan. |
-| Full audit | `skylos . -a`; enables security, secrets, dependency, and quality checks in addition to dead code. |
+| Full audit | `skylos . -a`; enables security, secrets, dependency, quality, and AI-defect checks in addition to dead code. |
 | Dead code | Unused functions, classes, imports, variables, parameters, files, unnecessary exports, and unreachable code. |
 | Security / danger | Potentially exploitable code paths such as injection, SSRF, path traversal, weak crypto, unsafe deserialization, and CI/CD supply-chain risk. |
 | Secrets | Hardcoded credentials, tokens, API keys, and client-side exposure of server-only values. |
 | Quality | Maintainability, complexity, architecture, resilience, typing, framework practice, and repo policy issues. |
+| AI defects | Evidence-backed AI-code failure modes such as hallucinated APIs, impossible dependencies, phantom references, and weakened tests. Run with `--ai-defects`; full audits include it. |
 | AI code mistakes | Hallucinated security calls, phantom decorators, unfinished stubs, disabled controls, placeholder data, stale mocks, and missing timeouts. |
 | Security quick | `skylos agent security-quick .`; one-shot LLM security audit, equivalent to `skylos agent scan . --security`. |
 | Security deep | `skylos agent security-deep .`; three-stage security workflow for threat-model context, static threat tracing, discovery/validation, and remediation handoff, equivalent to `skylos agent audit . --deep`. |
@@ -284,6 +286,7 @@ The Go engine may emit `SKY-G` IDs. Cross-language equivalents are remapped to
 
 | ID | Severity | Name | Languages |
 |:---|:---|:---|:---|
+| A101 | MEDIUM | Test assertion weakening | Diff-aware tests |
 | L012 | CRITICAL | Phantom function call / hallucinated security function | Python |
 | L023 | CRITICAL | Phantom decorator | Python |
 | D222 | CRITICAL | Dependency hallucination | Python |

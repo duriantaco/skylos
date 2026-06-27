@@ -71,9 +71,9 @@ jobs:
         run: |
           echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
           if [ -n "$DIFF_BASE" ]; then
-            .venv/bin/skylos . --quality --danger --secrets --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
+            .venv/bin/skylos . --quality --danger --secrets --ai-defects --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
           else
-            .venv/bin/skylos . --quality --danger --secrets --baseline --json -o "$REPORT"
+            .venv/bin/skylos . --quality --danger --secrets --ai-defects --baseline --json -o "$REPORT"
           fi
 
       - name: Report findings (advisory)

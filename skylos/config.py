@@ -61,6 +61,7 @@ DEFAULTS = {
     "security_enabled": False,
     "secrets_enabled": False,
     "quality_enabled": False,
+    "ai_defects_enabled": False,
     "vibe": {
         "extra_phantom_names": [],
         "extra_phantom_decorators": [],
@@ -102,12 +103,14 @@ _BOOL_CONFIG_KEYS = {
     "security_enabled",
     "secrets_enabled",
     "quality_enabled",
+    "ai_defects_enabled",
 }
 _SYNCED_SECURITY_POLICY_KEYS = {
     "security_contracts",
     "security_enabled",
     "secrets_enabled",
     "quality_enabled",
+    "ai_defects_enabled",
 }
 _SYNCED_POLICY_OVERRIDE_KEYS = _SYNCED_SECURITY_POLICY_KEYS | {
     "gate",

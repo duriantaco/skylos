@@ -202,6 +202,12 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         help="Run code quality checks. Off by default.",
     )
     parser.add_argument(
+        "--ai-defects",
+        action="store_true",
+        dest="ai_defects",
+        help="Run evidence-backed AI defect checks. Off by default.",
+    )
+    parser.add_argument(
         "--sca",
         action="store_true",
         help="Scan dependencies for known vulnerabilities (CVEs) via OSV.dev.",
@@ -211,7 +217,7 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         "--all",
         action="store_true",
         dest="all_checks",
-        help="Enable all checks: --danger --secrets --quality --sca",
+        help="Enable all checks: --danger --secrets --quality --ai-defects --sca",
     )
     parser.add_argument(
         "--no-grep-verify",
@@ -274,8 +280,8 @@ Run 'skylos tour' for a guided walkthrough of capabilities.
         type=str,
         default=None,
         metavar="CAT",
-        help="Show only specific category: security, secret, quality, dead_code, dependency. "
-        "Comma-separated for multiple. Example: --category security,secret",
+        help="Show only specific category: security, secret, quality, ai_defects, dead_code, dependency. "
+        "Comma-separated for multiple. Example: --category security,ai_defects",
     )
     parser.add_argument(
         "--file-filter",

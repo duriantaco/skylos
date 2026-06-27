@@ -180,9 +180,15 @@ FOLDER_META: dict[str, dict[str, Any]] = {
         "entrypoints": ["skylos/reporting/"],
     },
     "skylos/rules": {
-        "purpose": "Rule catalog and concrete rule implementations for quality, security, config, edge, CI/CD, and SCA findings.",
+        "purpose": "Rule catalog and concrete rule implementations for quality, security, AI-defect, config, edge, CI/CD, and SCA findings.",
         "touch": "Start here when adding rule IDs, tuning scanner semantics, config posture checks, or changing rule docs parity.",
-        "entrypoints": ["skylos/rules/catalog.py", "skylos/rules/danger", "skylos/rules/config", "skylos/rules/quality"],
+        "entrypoints": [
+            "skylos/rules/catalog.py",
+            "skylos/rules/ai_defect",
+            "skylos/rules/danger",
+            "skylos/rules/config",
+            "skylos/rules/quality",
+        ],
     },
     "skylos/scale": {
         "purpose": "Scale and performance helpers for larger repositories.",

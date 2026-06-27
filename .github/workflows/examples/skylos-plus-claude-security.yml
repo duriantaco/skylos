@@ -45,7 +45,7 @@ jobs:
         run: pip install skylos
 
       - name: Run Skylos Analysis
-        run: skylos . --danger --quality --secrets --json -o skylos-results.json
+        run: skylos . --danger --quality --secrets --ai-defects --json -o skylos-results.json
 
       - name: Quality Gate
         run: skylos cicd gate --input skylos-results.json --summary

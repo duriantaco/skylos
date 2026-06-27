@@ -128,7 +128,7 @@ def build_sonar_migration_plan(properties: dict[str, str]) -> dict[str, Any]:
             "exclusions": exclusions,
         },
         "skylos": {
-            "recommended_command": f"skylos {source_paths[0]} --danger --quality --upload",
+            "recommended_command": f"skylos {source_paths[0]} --danger --quality --ai-defects --upload",
             "suite_command": f"skylos suite {source_paths[0]} --upload",
             "config": config,
         },

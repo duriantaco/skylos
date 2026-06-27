@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ AI_CODE_DEFECT_TAXONOMY: dict[str, str] = {
     "incomplete_generation": "Generated code leaves stubs or unfinished bodies behind.",
     "dependency_hallucination": "Generated manifests cite packages or versions that do not exist.",
     "api_signature_hallucination": "Generated calls use real packages with invented APIs.",
+    "assertion_weakening": "Generated test edits weaken assertions instead of preserving behavior.",
     "precision_guard": "Clean generated code should remain free of AI-defect findings.",
 }
 
@@ -373,7 +375,13 @@ def _validate_scan(case: dict[str, Any], case_id: str) -> None:
         )
     _validate_optional_scan_string(scan, case_id, "file")
     _validate_optional_scan_string(scan, case_id, "range")
+    if "danger" in scan:
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} uses legacy scan.danger; "
+            "use scan.dependency_hallucinations instead"
+        )
     _validate_dependency_statuses(scan, case_id)
+    _validate_git_baseline(scan, case_id)
 
 
 def _validate_optional_scan_string(
@@ -438,6 +446,33 @@ def _validate_dependency_status_entry(entry: Any, case_id: str) -> None:
     )
 
 
+def _validate_git_baseline(scan: dict[str, Any], case_id: str) -> None:
+    baseline = scan.get("git_baseline")
+    if baseline is None:
+        return
+    if not isinstance(baseline, dict):
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} scan.git_baseline must be an object"
+        )
+    if not baseline:
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} scan.git_baseline must not be empty"
+        )
+    for rel_path, content in baseline.items():
+        if not isinstance(rel_path, str) or not rel_path.strip():
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} git baseline paths must be non-empty strings"
+            )
+        if Path(rel_path).is_absolute() or ".." in Path(rel_path).parts:
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} git baseline paths must stay inside the fixture"
+            )
+        if not isinstance(content, str):
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} git baseline content must be strings"
+            )
+
+
 def _selected_cases(selected_cases: set[str] | None) -> set[str] | None:
     if selected_cases is None:
         return None
@@ -472,7 +507,9 @@ def _run_case(
             line_range=scan.get("range"),
             confidence=int(scan.get("confidence", 60)),
             project_context=bool(scan.get("project_context", True)),
-            include_dependency_hallucinations=_include_danger_scan(scan),
+            include_dependency_hallucinations=_include_dependency_hallucination_scan(
+                scan
+            ),
         )
         elapsed = time.perf_counter() - started
     finally:
@@ -495,9 +532,7 @@ def _run_case(
     }
 
 
-def _include_danger_scan(scan: dict[str, Any]) -> bool:
-    if bool(scan.get("danger", False)):
-        return True
+def _include_dependency_hallucination_scan(scan: dict[str, Any]) -> bool:
     return bool(scan.get("dependency_hallucinations", False))
 
 
@@ -506,7 +541,12 @@ def _prepared_case_path(
     scan: dict[str, Any],
 ) -> tuple[Path, tempfile.TemporaryDirectory[str] | None]:
     dependency_statuses = _dependency_status_entries(scan)
-    if not dependency_statuses and not _include_danger_scan(scan):
+    git_baseline = _git_baseline_entries(scan)
+    if (
+        not dependency_statuses
+        and not git_baseline
+        and not _include_dependency_hallucination_scan(scan)
+    ):
         return case_path, None
 
     temp_case = tempfile.TemporaryDirectory(prefix="skylos-ai-defect-")
@@ -519,6 +559,8 @@ def _prepared_case_path(
 
     if dependency_statuses:
         _write_dependency_status_cache(prepared_path, dependency_statuses)
+    if git_baseline:
+        _prepare_git_baseline(prepared_path, git_baseline)
     return prepared_path, temp_case
 
 
@@ -532,6 +574,59 @@ def _dependency_status_entries(scan: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(entry, dict):
             statuses.append(entry)
     return statuses
+
+
+def _git_baseline_entries(scan: dict[str, Any]) -> dict[str, str]:
+    baseline = scan.get("git_baseline")
+    if not isinstance(baseline, dict):
+        return {}
+    entries: dict[str, str] = {}
+    for rel_path, content in baseline.items():
+        if isinstance(rel_path, str) and isinstance(content, str):
+            entries[rel_path] = content
+    return entries
+
+
+def _prepare_git_baseline(case_path: Path, git_baseline: dict[str, str]) -> None:
+    current_contents: dict[str, str | None] = {}
+    for rel_path in git_baseline:
+        target = case_path / rel_path
+        if target.exists():
+            current_contents[rel_path] = target.read_text(encoding="utf-8")
+        else:
+            current_contents[rel_path] = None
+
+    for rel_path, content in git_baseline.items():
+        target = case_path / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+    _run_git(case_path, "init")
+    _run_git(case_path, "config", "user.email", "benchmarks@skylos.dev")
+    _run_git(case_path, "config", "user.name", "Skylos Benchmark")
+    _run_git(case_path, "add", ".")
+    _run_git(case_path, "commit", "-m", "baseline")
+
+    for rel_path, content in current_contents.items():
+        target = case_path / rel_path
+        if content is None:
+            try:
+                target.unlink()
+            except FileNotFoundError:
+                pass
+            continue
+        target.write_text(content, encoding="utf-8")
+
+
+def _run_git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+    )
 
 
 def _write_dependency_status_cache(

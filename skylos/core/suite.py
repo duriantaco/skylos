@@ -232,6 +232,7 @@ def run_suite(
                 enable_secrets=True,
                 enable_danger=True,
                 enable_quality=True,
+                enable_ai_defects=True,
                 exclude_folders=sorted(exclude),
             )
     finally:

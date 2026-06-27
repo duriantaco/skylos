@@ -14,9 +14,12 @@ AI_VIBE_CATEGORIES = {
     "stale_reference",
     "missing_resilience_control",
     "api_signature_hallucination",
+    "assertion_weakening",
 }
 
 AI_RULE_DEFAULTS = {
+    "SKY-A101": ("assertion_weakening", "medium"),
+    "SKY-L012": ("hallucinated_reference", "high"),
     "SKY-L011": ("disabled_security_control", "medium"),
     "SKY-D222": ("dependency_hallucination", "high"),
     "SKY-D224": ("api_signature_hallucination", "high"),
@@ -45,6 +48,9 @@ SUGGESTED_FIX_BY_VIBE = {
     ),
     "api_signature_hallucination": (
         "Update the call to match the installed package API surface."
+    ),
+    "assertion_weakening": (
+        "Restore the specific assertion or explain why the weaker test still proves the behavior."
     ),
 }
 

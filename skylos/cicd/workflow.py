@@ -15,6 +15,8 @@ ANALYSIS_FLAG_MAP: dict[str, str] = {
     "sca": "--sca",
     "security": "--danger",
     "quality": "--quality",
+    "ai-defects": "--ai-defects",
+    "ai_defects": "--ai-defects",
     "secrets": "--secrets",
 }
 
@@ -89,6 +91,7 @@ def generate_workflow(
         "dead-code",
         "security",
         "quality",
+        "ai-defects",
         "secrets",
         "dependency",
     ]

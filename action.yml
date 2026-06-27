@@ -16,7 +16,7 @@ inputs:
     required: false
     default: "gate"
   analysis:
-    description: "Analysis types to run (space-separated): dead-code security quality secrets"
+    description: "Analysis types to run (space-separated): dead-code security quality ai-defects secrets"
     required: false
     default: "dead-code security"
   confidence:
@@ -78,6 +78,9 @@ runs:
         if echo "$SKYLOS_ANALYSIS" | grep -q "quality"; then
           FLAGS="$FLAGS --quality"
         fi
+        if echo "$SKYLOS_ANALYSIS" | grep -q "ai-defects"; then
+          FLAGS="$FLAGS --ai-defects"
+        fi
         if echo "$SKYLOS_ANALYSIS" | grep -q "secrets"; then
           FLAGS="$FLAGS --secrets"
         fi
@@ -114,6 +117,9 @@ runs:
         fi
         if echo "$SKYLOS_ANALYSIS" | grep -q "quality"; then
           FLAGS="$FLAGS --quality"
+        fi
+        if echo "$SKYLOS_ANALYSIS" | grep -q "ai-defects"; then
+          FLAGS="$FLAGS --ai-defects"
         fi
         if echo "$SKYLOS_ANALYSIS" | grep -q "secrets"; then
           FLAGS="$FLAGS --secrets"

@@ -5,6 +5,7 @@ from skylos.reporting.grader import (
     compute_grade,
     score_security,
     score_quality,
+    score_ai_defects,
     score_dead_code,
     score_dependencies,
     score_secrets,
@@ -20,6 +21,7 @@ def _empty_result(**overrides):
     base = {
         "danger": [],
         "quality": [],
+        "ai_defects": [],
         "secrets": [],
         "dependency_vulnerabilities": [],
         "unused_functions": [],
@@ -144,6 +146,18 @@ class TestScoreQuality:
         assert score <= 55
 
 
+class TestScoreAIDefects:
+    def test_no_findings(self):
+        score, _ = score_ai_defects([])
+        assert score == 100
+
+    def test_critical_ai_defect_caps_score(self):
+        findings = [{"severity": "CRITICAL", "message": "Hallucinated dependency"}]
+        score, issue = score_ai_defects(findings)
+        assert score <= 55
+        assert "Hallucinated dependency" in issue
+
+
 class TestScoreDeadCode:
     def test_no_dead_code(self):
         result = _empty_result()
@@ -252,7 +266,14 @@ class TestComputeGrade:
 
     def test_all_categories_present(self):
         grade = compute_grade(_empty_result(), 1000)
-        for cat in ("security", "quality", "dead_code", "dependencies", "secrets"):
+        for cat in (
+            "security",
+            "quality",
+            "dead_code",
+            "ai_defects",
+            "dependencies",
+            "secrets",
+        ):
             assert cat in grade["categories"]
             cat_data = grade["categories"][cat]
             assert "score" in cat_data
@@ -280,6 +301,21 @@ class TestComputeGrade:
         assert grade["categories"]["security"]["score"] < 100
         assert grade["categories"]["quality"]["score"] < 100
         assert grade["categories"]["dead_code"]["score"] < 100
+
+    def test_ai_defects_category_scores_findings(self):
+        result = _empty_result(
+            ai_defects=[
+                {
+                    "severity": "CRITICAL",
+                    "message": "Hallucinated dependency",
+                }
+            ]
+        )
+        grade = compute_grade(result, 5000, included_categories=["ai_defects"])
+
+        assert grade["scanned_categories"] == ["ai_defects"]
+        assert grade["categories"]["ai_defects"]["score"] <= 55
+        assert grade["categories"]["ai_defects"]["weight"] == 1.0
 
     def test_dead_code_only_grade_uses_only_dead_code_category(self):
         result = _empty_result(unused_functions=[{"name": f"f{i}"} for i in range(10)])

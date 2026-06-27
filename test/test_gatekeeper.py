@@ -252,7 +252,7 @@ def test_check_gate_quality_threshold_ignores_advisory_iad_quality():
     assert reasons == []
 
 
-def test_check_gate_ai_defects_count_against_quality_threshold():
+def test_check_gate_ai_defects_default_to_quality_threshold_for_compatibility():
     results = {
         "danger": [],
         "ai_defects": [{"rule_id": "SKY-L012", "file": "app.py", "line": 2}],
@@ -264,7 +264,22 @@ def test_check_gate_ai_defects_count_against_quality_threshold():
     passed, reasons = gk.check_gate(results, config)
 
     assert passed is False
-    assert any("quality" in reason for reason in reasons)
+    assert reasons == ["1 AI-defect issues (max: 0)"]
+
+
+def test_check_gate_ai_defects_can_use_dedicated_threshold():
+    results = {
+        "danger": [],
+        "ai_defects": [{"rule_id": "SKY-L012", "file": "app.py", "line": 2}],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {"gate": {"max_quality": 0, "max_ai_defects": 1}}
+
+    passed, reasons = gk.check_gate(results, config)
+
+    assert passed is True
+    assert reasons == []
 
 
 def test_check_gate_project_config_cannot_relax_critical_or_secrets():
@@ -456,6 +471,20 @@ def test_check_gate_agent_quality():
     passed, reasons = gk.check_gate(results, config, provenance=prov)
     assert passed is False
     assert any("quality" in r for r in reasons)
+
+
+def test_check_gate_agent_ai_defects():
+    results = {
+        "danger": [],
+        "ai_defects": [{"file": "ai.py", "rule_id": "SKY-L012"}],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {"gate": {"agent": {"max_ai_defects": 0}}}
+    prov = FakeProvenance(agent_files=["ai.py"])
+    passed, reasons = gk.check_gate(results, config, provenance=prov)
+    assert passed is False
+    assert any("AI-defect" in r for r in reasons)
 
 
 def test_check_gate_agent_secrets():

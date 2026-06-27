@@ -18,6 +18,7 @@ harder cases:
 - nested workspace manifests with dependency hallucinations below the scan root
 - clean dependency manifests for package/version precision
 - installed-package API member and keyword-argument hallucinations
+- diff-aware assertion weakening in tests
 - exact finding-count expectations to catch noisy over-reporting
 - a clean generated-code absence guard
 

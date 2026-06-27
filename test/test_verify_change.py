@@ -204,8 +204,10 @@ def test_verify_change_path_runs_existing_vibe_rules(tmp_path):
 def test_verify_change_path_accepts_injected_analyzer_result(tmp_path):
     app = tmp_path / "app.py"
     app.write_text("def handler():\n    pass\n")
+    seen = {}
 
-    def fake_analyze(*_args, **_kwargs):
+    def fake_analyze(*_args, **kwargs):
+        seen["kwargs"] = kwargs
         return json.dumps(
             {
                 "quality": [
@@ -225,6 +227,53 @@ def test_verify_change_path_accepts_injected_analyzer_result(tmp_path):
 
     assert payload["status"] == "fail"
     assert payload["findings"][0]["vibe_category"] == "incomplete_generation"
+    assert seen["kwargs"]["enable_ai_defects"] is True
+    assert seen["kwargs"]["enable_dependency_hallucinations"] is False
+    assert seen["kwargs"]["enable_danger"] is False
+    assert seen["kwargs"]["changed_files"] == [str(app)]
+
+
+def test_verify_change_path_can_include_dependency_hallucinations(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("import ghost_package\n")
+    seen = {}
+
+    def fake_analyze(*_args, **kwargs):
+        seen["kwargs"] = kwargs
+        return json.dumps({})
+
+    payload = verify_change_path(
+        app,
+        include_dependency_hallucinations=True,
+        analyze_func=fake_analyze,
+    )
+
+    assert payload["status"] == "pass"
+    assert seen["kwargs"]["enable_ai_defects"] is True
+    assert seen["kwargs"]["enable_dependency_hallucinations"] is True
+    assert seen["kwargs"]["enable_danger"] is False
+    assert seen["kwargs"]["changed_files"] == [str(app)]
+
+
+def test_verify_change_path_uses_target_file_for_changed_files(tmp_path):
+    app = tmp_path / "src" / "app.py"
+    app.parent.mkdir()
+    app.write_text("def handler():\n    pass\n")
+    seen = {}
+
+    def fake_analyze(*_args, **kwargs):
+        seen["kwargs"] = kwargs
+        return json.dumps({})
+
+    payload = verify_change_path(
+        tmp_path,
+        file="src/app.py",
+        project_context=True,
+        analyze_func=fake_analyze,
+    )
+
+    assert payload["status"] == "pass"
+    assert seen["kwargs"]["changed_files"] == ["src/app.py"]
 
 
 def test_verify_change_stdin_payload_uses_manifest_file_for_schema():
