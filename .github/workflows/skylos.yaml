@@ -70,14 +70,18 @@ jobs:
         shell: bash
         run: |
           echo "REPORT=$REPORT" >> "$GITHUB_OUTPUT"
+          AI_DEFECTS_FLAG=""
+          if .venv/bin/skylos --help | grep -q -- "--ai-defects"; then
+            AI_DEFECTS_FLAG="--ai-defects"
+          fi
           if [ -n "$DIFF_BASE" ]; then
-            .venv/bin/skylos . --quality --danger --secrets --ai-defects --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
+            .venv/bin/skylos . --quality --danger --secrets $AI_DEFECTS_FLAG --diff-base "$DIFF_BASE" --diff "$DIFF_BASE" --json -o "$REPORT"
           else
-            .venv/bin/skylos . --quality --danger --secrets --ai-defects --baseline --json -o "$REPORT"
+            .venv/bin/skylos . --quality --danger --secrets $AI_DEFECTS_FLAG --baseline --json -o "$REPORT"
           fi
 
       - name: Report findings (advisory)
-        if: always()
+        if: steps.scan.outcome == 'success'
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
         run: |
@@ -140,14 +144,14 @@ jobs:
           PY
 
       - name: GitHub annotations
-        if: always()
+        if: steps.scan.outcome == 'success'
         env:
           REPORT: ${{ steps.scan.outputs.REPORT }}
         run: |
           .venv/bin/skylos cicd annotate --input "$REPORT"
 
       - name: Upload report artifact
-        if: always()
+        if: steps.scan.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ steps.scan.outputs.REPORT }}
