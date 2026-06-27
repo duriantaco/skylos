@@ -252,6 +252,21 @@ def test_check_gate_quality_threshold_ignores_advisory_iad_quality():
     assert reasons == []
 
 
+def test_check_gate_ai_defects_count_against_quality_threshold():
+    results = {
+        "danger": [],
+        "ai_defects": [{"rule_id": "SKY-L012", "file": "app.py", "line": 2}],
+        "quality": [],
+        "secrets": [],
+    }
+    config = {"gate": {"max_quality": 0}}
+
+    passed, reasons = gk.check_gate(results, config)
+
+    assert passed is False
+    assert any("quality" in reason for reason in reasons)
+
+
 def test_check_gate_project_config_cannot_relax_critical_or_secrets():
     danger = [{"severity": "critical", "file": "app.py"}]
     for index in range(10):

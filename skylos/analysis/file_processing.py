@@ -10,6 +10,7 @@ from pathlib import Path
 from skylos.core.linter import LinterVisitor
 from skylos.rules.custom import load_community_rules, load_custom_rules
 from skylos.rules.danger.calls import DangerousCallsRule
+from skylos.rules.ai_defect import PhantomCallRule, PhantomDecoratorRule
 from skylos.rules.quality._readability import OpaqueIdentifierRule
 from skylos.rules.quality.async_blocking import AsyncBlockingRule
 from skylos.rules.quality.class_size import GodClassRule, GodFileRule
@@ -35,8 +36,6 @@ from skylos.rules.quality.logic import (
     MockPlaceholderDataRule,
     MutableDefaultRule,
     NoEffectStatementRule,
-    PhantomCallRule,
-    PhantomDecoratorRule,
     ReturnConsistencyRule,
     SecurityTodoRule,
     StaleMockRule,

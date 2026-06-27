@@ -1063,6 +1063,7 @@ def _selected_main_upload_static_categories(args) -> list[str]:
     if getattr(args, "danger", False):
         categories.append("danger")
     if getattr(args, "quality", False):
+        categories.append("ai_defects")
         categories.append("quality")
     if getattr(args, "secrets", False):
         categories.append("secrets")

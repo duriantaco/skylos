@@ -96,10 +96,7 @@ Rule IDs are unified across languages where the same vulnerability exists.
 | D216 | CRITICAL | Server-side request forgery | Python, TS/JS, Go, Java, Dart, Shell, audit | CWE-918 / A10 |
 | D217 | CRITICAL | Raw SQL / ORM SQL injection | Python | CWE-89 / A03 |
 | D220 | CRITICAL | SQL injection in added code / diff validation | MCP code-change validator | CWE-89 / A03 |
-| D222 | MEDIUM | Dependency hallucination | Python | AI supply-chain |
 | D223 | MEDIUM | Undeclared third-party dependency | Python | supply-chain |
-| D224 | HIGH | API signature hallucination | Python | AI-code runtime failure |
-| D225 | HIGH | Dependency version hallucination | npm, Go | AI supply-chain |
 | D226 | CRITICAL | XSS: unsafe DOM or HTML rendering | Python, TS/JS, Java, audit | CWE-79 / A03 |
 | D227 | HIGH | XSS: unsafe template rendering | Python | CWE-79 / A03 |
 | D228 | HIGH | XSS: unescaped HTML output | Python | CWE-79 / A03 |
@@ -283,6 +280,16 @@ The Go engine may emit `SKY-G` IDs. Cross-language equivalents are remapped to
 | SKY-G280 | SKY-G280 | Weak TLS version |
 | SKY-G305 | SKY-D215 | Archive extraction path traversal |
 
+## AI Defects
+
+| ID | Severity | Name | Languages |
+|:---|:---|:---|:---|
+| L012 | CRITICAL | Phantom function call / hallucinated security function | Python |
+| L023 | CRITICAL | Phantom decorator | Python |
+| D222 | CRITICAL | Dependency hallucination | Python |
+| D224 | HIGH | API signature hallucination | Python |
+| D225 | HIGH | Dependency version hallucination | Python, npm, Go |
+
 ## Logic and AI-Code Mistakes (SKY-L)
 
 | ID | Severity | Name | Languages |
@@ -298,14 +305,12 @@ The Go engine may emit `SKY-G` IDs. Cross-language equivalents are remapped to
 | L009 | LOW-HIGH | Debug leftover | Python |
 | L010 | MEDIUM | Security TODO/FIXME marker left in code | Python |
 | L011 | MEDIUM-HIGH | Disabled security control | Python |
-| L012 | CRITICAL | Phantom function call / hallucinated security function | Python |
 | L013 | HIGH | Insecure randomness for security values | Python |
 | L014 | HIGH | Hardcoded credential in code | Python |
 | L016 | MEDIUM | Undefined config / ghost feature flag | Python |
 | L017 | MEDIUM | Error information disclosure | Python |
 | L020 | HIGH | Overly broad file permissions | Python |
 | L021 | HIGH | Security control regression | Diff-aware review |
-| L023 | CRITICAL | Phantom decorator | Python |
 | L024 | HIGH | Stale mock target | Python |
 | L026 | MEDIUM | Unfinished generated function | Python |
 | L027 | LOW-MEDIUM | Duplicate string literal | Python |

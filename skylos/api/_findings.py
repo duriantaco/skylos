@@ -12,6 +12,7 @@ __all__ = [
 
 
 UPLOAD_FINDING_SPECS = (
+    ("ai_defects", "AI_DEFECT", "SKY-AI000"),
     ("danger", "SECURITY", "SKY-D000"),
     ("quality", "QUALITY", "SKY-Q000"),
     ("secrets", "SECRET", "SKY-S000"),

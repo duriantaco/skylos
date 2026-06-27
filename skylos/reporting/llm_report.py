@@ -3,6 +3,7 @@ import pathlib
 
 
 _LLM_REPORT_CATEGORIES = [
+    ("ai_defects", "AI Defects"),
     ("danger", "Security"),
     ("secrets", "Secrets"),
     ("quality", "Quality"),

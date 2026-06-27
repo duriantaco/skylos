@@ -51,7 +51,7 @@ from skylos.core.file_discovery import (
 from skylos.core.linter import LinterVisitor
 
 from skylos.rules.quality.policy import analyze_repo_policy
-from skylos.rules.quality.phantom_refs import scan_repo_phantom_security_references
+from skylos.rules.ai_defect.phantom_refs import scan_repo_phantom_security_references
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
 from skylos.rules.quality.clones import (
     CloneConfig,
@@ -1929,7 +1929,7 @@ class Skylos:
                         logger.error("Config scan failed", exc_info=True)
 
                 try:
-                    from skylos.rules.danger.danger_hallucination.manifest_dependency_hallucination import (
+                    from skylos.rules.ai_defect.manifest_dependency_hallucination import (
                         scan_manifest_dependency_hallucinations,
                     )
 
@@ -1945,14 +1945,28 @@ class Skylos:
                         logger.error("Manifest dependency scan failed", exc_info=True)
 
                 if danger_findings:
+                    from skylos.reporting.result_builder import AI_DEFECT_RULE_IDS
                     from skylos.rules.compliance import (
                         enrich_findings_with_compliance,
                     )
 
-                    result["danger"] = enrich_findings_with_compliance(
-                        danger_findings
-                    )
-                    result["analysis_summary"]["danger_count"] = len(danger_findings)
+                    ai_defects = []
+                    core_danger = []
+                    for finding in danger_findings:
+                        if str(finding.get("rule_id", "")) in AI_DEFECT_RULE_IDS:
+                            ai_defects.append(finding)
+                        else:
+                            core_danger.append(finding)
+                    if core_danger:
+                        result["danger"] = enrich_findings_with_compliance(
+                            core_danger
+                        )
+                        result["analysis_summary"]["danger_count"] = len(core_danger)
+                    if ai_defects:
+                        result["ai_defects"] = ai_defects
+                        result["analysis_summary"]["ai_defects_count"] = len(
+                            ai_defects
+                        )
             return json.dumps(result)
 
         logger.info(f"Analyzing {len(files)} files...")
@@ -2534,7 +2548,7 @@ class Skylos:
                     logger.error("Config scan failed", exc_info=True)
 
             try:
-                from skylos.rules.danger.danger_hallucination.dependency_hallucination import (
+                from skylos.rules.ai_defect.dependency_hallucination import (
                     scan_python_dependency_hallucinations,
                 )
 
@@ -2573,7 +2587,7 @@ class Skylos:
                     logger.error(traceback.format_exc())
 
             try:
-                from skylos.rules.danger.danger_hallucination.api_signature_hallucination import (
+                from skylos.rules.ai_defect.api_signature_hallucination import (
                     scan_python_api_signature_hallucinations,
                 )
 
@@ -2595,7 +2609,7 @@ class Skylos:
                     logger.error(traceback.format_exc())
 
             try:
-                from skylos.rules.danger.danger_hallucination.manifest_dependency_hallucination import (
+                from skylos.rules.ai_defect.manifest_dependency_hallucination import (
                     scan_manifest_dependency_hallucinations,
                 )
 

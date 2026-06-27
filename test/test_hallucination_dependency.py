@@ -1,6 +1,6 @@
 import json
 
-import skylos.rules.danger.danger_hallucination.dependency_hallucination as dep
+import skylos.rules.ai_defect.dependency_hallucination as dep
 
 
 def _write_py(path, text):

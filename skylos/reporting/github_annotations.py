@@ -11,7 +11,13 @@ _GITHUB_ANNOTATION_THRESHOLDS = {
     "medium": {"CRITICAL", "HIGH", "MEDIUM"},
     "low": {"CRITICAL", "HIGH", "MEDIUM", "LOW"},
 }
-_GITHUB_FINDING_CATEGORIES = ("danger", "quality", "secrets", "custom_rules")
+_GITHUB_FINDING_CATEGORIES = (
+    "danger",
+    "ai_defects",
+    "quality",
+    "secrets",
+    "custom_rules",
+)
 _GITHUB_DEAD_CODE_CATEGORIES = (
     ("unused_functions", "Unused function"),
     ("unused_imports", "Unused import"),

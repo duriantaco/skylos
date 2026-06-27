@@ -16,7 +16,7 @@ def test_build_verify_change_response_filters_to_ai_findings(tmp_path):
     app = tmp_path / "app.py"
     app.write_text("def handler(token):\n    return validate_token(token)\n")
     result = {
-        "quality": [
+        "ai_defects": [
             {
                 "rule_id": "SKY-L012",
                 "vibe_category": "hallucinated_reference",
@@ -27,6 +27,8 @@ def test_build_verify_change_response_filters_to_ai_findings(tmp_path):
                 "col": 11,
                 "message": "Call to validate_token() is never defined.",
             },
+        ],
+        "quality": [
             {
                 "rule_id": "SKY-Q302",
                 "severity": "LOW",
@@ -81,7 +83,7 @@ def test_build_verify_change_response_applies_api_signature_defaults(tmp_path):
     app = tmp_path / "app.py"
     app.write_text("api.missing(arg=True)\n")
     result = {
-        "danger": [
+        "ai_defects": [
             {
                 "rule_id": "SKY-D224",
                 "severity": "HIGH",
@@ -104,7 +106,7 @@ def test_build_verify_change_response_applies_version_hallucination_defaults(tmp
     manifest = tmp_path / "package.json"
     manifest.write_text('{"dependencies": {"ghost": "9.9.9"}}\n')
     result = {
-        "danger": [
+        "ai_defects": [
             {
                 "rule_id": "SKY-D225",
                 "severity": "HIGH",

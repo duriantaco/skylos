@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from skylos.rules.danger.danger_hallucination.api_signature_hallucination import (
+from skylos.rules.ai_defect.api_signature_hallucination import (
     RULE_ID_API_SIGNATURE,
     scan_python_api_signature_hallucinations,
 )
