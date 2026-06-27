@@ -49,8 +49,8 @@ pip install skylos
 skylos .
 ```
 
-The default scan focuses on dead code. Add security, secrets, quality, and
-dependency checks with `-a`:
+The default scan focuses on dead code. Add security, secrets, quality,
+dependency, and AI-defect checks with `-a`:
 
 ```bash
 skylos . -a
@@ -97,7 +97,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 |:---|:---|:---|:---|
 | First dead-code scan | `skylos .` | Finds unused functions, classes, imports, files, and framework entrypoint mistakes | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
 | Deterministic cleanup preview | `skylos clean . --dry-run --types import,function --confidence 80` | Shows safe import/function removals before writing; add `--apply` to edit files | [Dead code docs](https://docs.skylos.dev/dead-code-detection) |
-| Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, config, and quality checks | [Security docs](https://docs.skylos.dev/security-analysis) |
+| Security and quality audit | `skylos . -a` | Adds dangerous flow, secrets, dependency, config, quality, and AI-defect checks | [Security docs](https://docs.skylos.dev/security-analysis) |
 | PR gate | `skylos cicd init` | Generates a GitHub Actions workflow with annotations and failure thresholds | [CI/CD guide](https://docs.skylos.dev/ci-cd) |
 | Readable terminal report | `skylos . --format pretty` | Groups findings by file with severity badges, snippets, and copyable `file:line` locations | [CLI output modes](./docs/cli-output.md) |
 | Selectable terminal triage | `skylos . --tui` | Opens a keyboard-driven category list, finding list, and detail pane | [CLI output modes](./docs/cli-output.md) |
@@ -147,6 +147,9 @@ repo and PR checker that puts several common review checks behind one CLI.
 - **Agent-loop verification:** `skylos verify` and MCP `verify_change` return
   versioned JSON for only AI-code trust findings, so coding agents can
   self-correct before a human sees the change.
+- **Evidence-backed AI defects:** full scans put strict hallucination checks
+  under `ai_defects`, including phantom references, fake package APIs,
+  nonexistent packages, and impossible dependency versions.
 - **Verification-backed remediation:** security fixes are checked by re-running
   analysis, and supported findings can include targeted regression-test proof
   metadata.

@@ -21,9 +21,11 @@ AI_RULE_DEFAULTS = {
     "SKY-D222": ("dependency_hallucination", "high"),
     "SKY-D224": ("api_signature_hallucination", "high"),
     "SKY-D225": ("dependency_hallucination", "high"),
+    "SKY-L023": ("hallucinated_reference", "high"),
 }
 
 FINDING_SECTIONS = (
+    ("ai_defects", "ai_defect"),
     ("quality", "quality"),
     ("danger", "security"),
     ("custom_rules", "custom"),

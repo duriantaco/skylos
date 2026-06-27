@@ -268,7 +268,7 @@ _SAFE_VERIFICATION_FIELDS = ("verdict", "confidence", "reason")
 def _flatten_findings(results: dict) -> list[dict]:
     findings = []
 
-    for category in ("danger", "quality", "secrets", "custom_rules"):
+    for category in ("danger", "ai_defects", "quality", "secrets", "custom_rules"):
         for f in results.get(category, []) or []:
             finding = {
                 "file": f.get("file") or f.get("file_path") or "",

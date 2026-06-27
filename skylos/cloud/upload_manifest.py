@@ -13,6 +13,7 @@ class UploadFamilyManifest:
 
 
 _CODE_CATEGORY_LABELS = {
+    "ai_defects": "AI defects",
     "danger": "security (danger)",
     "quality": "quality",
     "secrets": "secrets",
@@ -28,7 +29,14 @@ def build_code_scan_manifest(
 ) -> UploadFamilyManifest:
     ordered = [
         _CODE_CATEGORY_LABELS[key]
-        for key in ("dead_code", "danger", "quality", "secrets", "dependency")
+        for key in (
+            "dead_code",
+            "ai_defects",
+            "danger",
+            "quality",
+            "secrets",
+            "dependency",
+        )
         if key in set(static_categories)
     ]
     notes = [

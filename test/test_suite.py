@@ -293,7 +293,7 @@ def test_suite_table_upload_preserves_bundle_and_payloads(tmp_path):
     assert uploaded["debt_payload"] == report["debt"]
     assert "danger" in uploaded["static_payload"]
     build_code.assert_called_once_with(
-        ["danger", "quality", "secrets", "dead_code", "dependency"],
+        ["danger", "ai_defects", "quality", "secrets", "dead_code", "dependency"],
         provenance_attached=True,
     )
     print_manifest.assert_called_once_with(

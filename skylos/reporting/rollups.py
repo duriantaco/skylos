@@ -5,6 +5,7 @@ from typing import Any
 
 
 FINDING_SECTIONS = (
+    ("ai_defects", "ai_defects"),
     ("danger", "security"),
     ("quality", "quality"),
     ("custom_rules", "quality"),
@@ -20,7 +21,14 @@ FINDING_SECTIONS = (
     ("unused_exports", "dead_code"),
 )
 
-_CATEGORY_KEYS = ("dead_code", "quality", "security", "secrets", "dependencies")
+_CATEGORY_KEYS = (
+    "dead_code",
+    "ai_defects",
+    "quality",
+    "security",
+    "secrets",
+    "dependencies",
+)
 _SEVERITY_ORDER = {
     "CRITICAL": 0,
     "HIGH": 1,

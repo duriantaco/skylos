@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from skylos.rules.danger.danger_hallucination.manifest_dependency_hallucination import (
+from skylos.rules.ai_defect.manifest_dependency_hallucination import (
     VERSION_CACHE_PATH,
     VERSION_CACHE_SCHEMA_VERSION,
 )

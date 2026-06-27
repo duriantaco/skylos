@@ -10,6 +10,7 @@ from skylos.core.suite import format_suite_json, format_suite_table, run_suite
 _VALID_UPLOAD_FAMILIES = ("static", "defense", "debt")
 _VALID_STATIC_UPLOAD_CATEGORIES = (
     "danger",
+    "ai_defects",
     "quality",
     "secrets",
     "dead_code",
@@ -56,6 +57,8 @@ def _build_static_upload_result(
 
     if "danger" in category_set:
         payload["danger"] = list(static_result.get("danger") or [])
+    if "ai_defects" in category_set:
+        payload["ai_defects"] = list(static_result.get("ai_defects") or [])
     if "quality" in category_set:
         payload["quality"] = list(static_result.get("quality") or [])
         if static_result.get("architecture_metrics") is not None:
@@ -139,10 +142,10 @@ def _build_suite_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--static-categories",
-        default="danger,quality,secrets,dead_code,dependency",
+        default="danger,ai_defects,quality,secrets,dead_code,dependency",
         help=(
             "Comma-separated code-scan categories to upload inside the static family. "
-            "Choices: danger,quality,secrets,dead_code,dependency"
+            "Choices: danger,ai_defects,quality,secrets,dead_code,dependency"
         ),
     )
     return parser

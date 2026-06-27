@@ -232,6 +232,7 @@ def _collect_agent_findings(findings_lists, agent_file_set):
     agent_dead_code = 0
     buckets = {
         "danger": agent_danger,
+        "ai_defects": agent_quality,
         "quality": agent_quality,
         "secrets": agent_secrets,
     }
@@ -459,6 +460,7 @@ def _apply_gate_thresholds(
 def _build_findings_lists(results, danger, quality, secrets):
     return {
         "danger": danger,
+        "ai_defects": results.get("ai_defects", []) or [],
         "quality": quality,
         "secrets": secrets,
         "dead_code": _collect_dead_code_items(results),
@@ -484,8 +486,9 @@ def check_gate(results, config, strict=False, provenance=None):
     reasons = []
     total_findings = _count_dead_code_findings(results)
     danger = results.get("danger", []) or []
+    ai_defects = results.get("ai_defects", []) or []
     quality = results.get("quality", []) or []
-    gate_quality = _gate_quality_findings(quality)
+    gate_quality = ai_defects + _gate_quality_findings(quality)
     secrets = results.get("secrets", []) or []
     dependencies = results.get("dependency_vulnerabilities", []) or []
     gate_config = _effective_gate_config(config)

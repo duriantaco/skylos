@@ -19,10 +19,10 @@ from .danger_agent.tool_privilege import scan as scan_agent_tool_privilege
 from .danger_llm.consumption import scan as scan_llm_consumption
 from .danger_llm.llm_flow import scan as scan_llm
 from .danger_ml.model_deserialization import scan as scan_ml_model_load
-from .danger_hallucination.dependency_hallucination import (
+from skylos.rules.ai_defect.dependency_hallucination import (
     scan_python_dependency_hallucinations,
 )
-from .danger_hallucination.api_signature_hallucination import (
+from skylos.rules.ai_defect.api_signature_hallucination import (
     scan_python_api_signature_hallucinations,
 )
 from skylos.security.command_guard import (

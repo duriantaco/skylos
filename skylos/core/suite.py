@@ -74,6 +74,7 @@ def _static_summary(static_result: dict[str, Any]) -> dict[str, int]:
             for category in _DEAD_CODE_CATEGORIES
         ),
         "security": len(static_result.get("danger", []) or []),
+        "ai_defects": len(static_result.get("ai_defects", []) or []),
         "secrets": len(static_result.get("secrets", []) or []),
         "quality": len(static_result.get("quality", []) or []),
         "dependencies": len(static_result.get("dependency_vulnerabilities", []) or []),
@@ -83,6 +84,7 @@ def _static_summary(static_result: dict[str, Any]) -> dict[str, int]:
 def _annotatable_findings(result: dict[str, Any]) -> list[dict[str, Any]]:
     categories = [
         "danger",
+        "ai_defects",
         "quality",
         "secrets",
         "custom_rules",

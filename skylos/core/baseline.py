@@ -20,12 +20,13 @@ def save_baseline(project_root: str | Path, result: dict) -> Path:
         "unused_classes": len(result.get("unused_classes", [])),
         "unused_variables": len(result.get("unused_variables", [])),
         "danger": len(result.get("danger", [])),
+        "ai_defects": len(result.get("ai_defects", [])),
         "quality": len(result.get("quality", [])),
         "secrets": len(result.get("secrets", [])),
     }
 
     fingerprints = set()
-    for category in ["danger", "quality", "secrets"]:
+    for category in ["danger", "ai_defects", "quality", "secrets"]:
         for finding in result.get(category, []):
             fp = f"{finding.get('rule_id', '')}:{finding.get('file', '')}:{finding.get('line', 0)}"
             fingerprints.add(fp)
@@ -61,7 +62,7 @@ def filter_new_findings(result: dict, baseline: dict) -> dict:
 
     filtered = dict(result)
 
-    for category in ["danger", "quality", "secrets"]:
+    for category in ["danger", "ai_defects", "quality", "secrets"]:
         original = result.get(category, [])
         new_findings = []
         for finding in original:

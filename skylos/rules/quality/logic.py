@@ -1,3 +1,4 @@
+from skylos.rules.ai_defect import PhantomCallRule, PhantomDecoratorRule
 from skylos.rules.quality.logic_foundation import (
     BareExceptRule,
     DangerousComparisonRule,
@@ -25,8 +26,6 @@ from skylos.rules.quality.logic_security import (
     InsecureRandomRule,
     MissingNetworkTimeoutRule,
     MockPlaceholderDataRule,
-    PhantomCallRule,
-    PhantomDecoratorRule,
     SecurityTodoRule,
     StaleMockRule,
     UndefinedConfigRule,

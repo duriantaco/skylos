@@ -8,14 +8,13 @@ from pathlib import Path
 
 import pytest
 
+from skylos.rules.ai_defect import PhantomCallRule, PhantomDecoratorRule
 from skylos.rules.quality.logic import (
     EmptyErrorHandlerRule,
     MissingResourceCleanupRule,
     DebugLeftoverRule,
     SecurityTodoRule,
     DisabledSecurityRule,
-    PhantomCallRule,
-    PhantomDecoratorRule,
     UnfinishedGenerationRule,
     UndefinedConfigRule,
     StaleMockRule,
@@ -25,7 +24,7 @@ from skylos.rules.quality.logic import (
     BroadFilePermissionsRule,
     MissingNetworkTimeoutRule,
 )
-from skylos.rules.quality.phantom_refs import scan_repo_phantom_security_references
+from skylos.rules.ai_defect.phantom_refs import scan_repo_phantom_security_references
 from skylos.rules.quality.unused_deps import scan_unused_dependencies
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
 
@@ -1713,7 +1712,10 @@ class TestPhantomDecorator:
             return "secret"
         """
         findings = check_code(PhantomDecoratorRule(), code)
-        assert any(f["rule_id"] == "SKY-L023" for f in findings)
+        l023 = [f for f in findings if f["rule_id"] == "SKY-L023"]
+        assert l023
+        assert l023[0]["category"] == "ai_defect"
+        assert l023[0]["defect_type"] == "hallucinated_reference"
 
     def test_phantom_rate_limit_with_args(self):
         code = """

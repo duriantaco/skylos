@@ -3282,7 +3282,7 @@ ignore = []
                 ],
             ),
             patch(
-                "skylos.rules.danger.danger_hallucination.dependency_hallucination.scan_python_dependency_hallucinations",
+                "skylos.rules.ai_defect.dependency_hallucination.scan_python_dependency_hallucinations",
                 return_value=[
                     {
                         "rule_id": "SKY-D222",
@@ -3322,9 +3322,13 @@ ignore = []
         danger_rule_ids = {
             finding.get("rule_id") for finding in result.get("danger", [])
         }
+        ai_defect_rule_ids = {
+            finding.get("rule_id") for finding in result.get("ai_defects", [])
+        }
 
         assert "SKY-L021" not in quality_rule_ids
         assert "SKY-D222" not in danger_rule_ids
+        assert "SKY-D222" not in ai_defect_rule_ids
         assert "SKY-D260" not in danger_rule_ids
 
 
@@ -3467,13 +3471,13 @@ def handler(request):
         )
 
         result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
-        quality = [
-            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ai_defects = [
+            f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
 
-        assert len(quality) == 1
-        assert quality[0]["name"] == "security.require_auth"
-        assert quality[0]["vibe_category"] == "hallucinated_reference"
+        assert len(ai_defects) == 1
+        assert ai_defects[0]["name"] == "security.require_auth"
+        assert ai_defects[0]["vibe_category"] == "hallucinated_reference"
 
     def test_analyze_single_file_skips_repo_phantom_reference_scan(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
@@ -3499,11 +3503,11 @@ def handler(request):
         )
 
         result = json.loads(analyze(str(views), conf=0, enable_quality=True))
-        quality = [
-            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ai_defects = [
+            f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
 
-        assert quality == []
+        assert ai_defects == []
 
     def test_analyze_subdirectory_uses_repo_root_for_phantom_scan(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
@@ -3528,12 +3532,12 @@ def handler(request):
         )
 
         result = json.loads(analyze(str(pkg), conf=0, enable_quality=True))
-        quality = [
-            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ai_defects = [
+            f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
 
-        assert len(quality) == 1
-        assert quality[0]["name"] == "security.require_auth"
+        assert len(ai_defects) == 1
+        assert ai_defects[0]["name"] == "security.require_auth"
 
     def test_analyze_nested_subproject_uses_nearest_project_root(self, tmp_path):
         backend = tmp_path / "backend"
@@ -3561,12 +3565,12 @@ def handler(request):
         )
 
         result = json.loads(analyze(str(pkg), conf=0, enable_quality=True))
-        quality = [
-            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ai_defects = [
+            f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
 
-        assert len(quality) == 1
-        assert quality[0]["name"] == "security.require_auth"
+        assert len(ai_defects) == 1
+        assert ai_defects[0]["name"] == "security.require_auth"
 
     def test_analyze_nested_subproject_ignore_applies_to_repo_phantom_scan(
         self, tmp_path
@@ -3602,11 +3606,11 @@ def handler(request):
         )
 
         result = json.loads(analyze(str(backend), conf=0, enable_quality=True))
-        quality = [
-            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ai_defects = [
+            f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
 
-        assert quality == []
+        assert ai_defects == []
 
     def test_analyze_repo_phantom_respects_inline_ignore_pragmas(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
@@ -3631,14 +3635,14 @@ def handler(request):
         )
 
         result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
-        quality = [
-            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ai_defects = [
+            f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
         suppressed = [
             f for f in result.get("suppressed", []) if f.get("rule_id") == "SKY-L012"
         ]
 
-        assert quality == []
+        assert ai_defects == []
         assert len(suppressed) == 1
         assert suppressed[0]["reason"] == "inline ignore comment"
 
@@ -3672,12 +3676,12 @@ def handler(request):
         )
 
         result = json.loads(analyze(str(app), conf=0, enable_quality=True))
-        quality = [
-            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ai_defects = [
+            f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
 
-        assert len(quality) == 1
-        assert quality[0]["name"] == "security.require_auth"
+        assert len(ai_defects) == 1
+        assert ai_defects[0]["name"] == "security.require_auth"
 
     def test_analyze_flags_stale_bare_call_resembling_local_symbol(self, tmp_path):
         pkg = tmp_path / "billing"
@@ -3701,13 +3705,13 @@ def create_invoice(order):
         )
 
         result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
-        quality = [
-            f for f in result.get("quality", []) if f.get("rule_id") == "SKY-L012"
+        ai_defects = [
+            f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
 
-        assert len(quality) == 1
-        assert quality[0]["name"] == "compute_total"
-        assert quality[0]["vibe_category"] == "hallucinated_reference"
+        assert len(ai_defects) == 1
+        assert ai_defects[0]["name"] == "compute_total"
+        assert ai_defects[0]["vibe_category"] == "hallucinated_reference"
 
     def test_danger_scan_does_not_run_sca_without_enable_sca(
         self, tmp_path, monkeypatch
@@ -3781,9 +3785,7 @@ def create_invoice(order):
             encoding="utf-8",
         )
 
-        from skylos.rules.danger.danger_hallucination import (
-            manifest_dependency_hallucination,
-        )
+        from skylos.rules.ai_defect import manifest_dependency_hallucination
 
         def fake_status_checker(_ecosystem, _name, _version, _cache):
             return manifest_dependency_hallucination.STATUS_MISSING_VERSION
@@ -3802,11 +3804,12 @@ def create_invoice(order):
         )
         result = json.loads(raw_result)
 
-        danger = result.get("danger")
-        assert isinstance(danger, list)
-        assert result["analysis_summary"]["danger_count"] == 1
-        assert danger[0]["rule_id"] == "SKY-D225"
-        assert danger[0]["metadata"]["package_name"] == "child-only"
+        ai_defects = result.get("ai_defects")
+        assert isinstance(ai_defects, list)
+        assert result["analysis_summary"]["ai_defects_count"] == 1
+        assert not result.get("danger")
+        assert ai_defects[0]["rule_id"] == "SKY-D225"
+        assert ai_defects[0]["metadata"]["package_name"] == "child-only"
 
     def test_danger_dependency_scan_uses_project_root_for_src_layout(
         self, tmp_path, monkeypatch
@@ -3817,7 +3820,7 @@ def create_invoice(order):
         (pkg / "__init__.py").write_text("", encoding="utf-8")
         (pkg / "module.py").write_text("import requests\n", encoding="utf-8")
 
-        from skylos.rules.danger.danger_hallucination import dependency_hallucination
+        from skylos.rules.ai_defect import dependency_hallucination
 
         seen = {}
 

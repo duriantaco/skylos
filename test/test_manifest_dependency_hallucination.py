@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from skylos.rules.danger.danger_hallucination.manifest_dependency_hallucination import (
+from skylos.rules.ai_defect.manifest_dependency_hallucination import (
     RULE_ID_DEPENDENCY_HALLUCINATION,
     RULE_ID_VERSION_HALLUCINATION,
     STATUS_EXISTS,
