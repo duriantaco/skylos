@@ -419,7 +419,11 @@ def test_ai_code_defect_runner_seeds_dependency_status_cache():
         prepared_path = Path(case_path)
         prepared_paths.append(prepared_path)
         cache_path = prepared_path / ".skylos" / "cache" / "dependency_versions.json"
-        cache_payloads.append(json.loads(cache_path.read_text(encoding="utf-8")))
+        cache_payloads.append(
+            json.loads(
+                cache_path.read_text(encoding="utf-8")  # skylos: ignore[SKY-D215] benchmark temp fixture path
+            )
+        )
         return {
             "findings": [
                 {
@@ -475,7 +479,7 @@ def test_ai_code_defect_runner_prepares_git_baseline():
         prepared_paths.append(prepared_path)
         assert (prepared_path / ".git").is_dir()
         test_file = prepared_path / "tests" / "test_payments.py"
-        current = test_file.read_text(encoding="utf-8")
+        current = test_file.read_text(encoding="utf-8")  # skylos: ignore[SKY-D215] benchmark temp fixture path
         assert "assert result is not None" in current
         assert kwargs["file"] == "tests/test_payments.py"
         assert kwargs["include_dependency_hallucinations"] is False
