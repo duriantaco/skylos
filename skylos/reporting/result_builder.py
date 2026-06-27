@@ -12,7 +12,14 @@ from skylos.reporting.dead_code_result import (
 )
 from skylos.reporting.rollups import attach_directory_rollups
 
-AI_DEFECT_RULE_IDS = {"SKY-L012", "SKY-L023", "SKY-D222", "SKY-D224", "SKY-D225"}
+AI_DEFECT_RULE_IDS = {
+    "SKY-A101",
+    "SKY-L012",
+    "SKY-L023",
+    "SKY-D222",
+    "SKY-D224",
+    "SKY-D225",
+}
 
 
 def _primary_path(path):
@@ -37,10 +44,12 @@ def build_analysis_result(
     enable_secrets,
     enable_danger,
     enable_quality,
+    enable_ai_defects,
     enable_sca,
     all_secrets,
     all_dangers,
     all_quality,
+    all_ai_defects,
     all_sca,
     all_suppressed,
     empty_files,
@@ -87,12 +96,14 @@ def build_analysis_result(
         result,
         enable_secrets,
         enable_danger,
+        enable_ai_defects,
         enable_sca,
         all_secrets,
         all_dangers,
+        all_ai_defects,
         all_sca,
     )
-    _attach_quality(result, enable_quality, all_quality)
+    _attach_quality(result, enable_quality, enable_ai_defects, all_quality)
     _attach_empty_files(result, empty_files)
     _enrich_danger(result, enable_danger)
     _bucket_unused_definitions(result, unused)
@@ -118,6 +129,7 @@ def build_analysis_result(
         files,
         enable_danger,
         enable_quality,
+        enable_ai_defects,
         enable_sca,
         enable_secrets,
     )
@@ -184,9 +196,11 @@ def _attach_findings(
     result,
     enable_secrets,
     enable_danger,
+    enable_ai_defects,
     enable_sca,
     all_secrets,
     all_dangers,
+    all_ai_defects,
     all_sca,
 ):
     summary = result["analysis_summary"]
@@ -198,7 +212,10 @@ def _attach_findings(
         if core_danger:
             result["danger"] = core_danger
             summary["danger_count"] = len(core_danger)
-        _append_ai_defects(result, ai_defects)
+        if enable_ai_defects:
+            _append_ai_defects(result, ai_defects)
+    if enable_ai_defects:
+        _append_ai_defects(result, all_ai_defects)
     if enable_sca:
         result["dependency_vulnerabilities"] = all_sca
         summary["sca_count"] = len(all_sca)
@@ -237,7 +254,7 @@ def _split_quality_findings(all_quality):
     return core_quality, custom_hits, ai_defects
 
 
-def _attach_quality(result, enable_quality, all_quality):
+def _attach_quality(result, enable_quality, enable_ai_defects, all_quality):
     if not enable_quality or not all_quality:
         return
     core_quality, custom_hits, ai_defects = _split_quality_findings(all_quality)
@@ -246,7 +263,8 @@ def _attach_quality(result, enable_quality, all_quality):
 
         for finding in ai_defects + core_quality:
             enrich_finding(finding)
-    _append_ai_defects(result, ai_defects)
+    if enable_ai_defects:
+        _append_ai_defects(result, ai_defects)
     if core_quality:
         result["quality"] = core_quality
         result["analysis_summary"]["quality_count"] = len(core_quality)
@@ -297,6 +315,7 @@ def _attach_grade(
     files,
     enable_danger,
     enable_quality,
+    enable_ai_defects,
     enable_sca,
     enable_secrets,
 ):
@@ -307,6 +326,7 @@ def _attach_grade(
         categories = _grade_categories(
             enable_danger,
             enable_quality,
+            enable_ai_defects,
             enable_sca,
             enable_secrets,
         )
@@ -321,12 +341,20 @@ def _attach_grade(
         _debug_traceback()
 
 
-def _grade_categories(enable_danger, enable_quality, enable_sca, enable_secrets):
+def _grade_categories(
+    enable_danger,
+    enable_quality,
+    enable_ai_defects,
+    enable_sca,
+    enable_secrets,
+):
     categories = []
     if enable_danger:
         categories.append("security")
     if enable_quality:
         categories.append("quality")
+    if enable_ai_defects:
+        categories.append("ai_defects")
     categories.append("dead_code")
     if enable_sca:
         categories.append("dependencies")

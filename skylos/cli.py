@@ -1062,8 +1062,9 @@ def _selected_main_upload_static_categories(args) -> list[str]:
     categories = ["dead_code"]
     if getattr(args, "danger", False):
         categories.append("danger")
-    if getattr(args, "quality", False):
+    if getattr(args, "ai_defects", False):
         categories.append("ai_defects")
+    if getattr(args, "quality", False):
         categories.append("quality")
     if getattr(args, "secrets", False):
         categories.append("secrets")
@@ -1283,6 +1284,7 @@ _DISPLAY_FILTER_CATEGORY_MAP = {
     "unused_classes": "dead_code",
     "unused_fixtures": "dead_code",
     "danger": "security",
+    "ai_defects": "ai_defects",
     "secrets": "secret",
     "quality": "quality",
     "circular_dependencies": "quality",
@@ -1802,6 +1804,7 @@ def _build_main_scan_context(args):
         args.danger = True
         args.secrets = True
         args.quality = True
+        args.ai_defects = True
         args.sca = True
 
     project_root = _resolve_main_project_root(args.path)
@@ -1888,6 +1891,7 @@ CONCISE_FINDING_CATEGORIES = (
     ("unused_files", "unused file"),
     ("unused_fixtures", "unused fixture"),
     ("danger", "security issue"),
+    ("ai_defects", "AI defect"),
     ("quality", "quality issue"),
     ("secrets", "secret"),
     ("custom_rules", "custom rule"),
@@ -1951,7 +1955,8 @@ def _strict_scan_exit_code(result: dict, args) -> int:
 def _apply_config_driven_analysis_flags(args, project_cfg, console):
     security_contracts_configured = bool(project_cfg.get("security_contracts") or [])
     explicit_category_flags = any(
-        getattr(args, name, False) for name in ("danger", "secrets", "quality")
+        getattr(args, name, False)
+        for name in ("danger", "secrets", "quality", "ai_defects")
     )
 
     enabled_from_policy = []
@@ -1968,6 +1973,9 @@ def _apply_config_driven_analysis_flags(args, project_cfg, console):
         if bool(project_cfg.get("quality_enabled", False)):
             args.quality = True
             enabled_from_policy.append("quality")
+        if bool(project_cfg.get("ai_defects_enabled", False)):
+            args.ai_defects = True
+            enabled_from_policy.append("ai_defects")
 
         if enabled_from_policy and not _is_main_machine_output(args):
             console.print(
@@ -3404,6 +3412,7 @@ def main() -> None:
                             "unused_files": [],
                             "danger": [],
                             "quality": [],
+                            "ai_defects": [],
                             "secrets": secrets,
                             "custom_rules": [],
                         }
@@ -3435,6 +3444,7 @@ def main() -> None:
                             enable_secrets=True,
                             enable_danger=True,
                             enable_quality=True,
+                            enable_ai_defects=True,
                             exclude_folders=list(exclude_folders),
                             changed_files=analysis_targets,
                             grep_verify=False,
@@ -3468,6 +3478,7 @@ def main() -> None:
                     "unused_files",
                     "danger",
                     "quality",
+                    "ai_defects",
                     "secrets",
                     "custom_rules",
                 ]:
@@ -3509,13 +3520,18 @@ def main() -> None:
                     if agent_args.format == "json":
                         print(json.dumps(staged_findings, indent=2, default=str))
                     else:
-                        category_counts = {"security": 0, "secrets": 0, "quality": 0}
+                        category_counts = {
+                            "security": 0,
+                            "secrets": 0,
+                            "quality": 0,
+                            "ai_defects": 0,
+                        }
                         for finding in staged_findings:
                             category = str(finding.get("category", "")).lower()
                             if category in category_counts:
                                 category_counts[category] += 1
                         count_bits = [
-                            f"{count} {name}"
+                            f"{count} {'AI defect' if name == 'ai_defects' else name}"
                             for name, count in category_counts.items()
                             if count
                         ]
@@ -3549,7 +3565,7 @@ def main() -> None:
                         "full quality enforcement still runs in CI.[/dim]"
                     )
                 console.print(
-                    "[good]No staged security, secrets, or quality issues[/good]"
+                    "[good]No staged security, secrets, quality, or AI-defect issues[/good]"
                 )
                 sys.exit(0)
 

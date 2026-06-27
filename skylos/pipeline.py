@@ -311,6 +311,7 @@ def run_static_on_files(
     enable_secrets=True,
     enable_danger=True,
     enable_quality=True,
+    enable_ai_defects=True,
     exclude_folders=None,
 ):
     import os
@@ -357,6 +358,7 @@ def run_static_on_files(
             enable_secrets=enable_secrets,
             enable_danger=enable_danger,
             enable_quality=enable_quality,
+            enable_ai_defects=enable_ai_defects,
             exclude_folders=list(
                 exclude_folders
                 or parse_exclude_folders(
@@ -476,6 +478,7 @@ def run_pipeline(
                         enable_secrets=True,
                         enable_danger=True,
                         enable_quality=True,
+                        enable_ai_defects=True,
                         exclude_folders=exclude_folders,
                     )
                 else:
@@ -487,6 +490,7 @@ def run_pipeline(
                         enable_secrets=True,
                         enable_danger=True,
                         enable_quality=True,
+                        enable_ai_defects=True,
                         exclude_folders=list(
                             exclude_folders
                             or parse_exclude_folders(

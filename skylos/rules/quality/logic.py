@@ -1,4 +1,3 @@
-from skylos.rules.ai_defect import PhantomCallRule, PhantomDecoratorRule
 from skylos.rules.quality.logic_foundation import (
     BareExceptRule,
     DangerousComparisonRule,
@@ -45,8 +44,6 @@ __all__ = [
     "DebugLeftoverRule",
     "SecurityTodoRule",
     "DisabledSecurityRule",
-    "PhantomCallRule",
-    "PhantomDecoratorRule",
     "UnfinishedGenerationRule",
     "UndefinedConfigRule",
     "StaleMockRule",

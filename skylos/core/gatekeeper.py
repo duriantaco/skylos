@@ -218,6 +218,16 @@ def _effective_gate_config(config):
             gate_config.get(key),
             BASELINE_GATE_CONFIG[key],
         )
+    if "max_ai_defects" in gate_config:
+        effective["max_ai_defects"] = _safe_gate_limit(
+            gate_config.get("max_ai_defects"),
+            effective.get("max_quality", BASELINE_GATE_CONFIG["max_quality"]),
+        )
+    else:
+        effective["max_ai_defects"] = effective.get(
+            "max_quality",
+            BASELINE_GATE_CONFIG["max_quality"],
+        )
     return effective
 
 
@@ -227,12 +237,13 @@ def _agent_gate_reason(message):
 
 def _collect_agent_findings(findings_lists, agent_file_set):
     agent_danger = []
+    agent_ai_defects = []
     agent_quality = []
     agent_secrets = []
     agent_dead_code = 0
     buckets = {
         "danger": agent_danger,
-        "ai_defects": agent_quality,
+        "ai_defects": agent_ai_defects,
         "quality": agent_quality,
         "secrets": agent_secrets,
     }
@@ -248,7 +259,7 @@ def _collect_agent_findings(findings_lists, agent_file_set):
             elif category == "dead_code":
                 agent_dead_code += 1
 
-    return agent_danger, agent_quality, agent_secrets, agent_dead_code
+    return agent_danger, agent_ai_defects, agent_quality, agent_secrets, agent_dead_code
 
 
 def _apply_agent_thresholds(
@@ -258,6 +269,7 @@ def _apply_agent_thresholds(
     critical_count,
     high_count,
     security_count,
+    ai_defects_count,
     quality_count,
     secrets_count,
     dead_code_count,
@@ -304,6 +316,17 @@ def _apply_agent_thresholds(
     ):
         agent_passed = False
 
+    max_ai_defects = agent_cfg.get("max_ai_defects", agent_cfg.get("max_quality"))
+    if not _append_threshold_reason(
+        reasons,
+        count=ai_defects_count,
+        limit=max_ai_defects,
+        message_template=_agent_gate_reason(
+            "{count} AI-defect issue(s) in AI-authored files (max: {limit})"
+        ),
+    ):
+        agent_passed = False
+
     if not _append_threshold_reason(
         reasons,
         count=secrets_count,
@@ -332,7 +355,7 @@ def _check_agent_gate(findings_lists, agent_file_set, agent_cfg, reasons):
 
     Returns False if any agent threshold is exceeded.
     """
-    agent_danger, agent_quality, agent_secrets, agent_dead_code = (
+    agent_danger, agent_ai_defects, agent_quality, agent_secrets, agent_dead_code = (
         _collect_agent_findings(findings_lists, agent_file_set)
     )
     agent_critical, agent_high = _split_danger_by_severity(agent_danger)
@@ -342,6 +365,7 @@ def _check_agent_gate(findings_lists, agent_file_set, agent_cfg, reasons):
         critical_count=len(agent_critical),
         high_count=len(agent_high),
         security_count=len(agent_danger),
+        ai_defects_count=len(agent_ai_defects),
         quality_count=len(agent_quality),
         secrets_count=len(agent_secrets),
         dead_code_count=agent_dead_code,
@@ -360,11 +384,14 @@ def _check_agent_gate(findings_lists, agent_file_set, agent_cfg, reasons):
     return agent_passed
 
 
-def _check_strict_gate(*, total_findings, danger, quality, secrets, dependencies):
+def _check_strict_gate(
+    *, total_findings, danger, ai_defects, quality, secrets, dependencies
+):
     gate_quality = _gate_quality_findings(quality)
     total_issues = (
         total_findings
         + len(danger)
+        + len(ai_defects)
         + len(gate_quality)
         + len(secrets)
         + len(dependencies)
@@ -384,6 +411,8 @@ def _apply_gate_thresholds(
     max_high,
     security_count,
     max_security,
+    ai_defects_count,
+    max_ai_defects,
     quality_count,
     max_quality,
     secrets_count,
@@ -427,6 +456,14 @@ def _apply_gate_thresholds(
         count=quality_count,
         limit=max_quality,
         message_template="{count} quality issues (max: {limit})",
+    ):
+        passed = False
+
+    if not _append_threshold_reason(
+        reasons,
+        count=ai_defects_count,
+        limit=max_ai_defects,
+        message_template="{count} AI-defect issues (max: {limit})",
     ):
         passed = False
 
@@ -488,7 +525,7 @@ def check_gate(results, config, strict=False, provenance=None):
     danger = results.get("danger", []) or []
     ai_defects = results.get("ai_defects", []) or []
     quality = results.get("quality", []) or []
-    gate_quality = ai_defects + _gate_quality_findings(quality)
+    gate_quality = _gate_quality_findings(quality)
     secrets = results.get("secrets", []) or []
     dependencies = results.get("dependency_vulnerabilities", []) or []
     gate_config = _effective_gate_config(config)
@@ -497,6 +534,7 @@ def check_gate(results, config, strict=False, provenance=None):
         return _check_strict_gate(
             total_findings=total_findings,
             danger=danger,
+            ai_defects=ai_defects,
             quality=gate_quality,
             secrets=secrets,
             dependencies=dependencies,
@@ -512,6 +550,8 @@ def check_gate(results, config, strict=False, provenance=None):
         max_high=gate_config.get("max_high", 5),
         security_count=len(danger),
         max_security=gate_config.get("max_security", 10),
+        ai_defects_count=len(ai_defects),
+        max_ai_defects=gate_config.get("max_ai_defects", 10),
         quality_count=len(gate_quality),
         max_quality=gate_config.get("max_quality", 10),
         secrets_count=len(secrets),
@@ -546,6 +586,7 @@ def _build_summary_rows(
     critical_count,
     high_count,
     security_count,
+    ai_defects_count,
     quality_count,
     secrets_count,
     dependency_count,
@@ -555,6 +596,7 @@ def _build_summary_rows(
         f"| Security (critical) | {critical_count} | {'✅' if critical_count == 0 else '❌'} |",
         f"| Security (high) | {high_count} | {'✅' if high_count <= 5 else '⚠️'} |",
         f"| Security (total) | {security_count} | {'✅' if security_count <= 10 else '⚠️'} |",
+        f"| AI defects | {ai_defects_count} | {'✅' if ai_defects_count <= 10 else '⚠️'} |",
         f"| Quality | {quality_count} | {'✅' if quality_count <= 10 else '⚠️'} |",
         f"| Secrets | {secrets_count} | {'✅' if secrets_count == 0 else '❌'} |",
         (
@@ -577,6 +619,7 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
     results = results or {}
 
     danger = results.get("danger", []) or []
+    ai_defects = results.get("ai_defects", []) or []
     quality = results.get("quality", []) or []
     secrets = results.get("secrets", []) or []
     dependencies = results.get("dependency_vulnerabilities", []) or []
@@ -601,6 +644,7 @@ def build_summary_markdown(results, passed, reasons, *, advisory=False):
             critical_count=critical_count,
             high_count=high_count,
             security_count=len(danger),
+            ai_defects_count=len(ai_defects),
             quality_count=len(quality),
             secrets_count=len(secrets),
             dependency_count=len(dependencies),

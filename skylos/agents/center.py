@@ -431,6 +431,7 @@ def _run_refresh_analysis(
     enable_secrets: bool,
     enable_danger: bool,
     enable_quality: bool,
+    enable_ai_defects: bool,
     include_dead_code: bool,
     use_baseline: bool,
     changed_files: list[str],
@@ -442,6 +443,7 @@ def _run_refresh_analysis(
         enable_secrets=enable_secrets,
         enable_danger=enable_danger,
         enable_quality=enable_quality,
+        enable_ai_defects=enable_ai_defects,
         exclude_folders=_resolve_analysis_excludes(
             project_root,
             exclude_folders=exclude_folders,
@@ -513,6 +515,7 @@ def refresh_agent_state(
     enable_secrets: bool = True,
     enable_danger: bool = True,
     enable_quality: bool = True,
+    enable_ai_defects: bool = True,
     include_dead_code: bool = True,
     use_baseline: bool = True,
     state_file: str | Path | None = None,
@@ -550,6 +553,7 @@ def refresh_agent_state(
         enable_secrets=enable_secrets,
         enable_danger=enable_danger,
         enable_quality=enable_quality,
+        enable_ai_defects=enable_ai_defects,
         include_dead_code=include_dead_code,
         use_baseline=use_baseline,
         changed_files=changed_files,
@@ -738,6 +742,13 @@ def normalize_findings(
     _append_findings(findings, result.get("danger") or [], root, "security", "HIGH")
     _append_findings(findings, result.get("secrets") or [], root, "secrets", "HIGH")
     _append_findings(findings, result.get("quality") or [], root, "quality", "MEDIUM")
+    _append_findings(
+        findings,
+        result.get("ai_defects") or [],
+        root,
+        "ai_defects",
+        "HIGH",
+    )
     _append_debt_hotspots(
         findings,
         result,

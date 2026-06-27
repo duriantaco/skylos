@@ -42,6 +42,10 @@ def verify_change_path(
         confidence=confidence,
         exclude_folders=exclude_folders,
         include_dependency_hallucinations=include_dependency_hallucinations,
+        changed_files=_changed_files_for_verify(
+            scan_target,
+            target_file,
+        ),
     )
     raw_result = analyze_func(str(scan_target), **analysis_options)
     analysis_result = _analysis_result_dict(raw_result)
@@ -98,16 +102,35 @@ def _analysis_options(
     confidence: int,
     exclude_folders: list[str] | None,
     include_dependency_hallucinations: bool,
+    changed_files: list[str] | None,
 ) -> dict[str, Any]:
-    return {
+    options = {
         "conf": confidence,
         "exclude_folders": exclude_folders,
         "enable_quality": True,
-        "enable_danger": include_dependency_hallucinations,
+        "enable_danger": False,
+        "enable_ai_defects": True,
+        "enable_dependency_hallucinations": include_dependency_hallucinations,
         "enable_secrets": False,
         "grep_verify": False,
         "trace_file": False,
     }
+    if changed_files:
+        options["changed_files"] = changed_files
+    return options
+
+
+def _changed_files_for_verify(
+    scan_target: Path,
+    target_file: Path | None,
+) -> list[str] | None:
+    if target_file is not None:
+        if target_file.is_absolute():
+            return [str(target_file)]
+        return [str(target_file).replace("\\", "/")]
+    if scan_target.is_file():
+        return [str(scan_target)]
+    return None
 
 
 def _write_manifest_code(root: Path, manifest_file: Path, code: str) -> Path:

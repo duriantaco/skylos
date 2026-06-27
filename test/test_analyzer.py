@@ -3310,6 +3310,7 @@ ignore = []
                     conf=0,
                     enable_danger=True,
                     enable_quality=True,
+                    enable_ai_defects=True,
                     changed_files={str(root_file.resolve())},
                     grep_verify=False,
                 )
@@ -3470,7 +3471,7 @@ def handler(request):
             encoding="utf-8",
         )
 
-        result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
+        result = json.loads(analyze(str(tmp_path), conf=0, enable_ai_defects=True))
         ai_defects = [
             f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
@@ -3479,7 +3480,35 @@ def handler(request):
         assert ai_defects[0]["name"] == "security.require_auth"
         assert ai_defects[0]["vibe_category"] == "hallucinated_reference"
 
-    def test_analyze_single_file_skips_repo_phantom_reference_scan(self, tmp_path):
+    def test_quality_scan_does_not_run_ai_defect_phantom_scan(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        pkg = tmp_path / "app"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "security.py").write_text(
+            """
+def authenticate(request):
+    return request
+""".strip(),
+            encoding="utf-8",
+        )
+        (pkg / "views.py").write_text(
+            """
+from app import security
+
+def handler(request):
+    return security.require_auth(request)
+""".strip(),
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
+
+        assert [
+            f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
+        ] == []
+
+    def test_analyze_single_file_runs_repo_phantom_reference_scan(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
         pkg = tmp_path / "app"
         pkg.mkdir()
@@ -3502,12 +3531,13 @@ def handler(request):
             encoding="utf-8",
         )
 
-        result = json.loads(analyze(str(views), conf=0, enable_quality=True))
+        result = json.loads(analyze(str(views), conf=0, enable_ai_defects=True))
         ai_defects = [
             f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
 
-        assert ai_defects == []
+        assert len(ai_defects) == 1
+        assert ai_defects[0]["name"] == "security.require_auth"
 
     def test_analyze_subdirectory_uses_repo_root_for_phantom_scan(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
@@ -3531,7 +3561,7 @@ def handler(request):
             encoding="utf-8",
         )
 
-        result = json.loads(analyze(str(pkg), conf=0, enable_quality=True))
+        result = json.loads(analyze(str(pkg), conf=0, enable_ai_defects=True))
         ai_defects = [
             f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
@@ -3564,7 +3594,7 @@ def handler(request):
             encoding="utf-8",
         )
 
-        result = json.loads(analyze(str(pkg), conf=0, enable_quality=True))
+        result = json.loads(analyze(str(pkg), conf=0, enable_ai_defects=True))
         ai_defects = [
             f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
@@ -3605,7 +3635,7 @@ def handler(request):
             encoding="utf-8",
         )
 
-        result = json.loads(analyze(str(backend), conf=0, enable_quality=True))
+        result = json.loads(analyze(str(backend), conf=0, enable_ai_defects=True))
         ai_defects = [
             f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
@@ -3634,7 +3664,7 @@ def handler(request):
             encoding="utf-8",
         )
 
-        result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
+        result = json.loads(analyze(str(tmp_path), conf=0, enable_ai_defects=True))
         ai_defects = [
             f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
@@ -3675,7 +3705,7 @@ def handler(request):
             encoding="utf-8",
         )
 
-        result = json.loads(analyze(str(app), conf=0, enable_quality=True))
+        result = json.loads(analyze(str(app), conf=0, enable_ai_defects=True))
         ai_defects = [
             f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
@@ -3704,7 +3734,7 @@ def create_invoice(order):
             encoding="utf-8",
         )
 
-        result = json.loads(analyze(str(tmp_path), conf=0, enable_quality=True))
+        result = json.loads(analyze(str(tmp_path), conf=0, enable_ai_defects=True))
         ai_defects = [
             f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
@@ -3766,7 +3796,7 @@ def create_invoice(order):
         assert result["analysis_summary"]["sca_count"] == 1
         assert result["dependency_vulnerabilities"][0]["rule_id"] == "CVE-TEST"
 
-    def test_danger_scan_checks_manifest_dependencies_without_python_files(
+    def test_ai_defect_scan_checks_manifest_dependencies_without_python_files(
         self, tmp_path, monkeypatch
     ):
         project = tmp_path / "repo"
@@ -3799,7 +3829,7 @@ def create_invoice(order):
         raw_result = analyze(
             str(manifest_only),
             conf=0,
-            enable_danger=True,
+            enable_ai_defects=True,
             grep_verify=False,
         )
         result = json.loads(raw_result)
@@ -3811,7 +3841,7 @@ def create_invoice(order):
         assert ai_defects[0]["rule_id"] == "SKY-D225"
         assert ai_defects[0]["metadata"]["package_name"] == "child-only"
 
-    def test_danger_dependency_scan_uses_project_root_for_src_layout(
+    def test_ai_defect_dependency_scan_uses_project_root_for_src_layout(
         self, tmp_path, monkeypatch
     ):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
@@ -3842,7 +3872,7 @@ def create_invoice(order):
             analyze(
                 str(tmp_path / "src"),
                 conf=0,
-                enable_danger=True,
+                enable_ai_defects=True,
                 grep_verify=False,
             )
         )

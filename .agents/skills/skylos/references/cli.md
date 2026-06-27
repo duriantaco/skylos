@@ -30,13 +30,14 @@ skylos . --gate
 ```
 
 Default scan behavior focuses on dead code. `-a` / `--all` enables danger,
-secrets, quality, and SCA checks.
+secrets, quality, AI-defect, and SCA checks.
 
 Individual check flags:
 
 - `--danger`: security and dangerous flows.
 - `--secrets`: leaked secret patterns.
-- `--quality`: maintainability and AI-code mistakes.
+- `--quality`: maintainability and repo quality checks.
+- `--ai-defects`: evidence-backed AI-code failure modes.
 - `--sca`: dependency CVEs through OSV.dev.
 
 ## Output Formats
@@ -65,6 +66,7 @@ Expect finding arrays such as:
 - `unused_parameters`
 - `unused_files`
 - `danger`
+- `ai_defects`
 - `secrets`
 - `quality`
 - `dependency_vulnerabilities`

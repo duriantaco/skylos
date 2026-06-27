@@ -101,6 +101,78 @@ def test_agent_pre_commit_scans_only_staged_source_files(tmp_path):
     assert "hook blocked the commit before Git created a new commit" in printed
 
 
+def test_agent_pre_commit_reports_ai_defects(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text(
+        "def handler(token):\n    return validate_token(token)\n",
+        encoding="utf-8",
+    )
+
+    console = Mock()
+    staged = Mock(stdout="app.py\n", returncode=0)
+    cached_diff = Mock(
+        stdout=(
+            "diff --git a/app.py b/app.py\n"
+            "--- a/app.py\n"
+            "+++ b/app.py\n"
+            "@@ -2 +2 @@\n"
+        ),
+        returncode=0,
+    )
+    unstaged = Mock(stdout="", returncode=0)
+    result = {
+        "unused_functions": [],
+        "unused_imports": [],
+        "unused_classes": [],
+        "unused_variables": [],
+        "danger": [],
+        "quality": [],
+        "ai_defects": [
+            {
+                "rule_id": "SKY-L012",
+                "file": "app.py",
+                "line": 2,
+                "severity": "CRITICAL",
+                "message": "Call to 'validate_token()' but this function is never defined.",
+            }
+        ],
+        "secrets": [],
+    }
+
+    def fake_run(cmd, **kwargs):
+        if cmd == ["git", "diff", "--cached", "--name-only"]:
+            return staged
+        if cmd[:4] == ["git", "diff", "--cached", "--unified=0"]:
+            return cached_diff
+        if cmd == ["git", "status", "--porcelain", "--untracked-files=all"]:
+            return unstaged
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    with (
+        patch("sys.argv", ["skylos", "agent", "pre-commit", str(repo)]),
+        patch("skylos.cli.Console", return_value=console),
+        patch("skylos.cli.setup_logger"),
+        patch("skylos.cli.find_project_root", return_value=repo),
+        patch("skylos.cli.load_config", return_value={}),
+        patch("skylos.cli.parse_exclude_folders", return_value=set()),
+        patch("skylos.cli.subprocess.run", side_effect=fake_run),
+        patch("skylos.cli.run_analyze", return_value=json.dumps(result)) as mock_analyze,
+        patch("skylos.core.baseline.load_baseline", return_value=None),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+    assert exc_info.value.code == 1
+    assert mock_analyze.call_args.kwargs["enable_ai_defects"] is True
+    printed = " ".join(
+        str(call.args[0]) for call in console.print.call_args_list if call.args
+    )
+    assert "1 AI defect" in printed
+    assert "app.py:2" in printed
+    assert "validate_token" in printed
+
+
 def test_agent_pre_commit_includes_staged_config_files(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -153,7 +225,7 @@ def test_agent_pre_commit_includes_staged_config_files(tmp_path):
     assert "reviewing 1 config staged file(s)" in printed
     assert "Checks secrets only." in printed
     assert "Running secrets check only." in printed
-    assert "No staged security, secrets, or quality issues" in printed
+    assert "No staged security, secrets, quality, or AI-defect issues" in printed
 
 
 def test_agent_pre_commit_uses_staged_snapshot_for_untracked_source_changes(tmp_path):
@@ -387,7 +459,7 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_only(tmp_path):
     assert "reviewing 1 test staged file(s)" in printed
     assert "Checks secrets only." in printed
     assert "Staged test files are secrets-only in local commit checks." in printed
-    assert "No staged security, secrets, or quality issues" in printed
+    assert "No staged security, secrets, quality, or AI-defect issues" in printed
 
 
 def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path):
@@ -450,7 +522,7 @@ def test_agent_pre_commit_scans_staged_benchmark_files_for_secrets_only(tmp_path
     assert "reviewing 1 benchmark staged file(s)" in printed
     assert "Checks secrets only." in printed
     assert "Staged benchmark files are secrets-only in local commit checks." in printed
-    assert "No staged security, secrets, or quality issues" in printed
+    assert "No staged security, secrets, quality, or AI-defect issues" in printed
 
 
 def test_agent_pre_commit_scans_staged_test_files_for_secrets_alongside_source(
@@ -766,7 +838,7 @@ def test_agent_pre_commit_suppresses_structural_quality_noise_locally(tmp_path):
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
     assert "non-blocking quality finding(s)" in printed
-    assert "No staged security, secrets, or quality issues" in printed
+    assert "No staged security, secrets, quality, or AI-defect issues" in printed
     assert "Function is 54 lines long" not in printed
 
 
@@ -909,5 +981,5 @@ def test_agent_pre_commit_suppresses_advisory_architecture_findings(tmp_path):
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
     assert "non-blocking quality finding(s)" in printed
-    assert "No staged security, secrets, or quality issues" in printed
+    assert "No staged security, secrets, quality, or AI-defect issues" in printed
     assert "Main Sequence" not in printed

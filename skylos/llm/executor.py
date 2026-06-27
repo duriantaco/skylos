@@ -228,6 +228,7 @@ class RemediationExecutor:
                 conf=0,
                 enable_danger=True,
                 enable_quality=True,
+                enable_ai_defects=True,
                 enable_secrets=True,
             )
             if isinstance(raw, str):

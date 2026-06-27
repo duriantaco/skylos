@@ -65,6 +65,7 @@ def _static_result(project_root: str) -> dict:
 
 def test_suite_json_outputs_combined_sections(tmp_path, capsys):
     static_result = _static_result(str(tmp_path))
+    run_analyze = Mock(return_value=json.dumps(static_result))
 
     with (
         patch(
@@ -82,7 +83,7 @@ def test_suite_json_outputs_combined_sections(tmp_path, capsys):
             progress_factory=Progress,
             parse_exclude_folders_func=lambda **kwargs: [],
             load_config_func=lambda _path: {},
-            run_analyze_func=lambda *_args, **_kwargs: json.dumps(static_result),
+            run_analyze_func=run_analyze,
             get_git_root_func=lambda: None,
             upload_report_func=_noop_upload,
             upload_defense_report_func=_noop_upload,
@@ -96,6 +97,7 @@ def test_suite_json_outputs_combined_sections(tmp_path, capsys):
     assert payload["summary"]["static"]["security"] == 1
     assert payload["summary"]["static"]["quality"] == 1
     assert payload["summary"]["static"]["secrets"] == 1
+    assert run_analyze.call_args.kwargs["enable_ai_defects"] is True
     assert payload["debt"]["score"]["hotspot_count"] == len(payload["debt"]["hotspots"])
     assert payload["defense"]["summary"]["integrations_found"] == 0
     assert payload["provenance"]["enabled"] is False

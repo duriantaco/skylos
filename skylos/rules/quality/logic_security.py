@@ -3,7 +3,6 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from skylos.rules.ai_defect import PhantomCallRule, PhantomDecoratorRule  # noqa: F401
 from skylos.rules.base import SkylosRule
 from skylos.rules.quality.logic_foundation import _string_literal_value
 from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY

@@ -305,6 +305,7 @@ class TestRunStaticOnFiles:
         kwargs = mock_analyze.call_args[1]
         assert "exclude_folders" in kwargs
         assert "venv" in kwargs["exclude_folders"]
+        assert kwargs["enable_ai_defects"] is True
 
     def test_empty_files_returns_empty(self):
         assert run_static_on_files([]) == _empty_result()
@@ -339,6 +340,7 @@ class TestRunStaticOnFiles:
 
         kwargs = mock_analyze.call_args.kwargs
         assert sorted(kwargs["changed_files"]) == ["/proj/a.py", "/proj/b.py"]
+        assert kwargs["enable_ai_defects"] is True
 
 
 class TestPipelinePhase1:

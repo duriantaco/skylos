@@ -274,6 +274,31 @@ def test_normalize_findings_includes_debt_hotspots(tmp_path):
     assert debt[0]["baseline_status"] == "untracked"
 
 
+def test_normalize_findings_includes_ai_defects(tmp_path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    target = project_root / "app.py"
+    target.write_text("def handler():\n    return validate_token()\n", encoding="utf-8")
+
+    result = {
+        "ai_defects": [
+            {
+                "rule_id": "SKY-L012",
+                "severity": "CRITICAL",
+                "message": "Call to 'validate_token()' but this function is never defined.",
+                "file": str(target),
+                "line": 2,
+            }
+        ]
+    }
+
+    findings = normalize_findings(result, project_root)
+
+    assert len(findings) == 1
+    assert findings[0]["category"] == "ai_defects"
+    assert findings[0]["rule_id"] == "SKY-L012"
+
+
 def test_normalize_findings_applies_debt_baseline(tmp_path):
     project_root = tmp_path / "repo"
     src = project_root / "src"
@@ -355,9 +380,12 @@ def test_refresh_agent_state_with_only_debt_baseline_does_not_mark_quality_new(
         ]
     }
 
-    with patch("skylos.agents.center.run_analyze", return_value=json.dumps(result)):
+    with patch(
+        "skylos.agents.center.run_analyze", return_value=json.dumps(result)
+    ) as run_analyze:
         state, updated = refresh_agent_state(project_root, force=True)
 
+    assert run_analyze.call_args.kwargs["enable_ai_defects"] is True
     assert updated is True
     quality = [
         finding for finding in state["findings"] if finding["category"] == "quality"

@@ -58,6 +58,7 @@ SUMMARY_CATEGORIES = (
     "unused_parameters",
     "unused_variables",
     "unused_classes",
+    "ai_defects",
     "quality",
     "custom_rules",
     "danger",

@@ -447,6 +447,40 @@ class TestMainFunction:
 
             assert mock_analyze.call_args.kwargs["enable_danger"] is True
 
+    def test_main_ai_defects_flag_enables_ai_defect_scan(self, mock_skylos_result):
+        test_args = ["cli.py", "test_path", "--ai-defects", "--json", "--no-provenance"]
+
+        with (
+            patch("sys.argv", test_args),
+            patch("skylos.cli.run_analyze") as mock_analyze,
+            patch("builtins.print"),
+            patch("skylos.cli.setup_logger"),
+            patch("skylos.cli.Progress") as mock_progress,
+        ):
+            mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
+            mock_analyze.return_value = json.dumps(mock_skylos_result)
+
+            main()
+
+            assert mock_analyze.call_args.kwargs["enable_ai_defects"] is True
+
+    def test_main_all_includes_ai_defect_scan(self, mock_skylos_result):
+        test_args = ["cli.py", "test_path", "--all", "--json", "--no-provenance"]
+
+        with (
+            patch("sys.argv", test_args),
+            patch("skylos.cli.run_analyze") as mock_analyze,
+            patch("builtins.print"),
+            patch("skylos.cli.setup_logger"),
+            patch("skylos.cli.Progress") as mock_progress,
+        ):
+            mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
+            mock_analyze.return_value = json.dumps(mock_skylos_result)
+
+            main()
+
+            assert mock_analyze.call_args.kwargs["enable_ai_defects"] is True
+
     def test_main_uses_policy_enabled_categories_when_no_flags(
         self, mock_skylos_result
     ):
@@ -468,6 +502,7 @@ class TestMainFunction:
                 "security_enabled": True,
                 "secrets_enabled": True,
                 "quality_enabled": True,
+                "ai_defects_enabled": True,
             }
             mock_progress.return_value.__enter__.return_value = Mock(add_task=Mock())
             mock_analyze.return_value = json.dumps(mock_skylos_result)
@@ -477,6 +512,7 @@ class TestMainFunction:
             assert mock_analyze.call_args.kwargs["enable_danger"] is True
             assert mock_analyze.call_args.kwargs["enable_secrets"] is True
             assert mock_analyze.call_args.kwargs["enable_quality"] is True
+            assert mock_analyze.call_args.kwargs["enable_ai_defects"] is True
 
 
 def _progress_ctx():

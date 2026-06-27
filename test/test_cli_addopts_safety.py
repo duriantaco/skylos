@@ -19,6 +19,7 @@ def test_sanitize_addopts_keeps_safe_scan_options_only():
     assert sanitize_addopts(
         [
             "--json",
+            "--ai-defects",
             "--confidence",
             "80",
             "--severity=high",
@@ -40,6 +41,7 @@ def test_sanitize_addopts_keeps_safe_scan_options_only():
         ]
     ) == [
         "--json",
+        "--ai-defects",
         "--confidence",
         "80",
         "--severity=high",

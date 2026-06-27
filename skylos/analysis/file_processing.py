@@ -10,7 +10,6 @@ from pathlib import Path
 from skylos.core.linter import LinterVisitor
 from skylos.rules.custom import load_community_rules, load_custom_rules
 from skylos.rules.danger.calls import DangerousCallsRule
-from skylos.rules.ai_defect import PhantomCallRule, PhantomDecoratorRule
 from skylos.rules.quality._readability import OpaqueIdentifierRule
 from skylos.rules.quality.async_blocking import AsyncBlockingRule
 from skylos.rules.quality.class_size import GodClassRule, GodFileRule
@@ -106,19 +105,12 @@ LINTER_RULE_NODE_TYPES = {
     DebugLeftoverRule: (ast.Call,),
     SecurityTodoRule: (ast.Module,),
     DisabledSecurityRule: (ast.Call, ast.FunctionDef, ast.AsyncFunctionDef, ast.Assign),
-    PhantomCallRule: (ast.Module, ast.Call),
     InsecureRandomRule: (ast.Assign,),
     HardcodedCredentialRule: (ast.Assign, ast.FunctionDef, ast.AsyncFunctionDef),
     ErrorDisclosureRule: (ast.ExceptHandler,),
     BroadFilePermissionsRule: (ast.Call,),
     UndefinedConfigRule: (ast.Module, ast.Call),
     StaleMockRule: (ast.Module, ast.Call),
-    PhantomDecoratorRule: (
-        ast.Module,
-        ast.FunctionDef,
-        ast.AsyncFunctionDef,
-        ast.ClassDef,
-    ),
     UnfinishedGenerationRule: (ast.FunctionDef, ast.AsyncFunctionDef),
     DuplicateStringLiteralRule: (ast.Module,),
     TooManyReturnsRule: (ast.FunctionDef, ast.AsyncFunctionDef),
@@ -187,7 +179,6 @@ def _build_builtin_quality_rules(cfg: dict) -> list:
             "SKY-L011",
             lambda: DisabledSecurityRule(vibe_dictionary=vibe_dictionary),
         ),
-        ("SKY-L012", lambda: PhantomCallRule(vibe_dictionary=vibe_dictionary)),
         ("SKY-L013", lambda: InsecureRandomRule(vibe_dictionary=vibe_dictionary)),
         (
             "SKY-L014",
@@ -207,10 +198,6 @@ def _build_builtin_quality_rules(cfg: dict) -> list:
             lambda: UndefinedConfigRule(vibe_dictionary=vibe_dictionary),
         ),
         ("SKY-L024", StaleMockRule),
-        (
-            "SKY-L023",
-            lambda: PhantomDecoratorRule(vibe_dictionary=vibe_dictionary),
-        ),
         ("SKY-L026", UnfinishedGenerationRule),
         (
             "SKY-L027",

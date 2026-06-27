@@ -56,6 +56,12 @@ dependency, and AI-defect checks with `-a`:
 skylos . -a
 ```
 
+Run only evidence-backed AI defect checks with:
+
+```bash
+skylos . --ai-defects
+```
+
 Verify a changed file or range before an agent hands it to review:
 
 ```bash
@@ -147,9 +153,10 @@ repo and PR checker that puts several common review checks behind one CLI.
 - **Agent-loop verification:** `skylos verify` and MCP `verify_change` return
   versioned JSON for only AI-code trust findings, so coding agents can
   self-correct before a human sees the change.
-- **Evidence-backed AI defects:** full scans put strict hallucination checks
-  under `ai_defects`, including phantom references, fake package APIs,
-  nonexistent packages, and impossible dependency versions.
+- **Evidence-backed AI defects:** `--ai-defects` and full scans put strict
+  AI-code failure checks under `ai_defects`, including phantom references, fake
+  package APIs, nonexistent packages, impossible dependency versions, and
+  weakened test assertions.
 - **Verification-backed remediation:** security fixes are checked by re-running
   analysis, and supported findings can include targeted regression-test proof
   metadata.
@@ -386,7 +393,7 @@ metadata, and supports monorepo subprojects through `--scan-path`.
 
 No. Skylos can run alongside them. It focuses on framework-aware dead-code
 signal, PR gating, AI-era regression checks, and a combined workflow across
-dead code, security, secrets, and quality.
+dead code, security, secrets, quality, and AI-defect checks.
 
 **Does Skylos require an LLM?**
 
