@@ -11,6 +11,7 @@ from skylos.rules.ai_defect.manifest_dependency_hallucination import (
 )
 from skylos.rules.ai_defect.phantom_refs import scan_repo_phantom_security_references
 from skylos.rules.ai_defect.assertion_weakening import detect_assertion_weakening
+from skylos.rules.ai_defect.test_impact import detect_test_impact_gaps
 
 __all__ = [
     "PhantomCallRule",
@@ -20,4 +21,5 @@ __all__ = [
     "scan_manifest_dependency_hallucinations",
     "scan_repo_phantom_security_references",
     "detect_assertion_weakening",
+    "detect_test_impact_gaps",
 ]

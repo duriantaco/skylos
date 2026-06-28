@@ -2937,6 +2937,27 @@ class Skylos:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("Assertion weakening scan failed", exc_info=True)
 
+            if changed_files and "SKY-A102" not in project_ignore:
+                try:
+                    from skylos.rules.ai_defect.test_impact import (
+                        detect_test_impact_gaps,
+                    )
+
+                    test_impact_findings = detect_test_impact_gaps(
+                        root,
+                        changed_files,
+                    )
+                    _extend_unsuppressed_ai_defect_findings(
+                        test_impact_findings,
+                        project_ignore=project_ignore,
+                        per_file_ignore_lines=per_file_ignore_lines,
+                        all_ai_defects=all_ai_defects,
+                        all_suppressed=all_suppressed,
+                    )
+                except Exception:
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error("Test impact scan failed", exc_info=True)
+
         if enable_quality:
             if progress_callback:
                 progress_callback(0, 1, Path("PHASE: dependency quality scan"))
