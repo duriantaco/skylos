@@ -37,7 +37,7 @@ Rule IDs use a stable public prefix:
 | Security / danger | Potentially exploitable code paths such as injection, SSRF, path traversal, weak crypto, unsafe deserialization, and CI/CD supply-chain risk. |
 | Secrets | Hardcoded credentials, tokens, API keys, and client-side exposure of server-only values. |
 | Quality | Maintainability, complexity, architecture, resilience, typing, framework practice, and repo policy issues. |
-| AI defects | Evidence-backed AI-code failure modes such as hallucinated APIs, impossible dependencies, phantom references, and weakened tests. Run with `--ai-defects`; full audits include it. |
+| AI defects | Evidence-backed AI-code failure modes such as hallucinated APIs, impossible dependencies, phantom references, and weakened tests. Run with `--ai-defects`; full audits include it. Output uses the `ai_defects` bucket; individual findings use category `ai_defect`. |
 | AI code mistakes | Hallucinated security calls, phantom decorators, unfinished stubs, disabled controls, placeholder data, stale mocks, and missing timeouts. |
 | Security quick | `skylos agent security-quick .`; one-shot LLM security audit, equivalent to `skylos agent scan . --security`. |
 | Security deep | `skylos agent security-deep .`; three-stage security workflow for threat-model context, static threat tracing, discovery/validation, and remediation handoff, equivalent to `skylos agent audit . --deep`. |
@@ -284,6 +284,13 @@ The Go engine may emit `SKY-G` IDs. Cross-language equivalents are remapped to
 
 ## AI Defects
 
+AI-defect grouping is based on finding category, not only the rule-ID prefix.
+The CLI flag is `--ai-defects`, JSON reports use the top-level `ai_defects`
+bucket, and individual findings use category `ai_defect`. Some hallucination
+rules keep historical `SKY-L` or `SKY-D` IDs for compatibility with existing
+suppressions, baselines, CI policies, and docs links; new AI-defect-only rules
+use the `SKY-A` prefix.
+
 | ID | Severity | Name | Languages |
 |:---|:---|:---|:---|
 | A101 | MEDIUM | Test assertion weakening | Diff-aware tests |
@@ -334,6 +341,8 @@ The Go engine may emit `SKY-G` IDs. Cross-language equivalents are remapped to
 | Q306 | MEDIUM | Cognitive complexity | Python | Sonar-style cognitive complexity |
 | Q401 | HIGH | Async blocking call | Python | blocking calls inside async code |
 | Q402 | MEDIUM | Await in loop | TS/JS | prefer batching |
+| Q403 | HIGH | Inconsistent lock acquisition order | Python | potential deadlock from reversed nested lock order |
+| Q404 | MEDIUM | Thread shared state mutation | Python | thread target mutates module state without an obvious lock |
 | Q501 | MEDIUM | God class | Python | excessive methods or attributes |
 | Q502 | MEDIUM-HIGH | God file | Python | excessive file size / definitions |
 | Q701 | MEDIUM | High coupling | Python | CBO-style signal |
@@ -349,6 +358,7 @@ The Go engine may emit `SKY-G` IDs. Cross-language equivalents are remapped to
 | P401 | LOW | Memory risk: `file.read()` / `readlines()` | Python |
 | P402 | LOW | Memory risk: `pandas.read_csv` without `chunksize` | Python |
 | P403 | LOW | Nested loop O(N^2) | Python / generic |
+| P404 | MEDIUM | Unbounded SQLAlchemy-style ORM `.all()` query | Python |
 | T101 | MEDIUM | Missing public parameter type annotation | Python |
 | T102 | MEDIUM | Missing public return type annotation | Python |
 | F101 | MEDIUM | FastAPI response model / return typing practice | Python |
@@ -424,7 +434,7 @@ findings.
 | SKY-S199 | Secret placeholder ID used in prompt examples. |
 
 Prompt text may also use range notation such as `SKY-D226-228`,
-`SKY-L001-004`, or `SKY-P401-403` to describe groups of concrete rule IDs.
+`SKY-L001-004`, or `SKY-P401-404` to describe groups of concrete rule IDs.
 
 ## Custom Rules
 

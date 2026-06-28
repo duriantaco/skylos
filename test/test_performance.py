@@ -58,6 +58,43 @@ def heavy():
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["rule_id"], "SKY-P403")
 
+    def test_detect_unbounded_orm_all(self):
+        code = """
+def list_users():
+    return User.query.all()
+"""
+        findings = self._analyze(code)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["rule_id"], "SKY-P404")
+
+    def test_detect_unbounded_sqlalchemy_session_query_all(self):
+        code = """
+def list_users(db):
+    return db.session.query(User).all()
+"""
+        findings = self._analyze(code)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["rule_id"], "SKY-P404")
+
+    def test_allow_limited_orm_all(self):
+        code = """
+def list_users():
+    return User.query.limit(100).all()
+"""
+        findings = self._analyze(code)
+        self.assertEqual(len(findings), 0)
+
+    def test_allow_django_queryset_all_because_it_is_lazy(self):
+        code = """
+def get_queryset():
+    return User.objects.all()
+
+def filtered_queryset():
+    return User.objects.filter(active=True).all()
+"""
+        findings = self._analyze(code)
+        self.assertEqual(len(findings), 0)
+
     def test_ignore_list_logic(self):
         code = """
 def ignore_me(f):

@@ -66,6 +66,61 @@ def _is_file_read_context(node: ast.Call) -> bool:
     return True
 
 
+def _qualified_name(node: ast.AST) -> str:
+    parts: list[str] = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+    return ".".join(reversed(parts))
+
+
+def _call_chain_has_limiter(node: ast.AST) -> bool:
+    current = node
+    while isinstance(current, ast.Call):
+        func = current.func
+        if isinstance(func, ast.Attribute) and func.attr in {
+            "first",
+            "get",
+            "head",
+            "limit",
+            "one",
+            "one_or_none",
+            "paginate",
+            "take",
+        }:
+            return True
+        current = func.value if isinstance(func, ast.Attribute) else func
+    if isinstance(current, ast.Attribute):
+        return _call_chain_has_limiter(current.value)
+    return False
+
+
+def _looks_like_orm_query(node: ast.AST) -> bool:
+    if isinstance(node, ast.Attribute):
+        if node.attr == "query":
+            return True
+        return _looks_like_orm_query(node.value)
+    if isinstance(node, ast.Call):
+        func_name = _qualified_name(node.func)
+        if func_name.endswith((".query", ".select")):
+            return True
+        if isinstance(node.func, ast.Attribute):
+            return _looks_like_orm_query(node.func.value)
+    return False
+
+
+def _is_unbounded_orm_all(node: ast.Call) -> bool:
+    if not isinstance(node.func, ast.Attribute) or node.func.attr != "all":
+        return False
+    if node.args or node.keywords:
+        return False
+    receiver = node.func.value
+    return _looks_like_orm_query(receiver) and not _call_chain_has_limiter(receiver)
+
+
 class PerformanceRule(SkylosRule):
     rule_id = "SKY-P401"
     name = "Performance Checks"
@@ -156,6 +211,26 @@ class PerformanceRule(SkylosRule):
                                 "col": node.col_offset,
                             }
                         )
+
+            if _is_unbounded_orm_all(node):
+                if "SKY-P404" not in self.ignore_list:
+                    findings.append(
+                        {
+                            "rule_id": "SKY-P404",
+                            "kind": "performance",
+                            "severity": "MEDIUM",
+                            "type": "function",
+                            "name": "all",
+                            "simple_name": "all",
+                            "value": "unbounded_query",
+                            "threshold": 0,
+                            "message": "Unbounded ORM .all() call may load an entire table. Add a limit, pagination, or streaming boundary.",
+                            "file": context.get("filename"),
+                            "basename": Path(context.get("filename", "")).name,
+                            "line": node.lineno,
+                            "col": node.col_offset,
+                        }
+                    )
 
         if isinstance(node, ast.For):
             if "SKY-P403" not in self.ignore_list:

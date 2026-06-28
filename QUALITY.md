@@ -76,9 +76,12 @@ advisory checks first.
 | Memory load | SKY-P401 | `.read()` / `.readlines()` loads entire file |
 | Pandas no chunk | SKY-P402 | `read_csv()` without `chunksize` |
 | Nested loop | SKY-P403 | O(N²) complexity |
+| Unbounded eager ORM query | SKY-P404 | SQLAlchemy-style `.all()` without limit or pagination |
 | Await in loop | SKY-Q402 | Awaiting serially inside loops where batching may be intended |
 | **Async / Class Design** | | |
 | Blocking call in async code | SKY-Q401 | Synchronous I/O or blocking calls in async handlers |
+| Lock order inversion | SKY-Q403 | Nested locks acquired in inconsistent order |
+| Thread shared state mutation | SKY-Q404 | Thread target mutates module state without an obvious lock |
 | God class | SKY-Q501 | Classes with too many methods or attributes |
 | God file | SKY-Q502 | Files with too many code lines or too many responsibilities |
 | Coupling | SKY-Q701 | Classes coupled to too many other classes |

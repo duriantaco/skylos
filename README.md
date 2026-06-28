@@ -157,6 +157,9 @@ repo and PR checker that puts several common review checks behind one CLI.
   AI-code failure checks under `ai_defects`, including phantom references, fake
   package APIs, nonexistent packages, impossible dependency versions, and
   weakened test assertions.
+  The category/tag is `ai_defect`; several rules intentionally keep historical
+  `SKY-L` or `SKY-D` IDs for suppression and baseline compatibility, while new
+  AI-defect-only checks use `SKY-A`.
 - **Verification-backed remediation:** security fixes are checked by re-running
   analysis, and supported findings can include targeted regression-test proof
   metadata.
