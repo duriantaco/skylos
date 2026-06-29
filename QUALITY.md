@@ -89,6 +89,8 @@ advisory checks first.
 | **AI Defects** | | |
 | Test assertion weakening | SKY-A101 | Specific or exception assertion replaced with a broad truthiness/null check, skip, or xfail |
 | High-risk change without tests | SKY-A102 | Auth, billing, validation, or similar high-risk code changed with no test file changed |
+| CI permission expansion | SKY-A103 | GitHub Actions diff adds write permissions or privileged workflow triggers |
+| Public CLI surface drift | SKY-A104 | Public CLI flag removed from argparse, Click, or Typer surface |
 | Phantom reference | SKY-L012 | Calls to undefined/hallucinated security helpers |
 | Phantom decorator | SKY-L023 | Security decorators that are not defined or imported |
 | Hallucinated dependency | SKY-D222 | Imported package does not exist in the package registry |
