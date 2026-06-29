@@ -1,5 +1,16 @@
 ## Changelog
 
+## [4.27.0](https://github.com/duriantaco/skylos/compare/v4.26.1...v4.27.0) (2026-06-29)
+
+
+### Features
+
+* **ai-defect:** add ci and cli diff signals ([#615](https://github.com/duriantaco/skylos/issues/615)) ([a9fb259](https://github.com/duriantaco/skylos/commit/a9fb25974a2c4affe3677c8ee112ebb468f393b3))
+* **ai-defect:** add test impact signal ([#614](https://github.com/duriantaco/skylos/issues/614)) ([22d2d8a](https://github.com/duriantaco/skylos/commit/22d2d8a23621edf268a94e40ca52c468c1738728))
+* **ai-defect:** split hallucination rules ([#609](https://github.com/duriantaco/skylos/issues/609)) ([943d0e0](https://github.com/duriantaco/skylos/commit/943d0e0cd5b9d25301aee9e043bbfaa1f8d196c7))
+* **ai-defect:** wire dedicated scan category ([#611](https://github.com/duriantaco/skylos/issues/611)) ([6a30225](https://github.com/duriantaco/skylos/commit/6a3022557bf1809a93245c2a90ad17940eee5044))
+* **quality:** add reliability checks ([#613](https://github.com/duriantaco/skylos/issues/613)) ([15e74ed](https://github.com/duriantaco/skylos/commit/15e74ed4130fed0697ed7d1fefe2ed837270d766))
+
 ## [4.26.1](https://github.com/duriantaco/skylos/compare/v4.26.0...v4.26.1) (2026-06-25)
 
 
