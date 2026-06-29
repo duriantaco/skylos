@@ -133,6 +133,101 @@ def _extend_unsuppressed_ai_defect_findings(
 
         all_ai_defects.append(finding)
 
+
+def _relative_changed_file(root, changed_file):
+    changed_path = Path(changed_file)
+    if not changed_path.is_absolute():
+        return str(changed_file)
+
+    try:
+        return str(changed_path.resolve().relative_to(root))
+    except ValueError:
+        return str(changed_path)
+
+
+def _diff_result_has_text(diff_result):
+    if diff_result.returncode != 0:
+        return False
+    if not diff_result.stdout.strip():
+        return False
+    return True
+
+
+def _git_diff_for_changed_file(root, rel_file, diff_base):
+    import subprocess
+
+    if diff_base:
+        diff_cmd = ["git", "diff", f"{diff_base}...HEAD", "--", rel_file]
+    else:
+        diff_cmd = ["git", "diff", "HEAD", "--", rel_file]
+
+    diff_result = subprocess.run(
+        diff_cmd,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        cwd=str(root),
+    )
+    if _diff_result_has_text(diff_result):
+        return diff_result.stdout
+
+    if not diff_base:
+        return ""
+
+    fallback_result = subprocess.run(
+        ["git", "diff", "HEAD", "--", rel_file],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        cwd=str(root),
+    )
+    if _diff_result_has_text(fallback_result):
+        return fallback_result.stdout
+
+    return ""
+
+
+def _scan_ai_defect_diff_signals(
+    root,
+    changed_files,
+    *,
+    project_ignore,
+    per_file_ignore_lines,
+    all_ai_defects,
+    all_suppressed,
+):
+    from skylos.rules.ai_defect.api_surface_drift import detect_cli_surface_drift
+    from skylos.rules.ai_defect.ci_permission_expansion import (
+        detect_ci_permission_expansion,
+    )
+    from skylos.security.contracts import resolve_diff_base_ref
+
+    diff_base = resolve_diff_base_ref(root)
+    for changed_file in changed_files:
+        rel_file = _relative_changed_file(root, changed_file)
+        diff_text = _git_diff_for_changed_file(root, rel_file, diff_base)
+        if not diff_text:
+            continue
+
+        if "SKY-A103" not in project_ignore:
+            _extend_unsuppressed_ai_defect_findings(
+                detect_ci_permission_expansion(diff_text, rel_file),
+                project_ignore=project_ignore,
+                per_file_ignore_lines=per_file_ignore_lines,
+                all_ai_defects=all_ai_defects,
+                all_suppressed=all_suppressed,
+            )
+
+        if "SKY-A104" not in project_ignore:
+            _extend_unsuppressed_ai_defect_findings(
+                detect_cli_surface_drift(diff_text, rel_file),
+                project_ignore=project_ignore,
+                per_file_ignore_lines=per_file_ignore_lines,
+                all_ai_defects=all_ai_defects,
+                all_suppressed=all_suppressed,
+            )
+
+
 _SECRET_CONFIG_SUFFIXES = {
     ".yaml",
     ".yml",
@@ -2957,6 +3052,23 @@ class Skylos:
                 except Exception:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error("Test impact scan failed", exc_info=True)
+
+            if changed_files and (
+                "SKY-A103" not in project_ignore
+                or "SKY-A104" not in project_ignore
+            ):
+                try:
+                    _scan_ai_defect_diff_signals(
+                        root,
+                        changed_files,
+                        project_ignore=project_ignore,
+                        per_file_ignore_lines=per_file_ignore_lines,
+                        all_ai_defects=all_ai_defects,
+                        all_suppressed=all_suppressed,
+                    )
+                except Exception:
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error("AI defect diff scan failed", exc_info=True)
 
         if enable_quality:
             if progress_callback:

@@ -295,6 +295,8 @@ use the `SKY-A` prefix.
 |:---|:---|:---|:---|
 | A101 | MEDIUM | Test assertion weakening | Diff-aware tests |
 | A102 | LOW | High-risk change without tests | Diff-aware PR signal |
+| A103 | HIGH | CI permission expansion | GitHub Actions |
+| A104 | MEDIUM | Public CLI surface drift | Diff-aware CLI |
 | L012 | CRITICAL | Phantom function call / hallucinated security function | Python |
 | L023 | CRITICAL | Phantom decorator | Python |
 | D222 | CRITICAL | Dependency hallucination | Python |

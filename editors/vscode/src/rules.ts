@@ -27,6 +27,8 @@ const RULES: Record<string, RuleMeta> = {
 
   "SKY-A101": { name: "Test assertion weakening", severity: "MEDIUM", category: "ai", description: "Specific test assertion was replaced with a broader truthiness/null check, skip, xfail, or removed exception assertion.", fix: "Restore the specific assertion or justify the behavioral change.", language: "python" },
   "SKY-A102": { name: "High-risk change without tests", severity: "LOW", category: "ai", description: "High-risk code changed without any accompanying test file change.", fix: "Add or update relevant tests, or document why behavior is unchanged." },
+  "SKY-A103": { name: "CI permission expansion", severity: "HIGH", category: "ai", description: "GitHub Actions diff adds write permissions or privileged workflow triggers.", fix: "Use least-privilege permissions and avoid privileged triggers for untrusted code." },
+  "SKY-A104": { name: "Public CLI surface drift", severity: "MEDIUM", category: "ai", description: "Public CLI flag was removed from an argparse, Click, or Typer surface.", fix: "Restore the flag, keep a compatibility alias, or document the breaking change." },
 
   "SKY-D201": { name: "eval() usage", severity: "HIGH", category: "security", description: "Use of eval() allows arbitrary code execution.", owasp: "A03:2021", pciDss: "6.2.4", cwe: "CWE-95", fix: "Use safe alternatives (ast.literal_eval in Python, JSON.parse in JS/TS)." },
   "SKY-D202": { name: "Dynamic code execution", severity: "HIGH", category: "security", description: "Dynamic code execution (exec, new Function, setTimeout with string).", owasp: "A03:2021", cwe: "CWE-95", fix: "Avoid dynamic code generation; use safe alternatives." },
