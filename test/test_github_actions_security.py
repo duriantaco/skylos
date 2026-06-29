@@ -75,6 +75,38 @@ def test_github_actions_scanner_detects_workflow_supply_chain_risks(tmp_path):
     }.items() <= findings[0].items()
 
 
+def test_github_actions_scanner_deduplicates_same_line_findings(tmp_path):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    workflow = workflows / "ci.yml"
+    workflow.write_text(
+        """
+name: CI
+on: pull_request
+jobs:
+  one:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+  two:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    findings = scan_github_actions(tmp_path)
+    checkout_credentials = [
+        finding
+        for finding in findings
+        if finding["rule_id"] == "SKY-D293"
+        and finding.get("value") == "actions/checkout@v4"
+    ]
+
+    assert len(checkout_credentials) == 1
+
+
 def test_github_actions_run_block_env_exfil_flags(tmp_path):
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)

@@ -82,6 +82,18 @@ class App {
     assert "SKY-D204" in _rule_ids(findings)
 
 
+def test_java_base64_alphabet_constant_is_not_secret(tmp_path):
+    findings = _scan_java(
+        tmp_path,
+        """class App {
+  private static final String C64 =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+}
+""",
+    )
+    assert "SKY-S101" not in _rule_ids(findings)
+
+
 def test_zip_slip_style_archive_extraction_flags(tmp_path):
     findings = _scan_java(
         tmp_path,

@@ -366,12 +366,26 @@ def _is_inline_ignored(lines: list[str], line: int, rule_id: str) -> bool:
     return False
 
 
+def _finding_identity(finding: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        finding.get("rule_id"),
+        finding.get("file"),
+        finding.get("line"),
+        finding.get("name"),
+        finding.get("message"),
+        finding.get("value"),
+    )
+
+
 def _add_finding(
     findings: list[dict[str, Any]],
     lines: list[str],
     finding: dict[str, Any],
 ):
     if _is_inline_ignored(lines, int(finding.get("line", 1)), str(finding["rule_id"])):
+        return
+    identity = _finding_identity(finding)
+    if any(_finding_identity(existing) == identity for existing in findings):
         return
     findings.append(finding)
 
