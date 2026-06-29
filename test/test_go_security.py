@@ -32,12 +32,12 @@ def _scan_go(tmp_path: Path, code: str) -> list[dict]:
     except GoEngineError:
         pytest.skip("skylos-go engine binary not available")
 
-    (tmp_path / "go.mod").write_text(
+    (tmp_path / "go.mod").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
         "module example.com/demo\n\ngo 1.22\n",
         encoding="utf-8",
     )
     file_path = tmp_path / "main.go"
-    file_path.write_text(code, encoding="utf-8")
+    file_path.write_text(code, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
     clear_go_cache()
     return scan_go_file(str(file_path), {})[7]
 
@@ -52,12 +52,12 @@ def _scan_go_full(tmp_path: Path, code: str) -> tuple:
     except GoEngineError:
         pytest.skip("skylos-go engine binary not available")
 
-    (tmp_path / "go.mod").write_text(
+    (tmp_path / "go.mod").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
         "module example.com/demo\n\ngo 1.22\n",
         encoding="utf-8",
     )
     file_path = tmp_path / "main.go"
-    file_path.write_text(code, encoding="utf-8")
+    file_path.write_text(code, encoding="utf-8")  # skylos: ignore[SKY-D324] pytest tmp_path fixture
     clear_go_cache()
     return scan_go_file(str(file_path), {})
 
