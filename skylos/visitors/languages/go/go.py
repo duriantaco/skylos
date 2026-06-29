@@ -96,6 +96,7 @@ def scan_go_file(file_path, cfg):
         return _empty_go_scan_result(cfg)
 
     result = _get_module_result(module_root)
+    is_generated = _is_generated_go_file(file_path)
 
     findings = result.get("findings", [])
     file_findings = [
@@ -108,11 +109,14 @@ def scan_go_file(file_path, cfg):
             f["rule_id"] = _GO_RULE_REMAP[rid]
 
     symbols_data = result.get("symbols")
-    defs, refs = _convert_symbols(symbols_data, str(file_path.resolve()))
+    if is_generated:
+        defs, refs = [], []
+    else:
+        defs, refs = _convert_symbols(symbols_data, str(file_path.resolve()))
 
     # Run tree-sitter-based quality checks
     quality_findings = []
-    if Parser is not None and GO_LANG is not None:
+    if not is_generated and Parser is not None and GO_LANG is not None:
         try:
             source = file_path.read_bytes()
             parser = Parser(GO_LANG)
@@ -186,3 +190,17 @@ def _find_module_root(file_path):
             return current
         current = current.parent
     return None
+
+
+def _is_generated_go_file(file_path: Path) -> bool:
+    if file_path.name.endswith(".pb.go"):
+        return True
+    try:
+        if file_path.is_symlink() or not file_path.is_file():
+            return False
+        with file_path.open("rb") as handle:
+            prefix = handle.read(4096).decode("utf-8", errors="ignore")
+    except Exception:
+        return False
+    normalized = prefix.lower()
+    return "code generated" in normalized and "do not edit" in normalized

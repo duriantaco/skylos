@@ -41,7 +41,8 @@ var interfaceMethods = map[string]bool{
 	"MarshalText": true, "UnmarshalText": true, "MarshalBinary": true, "UnmarshalBinary": true,
 	"Less": true, "Len": true, "Swap": true,
 	"Format": true, "GoString": true, "Scan": true,
-	"Value": true,
+	"Value":        true,
+	"IsCumulative": true,
 }
 
 var builtins = map[string]bool{
@@ -70,6 +71,7 @@ func Extract(root string) (*Result, error) {
 	root = resolvedRoot
 
 	modulePath := readModulePath(root)
+	projectInterfaceMethods := collectInterfaceMethodsByType(root, resolvedRoot)
 
 	pkgDirs := map[string]string{}
 	if modulePath != "" {
@@ -375,6 +377,8 @@ func Extract(root string) (*Result, error) {
 		return nil
 	})
 
+	markReferencedInterfaceMethods(result, projectInterfaceMethods)
+
 	if hasMethodDefs(result.Defs) {
 		defNames := symbolDefNames(result.Defs)
 		typedRefs, typedCalls := collectTypedSelectorRefs(root, resolvedRoot, modulePath, pkgDirs, defNames)
@@ -382,6 +386,107 @@ func Extract(root string) (*Result, error) {
 	}
 
 	return result, err
+}
+
+func collectInterfaceMethodsByType(root string, resolvedRoot string) map[string]map[string]bool {
+	methodsByType := map[string]map[string]bool{}
+	fset := token.NewFileSet()
+
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			name := info.Name()
+			if defaultSkipDirs[name] || (strings.HasPrefix(name, ".") && name != ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+
+		resolvedPath, resolveErr := filepath.EvalSymlinks(path)
+		if resolveErr != nil || !isPathWithinRoot(resolvedRoot, resolvedPath) {
+			return nil
+		}
+
+		file, parseErr := parser.ParseFile(fset, resolvedPath, nil, 0)
+		if parseErr != nil {
+			return nil
+		}
+
+		for _, decl := range file.Decls {
+			genDecl, ok := decl.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			for _, spec := range genDecl.Specs {
+				typeSpec, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				iface, ok := typeSpec.Type.(*ast.InterfaceType)
+				if !ok || iface.Methods == nil {
+					continue
+				}
+				typeName := qname(pkgDirKey(root, resolvedPath), typeSpec.Name.Name)
+				methods := methodsByType[typeName]
+				if methods == nil {
+					methods = map[string]bool{}
+					methodsByType[typeName] = methods
+				}
+				for _, field := range iface.Methods.List {
+					for _, name := range field.Names {
+						if name.Name != "_" {
+							methods[name.Name] = true
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+
+	return methodsByType
+}
+
+func markReferencedInterfaceMethods(result *Result, methodsByType map[string]map[string]bool) {
+	if len(methodsByType) == 0 {
+		return
+	}
+
+	referencedMethods := map[string]bool{}
+	for _, ref := range result.Refs {
+		methods := methodsByType[ref.Name]
+		if len(methods) == 0 {
+			continue
+		}
+		for methodName := range methods {
+			referencedMethods[methodName] = true
+		}
+	}
+
+	if len(referencedMethods) == 0 {
+		return
+	}
+
+	for i := range result.Defs {
+		if result.Defs[i].Type != "method" {
+			continue
+		}
+		parts := strings.Split(result.Defs[i].Name, ".")
+		if len(parts) == 0 {
+			continue
+		}
+		if referencedMethods[parts[len(parts)-1]] {
+			result.Defs[i].IsExported = true
+		}
+	}
 }
 
 func hasMethodDefs(defs []Def) bool {

@@ -49,12 +49,14 @@ type Analyzer struct {
 	fset     *token.FileSet
 	findings []output.Finding
 	imports  map[string]string
+	seen     map[string]bool
 }
 
 func New() *Analyzer {
 	return &Analyzer{
 		fset:    token.NewFileSet(),
 		imports: make(map[string]string),
+		seen:    make(map[string]bool),
 	}
 }
 
@@ -144,6 +146,10 @@ func (a *Analyzer) analyzeFile(path string) {
 			a.checkCallExpr(node, path)
 		case *ast.CompositeLit:
 			a.checkCompositeLit(node, path)
+		case *ast.Field:
+			if node.Tag != nil {
+				return false
+			}
 		case *ast.BasicLit:
 			a.checkHardcodedSecret(node, path)
 		}
@@ -622,10 +628,16 @@ func (a *Analyzer) isUnsafeExecCommand(call *ast.CallExpr, funcName string) bool
 
 func (a *Analyzer) addFinding(node ast.Node, path, ruleID, severity, message, detail string) {
 	pos := a.fset.Position(node.Pos())
+	fullMessage := message + " " + detail
+	key := ruleID + "\x00" + path + "\x00" + strconv.Itoa(pos.Line) + "\x00" + fullMessage
+	if a.seen[key] {
+		return
+	}
+	a.seen[key] = true
 	a.findings = append(a.findings, output.Finding{
 		RuleID:   ruleID,
 		Severity: severity,
-		Message:  message + " " + detail,
+		Message:  fullMessage,
 		File:     path,
 		Line:     pos.Line,
 		Col:      pos.Column,

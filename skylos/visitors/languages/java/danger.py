@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import math
 import re
+import string
 from tree_sitter import Language, Query, QueryCursor
 import tree_sitter_java as tsj
 
@@ -249,9 +250,17 @@ _SECRET_PREFIXES = (
 
 _SQL_KEYWORDS = ("SELECT", "INSERT", "UPDATE", "DELETE", "DROP")
 
-_BASE64_CHARS = set(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=-_"
-)
+def _base64_alphabet(extra: str) -> str:
+    return string.ascii_uppercase + string.ascii_lowercase + string.digits + extra
+
+
+_BASE64_CHARS = set(_base64_alphabet("+/=-_"))
+_KNOWN_NON_SECRET_ALPHABETS = {
+    _base64_alphabet("+/="),
+    _base64_alphabet("+/"),
+    _base64_alphabet("-_="),
+    _base64_alphabet("-_"),
+}
 
 
 def _shannon_entropy(s: str) -> float:
@@ -262,6 +271,10 @@ def _shannon_entropy(s: str) -> float:
         freq[c] = freq.get(c, 0) + 1
     length = len(s)
     return -sum((count / length) * math.log2(count / length) for count in freq.values())
+
+
+def _is_known_non_secret_alphabet(value: str) -> bool:
+    return value in _KNOWN_NON_SECRET_ALPHABETS
 
 
 def _get_query(lang: Language, key: str, pattern: str) -> Query | None:
@@ -1823,6 +1836,7 @@ def scan_danger(root_node, file_path: str, lang: Language | None = None) -> list
         if (
             not found_prefix
             and not is_test_file
+            and not _is_known_non_secret_alphabet(text)
             and len(text) >= MIN_LONG_SECRET_LENGTH
             and all(c in _BASE64_CHARS for c in text)
             and _shannon_entropy(text) > ENTROPY_THRESHOLD
