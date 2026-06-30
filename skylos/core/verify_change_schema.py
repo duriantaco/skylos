@@ -4,6 +4,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from skylos.contracts import contract_finding_metadata
+
 
 SCHEMA_VERSION = 1
 
@@ -15,10 +17,16 @@ AI_VIBE_CATEGORIES = {
     "missing_resilience_control",
     "api_signature_hallucination",
     "assertion_weakening",
+    "dependency_hallucination",
+    "disabled_security_control",
+    "test_impact_gap",
+    "missing_contract_guardrail",
 }
 
 AI_RULE_DEFAULTS = {
     "SKY-A101": ("assertion_weakening", "medium"),
+    "SKY-A102": ("test_impact_gap", "low"),
+    "SKY-A105": ("missing_contract_guardrail", "high"),
     "SKY-L012": ("hallucinated_reference", "high"),
     "SKY-L011": ("disabled_security_control", "medium"),
     "SKY-D222": ("dependency_hallucination", "high"),
@@ -52,6 +60,12 @@ SUGGESTED_FIX_BY_VIBE = {
     "assertion_weakening": (
         "Restore the specific assertion or explain why the weaker test still proves the behavior."
     ),
+    "test_impact_gap": (
+        "Add or update relevant tests, or document why behavior is unchanged."
+    ),
+    "missing_contract_guardrail": (
+        "Add one of the guard decorators required by the Skylos contract."
+    ),
 }
 
 
@@ -83,6 +97,7 @@ def build_verify_change_response(
     target_file: str | Path | None = None,
     line_range: str | tuple[int, int] | None = None,
     scan_target: str | Path | None = None,
+    contract: Any | None = None,
 ) -> dict[str, Any]:
     root = _project_root(project_root)
     parsed_range = _coerce_line_range(line_range)
@@ -94,7 +109,7 @@ def build_verify_change_response(
         if not _matches_line_range(finding, parsed_range):
             continue
 
-        normalized = _normalize_finding(finding, category, root)
+        normalized = _normalize_finding(finding, category, root, contract=contract)
         findings.append(normalized)
 
     findings.sort(
@@ -142,6 +157,8 @@ def _normalize_finding(
     finding: dict[str, Any],
     category: str,
     root: Path,
+    *,
+    contract: Any | None = None,
 ) -> dict[str, Any]:
     rule_id = str(_finding_value(finding, ("rule_id", "rule"), "UNKNOWN"))
     default_vibe, default_likelihood = _rule_defaults(rule_id)
@@ -152,7 +169,7 @@ def _normalize_finding(
     confidence = _confidence(finding.get("confidence"), ai_likelihood)
     severity = str(_finding_value(finding, ("severity",), "MEDIUM")).upper()
 
-    return {
+    normalized = {
         "rule_id": rule_id,
         "vibe_category": vibe_category,
         "ai_likelihood": ai_likelihood,
@@ -163,6 +180,8 @@ def _normalize_finding(
         "severity": severity,
         "category": category,
     }
+    normalized.update(contract_finding_metadata(contract, finding))
+    return normalized
 
 
 def _finding_range(finding: dict[str, Any], root: Path) -> dict[str, Any]:
