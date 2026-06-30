@@ -123,6 +123,15 @@ COMMANDS = [
         "desc": "Install/manage community rule packs",
         "group": "Utility",
     },
+    {
+        "name": "skylos contract",
+        "desc": "Create and validate AI hallucination contracts",
+        "details": [
+            "init: create .skylos/ai-contract.yml",
+            "validate [path]: validate a contract without scanning code",
+        ],
+        "group": "Utility",
+    },
     {"name": "skylos doctor", "desc": "Check installation health", "group": "Utility"},
     {
         "name": "skylos clean [--dry-run|--apply]",

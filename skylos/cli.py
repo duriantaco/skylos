@@ -1562,6 +1562,12 @@ def _handle_rules_command(argv):
     return run_rules_command(argv, console_factory=Console)
 
 
+def _handle_contract_command(argv):
+    from skylos.commands.contract_cmd import run_contract_command
+
+    return run_contract_command(argv, console_factory=Console)
+
+
 def _rules_install(console, rules_dir, pack_or_url):
     from skylos.commands.rules_cmd import install_rules
 

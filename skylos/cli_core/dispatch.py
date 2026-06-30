@@ -16,6 +16,7 @@ EARLY_COMMAND_HANDLERS = {
     "whitelist": "_run_whitelist_command",
     "clean": "_run_clean_command",
     "cache": "_run_cache_command",
+    "contract": "_handle_contract_command",
     "doctor": "_run_doctor_command",
     "whoami": "_run_whoami_command",
     "login": "_run_login_command",
