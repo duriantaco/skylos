@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "left-pad": "99.99.99",
+    "skylos-contract-ghost-sdk": "1.0.0"
+  }
+}
