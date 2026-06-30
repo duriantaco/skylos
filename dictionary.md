@@ -297,6 +297,7 @@ use the `SKY-A` prefix.
 | A102 | LOW | High-risk change without tests | Diff-aware PR signal |
 | A103 | HIGH | CI permission expansion | GitHub Actions |
 | A104 | MEDIUM | Public CLI surface drift | Diff-aware CLI |
+| A105 | HIGH | Contract route guard missing | Python contract verify |
 | L012 | CRITICAL | Phantom function call / hallucinated security function | Python |
 | L023 | CRITICAL | Phantom decorator | Python |
 | D222 | CRITICAL | Dependency hallucination | Python |
