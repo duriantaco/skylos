@@ -151,6 +151,73 @@
       }
     },
     {
+      "id": "django-error-handlers",
+      "path": "fixtures/django_error_handlers",
+      "description": "Django root URLconf error handler aliases should not be flagged as dead variables.",
+      "source": {
+        "repo": "https://github.com/daveisfera/skylos-repro",
+        "license": "Unlicense",
+        "notes": "Distilled from issue #619's Django error handler false-positive repro."
+      },
+      "expect": {
+        "absent": {
+          "unused_variables": [
+            "handler400",
+            "handler403",
+            "handler404",
+            "handler500"
+          ]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "django-path-converter",
+      "path": "fixtures/django_path_converter",
+      "description": "Django custom path converter protocol members should stay alive when the converter class is registered in URLconf.",
+      "source": {
+        "repo": "https://github.com/django/django",
+        "license": "BSD-3-Clause",
+        "notes": "Distilled from the official Django custom path converter documentation and issue #619."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["to_python", "to_url"],
+          "unused_variables": ["regex"]
+        },
+        "present": {}
+      }
+    },
+    {
+      "id": "gunicorn-config",
+      "path": "fixtures/gunicorn_config.py",
+      "description": "Gunicorn config settings and lifecycle hooks should not be flagged as dead code.",
+      "source": {
+        "repo": "https://github.com/daveisfera/skylos-repro",
+        "license": "Unlicense",
+        "notes": "Distilled from issue #619's Gunicorn config false-positive repro."
+      },
+      "expect": {
+        "absent": {
+          "unused_functions": ["worker_exit"],
+          "unused_variables": [
+            "bind",
+            "forwarded_allow_ips",
+            "secure_scheme_headers",
+            "workers",
+            "threads",
+            "worker_class",
+            "timeout",
+            "graceful_timeout",
+            "chdir",
+            "preload_app",
+            "control_socket_disable"
+          ]
+        },
+        "present": {}
+      }
+    },
+    {
       "id": "django-class-based-view",
       "path": "fixtures/django_cbv.py",
       "description": "Django class-based views should not be treated as dead framework classes.",
