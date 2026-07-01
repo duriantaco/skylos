@@ -1988,6 +1988,20 @@ class TestDiffFlag:
                     "message": "eval",
                 },
             ],
+            "ai_defects": [
+                {
+                    "rule_id": "SKY-A103",
+                    "file": "src/app.py",
+                    "line": 12,
+                    "message": "CI permission expanded",
+                },
+                {
+                    "rule_id": "SKY-A104",
+                    "file": "src/app.py",
+                    "line": 50,
+                    "message": "CLI flag removed",
+                },
+            ],
             "quality": [],
             "secrets": [],
         }
@@ -2019,6 +2033,58 @@ class TestDiffFlag:
         assert output["unused_functions"][0]["name"] == "foo"
         assert len(output["danger"]) == 1
         assert output["danger"][0]["line"] == 12
+        assert len(output["ai_defects"]) == 1
+        assert output["ai_defects"][0]["rule_id"] == "SKY-A103"
+
+    def test_diff_base_filters_ai_defects_to_changed_files(self, monkeypatch):
+        """--diff-base filters ai_defects to changed files."""
+        monkeypatch.setattr(
+            cli.sys,
+            "argv",
+            ["skylos", ".", "--diff-base", "origin/main", "--json", "--no-provenance"],
+        )
+
+        result = {
+            "analysis_summary": {"total_files": 2},
+            "unused_functions": [],
+            "unused_imports": [],
+            "unused_variables": [],
+            "unused_classes": [],
+            "unused_parameters": [],
+            "danger": [],
+            "ai_defects": [
+                {
+                    "rule_id": "SKY-A103",
+                    "file": "src/app.py",
+                    "line": 12,
+                    "message": "CI permission expanded",
+                },
+                {
+                    "rule_id": "SKY-A104",
+                    "file": "legacy/app.py",
+                    "line": 20,
+                    "message": "CLI flag removed",
+                },
+            ],
+            "quality": [],
+            "secrets": [],
+        }
+
+        captured_output = []
+
+        with (
+            patch("skylos.cli.Progress", return_value=_progress_ctx()),
+            patch("skylos.cli.run_analyze", return_value=json.dumps(result)),
+            patch("skylos.cli.load_config", return_value={}),
+            patch("skylos.cli.subprocess.run") as mock_git,
+            patch("builtins.print", side_effect=lambda x: captured_output.append(x)),
+        ):
+            mock_git.return_value = Mock(returncode=0, stdout="src/app.py\n")
+            cli.main()
+
+        output = json.loads(captured_output[0])
+        assert len(output["ai_defects"]) == 1
+        assert output["ai_defects"][0]["file"] == "src/app.py"
 
 
 if __name__ == "__main__":
