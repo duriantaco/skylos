@@ -1,0 +1,7 @@
+version: 1
+id: benchmark-contract-phantom-helper
+
+ai:
+  phantom_symbols:
+    names:
+      - verify_acme_tenant

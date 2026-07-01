@@ -78,6 +78,43 @@ logger = logging.getLogger("Skylos")
 PYTHON_SIGNATURE_SUFFIXES = (".py", ".pyi", ".pyw")
 
 
+def _merge_project_config_overrides(project_cfg, overrides):
+    if not isinstance(overrides, dict):
+        return project_cfg
+    if not isinstance(project_cfg, dict):
+        project_cfg = {}
+
+    merged = dict(project_cfg)
+    for key, value in overrides.items():
+        if (
+            isinstance(value, dict)
+            and isinstance(merged.get(key), dict)
+        ):
+            nested = dict(merged[key])
+            for nested_key, nested_value in value.items():
+                existing_value = nested.get(nested_key)
+                if isinstance(existing_value, list) and isinstance(
+                    nested_value, list
+                ):
+                    nested[nested_key] = _merge_ordered_lists(
+                        existing_value, nested_value
+                    )
+                else:
+                    nested[nested_key] = nested_value
+            merged[key] = nested
+        else:
+            merged[key] = value
+    return merged
+
+
+def _merge_ordered_lists(left, right):
+    merged = []
+    for value in list(left) + list(right):
+        if value not in merged:
+            merged.append(value)
+    return merged
+
+
 def _python_signature_files(files):
     py_files = []
     for file_path in files:
@@ -1982,6 +2019,7 @@ class Skylos:
         enable_sca=False,
         trace_file=None,
         config_file=None,
+        project_config_overrides=None,
     ) -> str:
         if not isinstance(path, (str, list, tuple)):
             raise TypeError(
@@ -2012,6 +2050,10 @@ class Skylos:
 
         workspace_inventory = discover_workspace_inventory(project_root)
         project_cfg = load_config(project_root, config_file=config_file)
+        if project_config_overrides:
+            project_cfg = _merge_project_config_overrides(
+                project_cfg, project_config_overrides
+            )
         project_ignore = set(project_cfg.get("ignore", []))
 
         if not files:
@@ -3571,6 +3613,7 @@ def analyze(
     enable_sca=False,
     trace_file=None,
     config_file=None,
+    project_config_overrides=None,
 ) -> str:
     return Skylos().analyze(
         path,
@@ -3589,6 +3632,7 @@ def analyze(
         enable_sca=enable_sca,
         trace_file=trace_file,
         config_file=config_file,
+        project_config_overrides=project_config_overrides,
     )
 
 

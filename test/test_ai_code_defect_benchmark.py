@@ -41,6 +41,11 @@ EXPECTED_CASE_IDS = {
     "go-module-version-hallucination",
     "mixed-manifest-hallucinations",
     "nested-manifest-workspace",
+    "contract-phantom-helper",
+    "contract-route-guard-missing",
+    "contract-route-guard-clean",
+    "contract-dependency-manifest",
+    "contract-dependency-clean",
     "clean-dependency-manifest",
     "clean-api-signature",
     "clean-range-scope",
@@ -66,6 +71,11 @@ EXPECTED_CASE_PATH_NAMES = [
     "go_module_version_hallucination",
     "mixed_manifest_hallucinations",
     "nested_manifest_workspace",
+    "contract_phantom_helper",
+    "contract_route_guard_missing",
+    "contract_route_guard_clean",
+    "contract_dependency_manifest",
+    "contract_dependency_clean",
     "clean_dependency_manifest",
     "clean_api_signature",
     "range_scoped_mixed_edit",
@@ -83,8 +93,9 @@ def _finding(
     category="quality",
     severity="CRITICAL",
     ai_likelihood="high",
+    contract_clause=None,
 ):
-    return {
+    finding = {
         "rule_id": rule_id,
         "vibe_category": vibe_category,
         "ai_likelihood": ai_likelihood,
@@ -97,6 +108,9 @@ def _finding(
         "severity": severity,
         "category": category,
     }
+    if contract_clause is not None:
+        finding["contract_clause"] = contract_clause
+    return finding
 
 
 def _fake_findings_for_case(case_path, scan_kwargs=None):
@@ -304,6 +318,53 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 severity="HIGH",
             ),
         ]
+    if case_name == "contract_phantom_helper":
+        return [
+            _finding(
+                "SKY-L012",
+                "hallucinated_reference",
+                message="Call to verify_acme_tenant() is never defined.",
+                file_path="app.py",
+                category="ai_defect",
+                contract_clause="ai.phantom_symbols.names",
+            ),
+        ]
+    if case_name == "contract_route_guard_missing":
+        return [
+            _finding(
+                "SKY-A105",
+                "missing_contract_guardrail",
+                message="Route is missing @login_required.",
+                file_path="apps/api/routes.py",
+                category="ai_defect",
+                severity="HIGH",
+                contract_clause="security.routes.require_any_decorator",
+            ),
+        ]
+    if case_name == "contract_route_guard_clean":
+        return []
+    if case_name == "contract_dependency_manifest":
+        return [
+            _finding(
+                "SKY-D222",
+                "dependency_hallucination",
+                message="Hallucinated npm dependency skylos-contract-ghost-sdk",
+                file_path="package.json",
+                category="ai_defect",
+                contract_clause="ai.dependencies.reject_nonexistent_packages",
+            ),
+            _finding(
+                "SKY-D225",
+                "dependency_hallucination",
+                message="Hallucinated npm dependency version left-pad@99.99.99",
+                file_path="package.json",
+                category="ai_defect",
+                severity="HIGH",
+                contract_clause="ai.dependencies.reject_impossible_versions",
+            ),
+        ]
+    if case_name == "contract_dependency_clean":
+        return []
     if case_name == "dependency_version_hallucination":
         return [
             _finding(
@@ -374,8 +435,8 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
 
     summary = run_manifest(MANIFEST_PATH, verify_func=fake_verify)
 
-    assert summary["case_count"] == 21
-    assert summary["pass_count"] == 21
+    assert summary["case_count"] == 26
+    assert summary["pass_count"] == 26
     assert summary["failure_count"] == 0
     assert summary["scores"]["overall_score"] == pytest.approx(100.0)
 
@@ -397,6 +458,18 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
             continue
         assert kwargs["include_dependency_hallucinations"] is True
 
+    contract_case_names = {
+        "contract_phantom_helper",
+        "contract_route_guard_missing",
+        "contract_route_guard_clean",
+        "contract_dependency_manifest",
+        "contract_dependency_clean",
+    }
+    for case_name, kwargs in seen:
+        if case_name not in contract_case_names:
+            continue
+        assert kwargs["contract_path"] == ".skylos/ai-contract.yml"
+
 
 def test_ai_code_defect_runner_empty_selection_runs_all_cases(monkeypatch):
     seen = []
@@ -407,7 +480,7 @@ def test_ai_code_defect_runner_empty_selection_runs_all_cases(monkeypatch):
 
     summary = run_manifest(MANIFEST_PATH, selected_cases=None, verify_func=fake_verify)
 
-    assert summary["case_count"] == 21
+    assert summary["case_count"] == 26
     assert seen == EXPECTED_CASE_PATH_NAMES
 
 

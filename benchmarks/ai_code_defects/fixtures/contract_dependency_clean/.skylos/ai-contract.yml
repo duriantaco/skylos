@@ -1,0 +1,7 @@
+version: 1
+id: benchmark-contract-dependencies-clean
+
+ai:
+  dependencies:
+    reject_nonexistent_packages: true
+    reject_impossible_versions: true

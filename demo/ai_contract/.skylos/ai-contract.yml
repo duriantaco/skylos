@@ -1,0 +1,17 @@
+version: 1
+id: demo-ai-contract
+
+ai:
+  phantom_symbols:
+    names:
+      - verify_acme_tenant
+
+security:
+  routes:
+    paths:
+      - "apps/api/**"
+    require_any_decorator:
+      - login_required
+
+tests:
+  high_risk_changes_require_tests: true

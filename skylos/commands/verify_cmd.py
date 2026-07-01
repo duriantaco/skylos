@@ -84,6 +84,12 @@ def _add_scope_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
+        "--contract",
+        dest="contract_path",
+        default=None,
+        help="AI hallucination contract to apply during verification.",
+    )
+    parser.add_argument(
         "--dependency-hallucinations",
         action="store_true",
         help="Include dependency hallucination checks that may use package metadata caches.",
@@ -127,21 +133,23 @@ def _run_from_args(
     if args.stdin:
         manifest = _read_stdin_manifest(parser)
         _apply_stdin_overrides(args, manifest)
-        return verify_change_stdin_payload_func(
-            manifest,
-            confidence=args.confidence,
-            exclude_folders=exclude_folders,
-        )
+        kwargs = {
+            "confidence": args.confidence,
+            "exclude_folders": exclude_folders,
+        }
+        return verify_change_stdin_payload_func(manifest, **kwargs)
 
-    return verify_change_path_func(
-        args.path,
-        file=args.file,
-        line_range=args.line_range,
-        confidence=args.confidence,
-        exclude_folders=exclude_folders,
-        project_context=args.project_context,
-        include_dependency_hallucinations=args.dependency_hallucinations,
-    )
+    kwargs = {
+        "file": args.file,
+        "line_range": args.line_range,
+        "confidence": args.confidence,
+        "exclude_folders": exclude_folders,
+        "project_context": args.project_context,
+        "include_dependency_hallucinations": args.dependency_hallucinations,
+    }
+    if args.contract_path is not None:
+        kwargs["contract_path"] = args.contract_path
+    return verify_change_path_func(args.path, **kwargs)
 
 
 def _apply_stdin_overrides(args: argparse.Namespace, manifest: dict[str, Any]) -> None:
@@ -152,6 +160,8 @@ def _apply_stdin_overrides(args: argparse.Namespace, manifest: dict[str, Any]) -
         _set_default(manifest, "range", args.line_range)
     if args.dependency_hallucinations:
         _set_default(manifest, "include_dependency_hallucinations", True)
+    if args.contract_path is not None:
+        _set_default(manifest, "contract_path", args.contract_path)
 
 
 def _set_default(payload: dict[str, Any], key: str, value: Any) -> None:

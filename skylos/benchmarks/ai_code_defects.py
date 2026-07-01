@@ -22,6 +22,7 @@ AI_CODE_DEFECT_TAXONOMY: dict[str, str] = {
     "dependency_hallucination": "Generated manifests cite packages or versions that do not exist.",
     "api_signature_hallucination": "Generated calls use real packages with invented APIs.",
     "assertion_weakening": "Generated test edits weaken assertions instead of preserving behavior.",
+    "contract_guardrail": "Generated code violates project-specific AI contract guardrails.",
     "precision_guard": "Clean generated code should remain free of AI-defect findings.",
 }
 
@@ -339,6 +340,7 @@ def _validate_expectation(expectation: Any, case_id: str, mode: str) -> None:
         "category",
         "severity",
         "ai_likelihood",
+        "contract_clause",
     )
     for key in string_keys:
         value = expectation.get(key)
@@ -372,9 +374,10 @@ def _validate_scan(case: dict[str, Any], case_id: str) -> None:
     if not isinstance(scan, dict):
         raise ValueError(
             f"AI-code-defect benchmark case {case_id} scan config must be an object"
-        )
+    )
     _validate_optional_scan_string(scan, case_id, "file")
     _validate_optional_scan_string(scan, case_id, "range")
+    _validate_optional_scan_string(scan, case_id, "contract_path")
     if "danger" in scan:
         raise ValueError(
             f"AI-code-defect benchmark case {case_id} uses legacy scan.danger; "
@@ -510,6 +513,7 @@ def _run_case(
             include_dependency_hallucinations=_include_dependency_hallucination_scan(
                 scan
             ),
+            contract_path=_contract_path_scan(scan),
         )
         elapsed = time.perf_counter() - started
     finally:
@@ -534,6 +538,13 @@ def _run_case(
 
 def _include_dependency_hallucination_scan(scan: dict[str, Any]) -> bool:
     return bool(scan.get("dependency_hallucinations", False))
+
+
+def _contract_path_scan(scan: dict[str, Any]) -> str | None:
+    contract_path = scan.get("contract_path")
+    if isinstance(contract_path, str):
+        return contract_path
+    return None
 
 
 def _prepared_case_path(
@@ -762,7 +773,7 @@ def _finding_matches(expectation: dict[str, Any], finding: dict[str, Any]) -> bo
         if finding.get("vibe_category") != vibe:
             return False
 
-    for key in ("category", "severity", "ai_likelihood"):
+    for key in ("category", "severity", "ai_likelihood", "contract_clause"):
         value = expectation.get(key)
         if not isinstance(value, str):
             continue

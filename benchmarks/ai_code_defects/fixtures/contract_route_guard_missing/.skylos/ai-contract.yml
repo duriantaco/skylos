@@ -1,0 +1,9 @@
+version: 1
+id: benchmark-contract-route-guard
+
+security:
+  routes:
+    paths:
+      - "apps/api/**"
+    require_any_decorator:
+      - login_required

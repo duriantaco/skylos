@@ -68,6 +68,14 @@ Verify a changed file or range before an agent hands it to review:
 skylos verify . --file src/app.py --range 40:75 --project-context
 ```
 
+Create a local AI hallucination contract for repo-specific generated-code
+truth, then verify against it:
+
+```bash
+skylos contract init
+skylos verify . --contract .skylos/ai-contract.yml
+```
+
 Create a project config with thresholds, ignores, template hooks, and vibe
 dictionary extensions:
 
@@ -109,6 +117,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Selectable terminal triage | `skylos . --tui` | Opens a keyboard-driven category list, finding list, and detail pane | [CLI output modes](./docs/cli-output.md) |
 | IDE/test-script output | `skylos --format concise src/test.py` | Prints only `file:line` findings and exits non-zero when findings exist | [CLI Reference](https://docs.skylos.dev/cli-reference) |
 | In-loop AI-code verification | `skylos verify . --file src/app.py --range 40:75` | Returns narrow JSON for hallucinated helpers, unfinished code, stale references, disabled controls, and API/dependency hallucinations | [AI features](https://docs.skylos.dev/ai-features) |
+| AI hallucination contracts | `skylos verify . --contract .skylos/ai-contract.yml` | Verifies generated code against repo-specific symbols, dependencies, APIs, route guards, and test requirements | [AI Hallucination Contracts](./docs/ai-hallucination-contracts.md) |
 | Changed-lines review | `skylos . -a --diff origin/main` | Keeps findings focused on active work instead of legacy debt | [Quality gate docs](https://docs.skylos.dev/quality-gate) |
 | Runtime-assisted dead-code check | `skylos . --trace` | Uses runtime traces to reduce dynamic-code false positives | [Smart tracing](https://docs.skylos.dev/smart-tracing) |
 | Local rule pack | `skylos rules init` | Scaffolds YAML rules for project-specific security and quality checks | [Custom rules](https://docs.skylos.dev/custom-rules) |

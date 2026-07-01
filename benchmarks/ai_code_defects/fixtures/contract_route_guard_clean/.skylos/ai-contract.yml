@@ -1,0 +1,9 @@
+version: 1
+id: benchmark-contract-route-guard-clean
+
+security:
+  routes:
+    paths:
+      - "apps/api/**"
+    require_any_decorator:
+      - tenant_admin_required

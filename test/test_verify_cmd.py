@@ -30,6 +30,8 @@ def test_run_verify_command_prints_json_and_preserves_args(capsys):
             "--range",
             "2:5",
             "--project-context",
+            "--contract",
+            ".skylos/ai-contract.yml",
             "--dependency-hallucinations",
             "--exclude-folder",
             "build",
@@ -51,6 +53,7 @@ def test_run_verify_command_prints_json_and_preserves_args(capsys):
         "exclude_folders": ["venv", "build"],
         "project_context": True,
         "include_dependency_hallucinations": True,
+        "contract_path": ".skylos/ai-contract.yml",
     }
 
 
@@ -105,7 +108,18 @@ def test_run_verify_command_reads_stdin_manifest(monkeypatch, capsys):
     )
 
     exit_code = run_verify_command(
-        ["repo", "--stdin", "--file", "app.py", "--range", "2:2", "-c", "80"],
+        [
+            "repo",
+            "--stdin",
+            "--file",
+            "app.py",
+            "--range",
+            "2:2",
+            "--contract",
+            ".skylos/ai-contract.yml",
+            "-c",
+            "80",
+        ],
         verify_change_path_func=lambda *_args, **_kwargs: None,
         verify_change_stdin_payload_func=fake_stdin,
         parse_exclude_folders_func=lambda **_kwargs: ("venv",),
@@ -119,6 +133,7 @@ def test_run_verify_command_reads_stdin_manifest(monkeypatch, capsys):
         "path": "repo",
         "file": "app.py",
         "range": "2:2",
+        "contract_path": ".skylos/ai-contract.yml",
     }
     assert seen["kwargs"] == {
         "confidence": 80,

@@ -665,6 +665,185 @@
       }
     },
     {
+      "id": "contract-phantom-helper",
+      "path": "fixtures/contract_phantom_helper",
+      "description": "Generated handler calls a repo-specific helper listed in the AI contract but never defined.",
+      "taxonomy": ["hallucinated_reference", "contract_guardrail"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for contract-extended phantom helper verification."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "contract_path": ".skylos/ai-contract.yml"
+      },
+      "expect": {
+        "finding_count": 1,
+        "present": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "contract_clause": "ai.phantom_symbols.names",
+            "file_contains": "app.py",
+            "message_contains": "verify_acme_tenant"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "contract-route-guard-missing",
+      "path": "fixtures/contract_route_guard_missing",
+      "description": "Generated route is inside a contract-scoped API path but lacks a required auth guard decorator.",
+      "taxonomy": ["contract_guardrail"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for AI contract route guard enforcement."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "contract_path": ".skylos/ai-contract.yml"
+      },
+      "expect": {
+        "finding_count": 1,
+        "present": [
+          {
+            "rule_id": "SKY-A105",
+            "vibe_category": "missing_contract_guardrail",
+            "contract_clause": "security.routes.require_any_decorator",
+            "category": "ai_defect",
+            "severity": "HIGH",
+            "file_contains": "apps/api/routes.py",
+            "message_contains": "@login_required"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "contract-route-guard-clean",
+      "path": "fixtures/contract_route_guard_clean",
+      "description": "Generated route uses the custom guard decorator required by the contract.",
+      "taxonomy": ["contract_guardrail", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic clean fixture for contract route guard precision."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "contract_path": ".skylos/ai-contract.yml"
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-A105",
+            "vibe_category": "missing_contract_guardrail"
+          }
+        ]
+      }
+    },
+    {
+      "id": "contract-dependency-manifest",
+      "path": "fixtures/contract_dependency_manifest",
+      "description": "Contract enables dependency hallucination checks for a manifest with a fake package and impossible version.",
+      "taxonomy": ["dependency_hallucination", "contract_guardrail"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for contract-enabled dependency hallucination checks."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "contract_path": ".skylos/ai-contract.yml",
+        "dependency_statuses": [
+          {
+            "ecosystem": "npm",
+            "name": "skylos-contract-ghost-sdk",
+            "version": "1.0.0",
+            "status": "missing_package"
+          },
+          {
+            "ecosystem": "npm",
+            "name": "left-pad",
+            "version": "99.99.99",
+            "status": "missing_version"
+          }
+        ]
+      },
+      "expect": {
+        "finding_count": 2,
+        "present": [
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination",
+            "contract_clause": "ai.dependencies.reject_nonexistent_packages",
+            "file_contains": "package.json",
+            "message_contains": "skylos-contract-ghost-sdk"
+          },
+          {
+            "rule_id": "SKY-D225",
+            "vibe_category": "dependency_hallucination",
+            "contract_clause": "ai.dependencies.reject_impossible_versions",
+            "file_contains": "package.json",
+            "message_contains": "left-pad"
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "contract-dependency-clean",
+      "path": "fixtures/contract_dependency_clean",
+      "description": "Contract-enabled dependency checks stay quiet for known-good dependency versions.",
+      "taxonomy": ["dependency_hallucination", "contract_guardrail", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic clean fixture for contract-enabled dependency hallucination precision."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "contract_path": ".skylos/ai-contract.yml",
+        "dependency_statuses": [
+          {
+            "ecosystem": "npm",
+            "name": "left-pad",
+            "version": "1.3.0",
+            "status": "exists"
+          }
+        ]
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination"
+          },
+          {
+            "rule_id": "SKY-D225",
+            "vibe_category": "dependency_hallucination"
+          }
+        ]
+      }
+    },
+    {
       "id": "clean-dependency-manifest",
       "path": "fixtures/clean_dependency_manifest",
       "description": "Generated npm and Go manifests use dependency versions known to exist.",
