@@ -154,6 +154,119 @@ _DJANGO_MODULE_VARS = {
     "default_app_config",
 }
 
+_DJANGO_URLCONF_HANDLER_VARS = {
+    "handler400",
+    "handler403",
+    "handler404",
+    "handler500",
+}
+
+_DJANGO_PATH_CONVERTER_METHODS = {
+    "to_python",
+    "to_url",
+}
+
+_GUNICORN_CONFIG_SETTINGS = {
+    "access_log_format",
+    "accesslog",
+    "backlog",
+    "bind",
+    "ca_certs",
+    "capture_output",
+    "cert_reqs",
+    "certfile",
+    "chdir",
+    "check_config",
+    "child_exit",
+    "ciphers",
+    "config",
+    "control_socket_disable",
+    "daemon",
+    "default_proc_name",
+    "disable_redirect_access_to_syslog",
+    "do_handshake_on_connect",
+    "enable_stdio_inheritance",
+    "env",
+    "errorlog",
+    "forwarded_allow_ips",
+    "graceful_timeout",
+    "group",
+    "initgroups",
+    "keepalive",
+    "keyfile",
+    "limit_request_field_size",
+    "limit_request_fields",
+    "limit_request_line",
+    "logconfig",
+    "logconfig_dict",
+    "logconfig_json",
+    "logger_class",
+    "loglevel",
+    "max_requests",
+    "max_requests_jitter",
+    "nworkers_changed",
+    "on_exit",
+    "on_reload",
+    "on_starting",
+    "paste",
+    "pidfile",
+    "post_fork",
+    "post_request",
+    "post_worker_init",
+    "pre_exec",
+    "pre_fork",
+    "pre_request",
+    "preload_app",
+    "proc_name",
+    "pythonpath",
+    "raw_env",
+    "reload",
+    "reload_engine",
+    "reload_extra_files",
+    "reuse_port",
+    "secure_scheme_headers",
+    "sendfile",
+    "spew",
+    "ssl_context",
+    "statsd_host",
+    "statsd_prefix",
+    "strip_header_spaces",
+    "suppress_ragged_eofs",
+    "threads",
+    "timeout",
+    "tmp_upload_dir",
+    "umask",
+    "user",
+    "when_ready",
+    "worker_abort",
+    "worker_class",
+    "worker_connections",
+    "worker_exit",
+    "worker_int",
+    "worker_tmp_dir",
+    "workers",
+    "wsgi_app",
+}
+
+_GUNICORN_CONFIG_HOOKS = {
+    "child_exit",
+    "nworkers_changed",
+    "on_exit",
+    "on_reload",
+    "on_starting",
+    "post_fork",
+    "post_request",
+    "post_worker_init",
+    "pre_exec",
+    "pre_fork",
+    "pre_request",
+    "ssl_context",
+    "when_ready",
+    "worker_abort",
+    "worker_exit",
+    "worker_int",
+}
+
 _DJANGO_COMMAND_ATTRS = {
     "help",
     "missing_args_message",
@@ -440,6 +553,97 @@ def _check_alembic_migration(def_obj):
     return None
 
 
+def _is_likely_module_level(def_obj):
+    parts = str(def_obj.name).split(".")
+    if len(parts) < 2:
+        return True
+    owner = parts[-2]
+    return not (owner and owner[0].isupper())
+
+
+def _parent_simple_name(def_obj):
+    if "." not in str(def_obj.name):
+        return None
+    parent = str(def_obj.name).rsplit(".", 1)[0]
+    return parent.split(".")[-1]
+
+
+def _class_declares_django_path_converter_protocol(analyzer, class_name):
+    has_regex = False
+    has_to_python = False
+    has_to_url = False
+
+    for candidate in getattr(analyzer, "defs", {}).values():
+        if "." not in str(getattr(candidate, "name", "")):
+            continue
+        if _parent_simple_name(candidate) != class_name:
+            continue
+        if candidate.type == "variable" and candidate.simple_name == "regex":
+            has_regex = True
+        elif candidate.type == "method" and candidate.simple_name == "to_python":
+            has_to_python = True
+        elif candidate.type == "method" and candidate.simple_name == "to_url":
+            has_to_url = True
+
+    return has_regex and has_to_python and has_to_url
+
+
+def _check_django_path_converter(def_obj, analyzer, framework):
+    converter_classes = set(
+        getattr(analyzer, "_global_django_path_converter_classes", set())
+    )
+    converter_classes.update(getattr(framework, "django_path_converter_classes", set()))
+    if not converter_classes:
+        return None
+
+    if def_obj.type == "class":
+        class_name = def_obj.simple_name
+    else:
+        class_name = _parent_simple_name(def_obj)
+    if class_name not in converter_classes:
+        return None
+    if not _class_declares_django_path_converter_protocol(analyzer, class_name):
+        return None
+
+    if def_obj.type == "class":
+        return _suppress(def_obj, "Django path converter class")
+    if def_obj.type == "variable" and def_obj.simple_name == "regex":
+        return _suppress(def_obj, "Django path converter regex")
+    if (
+        def_obj.type == "method"
+        and def_obj.simple_name in _DJANGO_PATH_CONVERTER_METHODS
+    ):
+        return _suppress(def_obj, "Django path converter method")
+    return None
+
+
+def _is_gunicorn_config_path(filename):
+    normalized = (
+        Path(str(filename))
+        .stem.lower()
+        .replace(".", "_")
+        .replace("-", "_")
+    )
+    parts = set(filter(None, normalized.split("_")))
+    if normalized == "gunicorn":
+        return True
+    return "gunicorn" in parts and bool(parts & {"conf", "config"})
+
+
+def _check_gunicorn_config(def_obj):
+    if not _is_gunicorn_config_path(def_obj.filename):
+        return None
+    if not _is_likely_module_level(def_obj):
+        return None
+
+    simple_name = def_obj.simple_name
+    if def_obj.type == "variable" and simple_name in _GUNICORN_CONFIG_SETTINGS:
+        return _suppress(def_obj, "Gunicorn config setting")
+    if def_obj.type == "function" and simple_name in _GUNICORN_CONFIG_HOOKS:
+        return _suppress(def_obj, "Gunicorn lifecycle hook")
+    return None
+
+
 def _check_django_drf_structural(def_obj, framework):
     detected = getattr(framework, "detected_frameworks", set())
     simple_name = def_obj.simple_name
@@ -460,6 +664,14 @@ def _check_django_drf_structural(def_obj, framework):
 
     if def_obj.type == "variable" and simple_name in _DJANGO_MODULE_VARS:
         return _suppress(def_obj)
+
+    if (
+        def_obj.type == "variable"
+        and simple_name in _DJANGO_URLCONF_HANDLER_VARS
+        and "django" in detected
+        and _is_likely_module_level(def_obj)
+    ):
+        return _suppress(def_obj, "Django URLconf error handler")
 
     if def_obj.type == "variable" and simple_name in _MIGRATION_ATTRS:
         fname = str(def_obj.filename)
@@ -1144,6 +1356,12 @@ def apply_penalties(
         return
 
     if _check_alembic_migration(def_obj) is True:
+        return
+
+    if _check_gunicorn_config(def_obj) is True:
+        return
+
+    if _check_django_path_converter(def_obj, analyzer, framework) is True:
         return
 
     if _check_django_drf_structural(def_obj, framework) is True:

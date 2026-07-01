@@ -2612,6 +2612,7 @@ class Skylos:
         self._global_abc_implementers = {}
         self._global_protocol_implementers = {}
         self._global_protocol_method_names = {}
+        self._global_django_path_converter_classes = set()
 
         for defs, test_flags, framework_flags, file, mod, cfg in file_contexts:
             self._global_abc_classes.update(
@@ -2648,6 +2649,10 @@ class Skylos:
                 if cls not in self._global_protocol_method_names:
                     self._global_protocol_method_names[cls] = set()
                 self._global_protocol_method_names[cls].update(methods)
+
+            self._global_django_path_converter_classes.update(
+                getattr(framework_flags, "django_path_converter_classes", set())
+            )
 
         self._duck_typed_implementers = set()
 

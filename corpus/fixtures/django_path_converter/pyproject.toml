@@ -1,0 +1,4 @@
+[project]
+name = "skylos-corpus-django-path-converter"
+version = "0.0.0"
+dependencies = ["Django"]

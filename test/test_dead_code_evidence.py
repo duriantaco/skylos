@@ -27,6 +27,13 @@ def _event_roles(entry):
     return {event["role"] for event in entry["evidence"]}
 
 
+def _unused_full_names(result, bucket):
+    return {
+        item.get("full_name") or item.get("name")
+        for item in result.get(bucket, [])
+    }
+
+
 def test_evidence_ledger_uses_paper_classification_precedence():
     symbol = SymbolKey(
         file="app.py",
@@ -241,6 +248,276 @@ def test_dynamic_pattern_evidence_is_reported_from_analyzer(tmp_path):
     assert by_name["app.handle_login"]["classification"] == "alive"
     assert _event_kinds(by_name["app.handle_login"]) >= {"dynamic_pattern"}
     assert "reachable_from_root" not in _event_kinds(by_name["app.handle_login"])
+
+
+def test_gunicorn_config_settings_and_hooks_are_not_reported_dead(tmp_path):
+    gunicorn_project = tmp_path / "gunicorn_project"
+    ordinary_project = tmp_path / "ordinary_project"
+    gunicorn_project.mkdir()
+    ordinary_project.mkdir()
+
+    (gunicorn_project / "gunicorn_config.py").write_text(
+        "\n".join(
+            [
+                'bind = "0.0.0.0:80"',
+                'forwarded_allow_ips = "*"',
+                "workers = 4",
+                "preload_app = True",
+                "control_socket_disable = True",
+                "",
+                "def worker_exit(server, worker):",
+                "    server.log.info('worker %s exiting', worker.pid)",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (ordinary_project / "ordinary.py").write_text(
+        "\n".join(
+            [
+                'bind = "127.0.0.1:8000"',
+                "",
+                "def worker_exit(server, worker):",
+                "    return server, worker",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = json.loads(
+        analyze(str(gunicorn_project), conf=60, grep_verify=False, trace_file=False)
+    )
+
+    unused_functions = _unused_full_names(result, "unused_functions")
+    unused_variables = _unused_full_names(result, "unused_variables")
+
+    assert "gunicorn_config.worker_exit" not in unused_functions
+    assert "gunicorn_config.bind" not in unused_variables
+    assert "gunicorn_config.forwarded_allow_ips" not in unused_variables
+    assert "gunicorn_config.workers" not in unused_variables
+    assert "gunicorn_config.preload_app" not in unused_variables
+    assert "gunicorn_config.control_socket_disable" not in unused_variables
+
+    by_name = _entries_by_name(result)
+    gunicorn_bind = by_name["gunicorn_config.bind"]
+    assert gunicorn_bind["classification"] == "uncertain"
+    assert any(
+        event["reason"] == "Gunicorn config setting"
+        for event in gunicorn_bind["evidence"]
+    )
+
+    ordinary_result = json.loads(
+        analyze(str(ordinary_project), conf=60, grep_verify=False, trace_file=False)
+    )
+    assert "ordinary.worker_exit" in _unused_full_names(
+        ordinary_result,
+        "unused_functions",
+    )
+    assert "ordinary.bind" in _unused_full_names(ordinary_result, "unused_variables")
+
+
+def test_django_urlconf_error_handler_aliases_are_not_reported_dead(tmp_path):
+    django_project = tmp_path / "django_project"
+    plain_project = tmp_path / "plain_project"
+    django_project.mkdir()
+    plain_project.mkdir()
+
+    (django_project / "urls.py").write_text(
+        "\n".join(
+            [
+                "from django.http import HttpResponseBadRequest, HttpResponseNotFound",
+                "",
+                "def _bad_request(request, exception):",
+                '    return HttpResponseBadRequest("Bad request")',
+                "",
+                "def _not_found(request, exception):",
+                '    return HttpResponseNotFound("Not found")',
+                "",
+                "handler400 = _bad_request",
+                "handler404 = _not_found",
+                "urlpatterns = []",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (plain_project / "plain.py").write_text(
+        "\n".join(
+            [
+                "def fallback():",
+                "    return 404",
+                "",
+                "handler404 = fallback",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = json.loads(
+        analyze(str(django_project), conf=60, grep_verify=False, trace_file=False)
+    )
+
+    unused_variables = _unused_full_names(result, "unused_variables")
+
+    assert "urls.handler400" not in unused_variables
+    assert "urls.handler404" not in unused_variables
+
+    by_name = _entries_by_name(result)
+    handler = by_name["urls.handler404"]
+    assert handler["classification"] == "uncertain"
+    assert any(
+        event["reason"] == "Django URLconf error handler"
+        for event in handler["evidence"]
+    )
+
+    plain_result = json.loads(
+        analyze(str(plain_project), conf=60, grep_verify=False, trace_file=False)
+    )
+    assert "plain.handler404" in _unused_full_names(
+        plain_result,
+        "unused_variables",
+    )
+
+
+def test_django_registered_path_converter_protocol_is_not_reported_dead(tmp_path):
+    django_project = tmp_path / "django_project"
+    ordinary_project = tmp_path / "ordinary_project"
+    wrapped_project = tmp_path / "wrapped_project"
+    django_project.mkdir()
+    ordinary_project.mkdir()
+    wrapped_project.mkdir()
+
+    (django_project / "converters.py").write_text(
+        "\n".join(
+            [
+                "class FourDigitYearConverter:",
+                '    regex = "[0-9]{4}"',
+                "",
+                "    def to_python(self, value):",
+                "        return int(value)",
+                "",
+                "    def to_url(self, value):",
+                '        return "%04d" % value',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (django_project / "urls.py").write_text(
+        "\n".join(
+            [
+                "import converters",
+                "from django.urls import path, register_converter",
+                "",
+                'register_converter(converters.FourDigitYearConverter, "yyyy")',
+                "urlpatterns = []",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    (ordinary_project / "converters.py").write_text(
+        "\n".join(
+            [
+                "class FourDigitYearConverter:",
+                '    regex = "[0-9]{4}"',
+                "",
+                "    def to_python(self, value):",
+                "        return int(value)",
+                "",
+                "    def to_url(self, value):",
+                '        return "%04d" % value',
+                "",
+                "converter = FourDigitYearConverter()",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (wrapped_project / "converters.py").write_text(
+        "\n".join(
+            [
+                "class FourDigitYearConverter:",
+                '    regex = "[0-9]{4}"',
+                "",
+                "    def to_python(self, value):",
+                "        return int(value)",
+                "",
+                "    def to_url(self, value):",
+                '        return "%04d" % value',
+                "",
+                "converter = FourDigitYearConverter()",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (wrapped_project / "urls.py").write_text(
+        "\n".join(
+            [
+                "import converters",
+                "from django.urls import register_converter",
+                "",
+                "def configure_converters():",
+                '    register_converter(converters.FourDigitYearConverter, "yyyy")',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = json.loads(
+        analyze(str(django_project), conf=60, grep_verify=False, trace_file=False)
+    )
+    unused_functions = _unused_full_names(result, "unused_functions")
+    unused_variables = _unused_full_names(result, "unused_variables")
+
+    assert "converters.FourDigitYearConverter.to_python" not in unused_functions
+    assert "converters.FourDigitYearConverter.to_url" not in unused_functions
+    assert "converters.FourDigitYearConverter.regex" not in unused_variables
+
+    by_name = _entries_by_name(result)
+    regex = by_name["converters.FourDigitYearConverter.regex"]
+    assert regex["classification"] == "uncertain"
+    assert any(
+        event["reason"] == "Django path converter regex"
+        for event in regex["evidence"]
+    )
+
+    ordinary_result = json.loads(
+        analyze(str(ordinary_project), conf=60, grep_verify=False, trace_file=False)
+    )
+    assert "converters.FourDigitYearConverter.to_python" in _unused_full_names(
+        ordinary_result,
+        "unused_functions",
+    )
+    assert "converters.FourDigitYearConverter.to_url" in _unused_full_names(
+        ordinary_result,
+        "unused_functions",
+    )
+    assert "converters.FourDigitYearConverter.regex" in _unused_full_names(
+        ordinary_result,
+        "unused_variables",
+    )
+
+    wrapped_result = json.loads(
+        analyze(str(wrapped_project), conf=60, grep_verify=False, trace_file=False)
+    )
+    assert "converters.FourDigitYearConverter.to_python" in _unused_full_names(
+        wrapped_result,
+        "unused_functions",
+    )
+    assert "converters.FourDigitYearConverter.to_url" in _unused_full_names(
+        wrapped_result,
+        "unused_functions",
+    )
+    assert "converters.FourDigitYearConverter.regex" in _unused_full_names(
+        wrapped_result,
+        "unused_variables",
+    )
 
 
 def test_trace_and_coverage_evidence_are_reported_from_analyzer(tmp_path):

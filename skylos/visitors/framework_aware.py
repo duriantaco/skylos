@@ -174,6 +174,12 @@ class FrameworkAwareVisitor:
         self.objects_with_routes = defaultdict(list)
         self.objects_passed_as_args = set()
         self.objects_created_by_call = set()
+        self.django_path_converter_classes = set()
+        self._django_register_converter_names = set()
+        self._django_urls_aliases = set()
+        self._django_root_aliases = set()
+        self._function_depth = 0
+        self._class_depth = 0
 
         if filename:
             self._check_framework_imports_in_file(filename)
@@ -195,6 +201,15 @@ class FrameworkAwareVisitor:
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             name = alias.name.lower()
+            bound_name = alias.asname or alias.name.split(".", 1)[0]
+
+            if name == "django":
+                self._django_root_aliases.add(bound_name)
+            elif name == "django.urls":
+                if alias.asname:
+                    self._django_urls_aliases.add(alias.asname)
+                else:
+                    self._django_root_aliases.add("django")
 
             for fw in FRAMEWORK_IMPORTS:
                 if fw in name:
@@ -211,6 +226,17 @@ class FrameworkAwareVisitor:
             if module_name in FRAMEWORK_IMPORTS:
                 self.is_framework_file = True
                 self.detected_frameworks.add(module_name)
+
+            if node.module == "django.urls":
+                for alias in node.names:
+                    if alias.name == "register_converter":
+                        self._django_register_converter_names.add(
+                            alias.asname or alias.name
+                        )
+            elif node.module == "django":
+                for alias in node.names:
+                    if alias.name == "urls":
+                        self._django_urls_aliases.add(alias.asname or alias.name)
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -247,7 +273,11 @@ class FrameworkAwareVisitor:
 
         if is_route:
             self._collect_annotation_type_refs(node)
-        self.generic_visit(node)
+        self._function_depth += 1
+        try:
+            self.generic_visit(node)
+        finally:
+            self._function_depth -= 1
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
@@ -289,7 +319,11 @@ class FrameworkAwareVisitor:
                     self.declarative_classes.add(node.name)
                     break
 
-        self.generic_visit(node)
+        self._class_depth += 1
+        try:
+            self.generic_visit(node)
+        finally:
+            self._class_depth -= 1
 
     def visit_Assign(self, node: ast.Assign) -> None:
         if isinstance(node.value, ast.Call):
@@ -322,6 +356,19 @@ class FrameworkAwareVisitor:
         if callback_target is not None:
             self._mark_view_from_url_pattern(callback_target)
             self.is_framework_file = True
+
+        if (
+            self._function_depth == 0
+            and self._class_depth == 0
+            and self._is_django_register_converter_call(node.func)
+            and node.args
+        ):
+            cls_name = self._simple_name(node.args[0])
+            if cls_name:
+                self.django_path_converter_classes.add(cls_name)
+                self._mark_classes.add(cls_name)
+                self.is_framework_file = True
+                self.detected_frameworks.add("django")
 
         if isinstance(node.func, ast.Attribute) and node.func.attr == "register":
             if len(node.args) >= 2:
@@ -452,6 +499,31 @@ class FrameworkAwareVisitor:
 
         parts.reverse()
         return ".".join(parts)
+
+    def _expr_to_str(self, node: ast.AST) -> str:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return self._attr_to_str(node)
+        return ""
+
+    def _is_django_register_converter_call(self, func: ast.AST) -> bool:
+        if isinstance(func, ast.Name):
+            return func.id in self._django_register_converter_names
+
+        if not isinstance(func, ast.Attribute) or func.attr != "register_converter":
+            return False
+
+        receiver = self._expr_to_str(func.value)
+        if receiver in self._django_urls_aliases:
+            return True
+        if receiver == "django.urls":
+            return True
+
+        for django_alias in self._django_root_aliases:
+            if receiver == f"{django_alias}.urls":
+                return True
+        return False
 
     def _base_names(self, node: ast.ClassDef) -> list[str]:
         out = []
