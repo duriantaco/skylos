@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from rich.console import Console
 from skylos.contracts import (
     DEFAULT_CONTRACT_PATH,
     ContractError,
+    contract_enables_dependency_hallucinations,
+    contract_project_config_overrides,
     starter_contract_text,
     validate_contract_file,
 )
@@ -43,6 +46,23 @@ def run_contract_command(argv, *, console_factory=Console) -> int:
         help=f"Contract path. Default: {DEFAULT_CONTRACT_PATH}",
     )
 
+    p_inspect = sub.add_parser(
+        "inspect",
+        aliases=["explain"],
+        help="Explain an AI contract",
+    )
+    p_inspect.add_argument(
+        "path",
+        nargs="?",
+        default=DEFAULT_CONTRACT_PATH,
+        help=f"Contract path. Default: {DEFAULT_CONTRACT_PATH}",
+    )
+    p_inspect.add_argument(
+        "--json",
+        action="store_true",
+        help="Print a machine-readable contract summary.",
+    )
+
     if not argv:
         parser.print_help()
         return 0
@@ -52,6 +72,8 @@ def run_contract_command(argv, *, console_factory=Console) -> int:
         return init_contract(console, args.path, force=bool(args.force))
     if args.contract_cmd == "validate":
         return validate_contract(console, args.path)
+    if args.contract_cmd in {"inspect", "explain"}:
+        return inspect_contract(console, args.path, output_json=bool(args.json))
 
     parser.print_help()
     return 0
@@ -81,6 +103,43 @@ def validate_contract(console, path_str: str) -> int:
         "[green]Valid AI contract[/green] "
         f"[dim](version {contract.version}, path {contract.path})[/dim]"
     )
+    return 0
+
+
+def inspect_contract(console, path_str: str, *, output_json: bool = False) -> int:
+    try:
+        contract = validate_contract_file(path_str, project_root=Path.cwd())
+    except ContractError as exc:
+        console.print(f"[red]Invalid contract:[/red] {exc}")
+        return 1
+
+    summary = _contract_summary(contract)
+    if output_json:
+        console.print(json.dumps(summary, indent=2), markup=False)
+        return 0
+
+    console.print(
+        "[green]AI contract[/green] "
+        f"[dim](version {contract.version}, path {contract.path})[/dim]"
+    )
+    if contract.contract_id:
+        console.print(f"[dim]id:[/dim] {contract.contract_id}")
+    console.print("[bold]Clauses[/bold]")
+    for clause, detail in summary["clauses"].items():
+        console.print(f"- {clause}: {_format_clause_detail(detail)}")
+    console.print("[bold]Analyzer effects[/bold]")
+    effects = summary["analyzer_effects"]
+    dependency_status = (
+        "enabled" if effects["dependency_hallucination_scan"] else "disabled"
+    )
+    console.print(f"- dependency hallucination scan: {dependency_status}")
+    overrides = effects["project_config_overrides"]
+    if overrides:
+        console.print(
+            f"- project config overrides: {json.dumps(overrides, sort_keys=True)}"
+        )
+    else:
+        console.print("- project config overrides: none")
     return 0
 
 
@@ -136,3 +195,62 @@ def _write_new_text_no_symlink(dest: Path, text: str) -> None:
                 os.close(fd)
             except OSError:
                 pass
+
+
+def _contract_summary(contract) -> dict:
+    return {
+        "schema_version": contract.version,
+        "id": contract.contract_id,
+        "path": str(contract.path),
+        "clauses": {
+            "ai.phantom_symbols.names": {
+                "enabled": bool(contract.ai.phantom_symbols.names),
+                "values": list(contract.ai.phantom_symbols.names),
+            },
+            "ai.phantom_symbols.decorators": {
+                "enabled": bool(contract.ai.phantom_symbols.decorators),
+                "values": list(contract.ai.phantom_symbols.decorators),
+            },
+            "ai.dependencies.reject_nonexistent_packages": {
+                "enabled": contract.ai.dependencies.reject_nonexistent_packages,
+            },
+            "ai.dependencies.reject_impossible_versions": {
+                "enabled": contract.ai.dependencies.reject_impossible_versions,
+            },
+            "ai.api_surface.reject_unknown_members": {
+                "enabled": contract.ai.api_surface.reject_unknown_members,
+            },
+            "ai.api_surface.reject_unknown_kwargs": {
+                "enabled": contract.ai.api_surface.reject_unknown_kwargs,
+            },
+            "security.routes.paths": {
+                "enabled": bool(contract.security.routes.paths),
+                "values": list(contract.security.routes.paths),
+            },
+            "security.routes.require_any_decorator": {
+                "enabled": bool(contract.security.routes.require_any_decorator),
+                "values": list(contract.security.routes.require_any_decorator),
+            },
+            "tests.high_risk_changes_require_tests": {
+                "enabled": contract.tests.high_risk_changes_require_tests,
+            },
+        },
+        "analyzer_effects": {
+            "dependency_hallucination_scan": contract_enables_dependency_hallucinations(
+                contract
+            ),
+            "project_config_overrides": contract_project_config_overrides(contract),
+        },
+    }
+
+
+def _format_clause_detail(detail: dict) -> str:
+    if not detail["enabled"]:
+        result = "disabled"
+    else:
+        values = detail.get("values")
+        if not values:
+            result = "enabled"
+        else:
+            result = ", ".join(str(value) for value in values)
+    return result

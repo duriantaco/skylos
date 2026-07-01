@@ -17,15 +17,19 @@ AI_VIBE_CATEGORIES = {
     "missing_resilience_control",
     "api_signature_hallucination",
     "assertion_weakening",
+    "ci_permission_expansion",
     "dependency_hallucination",
     "disabled_security_control",
     "test_impact_gap",
     "missing_contract_guardrail",
+    "public_api_surface_drift",
 }
 
 AI_RULE_DEFAULTS = {
     "SKY-A101": ("assertion_weakening", "medium"),
     "SKY-A102": ("test_impact_gap", "low"),
+    "SKY-A103": ("ci_permission_expansion", "high"),
+    "SKY-A104": ("public_api_surface_drift", "medium"),
     "SKY-A105": ("missing_contract_guardrail", "high"),
     "SKY-L012": ("hallucinated_reference", "high"),
     "SKY-L011": ("disabled_security_control", "medium"),
@@ -62,6 +66,12 @@ SUGGESTED_FIX_BY_VIBE = {
     ),
     "test_impact_gap": (
         "Add or update relevant tests, or document why behavior is unchanged."
+    ),
+    "ci_permission_expansion": (
+        "Restore the narrower workflow permissions or document why the broader CI trust boundary is required."
+    ),
+    "public_api_surface_drift": (
+        "Restore the public option or document the compatibility break."
     ),
     "missing_contract_guardrail": (
         "Add one of the guard decorators required by the Skylos contract."

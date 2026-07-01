@@ -87,7 +87,17 @@ def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
         "--contract",
         dest="contract_path",
         default=None,
-        help="AI hallucination contract to apply during verification.",
+        help=(
+            "AI hallucination contract to apply during verification. "
+            "Defaults to auto-discovering .skylos/ai-contract.yml."
+        ),
+    )
+    parser.add_argument(
+        "--no-contract",
+        dest="contract_enabled",
+        action="store_false",
+        default=True,
+        help="Do not auto-discover or apply an AI hallucination contract.",
     )
     parser.add_argument(
         "--dependency-hallucinations",
@@ -130,6 +140,7 @@ def _run_from_args(
     verify_change_path_func,
     verify_change_stdin_payload_func,
 ) -> dict[str, Any]:
+    _validate_contract_args(args, parser)
     if args.stdin:
         manifest = _read_stdin_manifest(parser)
         _apply_stdin_overrides(args, manifest)
@@ -149,6 +160,8 @@ def _run_from_args(
     }
     if args.contract_path is not None:
         kwargs["contract_path"] = args.contract_path
+    if not args.contract_enabled:
+        kwargs["contract_enabled"] = False
     return verify_change_path_func(args.path, **kwargs)
 
 
@@ -162,6 +175,19 @@ def _apply_stdin_overrides(args: argparse.Namespace, manifest: dict[str, Any]) -
         _set_default(manifest, "include_dependency_hallucinations", True)
     if args.contract_path is not None:
         _set_default(manifest, "contract_path", args.contract_path)
+    if not args.contract_enabled:
+        _set_default(manifest, "contract_enabled", False)
+
+
+def _validate_contract_args(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> None:
+    if args.contract_enabled:
+        return
+    if args.contract_path is None:
+        return
+    parser.error("--contract cannot be used with --no-contract")
 
 
 def _set_default(payload: dict[str, Any], key: str, value: Any) -> None:

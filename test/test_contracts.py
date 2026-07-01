@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -132,11 +133,44 @@ def test_run_contract_command_validates_default_contract(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     console = Mock()
 
-    assert contract_cmd.run_contract_command(["init"], console_factory=lambda: console) == 0
+    assert (
+        contract_cmd.run_contract_command(["init"], console_factory=lambda: console)
+        == 0
+    )
     assert (
         contract_cmd.run_contract_command(["validate"], console_factory=lambda: console)
         == 0
     )
+
+
+def test_run_contract_command_inspects_contract_as_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    console = Mock()
+    contract = Path("ai-contract.yml")
+    contract.write_text(
+        "version: 1\n"
+        "id: enterprise-auth-contract\n"
+        "ai:\n"
+        "  phantom_symbols:\n"
+        "    names: [verify_enterprise_auth]\n"
+        "  dependencies:\n"
+        "    reject_nonexistent_packages: true\n",
+        encoding="utf-8",
+    )
+
+    exit_code = contract_cmd.run_contract_command(
+        ["inspect", str(contract), "--json"],
+        console_factory=lambda: console,
+    )
+
+    assert exit_code == 0
+    payload = json.loads(console.print.call_args.args[0])
+    assert payload["id"] == "enterprise-auth-contract"
+    assert payload["clauses"]["ai.phantom_symbols.names"] == {
+        "enabled": True,
+        "values": ["verify_enterprise_auth"],
+    }
+    assert payload["analyzer_effects"]["dependency_hallucination_scan"] is True
 
 
 def test_cli_contract_dispatch_preserves_argv(monkeypatch):

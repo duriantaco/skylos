@@ -193,6 +193,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 "unused_parameters",
                 "unused_files",
                 "danger",
+                "ai_defects",
                 "quality",
                 "secrets",
                 "custom_rules",
@@ -205,6 +206,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                         if str((project_root / item.get("file", "")).resolve())
                         in changed_files
                     ]
+            result_json = json.dumps(result)
 
         if getattr(args, "diff", None):
             from skylos.cicd.review import (
@@ -228,6 +230,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                     "unused_parameters",
                     "unused_files",
                     "danger",
+                    "ai_defects",
                     "quality",
                     "secrets",
                     "custom_rules",
@@ -333,6 +336,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
 
                 _finding_categories = [
                     "danger",
+                    "ai_defects",
                     "quality",
                     "secrets",
                     "custom_rules",
@@ -784,6 +788,7 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             "unused_classes",
             "unused_parameters",
             "danger",
+            "ai_defects",
             "quality",
             "secrets",
             "custom_rules",
