@@ -57,6 +57,42 @@ def test_build_verify_change_response_filters_to_ai_findings(tmp_path):
     assert finding["suggested_fix"]
 
 
+def test_build_verify_change_response_keeps_diff_backed_ai_rules(tmp_path):
+    app = tmp_path / ".github" / "workflows" / "ci.yml"
+    app.parent.mkdir(parents=True)
+    app.write_text("permissions: write-all\n", encoding="utf-8")
+
+    payload = build_verify_change_response(
+        {
+            "ai_defects": [
+                {
+                    "rule_id": "SKY-A103",
+                    "vibe_category": "ci_permission_expansion",
+                    "severity": "HIGH",
+                    "file": str(app),
+                    "line": 1,
+                    "message": "CI permissions expanded.",
+                },
+                {
+                    "rule_id": "SKY-A104",
+                    "vibe_category": "public_api_surface_drift",
+                    "severity": "MEDIUM",
+                    "file": str(app),
+                    "line": 1,
+                    "message": "Public CLI flag removed.",
+                },
+            ],
+        },
+        project_root=tmp_path,
+    )
+
+    assert payload["status"] == "fail"
+    assert {finding["rule_id"] for finding in payload["findings"]} == {
+        "SKY-A103",
+        "SKY-A104",
+    }
+
+
 def test_build_verify_change_response_applies_rule_defaults(tmp_path):
     app = tmp_path / "app.py"
     app.write_text("requests.get(url, verify=False)\n")
@@ -436,6 +472,74 @@ def test_verify_change_path_contract_enables_project_vibe_override(tmp_path):
     )
 
 
+def test_verify_change_path_auto_discovers_default_contract_from_parent(tmp_path):
+    app = tmp_path / "src" / "app.py"
+    app.parent.mkdir()
+    app.write_text("def handler(request):\n    return verify_enterprise_auth(request)\n")
+    contract = tmp_path / ".skylos" / "ai-contract.yml"
+    contract.parent.mkdir()
+    contract.write_text(
+        "version: 1\n"
+        "ai:\n"
+        "  phantom_symbols:\n"
+        "    names: [verify_enterprise_auth]\n",
+        encoding="utf-8",
+    )
+    seen = {}
+
+    def fake_analyze(*_args, **kwargs):
+        seen["kwargs"] = kwargs
+        return json.dumps({})
+
+    payload = verify_change_path(app, analyze_func=fake_analyze)
+
+    assert payload["status"] == "pass"
+    assert seen["kwargs"]["project_config_overrides"] == {
+        "vibe": {"extra_phantom_names": ["verify_enterprise_auth"]}
+    }
+
+
+def test_verify_change_path_can_disable_auto_discovered_contract(tmp_path):
+    app = tmp_path / "src" / "app.py"
+    app.parent.mkdir()
+    app.write_text("import requests\n")
+    contract = tmp_path / ".skylos" / "ai-contract.yml"
+    contract.parent.mkdir()
+    contract.write_text(
+        "version: 1\n"
+        "ai:\n"
+        "  dependencies:\n"
+        "    reject_impossible_versions: true\n",
+        encoding="utf-8",
+    )
+    seen = {}
+
+    def fake_analyze(*_args, **kwargs):
+        seen["kwargs"] = kwargs
+        return json.dumps({})
+
+    payload = verify_change_path(
+        app,
+        contract_enabled=False,
+        analyze_func=fake_analyze,
+    )
+
+    assert payload["status"] == "pass"
+    assert seen["kwargs"]["enable_dependency_hallucinations"] is False
+    assert "project_config_overrides" not in seen["kwargs"]
+
+
+def test_verify_change_path_rejects_explicit_contract_when_disabled(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("pass\n")
+    contract = tmp_path / ".skylos" / "ai-contract.yml"
+    contract.parent.mkdir()
+    contract.write_text("version: 1\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="contracts are disabled"):
+        verify_change_path(app, contract_path=contract, contract_enabled=False)
+
+
 def test_verify_change_path_resolves_relative_contract_from_cwd_for_file_target(
     tmp_path, monkeypatch
 ):
@@ -635,6 +739,39 @@ def test_verify_change_stdin_payload_uses_manifest_file_for_schema():
     assert payload["target"]["file"] == "src/app.py"
     assert payload["target"]["range"] == {"start_line": 2, "end_line": 2}
     assert any(f["range"]["file"] == "src/app.py" for f in payload["findings"])
+
+
+def test_verify_change_stdin_payload_discovers_contract_from_manifest_path(tmp_path):
+    app = tmp_path / "src" / "app.py"
+    app.parent.mkdir()
+    contract = tmp_path / ".skylos" / "ai-contract.yml"
+    contract.parent.mkdir()
+    contract.write_text(
+        "version: 1\n"
+        "ai:\n"
+        "  phantom_symbols:\n"
+        "    names: [verify_enterprise_auth]\n",
+        encoding="utf-8",
+    )
+    seen = {}
+
+    def fake_analyze(*_args, **kwargs):
+        seen["kwargs"] = kwargs
+        return json.dumps({})
+
+    payload = verify_change_stdin_payload(
+        {
+            "path": str(tmp_path),
+            "file": "src/app.py",
+            "code": "def handler(request):\n    return verify_enterprise_auth(request)\n",
+        },
+        analyze_func=fake_analyze,
+    )
+
+    assert payload["status"] == "pass"
+    assert seen["kwargs"]["project_config_overrides"] == {
+        "vibe": {"extra_phantom_names": ["verify_enterprise_auth"]}
+    }
 
 
 def test_verify_change_stdin_payload_rejects_absolute_manifest_file():

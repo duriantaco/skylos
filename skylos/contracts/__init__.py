@@ -1,6 +1,7 @@
 from skylos.contracts.loader import (
     contract_enables_dependency_hallucinations,
     contract_project_config_overrides,
+    discover_contract_path,
     load_contract,
     starter_contract_text,
     validate_contract_file,
@@ -38,6 +39,7 @@ __all__ = [
     "contract_enables_dependency_hallucinations",
     "contract_finding_metadata",
     "contract_project_config_overrides",
+    "discover_contract_path",
     "load_contract",
     "RULE_ID_CONTRACT_ROUTE_GUARD",
     "VIBE_CONTRACT_GUARDRAIL",

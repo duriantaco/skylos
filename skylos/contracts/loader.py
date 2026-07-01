@@ -98,6 +98,25 @@ def validate_contract_file(
     return load_contract(path, project_root=project_root)
 
 
+def discover_contract_path(start: str | Path) -> Path | None:
+    candidate = Path(start).expanduser()
+    if candidate.is_file():
+        current = candidate.parent
+    else:
+        current = candidate
+
+    try:
+        current = current.resolve(strict=False)
+    except OSError:
+        current = current.absolute()
+
+    for directory in (current, *current.parents):
+        contract_path = directory / DEFAULT_CONTRACT_PATH
+        if contract_path.exists() or contract_path.is_symlink():
+            return contract_path
+    return None
+
+
 def contract_project_config_overrides(
     contract: HallucinationContract | None,
 ) -> dict[str, Any]:

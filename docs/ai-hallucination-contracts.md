@@ -15,22 +15,37 @@ Create a starter contract:
 ```bash
 skylos contract init
 skylos contract validate .skylos/ai-contract.yml
+skylos contract inspect
 ```
 
-Run verify with the contract:
+Run verify. If `.skylos/ai-contract.yml` exists in the target repo or an
+ancestor directory, `skylos verify` applies it automatically:
 
 ```bash
-skylos verify . --contract .skylos/ai-contract.yml
+skylos verify .
 ```
 
 For agent or editor loops, scope the same check to a file or range:
 
 ```bash
-skylos verify . --file apps/api/routes.py --range 10:40 --project-context --contract .skylos/ai-contract.yml
+skylos verify . --file apps/api/routes.py --range 10:40 --project-context
 ```
 
-MCP clients can pass the same path through the `verify_change` tool as
-`contract_path`.
+Use `--contract` only for a non-default contract path:
+
+```bash
+skylos verify . --contract policies/agent-contract.yml
+```
+
+Use `--no-contract` when a verify run should ignore auto-discovered contracts:
+
+```bash
+skylos verify . --no-contract
+```
+
+MCP clients get the same default discovery through the `verify_change` tool.
+They can pass `contract_path` for a non-default path, or set
+`contract_enabled` to `false` to opt out.
 
 ## Contract Shape
 
@@ -91,7 +106,7 @@ Example clause values:
 This repo includes a deterministic demo fixture:
 
 ```bash
-skylos verify demo/ai_contract --file apps/api/routes.py --project-context --contract demo/ai_contract/.skylos/ai-contract.yml
+skylos verify demo/ai_contract --file apps/api/routes.py --project-context
 ```
 
 The demo intentionally contains:

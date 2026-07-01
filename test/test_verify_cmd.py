@@ -57,6 +57,32 @@ def test_run_verify_command_prints_json_and_preserves_args(capsys):
     }
 
 
+def test_run_verify_command_can_disable_contract_discovery(capsys):
+    seen = {}
+
+    def fake_verify(path, **kwargs):
+        seen["path"] = path
+        seen["kwargs"] = kwargs
+        return {
+            "schema_version": 1,
+            "tool": "verify_change",
+            "status": "pass",
+            "target": {"path": path, "file": None, "range": None},
+            "findings": [],
+            "summary": "No AI-code issues found",
+        }
+
+    exit_code = run_verify_command(
+        ["repo", "--no-contract"],
+        verify_change_path_func=fake_verify,
+        parse_exclude_folders_func=lambda **_kwargs: (),
+    )
+
+    _ = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert seen["kwargs"]["contract_enabled"] is False
+
+
 def test_run_verify_command_fails_on_findings_unless_disabled(capsys):
     def fake_verify(_path, **_kwargs):
         return {
@@ -139,3 +165,35 @@ def test_run_verify_command_reads_stdin_manifest(monkeypatch, capsys):
         "confidence": 80,
         "exclude_folders": ["venv"],
     }
+
+
+def test_run_verify_command_sets_stdin_contract_opt_out(monkeypatch, capsys):
+    seen = {}
+
+    def fake_stdin(payload, **kwargs):
+        seen["payload"] = payload
+        seen["kwargs"] = kwargs
+        return {
+            "schema_version": 1,
+            "tool": "verify_change",
+            "status": "pass",
+            "target": {"path": payload["path"], "file": None, "range": None},
+            "findings": [],
+            "summary": "No AI-code issues found",
+        }
+
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(json.dumps({"code": "pass\n"})),
+    )
+
+    exit_code = run_verify_command(
+        ["repo", "--stdin", "--no-contract"],
+        verify_change_stdin_payload_func=fake_stdin,
+        parse_exclude_folders_func=lambda **_kwargs: (),
+    )
+
+    _ = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert seen["payload"]["contract_enabled"] is False

@@ -9,6 +9,7 @@ from typing import Any
 from skylos.contracts import (
     contract_enables_dependency_hallucinations,
     contract_project_config_overrides,
+    discover_contract_path,
     load_contract,
     scan_contract_route_guardrails,
 )
@@ -35,14 +36,19 @@ def verify_change_path(
     project_context: bool = False,
     include_dependency_hallucinations: bool = False,
     contract_path: str | Path | None = None,
+    contract_enabled: bool = True,
     analyze_func=None,
 ) -> dict[str, Any]:
     target = Path(path).expanduser()
     target_file = _optional_path(file)
     scan_target = _scan_target(target, target_file, project_context=project_context)
     root = _root_for_verify_target(target)
-    contract_file = (
-        _contract_path_for_verify(contract_path, root) if contract_path else None
+    contract_file = _contract_path_for_verify_target(
+        target=target,
+        scan_target=scan_target,
+        root=root,
+        contract_path=contract_path,
+        contract_enabled=contract_enabled,
     )
     contract = None
     if contract_file is not None:
@@ -105,6 +111,12 @@ def verify_change_stdin_payload(
     line_range = _manifest_value(payload, ("line_range", "range"), None)
     include_deps = bool(payload.get("include_dependency_hallucinations", False))
     contract_path = _manifest_value(payload, ("contract_path", "contract"), None)
+    contract_enabled = _manifest_contract_enabled(payload)
+    contract_path = _manifest_contract_path(
+        payload,
+        contract_path=contract_path,
+        contract_enabled=contract_enabled,
+    )
 
     with tempfile.TemporaryDirectory(prefix="skylos-verify-") as tmp:
         tmp_root = Path(tmp)
@@ -117,6 +129,7 @@ def verify_change_stdin_payload(
             exclude_folders=exclude_folders,
             include_dependency_hallucinations=include_deps,
             contract_path=contract_path,
+            contract_enabled=contract_enabled,
             analyze_func=analyze_func,
         )
 
@@ -151,6 +164,27 @@ def _analysis_options(
     if project_config_overrides:
         options["project_config_overrides"] = project_config_overrides
     return options
+
+
+def _contract_path_for_verify_target(
+    *,
+    target: Path,
+    scan_target: Path,
+    root: Path,
+    contract_path: str | Path | None,
+    contract_enabled: bool,
+) -> Path | None:
+    if not contract_enabled:
+        if contract_path is not None:
+            raise ValueError("contract_path cannot be used when contracts are disabled")
+        return None
+    if contract_path is not None:
+        return _contract_path_for_verify(contract_path, root)
+
+    discovered = discover_contract_path(scan_target)
+    if discovered is not None:
+        return discovered
+    return discover_contract_path(target)
 
 
 def _contract_path_for_verify(contract_path: str | Path, root: Path) -> Path:
@@ -346,6 +380,35 @@ def _manifest_value(
         if _has_manifest_value(value):
             return value
     return default
+
+
+def _manifest_contract_enabled(payload: dict[str, Any]) -> bool:
+    value = payload.get("contract_enabled", True)
+    if isinstance(value, bool):
+        return value
+    raise ValueError("stdin manifest contract_enabled must be true or false")
+
+
+def _manifest_contract_path(
+    payload: dict[str, Any],
+    *,
+    contract_path: Any,
+    contract_enabled: bool,
+) -> Any:
+    if not contract_enabled or _has_manifest_value(contract_path):
+        return contract_path
+
+    discovered = discover_contract_path(_manifest_contract_discovery_start(payload))
+    if discovered is None:
+        return contract_path
+    return discovered
+
+
+def _manifest_contract_discovery_start(payload: dict[str, Any]) -> Path:
+    target = Path(_manifest_target_path(payload)).expanduser()
+    if target.is_absolute():
+        return target
+    return Path.cwd() / target
 
 
 def _has_manifest_value(value: Any) -> bool:
