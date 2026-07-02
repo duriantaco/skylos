@@ -156,6 +156,11 @@ ROUTE_METHODS = {
     "websocket",
 }
 
+FASTAPI_DEPENDENCY_CALLS = {"Depends", "Security"}
+FASTAPI_APP_FACTORIES = {"FastAPI"}
+FASTAPI_ROUTER_FACTORIES = {"APIRouter"}
+ANNOTATED_NAMES = {"Annotated"}
+
 
 class FrameworkAwareVisitor:
     def __init__(self, filename: str | Path | None = None) -> None:
@@ -168,9 +173,16 @@ class FrameworkAwareVisitor:
         self.pydantic_models = set()
         self._mark_functions = set()
         self._mark_classes = set()
+        self._mark_dependency_names = set()
+        self._fastapi_dependency_call_names = set(FASTAPI_DEPENDENCY_CALLS)
+        self._fastapi_app_factory_names = set(FASTAPI_APP_FACTORIES)
+        self._fastapi_router_factory_names = set(FASTAPI_ROUTER_FACTORIES)
+        self._annotated_names = set(ANNOTATED_NAMES)
         self.declarative_classes = set()
         self._mark_cbv_http_methods = set()
         self._type_refs_in_routes = set()
+        self._fastapi_dependency_aliases = defaultdict(set)
+        self._fastapi_dependency_alias_refs = set()
         self.objects_with_routes = defaultdict(list)
         self.objects_passed_as_args = set()
         self.objects_created_by_call = set()
@@ -237,6 +249,21 @@ class FrameworkAwareVisitor:
                 for alias in node.names:
                     if alias.name == "urls":
                         self._django_urls_aliases.add(alias.asname or alias.name)
+
+            if module_name == "fastapi":
+                for alias in node.names:
+                    bound_name = alias.asname or alias.name
+                    if alias.name in FASTAPI_DEPENDENCY_CALLS:
+                        self._fastapi_dependency_call_names.add(bound_name)
+                    elif alias.name in FASTAPI_APP_FACTORIES:
+                        self._fastapi_app_factory_names.add(bound_name)
+                    elif alias.name in FASTAPI_ROUTER_FACTORIES:
+                        self._fastapi_router_factory_names.add(bound_name)
+
+            if module_name in {"typing", "typing_extensions"}:
+                for alias in node.names:
+                    if alias.name in ANNOTATED_NAMES:
+                        self._annotated_names.add(alias.asname or alias.name)
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -262,14 +289,27 @@ class FrameworkAwareVisitor:
                 self.is_framework_file = True
                 is_route = True
 
-        defaults_to_scan = []
-        if node.args.defaults:
-            defaults_to_scan.extend(node.args.defaults)
-        if node.args.kw_defaults:
-            defaults_to_scan.extend(node.args.kw_defaults)
+            if isinstance(deco, ast.Call):
+                dependencies = self._get_keyword_arg(deco, "dependencies")
+                if dependencies is not None:
+                    self._scan_for_depends(dependencies)
 
-        for default in defaults_to_scan:
-            self._scan_for_depends(default)
+        args_with_defaults = self._iter_args_with_defaults(node)
+        for arg, default in args_with_defaults:
+            if default is not None:
+                self._scan_for_depends(default, fallback=arg.annotation)
+            self._scan_for_depends(arg.annotation)
+
+            if arg.annotation:
+                alias_name = self._simple_name(arg.annotation)
+            else:
+                alias_name = None
+
+            if alias_name:
+                self._fastapi_dependency_alias_refs.add(alias_name)
+
+        if node.returns:
+            self._scan_for_depends(node.returns)
 
         if is_route:
             self._collect_annotation_type_refs(node)
@@ -331,6 +371,9 @@ class FrameworkAwareVisitor:
                 if isinstance(target, ast.Name):
                     self.objects_created_by_call.add(target.id)
 
+        for target in node.targets:
+            self._record_fastapi_dependency_alias(target, node.value)
+
         targets = []
         for t in node.targets:
             if isinstance(t, ast.Name):
@@ -346,6 +389,10 @@ class FrameworkAwareVisitor:
                     self._mark_view_from_url_pattern(view_expr)
         self.generic_visit(node)
 
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self._record_fastapi_dependency_alias(node.target, node.value)
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call) -> None:
         route_target = self._get_imperative_route_target(node)
         if route_target is not None:
@@ -356,6 +403,8 @@ class FrameworkAwareVisitor:
         if callback_target is not None:
             self._mark_view_from_url_pattern(callback_target)
             self.is_framework_file = True
+
+        self._scan_fastapi_call_metadata(node)
 
         if (
             self._function_depth == 0
@@ -398,6 +447,16 @@ class FrameworkAwareVisitor:
         self.generic_visit(node)
 
     def finalize(self) -> None:
+        for alias_name in self._fastapi_dependency_alias_refs:
+            for dep_name in self._fastapi_dependency_aliases.get(alias_name, ()):
+                self._mark_dependency_name(dep_name)
+
+        for dep_name in self._mark_dependency_names:
+            if dep_name in self.class_defs:
+                self._mark_classes.add(dep_name)
+            if dep_name in self.func_defs:
+                self._mark_functions.add(dep_name)
+
         for fname in self._mark_functions:
             if fname in self.func_defs:
                 self.framework_decorated_lines.add(self.func_defs[fname])
@@ -549,6 +608,24 @@ class FrameworkAwareVisitor:
     def _get_posarg(self, call: ast.Call, idx: int) -> ast.expr | None:
         return call.args[idx] if len(call.args) > idx else None
 
+    def _iter_args_with_defaults(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> Iterator[tuple[ast.arg, ast.expr | None]]:
+        positional = list(node.args.posonlyargs) + list(node.args.args)
+        default_offset = len(positional) - len(node.args.defaults)
+        for idx, arg in enumerate(positional):
+            default_idx = idx - default_offset
+
+            if default_idx >= 0:
+                default = node.args.defaults[default_idx]
+            else:
+                default = None
+
+            yield arg, default
+
+        for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
+            yield arg, default
+
     def _simple_name(self, node: ast.AST) -> str | None:
         if isinstance(node, ast.Name):
             return node.id
@@ -598,7 +675,7 @@ class FrameworkAwareVisitor:
                 target = call.args[2]
             return target
 
-        if attr == "add_api_route":
+        if attr in {"add_api_route", "add_api_websocket_route"}:
             if "fastapi" not in frameworks:
                 return None
             target = self._get_keyword_arg(call, "endpoint")
@@ -643,6 +720,13 @@ class FrameworkAwareVisitor:
         attr = call.func.attr
         frameworks = self.detected_frameworks
 
+        if frameworks.intersection({"fastapi", "starlette"}):
+            if attr == "add_exception_handler":
+                target = self._get_keyword_arg(call, "handler")
+                if target is None and len(call.args) >= 2:
+                    target = call.args[1]
+                return target
+
         if "sanic" not in frameworks:
             return None
 
@@ -658,22 +742,164 @@ class FrameworkAwareVisitor:
 
         return None
 
-    def _scan_for_depends(self, node) -> None:
-        if not isinstance(node, ast.Call):
+    def _scan_fastapi_call_metadata(self, call: ast.Call) -> None:
+        factory_kind = self._fastapi_factory_kind(call.func)
+
+        if factory_kind in {"app", "router"}:
+            dependencies = self._get_keyword_arg(call, "dependencies")
+            if dependencies is not None:
+                self._scan_for_depends(dependencies)
+
+        if factory_kind == "app":
+            for callback_kw in ("lifespan",):
+                self._mark_named_keyword_callback(call, callback_kw)
+            for callback_list_kw in ("on_startup", "on_shutdown"):
+                self._mark_keyword_callback_list(call, callback_list_kw)
+            self._mark_exception_handler_mapping(call)
+
+        if isinstance(call.func, ast.Attribute):
+            if call.func.attr == "include_router":
+                dependencies = self._get_keyword_arg(call, "dependencies")
+                if dependencies is not None:
+                    self._scan_for_depends(dependencies)
+            elif call.func.attr in {"add_api_route", "add_api_websocket_route"}:
+                dependencies = self._get_keyword_arg(call, "dependencies")
+                if dependencies is not None:
+                    self._scan_for_depends(dependencies)
+
+    def _mark_named_keyword_callback(self, call: ast.Call, keyword: str) -> None:
+        target = self._get_keyword_arg(call, keyword)
+        if target is not None:
+            self._mark_view_from_url_pattern(target)
+            self.is_framework_file = True
+
+    def _mark_keyword_callback_list(self, call: ast.Call, keyword: str) -> None:
+        target = self._get_keyword_arg(call, keyword)
+        if target is None:
             return
-        is_depends = False
-        if isinstance(node.func, ast.Name) and node.func.id == "Depends":
-            is_depends = True
-        elif isinstance(node.func, ast.Attribute) and node.func.attr == "Depends":
-            is_depends = True
-        if not is_depends:
+        for elt in self._iter_list_elts(target):
+            self._mark_view_from_url_pattern(elt)
+            self.is_framework_file = True
+
+    def _mark_exception_handler_mapping(self, call: ast.Call) -> None:
+        handlers = self._get_keyword_arg(call, "exception_handlers")
+        if not isinstance(handlers, ast.Dict):
             return
-        if node.args:
-            dep = node.args[0]
-            dep_name = self._simple_name(dep)
-            if dep_name:
-                self._mark_functions.add(dep_name)
+        for value in handlers.values:
+            if value is not None:
+                self._mark_view_from_url_pattern(value)
                 self.is_framework_file = True
+
+    def _scan_for_depends(
+        self, node: ast.AST | None, fallback: ast.AST | None = None
+    ) -> None:
+        for dep_name in self._dependency_names_from_node(node, fallback=fallback):
+            self._mark_dependency_name(dep_name)
+
+    def _mark_dependency_name(self, dep_name: str | None) -> None:
+        if dep_name:
+            self._mark_dependency_names.add(dep_name)
+            self.is_framework_file = True
+
+    def _dependency_names_from_node(
+        self, node: ast.AST | None, fallback: ast.AST | None = None
+    ) -> set[str]:
+        if node is None:
+            return set()
+
+        names = set()
+
+        if isinstance(node, ast.Call) and self._is_fastapi_dependency_call(node):
+            dep = None
+            if node.args:
+                dep = node.args[0]
+            else:
+                dep = self._get_keyword_arg(node, "dependency")
+
+            if dep is not None:
+                dep_name = self._simple_name(dep)
+            else:
+                dep_name = None
+
+            if dep_name is None and fallback is not None:
+                dep_name = self._simple_name(self._annotation_dependency_type(fallback))
+            if dep_name:
+                names.add(dep_name)
+            return names
+
+        if isinstance(node, ast.Subscript) and self._is_annotated_subscript(node):
+            parts = self._subscript_elements(node)
+
+            if parts:
+                dependency_type = parts[0]
+            else:
+                dependency_type = fallback
+
+            for meta in parts[1:]:
+                names.update(
+                    self._dependency_names_from_node(meta, fallback=dependency_type)
+                )
+            return names
+
+        for child in ast.iter_child_nodes(node):
+            names.update(self._dependency_names_from_node(child, fallback=fallback))
+
+        return names
+
+    def _is_fastapi_dependency_call(self, node: ast.Call) -> bool:
+        if isinstance(node.func, ast.Name):
+            return node.func.id in self._fastapi_dependency_call_names
+        if isinstance(node.func, ast.Attribute):
+            return node.func.attr in FASTAPI_DEPENDENCY_CALLS
+        return False
+
+    def _fastapi_factory_kind(self, node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name):
+            if node.id in self._fastapi_app_factory_names:
+                return "app"
+            if node.id in self._fastapi_router_factory_names:
+                return "router"
+            return None
+        if isinstance(node, ast.Attribute):
+            if node.attr in FASTAPI_APP_FACTORIES:
+                return "app"
+            if node.attr in FASTAPI_ROUTER_FACTORIES:
+                return "router"
+        return None
+
+    def _is_annotated_subscript(self, node: ast.Subscript) -> bool:
+        value = node.value
+        if isinstance(value, ast.Name):
+            return value.id in self._annotated_names
+        if isinstance(value, ast.Attribute):
+            return value.attr in ANNOTATED_NAMES
+        return False
+
+    def _record_fastapi_dependency_alias(
+        self, target: ast.AST, value: ast.AST | None
+    ) -> None:
+        if not isinstance(target, ast.Name):
+            return
+        if not isinstance(value, ast.Subscript) or not self._is_annotated_subscript(
+            value
+        ):
+            return
+        alias_deps = self._dependency_names_from_node(value)
+        if alias_deps:
+            self._fastapi_dependency_aliases[target.id].update(alias_deps)
+
+    def _subscript_elements(self, node: ast.Subscript) -> list[ast.AST]:
+        slice_node = node.slice
+        if isinstance(slice_node, ast.Tuple):
+            return list(slice_node.elts)
+        return [slice_node]
+
+    def _annotation_dependency_type(self, node: ast.AST) -> ast.AST:
+        if isinstance(node, ast.Subscript) and self._is_annotated_subscript(node):
+            parts = self._subscript_elements(node)
+            if parts:
+                return parts[0]
+        return node
 
     def _collect_annotation_type_refs(self, fn: ast.FunctionDef) -> None:
         def collect(t):

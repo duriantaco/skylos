@@ -429,6 +429,227 @@ def foo(x: int = Depends(dep)):
         assert v.is_framework_file is True
         assert 4 in v.framework_decorated_lines
 
+    def test_fastapi_annotated_depends_marks_dependency(self):
+        code = """
+from typing import Annotated
+from fastapi import Depends, FastAPI
+
+app = FastAPI()
+
+def common_parameters():
+    return {}
+
+@app.get("/items/")
+def read_items(commons: Annotated[dict, Depends(common_parameters)]):
+    return commons
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        assert v.func_defs["common_parameters"] in v.framework_decorated_lines
+
+    def test_fastapi_dependency_kwargs_mark_dependencies(self):
+        code = """
+from fastapi import APIRouter, Depends, FastAPI
+
+def global_dep():
+    return None
+
+def router_dep():
+    return None
+
+def include_dep():
+    return None
+
+def route_dep():
+    return None
+
+app = FastAPI(dependencies=[Depends(global_dep)])
+router = APIRouter(dependencies=[Depends(router_dep)])
+app.include_router(router, dependencies=[Depends(include_dep)])
+
+@router.get("/items/", dependencies=[Depends(route_dep)])
+def read_items():
+    return []
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.is_framework_file is True
+        for name in ("global_dep", "router_dep", "include_dep", "route_dep"):
+            assert v.func_defs[name] in v.framework_decorated_lines
+
+    def test_fastapi_dependency_alias_marks_only_when_used(self):
+        code = """
+from typing import Annotated
+from fastapi import Depends, FastAPI
+
+app = FastAPI()
+
+def used_dep():
+    return None
+
+def unused_dep():
+    return None
+
+UsedDep = Annotated[dict, Depends(used_dep)]
+UnusedDep = Annotated[dict, Depends(unused_dep)]
+
+@app.get("/items/")
+def read_items(commons: UsedDep):
+    return commons
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.func_defs["used_dep"] in v.framework_decorated_lines
+        assert v.func_defs["unused_dep"] not in v.framework_decorated_lines
+
+    def test_fastapi_dependency_alias_from_annassign_marks_only_when_used(self):
+        code = """
+from typing import Annotated, TypeAlias
+from fastapi import Depends, FastAPI
+
+app = FastAPI()
+
+def used_dep():
+    return None
+
+def unused_dep():
+    return None
+
+UsedDep: TypeAlias = Annotated[dict, Depends(used_dep)]
+UnusedDep: TypeAlias = Annotated[dict, Depends(unused_dep)]
+
+@app.get("/items/")
+def read_items(commons: UsedDep):
+    return commons
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.func_defs["used_dep"] in v.framework_decorated_lines
+        assert v.func_defs["unused_dep"] not in v.framework_decorated_lines
+
+    def test_fastapi_dependency_import_aliases_mark_dependencies(self):
+        code = """
+from typing_extensions import Annotated as A
+from fastapi import APIRouter as Router, Depends as Dep, FastAPI as App, Security as Sec
+
+app = App()
+router = Router()
+
+def app_dep():
+    return None
+
+def router_dep():
+    return None
+
+def security_dep():
+    return None
+
+def keyword_dep():
+    return None
+
+app = App(dependencies=[Dep(app_dep)])
+router = Router(dependencies=[Dep(router_dep)])
+
+@router.get("/items/")
+def read_items(
+    auth: A[dict, Sec(security_dep)],
+    item: A[dict, Dep(dependency=keyword_dep)],
+):
+    return item
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        for name in ("app_dep", "router_dep", "security_dep", "keyword_dep"):
+            assert v.func_defs[name] in v.framework_decorated_lines
+
+    def test_fastapi_class_dependency_shortcut_marks_class(self):
+        code = """
+from typing import Annotated
+from fastapi import Depends, FastAPI
+
+app = FastAPI()
+
+class CommonQueryParams:
+    def __init__(self):
+        pass
+
+@app.get("/items/")
+def read_items(commons: Annotated[CommonQueryParams, Depends()]):
+    return commons
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert (
+            v.class_defs["CommonQueryParams"].lineno in v.framework_decorated_lines
+        )
+
+    def test_fastapi_lifespan_and_constructor_callbacks_mark_handlers(self):
+        code = """
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+
+@asynccontextmanager
+async def lifespan(app):
+    yield
+
+def startup():
+    return None
+
+def shutdown():
+    return None
+
+def handle_error(request, exc):
+    return None
+
+app = FastAPI(
+    lifespan=lifespan,
+    on_startup=[startup],
+    on_shutdown=[shutdown],
+    exception_handlers={Exception: handle_error},
+)
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        for name in ("lifespan", "startup", "shutdown", "handle_error"):
+            assert v.func_defs[name] in v.framework_decorated_lines
+
+    def test_fastapi_imperative_websocket_and_exception_handlers_mark_callbacks(self):
+        code = """
+from fastapi import FastAPI
+
+app = FastAPI()
+
+async def websocket_endpoint(websocket):
+    pass
+
+async def unicorn_exception_handler(request, exc):
+    pass
+
+app.add_api_websocket_route("/ws", websocket_endpoint)
+app.add_exception_handler(Exception, unicorn_exception_handler)
+"""
+        tree = ast.parse(code)
+        v = FrameworkAwareVisitor()
+        v.visit(tree)
+        v.finalize()
+        assert v.func_defs["websocket_endpoint"] in v.framework_decorated_lines
+        assert v.func_defs["unicorn_exception_handler"] in v.framework_decorated_lines
+
     def test_typed_model_in_route_marks_model_definition(self):
         code = """
 from pydantic import BaseModel
