@@ -1,5 +1,21 @@
 ## Changelog
 
+## [4.28.0](https://github.com/duriantaco/skylos/compare/v4.27.0...v4.28.0) (2026-07-04)
+
+
+### Features
+
+* **ai-defect:** add AI hallucination contracts ([#618](https://github.com/duriantaco/skylos/issues/618)) ([6aa87d1](https://github.com/duriantaco/skylos/commit/6aa87d14cd27438615c19bec7bc3d6e0a6d0da1a))
+* **ai-defect:** harden AI code defect detection ([#623](https://github.com/duriantaco/skylos/issues/623)) ([2459ea2](https://github.com/duriantaco/skylos/commit/2459ea232568a793e636f2903cd46c8d8706e19e))
+
+
+### Bug Fixes
+
+* **analyzer:** improve fastapi framework liveness ([#622](https://github.com/duriantaco/skylos/issues/622)) ([5e172db](https://github.com/duriantaco/skylos/commit/5e172db3c1c1e34aa2846d542cdae25957a6f559))
+* **analyzer:** recognize django and gunicorn liveness ([#621](https://github.com/duriantaco/skylos/issues/621)) ([135677d](https://github.com/duriantaco/skylos/commit/135677df91645efc5274fc06947c7452fa341e16))
+* **scanner:** reduce go and java false positives ([#616](https://github.com/duriantaco/skylos/issues/616)) ([ef5b069](https://github.com/duriantaco/skylos/commit/ef5b0690ca602868e5b4f9ea39a80d5a578a705a))
+* **verify:** surface AI contract diff findings ([#620](https://github.com/duriantaco/skylos/issues/620)) ([b56d543](https://github.com/duriantaco/skylos/commit/b56d54328bfc73b5d8b2c05ff20c478ebcefc66e))
+
 ## [4.27.0](https://github.com/duriantaco/skylos/compare/v4.26.1...v4.27.0) (2026-06-29)
 
 
