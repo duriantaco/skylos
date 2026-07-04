@@ -381,23 +381,12 @@ class UnfinishedGenerationRule(SkylosRule):
             return None
 
         stmt = stmts[0]
-        marker = None
+        marker = _unfinished_generation_marker(stmt)
         marker_line = stmt.lineno
 
-        if isinstance(stmt, ast.Pass):
-            marker = "pass"
-        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
-            if stmt.value.value is ...:
-                marker = "..."
-        elif isinstance(stmt, ast.Raise):
-            exc = stmt.exc
-            if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
-                if exc.func.id == "NotImplementedError":
-                    marker = "NotImplementedError"
-            elif isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
-                marker = "NotImplementedError"
-
         if not marker:
+            return None
+        if _is_empty_collection_route_response(marker, node):
             return None
 
         return [
@@ -423,6 +412,145 @@ class UnfinishedGenerationRule(SkylosRule):
                 "ai_likelihood": "medium",
             }
         ]
+
+
+def _unfinished_generation_marker(stmt):
+    if isinstance(stmt, ast.Pass):
+        return "pass"
+
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+        if stmt.value.value is ...:
+            return "..."
+
+    if isinstance(stmt, ast.Raise):
+        exc = stmt.exc
+        if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
+            if exc.func.id == "NotImplementedError":
+                return "NotImplementedError"
+        elif isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
+            return "NotImplementedError"
+
+    if isinstance(stmt, ast.Return):
+        return _placeholder_return_marker(stmt.value)
+
+    return None
+
+
+def _is_empty_collection_route_response(
+    marker: str,
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    if marker not in {"return list", "return dict"}:
+        return False
+    return any(
+        _is_readonly_route_decorator(decorator)
+        and _decorator_has_response_contract(decorator)
+        for decorator in node.decorator_list
+    )
+
+
+def _is_readonly_route_decorator(decorator: ast.AST) -> bool:
+    name = _decorator_name(decorator)
+    method_name = name.rsplit(".", 1)[-1].lower()
+    if method_name == "get":
+        return True
+    if method_name not in {"route", "api_route"}:
+        return False
+    return _decorator_declares_only_get(decorator)
+
+
+def _decorator_declares_only_get(decorator: ast.AST) -> bool:
+    if not isinstance(decorator, ast.Call):
+        return False
+    methods: set[str] = set()
+    for keyword in decorator.keywords:
+        if keyword.arg == "methods":
+            methods.update(value.upper() for value in _string_values(keyword.value))
+    return bool(methods) and methods <= {"GET", "HEAD", "OPTIONS"}
+
+
+def _decorator_has_response_contract(decorator: ast.AST) -> bool:
+    if not isinstance(decorator, ast.Call):
+        return False
+    return any(
+        keyword.arg in {"response_model", "response_class"}
+        and not (
+            isinstance(keyword.value, ast.Constant) and keyword.value.value is None
+        )
+        for keyword in decorator.keywords
+    )
+
+
+def _decorator_name(decorator: ast.AST) -> str:
+    if isinstance(decorator, ast.Call):
+        return _dotted_name(decorator.func)
+    return _dotted_name(decorator)
+
+
+def _dotted_name(node: ast.AST | None) -> str:
+    if node is None:
+        return ""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_name(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    return ""
+
+
+def _string_values(node: ast.AST | None) -> list[str]:
+    if node is None:
+        return []
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        values: list[str] = []
+        for elt in node.elts:
+            values.extend(_string_values(elt))
+        return values
+    return []
+
+
+def _placeholder_return_marker(value):
+    if value is None:
+        return "return"
+
+    if isinstance(value, ast.Constant):
+        if value.value is None:
+            return "return None"
+        if value.value == "":
+            return 'return ""'
+
+    if isinstance(value, (ast.List, ast.Dict, ast.Set, ast.Tuple)):
+        if not _container_elements(value):
+            return f"return {type(value).__name__.lower()}"
+
+    if _is_empty_container_constructor(value):
+        return f"return {_empty_container_constructor_name(value)}"
+
+    return None
+
+
+def _is_empty_container_constructor(value):
+    return _empty_container_constructor_name(value) is not None
+
+
+def _empty_container_constructor_name(value):
+    if not isinstance(value, ast.Call):
+        return None
+    if value.args or value.keywords:
+        return None
+    if not isinstance(value.func, ast.Name):
+        return None
+    if value.func.id not in {"dict", "list", "set", "tuple"}:
+        return None
+    return value.func.id
+
+
+def _container_elements(node):
+    if isinstance(node, ast.Dict):
+        return node.keys or node.values
+    return getattr(node, "elts", [])
 
 
 class UndefinedConfigRule(SkylosRule):

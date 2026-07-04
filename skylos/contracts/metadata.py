@@ -53,6 +53,7 @@ def _contract_finding_match(
     if (
         rule_id == "SKY-D222"
         and contract.ai.dependencies.reject_nonexistent_packages
+        and _dependency_truth_state(finding) in {"", "missing_package"}
     ):
         package = _dependency_label(finding)
         return _ContractFindingMatch(
@@ -126,6 +127,13 @@ def _api_surface_match(
             "Contract rejects members absent from the installed API.",
         )
     return None
+
+
+def _dependency_truth_state(finding: dict[str, Any]) -> str:
+    metadata = finding.get("metadata")
+    if not isinstance(metadata, dict):
+        return ""
+    return str(metadata.get("dependency_truth_state", ""))
 
 
 def _dependency_label(finding: dict[str, Any]) -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from skylos.config import load_config
+from skylos.core.evidence_contract import attach_evidence_contract
 from skylos.reporting.architecture_result import attach_circular_and_architecture
 from skylos.reporting.dead_code_result import (
     dead_code_evidence,
@@ -210,7 +211,9 @@ def _attach_findings(
     if enable_danger and all_dangers:
         core_danger, ai_defects = _split_ai_defect_findings(all_dangers)
         if core_danger:
-            result["danger"] = core_danger
+            result["danger"] = [
+                attach_evidence_contract(finding) for finding in core_danger
+            ]
             summary["danger_count"] = len(core_danger)
         if enable_ai_defects:
             _append_ai_defects(result, ai_defects)
@@ -237,7 +240,7 @@ def _append_ai_defects(result, findings):
     if not findings:
         return
     ai_defects = result.setdefault("ai_defects", [])
-    ai_defects.extend(findings)
+    ai_defects.extend(attach_evidence_contract(finding) for finding in findings)
     result["analysis_summary"]["ai_defects_count"] = len(ai_defects)
 
 

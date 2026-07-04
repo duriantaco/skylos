@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from skylos.core.api_symbol_truth import (
+    SURFACE_KIND_PYTHON_MODULE,
+    cache_api_symbol_surface,
+)
+from skylos.core.python_api_surface import python_environment_key
 from skylos.rules.ai_defect.api_signature_hallucination import (
     RULE_ID_API_SIGNATURE,
     scan_python_api_signature_hallucinations,
@@ -102,6 +107,87 @@ def test_scan_allows_known_members_and_keywords(tmp_path, monkeypatch):
     )
 
     findings = _scan(repo, py_file)
+
+    assert findings == []
+
+
+def test_scan_allows_dynamic_getattr_and_kwargs_expansion(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    py_file = _write_py(
+        repo / "app.py",
+        "\n".join(
+            [
+                "import sampleapi",
+                "",
+                "def handler(payload):",
+                "    builder = getattr(sampleapi, 'make_user')",
+                "    builder(name='ada', **payload)",
+                "    sampleapi.make_user(**payload)",
+                "",
+            ]
+        ),
+    )
+
+    def surface_loader(_project_root, module_name):
+        assert module_name == "sampleapi"
+        return {
+            "members": {
+                "make_user": {
+                    "kind": "function",
+                    "parameters": [
+                        {"name": "name", "kind": "POSITIONAL_OR_KEYWORD"},
+                    ],
+                }
+            }
+        }
+
+    findings = scan_python_api_signature_hallucinations(
+        repo,
+        [py_file],
+        allowed_modules=("sampleapi",),
+        surface_loader=surface_loader,
+    )
+
+    assert findings == []
+
+
+def test_scan_allows_var_keyword_surface_parameters(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    py_file = _write_py(
+        repo / "app.py",
+        "\n".join(
+            [
+                "import sampleapi",
+                "",
+                "def handler():",
+                "    sampleapi.make_user(name='ada', imaginary=True)",
+                "",
+            ]
+        ),
+    )
+
+    def surface_loader(_project_root, module_name):
+        assert module_name == "sampleapi"
+        return {
+            "members": {
+                "make_user": {
+                    "kind": "function",
+                    "parameters": [
+                        {"name": "name", "kind": "POSITIONAL_OR_KEYWORD"},
+                        {"name": "kwargs", "kind": "VAR_KEYWORD"},
+                    ],
+                }
+            }
+        }
+
+    findings = scan_python_api_signature_hallucinations(
+        repo,
+        [py_file],
+        allowed_modules=("sampleapi",),
+        surface_loader=surface_loader,
+    )
 
     assert findings == []
 
@@ -237,6 +323,123 @@ def test_scan_default_allowlist_flags_openai_resource_method(tmp_path):
 
     assert len(findings) == 1
     assert findings[0]["symbol"] == "openai.OpenAI.responses.parse_json"
+
+
+def test_scan_uses_shared_python_api_truth_cache(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert cache_api_symbol_surface(
+        repo,
+        {
+            "kind": SURFACE_KIND_PYTHON_MODULE,
+            "name": "sampleapi",
+            "environment_key": python_environment_key(),
+            "members": {
+                "make_user": {
+                    "kind": "function",
+                    "parameters": [
+                        {"name": "name", "kind": "POSITIONAL_OR_KEYWORD"},
+                    ],
+                }
+            },
+        },
+    )
+    py_file = _write_py(
+        repo / "app.py",
+        "\n".join(
+            [
+                "import sampleapi",
+                "sampleapi.missing()",
+                "sampleapi.make_user(name='ada', imaginary=True)",
+                "",
+            ]
+        ),
+    )
+
+    findings = scan_python_api_signature_hallucinations(
+        repo,
+        [py_file],
+        allowed_modules=("sampleapi",),
+    )
+    messages = [finding["message"] for finding in findings]
+
+    assert len(findings) == 2
+    assert any("sampleapi.missing" in message for message in messages)
+    assert any("argument 'imaginary'" in message for message in messages)
+
+
+def test_scan_ignores_stale_shared_truth_and_falls_back_to_current_surface(
+    tmp_path,
+    monkeypatch,
+):
+    site_root = tmp_path / "site"
+    _write_sample_package(site_root)
+    monkeypatch.syspath_prepend(str(site_root))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert cache_api_symbol_surface(
+        repo,
+        {
+            "kind": SURFACE_KIND_PYTHON_MODULE,
+            "name": "sampleapi",
+            "environment_key": "stale",
+            "members": {
+                "make_user": {
+                    "kind": "function",
+                    "parameters": [
+                        {"name": "name", "kind": "POSITIONAL_OR_KEYWORD"},
+                        {"name": "imaginary", "kind": "KEYWORD_ONLY"},
+                    ],
+                }
+            },
+        },
+    )
+    py_file = _write_py(
+        repo / "app.py",
+        "import sampleapi\nsampleapi.make_user(name='ada', imaginary=True)\n",
+    )
+
+    findings = scan_python_api_signature_hallucinations(
+        repo,
+        [py_file],
+        allowed_modules=("sampleapi",),
+    )
+
+    assert len(findings) == 1
+    assert "argument 'imaginary'" in findings[0]["message"]
+
+
+def test_scan_rejects_malformed_shared_truth_and_falls_back_to_current_surface(
+    tmp_path,
+    monkeypatch,
+):
+    site_root = tmp_path / "site"
+    _write_sample_package(site_root)
+    monkeypatch.syspath_prepend(str(site_root))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert not cache_api_symbol_surface(
+        repo,
+        {
+            "kind": SURFACE_KIND_PYTHON_MODULE,
+            "name": "sampleapi",
+            "environment_key": python_environment_key(),
+            "members": {"make_user": ["bad"]},
+        },
+    )
+    py_file = _write_py(
+        repo / "app.py",
+        "import sampleapi\nsampleapi.make_user(name='ada', imaginary=True)\n",
+    )
+
+    findings = scan_python_api_signature_hallucinations(
+        repo,
+        [py_file],
+        allowed_modules=("sampleapi",),
+    )
+
+    assert len(findings) == 1
+    assert "argument 'imaginary'" in findings[0]["message"]
 
 
 def test_scan_skips_local_modules_named_like_allowlisted_package(

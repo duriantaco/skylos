@@ -3084,10 +3084,20 @@ class Skylos:
                     from skylos.rules.ai_defect.test_impact import (
                         detect_test_impact_gaps,
                     )
+                    from skylos.security.contracts import resolve_diff_base_ref
+
+                    diff_base = resolve_diff_base_ref(root)
+                    changed_file_diffs = {}
+                    for cf in changed_files:
+                        rel_cf = _relative_changed_file(root, cf)
+                        diff_text = _git_diff_for_changed_file(root, rel_cf, diff_base)
+                        if diff_text:
+                            changed_file_diffs[rel_cf] = diff_text
 
                     test_impact_findings = detect_test_impact_gaps(
                         root,
                         changed_files,
+                        changed_file_diffs=changed_file_diffs,
                     )
                     _extend_unsuppressed_ai_defect_findings(
                         test_impact_findings,

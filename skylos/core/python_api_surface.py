@@ -12,6 +12,10 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
 
+from skylos.core.api_symbol_truth import (
+    cache_api_symbol_surface,
+    python_module_api_symbol_surface,
+)
 from skylos.core.safe_cache_io import load_project_json_cache, save_project_json_cache
 
 
@@ -98,6 +102,12 @@ def cache_python_api_surface(
     modules[safe_name] = surface
     payload["modules"] = modules
     save_python_api_surface_cache(project_root, payload, cache_path=cache_path)
+    shared_surface = python_module_api_symbol_surface(
+        surface,
+        environment_key=python_environment_key(),
+    )
+    if shared_surface is not None:
+        cache_api_symbol_surface(project_root, shared_surface)
     return surface
 
 

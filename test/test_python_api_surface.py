@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from skylos.core.api_symbol_truth import (
+    SURFACE_KIND_PYTHON_MODULE,
+    cached_api_symbol_surface,
+)
 from skylos.core.python_api_surface import (
     build_python_api_surface,
     cache_python_api_surface,
     cached_python_api_surface,
     load_python_api_surface_cache,
+    python_environment_key,
     save_python_api_surface_cache,
 )
 
@@ -64,6 +69,28 @@ def test_cache_python_api_surface_records_functions_and_methods(tmp_path, monkey
     assert "timeout: int = 5" in client["methods"]["connect"]["signature"]
     assert _parameter_names(client["methods"]["connect"]) == ["self", "timeout"]
     assert "VALUE" not in members
+    shared = cached_api_symbol_surface(
+        project_root,
+        SURFACE_KIND_PYTHON_MODULE,
+        "sampleapi",
+        environment_key=python_environment_key(),
+    )
+    assert shared is not None
+    assert shared["members"]["make_user"]["kind"] == "function"
+    assert _parameter_names(shared["members"]["make_user"]) == ["name", "active"]
+    assert _parameter_names(shared["members"]["Client"]["methods"]["connect"]) == [
+        "self",
+        "timeout",
+    ]
+    assert (
+        cached_api_symbol_surface(
+            project_root,
+            SURFACE_KIND_PYTHON_MODULE,
+            "sampleapi",
+            environment_key="stale",
+        )
+        is None
+    )
 
 
 def test_python_api_surface_cache_invalidates_environment_key(tmp_path, monkeypatch):

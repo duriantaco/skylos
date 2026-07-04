@@ -194,6 +194,71 @@
       }
     },
     {
+      "id": "bad-test-expected-broadening",
+      "path": "fixtures/bad_test_expected_broadening",
+      "description": "Generated test edit replaces a specific expected value with a broad ANY matcher.",
+      "taxonomy": ["assertion_weakening"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for expected-value weakening in tests."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "file": "tests/test_auth.py",
+        "git_baseline": {
+          "tests/test_auth.py": "from unittest.mock import ANY\n\n\ndef response_role():\n    return \"admin\"\n\n\ndef test_admin_role_is_exact():\n    assert response_role() == \"admin\"\n"
+        }
+      },
+      "expect": {
+        "finding_count": 1,
+        "present": [
+          {
+            "rule_id": "SKY-A101",
+            "vibe_category": "assertion_weakening",
+            "category": "ai_defect",
+            "severity": "MEDIUM",
+            "message_contains": "expected value",
+            "file_contains": "tests/test_auth.py",
+            "start_line": 9
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "clean-test-expected-change",
+      "path": "fixtures/clean_test_expected_change",
+      "description": "A test keeps an exact expected value while the fixture value changes.",
+      "taxonomy": ["assertion_weakening", "precision_guard"],
+      "importance": "medium",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic precision guard for exact expected-value changes."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "file": "tests/test_auth.py",
+        "git_baseline": {
+          "tests/test_auth.py": "def response_role():\n    return \"pending_admin\"\n\n\ndef test_admin_role_is_exact():\n    assert response_role() == \"pending_admin\"\n"
+        }
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-A101",
+            "vibe_category": "assertion_weakening"
+          }
+        ]
+      }
+    },
+    {
       "id": "incomplete-generation",
       "path": "fixtures/incomplete_generation",
       "description": "Generated business function is left as a pass-body stub.",
@@ -344,7 +409,12 @@
           {
             "rule_id": "SKY-D222",
             "vibe_category": "dependency_hallucination",
-            "message_contains": "skylos-ai-ghost-sdk"
+            "message_contains": "skylos-ai-ghost-sdk",
+            "metadata": {
+              "dependency_truth_state": "missing_package",
+              "dependency_truth_source": "registry",
+              "dependency_source": "manifest"
+            }
           }
         ],
         "absent": []
@@ -519,6 +589,275 @@
           }
         ],
         "absent": []
+      }
+    },
+    {
+      "id": "repo-level-security-regression",
+      "path": "fixtures/repo_level_security_regression",
+      "description": "Generated repo-level edit introduces string-built SQL and unsafe pickle deserialization.",
+      "taxonomy": ["security_regression"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic static fixture for repo-level AI-code-security benchmark coverage."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "security_findings": true
+      },
+      "expect": {
+        "finding_count": 2,
+        "present": [
+          {
+            "rule_id": "SKY-D205",
+            "category": "security",
+            "severity": "CRITICAL",
+            "message_contains": "pickle.loads",
+            "file_contains": "app.py",
+            "start_line": 12
+          },
+          {
+            "rule_id": "SKY-D211",
+            "category": "security",
+            "severity": "CRITICAL",
+            "message_contains": "SQL injection",
+            "file_contains": "app.py",
+            "start_line": 8
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "slopsquat-dependency",
+      "path": "fixtures/slopsquat_dependency",
+      "description": "Generated requirements file pins a suspicious existing near-miss of a popular package.",
+      "taxonomy": ["dependency_hallucination"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic static fixture for slopsquat/lookalike dependency hallucination coverage."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "dependency_hallucinations": true,
+        "dependency_statuses": [
+          {
+            "ecosystem": "PyPI",
+            "name": "reqeusts",
+            "version": "1.0.0",
+            "status": "present"
+          },
+          {
+            "ecosystem": "PyPI",
+            "name": "requests",
+            "version": "2.31.0",
+            "status": "present"
+          }
+        ]
+      },
+      "expect": {
+        "finding_count": 1,
+        "present": [
+          {
+            "rule_id": "SKY-D222",
+            "vibe_category": "dependency_hallucination",
+            "category": "ai_defect",
+            "severity": "HIGH",
+            "message_contains": "reqeusts",
+            "metadata": {
+              "dependency_truth_state": "suspicious_existing",
+              "dependency_truth_source": "registry+lookalike",
+              "dependency_source": "manifest"
+            }
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "disabled-security-control",
+      "path": "fixtures/disabled_security_control",
+      "description": "Generated integration disables TLS verification while calling an external service.",
+      "taxonomy": ["security_regression", "incomplete_generation"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic fixture for generated code that weakens an important security control."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "finding_count": 1,
+        "present": [
+          {
+            "rule_id": "SKY-L011",
+            "vibe_category": "disabled_security_control",
+            "category": "quality",
+            "severity": "HIGH",
+            "message_contains": "TLS verification disabled",
+            "file_contains": "app.py",
+            "start_line": 5
+          }
+        ],
+        "absent": [
+          {
+            "rule_id": "SKY-L031",
+            "vibe_category": "missing_resilience_control"
+          }
+        ]
+      }
+    },
+    {
+      "id": "missing-auth-route",
+      "path": "fixtures/missing_auth_route",
+      "description": "Generated mutating FastAPI route has no auth, permission, or security dependency guard.",
+      "taxonomy": ["security_regression"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic static fixture for missing authorization in generated route handlers."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "finding_count": 1,
+        "present": [
+          {
+            "rule_id": "SKY-F102",
+            "vibe_category": "missing_auth_guard",
+            "category": "quality",
+            "severity": "MEDIUM",
+            "message_contains": "no obvious auth",
+            "file_contains": "app.py",
+            "start_line": 7
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "clean-auth-route",
+      "path": "fixtures/clean_auth_route",
+      "description": "Generated mutating FastAPI route uses an explicit admin dependency guard.",
+      "taxonomy": ["security_regression", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic precision guard for authenticated route handlers."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-F102",
+            "vibe_category": "missing_auth_guard"
+          }
+        ]
+      }
+    },
+    {
+      "id": "async-swallowed-error",
+      "path": "fixtures/async_swallowed_error",
+      "description": "Generated async integration swallows broad exceptions and returns None.",
+      "taxonomy": ["incomplete_generation", "security_regression"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic static fixture for async error handling failures in generated code."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "finding_count": 1,
+        "present": [
+          {
+            "rule_id": "SKY-L030",
+            "vibe_category": "swallowed_error",
+            "category": "quality",
+            "severity": "MEDIUM",
+            "message_contains": "broad 'Exception'",
+            "file_contains": "app.py",
+            "start_line": 4
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "clean-async-error-handling",
+      "path": "fixtures/clean_async_error_handling",
+      "description": "Generated async integration re-raises a narrow timeout instead of swallowing errors.",
+      "taxonomy": ["incomplete_generation", "precision_guard"],
+      "importance": "medium",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic precision guard for async error handling."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L030",
+            "vibe_category": "swallowed_error"
+          }
+        ]
+      }
+    },
+    {
+      "id": "clean-repo-level-security",
+      "path": "fixtures/clean_repo_level_security",
+      "description": "Clean repo-level security edit uses parameterized SQL and JSON parsing.",
+      "taxonomy": ["security_regression", "precision_guard"],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic precision guard for repo-level security benchmark coverage."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "security_findings": true
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-D205",
+            "category": "security"
+          },
+          {
+            "rule_id": "SKY-D211",
+            "category": "security"
+          }
+        ]
       }
     },
     {
@@ -901,6 +1240,36 @@
         "repo": "https://github.com/duriantaco/skylos",
         "license": "MIT",
         "notes": "Synthetic clean fixture for API-signature precision."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true,
+        "dependency_hallucinations": true
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-D224",
+            "vibe_category": "api_signature_hallucination"
+          }
+        ]
+      }
+    },
+    {
+      "id": "clean-dynamic-api-surface",
+      "path": "fixtures/clean_dynamic_api_surface",
+      "description": "Generated code uses dynamic access and keyword expansion around real installed package APIs without inventing members.",
+      "taxonomy": [
+        "api_signature_hallucination",
+        "precision_guard"
+      ],
+      "importance": "high",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic clean fixture for safe dynamic API-surface precision."
       },
       "scan": {
         "confidence": 60,
