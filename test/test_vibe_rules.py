@@ -2083,6 +2083,20 @@ class TestUnfinishedGeneration:
         assert l026
         assert any(f["value"] == marker for f in l026)
 
+    def test_empty_collection_fastapi_get_with_response_contract_not_flagged(self):
+        code = """
+        from fastapi import APIRouter
+
+        router = APIRouter()
+
+        @router.get("/users", response_model=list[str])
+        def list_users() -> list[str]:
+            return []
+        """
+        findings = check_code(UnfinishedGenerationRule(), code, filename="app.py")
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert len(l026) == 0
+
     def test_real_logic_with_none_fallback_not_flagged(self):
         code = """
         def find_user(users, target):

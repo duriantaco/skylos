@@ -386,6 +386,8 @@ class UnfinishedGenerationRule(SkylosRule):
 
         if not marker:
             return None
+        if _is_empty_collection_route_response(marker, node):
+            return None
 
         return [
             {
@@ -432,6 +434,81 @@ def _unfinished_generation_marker(stmt):
         return _placeholder_return_marker(stmt.value)
 
     return None
+
+
+def _is_empty_collection_route_response(
+    marker: str,
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    if marker not in {"return list", "return dict"}:
+        return False
+    return any(
+        _is_readonly_route_decorator(decorator)
+        and _decorator_has_response_contract(decorator)
+        for decorator in node.decorator_list
+    )
+
+
+def _is_readonly_route_decorator(decorator: ast.AST) -> bool:
+    name = _decorator_name(decorator)
+    method_name = name.rsplit(".", 1)[-1].lower()
+    if method_name == "get":
+        return True
+    if method_name not in {"route", "api_route"}:
+        return False
+    return _decorator_declares_only_get(decorator)
+
+
+def _decorator_declares_only_get(decorator: ast.AST) -> bool:
+    if not isinstance(decorator, ast.Call):
+        return False
+    methods: set[str] = set()
+    for keyword in decorator.keywords:
+        if keyword.arg == "methods":
+            methods.update(value.upper() for value in _string_values(keyword.value))
+    return bool(methods) and methods <= {"GET", "HEAD", "OPTIONS"}
+
+
+def _decorator_has_response_contract(decorator: ast.AST) -> bool:
+    if not isinstance(decorator, ast.Call):
+        return False
+    return any(
+        keyword.arg in {"response_model", "response_class"}
+        and not (
+            isinstance(keyword.value, ast.Constant) and keyword.value.value is None
+        )
+        for keyword in decorator.keywords
+    )
+
+
+def _decorator_name(decorator: ast.AST) -> str:
+    if isinstance(decorator, ast.Call):
+        return _dotted_name(decorator.func)
+    return _dotted_name(decorator)
+
+
+def _dotted_name(node: ast.AST | None) -> str:
+    if node is None:
+        return ""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_name(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    return ""
+
+
+def _string_values(node: ast.AST | None) -> list[str]:
+    if node is None:
+        return []
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        values: list[str] = []
+        for elt in node.elts:
+            values.extend(_string_values(elt))
+        return values
+    return []
 
 
 def _placeholder_return_marker(value):
