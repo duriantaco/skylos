@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from skylos.contracts import contract_finding_metadata
+from skylos.core.evidence_contract import finding_evidence_contract
 
 
 SCHEMA_VERSION = 1
@@ -20,6 +21,8 @@ AI_VIBE_CATEGORIES = {
     "ci_permission_expansion",
     "dependency_hallucination",
     "disabled_security_control",
+    "missing_auth_guard",
+    "swallowed_error",
     "test_impact_gap",
     "missing_contract_guardrail",
     "public_api_surface_drift",
@@ -31,6 +34,8 @@ AI_RULE_DEFAULTS = {
     "SKY-A103": ("ci_permission_expansion", "high"),
     "SKY-A104": ("public_api_surface_drift", "medium"),
     "SKY-A105": ("missing_contract_guardrail", "high"),
+    "SKY-F102": ("missing_auth_guard", "medium"),
+    "SKY-L030": ("swallowed_error", "medium"),
     "SKY-L012": ("hallucinated_reference", "high"),
     "SKY-L011": ("disabled_security_control", "medium"),
     "SKY-D222": ("dependency_hallucination", "high"),
@@ -55,6 +60,12 @@ SUGGESTED_FIX_BY_VIBE = {
     "stale_reference": "Update the reference to the renamed symbol or remove it.",
     "missing_resilience_control": "Add the missing timeout or resilience control.",
     "disabled_security_control": "Re-enable the security control or remove the bypass.",
+    "missing_auth_guard": (
+        "Add an auth, permission, security dependency, or route guard."
+    ),
+    "swallowed_error": (
+        "Narrow the exception type and log, handle, or re-raise the failure."
+    ),
     "dependency_hallucination": (
         "Remove the hallucinated dependency or replace it with a real package."
     ),
@@ -108,12 +119,16 @@ def build_verify_change_response(
     line_range: str | tuple[int, int] | None = None,
     scan_target: str | Path | None = None,
     contract: Any | None = None,
+    include_security_findings: bool = False,
 ) -> dict[str, Any]:
     root = _project_root(project_root)
     parsed_range = _coerce_line_range(line_range)
     findings: list[dict[str, Any]] = []
 
-    for finding, category in _iter_ai_findings(analysis_result):
+    for finding, category in _iter_ai_findings(
+        analysis_result,
+        include_security_findings=include_security_findings,
+    ):
         if not _matches_target(finding, root, target_file):
             continue
         if not _matches_line_range(finding, parsed_range):
@@ -147,10 +162,16 @@ def build_verify_change_response(
 
 def _iter_ai_findings(
     analysis_result: dict[str, Any],
+    *,
+    include_security_findings: bool = False,
 ) -> Iterator[tuple[dict[str, Any], str]]:
     for section, category in FINDING_SECTIONS:
         for finding in _section_findings(analysis_result, section):
-            if _is_ai_finding(finding):
+            if _is_ai_finding(finding) or (
+                include_security_findings
+                and category == "security"
+                and _is_security_finding(finding)
+            ):
                 yield finding, category
 
 
@@ -161,6 +182,14 @@ def _is_ai_finding(finding: dict[str, Any]) -> bool:
 
     rule_id = str(_finding_value(finding, ("rule_id", "rule"), ""))
     return rule_id in AI_RULE_DEFAULTS
+
+
+def _is_security_finding(finding: dict[str, Any]) -> bool:
+    rule_id = str(_finding_value(finding, ("rule_id", "rule"), "")).strip()
+    if not rule_id.startswith("SKY-D"):
+        return False
+    severity = str(_finding_value(finding, ("severity",), "")).strip().upper()
+    return severity in {"HIGH", "CRITICAL"}
 
 
 def _normalize_finding(
@@ -190,6 +219,12 @@ def _normalize_finding(
         "severity": severity,
         "category": category,
     }
+    metadata = finding.get("metadata")
+    if isinstance(metadata, dict):
+        normalized["metadata"] = dict(metadata)
+    evidence_contract = finding_evidence_contract(finding)
+    if evidence_contract is not None:
+        normalized["evidence_contract"] = evidence_contract
     normalized.update(contract_finding_metadata(contract, finding))
     return normalized
 

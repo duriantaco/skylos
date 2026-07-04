@@ -57,6 +57,75 @@ def test_build_verify_change_response_filters_to_ai_findings(tmp_path):
     assert finding["suggested_fix"]
 
 
+def test_build_verify_change_response_preserves_finding_metadata(tmp_path):
+    manifest = tmp_path / "package.json"
+    manifest.write_text('{"dependencies": {"ghost": "1.0.0"}}\n')
+    result = {
+        "ai_defects": [
+            {
+                "rule_id": "SKY-D222",
+                "vibe_category": "dependency_hallucination",
+                "ai_likelihood": "high",
+                "severity": "CRITICAL",
+                "file": str(manifest),
+                "line": 1,
+                "message": "Hallucinated dependency.",
+                "metadata": {
+                    "dependency_truth_state": "missing_package",
+                    "dependency_source": "manifest",
+                },
+            },
+        ],
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    assert payload["findings"][0]["metadata"] == {
+        "dependency_truth_state": "missing_package",
+        "dependency_source": "manifest",
+    }
+
+
+def test_build_verify_change_response_attaches_evidence_contract(tmp_path):
+    manifest = tmp_path / "package.json"
+    manifest.write_text('{"dependencies": {"ghost": "1.0.0"}}\n')
+    result = {
+        "ai_defects": [
+            {
+                "rule_id": "SKY-D222",
+                "vibe_category": "dependency_hallucination",
+                "ai_likelihood": "high",
+                "severity": "CRITICAL",
+                "file": str(manifest),
+                "line": 1,
+                "message": "Hallucinated dependency.",
+                "metadata": {
+                    "evidence_contract": {
+                        "proof_state": "unknown",
+                        "source": "package manifest",
+                        "sink": "dependency installer",
+                        "symbol": "ghost@1.0.0",
+                        "trace": "package.json:1",
+                    }
+                },
+            },
+        ],
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    contract = payload["findings"][0]["evidence_contract"]
+    assert contract["proof_state"] == "incomplete"
+    assert contract["sources"] == ["package manifest"]
+    assert contract["sinks"] == ["dependency installer"]
+    assert "ghost@1.0.0" in contract["symbols"]
+    assert "package.json:1" in contract["traces"]
+    assert any(
+        "must not be treated as verified" in limitation
+        for limitation in contract["limitations"]
+    )
+
+
 def test_build_verify_change_response_keeps_diff_backed_ai_rules(tmp_path):
     app = tmp_path / ".github" / "workflows" / "ci.yml"
     app.parent.mkdir(parents=True)
@@ -307,6 +376,45 @@ def test_build_verify_change_response_skips_unmatched_contract_metadata(tmp_path
     assert "contract_clause" not in payload["findings"][0]
 
 
+def test_build_verify_change_response_skips_suspicious_dependency_contract_metadata(
+    tmp_path,
+):
+    app = tmp_path / "app.py"
+    app.write_text("pass\n", encoding="utf-8")
+    contract_file = tmp_path / "ai-contract.yml"
+    contract_file.write_text(
+        "version: 1\n"
+        "ai:\n"
+        "  dependencies:\n"
+        "    reject_nonexistent_packages: true\n",
+        encoding="utf-8",
+    )
+    contract = load_contract(contract_file)
+
+    payload = build_verify_change_response(
+        {
+            "ai_defects": [
+                {
+                    "rule_id": "SKY-D222",
+                    "severity": "HIGH",
+                    "file": str(app),
+                    "line": 1,
+                    "message": "Suspicious existing PyPI dependency.",
+                    "metadata": {
+                        "package_name": "reqeusts",
+                        "package_version": "1.0.0",
+                        "dependency_truth_state": "suspicious_existing",
+                    },
+                }
+            ]
+        },
+        project_root=tmp_path,
+        contract=contract,
+    )
+
+    assert "contract_clause" not in payload["findings"][0]
+
+
 def test_build_verify_change_response_skips_dependency_import_defaults(tmp_path):
     app = tmp_path / "app.py"
     app.write_text("import requests\n", encoding="utf-8")
@@ -325,6 +433,94 @@ def test_build_verify_change_response_skips_dependency_import_defaults(tmp_path)
     payload = build_verify_change_response(result, project_root=tmp_path)
 
     assert payload["findings"] == []
+
+
+def test_build_verify_change_response_includes_security_only_when_requested(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("pickle.loads(request.data)\n", encoding="utf-8")
+    result = {
+        "danger": [
+            {
+                "rule_id": "SKY-D205",
+                "severity": "CRITICAL",
+                "file": str(app),
+                "line": 1,
+                "message": "Untrusted deserialization via pickle.loads",
+            }
+        ]
+    }
+
+    default_payload = build_verify_change_response(result, project_root=tmp_path)
+    security_payload = build_verify_change_response(
+        result,
+        project_root=tmp_path,
+        include_security_findings=True,
+    )
+
+    assert default_payload["findings"] == []
+    assert security_payload["findings"][0]["rule_id"] == "SKY-D205"
+    assert security_payload["findings"][0]["category"] == "security"
+    assert security_payload["findings"][0]["severity"] == "CRITICAL"
+
+
+def test_build_verify_change_response_includes_missing_auth_and_swallowed_errors(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("pass\n", encoding="utf-8")
+    result = {
+        "quality": [
+            {
+                "rule_id": "SKY-F102",
+                "severity": "MEDIUM",
+                "file": str(app),
+                "line": 4,
+                "message": "Mutating route has no obvious auth guard.",
+            },
+            {
+                "rule_id": "SKY-L030",
+                "severity": "MEDIUM",
+                "file": str(app),
+                "line": 9,
+                "message": "Catching broad 'Exception' with a trivial handler.",
+            },
+        ]
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    rule_ids = [finding["rule_id"] for finding in payload["findings"]]
+    assert rule_ids == ["SKY-F102", "SKY-L030"]
+    assert payload["findings"][0]["vibe_category"] == "missing_auth_guard"
+    assert payload["findings"][1]["vibe_category"] == "swallowed_error"
+
+
+def test_build_verify_change_response_includes_missing_auth_and_swallowed_vibes(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("pass\n", encoding="utf-8")
+    result = {
+        "quality": [
+            {
+                "rule_id": "CUSTOM-AUTH",
+                "vibe_category": "missing_auth_guard",
+                "severity": "MEDIUM",
+                "file": str(app),
+                "line": 4,
+                "message": "Mutating route has no obvious auth guard.",
+            },
+            {
+                "rule_id": "CUSTOM-ASYNC",
+                "vibe_category": "swallowed_error",
+                "severity": "MEDIUM",
+                "file": str(app),
+                "line": 9,
+                "message": "Catching broad 'Exception' with a trivial handler.",
+            },
+        ]
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    rule_ids = [finding["rule_id"] for finding in payload["findings"]]
+    assert rule_ids == ["CUSTOM-AUTH", "CUSTOM-ASYNC"]
 
 
 def test_build_verify_change_response_filters_target_file_and_range(tmp_path):
@@ -435,6 +631,42 @@ def test_verify_change_path_can_include_dependency_hallucinations(tmp_path):
     assert seen["kwargs"]["enable_ai_defects"] is True
     assert seen["kwargs"]["enable_dependency_hallucinations"] is True
     assert seen["kwargs"]["enable_danger"] is False
+    assert seen["kwargs"]["changed_files"] == [str(app)]
+
+
+def test_verify_change_path_can_include_security_findings(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("pickle.loads(request.data)\n", encoding="utf-8")
+    seen = {}
+
+    def fake_analyze(*_args, **kwargs):
+        seen["kwargs"] = kwargs
+        return json.dumps(
+            {
+                "danger": [
+                    {
+                        "rule_id": "SKY-D205",
+                        "severity": "CRITICAL",
+                        "file": str(app),
+                        "line": 1,
+                        "message": "Untrusted deserialization via pickle.loads",
+                    }
+                ]
+            }
+        )
+
+    payload = verify_change_path(
+        app,
+        include_security_findings=True,
+        analyze_func=fake_analyze,
+    )
+
+    assert payload["status"] == "fail"
+    assert payload["findings"][0]["rule_id"] == "SKY-D205"
+    assert payload["findings"][0]["category"] == "security"
+    assert seen["kwargs"]["enable_ai_defects"] is True
+    assert seen["kwargs"]["enable_dependency_hallucinations"] is False
+    assert seen["kwargs"]["enable_danger"] is True
     assert seen["kwargs"]["changed_files"] == [str(app)]
 
 

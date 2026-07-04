@@ -1,6 +1,8 @@
 import os
 import json
 
+from skylos.core.evidence_contract import finding_evidence_contract
+
 
 def severity_to_sarif_level(severity):
     severity_text = (severity or "").upper()
@@ -166,6 +168,10 @@ class SarifExporter:
             metadata = finding.get("metadata")
             if isinstance(metadata, dict) and metadata:
                 properties["skylos_metadata"] = metadata
+
+            evidence_contract = finding_evidence_contract(finding)
+            if evidence_contract is not None:
+                properties["skylos_evidence_contract"] = evidence_contract
 
             result_obj = {
                 "ruleId": rule_id,

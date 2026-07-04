@@ -35,6 +35,7 @@ def verify_change_path(
     exclude_folders: list[str] | None = None,
     project_context: bool = False,
     include_dependency_hallucinations: bool = False,
+    include_security_findings: bool = False,
     contract_path: str | Path | None = None,
     contract_enabled: bool = True,
     analyze_func=None,
@@ -71,6 +72,7 @@ def verify_change_path(
         confidence=confidence,
         exclude_folders=exclude_folders,
         include_dependency_hallucinations=include_deps,
+        include_security_findings=include_security_findings,
         changed_files=changed_files,
         project_config_overrides=contract_project_config_overrides(contract),
     )
@@ -90,6 +92,7 @@ def verify_change_path(
         line_range=line_range,
         scan_target=scan_target,
         contract=contract,
+        include_security_findings=include_security_findings,
     )
 
 
@@ -145,6 +148,7 @@ def _analysis_options(
     confidence: int,
     exclude_folders: list[str] | None,
     include_dependency_hallucinations: bool,
+    include_security_findings: bool,
     changed_files: list[str] | None,
     project_config_overrides: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -152,7 +156,7 @@ def _analysis_options(
         "conf": confidence,
         "exclude_folders": exclude_folders,
         "enable_quality": True,
-        "enable_danger": False,
+        "enable_danger": include_security_findings,
         "enable_ai_defects": True,
         "enable_dependency_hallucinations": include_dependency_hallucinations,
         "enable_secrets": False,

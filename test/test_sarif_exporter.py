@@ -190,3 +190,33 @@ def test_results_include_skylos_metadata_when_present():
         "missing_guards": ["require_admin"],
         "path": ["request", "handler", "response"],
     }
+
+
+def test_results_include_skylos_evidence_contract_for_high_impact_findings():
+    findings = [
+        {
+            "rule_id": "SKY-D212",
+            "severity": "HIGH",
+            "message": "Possible command injection",
+            "file_path": "app/routes.py",
+            "line_number": 27,
+            "category": "SECURITY",
+            "metadata": {
+                "security_evidence": {
+                    "source": "request.args['cmd']",
+                    "sink": "subprocess.run",
+                    "path": ["handler", "subprocess.run"],
+                }
+            },
+        }
+    ]
+
+    sarif = SarifExporter(findings).generate()
+    contract = sarif["runs"][0]["results"][0]["properties"][
+        "skylos_evidence_contract"
+    ]
+
+    assert contract["proof_state"] == "candidate"
+    assert contract["sources"] == ["request.args['cmd']"]
+    assert contract["sinks"] == ["subprocess.run"]
+    assert contract["traces"] == ["app/routes.py:27", "handler", "subprocess.run"]
