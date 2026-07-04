@@ -653,12 +653,27 @@ def _handler_body_is_trivial(body):
             ):
                 continue
         if isinstance(stmt, ast.Return):
-            if stmt.value is None:
-                continue
-            if isinstance(stmt.value, ast.Constant) and stmt.value.value is None:
+            if _return_value_is_trivial_placeholder(stmt.value):
                 continue
         return False
     return True
+
+
+def _return_value_is_trivial_placeholder(value):
+    if value is None:
+        return True
+    if isinstance(value, ast.Constant):
+        return value.value is None or value.value == ""
+    if isinstance(value, (ast.List, ast.Dict, ast.Set, ast.Tuple)):
+        if isinstance(value, ast.Dict):
+            return not value.keys and not value.values
+        return not value.elts
+    if isinstance(value, ast.Call):
+        if value.args or value.keywords:
+            return False
+        if isinstance(value.func, ast.Name):
+            return value.func.id in {"dict", "list", "set", "tuple"}
+    return False
 
 
 def _handler_has_real_work(body):

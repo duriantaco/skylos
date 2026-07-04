@@ -381,21 +381,8 @@ class UnfinishedGenerationRule(SkylosRule):
             return None
 
         stmt = stmts[0]
-        marker = None
+        marker = _unfinished_generation_marker(stmt)
         marker_line = stmt.lineno
-
-        if isinstance(stmt, ast.Pass):
-            marker = "pass"
-        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
-            if stmt.value.value is ...:
-                marker = "..."
-        elif isinstance(stmt, ast.Raise):
-            exc = stmt.exc
-            if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
-                if exc.func.id == "NotImplementedError":
-                    marker = "NotImplementedError"
-            elif isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
-                marker = "NotImplementedError"
 
         if not marker:
             return None
@@ -423,6 +410,70 @@ class UnfinishedGenerationRule(SkylosRule):
                 "ai_likelihood": "medium",
             }
         ]
+
+
+def _unfinished_generation_marker(stmt):
+    if isinstance(stmt, ast.Pass):
+        return "pass"
+
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+        if stmt.value.value is ...:
+            return "..."
+
+    if isinstance(stmt, ast.Raise):
+        exc = stmt.exc
+        if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
+            if exc.func.id == "NotImplementedError":
+                return "NotImplementedError"
+        elif isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
+            return "NotImplementedError"
+
+    if isinstance(stmt, ast.Return):
+        return _placeholder_return_marker(stmt.value)
+
+    return None
+
+
+def _placeholder_return_marker(value):
+    if value is None:
+        return "return"
+
+    if isinstance(value, ast.Constant):
+        if value.value is None:
+            return "return None"
+        if value.value == "":
+            return 'return ""'
+
+    if isinstance(value, (ast.List, ast.Dict, ast.Set, ast.Tuple)):
+        if not _container_elements(value):
+            return f"return {type(value).__name__.lower()}"
+
+    if _is_empty_container_constructor(value):
+        return f"return {_empty_container_constructor_name(value)}"
+
+    return None
+
+
+def _is_empty_container_constructor(value):
+    return _empty_container_constructor_name(value) is not None
+
+
+def _empty_container_constructor_name(value):
+    if not isinstance(value, ast.Call):
+        return None
+    if value.args or value.keywords:
+        return None
+    if not isinstance(value.func, ast.Name):
+        return None
+    if value.func.id not in {"dict", "list", "set", "tuple"}:
+        return None
+    return value.func.id
+
+
+def _container_elements(node):
+    if isinstance(node, ast.Dict):
+        return node.keys or node.values
+    return getattr(node, "elts", [])
 
 
 class UndefinedConfigRule(SkylosRule):

@@ -319,6 +319,19 @@ def foo():
         findings = check_code(rule, code)
         assert len(findings) == 1
 
+    def test_exception_return_empty_constructor(self):
+        code = """
+def foo():
+    try:
+        pass
+    except Exception:
+        return dict()
+"""
+        rule = BroadExceptionRule()
+        findings = check_code(rule, code)
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "SKY-L030"
+
     def test_base_exception_pass(self):
         code = """
 try:

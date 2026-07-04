@@ -150,6 +150,39 @@ class TestEmptyErrorHandlerFindings:
                 None,
                 id="suppress-base-exception",
             ),
+            pytest.param(
+                """
+                def parse(raw):
+                    try:
+                        return parse_payload(raw)
+                    except Exception:
+                        return {}
+                """,
+                "HIGH",
+                id="broad-except-empty-dict-return",
+            ),
+            pytest.param(
+                """
+                def parse(raw):
+                    try:
+                        return parse_payload(raw)
+                    except Exception:
+                        return ""
+                """,
+                "HIGH",
+                id="broad-except-empty-string-return",
+            ),
+            pytest.param(
+                """
+                def parse(raw):
+                    try:
+                        return parse_payload(raw)
+                    except Exception:
+                        return dict()
+                """,
+                "HIGH",
+                id="broad-except-dict-constructor-return",
+            ),
         ],
     )
     def test_swallowing_handlers_are_flagged(self, code, expected_severity):
@@ -227,6 +260,16 @@ class TestEmptyErrorHandlerSafeCases:
                         return None
                 """,
                 id="narrow-return-none-fallback",
+            ),
+            pytest.param(
+                """
+                def parse_json(raw):
+                    try:
+                        return json.loads(raw)
+                    except ValueError:
+                        return {}
+                """,
+                id="narrow-return-empty-dict-fallback",
             ),
             pytest.param(
                 """
@@ -2018,6 +2061,50 @@ class TestUnfinishedGeneration:
         """
         findings = check_code(UnfinishedGenerationRule(), code)
         assert any(f["rule_id"] == "SKY-L026" for f in findings)
+
+    @pytest.mark.parametrize(
+        ("body", "marker"),
+        [
+            ("return None", "return None"),
+            ("return ''", 'return ""'),
+            ("return []", "return list"),
+            ("return {}", "return dict"),
+            ("return dict()", "return dict"),
+            ("return list()", "return list"),
+        ],
+    )
+    def test_placeholder_return_body_flagged(self, body, marker):
+        code = f"""
+        def build_invoice_payload(order):
+            {body}
+        """
+        findings = check_code(UnfinishedGenerationRule(), code, filename="app.py")
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert l026
+        assert any(f["value"] == marker for f in l026)
+
+    def test_real_logic_with_none_fallback_not_flagged(self):
+        code = """
+        def find_user(users, target):
+            for user in users:
+                if user.id == target:
+                    return user
+            return None
+        """
+        findings = check_code(UnfinishedGenerationRule(), code, filename="app.py")
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert len(l026) == 0
+
+    def test_placeholder_return_test_file_not_flagged(self):
+        code = """
+        def helper():
+            return None
+        """
+        findings = check_code(
+            UnfinishedGenerationRule(), code, filename="test_helpers.py"
+        )
+        l026 = [f for f in findings if f["rule_id"] == "SKY-L026"]
+        assert len(l026) == 0
 
 
 class TestUndefinedConfig:
