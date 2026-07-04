@@ -30,6 +30,8 @@ EXPECTED_CASE_IDS = {
     "range-scoped-mixed-edit",
     "file-scoped-multi-module",
     "assertion-weakening",
+    "bad-test-expected-broadening",
+    "clean-test-expected-change",
     "incomplete-generation",
     "unfinished-generated-class",
     "api-signature-hallucination",
@@ -37,6 +39,14 @@ EXPECTED_CASE_IDS = {
     "dependency-package-hallucination",
     "compound-ai-failure-edit",
     "compound-api-range-scope",
+    "repo-level-security-regression",
+    "slopsquat-dependency",
+    "disabled-security-control",
+    "missing-auth-route",
+    "clean-auth-route",
+    "async-swallowed-error",
+    "clean-async-error-handling",
+    "clean-repo-level-security",
     "dependency-version-hallucination",
     "go-module-version-hallucination",
     "mixed-manifest-hallucinations",
@@ -48,6 +58,7 @@ EXPECTED_CASE_IDS = {
     "contract-dependency-clean",
     "clean-dependency-manifest",
     "clean-api-signature",
+    "clean-dynamic-api-surface",
     "clean-range-scope",
     "clean-generated-code",
 }
@@ -60,6 +71,8 @@ EXPECTED_CASE_PATH_NAMES = [
     "range_scoped_mixed_edit",
     "file_scoped_multi_module",
     "assertion_weakening",
+    "bad_test_expected_broadening",
+    "clean_test_expected_change",
     "incomplete_generation",
     "unfinished_generated_class",
     "api_signature_hallucination",
@@ -68,6 +81,14 @@ EXPECTED_CASE_PATH_NAMES = [
     "compound_ai_failure_edit",
     "compound_ai_failure_edit",
     "dependency_version_hallucination",
+    "repo_level_security_regression",
+    "slopsquat_dependency",
+    "disabled_security_control",
+    "missing_auth_route",
+    "clean_auth_route",
+    "async_swallowed_error",
+    "clean_async_error_handling",
+    "clean_repo_level_security",
     "go_module_version_hallucination",
     "mixed_manifest_hallucinations",
     "nested_manifest_workspace",
@@ -78,6 +99,7 @@ EXPECTED_CASE_PATH_NAMES = [
     "contract_dependency_clean",
     "clean_dependency_manifest",
     "clean_api_signature",
+    "clean_dynamic_api_surface",
     "range_scoped_mixed_edit",
     "clean_generated_code",
 ]
@@ -94,6 +116,7 @@ def _finding(
     severity="CRITICAL",
     ai_likelihood="high",
     contract_clause=None,
+    metadata=None,
 ):
     finding = {
         "rule_id": rule_id,
@@ -110,6 +133,8 @@ def _finding(
     }
     if contract_clause is not None:
         finding["contract_clause"] = contract_clause
+    if metadata is not None:
+        finding["metadata"] = metadata
     return finding
 
 
@@ -166,6 +191,19 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 message="Specific assertion was replaced with a broad truthiness/null check",
                 file_path="tests/test_payments.py",
                 start_line=12,
+                category="ai_defect",
+                severity="MEDIUM",
+                ai_likelihood="medium",
+            ),
+        ]
+    if case_name == "bad_test_expected_broadening":
+        return [
+            _finding(
+                "SKY-A101",
+                "assertion_weakening",
+                message="Specific expected value was replaced with a broad matcher",
+                file_path="tests/test_auth.py",
+                start_line=9,
                 category="ai_defect",
                 severity="MEDIUM",
                 ai_likelihood="medium",
@@ -244,6 +282,11 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 "dependency_hallucination",
                 message="Hallucinated npm dependency skylos-ai-ghost-sdk",
                 category="ai_defect",
+                metadata={
+                    "dependency_truth_state": "missing_package",
+                    "dependency_truth_source": "registry",
+                    "dependency_source": "manifest",
+                },
             ),
         ]
     if case_name == "compound_ai_failure_edit":
@@ -298,6 +341,73 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 message="Hallucinated npm dependency version left-pad@99.99.99",
                 category="ai_defect",
                 severity="HIGH",
+            ),
+        ]
+    if case_name == "repo_level_security_regression":
+        return [
+            _finding(
+                "SKY-D205",
+                "",
+                message="Untrusted deserialization via pickle.loads",
+                start_line=12,
+                category="security",
+                severity="CRITICAL",
+            ),
+            _finding(
+                "SKY-D211",
+                "",
+                message="Possible SQL injection: tainted or string-built query.",
+                start_line=8,
+                category="security",
+                severity="CRITICAL",
+            ),
+        ]
+    if case_name == "slopsquat_dependency":
+        return [
+            _finding(
+                "SKY-D222",
+                "dependency_hallucination",
+                message="Suspicious PyPI dependency reqeusts looks like requests",
+                category="ai_defect",
+                severity="HIGH",
+                metadata={
+                    "dependency_truth_state": "suspicious_existing",
+                    "dependency_truth_source": "registry+lookalike",
+                    "dependency_source": "manifest",
+                },
+            ),
+        ]
+    if case_name == "disabled_security_control":
+        return [
+            _finding(
+                "SKY-L011",
+                "disabled_security_control",
+                message="TLS verification disabled in generated HTTP call.",
+                start_line=5,
+                severity="HIGH",
+                ai_likelihood="medium",
+            ),
+        ]
+    if case_name == "missing_auth_route":
+        return [
+            _finding(
+                "SKY-F102",
+                "missing_auth_guard",
+                message="Mutating route has no obvious auth or permission guard.",
+                start_line=7,
+                severity="MEDIUM",
+                ai_likelihood="medium",
+            ),
+        ]
+    if case_name == "async_swallowed_error":
+        return [
+            _finding(
+                "SKY-L030",
+                "swallowed_error",
+                message="Async handler catches broad 'Exception' and swallows it.",
+                start_line=4,
+                severity="MEDIUM",
+                ai_likelihood="medium",
             ),
         ]
     if case_name == "nested_manifest_workspace":
@@ -423,6 +533,50 @@ def test_checked_in_ai_code_defect_manifest_validates():
     assert labels <= set(AI_CODE_DEFECT_TAXONOMY)
 
 
+def test_ai_code_defect_dependency_status_cache_normalizes_present_alias(tmp_path):
+    case_path = tmp_path / "case"
+    case_path.mkdir()
+
+    benchmark._write_dependency_status_cache(
+        case_path,
+        [
+            {
+                "ecosystem": "npm",
+                "name": "realpkg",
+                "version": "1.2.3",
+                "status": "exists",
+            }
+        ],
+    )
+
+    cache_path = case_path / benchmark.VERSION_CACHE_PATH
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+
+    assert payload["statuses"] == {"npm:realpkg:1.2.3": "present"}
+
+
+def test_ai_code_defect_dependency_status_cache_normalizes_package_identity(tmp_path):
+    case_path = tmp_path / "case"
+    case_path.mkdir()
+
+    benchmark._write_dependency_status_cache(
+        case_path,
+        [
+            {
+                "ecosystem": "PyPI",
+                "name": "Requests_HTML",
+                "version": "1.2.3",
+                "status": "missing_package",
+            }
+        ],
+    )
+
+    cache_path = case_path / benchmark.VERSION_CACHE_PATH
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+
+    assert payload["statuses"] == {"PyPI:requests-html:1.2.3": "missing_package"}
+
+
 def test_ai_code_defect_runner_scores_expectations(monkeypatch):
     seen = []
 
@@ -435,8 +589,8 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
 
     summary = run_manifest(MANIFEST_PATH, verify_func=fake_verify)
 
-    assert summary["case_count"] == 26
-    assert summary["pass_count"] == 26
+    assert summary["case_count"] == 37
+    assert summary["pass_count"] == 37
     assert summary["failure_count"] == 0
     assert summary["scores"]["overall_score"] == pytest.approx(100.0)
 
@@ -446,17 +600,28 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
         "dependency_package_hallucination",
         "compound_ai_failure_edit",
         "dependency_version_hallucination",
+        "slopsquat_dependency",
         "go_module_version_hallucination",
         "mixed_manifest_hallucinations",
         "nested_manifest_workspace",
         "clean_dependency_manifest",
         "clean_api_signature",
+        "clean_dynamic_api_surface",
         "clean_generated_code",
     }
     for case_name, kwargs in seen:
         if case_name not in dependency_hallucination_case_names:
             continue
         assert kwargs["include_dependency_hallucinations"] is True
+
+    security_case_names = {
+        "repo_level_security_regression",
+        "clean_repo_level_security",
+    }
+    for case_name, kwargs in seen:
+        assert kwargs["include_security_findings"] is (
+            case_name in security_case_names
+        )
 
     contract_case_names = {
         "contract_phantom_helper",
@@ -480,7 +645,7 @@ def test_ai_code_defect_runner_empty_selection_runs_all_cases(monkeypatch):
 
     summary = run_manifest(MANIFEST_PATH, selected_cases=None, verify_func=fake_verify)
 
-    assert summary["case_count"] == 26
+    assert summary["case_count"] == 37
     assert seen == EXPECTED_CASE_PATH_NAMES
 
 
@@ -544,6 +709,28 @@ def test_ai_code_defect_runner_isolates_dependency_hallucination_cases_without_s
     assert not prepared_paths[0].exists()
 
 
+def test_ai_code_defect_runner_isolates_security_cases():
+    prepared_paths = []
+
+    def fake_verify(case_path, **kwargs):
+        prepared_path = Path(case_path)
+        prepared_paths.append(prepared_path)
+        assert prepared_path.parent.name.startswith("skylos-ai-defect-")
+        assert kwargs["include_security_findings"] is True
+        return {"findings": _fake_findings_for_case(case_path, kwargs)}
+
+    summary = run_manifest(
+        MANIFEST_PATH,
+        selected_cases={"repo-level-security-regression"},
+        verify_func=fake_verify,
+    )
+
+    assert summary["case_count"] == 1
+    assert summary["pass_count"] == 1
+    assert prepared_paths
+    assert not prepared_paths[0].exists()
+
+
 def test_ai_code_defect_runner_prepares_git_baseline():
     prepared_paths = []
 
@@ -589,6 +776,385 @@ def test_ai_code_defect_runner_reports_missing_expectation(monkeypatch):
     assert "present" in failure_modes
 
 
+def test_ai_code_defect_runner_matches_metadata_expectations(monkeypatch, tmp_path):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                        {
+                            "id": "metadata-case",
+                            "path": "case",
+                            "taxonomy": ["dependency_hallucination"],
+                            "importance": "critical",
+                            "source": {
+                                "repo": "https://example.com/repo",
+                                "license": "MIT",
+                            },
+                            "scan": {},
+                        "expect": {
+                            "present": [
+                                {
+                                    "rule_id": "SKY-D222",
+                                    "metadata": {
+                                        "dependency_truth_state": "missing_package",
+                                        "dependency_source": "manifest",
+                                    },
+                                }
+                            ],
+                            "absent": [],
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_verify(_case_path, **_kwargs):
+        return {
+            "findings": [
+                _finding(
+                    "SKY-D222",
+                    "dependency_hallucination",
+                    metadata={
+                        "dependency_truth_state": "missing_package",
+                        "dependency_source": "manifest",
+                    },
+                )
+            ]
+        }
+
+    monkeypatch.setattr(benchmark.time, "perf_counter", lambda: 1)
+
+    summary = run_manifest(manifest, verify_func=fake_verify)
+
+    assert summary["pass_count"] == 1
+    assert summary["failure_count"] == 0
+
+
+def test_ai_code_defect_runner_exports_challenge_metadata(tmp_path):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    (case_dir / "app.py").write_text(
+        "import requests\n"
+        "requests.fetch_json('https://example.test')\n",
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                    {
+                        "id": "challenge-case",
+                        "path": "case",
+                        "taxonomy": ["api_signature_hallucination"],
+                        "importance": "high",
+                        "source": {
+                            "repo": "https://example.com/repo",
+                            "license": "MIT",
+                        },
+                        "scan": {},
+                        "expect": {
+                            "present": [{"rule_id": "SKY-D224"}],
+                            "absent": [],
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_verify(_case_path, **_kwargs):
+        return {
+            "findings": [
+                _finding(
+                    "SKY-D224",
+                    "api_signature_hallucination",
+                    message=(
+                        "Installed package 'requests' does not expose "
+                        "requests.fetch_json"
+                    ),
+                    file_path="app.py",
+                    start_line=2,
+                    category="ai_defect",
+                    severity="HIGH",
+                )
+            ]
+        }
+
+    def challenge(probes, prompt):
+        assert len(probes) == 1
+        assert "Use this Chain-of-Verification" in prompt
+        return {
+            "decisions": [
+                {
+                    "id": 1,
+                    "verdict": "ACCEPTED",
+                    "reason": "deterministic finding remains supported",
+                    "static_proof": "",
+                    "proof_kind": "",
+                    "proof_lines": [],
+                }
+            ]
+        }
+
+    summary = run_manifest(manifest, verify_func=fake_verify, challenge_func=challenge)
+
+    assert summary["pass_count"] == 1
+    case_challenge = summary["cases"][0]["metadata"]["challenge"]
+    assert case_challenge["deterministic_findings_retained"] is True
+    assert case_challenge["outcome_counts"]["accepted"] == 1
+    assert summary["metadata"]["challenge"]["outcome_counts"]["accepted"] == 1
+
+
+def test_ai_code_defect_runner_records_external_comparison_request_without_runner(
+    tmp_path,
+):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                    {
+                        "id": "comparison-case",
+                        "path": "case",
+                        "taxonomy": ["dependency_hallucination"],
+                        "importance": "high",
+                        "source": {
+                            "repo": "https://example.com/repo",
+                            "license": "MIT",
+                        },
+                        "scan": {},
+                        "expect": {
+                            "present": [],
+                            "absent": [{"rule_id": "SKY-D222"}],
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_verify(_case_path, **_kwargs):
+        return {"findings": []}
+
+    summary = run_manifest(
+        manifest,
+        verify_func=fake_verify,
+        comparison_tools=["semgrep"],
+    )
+
+    case_comparison = summary["cases"][0]["metadata"]["external_comparisons"]
+    top_comparison = summary["metadata"]["external_comparisons"]
+    assert case_comparison["requested_tools"] == ["semgrep"]
+    assert case_comparison["executed"] is False
+    assert case_comparison["reason"] == "no_comparison_runner"
+    assert case_comparison["results"] == []
+    assert top_comparison["requested_tools"] == ["semgrep"]
+    assert top_comparison["executed_case_count"] == 0
+    assert top_comparison["skipped_case_count"] == 1
+
+
+def test_ai_code_defect_runner_uses_external_comparison_runner(tmp_path):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                    {
+                        "id": "comparison-case",
+                        "path": "case",
+                        "taxonomy": ["dependency_hallucination"],
+                        "importance": "high",
+                        "source": {
+                            "repo": "https://example.com/repo",
+                            "license": "MIT",
+                        },
+                        "scan": {},
+                        "expect": {
+                            "present": [],
+                            "absent": [{"rule_id": "SKY-D222"}],
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_verify(_case_path, **_kwargs):
+        return {"findings": []}
+
+    def compare(tool_name, case_path, case):
+        calls.append((tool_name, Path(case_path).name, case["id"]))
+        return {
+            "finding_count": 0,
+            "status": "installed",
+            "tool": "spoofed-tool",
+        }
+
+    summary = run_manifest(
+        manifest,
+        verify_func=fake_verify,
+        comparison_tools=["semgrep"],
+        comparison_func=compare,
+    )
+
+    assert calls == [("semgrep", "case", "comparison-case")]
+    case_comparison = summary["cases"][0]["metadata"]["external_comparisons"]
+    top_comparison = summary["metadata"]["external_comparisons"]
+    assert case_comparison["executed"] is True
+    assert case_comparison["results"] == [
+        {
+            "tool": "semgrep",
+            "finding_count": 0,
+            "status": "installed",
+        }
+    ]
+    assert top_comparison["executed_case_count"] == 1
+    assert top_comparison["result_count"] == 1
+    assert top_comparison["tool_result_counts"] == {"semgrep": 1}
+
+
+def test_ai_code_defect_runner_reports_evidence_and_runtime_metrics(
+    monkeypatch,
+    tmp_path,
+):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                    {
+                        "id": "metrics-case",
+                        "path": "case",
+                        "taxonomy": ["dependency_hallucination"],
+                        "importance": "high",
+                        "source": {
+                            "repo": "https://example.com/repo",
+                            "license": "MIT",
+                        },
+                        "scan": {},
+                        "expect": {
+                            "present": [{"rule_id": "SKY-D222"}],
+                            "absent": [],
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_verify(_case_path, **_kwargs):
+        return {
+            "findings": [
+                {
+                    "rule_id": "SKY-D222",
+                    "vibe_category": "dependency_hallucination",
+                    "message": "missing package",
+                    "range": {
+                        "file": "package.json",
+                        "start_line": 1,
+                        "end_line": 1,
+                    },
+                    "severity": "HIGH",
+                    "category": "ai_defect",
+                    "evidence_contract": {
+                        "schema_version": 1,
+                        "proof_state": "candidate",
+                        "sources": ["package.json"],
+                        "sinks": [],
+                        "symbols": ["ghost@1.0.0"],
+                        "traces": ["package.json:1"],
+                        "limitations": [],
+                    },
+                }
+            ]
+        }
+
+    ticks = iter([10.0, 11.0, 13.0, 15.0])
+    monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
+
+    summary = run_manifest(manifest, verify_func=fake_verify)
+
+    evidence = summary["metadata"]["evidence_contracts"]
+    runtime = summary["metadata"]["runtime"]
+    assert evidence["finding_count"] == 1
+    assert evidence["with_contract"] == 1
+    assert evidence["coverage_rate"] == 1.0
+    assert evidence["proof_states"] == {"candidate": 1}
+    assert runtime["case_count"] == 1
+    assert runtime["mean_seconds"] == 2.0
+    assert summary["cases"][0]["evidence_contracts"]["with_contract"] == 1
+
+
+def test_ai_code_defect_runtime_metadata_uses_nearest_rank_p95():
+    cases = [{"elapsed_seconds": float(index)} for index in range(1, 32)]
+
+    runtime = benchmark._runtime_metadata(cases)
+
+    assert runtime["case_count"] == 31
+    assert runtime["p95_seconds"] == 30.0
+
+
+def test_validate_manifest_rejects_invalid_metadata_expectation(tmp_path):
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "cases": [
+                        {
+                            "id": "bad-metadata",
+                            "path": "case",
+                            "taxonomy": ["dependency_hallucination"],
+                            "importance": "critical",
+                            "source": {
+                                "repo": "https://example.com/repo",
+                                "license": "MIT",
+                            },
+                            "scan": {},
+                        "expect": {
+                            "present": [
+                                {
+                                    "rule_id": "SKY-D222",
+                                    "metadata": {"dependency_truth_state": 123},
+                                }
+                            ],
+                            "absent": [],
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="metadata.dependency_truth_state"):
+        validate_manifest(load_manifest(manifest_path), manifest_path)
+
+
 def test_format_summary_includes_case_statuses():
     summary = {
         "pass_count": 1,
@@ -597,6 +1163,29 @@ def test_format_summary_includes_case_statuses():
             "overall_score": 75.0,
             "recall": 0.5,
             "absence_guard": 1.0,
+        },
+        "metadata": {
+            "evidence_contracts": {
+                "finding_count": 2,
+                "with_contract": 1,
+                "coverage_rate": 0.5,
+            },
+            "runtime": {
+                "mean_seconds": 1.25,
+                "p95_seconds": 2.5,
+            },
+            "challenge": {
+                "outcome_counts": {
+                    "accepted": 1,
+                    "refuted": 0,
+                    "uncertain": 1,
+                }
+            },
+            "external_comparisons": {
+                "requested_tools": ["semgrep"],
+                "executed_case_count": 1,
+                "result_count": 1,
+            },
         },
         "cases": [
             {"id": "good", "failures": []},
@@ -607,6 +1196,10 @@ def test_format_summary_includes_case_statuses():
     rendered = format_summary(summary)
 
     assert "AI-code defect benchmark score: 75.0/100" in rendered
+    assert "AI-code defect evidence-contract coverage: 0.50 (1/2)" in rendered
+    assert "AI-code defect benchmark runtime: mean 1.25s, p95 2.50s" in rendered
+    assert "AI-code defect challenge outcomes: accepted=1, refuted=0, uncertain=1" in rendered
+    assert "AI-code defect external comparisons: semgrep, executed cases 1, results 1" in rendered
     assert "- good: PASS" in rendered
     assert "- bad: FAIL" in rendered
 
@@ -667,4 +1260,36 @@ def test_validate_manifest_rejects_legacy_danger_scan_flag(tmp_path):
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(ValueError, match="scan\\.danger"):
+        validate_manifest(load_manifest(manifest_path), manifest_path)
+
+
+def test_validate_manifest_rejects_non_boolean_dependency_hallucination_flag(
+    tmp_path,
+):
+    fixture = tmp_path / "case.py"
+    fixture.write_text("pass\n", encoding="utf-8")
+    manifest = {
+        "version": 1,
+        "cases": [
+            {
+                "id": "bad-dependency-flag",
+                "path": "case.py",
+                "taxonomy": ["dependency_hallucination"],
+                "importance": "high",
+                "source": {
+                    "repo": "https://github.com/example/project",
+                    "license": "MIT",
+                },
+                "scan": {"dependency_hallucinations": "false"},
+                "expect": {
+                    "present": [{"rule_id": "SKY-D222"}],
+                    "absent": [],
+                },
+            }
+        ],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="scan\\.dependency_hallucinations"):
         validate_manifest(load_manifest(manifest_path), manifest_path)
