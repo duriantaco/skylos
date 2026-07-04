@@ -7,6 +7,8 @@ from skylos.rules.ai_defect.test_impact import detect_test_impact_gaps
 
 def _write_changed_source(path):
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise OSError("refusing to write through symlink fixture path")
     path.write_text("def changed():\n    return True\n", encoding="utf-8")
     return path
 
