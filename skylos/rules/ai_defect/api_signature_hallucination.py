@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from skylos.core.python_api_surface import cache_python_api_surface
+from skylos.core.api_symbol_truth import (
+    SURFACE_KIND_PYTHON_MODULE,
+    cached_api_symbol_surface,
+)
+from skylos.core.python_api_surface import cache_python_api_surface, python_environment_key
 from skylos.core.safe_cache_io import read_text_no_symlink
 
 
@@ -368,7 +372,22 @@ def _repo_root(value: str | Path | None) -> Path | None:
 def _surface_loader(surface_loader: SurfaceLoader | None) -> SurfaceLoader:
     if surface_loader is not None:
         return surface_loader
-    return cache_python_api_surface
+    return _shared_python_surface_loader
+
+
+def _shared_python_surface_loader(
+    project_root: str | Path,
+    module_name: str,
+) -> dict[str, Any] | None:
+    shared_surface = cached_api_symbol_surface(
+        project_root,
+        SURFACE_KIND_PYTHON_MODULE,
+        module_name,
+        environment_key=python_environment_key(),
+    )
+    if shared_surface is not None:
+        return shared_surface
+    return cache_python_api_surface(project_root, module_name)
 
 
 def _allowed_roots(allowed_modules: tuple[str, ...] | None) -> set[str]:
