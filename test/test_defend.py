@@ -434,12 +434,15 @@ class TestReport:
         score = compute_defense_score(results)
         output = format_defense_json(results, score, 1, 10)
         data = json.loads(output)
-        assert data["version"] == "1.0"
+        assert data["version"] == "1.1"
+        assert data["skylos_version"]
         assert data["owasp_framework"] == "llm"
         assert data["owasp_version"] == "2025"
         assert data["summary"]["total_checks"] == 1
         assert data["summary"]["passed"] == 1
         assert len(data["findings"]) == 1
+        assert "attestation" not in data
+        assert "framework_evidence" not in data
 
     def test_table_uses_selected_owasp_label(self):
         results = [
@@ -2129,3 +2132,441 @@ def unsafe_handler(text):
         assert integrations[0].has_prompt_delimiter is True
         # Second integration (unsafe_handler) should NOT inherit the delimiter
         assert integrations[1].has_prompt_delimiter is False
+
+
+# ---------------------------------------------------------------------------
+# Attestation tests (agent verification)
+# ---------------------------------------------------------------------------
+
+
+class TestAttestation:
+    def _results(self):
+        return [
+            DefenseResult(
+                "no-dangerous-sink",
+                False,
+                "app.py:10",
+                "app.py:12",
+                "LLM output flows to eval()",
+                "critical",
+                8,
+                "defense",
+                owasp_llm="LLM02",
+                remediation="Remove eval",
+            ),
+        ]
+
+    def _build(self, tmpdir: Path, **overrides):
+        from skylos.defend.attestation import build_attestation
+        from skylos.defend.engine import resolve_active_plugin_ids
+
+        kwargs = {
+            "target": tmpdir,
+            "files": sorted(tmpdir.rglob("*.py")),
+            "results": self._results(),
+            "plugin_ids": resolve_active_plugin_ids(),
+            "policy_path": None,
+            "owasp_framework": "llm",
+            "owasp_version": "2025",
+        }
+        kwargs.update(overrides)
+        return build_attestation(**kwargs)
+
+    def test_digest_deterministic_across_runs(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmpdir = Path(d)
+            (tmpdir / "app.py").write_text("x = 1\n")
+            first = self._build(tmpdir)
+            second = self._build(tmpdir)
+            assert first["digest"] == second["digest"]
+            assert first["inputs"]["files_digest"] == second["inputs"]["files_digest"]
+
+    def test_digest_changes_when_file_content_changes(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmpdir = Path(d)
+            target = tmpdir / "app.py"
+            target.write_text("x = 1\n")
+            first = self._build(tmpdir)
+            target.write_text("x = 2\n")
+            second = self._build(tmpdir)
+            assert first["digest"] != second["digest"]
+
+    def test_generated_at_not_part_of_digest(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmpdir = Path(d)
+            (tmpdir / "app.py").write_text("x = 1\n")
+            first = self._build(tmpdir)
+            second = self._build(tmpdir)
+            assert first["generated_at"] != "" and second["generated_at"] != ""
+            assert first["digest"] == second["digest"]
+
+    def test_policy_hash_set_when_policy_file_given(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmpdir = Path(d)
+            (tmpdir / "app.py").write_text("x = 1\n")
+            policy = tmpdir / "skylos-defend.yaml"
+            policy.write_text("rules: {}\n")
+            with_policy = self._build(tmpdir, policy_path=str(policy))
+            without_policy = self._build(tmpdir)
+            assert with_policy["inputs"]["policy_hash"] is not None
+            assert without_policy["inputs"]["policy_hash"] is None
+            assert with_policy["digest"] != without_policy["digest"]
+
+    def test_unreadable_file_hashes_to_none_without_raising(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmpdir = Path(d)
+            missing = tmpdir / "missing.py"
+            attestation = self._build(tmpdir, files=[missing])
+            assert attestation["inputs"]["files_hashed"] == 1
+
+    def test_hash_file_rejects_out_of_root_paths(self):
+        from skylos.defend.attestation import _hash_file
+
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as out:
+            tmpdir = Path(d)
+            outside = Path(out) / "outside.py"
+            outside.write_text("x = 1\n")
+
+            assert _hash_file(outside, root=tmpdir) is None
+
+    def test_hash_file_rejects_symlinks(self):
+        from skylos.defend.attestation import _hash_file
+
+        with tempfile.TemporaryDirectory() as d:
+            tmpdir = Path(d)
+            real = tmpdir / "real.py"
+            real.write_text("x = 1\n")
+            link = tmpdir / "link.py"
+            try:
+                link.symlink_to(real)
+            except (OSError, NotImplementedError):
+                pytest.skip("symlinks are not available on this platform")
+
+            assert _hash_file(real, root=tmpdir) is not None
+            assert _hash_file(link, root=tmpdir) is None
+
+    def test_paths_are_relative_posix(self):
+        from skylos.defend.attestation import _relative_posix
+
+        with tempfile.TemporaryDirectory() as d:
+            tmpdir = Path(d)
+            nested = tmpdir / "pkg" / "mod.py"
+            nested.parent.mkdir()
+            nested.write_text("x = 1\n")
+            assert _relative_posix(nested, tmpdir) == "pkg/mod.py"
+
+    def test_results_affect_digest(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmpdir = Path(d)
+            (tmpdir / "app.py").write_text("x = 1\n")
+            first = self._build(tmpdir)
+            second = self._build(tmpdir, results=[])
+            assert first["digest"] != second["digest"]
+
+    def test_public_result_evidence_fields_affect_digest(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmpdir = Path(d)
+            (tmpdir / "app.py").write_text("x = 1\n")
+            baseline = self._build(tmpdir)
+            tampered = self._build(
+                tmpdir,
+                results=[
+                    DefenseResult(
+                        "no-dangerous-sink",
+                        False,
+                        "app.py:10",
+                        "app.py:12",
+                        "different evidence text",
+                        "critical",
+                        99,
+                        "defense",
+                        owasp_llm="LLM99",
+                        remediation="different remediation",
+                    ),
+                ],
+            )
+            assert baseline["digest"] != tampered["digest"]
+            assert baseline["inputs"]["results_digest"] != tampered["inputs"][
+                "results_digest"
+            ]
+
+    def test_integration_inventory_affects_digest_when_provided(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmpdir = Path(d)
+            (tmpdir / "app.py").write_text("x = 1\n")
+            without_inventory = self._build(tmpdir)
+            with_inventory = self._build(
+                tmpdir,
+                integrations=[
+                    _make_integration(
+                        location="app.py:10",
+                        prompt_sites=["app.py:8"],
+                        output_sinks=["eval (L12)"],
+                    )
+                ],
+            )
+            assert without_inventory["digest"] != with_inventory["digest"]
+            assert "run_evidence_digest" in with_inventory["inputs"]
+
+
+# ---------------------------------------------------------------------------
+# Framework evidence tests (agent verification)
+# ---------------------------------------------------------------------------
+
+
+class TestFrameworkEvidence:
+    def test_every_mapped_plugin_id_exists(self):
+        from skylos.defend.frameworks import PLUGIN_FRAMEWORK_EVIDENCE
+
+        registered = {plugin.id for plugin in ALL_PLUGINS}
+        for plugin_id in PLUGIN_FRAMEWORK_EVIDENCE:
+            assert plugin_id in registered
+
+    def test_contribution_wording_stays_evidence_only(self):
+        from skylos.defend.frameworks import PLUGIN_FRAMEWORK_EVIDENCE
+
+        banned = ("complies", "compliant", "satisfies", "certifies")
+        for plugin_id, frameworks in PLUGIN_FRAMEWORK_EVIDENCE.items():
+            for refs in frameworks.values():
+                for ref in refs:
+                    text = ref["contribution"].lower()
+                    for word in banned:
+                        assert word not in text, (
+                            f"{plugin_id}: banned word {word!r}"
+                        )
+
+    def test_no_eu_ai_act_mapping_for_pii_filter(self):
+        from skylos.defend.frameworks import PLUGIN_FRAMEWORK_EVIDENCE
+
+        assert "eu_ai_act" not in PLUGIN_FRAMEWORK_EVIDENCE["output-pii-filter"]
+
+    def test_status_pass_fail_mixed(self):
+        from skylos.defend.frameworks import compute_framework_evidence
+
+        def _result(plugin_id, passed, loc):
+            return DefenseResult(
+                plugin_id, passed, loc, loc, "msg", "critical", 8, "defense"
+            )
+
+        evidence = compute_framework_evidence(
+            [
+                _result("no-dangerous-sink", True, "a.py:1"),
+                _result("no-dangerous-sink", False, "b.py:1"),
+            ]
+        )
+        controls = evidence["frameworks"]["eu_ai_act"]["controls"]
+        art15 = next(c for c in controls if c["control_id"] == "Art. 15")
+        assert art15["status"] == "mixed"
+
+        evidence_pass = compute_framework_evidence(
+            [_result("no-dangerous-sink", True, "a.py:1")]
+        )
+        controls = evidence_pass["frameworks"]["eu_ai_act"]["controls"]
+        assert controls[0]["status"] == "pass"
+
+        evidence_fail = compute_framework_evidence(
+            [_result("no-dangerous-sink", False, "a.py:1")]
+        )
+        controls = evidence_fail["frameworks"]["eu_ai_act"]["controls"]
+        assert controls[0]["status"] == "fail"
+
+    def test_disclaimer_present(self):
+        from skylos.defend.frameworks import (
+            FRAMEWORK_EVIDENCE_DISCLAIMER,
+            compute_framework_evidence,
+        )
+
+        evidence = compute_framework_evidence([])
+        assert evidence["disclaimer"] == FRAMEWORK_EVIDENCE_DISCLAIMER
+        assert "not a compliance determination" in evidence["disclaimer"]
+
+    def test_unmapped_plugin_produces_no_controls(self):
+        from skylos.defend.frameworks import compute_framework_evidence
+
+        evidence = compute_framework_evidence(
+            [
+                DefenseResult(
+                    "input-length-limit",
+                    True,
+                    "a.py:1",
+                    "a.py:1",
+                    "msg",
+                    "low",
+                    1,
+                    "defense",
+                ),
+            ]
+        )
+        assert evidence["frameworks"]["eu_ai_act"]["controls"] == []
+        assert len(evidence["frameworks"]["nist_ai_rmf"]["controls"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Markdown / SARIF / GitHub summary report tests (agent verification)
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceReports:
+    def _results(self):
+        return [
+            DefenseResult(
+                "no-dangerous-sink",
+                False,
+                "app.py:10",
+                "app.py:12",
+                "LLM output flows to eval()",
+                "critical",
+                8,
+                "defense",
+                owasp_llm="LLM02",
+                remediation="Remove eval on model output",
+            ),
+            DefenseResult(
+                "model-pinned",
+                True,
+                "app.py:10",
+                "app.py:10",
+                "model pinned",
+                "medium",
+                3,
+                "defense",
+                owasp_llm="LLM03",
+            ),
+            DefenseResult(
+                "logging-present",
+                False,
+                "app.py:10",
+                "app.py:10",
+                "no logging found",
+                "medium",
+                3,
+                "ops",
+            ),
+        ]
+
+    def test_markdown_report_sections(self):
+        from skylos.defend.frameworks import compute_framework_evidence
+        from skylos.defend.report import format_defense_markdown
+
+        results = self._results()
+        score = compute_defense_score(results)
+        ops = compute_ops_score(results)
+        coverage = compute_owasp_coverage(results, framework="llm", version="2025")
+        markdown = format_defense_markdown(
+            results,
+            score,
+            integrations=[_make_integration()],
+            files_scanned=3,
+            target="demo",
+            owasp_coverages=[("llm", "2025", coverage)],
+            ops_score=ops,
+            framework_evidence=compute_framework_evidence(results),
+            attestation={
+                "algorithm": "sha256",
+                "digest": "a" * 64,
+                "generated_at": "2026-01-01T00:00:00+00:00",
+                "inputs": {
+                    "files_hashed": 3,
+                    "files_digest": "b" * 64,
+                    "policy_hash": None,
+                    "plugin_set": ["model-pinned"],
+                    "owasp_framework": "llm",
+                    "owasp_version": "2025",
+                },
+            },
+            policy_path=None,
+        )
+        assert "# Skylos Agent Verification Report" in markdown
+        assert "## Executive Summary" in markdown
+        assert "## AI Integration Inventory" in markdown
+        assert "## Verification Results" in markdown
+        assert "## OWASP Coverage" in markdown
+        assert "## Regulatory Framework Evidence" in markdown
+        assert "### Not addressed by static verification" in markdown
+        assert "## Remediation Appendix" in markdown
+        assert "## Attestation" in markdown
+        assert "## Methodology & Disclaimer" in markdown
+        assert "a" * 64 in markdown
+        assert "Remove eval on model output" in markdown
+        assert "not a compliance determination" in markdown
+
+    def test_sarif_contains_only_failed_defense_checks(self):
+        from skylos.defend.report import format_defense_sarif
+
+        sarif = json.loads(format_defense_sarif(self._results()))
+        run = sarif["runs"][0]
+        assert run["tool"]["driver"]["name"] == "Skylos Defend"
+        rule_ids = [result["ruleId"] for result in run["results"]]
+        assert rule_ids == ["no-dangerous-sink"]
+
+    def test_sarif_severity_and_location_mapping(self):
+        from skylos.defend.report import format_defense_sarif
+
+        sarif = json.loads(format_defense_sarif(self._results()))
+        result = sarif["runs"][0]["results"][0]
+        assert result["level"] == "error"
+        location = result["locations"][0]["physicalLocation"]
+        assert location["artifactLocation"]["uri"] == "app.py"
+        assert location["region"]["startLine"] == 12
+
+    def test_sarif_path_prefix_applied(self):
+        from skylos.defend.report import format_defense_sarif
+
+        sarif = json.loads(
+            format_defense_sarif(self._results(), path_prefix="apps/api")
+        )
+        location = sarif["runs"][0]["results"][0]["locations"][0]["physicalLocation"]
+        assert location["artifactLocation"]["uri"] == "apps/api/app.py"
+
+    def test_sarif_attestation_in_run_properties(self):
+        from skylos.defend.report import format_defense_sarif
+
+        attestation = {"algorithm": "sha256", "digest": "c" * 64}
+        sarif = json.loads(
+            format_defense_sarif(self._results(), attestation=attestation)
+        )
+        assert (
+            sarif["runs"][0]["properties"]["skylos_attestation"]["digest"]
+            == "c" * 64
+        )
+
+    def test_sarif_help_uri_points_to_ai_defense_docs(self):
+        from skylos.defend.report import format_defense_sarif
+
+        sarif = json.loads(format_defense_sarif(self._results()))
+        rule = sarif["runs"][0]["tool"]["driver"]["rules"][0]
+        assert rule["helpUri"] == (
+            "https://docs.skylos.dev/ai-defense#no-dangerous-sink"
+        )
+
+    def test_github_summary_contents(self):
+        from skylos.defend.report import format_defense_github_summary
+
+        results = self._results()
+        score = compute_defense_score(results)
+        ops = compute_ops_score(results)
+        coverage = compute_owasp_coverage(results, framework="llm", version="2025")
+        summary = format_defense_github_summary(
+            results,
+            score,
+            ops,
+            coverage,
+            gate_passed=False,
+            attestation={"algorithm": "sha256", "digest": "d" * 64},
+        )
+        assert "## Skylos Agent Verification" in summary
+        assert "no-dangerous-sink" in summary
+        assert "FAIL" in summary
+        assert "sha256:" in summary
+
+    def test_gate_evaluation_matches_exit_semantics(self):
+        from skylos.defend.scoring import evaluate_gate
+
+        results = self._results()
+        score = compute_defense_score(results)
+        assert evaluate_gate(results, score, fail_on="critical") is False
+        assert evaluate_gate(results, score, fail_on=None) is True
+        assert evaluate_gate(results, score, min_score=100) is False
+        passing = [r for r in results if r.passed and r.category == "defense"]
+        passing_score = compute_defense_score(passing)
+        assert evaluate_gate(passing, passing_score, fail_on="critical") is True

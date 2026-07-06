@@ -67,6 +67,32 @@ def compute_defense_score(results: list[DefenseResult]) -> DefenseScore:
     )
 
 
+def evaluate_gate(
+    results: list[DefenseResult],
+    score: DefenseScore,
+    *,
+    fail_on: str | None = None,
+    min_score: int | None = None,
+) -> bool:
+    severity_order = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+
+    if fail_on:
+        threshold = severity_order.get(fail_on, 0)
+        for result in results:
+            if result.category != "defense":
+                continue
+            if (
+                not result.passed
+                and severity_order.get(result.severity, 0) >= threshold
+            ):
+                return False
+
+    if min_score is not None and score.score_pct < min_score:
+        return False
+
+    return True
+
+
 def compute_ops_score(results: list[DefenseResult]) -> OpsScore:
     ops_results: list[DefenseResult] = []
     for result in results:

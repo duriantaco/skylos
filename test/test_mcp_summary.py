@@ -173,3 +173,133 @@ def test_mcp_verify_change_returns_shared_schema(monkeypatch):
     assert result["schema_version"] == 1
     assert result["tool"] == "verify_change"
     assert result["status"] == "pass"
+
+
+def test_mcp_verify_agent_passthrough(monkeypatch):
+    class FakeMCP:
+        def __init__(self):
+            self.tools = {}
+
+        def tool(self):
+            def decorate(fn):
+                self.tools[fn.__name__] = fn
+                return fn
+
+            return decorate
+
+        def resource(self, *_args, **_kwargs):
+            def decorate(fn):
+                return fn
+
+            return decorate
+
+    fake = FakeMCP()
+    _register_tools(fake)
+    monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+    monkeypatch.setattr(
+        mcp_server,
+        "_verify_agent_impl",
+        lambda **_kwargs: {
+            "schema_version": 1,
+            "tool": "verify_agent",
+            "path": ".",
+            "integrations_found": 0,
+            "defense_score": {"score_pct": 100},
+            "failed_checks": [],
+            "summary": "Defense score 100% (SECURE); 0 failed check(s)",
+        },
+    )
+
+    result = json.loads(fake.tools["verify_agent"](path="."))
+
+    assert result["schema_version"] == 1
+    assert result["tool"] == "verify_agent"
+    assert result["failed_checks"] == []
+
+
+def test_mcp_verify_agent_real_impl_on_fixture(monkeypatch, tmp_path):
+    class FakeMCP:
+        def __init__(self):
+            self.tools = {}
+
+        def tool(self):
+            def decorate(fn):
+                self.tools[fn.__name__] = fn
+                return fn
+
+            return decorate
+
+        def resource(self, *_args, **_kwargs):
+            def decorate(fn):
+                return fn
+
+            return decorate
+
+    target = tmp_path / "agent"
+    target.mkdir()
+    (target / "app.py").write_text(
+        """
+import openai
+from flask import request
+client = openai.OpenAI()
+
+def run():
+    msg = request.get_json()["message"]
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": msg}],
+    )
+    return eval(response.choices[0].message.content)
+""",
+        encoding="utf-8",
+    )
+
+    fake = FakeMCP()
+    _register_tools(fake)
+    monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+
+    result = json.loads(
+        fake.tools["verify_agent"](path=str(target), fail_on="critical")
+    )
+
+    assert result["schema_version"] == 1
+    assert result["tool"] == "verify_agent"
+    assert result["integrations_found"] >= 1
+    assert result["failed_checks"], "guardrail-free fixture must fail checks"
+    assert len(result["attestation"]["digest"]) == 64
+    assert result["gate"] == {
+        "fail_on": "critical",
+        "min_score": None,
+        "passed": False,
+    }
+    assert result["owasp"]["framework"] == "llm"
+    assert result["owasp"]["version"] == "2025"
+    failed_ids = {check["plugin_id"] for check in result["failed_checks"]}
+    assert "no-dangerous-sink" in failed_ids
+
+
+def test_mcp_verify_agent_rejects_missing_path(monkeypatch):
+    class FakeMCP:
+        def __init__(self):
+            self.tools = {}
+
+        def tool(self):
+            def decorate(fn):
+                self.tools[fn.__name__] = fn
+                return fn
+
+            return decorate
+
+        def resource(self, *_args, **_kwargs):
+            def decorate(fn):
+                return fn
+
+            return decorate
+
+    fake = FakeMCP()
+    _register_tools(fake)
+    monkeypatch.setattr(mcp_server, "_gate", lambda _tool_name: None)
+
+    result = json.loads(fake.tools["verify_agent"](path="/nonexistent/nowhere"))
+
+    assert "error" in result

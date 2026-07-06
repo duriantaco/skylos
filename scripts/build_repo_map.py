@@ -1109,6 +1109,10 @@ def _write_text_safely(path: Path, content: str) -> None:
         handle.write(content)
 
 
+def _normalize_generated_html(content: str) -> str:
+    return "\n".join(line.rstrip() for line in content.splitlines()) + "\n"
+
+
 def write_repo_map(root: Path, output: Path) -> str:
     """
     Generate and write the repo-map HTML page.
@@ -1130,7 +1134,7 @@ def write_repo_map(root: Path, output: Path) -> str:
     """
     output = _resolve_output_path(root.resolve(), output)
     data = collect_repo_map(root)
-    page = render_html(data)
+    page = _normalize_generated_html(render_html(data))
     _write_text_safely(output, page)
     return page
 
@@ -1180,7 +1184,7 @@ def main(argv: list[str] | None = None) -> int:
 
     root = args.root.resolve()
     output = _resolve_output_path(root, args.output)
-    page = render_html(collect_repo_map(root))
+    page = _normalize_generated_html(render_html(collect_repo_map(root)))
 
     if args.check:
         if not _safe_source_file(output):
