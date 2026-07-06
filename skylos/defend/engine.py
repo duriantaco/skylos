@@ -60,6 +60,10 @@ def run_defense_checks(
     return results, score, ops
 
 
+def resolve_active_plugin_ids(policy: DefensePolicy | None = None) -> list[str]:
+    return [plugin.id for plugin in _resolve_plugins(policy)]
+
+
 def _resolve_plugins(policy: DefensePolicy | None) -> list[DefensePlugin]:
     if policy is None:
         return list(ALL_PLUGINS)

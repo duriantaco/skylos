@@ -33,25 +33,25 @@
       </div>
     </aside>
     <main>
-      
+
     <section>
       <h2>Repo Snapshot</h2>
       <p class="lede">Use the route cards first. The folder and symbol sections are there when you need detail.</p>
       <div class="meta-grid">
-        <div class="metric"><strong>780</strong><span>Python files scanned</span></div>
-        <div class="metric"><strong>6926</strong><span>top-level classes/functions</span></div>
-        <div class="metric"><strong>31</strong><span>ownership areas</span></div>
+        <div class="metric"><strong>826</strong><span>Python files scanned</span></div>
+        <div class="metric"><strong>7657</strong><span>top-level classes/functions</span></div>
+        <div class="metric"><strong>32</strong><span>ownership areas</span></div>
         <div class="metric"><strong>12</strong><span>guided routes</span></div>
       </div>
       <div class="note">Comprehension debt grows when the codebase changes faster than the team can maintain a shared mental model. This page keeps the first question simple: where should I start? Source framing: <a href="https://dev.to/javz/your-codebase-has-technical-debt-but-does-your-team-have-comprehension-debt-385f">DEV Community article</a>.</div>
     </section>
-    
+
 
     <section id="personas">
       <h2>Choose A Mode</h2>
       <p class="lede">Choose the closest job-to-be-done. The page will hide unrelated cards while keeping search available.</p>
       <div class="mode-stack">
-        
+
       <div id="mode-panel" class="mode-panel" aria-live="polite">
         <div>
           <div class="mini-label">Current mode</div>
@@ -64,60 +64,60 @@
         </div>
       </div>
       <div class="persona-grid">
-        
+
         <button class="persona-card active" type="button" data-mode="all" data-mode-title="Show everything" data-mode-summary="Everything is visible. Choose a mode to hide unrelated cards and rows." data-search="all everything full map reset" aria-pressed="true">
           <span class="persona-title">Show everything</span>
           <span class="persona-summary">Use this when you already know what you are looking for.</span>
           <span class="link-row"><span class="muted">Full map</span></span>
         </button>
-        
+
 
             <button class="persona-card searchable" type="button" data-mode="user" data-mode-title="I just want to use Skylos" data-mode-summary="Start with install, commands, output, and rule meanings. Skip internal ownership maps." data-search="i just want to use skylos start with install, commands, output, and rule meanings. skip internal ownership maps. install quick start cli output rules user docs readme.md docs/readme.md dictionary.md" aria-pressed="false">
               <span class="persona-title">I just want to use Skylos</span>
               <span class="persona-summary">Start with install, commands, output, and rule meanings. Skip internal ownership maps.</span>
               <span class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/README.md" rel="noopener noreferrer">README.md</a> <a href="https://github.com/duriantaco/skylos/blob/main/docs/README.md" rel="noopener noreferrer">docs/README.md</a> <a href="https://github.com/duriantaco/skylos/blob/main/dictionary.md" rel="noopener noreferrer">dictionary.md</a></span>
             </button>
-            
+
 
             <button class="persona-card searchable" type="button" data-mode="contributor" data-mode-title="I want to contribute" data-mode-summary="Pick a safe ownership area, find nearby tests, and keep the change narrow." data-search="i want to contribute pick a safe ownership area, find nearby tests, and keep the change narrow. contribute first pr tests safe change ownership contributing.md test/ scripts/" aria-pressed="false">
               <span class="persona-title">I want to contribute</span>
               <span class="persona-summary">Pick a safe ownership area, find nearby tests, and keep the change narrow.</span>
               <span class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/CONTRIBUTING.md" rel="noopener noreferrer">CONTRIBUTING.md</a> <a href="https://github.com/duriantaco/skylos/tree/main/test" rel="noopener noreferrer">test</a> <a href="https://github.com/duriantaco/skylos/tree/main/scripts" rel="noopener noreferrer">scripts</a></span>
             </button>
-            
+
 
             <button class="persona-card searchable" type="button" data-mode="debugger" data-mode-title="I am debugging a bad finding" data-mode-summary="Reproduce the finding, locate the detector/evidence layer, and add a regression test." data-search="i am debugging a bad finding reproduce the finding, locate the detector/evidence layer, and add a regression test. false positive false negative detector evidence regression skylos/analyzer.py skylos/rules/ skylos/analysis/ test/" aria-pressed="false">
               <span class="persona-title">I am debugging a bad finding</span>
               <span class="persona-summary">Reproduce the finding, locate the detector/evidence layer, and add a regression test.</span>
               <span class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">skylos/analyzer.py</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/rules" rel="noopener noreferrer">skylos/rules</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/analysis" rel="noopener noreferrer">skylos/analysis</a> <a href="https://github.com/duriantaco/skylos/tree/main/test" rel="noopener noreferrer">test</a></span>
             </button>
-            
+
 
             <button class="persona-card searchable" type="button" data-mode="security" data-mode-title="I am reviewing security or LLM behavior" data-mode-summary="Follow trust boundaries: config policy, config scanners, LLM evidence filters, CI, and cloud sync." data-search="i am reviewing security or llm behavior follow trust boundaries: config policy, config scanners, llm evidence filters, ci, and cloud sync. security llm policy cloud ci edge config evidence bypass skylos/config.py skylos/rules/config/ skylos/llm/ skylos/security/ skylos/cloud/ skylos/cicd/" aria-pressed="false">
               <span class="persona-title">I am reviewing security or LLM behavior</span>
               <span class="persona-summary">Follow trust boundaries: config policy, config scanners, LLM evidence filters, CI, and cloud sync.</span>
               <span class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/config.py" rel="noopener noreferrer">skylos/config.py</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/rules/config" rel="noopener noreferrer">skylos/rules/config</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/llm" rel="noopener noreferrer">skylos/llm</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/security" rel="noopener noreferrer">skylos/security</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/cloud" rel="noopener noreferrer">skylos/cloud</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/cicd" rel="noopener noreferrer">skylos/cicd</a></span>
             </button>
-            
+
 
             <button class="persona-card searchable" type="button" data-mode="maintainer" data-mode-title="I need the architecture" data-mode-summary="Use the layer map, hot zones, and docstring guide before reshaping shared paths." data-search="i need the architecture use the layer map, hot zones, and docstring guide before reshaping shared paths. architecture maintainer hot zones boundaries main sequence skylos/pipeline.py skylos/analyzer.py skylos/cli.py skylos/config.py" aria-pressed="false">
               <span class="persona-title">I need the architecture</span>
               <span class="persona-summary">Use the layer map, hot zones, and docstring guide before reshaping shared paths.</span>
               <span class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/pipeline.py" rel="noopener noreferrer">skylos/pipeline.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">skylos/analyzer.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">skylos/cli.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/config.py" rel="noopener noreferrer">skylos/config.py</a></span>
             </button>
-            
+
       </div>
       <div id="mode-plan-templates" hidden>
-        
+
       <template data-mode-plan="all">
         <div class="guide-time">10 minutes</div>
         <h3>Use the full map</h3>
         <ol class="step-list"><li>Use search when you already know a path, symbol, or rule id.</li>
 <li>Pick a mode when you want unrelated sections hidden.</li>
 <li>Start from route cards before opening folder or symbol indexes.</li></ol>
-        
+
       </template>
-    
+
 
       <template data-mode-plan="user">
         <div class="guide-time">10 minutes</div>
@@ -127,7 +127,7 @@
 <li>Read only the first two files in that route before browsing deeper.</li></ol>
         <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/README.md" rel="noopener noreferrer">README.md</a> <a href="https://github.com/duriantaco/skylos/blob/main/docs/repo-map/index.html" rel="noopener noreferrer">docs/repo-map/index.html</a></div>
       </template>
-    
+
 
       <template data-mode-plan="contributor">
         <div class="guide-time">15 minutes</div>
@@ -137,7 +137,7 @@
 <li>Change one ownership area first; avoid drive-by refactors.</li></ol>
         <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/test" rel="noopener noreferrer">test</a> <a href="https://github.com/duriantaco/skylos/tree/main/scripts" rel="noopener noreferrer">scripts</a></div>
       </template>
-    
+
 
       <template data-mode-plan="debugger">
         <div class="guide-time">20 minutes</div>
@@ -147,7 +147,7 @@
 <li>Patch the detector and keep the fixture as a regression test.</li></ol>
         <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/skylos/rules" rel="noopener noreferrer">skylos/rules</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">skylos/analyzer.py</a> <a href="https://github.com/duriantaco/skylos/tree/main/test" rel="noopener noreferrer">test</a></div>
       </template>
-    
+
 
       <template data-mode-plan="security">
         <div class="guide-time">20 minutes</div>
@@ -157,7 +157,7 @@
 <li>Ask for benchmark or regression evidence before merging scanner semantics.</li></ol>
         <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/skylos/llm" rel="noopener noreferrer">skylos/llm</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/security" rel="noopener noreferrer">skylos/security</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/cloud" rel="noopener noreferrer">skylos/cloud</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/cicd" rel="noopener noreferrer">skylos/cicd</a></div>
       </template>
-    
+
 
       <template data-mode-plan="maintainer">
         <div class="guide-time">15 minutes</div>
@@ -167,18 +167,18 @@
 <li>Use the docstring standard before reshaping public entrypoints.</li></ol>
         <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/pipeline.py" rel="noopener noreferrer">skylos/pipeline.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">skylos/analyzer.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">skylos/cli.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/config.py" rel="noopener noreferrer">skylos/config.py</a></div>
       </template>
-    
+
       </div>
-    
+
       </div>
     </section>
-    
+
 
     <section id="first-steps">
       <h2>First 10 Minutes</h2>
       <p class="lede">Pick the card that matches your situation. Stop after the listed files unless you have a reason to go deeper.</p>
       <div class="guide-grid">
-        
+
             <article class="guide-card searchable persona-target" data-personas="user contributor" data-search="i am completely new 10 minutes open readme.md to understand what skylos does. open this map and pick exactly one route card. read only the first two files in that route before browsing deeper. readme.md docs/repo-map/index.html">
               <div class="guide-time">10 minutes</div>
               <h3>I am completely new</h3>
@@ -187,7 +187,7 @@
 <li>Read only the first two files in that route before browsing deeper.</li></ol>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/README.md" rel="noopener noreferrer">README.md</a> <a href="https://github.com/duriantaco/skylos/blob/main/docs/repo-map/index.html" rel="noopener noreferrer">docs/repo-map/index.html</a></div>
             </article>
-            
+
 
             <article class="guide-card searchable persona-target" data-personas="contributor" data-search="i need to make a small change 15 minutes search this page for the thing you want to change. open the matching folder card and check the nearby tests. change one ownership area first; avoid drive-by refactors. test/ scripts/">
               <div class="guide-time">15 minutes</div>
@@ -197,7 +197,7 @@
 <li>Change one ownership area first; avoid drive-by refactors.</li></ol>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/test" rel="noopener noreferrer">test</a> <a href="https://github.com/duriantaco/skylos/tree/main/scripts" rel="noopener noreferrer">scripts</a></div>
             </article>
-            
+
 
             <article class="guide-card searchable persona-target" data-personas="debugger" data-search="i am debugging a bad result 20 minutes find the rule or finding category in the route cards. build the smallest fixture that reproduces the bad result. patch the detector and keep the fixture as a regression test. skylos/rules/ skylos/analyzer.py test/">
               <div class="guide-time">20 minutes</div>
@@ -207,7 +207,7 @@
 <li>Patch the detector and keep the fixture as a regression test.</li></ol>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/skylos/rules" rel="noopener noreferrer">skylos/rules</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">skylos/analyzer.py</a> <a href="https://github.com/duriantaco/skylos/tree/main/test" rel="noopener noreferrer">test</a></div>
             </article>
-            
+
 
             <article class="guide-card searchable persona-target" data-personas="security maintainer" data-search="i am reviewing a risky pr 20 minutes check whether the pr touches a hot zone. follow the scan flow to see downstream output impact. ask for benchmark or regression evidence before merging scanner semantics. skylos/llm/ skylos/security/ skylos/cloud/ skylos/cicd/">
               <div class="guide-time">20 minutes</div>
@@ -217,7 +217,7 @@
 <li>Ask for benchmark or regression evidence before merging scanner semantics.</li></ol>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/skylos/llm" rel="noopener noreferrer">skylos/llm</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/security" rel="noopener noreferrer">skylos/security</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/cloud" rel="noopener noreferrer">skylos/cloud</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/cicd" rel="noopener noreferrer">skylos/cicd</a></div>
             </article>
-            
+
 
             <article class="guide-card searchable persona-target" data-personas="maintainer" data-search="i need the architecture 15 minutes read the architecture section before opening shared core files. check hot zones for files that can change many workflows. use the docstring standard before reshaping public entrypoints. skylos/pipeline.py skylos/analyzer.py skylos/cli.py skylos/config.py">
               <div class="guide-time">15 minutes</div>
@@ -227,16 +227,16 @@
 <li>Use the docstring standard before reshaping public entrypoints.</li></ol>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/pipeline.py" rel="noopener noreferrer">skylos/pipeline.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">skylos/analyzer.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">skylos/cli.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/config.py" rel="noopener noreferrer">skylos/config.py</a></div>
             </article>
-            
+
       </div>
     </section>
-    
+
 
     <section id="routes">
       <h2>Start Here</h2>
-      
+
       <div class="route-grid">
-        
+
             <article class="route-card searchable persona-target" data-personas="user contributor maintainer" data-search="i want to understand a normal scan follow the main path from cli input to findings and output. skylos/cli.py skylos/config.py skylos/pipeline.py skylos/analyzer.py skylos/reporting/ test/test_cli.py test/test_analyzer.py read the cli route first, then jump to config loading. follow the handoff into pipeline/analyzer only after the inputs make sense. verify with cli and analyzer tests before trusting a behavior change.">
               <h3>I want to understand a normal scan</h3>
               <p>Follow the main path from CLI input to findings and output.</p>
@@ -248,7 +248,7 @@
               <div class="mini-label">Tests / proof</div>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/test/test_cli.py" rel="noopener noreferrer">test/test_cli.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_analyzer.py" rel="noopener noreferrer">test/test_analyzer.py</a></div>
             </article>
-            
+
 
             <article class="route-card searchable persona-target" data-personas="debugger contributor maintainer" data-search="i want to fix a false positive find the detector, the evidence proof, and the regression test that should pin the behavior. skylos/analyzer.py skylos/analysis/ skylos/deadcode/ skylos/visitors/ test/ test/test_analyzer.py reproduce the wrong finding with the smallest possible fixture. find whether the bug is rule logic, liveness evidence, framework handling, or output filtering. add a regression test that fails before the fix and passes after it.">
               <h3>I want to fix a false positive</h3>
@@ -261,7 +261,7 @@
               <div class="mini-label">Tests / proof</div>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/test/test_analyzer.py" rel="noopener noreferrer">test/test_analyzer.py</a></div>
             </article>
-            
+
 
             <article class="route-card searchable persona-target" data-personas="contributor debugger maintainer" data-search="i want to add or tune a rule change the catalog and implementation together so docs, ids, and behavior stay aligned. skylos/rules/catalog.py skylos/rules/danger/ skylos/rules/config/ skylos/rules/quality/ dictionary.md scripts/check_rule_docs_parity.py start with the rule id and public wording before touching detector code. keep the catalog, implementation, tests, and docs parity together. run parity checks so users do not see undocumented or mismatched rule ids.">
               <h3>I want to add or tune a rule</h3>
@@ -274,7 +274,7 @@
               <div class="mini-label">Tests / proof</div>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/scripts/check_rule_docs_parity.py" rel="noopener noreferrer">scripts/check_rule_docs_parity.py</a></div>
             </article>
-            
+
 
             <article class="route-card searchable persona-target" data-personas="security maintainer" data-search="i want to touch llm analysis keep prompts, provider runtime, evidence grounding, and scanner integrity together. skylos/llm/analyzer.py skylos/llm/finding_evidence.py skylos/adapters/ skylos/agents/ test/test_llm_finding_evidence.py test/test_agent_service.py treat the llm as untrusted until code evidence proves the claim. change prompts/runtime separately from evidence filters when possible. benchmark against hard false-positive and false-negative fixtures.">
               <h3>I want to touch LLM analysis</h3>
@@ -287,7 +287,7 @@
               <div class="mini-label">Tests / proof</div>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/test/test_llm_finding_evidence.py" rel="noopener noreferrer">test/test_llm_finding_evidence.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_agent_service.py" rel="noopener noreferrer">test/test_agent_service.py</a></div>
             </article>
-            
+
 
             <article class="route-card searchable persona-target" data-personas="security maintainer" data-search="i want to change cloud or ci policy follow local config, synced policy, generated workflows, and gate output as one security boundary. skylos/config.py skylos/cloud/sync.py skylos/cicd/workflow.py test/test_config.py test/test_security_contracts.py test/test_cicd_workflow.py decide which side owns the policy: local repo, synced cloud policy, or cli flag. check merge precedence before changing analyzer behavior. test the bypass case, not only the normal happy path.">
               <h3>I want to change cloud or CI policy</h3>
@@ -300,7 +300,7 @@
               <div class="mini-label">Tests / proof</div>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/test/test_config.py" rel="noopener noreferrer">test/test_config.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_security_contracts.py" rel="noopener noreferrer">test/test_security_contracts.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_cicd_workflow.py" rel="noopener noreferrer">test/test_cicd_workflow.py</a></div>
             </article>
-            
+
 
             <article class="route-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="i want to prove quality changed run benchmarks and regression scripts instead of trusting a single happy-path fixture. scripts/security_benchmark.py scripts/quality_benchmark.py scripts/dead_code_benchmark.py skylos/benchmarks/ test/test_security_benchmark.py test/test_quality_benchmark.py test/test_dead_code_benchmark.py pick the benchmark closest to the behavior you changed. record before/after scores and timing. keep hard fixtures in the benchmark suite when they guard real regressions.">
               <h3>I want to prove quality changed</h3>
@@ -313,7 +313,7 @@
               <div class="mini-label">Tests / proof</div>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/test/test_security_benchmark.py" rel="noopener noreferrer">test/test_security_benchmark.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_quality_benchmark.py" rel="noopener noreferrer">test/test_quality_benchmark.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_dead_code_benchmark.py" rel="noopener noreferrer">test/test_dead_code_benchmark.py</a></div>
             </article>
-            
+
 
             <article class="route-card searchable persona-target" data-personas="user contributor" data-search="i want to use skylos as a library start with the public api facade before reaching into private helpers. skylos/api/__init__.py skylos/api/_findings.py skylos/api/_payloads.py test/test_api.py import from skylos.api first; treat underscore modules as implementation details. check payload shape helpers before creating a new response format. preserve public facade behavior even when private helpers move.">
               <h3>I want to use Skylos as a library</h3>
@@ -326,16 +326,16 @@
               <div class="mini-label">Tests / proof</div>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/test/test_api.py" rel="noopener noreferrer">test/test_api.py</a></div>
             </article>
-            
+
       </div>
     </section>
-    
+
 
     <section id="sharp-edges">
       <h2>Safe Path</h2>
       <p class="lede">This is the quick judgment layer: where a new contributor can start, where to slow down, and what proof usually matters.</p>
       <div class="guide-grid">
-        
+
             <article class="guide-card searchable" data-search="safer first touches focused command modules under skylos/commands/ rule fixtures and narrow regression tests reporting copy or output formatting benchmark fixture additions">
               <h3>Safer first touches</h3>
               <ul><li>Focused command modules under skylos/commands/</li>
@@ -343,7 +343,7 @@
 <li>Reporting copy or output formatting</li>
 <li>Benchmark fixture additions</li></ul>
             </article>
-            
+
 
             <article class="guide-card searchable" data-search="slow down here skylos/cli.py because it still dispatches many workflows skylos/analyzer.py because it owns core scanner semantics skylos/config.py because config precedence can become a security boundary skylos/llm/finding_evidence.py because filters can create false negatives">
               <h3>Slow down here</h3>
@@ -352,7 +352,7 @@
 <li>skylos/config.py because config precedence can become a security boundary</li>
 <li>skylos/llm/finding_evidence.py because filters can create false negatives</li></ul>
             </article>
-            
+
 
             <article class="guide-card searchable" data-search="proof expected false-positive fixes need a negative and positive fixture security changes need a bypass or attacker-controlled input test llm grounding changes need before/after benchmark evidence public api changes need facade compatibility tests">
               <h3>Proof expected</h3>
@@ -361,16 +361,16 @@
 <li>LLM grounding changes need before/after benchmark evidence</li>
 <li>Public API changes need facade compatibility tests</li></ul>
             </article>
-            
+
       </div>
     </section>
-    
+
 
     <section id="architecture">
       <h2>Architecture</h2>
       <p class="lede">Use this when a change crosses ownership boundaries. It shows dependency direction and the guardrail for each layer.</p>
       <div class="arch-grid">
-        
+
             <article class="arch-card searchable persona-target" data-personas="user contributor maintainer" data-search="interfaces where users, ci, agents, and library consumers enter skylos. policy, discovery, analysis, reporting keep interface code thin; move command-specific logic into focused modules. skylos/cli.py skylos/api/ skylos/commands/ skylos/cicd/">
               <h3>Interfaces</h3>
               <p>Where users, CI, agents, and library consumers enter Skylos.</p>
@@ -380,7 +380,7 @@
               <p class="compact">Keep interface code thin; move command-specific logic into focused modules.</p>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">skylos/cli.py</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/api" rel="noopener noreferrer">skylos/api</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/commands" rel="noopener noreferrer">skylos/commands</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/cicd" rel="noopener noreferrer">skylos/cicd</a></div>
             </article>
-            
+
 
             <article class="arch-card searchable persona-target" data-personas="security maintainer" data-search="policy and trust configuration, synced cloud policy, security contracts, and gate decisions. interfaces and analyzer output treat merge precedence and attacker-controlled repo config as security-sensitive. skylos/config.py skylos/cloud/sync.py">
               <h3>Policy And Trust</h3>
@@ -391,7 +391,7 @@
               <p class="compact">Treat merge precedence and attacker-controlled repo config as security-sensitive.</p>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/config.py" rel="noopener noreferrer">skylos/config.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/cloud/sync.py" rel="noopener noreferrer">skylos/cloud/sync.py</a></div>
             </article>
-            
+
 
             <article class="arch-card searchable persona-target" data-personas="debugger contributor maintainer" data-search="discovery decides which files and languages enter the scanner. config and filesystem state too broad creates noise; too narrow creates false negatives. skylos/discover/ skylos/pipeline.py skylos/engines/">
               <h3>Discovery</h3>
@@ -402,7 +402,7 @@
               <p class="compact">Too broad creates noise; too narrow creates false negatives.</p>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/skylos/discover" rel="noopener noreferrer">skylos/discover</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/pipeline.py" rel="noopener noreferrer">skylos/pipeline.py</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/engines" rel="noopener noreferrer">skylos/engines</a></div>
             </article>
-            
+
 
             <article class="arch-card searchable persona-target" data-personas="debugger security maintainer" data-search="static analysis core owns liveness, rules, framework handling, config posture checks, quality checks, and dangerous-flow detection. discovery, config, language engines every semantic change needs a small fixture and a regression test. skylos/analyzer.py skylos/analysis/ skylos/rules/ skylos/visitors/">
               <h3>Static Analysis Core</h3>
@@ -413,7 +413,7 @@
               <p class="compact">Every semantic change needs a small fixture and a regression test.</p>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">skylos/analyzer.py</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/analysis" rel="noopener noreferrer">skylos/analysis</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/rules" rel="noopener noreferrer">skylos/rules</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/visitors" rel="noopener noreferrer">skylos/visitors</a></div>
             </article>
-            
+
 
             <article class="arch-card searchable persona-target" data-personas="security maintainer" data-search="evidence and ai review grounds llm/agent findings against source code and scanner evidence. static analysis output and provider adapters filters must prove safety; weak refutation creates scanner false negatives. skylos/llm/ skylos/agents/ skylos/adapters/">
               <h3>Evidence And AI Review</h3>
@@ -424,7 +424,7 @@
               <p class="compact">Filters must prove safety; weak refutation creates scanner false negatives.</p>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/skylos/llm" rel="noopener noreferrer">skylos/llm</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/agents" rel="noopener noreferrer">skylos/agents</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/adapters" rel="noopener noreferrer">skylos/adapters</a></div>
             </article>
-            
+
 
             <article class="arch-card searchable persona-target" data-personas="user contributor maintainer" data-search="output and feedback turns findings into terminal output, reports, uploads, annotations, and review comments. analyzer results and policy decisions output changes should preserve machine-readable compatibility. skylos/reporting/ skylos/cloud/ skylos/cicd/ skylos/ui/">
               <h3>Output And Feedback</h3>
@@ -435,7 +435,7 @@
               <p class="compact">Output changes should preserve machine-readable compatibility.</p>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/skylos/reporting" rel="noopener noreferrer">skylos/reporting</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/cloud" rel="noopener noreferrer">skylos/cloud</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/cicd" rel="noopener noreferrer">skylos/cicd</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/ui" rel="noopener noreferrer">skylos/ui</a></div>
             </article>
-            
+
 
             <article class="arch-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="proof harness keeps behavior honest with tests, benchmarks, parity checks, and generated artifacts. all product layers benchmark updates should explain score, timing, and regression intent. test/ benchmarks/ scripts/ skylos/benchmarks/">
               <h3>Proof Harness</h3>
@@ -446,66 +446,66 @@
               <p class="compact">Benchmark updates should explain score, timing, and regression intent.</p>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/test" rel="noopener noreferrer">test</a> <a href="https://github.com/duriantaco/skylos/tree/main/benchmarks" rel="noopener noreferrer">benchmarks</a> <a href="https://github.com/duriantaco/skylos/tree/main/scripts" rel="noopener noreferrer">scripts</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/benchmarks" rel="noopener noreferrer">skylos/benchmarks</a></div>
             </article>
-            
+
       </div>
     </section>
-    
+
 
     <section id="docstrings">
       <h2>Docstring Standard</h2>
       <p class="lede">Use these fields for key functions, not every helper. The goal is to preserve editing judgment, trust boundaries, and proof expectations.</p>
       <div class="doc-grid">
-        
+
             <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="intent why this function exists, in product terms. prefer the user-visible or scanner-integrity reason over a paraphrase of the function name.">
               <h3>Intent</h3>
               <p>Why this function exists, in product terms. Prefer the user-visible or scanner-integrity reason over a paraphrase of the function name.</p>
             </article>
-            
+
 
             <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="trust boundary state whether inputs can come from a scanned repo, ci, cloud policy, llm output, or local filesystem. this is mandatory for security-sensitive helpers.">
               <h3>Trust Boundary</h3>
               <p>State whether inputs can come from a scanned repo, CI, cloud policy, LLM output, or local filesystem. This is mandatory for security-sensitive helpers.</p>
             </article>
-            
+
 
             <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="invariants list conditions the function must preserve, such as policy precedence, no symlink writes, no html injection, or no llm-only refutation.">
               <h3>Invariants</h3>
               <p>List conditions the function must preserve, such as policy precedence, no symlink writes, no HTML injection, or no LLM-only refutation.</p>
             </article>
-            
+
 
             <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="failure mode say what happens when parsing, io, provider calls, or analysis fails. future maintainers need to know whether fail-open is intentional.">
               <h3>Failure Mode</h3>
               <p>Say what happens when parsing, IO, provider calls, or analysis fails. Future maintainers need to know whether fail-open is intentional.</p>
             </article>
-            
+
 
             <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="evidence contract for scanners, explain what proof is enough to emit or suppress a finding. this reduces false positives and false negatives.">
               <h3>Evidence Contract</h3>
               <p>For scanners, explain what proof is enough to emit or suppress a finding. This reduces false positives and false negatives.</p>
             </article>
-            
+
 
             <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="performance shape call out whole-repo walks, ast parsing, subprocesses, network calls, caching, or expected input size.">
               <h3>Performance Shape</h3>
               <p>Call out whole-repo walks, AST parsing, subprocesses, network calls, caching, or expected input size.</p>
             </article>
-            
+
 
             <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="extension point name the safe place to add new rules, providers, languages, output formats, or framework conventions.">
               <h3>Extension Point</h3>
               <p>Name the safe place to add new rules, providers, languages, output formats, or framework conventions.</p>
             </article>
-            
+
 
             <article class="doc-card searchable persona-target" data-personas="contributor debugger security maintainer" data-search="validation point to the exact test family, benchmark, or parity check that should fail if the function regresses.">
               <h3>Validation</h3>
               <p>Point to the exact test family, benchmark, or parity check that should fail if the function regresses.</p>
             </article>
-            
+
       </div>
     </section>
-    
+
 
     <section id="flow">
       <h2>Scan Flow</h2>
@@ -515,28 +515,28 @@
               <p>CLI args, changed files, config</p>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">skylos/cli.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/config.py" rel="noopener noreferrer">skylos/config.py</a></div>
             </div>
-            
+
 
             <div class="flow-step searchable" data-search="discovery select source files and language paths skylos/discover/ skylos/pipeline.py">
               <div class="flow-title">Discovery</div>
               <p>Select source files and language paths</p>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/skylos/discover" rel="noopener noreferrer">skylos/discover</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/pipeline.py" rel="noopener noreferrer">skylos/pipeline.py</a></div>
             </div>
-            
+
 
             <div class="flow-step searchable" data-search="analysis static detectors, rules, liveness, evidence skylos/analyzer.py skylos/rules/ skylos/analysis/">
               <div class="flow-title">Analysis</div>
               <p>Static detectors, rules, liveness, evidence</p>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">skylos/analyzer.py</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/rules" rel="noopener noreferrer">skylos/rules</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/analysis" rel="noopener noreferrer">skylos/analysis</a></div>
             </div>
-            
+
 
             <div class="flow-step searchable" data-search="review llm/agent review and evidence grounding where enabled skylos/llm/ skylos/agents/ skylos/adapters/">
               <div class="flow-title">Review</div>
               <p>LLM/agent review and evidence grounding where enabled</p>
               <div class="link-row"><a href="https://github.com/duriantaco/skylos/tree/main/skylos/llm" rel="noopener noreferrer">skylos/llm</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/agents" rel="noopener noreferrer">skylos/agents</a> <a href="https://github.com/duriantaco/skylos/tree/main/skylos/adapters" rel="noopener noreferrer">skylos/adapters</a></div>
             </div>
-            
+
 
             <div class="flow-step searchable" data-search="output pretty output, sarif, cloud upload, ci review skylos/reporting/ skylos/cloud/ skylos/cicd/">
               <div class="flow-title">Output</div>
@@ -545,7 +545,7 @@
             </div>
             </div>
     </section>
-    
+
 
     <section id="folders">
       <h2>Folders</h2>
@@ -554,8 +554,8 @@
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks" rel="noopener noreferrer">benchmarks</a></h3>
         <div class="stat-row">
-          <span class="pill"><strong>files</strong> 161</span>
-          <span class="pill"><strong>symbols</strong> 314</span>
+          <span class="pill"><strong>files</strong> 174</span>
+          <span class="pill"><strong>symbols</strong> 334</span>
         </div>
       </div>
       <p>Benchmark data and generated comparison artifacts.</p>
@@ -598,14 +598,14 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="scripts repository maintenance, benchmark, parity, and regression scripts. use this for repeatable evidence and local automation that should not live in runtime package code. scripts/security_benchmark.py scripts/quality_benchmark.py scripts/check_rule_docs_parity.py test/test_typescript_safe_glob.py scripts/repo_map_renderer.py scripts/build_repo_map.py scripts/regression_delta.py scripts/compare_codex_skylos_quality.py scripts/compare_codex_skylos_agent_review.py scripts/analyzer_speed_check.py scripts/compare_codex_skylos_demo_deadcode.py scripts/dead_code_compare_scanners.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/scripts" rel="noopener noreferrer">scripts</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 19</span>
-          <span class="pill"><strong>symbols</strong> 127</span>
+          <span class="pill"><strong>symbols</strong> 128</span>
         </div>
       </div>
       <p>Repository maintenance, benchmark, parity, and regression scripts.</p>
@@ -648,14 +648,14 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos root entrypoints and shared scan orchestration. start here when cli behavior, scan flow, or global configuration changes. skylos/cli.py skylos/analyzer.py skylos/pipeline.py skylos/config.py test/test_skylos.py skylos/cli.py skylos/config.py skylos/analyzer.py skylos/verify_change.py skylos/pipeline.py skylos/constants.py skylos/__init__.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos" rel="noopener noreferrer">skylos</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 7</span>
-          <span class="pill"><strong>symbols</strong> 254</span>
+          <span class="pill"><strong>symbols</strong> 269</span>
         </div>
       </div>
       <p>Root entrypoints and shared scan orchestration.</p>
@@ -692,12 +692,12 @@
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">Skylos</a> <span>class</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">proc_file</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">analyze</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_python_signature_files</a> <span>def</span></li></ul>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_merge_project_config_overrides</a> <span>def</span></li></ul>
       </div>
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/adapters provider adapters that let skylos talk to model runtimes without coupling core logic to one vendor. change this when adding or hardening an llm provider boundary. skylos/adapters/base.py skylos/adapters/litellm_adapter.py  skylos/adapters/__init__.py skylos/adapters/base.py skylos/adapters/litellm_adapter.py">
       <div class="card-head">
@@ -731,7 +731,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/agents agent-facing payloads, service helpers, and review triage learning. use this area for agent review workflows and normalized agent result handling. skylos/agents/service.py skylos/agents/payload.py test/test_agent_service.py test/test_agents.py skylos/agents/center.py skylos/agents/service.py skylos/agents/payload.py skylos/agents/triage_learner.py skylos/agents/__init__.py">
       <div class="card-head">
@@ -778,14 +778,14 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/analysis reusable static-analysis primitives: architecture, reachability, control-flow, penalties, and implicit references. change this when multiple scanners need the same code-understanding primitive. skylos/analysis/module_reachability.py skylos/analysis/control_flow.py  skylos/analysis/penalties.py skylos/analysis/file_processing.py skylos/analysis/architecture.py skylos/analysis/circular_deps.py skylos/analysis/ast_mask.py skylos/analysis/control_flow.py skylos/analysis/architecture_findings.py skylos/analysis/architecture_layers.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analysis" rel="noopener noreferrer">skylos/analysis</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 13</span>
-          <span class="pill"><strong>symbols</strong> 109</span>
+          <span class="pill"><strong>symbols</strong> 115</span>
         </div>
       </div>
       <p>Reusable static-analysis primitives: architecture, reachability, control-flow, penalties, and implicit references.</p>
@@ -828,9 +828,9 @@
     </div>
       </details>
     </article>
-    
 
-    <article class="folder-card searchable" data-search="skylos/api public api facade and private helpers for payloads, snippets, findings, urls, and ai-detection metadata. keep compatibility in mind here; external users may import from skylos.api. skylos/api/__init__.py skylos/api/_findings.py skylos/api/_payloads.py test/test_api.py test/test_api_signature_hallucination.py test/test_python_api_surface.py skylos/api/__init__.py skylos/api/_artifacts.py skylos/api/_payloads.py skylos/api/_findings.py skylos/api/_urls.py skylos/api/_ai_detection.py skylos/api/_snippets.py">
+
+    <article class="folder-card searchable" data-search="skylos/api public api facade and private helpers for payloads, snippets, findings, urls, and ai-detection metadata. keep compatibility in mind here; external users may import from skylos.api. skylos/api/__init__.py skylos/api/_findings.py skylos/api/_payloads.py test/test_api.py test/test_api_signature_hallucination.py test/test_api_symbol_truth.py test/test_js_api_surface.py test/test_python_api_surface.py skylos/api/__init__.py skylos/api/_artifacts.py skylos/api/_payloads.py skylos/api/_findings.py skylos/api/_urls.py skylos/api/_ai_detection.py skylos/api/_snippets.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/api" rel="noopener noreferrer">skylos/api</a></h3>
         <div class="stat-row">
@@ -845,7 +845,7 @@
         <div class="mini-label">Entrypoints</div>
         <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/api/__init__.py" rel="noopener noreferrer">skylos/api/__init__.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/api/_findings.py" rel="noopener noreferrer">skylos/api/_findings.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/api/_payloads.py" rel="noopener noreferrer">skylos/api/_payloads.py</a></div>
         <div class="mini-label">Nearby tests</div>
-        <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/test/test_api.py" rel="noopener noreferrer">test/test_api.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_api_signature_hallucination.py" rel="noopener noreferrer">test/test_api_signature_hallucination.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_python_api_surface.py" rel="noopener noreferrer">test/test_python_api_surface.py</a></div>
+        <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/test/test_api.py" rel="noopener noreferrer">test/test_api.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_api_signature_hallucination.py" rel="noopener noreferrer">test/test_api_signature_hallucination.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_api_symbol_truth.py" rel="noopener noreferrer">test/test_api_symbol_truth.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_js_api_surface.py" rel="noopener noreferrer">test/test_js_api_surface.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_python_api_surface.py" rel="noopener noreferrer">test/test_python_api_surface.py</a></div>
         <div class="split-list">
       <div>
         <div class="mini-label">Important files</div>
@@ -877,7 +877,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/audit deep-audit candidate selection, processing, redaction, export, and revalidation. use this for audit packets, changed-file audits, and post-scan review artifacts. skylos/audit/processor.py skylos/audit/candidates.py skylos/audit/revalidator.py test/test_audit_candidates.py test/test_audit_ci.py test/test_audit_cli.py test/test_audit_export.py test/test_audit_processor.py test/test_audit_revalidator.py skylos/audit/export.py skylos/audit/processor.py skylos/audit/candidates.py skylos/audit/types.py skylos/audit/revalidator.py skylos/audit/ci.py skylos/audit/polyglot.py skylos/audit/redaction.py">
       <div class="card-head">
@@ -927,14 +927,14 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/benchmarks benchmark fixtures and scoring code for security, quality, dead-code, and agent-review comparisons. change this when proving scanner quality changed, not just when code still passes tests. skylos/benchmarks/security.py skylos/benchmarks/quality.py skylos/benchmarks/agent_review.py  skylos/benchmarks/ai_code_defects.py skylos/benchmarks/dead_code.py skylos/benchmarks/agent_review.py skylos/benchmarks/verify_benchmark_eval.py skylos/benchmarks/framework_corpus.py skylos/benchmarks/security.py skylos/benchmarks/verify_benchmark_runner.py skylos/benchmarks/quality.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/benchmarks" rel="noopener noreferrer">skylos/benchmarks</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 14</span>
-          <span class="pill"><strong>symbols</strong> 218</span>
+          <span class="pill"><strong>symbols</strong> 232</span>
         </div>
       </div>
       <p>Benchmark fixtures and scoring code for security, quality, dead-code, and agent-review comparisons.</p>
@@ -977,7 +977,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/cicd ci workflow generation, annotations, review comments, evidence, and risk passport output. use this when changing github/gitlab integration behavior or ci gate messaging. skylos/cicd/workflow.py skylos/cicd/review.py skylos/cicd/evidence.py test/test_cicd_annotate.py test/test_cicd_evidence.py test/test_cicd_gate.py test/test_cicd_review.py test/test_cicd_risk_passport.py test/test_cicd_workflow.py skylos/cicd/evidence.py skylos/cicd/review.py skylos/cicd/risk_passport.py skylos/cicd/workflow.py skylos/cicd/__init__.py">
       <div class="card-head">
@@ -1024,7 +1024,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/cli_core smaller cli parser and dispatch pieces peeled away from the main cli module. prefer this for new command wiring when it fits the newer cli split. skylos/cli_core/main_parser.py skylos/cli_core/dispatch.py  skylos/cli_core/dispatch.py skylos/cli_core/main_parser.py skylos/cli_core/__init__.py">
       <div class="card-head">
@@ -1061,7 +1061,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/cloud skylos cloud login, credentials, policy sync, project context, and upload manifest support. treat this as security-sensitive because local repo state and cloud policy meet here. skylos/cloud/sync.py skylos/cloud/credentials.py skylos/cloud/project_context.py  skylos/cloud/sync.py skylos/cloud/login.py skylos/cloud/sync_setup.py skylos/cloud/upload_manifest.py skylos/cloud/credentials.py skylos/cloud/project_context.py skylos/cloud/__init__.py">
       <div class="card-head">
@@ -1110,14 +1110,14 @@
     </div>
       </details>
     </article>
-    
 
-    <article class="folder-card searchable" data-search="skylos/commands command modules used by the cli for focused command behavior. put command-specific behavior here instead of growing skylos/cli.py. skylos/commands/cicd_cmd.py skylos/commands/sync_cmd.py  skylos/commands/agent_verify_cmd.py skylos/commands/agent_replay_cmd.py skylos/commands/clean_cmd.py skylos/commands/suite_cmd.py skylos/commands/defend_cmd.py skylos/commands/rules_cmd.py skylos/commands/verify_cmd.py skylos/commands/key_cmd.py">
+
+    <article class="folder-card searchable" data-search="skylos/commands command modules used by the cli for focused command behavior. put command-specific behavior here instead of growing skylos/cli.py. skylos/commands/cicd_cmd.py skylos/commands/sync_cmd.py  skylos/commands/agent_verify_cmd.py skylos/commands/defend_cmd.py skylos/commands/agent_replay_cmd.py skylos/commands/clean_cmd.py skylos/commands/suite_cmd.py skylos/commands/rules_cmd.py skylos/commands/verify_cmd.py skylos/commands/key_cmd.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands" rel="noopener noreferrer">skylos/commands</a></h3>
         <div class="stat-row">
-          <span class="pill"><strong>files</strong> 27</span>
-          <span class="pill"><strong>symbols</strong> 164</span>
+          <span class="pill"><strong>files</strong> 28</span>
+          <span class="pill"><strong>symbols</strong> 181</span>
         </div>
       </div>
       <p>Command modules used by the CLI for focused command behavior.</p>
@@ -1132,10 +1132,10 @@
       <div>
         <div class="mini-label">Important files</div>
         <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/agent_verify_cmd.py" rel="noopener noreferrer">skylos/commands/agent_verify_cmd.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/defend_cmd.py" rel="noopener noreferrer">skylos/commands/defend_cmd.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/agent_replay_cmd.py" rel="noopener noreferrer">skylos/commands/agent_replay_cmd.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/clean_cmd.py" rel="noopener noreferrer">skylos/commands/clean_cmd.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/suite_cmd.py" rel="noopener noreferrer">skylos/commands/suite_cmd.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/defend_cmd.py" rel="noopener noreferrer">skylos/commands/defend_cmd.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/rules_cmd.py" rel="noopener noreferrer">skylos/commands/rules_cmd.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/verify_cmd.py" rel="noopener noreferrer">skylos/commands/verify_cmd.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/key_cmd.py" rel="noopener noreferrer">skylos/commands/key_cmd.py</a></li></ul>
@@ -1147,27 +1147,74 @@
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/agent_verify_cmd.py" rel="noopener noreferrer">_run_static_dead_code_scan</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/agent_verify_cmd.py" rel="noopener noreferrer">_collect_dead_code_findings</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/agent_verify_cmd.py" rel="noopener noreferrer">_run_verification_harness</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/defend_cmd.py" rel="noopener noreferrer">run_defend_command</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/defend_cmd.py" rel="noopener noreferrer">_build_empty_defense_json</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/defend_cmd.py" rel="noopener noreferrer">_build_defend_parser</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/defend_cmd.py" rel="noopener noreferrer">_validate_defend_target</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/defend_cmd.py" rel="noopener noreferrer">_validate_min_score</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/agent_replay_cmd.py" rel="noopener noreferrer">add_agent_replay_parser</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/agent_replay_cmd.py" rel="noopener noreferrer">run_agent_replay_command</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/agent_replay_cmd.py" rel="noopener noreferrer">harness_replay_payload</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/agent_replay_cmd.py" rel="noopener noreferrer">print_harness_replay</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/agent_replay_cmd.py" rel="noopener noreferrer">_write_replay_output</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/clean_cmd.py" rel="noopener noreferrer">run_analyze</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/clean_cmd.py" rel="noopener noreferrer">run_clean_command</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/clean_cmd.py" rel="noopener noreferrer">_apply_codemod</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/clean_cmd.py" rel="noopener noreferrer">_collect_findings</a> <span>def</span></li></ul>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/agent_replay_cmd.py" rel="noopener noreferrer">print_harness_replay</a> <span>def</span></li></ul>
       </div>
     </div>
       </details>
     </article>
-    
 
-    <article class="folder-card searchable" data-search="skylos/core small shared core types and helpers used across scan paths. use this only for concepts that are truly shared across the product.   skylos/core/gatekeeper.py skylos/core/python_api_surface.py skylos/core/verify_change_schema.py skylos/core/reference_index_store.py skylos/core/result_cache.py skylos/core/file_discovery.py skylos/core/grep_verify_common.py skylos/core/contribution_events.py">
+
+    <article class="folder-card searchable" data-search="skylos/contracts generated facts are available; this folder still needs a curated summary. use the module list and tests to decide whether this is the right ownership area.  test/test_contracts.py test/test_security_contracts.py skylos/contracts/routes.py skylos/contracts/loader.py skylos/contracts/metadata.py skylos/contracts/schema.py skylos/contracts/__init__.py">
+      <div class="card-head">
+        <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts" rel="noopener noreferrer">skylos/contracts</a></h3>
+        <div class="stat-row">
+          <span class="pill"><strong>files</strong> 5</span>
+          <span class="pill"><strong>symbols</strong> 71</span>
+        </div>
+      </div>
+      <p>Generated facts are available; this folder still needs a curated summary.</p>
+      <p class="touch"><strong>Touch when:</strong> Use the module list and tests to decide whether this is the right ownership area.</p>
+      <details>
+        <summary>Entrypoints, tests, and key symbols</summary>
+        <div class="mini-label">Entrypoints</div>
+        <div class="link-row"><span class="muted">Generated only</span></div>
+        <div class="mini-label">Nearby tests</div>
+        <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/test/test_contracts.py" rel="noopener noreferrer">test/test_contracts.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_security_contracts.py" rel="noopener noreferrer">test/test_security_contracts.py</a></div>
+        <div class="split-list">
+      <div>
+        <div class="mini-label">Important files</div>
+        <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/routes.py" rel="noopener noreferrer">skylos/contracts/routes.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">skylos/contracts/loader.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/metadata.py" rel="noopener noreferrer">skylos/contracts/metadata.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/schema.py" rel="noopener noreferrer">skylos/contracts/schema.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/__init__.py" rel="noopener noreferrer">skylos/contracts/__init__.py</a></li></ul>
+      </div>
+      <div>
+        <div class="mini-label">Key symbols</div>
+        <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/routes.py" rel="noopener noreferrer">scan_contract_route_guardrails</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/routes.py" rel="noopener noreferrer">_contract_has_route_guardrail</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/routes.py" rel="noopener noreferrer">_candidate_python_files</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/routes.py" rel="noopener noreferrer">_candidate_file_path</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/routes.py" rel="noopener noreferrer">_glob_contract_pattern</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">starter_contract_text</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">load_contract</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">validate_contract_file</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">discover_contract_path</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">contract_project_config_overrides</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/metadata.py" rel="noopener noreferrer">contract_finding_metadata</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/metadata.py" rel="noopener noreferrer">_ContractFindingMatch</a> <span>class</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/metadata.py" rel="noopener noreferrer">_contract_finding_match</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/metadata.py" rel="noopener noreferrer">_phantom_symbol_match</a> <span>def</span></li></ul>
+      </div>
+    </div>
+      </details>
+    </article>
+
+
+    <article class="folder-card searchable" data-search="skylos/core small shared core types and helpers used across scan paths. use this only for concepts that are truly shared across the product.   skylos/core/gatekeeper.py skylos/core/js_api_surface_members.py skylos/core/python_api_surface.py skylos/core/verify_change_schema.py skylos/core/reference_index_store.py skylos/core/result_cache.py skylos/core/evidence_contract.py skylos/core/api_symbol_truth.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core" rel="noopener noreferrer">skylos/core</a></h3>
         <div class="stat-row">
-          <span class="pill"><strong>files</strong> 24</span>
-          <span class="pill"><strong>symbols</strong> 270</span>
+          <span class="pill"><strong>files</strong> 30</span>
+          <span class="pill"><strong>symbols</strong> 382</span>
         </div>
       </div>
       <p>Small shared core types and helpers used across scan paths.</p>
@@ -1182,13 +1229,13 @@
       <div>
         <div class="mini-label">Important files</div>
         <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">skylos/core/gatekeeper.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/js_api_surface_members.py" rel="noopener noreferrer">skylos/core/js_api_surface_members.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/python_api_surface.py" rel="noopener noreferrer">skylos/core/python_api_surface.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/verify_change_schema.py" rel="noopener noreferrer">skylos/core/verify_change_schema.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/reference_index_store.py" rel="noopener noreferrer">skylos/core/reference_index_store.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/result_cache.py" rel="noopener noreferrer">skylos/core/result_cache.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/file_discovery.py" rel="noopener noreferrer">skylos/core/file_discovery.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify_common.py" rel="noopener noreferrer">skylos/core/grep_verify_common.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/contribution_events.py" rel="noopener noreferrer">skylos/core/contribution_events.py</a></li></ul>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/evidence_contract.py" rel="noopener noreferrer">skylos/core/evidence_contract.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/api_symbol_truth.py" rel="noopener noreferrer">skylos/core/api_symbol_truth.py</a></li></ul>
       </div>
       <div>
         <div class="mini-label">Key symbols</div>
@@ -1197,20 +1244,20 @@
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">run_push</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">start_deployment_wizard</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">check_gate</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/js_api_surface_members.py" rel="noopener noreferrer">_object_export_members</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/js_api_surface_members.py" rel="noopener noreferrer">_named_export_clause_pairs</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/js_api_surface_members.py" rel="noopener noreferrer">_namespace_export_name</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/js_api_surface_members.py" rel="noopener noreferrer">_exported_function_signature_names</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/js_api_surface_members.py" rel="noopener noreferrer">_exported_direct_member_pairs</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/python_api_surface.py" rel="noopener noreferrer">load_python_api_surface_cache</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/python_api_surface.py" rel="noopener noreferrer">save_python_api_surface_cache</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/python_api_surface.py" rel="noopener noreferrer">cached_python_api_surface</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/python_api_surface.py" rel="noopener noreferrer">cache_python_api_surface</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/python_api_surface.py" rel="noopener noreferrer">build_python_api_surface</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/verify_change_schema.py" rel="noopener noreferrer">parse_line_range</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/verify_change_schema.py" rel="noopener noreferrer">build_verify_change_response</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/verify_change_schema.py" rel="noopener noreferrer">_iter_ai_findings</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/verify_change_schema.py" rel="noopener noreferrer">_is_ai_finding</a> <span>def</span></li></ul>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/python_api_surface.py" rel="noopener noreferrer">cache_python_api_surface</a> <span>def</span></li></ul>
       </div>
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/deadcode dead-code specific analysis, framework liveness, and evidence support. change this for dead-code false positives, framework awareness, and reachability fixes. skylos/deadcode/evidence.py test/test_dead_code.py test/test_dead_code_benchmark.py test/test_dead_code_evidence.py test/test_dead_code_liveness.py test/test_demo_deadcode_benchmark.py skylos/deadcode/evidence.py skylos/deadcode/plugin_registry.py skylos/deadcode/browser_refs.py skylos/deadcode/liveness.py skylos/deadcode/config_entrypoints.py skylos/deadcode/python_ast.py skylos/deadcode/collect.py skylos/deadcode/__init__.py">
       <div class="card-head">
@@ -1260,7 +1307,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/debt technical-debt detection and reporting helpers. use this for code-health signals that are not direct security findings. skylos/debt/ test/test_debt.py skylos/debt/report.py skylos/debt/baseline.py skylos/debt/advisor.py skylos/debt/engine.py skylos/debt/scoring.py skylos/debt/policy.py skylos/debt/result.py skylos/debt/__init__.py">
       <div class="card-head">
@@ -1310,14 +1357,14 @@
     </div>
       </details>
     </article>
-    
 
-    <article class="folder-card searchable" data-search="skylos/defend defensive scanning plugins and checks for suspicious package or code patterns. use this for supply-chain or malicious-code detection extensions. skylos/defend/ test/test_defend.py test/test_defend_typescript.py skylos/defend/owasp.py skylos/defend/policy.py skylos/defend/result.py skylos/defend/scoring.py skylos/defend/engine.py skylos/defend/report.py skylos/defend/plugin.py skylos/defend/plugins/cost_controls.py">
+
+    <article class="folder-card searchable" data-search="skylos/defend defensive scanning plugins and checks for suspicious package or code patterns. use this for supply-chain or malicious-code detection extensions. skylos/defend/ test/test_defend.py test/test_defend_typescript.py skylos/defend/report.py skylos/defend/attestation.py skylos/defend/owasp.py skylos/defend/scoring.py skylos/defend/engine.py skylos/defend/policy.py skylos/defend/result.py skylos/defend/frameworks.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend" rel="noopener noreferrer">skylos/defend</a></h3>
         <div class="stat-row">
-          <span class="pill"><strong>files</strong> 22</span>
-          <span class="pill"><strong>symbols</strong> 36</span>
+          <span class="pill"><strong>files</strong> 24</span>
+          <span class="pill"><strong>symbols</strong> 68</span>
         </div>
       </div>
       <p>Defensive scanning plugins and checks for suspicious package or code patterns.</p>
@@ -1331,36 +1378,36 @@
         <div class="split-list">
       <div>
         <div class="mini-label">Important files</div>
-        <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/owasp.py" rel="noopener noreferrer">skylos/defend/owasp.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/policy.py" rel="noopener noreferrer">skylos/defend/policy.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/result.py" rel="noopener noreferrer">skylos/defend/result.py</a></li>
+        <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/report.py" rel="noopener noreferrer">skylos/defend/report.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/attestation.py" rel="noopener noreferrer">skylos/defend/attestation.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/owasp.py" rel="noopener noreferrer">skylos/defend/owasp.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/scoring.py" rel="noopener noreferrer">skylos/defend/scoring.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/engine.py" rel="noopener noreferrer">skylos/defend/engine.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/report.py" rel="noopener noreferrer">skylos/defend/report.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/plugin.py" rel="noopener noreferrer">skylos/defend/plugin.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/plugins/cost_controls.py" rel="noopener noreferrer">skylos/defend/plugins/cost_controls.py</a></li></ul>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/policy.py" rel="noopener noreferrer">skylos/defend/policy.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/result.py" rel="noopener noreferrer">skylos/defend/result.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/frameworks.py" rel="noopener noreferrer">skylos/defend/frameworks.py</a></li></ul>
       </div>
       <div>
         <div class="mini-label">Key symbols</div>
-        <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/owasp.py" rel="noopener noreferrer">supported_owasp_frameworks</a> <span>def</span></li>
+        <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/report.py" rel="noopener noreferrer">format_defense_table</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/report.py" rel="noopener noreferrer">format_defense_json</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/report.py" rel="noopener noreferrer">format_defense_markdown</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/report.py" rel="noopener noreferrer">format_defense_sarif</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/report.py" rel="noopener noreferrer">format_defense_github_summary</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/attestation.py" rel="noopener noreferrer">build_attestation</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/attestation.py" rel="noopener noreferrer">_sha256_json</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/attestation.py" rel="noopener noreferrer">_hash_file</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/attestation.py" rel="noopener noreferrer">_resolve_hashable_path</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/attestation.py" rel="noopener noreferrer">_sha256_regular_file</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/owasp.py" rel="noopener noreferrer">supported_owasp_frameworks</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/owasp.py" rel="noopener noreferrer">supported_owasp_versions</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/owasp.py" rel="noopener noreferrer">normalize_owasp_framework</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/owasp.py" rel="noopener noreferrer">normalize_owasp_selection</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/owasp.py" rel="noopener noreferrer">get_owasp_mapping</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/policy.py" rel="noopener noreferrer">DefensePolicy</a> <span>class</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/policy.py" rel="noopener noreferrer">load_policy</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/policy.py" rel="noopener noreferrer">_parse_policy</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/result.py" rel="noopener noreferrer">DefenseResult</a> <span>class</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/result.py" rel="noopener noreferrer">DefenseScore</a> <span>class</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/result.py" rel="noopener noreferrer">OpsScore</a> <span>class</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/scoring.py" rel="noopener noreferrer">compute_defense_score</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/scoring.py" rel="noopener noreferrer">compute_ops_score</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/scoring.py" rel="noopener noreferrer">_score_pct</a> <span>def</span></li></ul>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/defend/owasp.py" rel="noopener noreferrer">normalize_owasp_selection</a> <span>def</span></li></ul>
       </div>
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/discover source discovery and language/workspace detection. change this when skylos misses files or scans too much.  test/test_discover.py test/test_discover_typescript.py test/test_file_discovery.py skylos/discover/detector_typescript.py skylos/discover/detector.py skylos/discover/graph.py skylos/discover/taint.py skylos/discover/integration.py skylos/discover/report.py skylos/discover/__init__.py">
       <div class="card-head">
@@ -1409,7 +1456,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/engines language-specific engines and parsers beyond the python ast path. use this when adding or fixing non-python language analysis. skylos/engines/  skylos/engines/go_runner.py skylos/engines/go_contract.py skylos/engines/__init__.py">
       <div class="card-head">
@@ -1447,7 +1494,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/integrations external-service integration helpers. keep external contracts small and well-tested here. skylos/integrations/  skylos/integrations/ingest.py skylos/integrations/sonar.py skylos/integrations/__init__.py">
       <div class="card-head">
@@ -1488,14 +1535,14 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/llm llm security analysis, evidence grounding, provider runtime resolution, and prompt templates. treat this as high-risk: changes can reduce hallucinations or create scanner false negatives. skylos/llm/analyzer.py skylos/llm/finding_evidence.py skylos/llm/runtime.py test/test_cli_llm_provider.py test/test_litellm_adapter.py test/test_llm_analyzer.py test/test_llm_consumption.py test/test_llm_context.py test/test_llm_finding_evidence.py skylos/llm/security_taskflow.py skylos/llm/verify_orchestrator.py skylos/llm/_grounding.py skylos/llm/finding_evidence.py skylos/llm/prompts.py skylos/llm/threat_trace.py skylos/llm/harness/replay.py skylos/llm/liveness.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/llm" rel="noopener noreferrer">skylos/llm</a></h3>
         <div class="stat-row">
-          <span class="pill"><strong>files</strong> 47</span>
-          <span class="pill"><strong>symbols</strong> 506</span>
+          <span class="pill"><strong>files</strong> 53</span>
+          <span class="pill"><strong>symbols</strong> 554</span>
         </div>
       </div>
       <p>LLM security analysis, evidence grounding, provider runtime resolution, and prompt templates.</p>
@@ -1538,7 +1585,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/misc generated facts are available; this folder still needs a curated summary. use the module list and tests to decide whether this is the right ownership area.   skylos/misc/update_mapping.py">
       <div class="card-head">
@@ -1572,7 +1619,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/plugins plugin interfaces and loading support. use this when adding extension points without coupling them to core scan flow. skylos/plugins/  skylos/plugins/pytest_unused_fixtures.py skylos/plugins/__init__.py">
       <div class="card-head">
@@ -1606,7 +1653,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/remediation autofix and cleanup support for selected findings. use this only when a finding has a safe, narrow, testable edit path. skylos/remediation/  skylos/remediation/fixgen.py skylos/remediation/codemods.py skylos/remediation/regression_tests.py skylos/remediation/safety.py skylos/remediation/__init__.py">
       <div class="card-head">
@@ -1653,7 +1700,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/reporting output formatters and exports such as sarif, compact json, and human-readable reports. use this when scan results are right but the output is wrong or hard to consume. skylos/reporting/  skylos/reporting/result_builder.py skylos/reporting/dead_code_result.py skylos/reporting/grader.py skylos/reporting/provenance.py skylos/reporting/architecture_result.py skylos/reporting/github_annotations.py skylos/reporting/llm_report.py skylos/reporting/rollups.py">
       <div class="card-head">
@@ -1703,14 +1750,14 @@
     </div>
       </details>
     </article>
-    
 
-    <article class="folder-card searchable" data-search="skylos/rules rule catalog and concrete rule implementations for quality, security, ai-defect, config, edge, ci/cd, and sca findings. start here when adding rule ids, tuning scanner semantics, config posture checks, or changing rule docs parity. skylos/rules/catalog.py skylos/rules/ai_defect skylos/rules/danger skylos/rules/config skylos/rules/quality test/test_community_rules.py test/test_good_practices_rules.py test/test_mcp_rules.py test/test_quality_new_rules.py test/test_quality_rules.py test/test_rules_cmd.py skylos/rules/config/cicd/github_actions.py skylos/rules/config/cicd/gitlab_ci.py skylos/rules/config/edge/systemd.py skylos/rules/ai_defect/manifest_dependency_hallucination.py skylos/rules/config/edge/docker_compose.py skylos/rules/quality/logic_foundation.py skylos/rules/quality/logic_security.py skylos/rules/ai_defect/api_signature_hallucination.py">
+
+    <article class="folder-card searchable" data-search="skylos/rules rule catalog and concrete rule implementations for quality, security, ai-defect, config, edge, ci/cd, and sca findings. start here when adding rule ids, tuning scanner semantics, config posture checks, or changing rule docs parity. skylos/rules/catalog.py skylos/rules/ai_defect skylos/rules/danger skylos/rules/config skylos/rules/quality test/test_ai_pr_diff_rules.py test/test_community_rules.py test/test_good_practices_rules.py test/test_mcp_rules.py test/test_quality_new_rules.py test/test_quality_rules.py skylos/rules/ai_defect/manifest_dependency_hallucination.py skylos/rules/config/cicd/github_actions.py skylos/rules/ai_defect/assertion_weakening.py skylos/rules/config/cicd/gitlab_ci.py skylos/rules/quality/logic_security.py skylos/rules/config/edge/systemd.py skylos/rules/config/edge/docker_compose.py skylos/rules/quality/logic_foundation.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules" rel="noopener noreferrer">skylos/rules</a></h3>
         <div class="stat-row">
-          <span class="pill"><strong>files</strong> 86</span>
-          <span class="pill"><strong>symbols</strong> 717</span>
+          <span class="pill"><strong>files</strong> 91</span>
+          <span class="pill"><strong>symbols</strong> 916</span>
         </div>
       </div>
       <p>Rule catalog and concrete rule implementations for quality, security, AI-defect, config, edge, CI/CD, and SCA findings.</p>
@@ -1720,40 +1767,40 @@
         <div class="mini-label">Entrypoints</div>
         <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/catalog.py" rel="noopener noreferrer">skylos/rules/catalog.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect" rel="noopener noreferrer">skylos/rules/ai_defect</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/danger" rel="noopener noreferrer">skylos/rules/danger</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config" rel="noopener noreferrer">skylos/rules/config</a> <a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/quality" rel="noopener noreferrer">skylos/rules/quality</a></div>
         <div class="mini-label">Nearby tests</div>
-        <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/test/test_community_rules.py" rel="noopener noreferrer">test/test_community_rules.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_good_practices_rules.py" rel="noopener noreferrer">test/test_good_practices_rules.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_mcp_rules.py" rel="noopener noreferrer">test/test_mcp_rules.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_quality_new_rules.py" rel="noopener noreferrer">test/test_quality_new_rules.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_quality_rules.py" rel="noopener noreferrer">test/test_quality_rules.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_rules_cmd.py" rel="noopener noreferrer">test/test_rules_cmd.py</a></div>
+        <div class="link-row"><a href="https://github.com/duriantaco/skylos/blob/main/test/test_ai_pr_diff_rules.py" rel="noopener noreferrer">test/test_ai_pr_diff_rules.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_community_rules.py" rel="noopener noreferrer">test/test_community_rules.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_good_practices_rules.py" rel="noopener noreferrer">test/test_good_practices_rules.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_mcp_rules.py" rel="noopener noreferrer">test/test_mcp_rules.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_quality_new_rules.py" rel="noopener noreferrer">test/test_quality_new_rules.py</a> <a href="https://github.com/duriantaco/skylos/blob/main/test/test_quality_rules.py" rel="noopener noreferrer">test/test_quality_rules.py</a></div>
         <div class="split-list">
       <div>
         <div class="mini-label">Important files</div>
-        <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/github_actions.py" rel="noopener noreferrer">skylos/rules/config/cicd/github_actions.py</a></li>
+        <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/manifest_dependency_hallucination.py" rel="noopener noreferrer">skylos/rules/ai_defect/manifest_dependency_hallucination.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/github_actions.py" rel="noopener noreferrer">skylos/rules/config/cicd/github_actions.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/assertion_weakening.py" rel="noopener noreferrer">skylos/rules/ai_defect/assertion_weakening.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/gitlab_ci.py" rel="noopener noreferrer">skylos/rules/config/cicd/gitlab_ci.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/edge/systemd.py" rel="noopener noreferrer">skylos/rules/config/edge/systemd.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/manifest_dependency_hallucination.py" rel="noopener noreferrer">skylos/rules/ai_defect/manifest_dependency_hallucination.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/edge/docker_compose.py" rel="noopener noreferrer">skylos/rules/config/edge/docker_compose.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/quality/logic_foundation.py" rel="noopener noreferrer">skylos/rules/quality/logic_foundation.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/quality/logic_security.py" rel="noopener noreferrer">skylos/rules/quality/logic_security.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/api_signature_hallucination.py" rel="noopener noreferrer">skylos/rules/ai_defect/api_signature_hallucination.py</a></li></ul>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/edge/systemd.py" rel="noopener noreferrer">skylos/rules/config/edge/systemd.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/edge/docker_compose.py" rel="noopener noreferrer">skylos/rules/config/edge/docker_compose.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/quality/logic_foundation.py" rel="noopener noreferrer">skylos/rules/quality/logic_foundation.py</a></li></ul>
       </div>
       <div>
         <div class="mini-label">Key symbols</div>
-        <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/github_actions.py" rel="noopener noreferrer">scan_github_actions_file</a> <span>def</span></li>
+        <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/manifest_dependency_hallucination.py" rel="noopener noreferrer">scan_manifest_dependency_hallucinations</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/manifest_dependency_hallucination.py" rel="noopener noreferrer">check_dependency_version_status</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/manifest_dependency_hallucination.py" rel="noopener noreferrer">_repo_root</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/manifest_dependency_hallucination.py" rel="noopener noreferrer">_status_checker</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/manifest_dependency_hallucination.py" rel="noopener noreferrer">_collect_manifest_dependencies</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/github_actions.py" rel="noopener noreferrer">scan_github_actions_file</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/github_actions.py" rel="noopener noreferrer">scan_github_actions</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/github_actions.py" rel="noopener noreferrer">_finding</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/github_actions.py" rel="noopener noreferrer">_is_workflow_file</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/github_actions.py" rel="noopener noreferrer">_is_action_file</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/gitlab_ci.py" rel="noopener noreferrer">scan_gitlab_ci_file</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/gitlab_ci.py" rel="noopener noreferrer">scan_gitlab_ci</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/gitlab_ci.py" rel="noopener noreferrer">_finding</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/gitlab_ci.py" rel="noopener noreferrer">_is_gitlab_ci_file</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/gitlab_ci.py" rel="noopener noreferrer">_is_under_root</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/edge/systemd.py" rel="noopener noreferrer">UnitEntry</a> <span>class</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/edge/systemd.py" rel="noopener noreferrer">scan_systemd_file</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/edge/systemd.py" rel="noopener noreferrer">scan_systemd</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/edge/systemd.py" rel="noopener noreferrer">_finding</a> <span>def</span></li></ul>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/assertion_weakening.py" rel="noopener noreferrer">detect_assertion_weakening</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/assertion_weakening.py" rel="noopener noreferrer">_DiffLine</a> <span>class</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/assertion_weakening.py" rel="noopener noreferrer">_Hunk</a> <span>class</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/assertion_weakening.py" rel="noopener noreferrer">_MockEvidence</a> <span>class</span></li></ul>
       </div>
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/scale scale and performance helpers for larger repositories. use this when scan runtime, batching, or large-repo behavior changes. skylos/scale/  skylos/scale/parallel_static.py skylos/scale/__init__.py">
       <div class="card-head">
@@ -1787,7 +1834,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/security security contract detection, secret handling, and security-specific analysis helpers. treat this as gate-sensitive; regressions here can hide vulnerabilities. skylos/security/ test/test_csharp_security.py test/test_dart_security.py test/test_dockerfile_security.py test/test_edge_compose_security.py test/test_edge_systemd_security.py test/test_github_actions_security.py skylos/security/command_guard_exfil.py skylos/security/contracts.py skylos/security/command_guard_policy.py skylos/security/injection_scanner.py skylos/security/command_guard_parse.py skylos/security/command_guard_paths.py skylos/security/canonicalize.py skylos/security/agent_instruction_paths.py">
       <div class="card-head">
@@ -1837,7 +1884,7 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/ui terminal ui and presentation helpers. use this when the scan is correct but terminal interaction is confusing. skylos/ui/ test/test_suite.py test/test_tui.py skylos/ui/terminal_report.py skylos/ui/rich_report.py skylos/ui/tui.py skylos/ui/nudge.py skylos/ui/help.py skylos/ui/tour.py skylos/ui/__init__.py">
       <div class="card-head">
@@ -1886,14 +1933,14 @@
     </div>
       </details>
     </article>
-    
+
 
     <article class="folder-card searchable" data-search="skylos/visitors ast/tree visitors that collect findings and semantic evidence. use this when a language-specific scan is missing or over-reporting code patterns. skylos/visitors/  skylos/visitors/languages/typescript/danger.py skylos/visitors/languages/typescript/analysis.py skylos/visitors/languages/java/danger.py skylos/visitors/languages/shell/danger.py skylos/visitors/languages/typescript/workspace.py skylos/visitors/languages/csharp/danger.py skylos/visitors/languages/kotlin/core.py skylos/visitors/languages/typescript/resolve.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/skylos/visitors" rel="noopener noreferrer">skylos/visitors</a></h3>
         <div class="stat-row">
           <span class="pill"><strong>files</strong> 43</span>
-          <span class="pill"><strong>symbols</strong> 397</span>
+          <span class="pill"><strong>symbols</strong> 400</span>
         </div>
       </div>
       <p>AST/tree visitors that collect findings and semantic evidence.</p>
@@ -1929,21 +1976,21 @@
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/visitors/languages/typescript/analysis.py" rel="noopener noreferrer">find_dead_ts_files</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/visitors/languages/typescript/analysis.py" rel="noopener noreferrer">find_unused_ts_exports</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/visitors/languages/java/danger.py" rel="noopener noreferrer">scan_danger</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/visitors/languages/java/danger.py" rel="noopener noreferrer">_base64_alphabet</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/visitors/languages/java/danger.py" rel="noopener noreferrer">_shannon_entropy</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/visitors/languages/java/danger.py" rel="noopener noreferrer">_get_query</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/visitors/languages/java/danger.py" rel="noopener noreferrer">_get_text</a> <span>def</span></li></ul>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/skylos/visitors/languages/java/danger.py" rel="noopener noreferrer">_is_known_non_secret_alphabet</a> <span>def</span></li></ul>
       </div>
     </div>
       </details>
     </article>
-    
 
-    <article class="folder-card searchable" data-search="test unit and regression tests covering cli, analyzer, rules, integrations, and benchmarks. add narrow tests here before trusting analyzer or policy changes. test/ test/__init__.py test/conftest.py test/test_agent_center.py test/test_agent_integration.py test/test_agent_remediate.py test/test_agent_review_benchmark.py test/test_java_security.py test/test_verify_orchestrator.py test/test_debt.py test/test_dangerous.py test/test_cli_refactor_guardrails.py test/test_sync.py test/test_cli.py test/test_provenance.py">
+
+    <article class="folder-card searchable" data-search="test unit and regression tests covering cli, analyzer, rules, integrations, and benchmarks. add narrow tests here before trusting analyzer or policy changes. test/ test/__init__.py test/conftest.py test/test_agent_center.py test/test_agent_integration.py test/test_agent_remediate.py test/test_agent_review_benchmark.py test/test_java_security.py test/test_verify_orchestrator.py test/test_debt.py test/test_cli_refactor_guardrails.py test/test_dangerous.py test/test_sync.py test/test_cli.py test/test_go_security.py">
       <div class="card-head">
         <h3><a href="https://github.com/duriantaco/skylos/blob/main/test" rel="noopener noreferrer">test</a></h3>
         <div class="stat-row">
-          <span class="pill"><strong>files</strong> 210</span>
-          <span class="pill"><strong>symbols</strong> 2660</span>
+          <span class="pill"><strong>files</strong> 218</span>
+          <span class="pill"><strong>symbols</strong> 2853</span>
         </div>
       </div>
       <p>Unit and regression tests covering CLI, analyzer, rules, integrations, and benchmarks.</p>
@@ -1960,19 +2007,19 @@
         <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_java_security.py" rel="noopener noreferrer">test/test_java_security.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_verify_orchestrator.py" rel="noopener noreferrer">test/test_verify_orchestrator.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_debt.py" rel="noopener noreferrer">test/test_debt.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_dangerous.py" rel="noopener noreferrer">test/test_dangerous.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_cli_refactor_guardrails.py" rel="noopener noreferrer">test/test_cli_refactor_guardrails.py</a></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_dangerous.py" rel="noopener noreferrer">test/test_dangerous.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_sync.py" rel="noopener noreferrer">test/test_sync.py</a></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_cli.py" rel="noopener noreferrer">test/test_cli.py</a></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_provenance.py" rel="noopener noreferrer">test/test_provenance.py</a></li></ul>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_go_security.py" rel="noopener noreferrer">test/test_go_security.py</a></li></ul>
       </div>
       <div>
         <div class="mini-label">Key symbols</div>
         <ul><li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_java_security.py" rel="noopener noreferrer">test_java_constant_folding_caps_string_concatenation</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_java_security.py" rel="noopener noreferrer">test_java_constant_store_has_total_string_budget</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_java_security.py" rel="noopener noreferrer">test_object_input_stream_flags</a> <span>def</span></li>
+<li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_java_security.py" rel="noopener noreferrer">test_java_base64_alphabet_constant_is_not_secret</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_java_security.py" rel="noopener noreferrer">test_zip_slip_style_archive_extraction_flags</a> <span>def</span></li>
-<li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_java_security.py" rel="noopener noreferrer">test_archive_extraction_with_normalize_guard_is_safe</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_verify_orchestrator.py" rel="noopener noreferrer">sample_finding</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_verify_orchestrator.py" rel="noopener noreferrer">sample_finding_with_callers</a> <span>def</span></li>
 <li><a href="https://github.com/duriantaco/skylos/blob/main/test/test_verify_orchestrator.py" rel="noopener noreferrer">sample_defs_map</a> <span>def</span></li>
@@ -1988,7 +2035,7 @@
     </article>
     </div>
     </section>
-    
+
 
     <section id="hot">
       <h2>Hot Zones</h2>
@@ -1998,7 +2045,7 @@
         <tbody>
             <tr class="searchable" data-search="skylos/cli.py root entrypoints and shared scan orchestration.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">skylos/cli.py</a></td>
-              <td>34 / 152</td>
+              <td>34 / 153</td>
               <td><span class="warn">many symbols</span> <span class="warn">shared path</span></td>
               <td>Root entrypoints and shared scan orchestration.</td>
             </tr>
@@ -2012,7 +2059,7 @@
 
             <tr class="searchable" data-search="skylos/analyzer.py root entrypoints and shared scan orchestration.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">skylos/analyzer.py</a></td>
-              <td>3 / 24</td>
+              <td>3 / 30</td>
               <td><span class="warn">shared path</span></td>
               <td>Root entrypoints and shared scan orchestration.</td>
             </tr>
@@ -2024,6 +2071,13 @@
               <td>Root entrypoints and shared scan orchestration.</td>
             </tr>
 
+            <tr class="searchable" data-search="skylos/rules/ai_defect/manifest_dependency_hallucination.py rule catalog and concrete rule implementations for quality, security, ai-defect, config, edge, ci/cd, and sca findings.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/ai_defect/manifest_dependency_hallucination.py" rel="noopener noreferrer">skylos/rules/ai_defect/manifest_dependency_hallucination.py</a></td>
+              <td>2 / 114</td>
+              <td><span class="warn">many symbols</span></td>
+              <td>Rule catalog and concrete rule implementations for quality, security, AI-defect, config, edge, CI/CD, and SCA findings.</td>
+            </tr>
+
             <tr class="searchable" data-search="skylos/api/__init__.py public api facade and private helpers for payloads, snippets, findings, urls, and ai-detection metadata.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/api/__init__.py" rel="noopener noreferrer">skylos/api/__init__.py</a></td>
               <td>15 / 97</td>
@@ -2033,7 +2087,7 @@
 
             <tr class="searchable" data-search="test/test_java_security.py unit and regression tests covering cli, analyzer, rules, integrations, and benchmarks.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/test/test_java_security.py" rel="noopener noreferrer">test/test_java_security.py</a></td>
-              <td>85 / 89</td>
+              <td>86 / 90</td>
               <td><span class="warn">many symbols</span></td>
               <td>Unit and regression tests covering CLI, analyzer, rules, integrations, and benchmarks.</td>
             </tr>
@@ -2052,18 +2106,25 @@
               <td>Unit and regression tests covering CLI, analyzer, rules, integrations, and benchmarks.</td>
             </tr>
 
+            <tr class="searchable" data-search="test/test_cli_refactor_guardrails.py unit and regression tests covering cli, analyzer, rules, integrations, and benchmarks.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/test/test_cli_refactor_guardrails.py" rel="noopener noreferrer">test/test_cli_refactor_guardrails.py</a></td>
+              <td>65 / 69</td>
+              <td><span class="warn">many symbols</span></td>
+              <td>Unit and regression tests covering CLI, analyzer, rules, integrations, and benchmarks.</td>
+            </tr>
+
+            <tr class="searchable" data-search="skylos/rules/config/cicd/github_actions.py rule catalog and concrete rule implementations for quality, security, ai-defect, config, edge, ci/cd, and sca findings.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/github_actions.py" rel="noopener noreferrer">skylos/rules/config/cicd/github_actions.py</a></td>
+              <td>2 / 64</td>
+              <td><span class="warn">many symbols</span></td>
+              <td>Rule catalog and concrete rule implementations for quality, security, AI-defect, config, edge, CI/CD, and SCA findings.</td>
+            </tr>
+
             <tr class="searchable" data-search="skylos/llm/security_taskflow.py llm security analysis, evidence grounding, provider runtime resolution, and prompt templates.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/llm/security_taskflow.py" rel="noopener noreferrer">skylos/llm/security_taskflow.py</a></td>
               <td>11 / 63</td>
               <td><span class="warn">many symbols</span></td>
               <td>LLM security analysis, evidence grounding, provider runtime resolution, and prompt templates.</td>
-            </tr>
-
-            <tr class="searchable" data-search="skylos/rules/config/cicd/github_actions.py rule catalog and concrete rule implementations for quality, security, ai-defect, config, edge, ci/cd, and sca findings.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/rules/config/cicd/github_actions.py" rel="noopener noreferrer">skylos/rules/config/cicd/github_actions.py</a></td>
-              <td>2 / 63</td>
-              <td><span class="warn">many symbols</span></td>
-              <td>Rule catalog and concrete rule implementations for quality, security, AI-defect, config, edge, CI/CD, and SCA findings.</td>
             </tr>
 
             <tr class="searchable" data-search="test/test_dangerous.py unit and regression tests covering cli, analyzer, rules, integrations, and benchmarks.">
@@ -2078,24 +2139,10 @@
               <td>1 / 61</td>
               <td><span class="warn">many symbols</span></td>
               <td>AST/tree visitors that collect findings and semantic evidence.</td>
-            </tr>
-
-            <tr class="searchable" data-search="skylos/llm/verify_orchestrator.py llm security analysis, evidence grounding, provider runtime resolution, and prompt templates.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/llm/verify_orchestrator.py" rel="noopener noreferrer">skylos/llm/verify_orchestrator.py</a></td>
-              <td>4 / 60</td>
-              <td><span class="warn">many symbols</span></td>
-              <td>LLM security analysis, evidence grounding, provider runtime resolution, and prompt templates.</td>
-            </tr>
-
-            <tr class="searchable" data-search="test/test_cli_refactor_guardrails.py unit and regression tests covering cli, analyzer, rules, integrations, and benchmarks.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/test/test_cli_refactor_guardrails.py" rel="noopener noreferrer">test/test_cli_refactor_guardrails.py</a></td>
-              <td>56 / 58</td>
-              <td><span class="warn">many symbols</span></td>
-              <td>Unit and regression tests covering CLI, analyzer, rules, integrations, and benchmarks.</td>
             </tr></tbody>
       </table>
     </section>
-    
+
 
     <section id="symbols">
       <h2>Symbol Index</h2>
@@ -2831,6 +2878,27 @@
               <td>benchmarks/ai_code_defects/fixtures/assertion_weakening/tests/test_payments.py</td>
             </tr>
 
+            <tr class="searchable" data-search="refresh_cache async def benchmarks/ai_code_defects/fixtures/async_swallowed_error/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/async_swallowed_error/app.py" rel="noopener noreferrer">refresh_cache</a></td>
+              <td>async def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/async_swallowed_error/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="response_role def benchmarks/ai_code_defects/fixtures/bad_test_expected_broadening/tests/test_auth.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/bad_test_expected_broadening/tests/test_auth.py" rel="noopener noreferrer">response_role</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/bad_test_expected_broadening/tests/test_auth.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="test_admin_role_is_exact def benchmarks/ai_code_defects/fixtures/bad_test_expected_broadening/tests/test_auth.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/bad_test_expected_broadening/tests/test_auth.py" rel="noopener noreferrer">test_admin_role_is_exact</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/bad_test_expected_broadening/tests/test_auth.py</td>
+            </tr>
+
             <tr class="searchable" data-search="build_user_request def benchmarks/ai_code_defects/fixtures/clean_api_signature/app.py benchmark data and generated comparison artifacts.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/clean_api_signature/app.py" rel="noopener noreferrer">build_user_request</a></td>
               <td>def</td>
@@ -2843,6 +2911,41 @@
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>benchmarks/ai_code_defects/fixtures/clean_api_signature/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="refresh_cache async def benchmarks/ai_code_defects/fixtures/clean_async_error_handling/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/clean_async_error_handling/app.py" rel="noopener noreferrer">refresh_cache</a></td>
+              <td>async def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/clean_async_error_handling/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="require_admin def benchmarks/ai_code_defects/fixtures/clean_auth_route/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/clean_auth_route/app.py" rel="noopener noreferrer">require_admin</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/clean_auth_route/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="create_user def benchmarks/ai_code_defects/fixtures/clean_auth_route/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/clean_auth_route/app.py" rel="noopener noreferrer">create_user</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/clean_auth_route/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="build_dynamic_request def benchmarks/ai_code_defects/fixtures/clean_dynamic_api_surface/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/clean_dynamic_api_surface/app.py" rel="noopener noreferrer">build_dynamic_request</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/clean_dynamic_api_surface/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="build_known_member_request def benchmarks/ai_code_defects/fixtures/clean_dynamic_api_surface/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/clean_dynamic_api_surface/app.py" rel="noopener noreferrer">build_known_member_request</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/clean_dynamic_api_surface/app.py</td>
             </tr>
 
             <tr class="searchable" data-search="validate_token def benchmarks/ai_code_defects/fixtures/clean_generated_code/app.py benchmark data and generated comparison artifacts.">
@@ -2866,6 +2969,34 @@
               <td>benchmarks/ai_code_defects/fixtures/clean_generated_code/app.py</td>
             </tr>
 
+            <tr class="searchable" data-search="search_users def benchmarks/ai_code_defects/fixtures/clean_repo_level_security/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/clean_repo_level_security/app.py" rel="noopener noreferrer">search_users</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/clean_repo_level_security/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="restore_session def benchmarks/ai_code_defects/fixtures/clean_repo_level_security/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/clean_repo_level_security/app.py" rel="noopener noreferrer">restore_session</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/clean_repo_level_security/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="response_role def benchmarks/ai_code_defects/fixtures/clean_test_expected_change/tests/test_auth.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/clean_test_expected_change/tests/test_auth.py" rel="noopener noreferrer">response_role</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/clean_test_expected_change/tests/test_auth.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="test_admin_role_is_exact def benchmarks/ai_code_defects/fixtures/clean_test_expected_change/tests/test_auth.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/clean_test_expected_change/tests/test_auth.py" rel="noopener noreferrer">test_admin_role_is_exact</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/clean_test_expected_change/tests/test_auth.py</td>
+            </tr>
+
             <tr class="searchable" data-search="sync_profile def benchmarks/ai_code_defects/fixtures/compound_ai_failure_edit/app.py benchmark data and generated comparison artifacts.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/compound_ai_failure_edit/app.py" rel="noopener noreferrer">sync_profile</a></td>
               <td>def</td>
@@ -2878,6 +3009,41 @@
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>benchmarks/ai_code_defects/fixtures/compound_ai_failure_edit/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="handler def benchmarks/ai_code_defects/fixtures/contract_phantom_helper/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/contract_phantom_helper/app.py" rel="noopener noreferrer">handler</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/contract_phantom_helper/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="tenant_admin_required def benchmarks/ai_code_defects/fixtures/contract_route_guard_clean/apps/api/routes.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/contract_route_guard_clean/apps/api/routes.py" rel="noopener noreferrer">tenant_admin_required</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/contract_route_guard_clean/apps/api/routes.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="admin_dashboard def benchmarks/ai_code_defects/fixtures/contract_route_guard_clean/apps/api/routes.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/contract_route_guard_clean/apps/api/routes.py" rel="noopener noreferrer">admin_dashboard</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/contract_route_guard_clean/apps/api/routes.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="admin_dashboard def benchmarks/ai_code_defects/fixtures/contract_route_guard_missing/apps/api/routes.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/contract_route_guard_missing/apps/api/routes.py" rel="noopener noreferrer">admin_dashboard</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/contract_route_guard_missing/apps/api/routes.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="fetch_profile def benchmarks/ai_code_defects/fixtures/disabled_security_control/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/disabled_security_control/app.py" rel="noopener noreferrer">fetch_profile</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/disabled_security_control/app.py</td>
             </tr>
 
             <tr class="searchable" data-search="sync_worker def benchmarks/ai_code_defects/fixtures/file_scoped_multi_module/app/background.py benchmark data and generated comparison artifacts.">
@@ -2906,6 +3072,13 @@
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>benchmarks/ai_code_defects/fixtures/incomplete_generation/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="create_user def benchmarks/ai_code_defects/fixtures/missing_auth_route/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/missing_auth_route/app.py" rel="noopener noreferrer">create_user</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/missing_auth_route/app.py</td>
             </tr>
 
             <tr class="searchable" data-search="handler def benchmarks/ai_code_defects/fixtures/multiple_phantom_references/app.py benchmark data and generated comparison artifacts.">
@@ -2941,6 +3114,20 @@
               <td>def</td>
               <td><span class="ok">public</span></td>
               <td>benchmarks/ai_code_defects/fixtures/range_scoped_mixed_edit/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="search_users def benchmarks/ai_code_defects/fixtures/repo_level_security_regression/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/repo_level_security_regression/app.py" rel="noopener noreferrer">search_users</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/repo_level_security_regression/app.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="restore_session def benchmarks/ai_code_defects/fixtures/repo_level_security_regression/app.py benchmark data and generated comparison artifacts.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/benchmarks/ai_code_defects/fixtures/repo_level_security_regression/app.py" rel="noopener noreferrer">restore_session</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>benchmarks/ai_code_defects/fixtures/repo_level_security_regression/app.py</td>
             </tr>
 
             <tr class="searchable" data-search="authenticate def benchmarks/ai_code_defects/fixtures/repo_local_phantom_reference/app/security.py benchmark data and generated comparison artifacts.">
@@ -5267,6 +5454,20 @@
               <td>skylos/analysis/pyproject_entrypoints.py</td>
             </tr>
 
+            <tr class="searchable" data-search="_merge_project_config_overrides def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_merge_project_config_overrides</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_merge_ordered_lists def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_merge_ordered_lists</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
             <tr class="searchable" data-search="_python_signature_files def skylos/analyzer.py root entrypoints and shared scan orchestration.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_python_signature_files</a></td>
               <td>def</td>
@@ -5283,6 +5484,34 @@
 
             <tr class="searchable" data-search="_extend_unsuppressed_ai_defect_findings def skylos/analyzer.py root entrypoints and shared scan orchestration.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_extend_unsuppressed_ai_defect_findings</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_relative_changed_file def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_relative_changed_file</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_diff_result_has_text def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_diff_result_has_text</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_git_diff_for_changed_file def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_git_diff_for_changed_file</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/analyzer.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="_scan_ai_defect_diff_signals def skylos/analyzer.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/analyzer.py" rel="noopener noreferrer">_scan_ai_defect_diff_signals</a></td>
               <td>def</td>
               <td><span class="muted">private</span></td>
               <td>skylos/analyzer.py</td>
@@ -6954,6 +7183,13 @@
               <td>skylos/cli.py</td>
             </tr>
 
+            <tr class="searchable" data-search="_handle_contract_command def skylos/cli.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">_handle_contract_command</a></td>
+              <td>def</td>
+              <td><span class="muted">private</span></td>
+              <td>skylos/cli.py</td>
+            </tr>
+
             <tr class="searchable" data-search="_rules_install def skylos/cli.py root entrypoints and shared scan orchestration.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/cli.py" rel="noopener noreferrer">_rules_install</a></td>
               <td>def</td>
@@ -7836,6 +8072,34 @@
               <td>skylos/commands/clean_cmd.py</td>
             </tr>
 
+            <tr class="searchable" data-search="run_contract_command def skylos/commands/contract_cmd.py command modules used by the cli for focused command behavior.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/contract_cmd.py" rel="noopener noreferrer">run_contract_command</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>skylos/commands/contract_cmd.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="init_contract def skylos/commands/contract_cmd.py command modules used by the cli for focused command behavior.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/contract_cmd.py" rel="noopener noreferrer">init_contract</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>skylos/commands/contract_cmd.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="validate_contract def skylos/commands/contract_cmd.py command modules used by the cli for focused command behavior.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/contract_cmd.py" rel="noopener noreferrer">validate_contract</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>skylos/commands/contract_cmd.py</td>
+            </tr>
+
+            <tr class="searchable" data-search="inspect_contract def skylos/commands/contract_cmd.py command modules used by the cli for focused command behavior.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/contract_cmd.py" rel="noopener noreferrer">inspect_contract</a></td>
+              <td>def</td>
+              <td><span class="ok">public</span></td>
+              <td>skylos/commands/contract_cmd.py</td>
+            </tr>
+
             <tr class="searchable" data-search="run_credits_command def skylos/commands/credits_cmd.py command modules used by the cli for focused command behavior.">
               <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/commands/credits_cmd.py" rel="noopener noreferrer">run_credits_command</a></td>
               <td>def</td>
@@ -8116,336 +8380,119 @@
               <td>skylos/constants.py</td>
             </tr>
 
-            <tr class="searchable" data-search="save_baseline def skylos/core/baseline.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/baseline.py" rel="noopener noreferrer">save_baseline</a></td>
+            <tr class="searchable" data-search="starter_contract_text def skylos/contracts/loader.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">starter_contract_text</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
-              <td>skylos/core/baseline.py</td>
+              <td>skylos/contracts/loader.py</td>
             </tr>
 
-            <tr class="searchable" data-search="load_baseline def skylos/core/baseline.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/baseline.py" rel="noopener noreferrer">load_baseline</a></td>
+            <tr class="searchable" data-search="load_contract def skylos/contracts/loader.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">load_contract</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
-              <td>skylos/core/baseline.py</td>
+              <td>skylos/contracts/loader.py</td>
             </tr>
 
-            <tr class="searchable" data-search="filter_new_findings def skylos/core/baseline.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/baseline.py" rel="noopener noreferrer">filter_new_findings</a></td>
+            <tr class="searchable" data-search="validate_contract_file def skylos/contracts/loader.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">validate_contract_file</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
-              <td>skylos/core/baseline.py</td>
+              <td>skylos/contracts/loader.py</td>
             </tr>
 
-            <tr class="searchable" data-search="sanitize_addopts def skylos/core/cli_shared.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/cli_shared.py" rel="noopener noreferrer">sanitize_addopts</a></td>
+            <tr class="searchable" data-search="discover_contract_path def skylos/contracts/loader.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">discover_contract_path</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
-              <td>skylos/core/cli_shared.py</td>
+              <td>skylos/contracts/loader.py</td>
             </tr>
 
-            <tr class="searchable" data-search="get_git_changed_files def skylos/core/cli_shared.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/cli_shared.py" rel="noopener noreferrer">get_git_changed_files</a></td>
+            <tr class="searchable" data-search="contract_project_config_overrides def skylos/contracts/loader.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">contract_project_config_overrides</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
-              <td>skylos/core/cli_shared.py</td>
+              <td>skylos/contracts/loader.py</td>
             </tr>
 
-            <tr class="searchable" data-search="estimate_cost def skylos/core/cli_shared.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/cli_shared.py" rel="noopener noreferrer">estimate_cost</a></td>
+            <tr class="searchable" data-search="contract_enables_dependency_hallucinations def skylos/contracts/loader.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/loader.py" rel="noopener noreferrer">contract_enables_dependency_hallucinations</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
-              <td>skylos/core/cli_shared.py</td>
+              <td>skylos/contracts/loader.py</td>
             </tr>
 
-            <tr class="searchable" data-search="load_addopts def skylos/core/cli_shared.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/cli_shared.py" rel="noopener noreferrer">load_addopts</a></td>
+            <tr class="searchable" data-search="contract_finding_metadata def skylos/contracts/metadata.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/metadata.py" rel="noopener noreferrer">contract_finding_metadata</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
-              <td>skylos/core/cli_shared.py</td>
+              <td>skylos/contracts/metadata.py</td>
             </tr>
 
-            <tr class="searchable" data-search="record_structural_event def skylos/core/contribution_events.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/contribution_events.py" rel="noopener noreferrer">record_structural_event</a></td>
+            <tr class="searchable" data-search="scan_contract_route_guardrails def skylos/contracts/routes.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/routes.py" rel="noopener noreferrer">scan_contract_route_guardrails</a></td>
               <td>def</td>
               <td><span class="ok">public</span></td>
-              <td>skylos/core/contribution_events.py</td>
+              <td>skylos/contracts/routes.py</td>
             </tr>
 
-            <tr class="searchable" data-search="load_local_events def skylos/core/contribution_events.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/contribution_events.py" rel="noopener noreferrer">load_local_events</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/contribution_events.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="build_structural_event def skylos/core/contribution_events.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/contribution_events.py" rel="noopener noreferrer">build_structural_event</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/contribution_events.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="contributionsettings class skylos/core/contribution_settings.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/contribution_settings.py" rel="noopener noreferrer">ContributionSettings</a></td>
+            <tr class="searchable" data-search="contracterror class skylos/contracts/schema.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/schema.py" rel="noopener noreferrer">ContractError</a></td>
               <td>class</td>
               <td><span class="ok">public</span></td>
-              <td>skylos/core/contribution_settings.py</td>
+              <td>skylos/contracts/schema.py</td>
             </tr>
 
-            <tr class="searchable" data-search="load_contribution_settings def skylos/core/contribution_settings.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/contribution_settings.py" rel="noopener noreferrer">load_contribution_settings</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/contribution_settings.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="contribution_settings_from_config def skylos/core/contribution_settings.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/contribution_settings.py" rel="noopener noreferrer">contribution_settings_from_config</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/contribution_settings.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="should_exclude_path def skylos/core/file_discovery.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/file_discovery.py" rel="noopener noreferrer">should_exclude_path</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/file_discovery.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="should_include_path def skylos/core/file_discovery.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/file_discovery.py" rel="noopener noreferrer">should_include_path</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/file_discovery.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="find_git_root def skylos/core/file_discovery.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/file_discovery.py" rel="noopener noreferrer">find_git_root</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/file_discovery.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="list_git_visible_files def skylos/core/file_discovery.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/file_discovery.py" rel="noopener noreferrer">list_git_visible_files</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/file_discovery.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="discover_source_files def skylos/core/file_discovery.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/file_discovery.py" rel="noopener noreferrer">discover_source_files</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/file_discovery.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="run_cmd def skylos/core/gatekeeper.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">run_cmd</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/gatekeeper.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="get_git_status def skylos/core/gatekeeper.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">get_git_status</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/gatekeeper.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="run_push def skylos/core/gatekeeper.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">run_push</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/gatekeeper.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="start_deployment_wizard def skylos/core/gatekeeper.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">start_deployment_wizard</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/gatekeeper.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="check_gate def skylos/core/gatekeeper.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">check_gate</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/gatekeeper.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="build_summary_markdown def skylos/core/gatekeeper.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">build_summary_markdown</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/gatekeeper.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="write_github_summary def skylos/core/gatekeeper.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">write_github_summary</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/gatekeeper.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="run_gate_interaction def skylos/core/gatekeeper.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/gatekeeper.py" rel="noopener noreferrer">run_gate_interaction</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/gatekeeper.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="file_content_hash def skylos/core/grep_cache.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_cache.py" rel="noopener noreferrer">file_content_hash</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_cache.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="grepcache class skylos/core/grep_cache.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_cache.py" rel="noopener noreferrer">GrepCache</a></td>
+            <tr class="searchable" data-search="phantomsymbolscontract class skylos/contracts/schema.py root entrypoints and shared scan orchestration.">
+              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/contracts/schema.py" rel="noopener noreferrer">PhantomSymbolsContract</a></td>
               <td>class</td>
               <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_cache.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="grepverdict class skylos/core/grep_verify.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify.py" rel="noopener noreferrer">GrepVerdict</a></td>
-              <td>class</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="grepstrategy class skylos/core/grep_verify.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify.py" rel="noopener noreferrer">GrepStrategy</a></td>
-              <td>class</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="multi_strategy_search def skylos/core/grep_verify.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify.py" rel="noopener noreferrer">multi_strategy_search</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="parallel_multi_strategy_search def skylos/core/grep_verify.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify.py" rel="noopener noreferrer">parallel_multi_strategy_search</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="grep_verify_findings def skylos/core/grep_verify.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify.py" rel="noopener noreferrer">grep_verify_findings</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="detect_language def skylos/core/grep_verify_common.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify_common.py" rel="noopener noreferrer">detect_language</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify_common.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="source_globs_for_language def skylos/core/grep_verify_common.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify_common.py" rel="noopener noreferrer">source_globs_for_language</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify_common.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="repo_relative_path def skylos/core/grep_verify_common.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify_common.py" rel="noopener noreferrer">repo_relative_path</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify_common.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="module_candidates def skylos/core/grep_verify_common.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify_common.py" rel="noopener noreferrer">module_candidates</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify_common.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="parameter_owner_name def skylos/core/grep_verify_common.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify_common.py" rel="noopener noreferrer">parameter_owner_name</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify_common.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="is_definition_line def skylos/core/grep_verify_common.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify_common.py" rel="noopener noreferrer">is_definition_line</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify_common.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="filter_grep_results def skylos/core/grep_verify_common.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify_common.py" rel="noopener noreferrer">filter_grep_results</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify_common.py</td>
-            </tr>
-
-            <tr class="searchable" data-search="is_substring_match def skylos/core/grep_verify_common.py small shared core types and helpers used across scan paths.">
-              <td><a href="https://github.com/duriantaco/skylos/blob/main/skylos/core/grep_verify_common.py" rel="noopener noreferrer">is_substring_match</a></td>
-              <td>def</td>
-              <td><span class="ok">public</span></td>
-              <td>skylos/core/grep_verify_common.py</td>
+              <td>skylos/contracts/schema.py</td>
             </tr></tbody>
       </table>
     </section>
-    
+
 
     <section id="terms">
       <h2>Vocabulary</h2>
-      
+
       <div class="route-grid">
         <dl>
         <div class="term searchable" data-search="finding a normalized issue skylos reports. most output formats eventually render finding dictionaries.">
           <dt>Finding</dt>
           <dd>A normalized issue Skylos reports. Most output formats eventually render finding dictionaries.</dd>
         </div>
-        
+
 
         <div class="term searchable" data-search="danger security-sensitive findings such as injection, insecure config, secrets, or policy regressions.">
           <dt>Danger</dt>
           <dd>Security-sensitive findings such as injection, insecure config, secrets, or policy regressions.</dd>
         </div>
-        
+
 
         <div class="term searchable" data-search="quality maintainability findings like complexity, naming, god files, and readability issues.">
           <dt>Quality</dt>
           <dd>Maintainability findings like complexity, naming, god files, and readability issues.</dd>
         </div>
-        
+
 
         <div class="term searchable" data-search="security contract a configured security expectation that should not be weakened by a pr.">
           <dt>Security contract</dt>
           <dd>A configured security expectation that should not be weakened by a PR.</dd>
         </div>
-        
+
 
         <div class="term searchable" data-search="evidence grounding code-backed proof used to keep llm findings from drifting into hallucinations.">
           <dt>Evidence grounding</dt>
           <dd>Code-backed proof used to keep LLM findings from drifting into hallucinations.</dd>
         </div>
-        
+
 
         <div class="term searchable" data-search="rule catalog the source of rule ids and public rule descriptions.">
           <dt>Rule catalog</dt>
           <dd>The source of rule IDs and public rule descriptions.</dd>
         </div>
-        
+
 
         <div class="term searchable" data-search="benchmark a repeatable fixture that compares scanner behavior across versions or tools.">
           <dt>Benchmark</dt>
@@ -8454,7 +8501,7 @@
         </dl>
       </div>
     </section>
-    
+
       <div id="empty-state" class="empty-state">No matching cards or rows. Try a folder, symbol, rule type, or workflow name.</div>
     </main>
   </div>

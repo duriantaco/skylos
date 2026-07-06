@@ -23,6 +23,9 @@ test surface, and security guardrails.
   classification, use `/skylos-security`.
 - Dead-code false positives, framework liveness, runtime tracing, Vulture
   comparisons, and benchmark work: read `references/dead-code.md`.
+- Pre-deployment agent verification (`skylos discover` / `skylos defend`),
+  evidence reports, attestation digests, and OWASP LLM/Agentic coverage: see
+  the defend entry in `references/cli.md` and `docs/agent-verification.md`.
 - GitHub Actions, SARIF, repo map Pages, CI gates, docs deploy, and generated
   workflows: read `references/ci.md`.
 

@@ -15,6 +15,13 @@ from skylos.commands.scan_cmd import run_scan_command
 from skylos.debt.result import DebtHotspot, DebtScore, DebtSnapshot
 
 
+@pytest.fixture(autouse=True)
+def _isolate_github_step_summary(monkeypatch):
+    # These tests run inside GitHub Actions where GITHUB_STEP_SUMMARY is set;
+    # commands would otherwise append real summaries during unit tests.
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+
 def _debt_snapshot(project: Path, *, hotspot_scope: str = "project") -> DebtSnapshot:
     hotspot = DebtHotspot(
         fingerprint="hotspot:app/services.py",
@@ -1409,3 +1416,231 @@ def test_cli_guardrail_agent_watch_forwards_learn_flag(monkeypatch):
     assert exc.value.code == 0
     assert mock_watch.call_args.kwargs["enable_learning"] is True
     mock_print.assert_called_once()
+
+
+_DEFEND_FIXTURE_APP = """
+import openai
+from flask import request
+client = openai.OpenAI()
+
+def run():
+    msg = request.get_json()["message"]
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": msg}],
+    )
+    return eval(response.choices[0].message.content)
+"""
+
+
+def _write_defend_fixture(tmp_path):
+    target = tmp_path / "repo"
+    target.mkdir()
+    (target / "app.py").write_text(_DEFEND_FIXTURE_APP, encoding="utf-8")
+    return target
+
+
+def test_defend_command_format_json_matches_json_flag(tmp_path):
+    target = _write_defend_fixture(tmp_path)
+    console = Mock()
+
+    from skylos.commands.defend_cmd import run_defend_command
+
+    printed = []
+    with patch("builtins.print", side_effect=lambda *a, **k: printed.append(a[0])):
+        exit_alias = run_defend_command(
+            [str(target), "--json"],
+            console_factory=lambda: console,
+            progress_factory=lambda *args, **kwargs: _progress_ctx(),
+        )
+        exit_format = run_defend_command(
+            [str(target), "--format", "json"],
+            console_factory=lambda: console,
+            progress_factory=lambda *args, **kwargs: _progress_ctx(),
+        )
+
+    assert exit_alias == exit_format == 0
+    alias_payload = json.loads(printed[0])
+    format_payload = json.loads(printed[1])
+    assert alias_payload["version"] == format_payload["version"] == "1.1"
+    assert alias_payload["skylos_version"] == format_payload["skylos_version"]
+    assert (
+        alias_payload["attestation"]["digest"]
+        == format_payload["attestation"]["digest"]
+    )
+    assert "framework_evidence" in alias_payload
+    assert alias_payload["findings"] == format_payload["findings"]
+
+
+def test_defend_command_json_conflicts_with_other_format(tmp_path):
+    target = _write_defend_fixture(tmp_path)
+    console = Mock()
+
+    from skylos.commands.defend_cmd import run_defend_command
+
+    exit_code = run_defend_command(
+        [str(target), "--json", "--format", "md"],
+        console_factory=lambda: console,
+        progress_factory=lambda *args, **kwargs: _progress_ctx(),
+    )
+
+    assert exit_code == 1
+    assert "--json conflicts with --format md" in console.print.call_args.args[0]
+
+
+def test_defend_command_format_md_prints_evidence_report(tmp_path):
+    target = _write_defend_fixture(tmp_path)
+    console = Mock()
+
+    from skylos.commands.defend_cmd import run_defend_command
+
+    with patch("builtins.print") as mock_print:
+        exit_code = run_defend_command(
+            [str(target), "--format", "md"],
+            console_factory=lambda: console,
+            progress_factory=lambda *args, **kwargs: _progress_ctx(),
+        )
+
+    assert exit_code == 0
+    mock_print.assert_called_once()
+    markdown = mock_print.call_args.args[0]
+    assert "# Skylos Agent Verification Report" in markdown
+    assert "## Attestation" in markdown
+    assert "## Regulatory Framework Evidence" in markdown
+    assert "OWASP Agentic Top 10 2026" in markdown
+
+
+def test_defend_command_format_sarif_writes_failed_checks_only(tmp_path):
+    target = _write_defend_fixture(tmp_path)
+    output_file = tmp_path / "out.sarif"
+    console = Mock()
+
+    from skylos.commands.defend_cmd import run_defend_command
+
+    exit_code = run_defend_command(
+        [str(target), "--format", "sarif", "-o", str(output_file)],
+        console_factory=lambda: console,
+        progress_factory=lambda *args, **kwargs: _progress_ctx(),
+    )
+
+    assert exit_code == 0
+    sarif = json.loads(output_file.read_text(encoding="utf-8"))
+    run = sarif["runs"][0]
+    assert run["tool"]["driver"]["name"] == "Skylos Defend"
+    assert run["results"], "expected failed defense checks in SARIF"
+    for result in run["results"]:
+        assert result["ruleId"]
+    assert "skylos_attestation" in run["properties"]
+
+
+def test_defend_command_sarif_gate_still_sets_exit_code(tmp_path):
+    target = _write_defend_fixture(tmp_path)
+    output_file = tmp_path / "out.sarif"
+    console = Mock()
+
+    from skylos.commands.defend_cmd import run_defend_command
+
+    exit_code = run_defend_command(
+        [
+            str(target),
+            "--format",
+            "sarif",
+            "-o",
+            str(output_file),
+            "--fail-on",
+            "critical",
+        ],
+        console_factory=lambda: console,
+        progress_factory=lambda *args, **kwargs: _progress_ctx(),
+    )
+
+    assert exit_code == 1
+    assert output_file.exists()
+
+
+def test_defend_command_writes_github_step_summary(tmp_path, monkeypatch):
+    target = _write_defend_fixture(tmp_path)
+    summary_file = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_file))
+    console = Mock()
+
+    from skylos.commands.defend_cmd import run_defend_command
+
+    exit_code = run_defend_command(
+        [str(target), "--fail-on", "critical"],
+        console_factory=lambda: console,
+        progress_factory=lambda *args, **kwargs: _progress_ctx(),
+    )
+
+    assert exit_code == 1
+    summary = summary_file.read_text(encoding="utf-8")
+    assert "## Skylos Agent Verification" in summary
+    assert "Defense score" in summary
+    assert "FAIL" in summary
+
+
+def test_defend_github_step_summary_rejects_symlink(tmp_path, monkeypatch):
+    real_summary = tmp_path / "real.md"
+    real_summary.write_text("existing\n", encoding="utf-8")
+    summary_link = tmp_path / "summary.md"
+    try:
+        summary_link.symlink_to(real_summary)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available on this platform")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_link))
+
+    from skylos.commands.defend_cmd import _write_defend_github_summary
+
+    _write_defend_github_summary(lambda: "new summary")
+
+    assert real_summary.read_text(encoding="utf-8") == "existing\n"
+
+
+def test_defend_command_empty_path_supports_md_and_sarif(tmp_path):
+    target = tmp_path / "repo"
+    target.mkdir()
+    console = Mock()
+
+    from skylos.commands.defend_cmd import run_defend_command
+
+    with patch("builtins.print") as mock_print:
+        exit_md = run_defend_command(
+            [str(target), "--format", "md"],
+            console_factory=lambda: console,
+            progress_factory=lambda *args, **kwargs: _progress_ctx(),
+        )
+    markdown = mock_print.call_args.args[0]
+    assert exit_md == 0
+    assert "# Skylos Agent Verification Report" in markdown
+
+    with patch("builtins.print") as mock_print:
+        exit_sarif = run_defend_command(
+            [str(target), "--format", "sarif"],
+            console_factory=lambda: console,
+            progress_factory=lambda *args, **kwargs: _progress_ctx(),
+        )
+    sarif = json.loads(mock_print.call_args.args[0])
+    assert exit_sarif == 0
+    assert sarif["runs"][0]["results"] == []
+
+
+def test_defend_command_empty_json_carries_attestation(tmp_path):
+    target = tmp_path / "repo"
+    target.mkdir()
+    console = Mock()
+
+    from skylos.commands.defend_cmd import run_defend_command
+
+    with patch("builtins.print") as mock_print:
+        exit_code = run_defend_command(
+            [str(target), "--json"],
+            console_factory=lambda: console,
+            progress_factory=lambda *args, **kwargs: _progress_ctx(),
+        )
+
+    assert exit_code == 0
+    payload = json.loads(mock_print.call_args.args[0])
+    assert payload["version"] == "1.1"
+    assert payload["skylos_version"]
+    assert payload["project"]
+    assert len(payload["attestation"]["digest"]) == 64

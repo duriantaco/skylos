@@ -108,7 +108,10 @@ class SarifExporter:
                 "shortDescription": {"text": title or rule_id},
                 "defaultConfiguration": {"level": level},
                 "properties": {"tags": tags},
-                "helpUri": f"https://docs.skylos.dev/rules/{rule_id}",
+                "helpUri": str(
+                    finding.get("help_uri")
+                    or f"https://docs.skylos.dev/rules/{rule_id}"
+                ),
             }
 
             cwe_list = finding.get("cwe", [])

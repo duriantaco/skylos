@@ -103,8 +103,20 @@ only new findings.
 - `skylos tour`: walkthrough.
 - `skylos init`: write project config.
 - `skylos suite .`: full local analysis bundle.
-- `skylos discover .`: map LLM/AI integrations.
-- `skylos defend .`: OWASP LLM guardrail checks.
+- `skylos discover .`: inventory LLM/AI integrations (providers, agent tools,
+  prompt sites, input sources); `--json` for machines.
+- `skylos defend .`: pre-deployment agent verification — 13 deterministic
+  guardrail checks per LLM integration, weighted defense score + separate ops
+  score. Formats: `--format table|json|md|sarif` (`--json` = `--format json`;
+  md = auditor evidence report with attestation; sarif = failed checks for
+  code scanning). Gate with `--fail-on <sev>` / `--min-score <pct>` or a
+  `--policy skylos-defend.yaml` (exit 1 on failure). OWASP selection:
+  `--owasp-framework llm|agentic` (`llm` 2024/2025, `agentic` ASI 2026),
+  filter with `--owasp LLM01,ASI02`. JSON schema 1.1 includes `attestation`
+  (reproducible sha256 digest over full run evidence; identical tree + flags +
+  Skylos version → identical digest) and `framework_evidence` (EU AI Act /
+  NIST AI RMF / ISO 42001, evidence-toward semantics only). Details:
+  `docs/agent-verification.md`.
 - `skylos agent scan|verify|remediate|audit|watch|pre-commit|triage .`:
   hybrid static and LLM analysis, requiring `[llm]` extras and provider config.
 - `skylos rules init|validate|list`: local YAML rule packs.

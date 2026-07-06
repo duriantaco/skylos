@@ -42,7 +42,11 @@ Rule IDs use a stable public prefix:
 | Security quick | `skylos agent security-quick .`; one-shot LLM security audit, equivalent to `skylos agent scan . --security`. |
 | Security deep | `skylos agent security-deep .`; three-stage security workflow for threat-model context, static threat tracing, discovery/validation, and remediation handoff, equivalent to `skylos agent audit . --deep`. |
 | Threat trace | Static source-to-sink evidence showing how user-controlled input reaches a sensitive sink, recorded on security-deep findings and run artifacts. |
-| LLM app defense | `skylos defend .`; checks LLM integrations for guardrails such as tool safety, output validation, rate limits, and prompt-injection exposure. |
+| Agent verification (pre-deployment) | `skylos defend .`; deterministic static verification of AI-agent guardrails before deployment — tool safety, output validation, prompt-injection exposure, PII filtering, model pinning, and ops checks — scored and gateable in CI. Formerly described as "LLM app defense". Check ids are kebab-case plugin ids (e.g. `no-dangerous-sink`), distinct from the SKY-D260–D267 static rules. |
+| LLM integration inventory | `skylos discover .`; maps every LLM call, agent tool, prompt site, input source, and output sink in the codebase. Feeds `skylos defend`. |
+| Evidence report | `skylos defend . --format md`; auditor-facing markdown artifact with integration inventory, per-check results, OWASP LLM + Agentic coverage, regulatory framework evidence, remediation appendix, and attestation. |
+| Attestation digest | Reproducible SHA-256 over scanned file contents, policy hash, plugin set, OWASP selection, filters, integration inventory, scores, and full check evidence; emitted in defend JSON/md/SARIF output. Identical trees, flags, policy, plugin set, and Skylos version reproduce identical digests; timestamps are excluded. |
+| Framework evidence | Defend check results mapped to EU AI Act, NIST AI RMF, and ISO/IEC 42001 controls with strict "evidence toward" semantics — never a compliance determination. |
 | Prompt templates | Maintainer-provided files under `[tool.skylos.templates]` that extend built-in LLM prompts without replacing safety and JSON-output contracts. |
 | Vibe dictionary | Project-specific keyword extensions under `[tool.skylos.vibe]` for phantom security names, credential names, sensitive files, and timeout-required calls. |
 | Quality gate | A threshold-based pass/fail decision used locally or in CI. |
