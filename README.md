@@ -128,7 +128,10 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Agent harness replay | `skylos agent replay .skylos/runs/<run-id>` | Validates and summarizes saved agent verification phases, tool calls, decisions, and budgets | [Agent harness artifacts](#agent-harness-artifacts) |
 | Verification-backed remediation | `skylos agent scan . --fix` | Re-scans fixed security findings and records proof-test metadata for supported fixes | [AI features](https://docs.skylos.dev/ai-features) |
 | MCP agent verification | `verify_change` MCP tool | Lets Claude, Cursor, and other MCP clients verify an edited file/range with the same schema as `skylos verify` | [MCP server](https://docs.skylos.dev/mcp-server) |
-| LLM app defense | `skylos defend .` | Finds missing AI app guardrails mapped to OWASP LLM risks | [AI defense](https://docs.skylos.dev/ai-defense) |
+| LLM integration inventory | `skylos discover .` | Maps every LLM call, agent tool, prompt site, and input source in the codebase | [Agent verification](./docs/agent-verification.md) |
+| Pre-deployment agent verification | `skylos defend . --format md -o evidence.md` | Verifies agent guardrails, scores OWASP LLM/Agentic coverage, and emits an attested evidence report | [Agent verification](./docs/agent-verification.md) |
+| Agent verification CI gate | `skylos defend . --fail-on critical` | Blocks deploys with unguarded LLM integrations; SARIF for code scanning via `--format sarif` | [Agent verification](./docs/agent-verification.md) |
+| MCP agent pre-flight | `verify_agent` MCP tool | Lets coding agents statically verify the agents they build — scores, failed checks, attestation digest | [MCP server](https://docs.skylos.dev/mcp-server) |
 | Technical debt triage | `skylos debt .` | Ranks hotspots and debt trends | [Technical debt](https://docs.skylos.dev/technical-debt) |
 
 ## What Skylos Catches
@@ -145,6 +148,50 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | LLM app risks | unsafe tool use, prompt injection exposure, missing output validation, missing rate limits | helps teams ship AI features with guardrails |
 
 See the full [Rules Reference](https://docs.skylos.dev/rules-reference).
+
+## Verify AI Agents Before They Ship
+
+Runtime guardrails are the WAF; Skylos is the SAST. `skylos discover`
+inventories every LLM integration in a codebase (providers, frameworks, agent
+tools, prompt sites, input sources), and `skylos defend` verifies the
+guardrails around them — deterministically, locally, with no model in the
+loop — then gates CI and emits auditor-ready evidence.
+
+```bash
+skylos discover .                               # inventory LLM integrations and agent tools
+skylos defend .                                 # score guardrails (13 weighted checks)
+skylos defend . --format md -o evidence.md      # auditor evidence report + attestation
+skylos defend . --format sarif -o defend.sarif  # GitHub code scanning upload
+skylos defend . --fail-on critical              # CI gate: exit 1 on critical gaps
+skylos defend . --owasp-framework agentic       # report against OWASP Agentic ASI Top 10
+```
+
+Per integration it verifies: dangerous output sinks (eval/exec/subprocess),
+agent tool scope and typed schemas, prompt-injection exposure (delimiters,
+untrusted input paths, RAG context isolation), output validation, PII
+filtering, and model pinning — plus ops checks (logging, cost controls, rate
+limiting) scored separately so they never inflate the security score.
+
+- **OWASP mapping:** LLM Top 10 (2024/2025) and Agentic ASI Top 10 (2026).
+- **Evidence report (`--format md`):** integration inventory, per-check
+  results, OWASP coverage, regulatory framework evidence (EU AI Act, NIST AI
+  RMF, ISO/IEC 42001 — "evidence toward" mappings, never compliance claims),
+  and a remediation appendix.
+- **Attestation:** JSON/md/SARIF reports carry a reproducible SHA-256 digest
+  over file contents, policy, plugin set, integration inventory, scores, and
+  full check evidence — re-run on the same tree with the same flags and Skylos
+  version, and the digest must match.
+- **CI-native:** `skylos cicd init --defend` generates the workflow step, the
+  `skylos-defend` pre-commit hook gates locally, and `$GITHUB_STEP_SUMMARY`
+  gets a score summary automatically in Actions.
+- **Policy as code:** `skylos-defend.yaml` pins gate thresholds and severity
+  overrides (`--policy`).
+- **Agent-native:** the `verify_agent` MCP tool lets coding agents verify the
+  agents they build — deterministic verification, not AI checking AI.
+
+Static pre-deployment verification complements runtime controls (gateways,
+policy engines, human approval flows); it does not replace them. Full guide:
+[docs/agent-verification.md](./docs/agent-verification.md).
 
 ## How Skylos Fits
 
@@ -176,7 +223,8 @@ repo and PR checker that puts several common review checks behind one CLI.
 - **Project-specific rules:** add local YAML rules and extend prompt, credential,
   sensitive-file, and timeout dictionaries from config.
 - **One command surface:** dead code, security, secrets, dependency, quality,
-  technical debt, agent review, and AI defense commands share the same CLI.
+  technical debt, agent review, and pre-deployment agent verification commands
+  share the same CLI.
 
 ## Agent Harness Artifacts
 

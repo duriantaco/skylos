@@ -18,12 +18,12 @@ COMMANDS = [
     },
     {
         "name": "skylos discover <path>",
-        "desc": "Map LLM/AI integrations in your codebase",
+        "desc": "Inventory LLM/AI integrations and agent tools",
         "group": "Core Analysis",
     },
     {
         "name": "skylos defend <path>",
-        "desc": "Check LLM integrations for missing defenses",
+        "desc": "Verify agent guardrails before deployment (gate + evidence)",
         "group": "Core Analysis",
     },
     {
