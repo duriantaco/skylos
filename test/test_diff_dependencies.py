@@ -58,7 +58,10 @@ class TestParseAddedLines:
 
 class TestScanDiffAddedImports:
     def _repo(self, tmp_path):
-        (tmp_path / "requirements.txt").write_text("click\n", encoding="utf-8")
+        (tmp_path / "requirements.txt").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+            "click\n",
+            encoding="utf-8",
+        )
         return tmp_path
 
     def test_flags_hallucinated_import(self, tmp_path, monkeypatch):
