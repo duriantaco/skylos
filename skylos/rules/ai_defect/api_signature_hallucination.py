@@ -241,6 +241,8 @@ class _ApiSignatureChecker(ast.NodeVisitor):
             properties = _entry_properties(current_entry)
             property_entry = properties.get(property_name)
             if not isinstance(property_entry, dict):
+                if _entry_truncated(current_entry):
+                    return None
                 label = f"{module_name}.{class_name}.{'.'.join(chain[1:])}"
                 return _CallTarget(module_name, label, None, "method")
             current_entry = property_entry
@@ -250,6 +252,8 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         method = methods.get(method_name)
         label = f"{module_name}.{class_name}.{'.'.join(chain[1:])}"
         if not isinstance(method, dict):
+            if _entry_truncated(current_entry):
+                return None
             return _CallTarget(module_name, label, None, "method")
         return _CallTarget(module_name, label, method, "")
 
@@ -265,6 +269,8 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         entry = self._module_member(module_name, member_name)
         label = f"{module_name}.{member_name}"
         if entry is None:
+            if _members_truncated(self._surface(module_name)):
+                return None
             return _CallTarget(module_name, label, None, "module_member")
         return _CallTarget(module_name, label, entry, "")
 
@@ -283,6 +289,8 @@ class _ApiSignatureChecker(ast.NodeVisitor):
         method = methods.get(method_name)
         label = f"{module_name}.{class_name}.{method_name}"
         if not isinstance(method, dict):
+            if _entry_truncated(class_entry):
+                return None
             return _CallTarget(module_name, label, None, "method")
         return _CallTarget(module_name, label, method, "")
 
@@ -606,6 +614,18 @@ def _entry_properties(entry: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(properties, dict):
         return properties
     return {}
+
+
+def _entry_truncated(entry: dict[str, Any] | None) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    return entry.get("methods_truncated") is True
+
+
+def _members_truncated(surface: dict[str, Any] | None) -> bool:
+    if not isinstance(surface, dict):
+        return False
+    return surface.get("members_truncated") is True
 
 
 def _keyword_accepted(entry: dict[str, Any], keyword: str) -> bool:

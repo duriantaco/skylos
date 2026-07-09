@@ -287,6 +287,45 @@ class TestSkylosApi(unittest.TestCase):
     @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
     @patch("skylos.api.get_git_root", return_value=None)
     @patch("requests.post")
+    def test_upload_defense_report_sends_attestation(
+        self, mock_post, _mock_root, _mock_git_info, mock_token
+    ):
+        mock_token.return_value = "token"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"scanId": "s1"}
+        mock_post.return_value = mock_response
+
+        attestation = {
+            "algorithm": "sha256",
+            "digest": "abc123",
+            "inputs": {"skylos_version": "4.28.0", "plugin_set": ["tool-scope"]},
+        }
+        framework_evidence = {"eu_ai_act": [{"control": "Art. 15"}]}
+        result = upload_defense_report(
+            json.dumps(
+                {
+                    "summary": {"score_pct": 92, "risk_rating": "LOW"},
+                    "attestation": attestation,
+                    "framework_evidence": framework_evidence,
+                    "skylos_version": "4.28.0",
+                }
+            ),
+            quiet=True,
+        )
+
+        self.assertTrue(result["success"])
+        _args, kwargs = mock_post.call_args
+        payload = kwargs["json"]
+        self.assertEqual(payload["attestation"], attestation)
+        self.assertEqual(payload["framework_evidence"], framework_evidence)
+        self.assertEqual(payload["skylos_version"], "4.28.0")
+
+    @patch("skylos.api.get_project_token")
+    @patch("skylos.api.get_git_info", return_value=("c", "b", "actor", {}))
+    @patch("skylos.api.get_git_root", return_value=None)
+    @patch("requests.post")
     def test_upload_debt_report_sends_debt_payload(
         self, mock_post, _mock_root, _mock_git_info, mock_token
     ):

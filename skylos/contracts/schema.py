@@ -28,6 +28,7 @@ class DependencyContract:
 class ApiSurfaceContract:
     reject_unknown_members: bool = False
     reject_unknown_kwargs: bool = False
+    modules: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

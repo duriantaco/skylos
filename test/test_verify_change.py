@@ -607,7 +607,7 @@ def test_verify_change_path_accepts_injected_analyzer_result(tmp_path):
     assert payload["status"] == "fail"
     assert payload["findings"][0]["vibe_category"] == "incomplete_generation"
     assert seen["kwargs"]["enable_ai_defects"] is True
-    assert seen["kwargs"]["enable_dependency_hallucinations"] is False
+    assert seen["kwargs"]["enable_dependency_hallucinations"] is True
     assert seen["kwargs"]["enable_danger"] is False
     assert seen["kwargs"]["changed_files"] == [str(app)]
 
@@ -632,6 +632,25 @@ def test_verify_change_path_can_include_dependency_hallucinations(tmp_path):
     assert seen["kwargs"]["enable_dependency_hallucinations"] is True
     assert seen["kwargs"]["enable_danger"] is False
     assert seen["kwargs"]["changed_files"] == [str(app)]
+
+
+def test_verify_change_path_can_opt_out_of_dependency_hallucinations(tmp_path):
+    app = tmp_path / "app.py"
+    app.write_text("import os\n")
+    seen = {}
+
+    def fake_analyze(*_args, **kwargs):
+        seen["kwargs"] = kwargs
+        return json.dumps({})
+
+    payload = verify_change_path(
+        app,
+        include_dependency_hallucinations=False,
+        analyze_func=fake_analyze,
+    )
+
+    assert payload["status"] == "pass"
+    assert seen["kwargs"]["enable_dependency_hallucinations"] is False
 
 
 def test_verify_change_path_can_include_security_findings(tmp_path):
@@ -665,7 +684,7 @@ def test_verify_change_path_can_include_security_findings(tmp_path):
     assert payload["findings"][0]["rule_id"] == "SKY-D205"
     assert payload["findings"][0]["category"] == "security"
     assert seen["kwargs"]["enable_ai_defects"] is True
-    assert seen["kwargs"]["enable_dependency_hallucinations"] is False
+    assert seen["kwargs"]["enable_dependency_hallucinations"] is True
     assert seen["kwargs"]["enable_danger"] is True
     assert seen["kwargs"]["changed_files"] == [str(app)]
 
@@ -757,7 +776,7 @@ def test_verify_change_path_can_disable_auto_discovered_contract(tmp_path):
     )
 
     assert payload["status"] == "pass"
-    assert seen["kwargs"]["enable_dependency_hallucinations"] is False
+    assert seen["kwargs"]["enable_dependency_hallucinations"] is True
     assert "project_config_overrides" not in seen["kwargs"]
 
 

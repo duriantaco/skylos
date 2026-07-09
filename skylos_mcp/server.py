@@ -160,6 +160,7 @@ def _validate_code_change_impl(
     diff: str,
     path: str = ".",
     policy: str | None = None,
+    check_dependencies: bool = True,
 ) -> dict:
     """Core logic for validate_code_change, extracted for testability."""
     from skylos.rules.quality.regression import detect_security_regressions
@@ -295,6 +296,25 @@ def _validate_code_change_impl(
             elif not raw_line.startswith("-"):
                 line_no += 1
 
+    registry_status = "skipped"
+    if check_dependencies:
+        try:
+            from skylos.rules.ai_defect.diff_dependencies import (
+                scan_diff_dependency_hallucinations,
+            )
+
+            dep_result = scan_diff_dependency_hallucinations(
+                diff, Path(path).resolve()
+            )
+        except Exception:
+            registry_status = "error"
+            logger.debug("Diff dependency check failed", exc_info=True)
+        else:
+            all_findings.extend(dep_result["findings"])
+            registry_status = (
+                "unreachable" if dep_result["registry_unreachable"] else "ok"
+            )
+
     if policy:
         policy_path = Path(policy) if not Path(policy).is_absolute() else Path(policy)
         if not policy_path.exists():
@@ -317,6 +337,7 @@ def _validate_code_change_impl(
         "status": status,
         "findings": all_findings,
         "summary": summary_text,
+        "registry": registry_status,
     }
 
 
@@ -326,7 +347,7 @@ def _verify_change_impl(
     line_range: str | None = None,
     confidence: int = 60,
     project_context: bool = False,
-    include_dependency_hallucinations: bool = False,
+    include_dependency_hallucinations: bool = True,
     exclude_folders: str | None = None,
     contract_path: str | None = None,
     contract_enabled: bool = True,
@@ -1284,6 +1305,7 @@ def _register_tools(mcp):
         diff: str,
         path: str = ".",
         policy: str | None = None,
+        check_dependencies: bool = True,
     ) -> str:
         """Validate a code diff for security regressions and issues before it lands.
 
@@ -1292,6 +1314,11 @@ def _register_tools(mcp):
         - New dangerous patterns (eval, exec, SQL injection, etc.)
         - Secrets in added code
         - AI defense issues in added code
+        - Hallucinated or undeclared dependencies in added imports and manifest
+          entries (requirements*.txt, pyproject.toml, package.json, go.mod),
+          verified against the package registries. The "registry" field reports
+          "ok", "unreachable" (lookups incomplete — do not treat pass as clean),
+          or "skipped".
 
         Returns pass/fail with findings.
         """
@@ -1300,7 +1327,7 @@ def _register_tools(mcp):
             return gate_err
 
         try:
-            result = _validate_code_change_impl(diff, path, policy)
+            result = _validate_code_change_impl(diff, path, policy, check_dependencies)
             _store_result(result, "validate_code_change", path)
             return json.dumps(result, indent=2)
         except Exception as e:
@@ -1313,7 +1340,7 @@ def _register_tools(mcp):
         line_range: str | None = None,
         confidence: int = 60,
         project_context: bool = False,
-        include_dependency_hallucinations: bool = False,
+        include_dependency_hallucinations: bool = True,
         exclude_folders: str | None = None,
         contract_path: str | None = None,
         contract_enabled: bool = True,
@@ -1322,8 +1349,9 @@ def _register_tools(mcp):
 
         Returns a narrow, versioned JSON verdict containing only AI-code trust
         findings such as hallucinated references, unfinished generated code,
-        stale references, disabled controls, and optional dependency
-        hallucinations.
+        stale references, disabled controls, and dependency hallucinations
+        (checked by default; pass include_dependency_hallucinations=False to
+        skip the registry lookups).
         """
         gate_err = _gate("verify_change")
         if gate_err:

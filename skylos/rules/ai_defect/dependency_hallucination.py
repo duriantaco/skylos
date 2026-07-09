@@ -730,26 +730,170 @@ def _is_confident_hallucination_candidate(name):
     return True
 
 
+def _build_dependency_context(repo_root):
+    declared_deps = _collect_declared_deps(repo_root)
+    cache_path = repo_root / ".skylos" / "cache" / "pypi_exists.json"
+    return {
+        "stdlib": _get_stdlib_modules(),
+        "local_modules": _collect_local_modules(repo_root),
+        "declared_deps": declared_deps,
+        "manifest_context": bool(declared_deps)
+        or _has_dependency_manifest_context(repo_root),
+        "private_allow": _load_private_allowlist(),
+        "installed_mapping": _build_installed_module_mapping(),
+        "import_to_dist": _load_import_to_dist_mapping(),
+        "cache_path": cache_path,
+        "pypi_cache": _load_pypi_cache(repo_root, cache_path),
+        "cache_modified": False,
+        "registry_unreachable": False,
+    }
+
+
+def _tracked_pypi_status(name, ctx):
+    old_size = len(ctx["pypi_cache"])
+    status = _check_pypi_status(name, ctx["pypi_cache"])
+    if len(ctx["pypi_cache"]) != old_size:
+        ctx["cache_modified"] = True
+    if status == "unknown":
+        ctx["registry_unreachable"] = True
+    return status
+
+
+def _undeclared_template(mod, message):
+    return {
+        "rule_id": RULE_ID_UNDECLARED,
+        "severity": SEV_MEDIUM,
+        "message": message,
+        "col": 0,
+        "symbol": mod,
+    }
+
+
+def _hallucinated_template(mod):
+    return {
+        "rule_id": RULE_ID_HALLUCINATION,
+        "severity": SEV_CRITICAL,
+        "message": (
+            f"Hallucinated dependency '{mod}'. "
+            f"Package does not exist on PyPI."
+        ),
+        "col": 0,
+        "symbol": mod,
+        "category": "ai_defect",
+        "defect_type": "dependency_hallucination",
+        "vibe_category": "dependency_hallucination",
+        "ai_likelihood": "high",
+    }
+
+
+def _classify_import(mod, ctx):
+    """Return a finding template (without file/line) for an import root, or None."""
+    if not mod or mod.startswith("_"):
+        return None
+
+    if mod in ctx["stdlib"] or mod in ctx["local_modules"]:
+        return None
+
+    declared_deps = ctx["declared_deps"]
+    manifest_context = ctx["manifest_context"]
+
+    installed_result = _classify_installed_import(mod, ctx)
+    if installed_result is not _NO_FINDING:
+        return installed_result
+
+    if _get_possible_packages(mod, ctx["installed_mapping"]) & declared_deps:
+        return None
+
+    normalized_mod = _normalize_name(mod)
+
+    if normalized_mod in declared_deps:
+        return None
+
+    if normalized_mod in ctx["private_allow"]:
+        return None
+
+    mapped_result = _classify_mapped_import(mod, ctx)
+    if mapped_result is not _NO_FINDING:
+        return mapped_result
+
+    return _classify_registry_import(mod, ctx, manifest_context)
+
+
+_NO_FINDING = object()
+
+
+def _classify_installed_import(mod, ctx):
+    if mod not in ctx["installed_mapping"]:
+        return _NO_FINDING
+
+    known_dists = ctx["installed_mapping"][mod]
+    if known_dists & ctx["declared_deps"]:
+        return None
+
+    if not ctx["manifest_context"]:
+        return None
+
+    dist_hint = ", ".join(sorted(known_dists))
+    return _undeclared_template(
+        mod,
+        f"Undeclared import '{mod}' (provided by: {dist_hint}). Add to requirements.txt/pyproject.toml/setup.py.",
+    )
+
+
+def _classify_mapped_import(mod, ctx):
+    if mod in ctx["import_to_dist"]:
+        mapped_dist = ctx["import_to_dist"][mod]
+
+        if _normalize_name(mapped_dist) in ctx["declared_deps"]:
+            return None
+
+        if not ctx["manifest_context"]:
+            return None
+
+        if _tracked_pypi_status(mapped_dist, ctx) == "exists":
+            return _undeclared_template(
+                mod,
+                (
+                    f"Undeclared import '{mod}' (provided by: "
+                    f"{mapped_dist}). Add to "
+                    f"requirements.txt/pyproject.toml/setup.py."
+                ),
+            )
+    return _NO_FINDING
+
+
+def _classify_registry_import(mod, ctx, manifest_context):
+    pypi_status = _tracked_pypi_status(mod, ctx)
+
+    if pypi_status == "missing" and _is_confident_hallucination_candidate(mod):
+        return _hallucinated_template(mod)
+    if pypi_status == "exists" and manifest_context:
+        return _undeclared_template(
+            mod,
+            (
+                f"Undeclared import '{mod}'. Not found in "
+                f"requirements.txt/pyproject.toml/setup.py."
+            ),
+        )
+    if manifest_context:
+        return _undeclared_template(
+            mod,
+            (
+                f"Undeclared import '{mod}'. Not found in "
+                f"requirements.txt/pyproject.toml/setup.py "
+                f"(possible import/dist name mismatch)."
+            ),
+        )
+    return None
+
+
 def scan_python_dependency_hallucinations(repo_root, py_files):
     findings = []
 
     if repo_root is None:
         return findings
 
-    stdlib = _get_stdlib_modules()
-    local_modules = _collect_local_modules(repo_root)
-    declared_deps = _collect_declared_deps(repo_root)
-    dependency_manifest_context = bool(
-        declared_deps
-    ) or _has_dependency_manifest_context(repo_root)
-    private_allow = _load_private_allowlist()
-
-    installed_mapping = _build_installed_module_mapping()
-    import_to_dist = _load_import_to_dist_mapping()
-
-    cache_path = repo_root / ".skylos" / "cache" / "pypi_exists.json"
-    pypi_cache = _load_pypi_cache(repo_root, cache_path)
-    cache_modified = False
+    ctx = _build_dependency_context(repo_root)
 
     for file_path in py_files:
         try:
@@ -757,151 +901,67 @@ def scan_python_dependency_hallucinations(repo_root, py_files):
         except OSError:
             continue
 
-        imported = _extract_imports(src)
-
-        for mod in sorted(imported):
-            if not mod:
+        for mod in sorted(_extract_imports(src)):
+            template = _classify_import(mod, ctx)
+            if template is None:
                 continue
 
-            if mod.startswith("_"):
-                continue
+            finding = dict(template)
+            finding["file"] = str(file_path)
+            finding["line"] = _find_import_line(src, mod)
+            findings.append(finding)
 
-            if mod in stdlib:
-                continue
-
-            if mod in local_modules:
-                continue
-
-            if mod in installed_mapping:
-                known_dists = installed_mapping[mod]
-                if known_dists & declared_deps:
-                    continue
-
-                if not dependency_manifest_context:
-                    continue
-
-                line = _find_import_line(src, mod)
-                dist_hint = ", ".join(sorted(known_dists))
-                findings.append(
-                    {
-                        "rule_id": RULE_ID_UNDECLARED,
-                        "severity": SEV_MEDIUM,
-                        "message": f"Undeclared import '{mod}' (provided by: {dist_hint}). Add to requirements.txt/pyproject.toml/setup.py.",
-                        "file": str(file_path),
-                        "line": line,
-                        "col": 0,
-                        "symbol": mod,
-                    }
-                )
-                continue
-
-            possible_packages = _get_possible_packages(mod, installed_mapping)
-
-            if possible_packages & declared_deps:
-                continue
-
-            normalized_mod = _normalize_name(mod)
-
-            if normalized_mod in declared_deps:
-                continue
-
-            if normalized_mod in private_allow:
-                continue
-
-            if mod in import_to_dist:
-                mapped_dist = import_to_dist[mod]
-                mapped_normalized = _normalize_name(mapped_dist)
-
-                if mapped_normalized in declared_deps:
-                    continue
-
-                if not dependency_manifest_context:
-                    continue
-
-                line = _find_import_line(src, mod)
-
-                old_size = len(pypi_cache)
-                mapped_status = _check_pypi_status(mapped_dist, pypi_cache)
-                if len(pypi_cache) != old_size:
-                    cache_modified = True
-
-                if mapped_status == "exists":
-                    findings.append(
-                        {
-                            "rule_id": RULE_ID_UNDECLARED,
-                            "severity": SEV_MEDIUM,
-                            "message": (
-                                f"Undeclared import '{mod}' (provided by: "
-                                f"{mapped_dist}). Add to "
-                                f"requirements.txt/pyproject.toml/setup.py."
-                            ),
-                            "file": str(file_path),
-                            "line": line,
-                            "col": 0,
-                            "symbol": mod,
-                        }
-                    )
-                    continue
-
-            line = _find_import_line(src, mod)
-
-            original_cache_size = len(pypi_cache)
-            pypi_status = _check_pypi_status(mod, pypi_cache)
-            if len(pypi_cache) != original_cache_size:
-                cache_modified = True
-
-            if pypi_status == "missing" and _is_confident_hallucination_candidate(mod):
-                findings.append(
-                    {
-                        "rule_id": RULE_ID_HALLUCINATION,
-                        "severity": SEV_CRITICAL,
-                        "message": (
-                            f"Hallucinated dependency '{mod}'. "
-                            f"Package does not exist on PyPI."
-                        ),
-                        "file": str(file_path),
-                        "line": line,
-                        "col": 0,
-                        "symbol": mod,
-                        "category": "ai_defect",
-                        "defect_type": "dependency_hallucination",
-                        "vibe_category": "dependency_hallucination",
-                        "ai_likelihood": "high",
-                    }
-                )
-            elif pypi_status == "exists" and dependency_manifest_context:
-                findings.append(
-                    {
-                        "rule_id": RULE_ID_UNDECLARED,
-                        "severity": SEV_MEDIUM,
-                        "message": (
-                            f"Undeclared import '{mod}'. Not found in "
-                            f"requirements.txt/pyproject.toml/setup.py."
-                        ),
-                        "file": str(file_path),
-                        "line": line,
-                        "col": 0,
-                        "symbol": mod,
-                    }
-                )
-            elif dependency_manifest_context:
-                findings.append(
-                    {
-                        "rule_id": RULE_ID_UNDECLARED,
-                        "severity": SEV_MEDIUM,
-                        "message": (
-                            f"Undeclared import '{mod}'. Not found in "
-                            f"requirements.txt/pyproject.toml/setup.py "
-                            f"(possible import/dist name mismatch)."
-                        ),
-                        "file": str(file_path),
-                        "line": line,
-                        "col": 0,
-                        "symbol": mod,
-                    }
-                )
-
-    if cache_modified:
-        _save_pypi_cache(repo_root, cache_path, pypi_cache)
+    if ctx["cache_modified"]:
+        _save_pypi_cache(repo_root, ctx["cache_path"], ctx["pypi_cache"])
 
     return findings
+
+
+def scan_diff_added_imports(
+    repo_root,
+    added_imports,
+    extra_local_modules=None,
+    extra_declared_deps=None,
+):
+    """Classify import roots added by a diff without reading files from disk.
+
+    added_imports: iterable of (file_label, line_no, module_name) tuples.
+    extra_local_modules: module roots created by the same diff, treated as
+    local so brand-new project modules are not reported as hallucinated.
+    Returns (findings, registry_unreachable).
+    """
+    findings = []
+
+    if repo_root is None:
+        return findings, False
+
+    root = Path(repo_root)
+    ctx = _build_dependency_context(root)
+    if extra_local_modules:
+        ctx["local_modules"] = set(ctx["local_modules"]) | set(extra_local_modules)
+    if extra_declared_deps:
+        ctx["declared_deps"] = set(ctx["declared_deps"]) | {
+            _normalize_name(dep) for dep in extra_declared_deps if _normalize_name(dep)
+        }
+        ctx["manifest_context"] = True
+
+    seen = set()
+    for file_label, line_no, module_name in added_imports:
+        mod = str(module_name).split(".")[0].strip()
+        if (file_label, mod) in seen:
+            continue
+        seen.add((file_label, mod))
+
+        template = _classify_import(mod, ctx)
+        if template is None:
+            continue
+
+        finding = dict(template)
+        finding["file"] = str(file_label)
+        finding["line"] = int(line_no)
+        findings.append(finding)
+
+    if ctx["cache_modified"]:
+        _save_pypi_cache(root, ctx["cache_path"], ctx["pypi_cache"])
+
+    return findings, ctx["registry_unreachable"]

@@ -16,7 +16,10 @@ class ToolScopePlugin(DefensePlugin):
     )
 
     def applies_to(self, integration: LLMIntegration) -> bool:
-        return integration.integration_type == "agent" and len(integration.tools) > 0
+        return (
+            integration.integration_type in ("agent", "mcp_server")
+            and len(integration.tools) > 0
+        )
 
     def check(
         self, integration: LLMIntegration, graph: AIIntegrationGraph

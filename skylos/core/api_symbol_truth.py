@@ -139,6 +139,8 @@ def python_module_api_symbol_surface(
         "environment_key": safe_environment_key,
         "members": surface.get("members", {}),
     }
+    if isinstance(surface.get("members_truncated"), bool):
+        record["members_truncated"] = surface["members_truncated"]
     origin = surface.get("origin")
     if isinstance(origin, str) and origin.strip():
         record["origin"] = origin
@@ -162,6 +164,9 @@ def normalize_api_symbol_surface(surface: dict[str, Any]) -> dict[str, Any] | No
         value = surface.get(key)
         if isinstance(value, str) and value.strip():
             normalized[key] = value.strip()
+
+    if isinstance(surface.get("members_truncated"), bool):
+        normalized["members_truncated"] = surface["members_truncated"]
 
     metadata = surface.get("metadata")
     if isinstance(metadata, dict):

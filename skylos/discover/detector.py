@@ -47,6 +47,37 @@ KNOWN_FRAMEWORKS: dict[str, str] = {
     "dspy": "DSPy",
     "smolagents": "SmolAgents",
     "pydantic_ai": "PydanticAI",
+    "agents": "OpenAI Agents SDK",
+    "claude_agent_sdk": "Claude Agent SDK",
+    "claude_code_sdk": "Claude Agent SDK",
+    "google.adk": "Google ADK",
+}
+
+# "agents" collides with local packages named agents/; only register it when
+# the import binds a symbol unique to the OpenAI Agents SDK.
+_GATED_FRAMEWORK_MODULES = {"agents"}
+
+_OPENAI_AGENTS_SYMBOLS = {
+    "Agent",
+    "Runner",
+    "RunConfig",
+    "RunContextWrapper",
+    "RunResult",
+    "ModelSettings",
+    "function_tool",
+    "handoff",
+    "Handoff",
+    "input_guardrail",
+    "output_guardrail",
+    "GuardrailFunctionOutput",
+    "WebSearchTool",
+    "FileSearchTool",
+    "ComputerTool",
+    "MCPServerStdio",
+    "MCPServerSse",
+    "MCPServerStreamableHttp",
+    "ItemHelpers",
+    "trace",
 }
 
 LLM_CALL_PATTERNS: list[tuple[str, str, str]] = [
@@ -66,6 +97,12 @@ LLM_CALL_PATTERNS: list[tuple[str, str, str]] = [
     ("litellm", "completion", "chat"),
     ("litellm", "acompletion", "chat"),
     ("litellm", "embedding", "embedding"),
+    ("Runner", "run", "agent"),
+    ("Runner", "run_sync", "agent"),
+    ("Runner", "run_streamed", "agent"),
+    ("runner", "run", "agent"),
+    ("runner", "run_async", "agent"),
+    ("runner", "run_live", "agent"),
     ("client", "chat", "chat"),
     ("llm", "invoke", "chat"),
     ("llm", "predict", "chat"),
@@ -154,6 +191,40 @@ _PII_IMPORT_MODULES = (
     "pii_tools",
     "commonregex",
 )
+
+# Server-side MCP only: mcp.types/client imports alone must not trigger.
+_MCP_SERVER_IMPORT_MODULES = ("fastmcp", "mcp.server")
+_MCP_SERVER_CLASSES = {"FastMCP", "Server"}
+
+_HTTP_LLM_HOSTS: dict[str, str] = {
+    "api.openai.com": "OpenAI",
+    "api.anthropic.com": "Anthropic",
+    "generativelanguage.googleapis.com": "Google Gemini",
+    "api.mistral.ai": "Mistral",
+    "api.cohere.com": "Cohere",
+    "api.cohere.ai": "Cohere",
+    "api.groq.com": "Groq",
+    "api.together.xyz": "Together AI",
+    "api.fireworks.ai": "Fireworks",
+    "openrouter.ai": "OpenRouter",
+    "api.deepseek.com": "DeepSeek",
+    "api.x.ai": "xAI",
+    "api.perplexity.ai": "Perplexity",
+    "bedrock-runtime.": "AWS Bedrock",
+    "localhost:11434": "Ollama",
+    "127.0.0.1:11434": "Ollama",
+}
+
+# Unambiguous LLM API paths; these catch OpenAI-compatible internal gateways
+# where the host is customer-specific.
+_HTTP_LLM_PATHS: dict[str, tuple[str, str]] = {
+    "/chat/completions": ("OpenAI-compatible API", "chat"),
+    "/v1/completions": ("OpenAI-compatible API", "completion"),
+    "/v1/messages": ("Anthropic-compatible API", "chat"),
+    "/v1/embeddings": ("OpenAI-compatible API", "embedding"),
+}
+
+_HTTP_CALL_METHODS = {"post", "urlopen"}
 
 _RATE_LIMIT_DECORATORS = {"limit", "rate_limit", "ratelimit", "throttle"}
 
@@ -250,6 +321,7 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
 
         self._var_assignments: dict[str, int] = {}
         self._string_constants: dict[str, str] = {}
+        self._dict_constants: dict[str, dict] = {}
         self._llm_response_vars: set[str] = set()
         self._user_input_vars: set[str] = set()
 
@@ -266,6 +338,9 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
         self._func_pii_filter: dict[str, str] = {}
         self._has_rag_imports = False
         self._has_pii_imports = False
+
+        self._has_mcp_server_imports = False
+        self._mcp_server_sites: list[str] = []
 
         self._func_prompt_sites: dict[str, list[str]] = {}
         self._func_tool_defs: dict[str, list[ToolDef]] = {}
@@ -296,8 +371,10 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
             name = alias.asname or alias.name
             full = f"{module}.{alias.name}" if module else alias.name
             self.from_imports[name] = full
-            self._check_sdk_import(module)
-            self._check_sdk_import(full)
+            if node.level == 0:  # relative imports are never external SDKs
+                self._check_sdk_import(module)
+                self._check_sdk_import(full)
+                self._check_gated_framework_import(module, alias.name)
         self.generic_visit(node)
 
     def _check_sdk_import(self, module: str) -> None:
@@ -305,6 +382,8 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
             if module == sdk_mod or module.startswith(sdk_mod + "."):
                 self.detected_sdks[sdk_mod] = provider
         for fw_mod, framework in KNOWN_FRAMEWORKS.items():
+            if fw_mod in _GATED_FRAMEWORK_MODULES:
+                continue
             if module == fw_mod or module.startswith(fw_mod + "."):
                 self.detected_frameworks[fw_mod] = framework
 
@@ -314,6 +393,15 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
         for pii_mod in _PII_IMPORT_MODULES:
             if module == pii_mod or module.startswith(pii_mod + "."):
                 self._has_pii_imports = True
+        for mcp_mod in _MCP_SERVER_IMPORT_MODULES:
+            if module == mcp_mod or module.startswith(mcp_mod + "."):
+                self._has_mcp_server_imports = True
+
+    def _check_gated_framework_import(self, module: str, symbol: str) -> None:
+        if module != "agents" and not module.startswith("agents."):
+            return
+        if symbol in _OPENAI_AGENTS_SYMBOLS:
+            self.detected_frameworks["agents"] = KNOWN_FRAMEWORKS["agents"]
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._visit_funcdef(node)
@@ -383,14 +471,14 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
 
     def _is_tool_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         for dec_name in self._current_func_decorators:
-            if dec_name in ("tool", "function_tool", "structured_tool"):
+            if dec_name in ("tool", "function_tool", "structured_tool", "call_tool"):
                 return True
         for dec in node.decorator_list:
             if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute):
-                if dec.func.attr in ("tool", "function_tool"):
+                if dec.func.attr in ("tool", "function_tool", "call_tool"):
                     return True
             elif isinstance(dec, ast.Attribute):
-                if dec.attr in ("tool", "function_tool"):
+                if dec.attr in ("tool", "function_tool", "call_tool"):
                     return True
         return False
 
@@ -408,6 +496,8 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         self._detect_llm_call(node)
+        self._detect_http_llm_call(node)
+        self._detect_mcp_server(node)
         self._detect_input_source(node)
         self._detect_dangerous_sink(node)
         self._detect_output_validation(node)
@@ -416,6 +506,150 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
         self._detect_rag_call(node)
         self._detect_pii_call(node)
         self.generic_visit(node)
+
+    def _detect_http_llm_call(self, node: ast.Call) -> None:
+        chain = self._resolve_call_chain(node.func)
+        if not chain:
+            return
+        method = chain.rsplit(".", 1)[-1]
+        if method not in _HTTP_CALL_METHODS:
+            return
+
+        url = self._http_call_url(node)
+        if not url:
+            return
+
+        target = self._http_llm_target(url)
+        if target is None:
+            return
+        provider, integration_type = target
+
+        model_value, has_max_tokens = self._extract_http_payload_fields(node)
+        self._record_http_llm_call(
+            node,
+            provider=provider,
+            integration_type=integration_type,
+            model_value=model_value,
+            has_max_tokens=has_max_tokens,
+        )
+
+    def _http_call_url(self, node: ast.Call) -> str:
+        url_expr: Optional[ast.expr] = None
+        for kw in node.keywords:
+            if kw.arg == "url":
+                url_expr = kw.value
+                break
+        if url_expr is None and node.args:
+            url_expr = node.args[0]
+        if url_expr is None:
+            return ""
+        return self._resolve_str_expr(url_expr).lower()
+
+    def _http_llm_target(self, url: str) -> tuple[str, str] | None:
+        provider: str | None = None
+        for host, host_provider in _HTTP_LLM_HOSTS.items():
+            if host in url:
+                provider = host_provider
+                break
+
+        integration_type: str | None = None
+        for path, (path_provider, path_type) in _HTTP_LLM_PATHS.items():
+            if path in url:
+                integration_type = path_type
+                if provider is None:
+                    provider = path_provider
+                break
+
+        if provider is None:
+            return None
+        if integration_type is None:
+            integration_type = "chat"
+        return provider, integration_type
+
+    def _record_http_llm_call(
+        self,
+        node: ast.Call,
+        *,
+        provider: str,
+        integration_type: str,
+        model_value: str,
+        has_max_tokens: bool,
+    ) -> None:
+        self._raw_llm_calls.append(
+            {
+                "provider": provider,
+                "location": f"{self.filepath}:{node.lineno}",
+                "integration_type": integration_type,
+                "model_value": model_value,
+                "model_pinned": (
+                    self._is_model_pinned(model_value) if model_value else False
+                ),
+                "has_system_prompt": False,
+                "has_tools": False,
+                "tool_names": [],
+                "func_scope": self._func_scope(),
+                "has_max_tokens": has_max_tokens,
+            }
+        )
+
+    def _resolve_str_expr(self, node: ast.expr) -> str:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.JoinedStr):
+            return "".join(
+                str(value.value)
+                for value in node.values
+                if isinstance(value, ast.Constant)
+            )
+        if isinstance(node, ast.Name):
+            return self._string_constants.get(node.id, "")
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return self._resolve_str_expr(node.left) + self._resolve_str_expr(
+                node.right
+            )
+        return ""
+
+    def _extract_http_payload_fields(self, node: ast.Call) -> tuple[str, bool]:
+        payload: Optional[dict] = None
+        for kw in node.keywords:
+            if kw.arg in ("json", "data"):
+                if isinstance(kw.value, ast.Dict):
+                    payload = {}
+                    for key, val in zip(kw.value.keys, kw.value.values):
+                        if isinstance(key, ast.Constant) and isinstance(
+                            key.value, str
+                        ):
+                            payload[key.value] = (
+                                val.value if isinstance(val, ast.Constant) else None
+                            )
+                elif isinstance(kw.value, ast.Name):
+                    payload = self._dict_constants.get(kw.value.id)
+                break
+        if not payload:
+            return "", False
+
+        model_value = payload.get("model")
+        if not isinstance(model_value, str):
+            model_value = ""
+        has_max_tokens = any(
+            key in payload for key in ("max_tokens", "max_output_tokens", "maxTokens")
+        )
+        return model_value, has_max_tokens
+
+    def _detect_mcp_server(self, node: ast.Call) -> None:
+        if not self._has_mcp_server_imports:
+            return
+        chain = self._resolve_call_chain(node.func)
+        cls = chain.rsplit(".", 1)[-1] if chain else ""
+        if cls not in _MCP_SERVER_CLASSES:
+            return
+        if cls == "Server":
+            origin = self.from_imports.get(chain, "") or self.imports.get(
+                chain.split(".")[0], ""
+            )
+            if not (origin.startswith("mcp") or chain.startswith("mcp.")):
+                return
+        self._mcp_server_sites.append(f"{self.filepath}:{node.lineno}")
 
     def _detect_llm_call(self, node: ast.Call) -> None:
         call_chain = self._resolve_call_chain(node.func)
@@ -573,6 +807,29 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
             )
             self.integrations.append(integration)
 
+        self._finalize_mcp_server()
+
+    def _finalize_mcp_server(self) -> None:
+        if not self._has_mcp_server_imports:
+            return
+        if not self._mcp_server_sites and not self.tool_defs:
+            return
+        location = (
+            self._mcp_server_sites[0]
+            if self._mcp_server_sites
+            else self.tool_defs[0].location
+        )
+        self.integrations.append(
+            LLMIntegration(
+                provider="MCP Server",
+                location=location,
+                integration_type="mcp_server",
+                tools=list(self.tool_defs),
+                has_logging=bool(self._func_logging),
+                has_rate_limiting=bool(self._func_rate_limiting),
+            )
+        )
+
     def _detect_framework_call(
         self, node: ast.Call, call_chain: str
     ) -> tuple[Optional[str], Optional[str]]:
@@ -603,6 +860,29 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                     return "CrewAI", "agent"
                 if call_chain == name and "Crew" in full:
                     return "CrewAI", "agent"
+
+        for name, full in self.from_imports.items():
+            if full.startswith(("claude_agent_sdk", "claude_code_sdk")):
+                if call_chain == name and name == "query":
+                    return "Claude Agent SDK", "agent"
+
+        if "claude_agent_sdk" in self.detected_frameworks or (
+            "claude_code_sdk" in self.detected_frameworks
+        ):
+            if call_chain.endswith(".query") and "." in call_chain:
+                obj = call_chain.rsplit(".", 2)[-2].lower()
+                if any(obj.startswith(p) for p in ("client", "claude", "sdk", "agent")):
+                    return "Claude Agent SDK", "agent"
+
+        for name, full in self.from_imports.items():
+            if full.startswith("google.adk"):
+                symbol = full.rsplit(".", 1)[-1]
+                if call_chain == name and symbol in ("Agent", "LlmAgent"):
+                    return "Google ADK", "agent"
+
+        for name, full in self.from_imports.items():
+            if full == "agents.Agent" and call_chain == name:
+                return "OpenAI Agents SDK", "agent"
 
         return None, None
 
@@ -904,6 +1184,17 @@ class _LLMDetectorVisitor(ast.NodeVisitor):
                     node.value.value, str
                 ):
                     self._string_constants[target.id] = node.value.value
+                elif isinstance(node.value, ast.Dict):
+                    entries: dict = {}
+                    for key, val in zip(node.value.keys, node.value.values):
+                        if isinstance(key, ast.Constant) and isinstance(
+                            key.value, str
+                        ):
+                            entries[key.value] = (
+                                val.value if isinstance(val, ast.Constant) else None
+                            )
+                    if entries:
+                        self._dict_constants[target.id] = entries
 
         self.generic_visit(node)
         self._current_assign_target = None

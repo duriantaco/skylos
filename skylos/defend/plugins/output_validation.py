@@ -18,6 +18,9 @@ class OutputValidationPlugin(DefensePlugin):
         "or similar parsing before consuming LLM responses."
     )
 
+    def applies_to(self, integration: LLMIntegration) -> bool:
+        return integration.integration_type != "mcp_server"
+
     def check(
         self, integration: LLMIntegration, graph: AIIntegrationGraph
     ) -> DefenseResult:

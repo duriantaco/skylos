@@ -54,6 +54,24 @@ def test_contract_config_overrides_extend_vibe_dictionary(tmp_path):
     assert contract_enables_dependency_hallucinations(contract) is False
 
 
+def test_contract_api_surface_modules_flow_into_config_overrides(tmp_path):
+    contract_file = tmp_path / "ai-contract.yml"
+    contract_file.write_text(
+        "version: 1\n"
+        "ai:\n"
+        "  api_surface:\n"
+        "    modules: [httpx, requests]\n",
+        encoding="utf-8",
+    )
+
+    contract = load_contract(contract_file)
+
+    assert contract.ai.api_surface.modules == ("httpx", "requests")
+    assert contract_project_config_overrides(contract) == {
+        "api_signature_modules": ["httpx", "requests"]
+    }
+
+
 def test_contract_dependency_or_api_surface_enables_dependency_scan(tmp_path):
     contract_file = tmp_path / "ai-contract.yml"
     contract_file.write_text(

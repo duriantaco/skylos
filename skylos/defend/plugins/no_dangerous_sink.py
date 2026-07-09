@@ -17,6 +17,9 @@ class NoDangerousSinkPlugin(DefensePlugin):
         "and sanitization before any dangerous operation."
     )
 
+    def applies_to(self, integration: LLMIntegration) -> bool:
+        return integration.integration_type != "mcp_server"
+
     def check(
         self, integration: LLMIntegration, graph: AIIntegrationGraph
     ) -> DefenseResult:

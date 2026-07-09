@@ -2925,9 +2925,11 @@ class Skylos:
 
                     py_files = _python_signature_files(files)
                     if py_files:
+                        api_modules = project_cfg.get("api_signature_modules")
                         api_findings = scan_python_api_signature_hallucinations(
                             project_root,
                             py_files,
+                            allowed_modules=tuple(api_modules) if api_modules else None,
                         )
                         _extend_unsuppressed_ai_defect_findings(
                             api_findings,
