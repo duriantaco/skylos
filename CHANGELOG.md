@@ -1,5 +1,18 @@
 ## Changelog
 
+## [4.29.0](https://github.com/duriantaco/skylos/compare/v4.28.0...v4.29.0) (2026-07-09)
+
+
+### Features
+
+* **defend:** add agent verification evidence ([#625](https://github.com/duriantaco/skylos/issues/625)) ([f3155e4](https://github.com/duriantaco/skylos/commit/f3155e455fba480bf897253cd29f594892982e38))
+* **defend:** expand agent verification checks ([#628](https://github.com/duriantaco/skylos/issues/628)) ([f185cf3](https://github.com/duriantaco/skylos/commit/f185cf3437df70ff0f15ccea7b889b7e8696fa04))
+
+
+### Bug Fixes
+
+* **dead-code:** recognize numba overload implementations ([df7a2d3](https://github.com/duriantaco/skylos/commit/df7a2d3584ef4738e7b9a06be6f98ef634f8c2e4))
+
 ## [4.28.0](https://github.com/duriantaco/skylos/compare/v4.27.0...v4.28.0) (2026-07-04)
 
 
