@@ -101,8 +101,17 @@ def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--dependency-hallucinations",
+        dest="dependency_hallucinations",
         action="store_true",
-        help="Include dependency hallucination checks that may use package metadata caches.",
+        default=None,
+        help="Include dependency hallucination checks (default: enabled for path targets).",
+    )
+    parser.add_argument(
+        "--no-dependency-hallucinations",
+        dest="dependency_hallucinations",
+        action="store_false",
+        default=None,
+        help="Skip dependency hallucination checks and their package registry lookups.",
     )
     parser.add_argument(
         "--exclude-folder",
@@ -156,8 +165,9 @@ def _run_from_args(
         "confidence": args.confidence,
         "exclude_folders": exclude_folders,
         "project_context": args.project_context,
-        "include_dependency_hallucinations": args.dependency_hallucinations,
     }
+    if args.dependency_hallucinations is not None:
+        kwargs["include_dependency_hallucinations"] = args.dependency_hallucinations
     if args.contract_path is not None:
         kwargs["contract_path"] = args.contract_path
     if not args.contract_enabled:

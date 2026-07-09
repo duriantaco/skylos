@@ -466,3 +466,95 @@ def test_scan_skips_local_modules_named_like_allowlisted_package(
     findings = _scan(repo, py_file)
 
     assert findings == []
+
+
+def test_scan_skips_missing_members_when_surface_truncated(tmp_path):
+    py_file = _write_py(
+        tmp_path / "app.py",
+        "\n".join(
+            [
+                "import bigmod",
+                "bigmod.beyond_cap()",
+                "client = bigmod.Client()",
+                "client.beyond_cap()",
+                "",
+            ]
+        ),
+    )
+
+    def loader(_root, _module_name):
+        return {
+            "members": {
+                "known": {"kind": "function", "parameters": []},
+                "Client": {
+                    "kind": "class",
+                    "parameters": [],
+                    "methods": {},
+                    "methods_truncated": True,
+                    "properties": {},
+                },
+            },
+            "members_truncated": True,
+        }
+
+    findings = scan_python_api_signature_hallucinations(
+        tmp_path,
+        [py_file],
+        allowed_modules=("bigmod",),
+        surface_loader=loader,
+    )
+
+    assert findings == []
+
+
+def test_load_config_sanitizes_api_signature_modules(tmp_path):
+    from skylos.config import load_config
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.skylos]\napi_signature_modules = ["httpx", 42]\n',
+        encoding="utf-8",
+    )
+
+    config = load_config(tmp_path)
+
+    assert config["api_signature_modules"] == ["httpx"]
+
+
+def test_analyzer_passes_configured_allowlist_to_scan(tmp_path, monkeypatch):
+    from skylos import analyzer as analyzer_module
+    from skylos.rules.ai_defect import api_signature_hallucination as api_sig
+    from skylos.rules.ai_defect import dependency_hallucination as dep_mod
+    from skylos.rules.ai_defect import manifest_dependency_hallucination as manifest_mod
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\n\n'
+        '[tool.skylos]\napi_signature_modules = ["httpx"]\n',
+        encoding="utf-8",
+    )
+    _write_py(tmp_path / "app.py", "import httpx\n")
+
+    seen = {}
+
+    def fake_scan(project_root, py_files, *, allowed_modules=None, **kwargs):
+        seen["allowed_modules"] = allowed_modules
+        return []
+
+    monkeypatch.setattr(
+        api_sig, "scan_python_api_signature_hallucinations", fake_scan
+    )
+    # The D224 scan is gated behind enable_dependency_hallucinations, so keep
+    # it on but stub the registry-touching scans to stay offline.
+    monkeypatch.setattr(
+        dep_mod, "scan_python_dependency_hallucinations", lambda *a, **k: []
+    )
+    monkeypatch.setattr(
+        manifest_mod, "scan_manifest_dependency_hallucinations", lambda *a, **k: []
+    )
+
+    analyzer_module.analyze(
+        str(tmp_path),
+        enable_ai_defects=True,
+        grep_verify=False,
+    )
+
+    assert seen["allowed_modules"] == ("httpx",)

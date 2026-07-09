@@ -1831,6 +1831,9 @@ def _base_defense_upload_payload(
         "owasp_coverage": defense_data.get("owasp_coverage"),
         "defense_findings": defense_data.get("findings", []),
         "defense_integrations": defense_data.get("integrations", []),
+        "attestation": defense_data.get("attestation"),
+        "framework_evidence": defense_data.get("framework_evidence"),
+        "skylos_version": defense_data.get("skylos_version"),
     }
 
 

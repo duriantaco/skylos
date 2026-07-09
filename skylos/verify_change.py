@@ -34,7 +34,7 @@ def verify_change_path(
     confidence: int = 60,
     exclude_folders: list[str] | None = None,
     project_context: bool = False,
-    include_dependency_hallucinations: bool = False,
+    include_dependency_hallucinations: bool = True,
     include_security_findings: bool = False,
     contract_path: str | Path | None = None,
     contract_enabled: bool = True,
@@ -112,6 +112,9 @@ def verify_change_stdin_payload(
 
     manifest_file = _safe_manifest_file(_manifest_value(payload, ("file",), "snippet.py"))
     line_range = _manifest_value(payload, ("line_range", "range"), None)
+    # Stays opt-in for snippets: they are scanned inside a temp root, where
+    # project-local imports cannot resolve and would be misreported as
+    # hallucinated dependencies.
     include_deps = bool(payload.get("include_dependency_hallucinations", False))
     contract_path = _manifest_value(payload, ("contract_path", "contract"), None)
     contract_enabled = _manifest_contract_enabled(payload)

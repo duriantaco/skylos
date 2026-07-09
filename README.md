@@ -152,10 +152,13 @@ See the full [Rules Reference](https://docs.skylos.dev/rules-reference).
 ## Verify AI Agents Before They Ship
 
 Runtime guardrails are the WAF; Skylos is the SAST. `skylos discover`
-inventories every LLM integration in a codebase (providers, frameworks, agent
-tools, prompt sites, input sources), and `skylos defend` verifies the
-guardrails around them — deterministically, locally, with no model in the
-loop — then gates CI and emits auditor-ready evidence.
+inventories every LLM integration in a codebase (provider SDKs, agent
+frameworks including the OpenAI Agents SDK, Claude Agent SDK, and Google ADK,
+MCP servers and their tools, direct HTTP calls to LLM APIs or
+OpenAI-compatible gateways, plus agent tools, prompt sites, and input
+sources), and `skylos defend` verifies the guardrails around them —
+deterministically, locally, with no model in the loop — then gates CI and
+emits auditor-ready evidence.
 
 ```bash
 skylos discover .                               # inventory LLM integrations and agent tools

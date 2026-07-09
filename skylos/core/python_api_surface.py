@@ -129,11 +129,13 @@ def build_python_api_surface(
     if not isinstance(module, ModuleType):
         return None
 
+    members, members_truncated = _module_members(module)
     return {
         "module": safe_name,
         "origin": _module_origin(module),
         "captured_at": _utc_timestamp(),
-        "members": _module_members(module),
+        "members": members,
+        "members_truncated": members_truncated,
     }
 
 
@@ -203,9 +205,10 @@ def _module_origin(module: ModuleType) -> str:
     return origin
 
 
-def _module_members(module: ModuleType) -> dict[str, Any]:
+def _module_members(module: ModuleType) -> tuple[dict[str, Any], bool]:
     members: dict[str, Any] = {}
-    for name in _public_names(module, MAX_MODULE_MEMBERS):
+    names, truncated = _public_names(module, MAX_MODULE_MEMBERS)
+    for name in names:
         try:
             value = getattr(module, name)
         except Exception:
@@ -215,7 +218,7 @@ def _module_members(module: ModuleType) -> dict[str, Any]:
         if entry is None:
             continue
         members[name] = entry
-    return members
+    return members, truncated
 
 
 def _member_entry(value: Any) -> dict[str, Any] | None:
@@ -227,18 +230,21 @@ def _member_entry(value: Any) -> dict[str, Any] | None:
 
 
 def _class_entry(value: type) -> dict[str, Any]:
+    methods, methods_truncated = _class_methods(value)
     return {
         "kind": "class",
         "signature": _signature_for(value),
         "parameters": _parameters_for(value),
-        "methods": _class_methods(value),
+        "methods": methods,
+        "methods_truncated": methods_truncated,
         "properties": _class_properties(value),
     }
 
 
-def _class_methods(value: type) -> dict[str, Any]:
+def _class_methods(value: type) -> tuple[dict[str, Any], bool]:
     methods: dict[str, Any] = {}
-    for name in _public_names(value, MAX_CLASS_MEMBERS):
+    names, truncated = _public_names(value, MAX_CLASS_MEMBERS)
+    for name in names:
         try:
             member = getattr(value, name)
         except Exception:
@@ -252,12 +258,13 @@ def _class_methods(value: type) -> dict[str, Any]:
             "signature": _signature_for(member),
             "parameters": _parameters_for(member),
         }
-    return methods
+    return methods, truncated
 
 
 def _class_properties(value: type) -> dict[str, Any]:
     properties: dict[str, Any] = {}
-    for name in _public_names(value, MAX_CLASS_MEMBERS):
+    names, _truncated = _public_names(value, MAX_CLASS_MEMBERS)
+    for name in names:
         try:
             member = getattr(value, name)
         except Exception:
@@ -266,10 +273,12 @@ def _class_properties(value: type) -> dict[str, Any]:
         resource_class = _property_resource_class(member, value)
         if resource_class is None:
             continue
+        methods, methods_truncated = _class_methods(resource_class)
         properties[name] = {
             "kind": "property",
             "class": resource_class.__name__,
-            "methods": _class_methods(resource_class),
+            "methods": methods,
+            "methods_truncated": methods_truncated,
         }
     return properties
 
@@ -416,22 +425,24 @@ def _parameters_for(value: Any) -> list[dict[str, Any]]:
     return parameters
 
 
-def _public_names(value: Any, limit: int) -> list[str]:
+def _public_names(value: Any, limit: int) -> tuple[list[str], bool]:
     names: list[str] = []
+    truncated = False
     try:
         raw_names = dir(value)
     except Exception:
-        return names
+        return names, truncated
 
     for name in raw_names:
-        if len(names) >= limit:
-            break
         if not isinstance(name, str):
             continue
         if name.startswith("_"):
             continue
+        if len(names) >= limit:
+            truncated = True
+            break
         names.append(name)
-    return names
+    return names, truncated
 
 
 def _environment_info() -> dict[str, Any]:

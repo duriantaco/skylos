@@ -573,3 +573,357 @@ def safe():
     def test_syntax_error_handled(self):
         flows = analyze_taint_flows("bad.py", "def broken(")
         assert flows == []
+
+
+# ---------------------------------------------------------------------------
+# Agent SDK detection (OpenAI Agents SDK, Claude Agent SDK, Google ADK)
+# ---------------------------------------------------------------------------
+
+
+class TestAgentSdkDetection:
+    def test_openai_agents_sdk_runner(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "main.py").write_text(
+                """
+from agents import Agent, Runner
+
+agent = Agent(name="assistant", instructions="You are a helpful assistant.")
+
+def main(user_input):
+    result = Runner.run_sync(agent, user_input)
+    return result.final_output
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) >= 1
+            assert all(i.provider == "OpenAI Agents SDK" for i in integrations)
+            assert any(i.integration_type == "agent" for i in integrations)
+
+    def test_openai_agents_sdk_function_tool(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "main.py").write_text(
+                """
+from agents import Agent, Runner, function_tool
+
+@function_tool
+def get_weather(city: str) -> str:
+    return f"weather in {city}"
+
+agent = Agent(name="assistant", tools=[get_weather])
+
+def main(q):
+    return Runner.run_sync(agent, q)
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            agent_integs = [i for i in integrations if i.tools]
+            assert len(agent_integs) >= 1
+            assert agent_integs[0].tools[0].name == "get_weather"
+            assert agent_integs[0].tools[0].has_typed_schema is True
+
+    def test_local_agents_package_not_detected(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "main.py").write_text(
+                """
+from agents import build_pipeline
+
+def main():
+    pipeline = build_pipeline()
+    return pipeline.run("data")
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 0
+
+    def test_relative_import_not_sdk(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "pkg").mkdir()
+            (root / "pkg" / "__init__.py").write_text("")
+            (root / "pkg" / "main.py").write_text(
+                """
+from .autogen import helper
+from .agents import Agent
+
+def main(llm):
+    return llm.invoke("hello")
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 0
+
+    def test_claude_agent_sdk_query(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "main.py").write_text(
+                """
+from claude_agent_sdk import query, ClaudeAgentOptions
+
+async def main(prompt_text):
+    async for message in query(prompt=prompt_text):
+        print(message)
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 1
+            assert integrations[0].provider == "Claude Agent SDK"
+            assert integrations[0].integration_type == "agent"
+
+    def test_claude_sdk_client_query(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "main.py").write_text(
+                """
+from claude_agent_sdk import ClaudeSDKClient
+
+async def main(prompt_text):
+    async with ClaudeSDKClient() as client:
+        await client.query(prompt_text)
+        async for message in client.receive_response():
+            print(message)
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 1
+            assert integrations[0].provider == "Claude Agent SDK"
+            assert integrations[0].integration_type == "agent"
+
+    def test_google_adk_agent(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "main.py").write_text(
+                """
+from google.adk.agents import Agent
+
+def get_weather(city: str) -> dict:
+    return {"city": city}
+
+root_agent = Agent(
+    name="weather_agent",
+    model="gemini-2.0-flash",
+    instructions="Answer weather questions.",
+    tools=[get_weather],
+)
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 1
+            assert integrations[0].provider == "Google ADK"
+            assert integrations[0].integration_type == "agent"
+            assert integrations[0].model_value == "gemini-2.0-flash"
+            assert integrations[0].model_pinned is False
+
+    def test_google_adk_runner_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "main.py").write_text(
+                """
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+
+def main(runner, message):
+    for event in runner.run(user_id="u", session_id="s", new_message=message):
+        print(event)
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 1
+            assert integrations[0].provider == "Google ADK"
+            assert integrations[0].integration_type == "agent"
+
+
+# ---------------------------------------------------------------------------
+# MCP server detection
+# ---------------------------------------------------------------------------
+
+
+class TestMcpServerDetection:
+    def test_fastmcp_server_with_tools(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "server.py").write_text(
+                """
+from mcp.server.fastmcp import FastMCP
+import subprocess
+
+mcp = FastMCP("demo")
+
+@mcp.tool()
+def run_command(command: str) -> str:
+    return subprocess.check_output(command, shell=True).decode()
+
+@mcp.tool()
+def add(a, b):
+    return a + b
+
+mcp.run()
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 1
+            integ = integrations[0]
+            assert integ.provider == "MCP Server"
+            assert integ.integration_type == "mcp_server"
+            assert len(integ.tools) == 2
+            by_name = {t.name: t for t in integ.tools}
+            assert by_name["run_command"].has_typed_schema is True
+            assert by_name["run_command"].dangerous_calls
+            assert by_name["add"].has_typed_schema is False
+
+    def test_fastmcp_package_import_variant(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "server.py").write_text(
+                """
+from fastmcp import FastMCP
+
+mcp = FastMCP("demo")
+
+@mcp.tool()
+def greet(name: str) -> str:
+    return f"hello {name}"
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 1
+            assert integrations[0].integration_type == "mcp_server"
+            assert len(integrations[0].tools) == 1
+
+    def test_mcp_client_import_not_detected(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "client.py").write_text(
+                """
+from mcp import ClientSession
+from mcp.types import Tool
+
+async def main(session: ClientSession):
+    tools = await session.list_tools()
+    return tools
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 0
+
+    def test_langchain_tools_without_mcp_not_mcp_server(
+        self, anthropic_agent_project
+    ):
+        integrations, _ = detect_integrations(anthropic_agent_project)
+        assert all(i.integration_type != "mcp_server" for i in integrations)
+
+
+# ---------------------------------------------------------------------------
+# HTTP-level LLM call detection
+# ---------------------------------------------------------------------------
+
+
+class TestHttpLlmDetection:
+    def test_requests_post_openai(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "ask.py").write_text(
+                """
+import requests
+
+def ask(prompt):
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Authorization": "Bearer key"},
+        json={
+            "model": "gpt-4o-2024-08-06",
+            "max_tokens": 256,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+    )
+    return resp.json()
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 1
+            integ = integrations[0]
+            assert integ.provider == "OpenAI"
+            assert integ.integration_type == "chat"
+            assert integ.model_value == "gpt-4o-2024-08-06"
+            assert integ.model_pinned is True
+            assert integ.has_max_tokens is True
+
+    def test_httpx_internal_gateway_path_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "gateway.py").write_text(
+                """
+import httpx
+
+BASE = "https://llm-gateway.internal.example.com/v1"
+
+def ask(prompt):
+    with httpx.Client() as client:
+        r = client.post(f"{BASE}/chat/completions", json={"model": "gpt-4o"})
+    return r.json()
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 1
+            integ = integrations[0]
+            assert integ.provider == "OpenAI-compatible API"
+            assert integ.integration_type == "chat"
+            assert integ.model_value == "gpt-4o"
+            assert integ.model_pinned is False
+
+    def test_url_constant_and_payload_variable(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "ask.py").write_text(
+                """
+import requests
+
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+PAYLOAD = {"model": "claude-sonnet-4-20250514", "max_tokens": 1024}
+
+def ask():
+    return requests.post(ANTHROPIC_URL, json=PAYLOAD)
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 1
+            integ = integrations[0]
+            assert integ.provider == "Anthropic"
+            assert integ.integration_type == "chat"
+            assert integ.model_value == "claude-sonnet-4-20250514"
+            assert integ.model_pinned is True
+            assert integ.has_max_tokens is True
+
+    def test_urlopen_completions(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "legacy.py").write_text(
+                """
+import urllib.request
+
+def ask(data):
+    return urllib.request.urlopen(
+        "https://api.openai.com/v1/completions", data=data
+    )
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 1
+            assert integrations[0].provider == "OpenAI"
+            assert integrations[0].integration_type == "completion"
+
+    def test_non_llm_post_not_detected(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "webhook.py").write_text(
+                """
+import requests
+
+def notify(payload):
+    return requests.post("https://example.com/api/users", json=payload)
+"""
+            )
+            integrations, _ = detect_integrations(root)
+            assert len(integrations) == 0

@@ -18,6 +18,9 @@ class ModelPinnedPlugin(DefensePlugin):
         "claude-sonnet-4-20250514) to prevent unexpected behavior changes."
     )
 
+    def applies_to(self, integration: LLMIntegration) -> bool:
+        return integration.integration_type != "mcp_server"
+
     def check(
         self, integration: LLMIntegration, graph: AIIntegrationGraph
     ) -> DefenseResult:

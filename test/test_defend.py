@@ -2570,3 +2570,62 @@ class TestEvidenceReports:
         passing = [r for r in results if r.passed and r.category == "defense"]
         passing_score = compute_defense_score(passing)
         assert evaluate_gate(passing, passing_score, fail_on="critical") is True
+
+
+# ---------------------------------------------------------------------------
+# MCP server integration applicability
+# ---------------------------------------------------------------------------
+
+
+class TestMcpServerApplicability:
+    def _mcp_integration(self, **kwargs):
+        defaults = {
+            "provider": "MCP Server",
+            "location": "server.py:5",
+            "integration_type": "mcp_server",
+            "tools": [
+                ToolDef(
+                    name="run_command",
+                    location="server.py:8",
+                    has_typed_schema=False,
+                    dangerous_calls=["subprocess.check_output (L9)"],
+                )
+            ],
+        }
+        defaults.update(kwargs)
+        return LLMIntegration(**defaults)
+
+    def test_tool_checks_apply_to_mcp_server(self):
+        integ = self._mcp_integration()
+        results, _, _ = run_defense_checks([integ], AIIntegrationGraph())
+        ids = {r.plugin_id for r in results}
+        assert "tool-schema-present" in ids
+        assert "tool-scope" in ids
+
+    def test_call_shaped_checks_skip_mcp_server(self):
+        integ = self._mcp_integration()
+        results, _, _ = run_defense_checks([integ], AIIntegrationGraph())
+        ids = {r.plugin_id for r in results}
+        assert "model-pinned" not in ids
+        assert "no-dangerous-sink" not in ids
+        assert "output-validation" not in ids
+        assert "cost-controls" not in ids
+
+    def test_mcp_server_tool_findings_fail(self):
+        integ = self._mcp_integration()
+        results, _, _ = run_defense_checks([integ], AIIntegrationGraph())
+        by_id = {r.plugin_id: r for r in results}
+        assert by_id["tool-schema-present"].passed is False
+        assert by_id["tool-scope"].passed is False
+
+    def test_agent_integrations_unaffected(self):
+        integ = _make_integration(
+            integration_type="agent",
+            model_value="gpt-4o-2024-08-06",
+            model_pinned=True,
+            tools=[ToolDef(name="t", location="a.py:1", has_typed_schema=True)],
+        )
+        results, _, _ = run_defense_checks([integ], AIIntegrationGraph())
+        ids = {r.plugin_id for r in results}
+        assert "model-pinned" in ids
+        assert "tool-schema-present" in ids

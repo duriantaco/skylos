@@ -62,6 +62,7 @@ DEFAULTS = {
     "secrets_enabled": False,
     "quality_enabled": False,
     "ai_defects_enabled": False,
+    "api_signature_modules": [],
     "vibe": {
         "extra_phantom_names": [],
         "extra_phantom_decorators": [],
@@ -93,6 +94,7 @@ _STRING_LIST_CONFIG_KEYS = {
     "exclude",
     "whitelist",
     "lower_confidence",
+    "api_signature_modules",
 }
 _DICT_CONFIG_KEYS = {
     "non_library_dirs",

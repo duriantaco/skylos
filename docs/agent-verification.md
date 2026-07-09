@@ -1,7 +1,10 @@
 # Pre-Deployment Agent Verification
 
 Statically verify an AI agent's guardrails before it ships. `skylos discover`
-inventories every LLM integration in the tree; `skylos defend` runs 13
+inventories every LLM integration in the tree — provider SDK calls, agent
+frameworks (LangChain/LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, Claude
+Agent SDK, Google ADK, and more), MCP servers and their tools, and direct
+HTTP calls to LLM APIs or OpenAI-compatible gateways. `skylos defend` runs 13
 deterministic checks against each integration, scores the result, gates CI,
 and emits auditor-ready evidence with a reproducible attestation digest.
 
@@ -53,7 +56,10 @@ inflate the defense score):
 Scoring: defense score = passed weight / total weight, rated `SECURE` (≥90),
 `LOW` (≥75), `MEDIUM` (≥50), `HIGH` (≥25), `CRITICAL` (&lt;25). Checks apply
 per integration only where relevant (`applies_to`), so a tool-less chat app
-is not penalized for agent-tool checks.
+is not penalized for agent-tool checks. MCP server integrations get the tool
+checks (`tool-scope`, `tool-schema-present`) but are exempt from call-shaped
+checks (`model-pinned`, `cost-controls`, `output-validation`,
+`no-dangerous-sink`) that have no meaning for a server exposing tools.
 
 ## OWASP frameworks
 

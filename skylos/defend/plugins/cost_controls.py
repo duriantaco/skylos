@@ -19,6 +19,9 @@ class CostControlsPlugin(DefensePlugin):
         "to cap response length and control costs."
     )
 
+    def applies_to(self, integration: LLMIntegration) -> bool:
+        return integration.integration_type != "mcp_server"
+
     def check(
         self, integration: LLMIntegration, graph: AIIntegrationGraph
     ) -> DefenseResult:

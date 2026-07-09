@@ -123,14 +123,20 @@ def contract_project_config_overrides(
     if contract is None:
         return {}
 
+    overrides: dict[str, Any] = {}
+
     vibe: dict[str, list[str]] = {}
     if contract.ai.phantom_symbols.names:
         vibe["extra_phantom_names"] = list(contract.ai.phantom_symbols.names)
     if contract.ai.phantom_symbols.decorators:
         vibe["extra_phantom_decorators"] = list(contract.ai.phantom_symbols.decorators)
-    if not vibe:
-        return {}
-    return {"vibe": vibe}
+    if vibe:
+        overrides["vibe"] = vibe
+
+    if contract.ai.api_surface.modules:
+        overrides["api_signature_modules"] = list(contract.ai.api_surface.modules)
+
+    return overrides
 
 
 def contract_enables_dependency_hallucinations(
@@ -219,7 +225,7 @@ def _parse_dependencies(raw: dict[str, Any]) -> DependencyContract:
 def _parse_api_surface(raw: dict[str, Any]) -> ApiSurfaceContract:
     _reject_unknown(
         raw,
-        {"reject_unknown_members", "reject_unknown_kwargs"},
+        {"reject_unknown_members", "reject_unknown_kwargs", "modules"},
         "ai.api_surface",
     )
     return ApiSurfaceContract(
@@ -231,6 +237,7 @@ def _parse_api_surface(raw: dict[str, Any]) -> ApiSurfaceContract:
             raw.get("reject_unknown_kwargs", False),
             "ai.api_surface.reject_unknown_kwargs",
         ),
+        modules=tuple(_string_list(raw.get("modules"), "ai.api_surface.modules")),
     )
 
 

@@ -28,6 +28,8 @@ TS_PROVIDER_BY_IMPORT = {
     "@ai-sdk/openai": "OpenAI",
     "@ai-sdk/anthropic": "Anthropic",
     "@ai-sdk/google": "Google Gemini",
+    "@openai/agents": "OpenAI Agents SDK",
+    "@anthropic-ai/claude-agent-sdk": "Claude Agent SDK",
 }
 
 TS_PROVIDER_BY_CONSTRUCTOR = {
@@ -503,6 +505,12 @@ def _classify_call(
 
     if imported.source == "litellm" and function_text == "embedding":
         return "LiteLLM", "embedding", ""
+
+    if imported.source == "@openai/agents" and function_text == "run":
+        return "OpenAI Agents SDK", "agent", ""
+
+    if imported.source == "@anthropic-ai/claude-agent-sdk" and function_text == "query":
+        return "Claude Agent SDK", "agent", ""
 
     return None
 
