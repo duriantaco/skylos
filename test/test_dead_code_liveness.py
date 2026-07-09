@@ -13,6 +13,95 @@ def _unused_function_names(result):
     return {item["full_name"] for item in result.get("unused_functions", [])}
 
 
+def test_numba_overload_implementation_is_live(tmp_path):
+    _write(
+        tmp_path / "skylos_false_positive.py",
+        """
+        import numba.extending
+        from numba import njit
+
+        def select_method(x):
+            return x
+
+        @numba.extending.overload(select_method)
+        def _select_method(x):
+            def temp(x):
+                return x
+            return temp
+
+        @njit()
+        def jitted_harness():
+            return select_method(0.0)
+
+        jitted_harness()
+        """,
+    )
+    _write(
+        tmp_path / "aliased_overload.py",
+        """
+        from numba.extending import overload as nb_overload
+        import numba.extending as ne
+
+        def select_alias(x):
+            return x
+
+        @nb_overload(select_alias)
+        def _select_alias(x):
+            def impl(x):
+                return x
+            return impl
+
+        @ne.overload(select_alias)
+        def _select_module_alias(x):
+            def impl(x):
+                return x
+            return impl
+
+        @ne.overload_method(object, "work")
+        def _select_method_alias(x):
+            def impl(x):
+                return x
+            return impl
+
+        @ne.overload_attribute(object, "value")
+        def _select_attribute_alias(x):
+            def impl(x):
+                return x
+            return impl
+        """,
+    )
+    _write(
+        tmp_path / "shadowed_alias.py",
+        """
+        from numba.extending import overload as nb_overload
+
+        def nb_overload(target):
+            def decorator(func):
+                return func
+            return decorator
+
+        @nb_overload(None)
+        def _shadowed_helper(x):
+            return x
+        """,
+    )
+
+    result = json.loads(analyze(str(tmp_path), conf=0, grep_verify=False))
+    unused = _unused_function_names(result)
+
+    assert "skylos_false_positive._select_method" not in unused
+    assert "skylos_false_positive._select_method.temp" not in unused
+    assert "aliased_overload._select_alias" not in unused
+    assert "aliased_overload._select_alias.impl" not in unused
+    assert "aliased_overload._select_module_alias" not in unused
+    assert "aliased_overload._select_module_alias.impl" not in unused
+    assert "aliased_overload._select_method_alias" not in unused
+    assert "aliased_overload._select_method_alias.impl" not in unused
+    assert "aliased_overload._select_attribute_alias" not in unused
+    assert "aliased_overload._select_attribute_alias.impl" not in unused
+    assert "shadowed_alias._shadowed_helper" in unused
+
+
 def test_optional_import_fallback_is_live(tmp_path):
     _write(
         tmp_path / "pkg" / "mod.py",

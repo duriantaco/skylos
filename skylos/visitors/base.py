@@ -75,6 +75,12 @@ OVERRIDE_DECORATORS = {
     "typing_extensions.override",
 }
 
+NUMBA_OVERLOAD_DECORATORS = {
+    "numba.extending.overload",
+    "numba.extending.overload_method",
+    "numba.extending.overload_attribute",
+}
+
 IMPLICIT_DUNDERS = {
     "__init__",
     "__new__",
@@ -718,6 +724,53 @@ class Visitor(ast.NodeVisitor):
             return self._get_decorator_name(deco.func)
         return None
 
+    def _local_binding_shadows_alias(
+        self, name: str, current_definition: str | None = None
+    ) -> bool:
+        if self.current_function_scope and self.local_var_maps:
+            for scope_map in reversed(self.local_var_maps):
+                if scope_map.get(name) != current_definition and name in scope_map:
+                    return True
+
+        candidates = []
+        if self.cls:
+            candidates.append(".".join(filter(None, [self.mod, self.cls, name])))
+        candidates.append(f"{self.mod}.{name}" if self.mod else name)
+
+        return any(
+            d.name in candidates
+            and d.name != current_definition
+            and d.type != "import"
+            for d in self.defs
+        )
+
+    def _resolve_alias_prefix(
+        self, name: str, current_definition: str | None = None
+    ) -> str:
+        head = name.split(".", 1)[0]
+        if self._local_binding_shadows_alias(head, current_definition):
+            return name
+        if name in self.alias:
+            return self.alias[name]
+        if "." not in name:
+            return name
+        _, rest = name.split(".", 1)
+        target = self.alias.get(head)
+        if target:
+            return f"{target}.{rest}"
+        return name
+
+    def _is_numba_overload_decorator(
+        self, name: str, current_definition: str | None = None
+    ) -> bool:
+        head = name.split(".", 1)[0]
+        if self._local_binding_shadows_alias(head, current_definition):
+            return False
+        return (
+            self._resolve_alias_prefix(name, current_definition)
+            in NUMBA_OVERLOAD_DECORATORS
+        )
+
     def _analyze_decorator_args(self, deco: ast.expr) -> None:
         if not isinstance(deco, ast.Call):
             return
@@ -871,6 +924,10 @@ class Visitor(ast.NodeVisitor):
                         )
                 elif any(
                     keyword in deco_name.lower() for keyword in FRAMEWORK_DECORATORS
+                ):
+                    self.add_ref(qualified_name)
+                elif isinstance(d, ast.Call) and self._is_numba_overload_decorator(
+                    deco_name, current_definition=qualified_name
                 ):
                     self.add_ref(qualified_name)
                 elif deco_name in self.local_registration_decorators:
