@@ -51,7 +51,6 @@ from skylos.core.file_discovery import (
 from skylos.core.linter import LinterVisitor
 
 from skylos.rules.quality.policy import analyze_repo_policy
-from skylos.rules.ai_defect.phantom_refs import scan_repo_phantom_security_references
 from skylos.rules.vibe_dictionary import build_vibe_dictionary
 from skylos.rules.quality.clones import (
     CloneConfig,
@@ -123,6 +122,31 @@ def _python_signature_files(files):
     return py_files
 
 
+def _verification_surface_root(path, discovered_root, project_root):
+    targets = path if isinstance(path, (list, tuple)) else [path]
+    resolved_targets = [Path(target).resolve() for target in targets]
+    if resolved_targets and all(target.is_file() for target in resolved_targets):
+        return project_root
+    return Path(discovered_root).resolve()
+
+
+def _verification_should_discover_workspace(path):
+    targets = path if isinstance(path, (list, tuple)) else [path]
+    resolved_targets = [Path(target).resolve() for target in targets]
+    return bool(resolved_targets) and all(
+        target.is_file() for target in resolved_targets
+    )
+
+
+def _python_verification_surface_root(surface_root):
+    root = Path(surface_root).resolve()
+    if any(
+        (root / f"__init__{suffix}").is_file() for suffix in PYTHON_SIGNATURE_SUFFIXES
+    ):
+        return root.parent
+    return root
+
+
 def _extend_unsuppressed_danger_findings(
     findings,
     *,
@@ -169,6 +193,38 @@ def _extend_unsuppressed_ai_defect_findings(
             continue
 
         all_ai_defects.append(finding)
+
+
+def _append_ai_verification_result(
+    findings,
+    check,
+    *,
+    project_ignore,
+    per_file_ignore_lines,
+    all_ai_defects,
+    all_suppressed,
+    verification_checks,
+):
+    from skylos.core.verification_coverage import reconcile_check_findings
+
+    before_count = len(all_ai_defects)
+    before_suppressed = len(all_suppressed)
+    _extend_unsuppressed_ai_defect_findings(
+        findings,
+        project_ignore=project_ignore,
+        per_file_ignore_lines=per_file_ignore_lines,
+        all_ai_defects=all_ai_defects,
+        all_suppressed=all_suppressed,
+    )
+    accepted_count = len(all_ai_defects) - before_count
+    suppressed_count = len(all_suppressed) - before_suppressed
+    verification_checks.append(
+        reconcile_check_findings(
+            check,
+            accepted_count,
+            suppressed_count=suppressed_count,
+        )
+    )
 
 
 def _relative_changed_file(root, changed_file):
@@ -681,8 +737,10 @@ class Skylos:
                 p = p[source_root_idx + 1 :]
                 break
 
-        if p[-1].endswith(".py"):
-            p[-1] = p[-1][:-3]
+        for suffix in PYTHON_SIGNATURE_SUFFIXES:
+            if p[-1].endswith(suffix):
+                p[-1] = p[-1][: -len(suffix)]
+                break
         if p[-1] == "__init__":
             p.pop()
         return ".".join(p)
@@ -773,13 +831,11 @@ class Skylos:
         p = Path(path).resolve()
 
         if p.is_file():
-            if p.suffix == ".pyi":
-                return [], p.parent
             return [p], p.parent
 
         root = p
         exts = {
-            ".py",
+            *PYTHON_SIGNATURE_SUFFIXES,
             ".go",
             *(_TS_JS_SOURCE_EXTS),
             ".java",
@@ -792,6 +848,8 @@ class Skylos:
         }
         ext_list = [
             "py",
+            "pyi",
+            "pyw",
             "go",
             "ts",
             "tsx",
@@ -2111,6 +2169,20 @@ class Skylos:
             project_root = _resolve_analysis_root(project_root)
 
         files, root = self._discover_files(path, exclude_folders)
+        verification_surface_root = _verification_surface_root(
+            path,
+            root,
+            project_root,
+        )
+        if enable_ai_defects:
+            from skylos.core.verification_registry import (
+                expected_ai_verification_checks,
+            )
+
+            self._ai_verification_expectations = expected_ai_verification_checks(files)
+        else:
+            self._ai_verification_expectations = None
+        self._ai_verification_checks = [] if enable_ai_defects else None
         self._language_engine_reports = {}
         go_engine_report = _go_engine_analysis_report(files)
         if go_engine_report is not None:
@@ -2200,6 +2272,17 @@ class Skylos:
                     result["analysis_summary"]["ai_defects_count"] = len(
                         ai_defect_findings
                     )
+            if enable_ai_defects:
+                from skylos.core.verification_coverage import (
+                    build_ai_verification_coverage,
+                )
+
+                result["analysis_summary"]["ai_verification"] = (
+                    build_ai_verification_coverage(
+                        self._ai_verification_checks,
+                        expected_checks=self._ai_verification_expectations,
+                    )
+                )
             return json.dumps(result)
 
         logger.info(f"Analyzing {len(files)} files...")
@@ -2268,7 +2351,6 @@ class Skylos:
         all_dangers = []
         all_quality = []
         all_ai_defects = []
-        self._ai_verification_checks = [] if enable_ai_defects else None
         all_suppressed = []
         empty_files = []
         file_contexts = []
@@ -3034,42 +3116,85 @@ class Skylos:
                     if os.getenv("SKYLOS_DEBUG"):
                         logger.error(traceback.format_exc())
 
-            try:
-                _ai_py_files = [
-                    f for f in files if str(f).endswith((".py", ".pyi", ".pyw"))
-                ]
-                if (
-                    _ai_py_files
-                    and (
-                        "SKY-L012" not in project_ignore
-                        or "SKY-L023" not in project_ignore
+            _ai_py_files = [
+                f for f in files if str(f).endswith((".py", ".pyi", ".pyw"))
+            ]
+            if _ai_py_files:
+                from skylos.rules.ai_defect.python_api_hallucination import (
+                    failed_python_api_check,
+                    scan_python_local_api_hallucinations,
+                    skipped_python_api_check,
+                )
+
+                ignored_python_rules = {"SKY-L012", "SKY-L023"} & project_ignore
+                vibe_dictionary = build_vibe_dictionary(project_cfg.get("vibe"))
+                if ignored_python_rules == {"SKY-L012", "SKY-L023"}:
+                    self._ai_verification_checks.append(
+                        skipped_python_api_check("rule_ignored")
                     )
-                    and project_root.exists()
-                ):
-                    repo_py_files = discover_source_files(
-                        project_root,
-                        {".py"},
-                        exclude_folders=exclude_folders,
+                elif not project_root.exists():
+                    self._ai_verification_checks.append(
+                        failed_python_api_check("invalid_project_root")
                     )
-                    phantom_findings = scan_repo_phantom_security_references(
-                        project_root,
-                        repo_py_files,
-                        target_files=_ai_py_files,
-                        vibe_dictionary=build_vibe_dictionary(project_cfg.get("vibe")),
-                    )
-                    _extend_unsuppressed_ai_defect_findings(
-                        phantom_findings,
-                        project_ignore=project_ignore,
-                        per_file_ignore_lines=per_file_ignore_lines,
-                        all_ai_defects=all_ai_defects,
-                        all_suppressed=all_suppressed,
-                    )
+                else:
+                    try:
+                        if _verification_should_discover_workspace(path):
+                            python_verification_root = project_root
+                            repo_py_files = discover_source_files(
+                                project_root,
+                                set(PYTHON_SIGNATURE_SUFFIXES),
+                                exclude_folders=exclude_folders,
+                            )
+                        else:
+                            python_verification_root = (
+                                _python_verification_surface_root(
+                                    verification_surface_root
+                                )
+                            )
+                            repo_py_files = list(_ai_py_files)
+                        phantom_findings, python_check = (
+                            scan_python_local_api_hallucinations(
+                                python_verification_root,
+                                repo_py_files,
+                                target_files=_ai_py_files,
+                                vibe_dictionary=vibe_dictionary,
+                            )
+                        )
+                        if ignored_python_rules:
+                            python_check["skipped_references"] = int(
+                                python_check.get("skipped_references") or 0
+                            ) + len(ignored_python_rules)
+                            python_check.setdefault("reasons", []).append(
+                                {
+                                    "code": "rule_ignored",
+                                    "count": len(ignored_python_rules),
+                                }
+                            )
+                        _append_ai_verification_result(
+                            phantom_findings,
+                            python_check,
+                            project_ignore=project_ignore,
+                            per_file_ignore_lines=per_file_ignore_lines,
+                            all_ai_defects=all_ai_defects,
+                            all_suppressed=all_suppressed,
+                            verification_checks=self._ai_verification_checks,
+                        )
+                    except Exception:
+                        self._ai_verification_checks.append(
+                            failed_python_api_check("detector_error")
+                        )
+                        if os.getenv("SKYLOS_DEBUG"):
+                            logger.error(
+                                "Python API hallucination scan failed",
+                                exc_info=True,
+                            )
+
+                try:
                     from skylos.rules.ai_defect import (
                         PhantomCallRule,
                         PhantomDecoratorRule,
                     )
 
-                    vibe_dictionary = build_vibe_dictionary(project_cfg.get("vibe"))
                     fallback_rules = []
                     if "SKY-L012" not in project_ignore:
                         fallback_rules.append(
@@ -3095,9 +3220,91 @@ class Skylos:
                             all_ai_defects=all_ai_defects,
                             all_suppressed=all_suppressed,
                         )
-            except Exception:
-                if os.getenv("SKYLOS_DEBUG"):
-                    logger.error(traceback.format_exc())
+                except Exception:
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error(traceback.format_exc())
+
+            _ai_go_files = [f for f in files if str(f).endswith(".go")]
+            if _ai_go_files:
+                from skylos.rules.ai_defect.go_api_hallucination import (
+                    failed_go_api_check,
+                    scan_go_local_api_hallucinations,
+                    skipped_go_api_check,
+                )
+
+                if "SKY-L012" in project_ignore:
+                    self._ai_verification_checks.append(
+                        skipped_go_api_check("rule_ignored")
+                    )
+                else:
+                    try:
+                        go_findings, go_check = scan_go_local_api_hallucinations(
+                            project_root,
+                            _ai_go_files,
+                            restrict_to_files=not _verification_should_discover_workspace(
+                                path
+                            ),
+                            exclude_folders=exclude_folders,
+                        )
+                        _append_ai_verification_result(
+                            go_findings,
+                            go_check,
+                            project_ignore=project_ignore,
+                            per_file_ignore_lines=per_file_ignore_lines,
+                            all_ai_defects=all_ai_defects,
+                            all_suppressed=all_suppressed,
+                            verification_checks=self._ai_verification_checks,
+                        )
+                    except Exception:
+                        self._ai_verification_checks.append(
+                            failed_go_api_check("detector_error")
+                        )
+                        if os.getenv("SKYLOS_DEBUG"):
+                            logger.error(
+                                "Go API hallucination scan failed",
+                                exc_info=True,
+                            )
+
+            _ai_java_files = [f for f in files if str(f).endswith(".java")]
+            if _ai_java_files:
+                from skylos.rules.ai_defect.java_api_hallucination import (
+                    failed_java_api_check,
+                    scan_java_local_api_hallucinations,
+                    skipped_java_api_check,
+                )
+
+                if "SKY-L012" in project_ignore:
+                    self._ai_verification_checks.append(
+                        skipped_java_api_check("rule_ignored")
+                    )
+                else:
+                    try:
+                        java_findings, java_check = scan_java_local_api_hallucinations(
+                            verification_surface_root,
+                            _ai_java_files,
+                            discover_workspace=_verification_should_discover_workspace(
+                                path
+                            ),
+                            exclude_folders=exclude_folders,
+                        )
+                        _append_ai_verification_result(
+                            java_findings,
+                            java_check,
+                            project_ignore=project_ignore,
+                            per_file_ignore_lines=per_file_ignore_lines,
+                            all_ai_defects=all_ai_defects,
+                            all_suppressed=all_suppressed,
+                            verification_checks=self._ai_verification_checks,
+                        )
+                    except Exception:
+                        self._ai_verification_checks.append(
+                            failed_java_api_check("detector_error")
+                        )
+                        if os.getenv("SKYLOS_DEBUG"):
+                            logger.error(
+                                "Java API hallucination scan failed",
+                                exc_info=True,
+                            )
 
             if changed_files and "SKY-A101" not in project_ignore:
                 try:
@@ -3289,7 +3496,6 @@ class Skylos:
                 logger.error("MDX component import graph scan failed", exc_info=True)
 
         if enable_ai_defects:
-            from skylos.core.verification_coverage import reconcile_check_findings
             from skylos.rules.ai_defect.js_api_hallucination import (
                 failed_js_api_check,
                 scan_js_local_api_hallucinations,
@@ -3308,17 +3514,14 @@ class Skylos:
                         ts_raw_imports,
                         monorepo_resolver=monorepo_resolver,
                     )
-                    before_count = len(all_ai_defects)
-                    _extend_unsuppressed_ai_defect_findings(
+                    _append_ai_verification_result(
                         js_findings,
+                        js_check,
                         project_ignore=project_ignore,
                         per_file_ignore_lines=per_file_ignore_lines,
                         all_ai_defects=all_ai_defects,
                         all_suppressed=all_suppressed,
-                    )
-                    accepted_count = len(all_ai_defects) - before_count
-                    self._ai_verification_checks.append(
-                        reconcile_check_findings(js_check, accepted_count)
+                        verification_checks=self._ai_verification_checks,
                     )
                 except Exception:
                     self._ai_verification_checks.append(
@@ -3545,6 +3748,12 @@ def proc_file(
 
         if full_scan and enable_quality_rules:
             quality_findings = scan_python_quality(tree, source, file, cfg)
+            if Path(file).suffix == ".pyi":
+                quality_findings = [
+                    finding
+                    for finding in quality_findings
+                    if finding.get("rule_id") not in {"SKY-L026", "SKY-L033"}
+                ]
 
         if full_scan and enable_danger_rules:
             d_rules = [DangerousCallsRule()]
