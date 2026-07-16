@@ -9,7 +9,10 @@ def _scan(tmp_path, files, targets=None):
     for name, source in files.items():
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(source, encoding="utf-8")
+        path.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+            source,
+            encoding="utf-8",
+        )
         paths.append(path)
     target_paths = [tmp_path / name for name in (targets or files)]
     return scan_python_local_api_hallucinations(

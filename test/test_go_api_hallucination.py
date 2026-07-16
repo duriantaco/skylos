@@ -9,7 +9,10 @@ from skylos.verify_change import verify_change_path
 def _write(root: Path, relative: str, source: str) -> Path:
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source, encoding="utf-8")
+    path.write_text(  # skylos: ignore[SKY-D324] pytest tmp_path fixture
+        source,
+        encoding="utf-8",
+    )
     return path
 
 
