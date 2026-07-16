@@ -8,6 +8,7 @@ import pytest
 import skylos.benchmarks.ai_code_defects as benchmark
 from skylos.benchmarks.ai_code_defects import (
     AI_CODE_DEFECT_TAXONOMY,
+    BENCHMARK_LANGUAGES,
     format_summary,
     load_manifest,
     run_manifest,
@@ -60,6 +61,8 @@ EXPECTED_CASE_IDS = {
     "clean-api-signature",
     "clean-dynamic-api-surface",
     "clean-range-scope",
+    "typescript-local-api-hallucination",
+    "clean-typescript-local-api-surface",
     "clean-generated-code",
 }
 
@@ -101,6 +104,8 @@ EXPECTED_CASE_PATH_NAMES = [
     "clean_api_signature",
     "clean_dynamic_api_surface",
     "range_scoped_mixed_edit",
+    "typescript_local_api_hallucination",
+    "clean_typescript_local_api_surface",
     "clean_generated_code",
 ]
 
@@ -518,6 +523,45 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
         ]
     if case_name == "clean_api_signature":
         return []
+    if case_name == "typescript_local_api_hallucination":
+        return [
+            _finding(
+                "SKY-L012",
+                "hallucinated_reference",
+                file_path="src/app.ts",
+                metadata={
+                    "language": "typescript",
+                    "reference_kind": "named_import",
+                },
+            ),
+            _finding(
+                "SKY-L012",
+                "hallucinated_reference",
+                file_path="src/app.ts",
+                metadata={
+                    "language": "typescript",
+                    "reference_kind": "named_import",
+                },
+            ),
+            _finding(
+                "SKY-L012",
+                "hallucinated_reference",
+                file_path="src/app.ts",
+                metadata={
+                    "language": "typescript",
+                    "reference_kind": "namespace_member",
+                },
+            ),
+            _finding(
+                "SKY-L012",
+                "hallucinated_reference",
+                file_path="src/app.ts",
+                metadata={
+                    "language": "typescript",
+                    "reference_kind": "commonjs_destructure",
+                },
+            ),
+        ]
     return []
 
 
@@ -526,6 +570,7 @@ def test_checked_in_ai_code_defect_manifest_validates():
     cases = validate_manifest(manifest, MANIFEST_PATH)
 
     assert {case["id"] for case in cases} == EXPECTED_CASE_IDS
+    assert all(case.get("language") in BENCHMARK_LANGUAGES for case in cases)
     labels = set()
     for case in cases:
         for label in case["taxonomy"]:
@@ -589,10 +634,12 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
 
     summary = run_manifest(MANIFEST_PATH, verify_func=fake_verify)
 
-    assert summary["case_count"] == 37
-    assert summary["pass_count"] == 37
+    assert summary["case_count"] == 39
+    assert summary["pass_count"] == 39
     assert summary["failure_count"] == 0
     assert summary["scores"]["overall_score"] == pytest.approx(100.0)
+    assert summary["metadata"]["languages"]["labelled_cases"] == 39
+    assert summary["metadata"]["languages"]["coverage_rate"] == 1.0
 
     dependency_hallucination_case_names = {
         "api_signature_hallucination",
@@ -645,7 +692,7 @@ def test_ai_code_defect_runner_empty_selection_runs_all_cases(monkeypatch):
 
     summary = run_manifest(MANIFEST_PATH, selected_cases=None, verify_func=fake_verify)
 
-    assert summary["case_count"] == 37
+    assert summary["case_count"] == 39
     assert seen == EXPECTED_CASE_PATH_NAMES
 
 

@@ -3,6 +3,7 @@
   "cases": [
     {
       "id": "hallucinated-reference",
+      "language": "python",
       "path": "fixtures/hallucinated_reference",
       "description": "Generated handler calls a plausible helper that was never defined.",
       "taxonomy": ["hallucinated_reference"],
@@ -29,6 +30,7 @@
     },
     {
       "id": "repo-local-phantom-reference",
+      "language": "python",
       "path": "fixtures/repo_local_phantom_reference",
       "description": "Generated handler calls a plausible method on a real local module, but the method was never implemented.",
       "taxonomy": ["hallucinated_reference"],
@@ -56,6 +58,7 @@
     },
     {
       "id": "multiple-phantom-references",
+      "language": "python",
       "path": "fixtures/multiple_phantom_references",
       "description": "Generated request handler chains several plausible security helpers that do not exist.",
       "taxonomy": ["hallucinated_reference"],
@@ -83,6 +86,7 @@
     },
     {
       "id": "range-scoped-mixed-edit",
+      "language": "python",
       "path": "fixtures/range_scoped_mixed_edit",
       "description": "A generated file contains multiple AI defects, but verify is scoped to only the changed handler range.",
       "taxonomy": ["hallucinated_reference"],
@@ -124,6 +128,7 @@
     },
     {
       "id": "file-scoped-multi-module",
+      "language": "python",
       "path": "fixtures/file_scoped_multi_module",
       "description": "A generated package contains defects in multiple modules, but verify is scoped to the edited route file.",
       "taxonomy": ["hallucinated_reference", "precision_guard"],
@@ -160,6 +165,7 @@
     },
     {
       "id": "assertion-weakening",
+      "language": "python",
       "path": "fixtures/assertion_weakening",
       "description": "Generated test edit weakens a specific status assertion into a broad null check.",
       "taxonomy": ["assertion_weakening"],
@@ -195,6 +201,7 @@
     },
     {
       "id": "bad-test-expected-broadening",
+      "language": "python",
       "path": "fixtures/bad_test_expected_broadening",
       "description": "Generated test edit replaces a specific expected value with a broad ANY matcher.",
       "taxonomy": ["assertion_weakening"],
@@ -230,6 +237,7 @@
     },
     {
       "id": "clean-test-expected-change",
+      "language": "python",
       "path": "fixtures/clean_test_expected_change",
       "description": "A test keeps an exact expected value while the fixture value changes.",
       "taxonomy": ["assertion_weakening", "precision_guard"],
@@ -260,6 +268,7 @@
     },
     {
       "id": "incomplete-generation",
+      "language": "python",
       "path": "fixtures/incomplete_generation",
       "description": "Generated business function is left as a pass-body stub.",
       "taxonomy": ["incomplete_generation"],
@@ -286,6 +295,7 @@
     },
     {
       "id": "unfinished-generated-class",
+      "language": "python",
       "path": "fixtures/unfinished_generated_class",
       "description": "Generated workflow mixes pass, ellipsis, and NotImplementedError placeholders.",
       "taxonomy": ["incomplete_generation"],
@@ -313,6 +323,7 @@
     },
     {
       "id": "api-signature-hallucination",
+      "language": "python",
       "path": "fixtures/api_signature_hallucination",
       "description": "Generated code calls real installed package APIs that do not exist.",
       "taxonomy": ["api_signature_hallucination"],
@@ -342,6 +353,7 @@
     },
     {
       "id": "api-keyword-hallucination",
+      "language": "python",
       "path": "fixtures/api_keyword_hallucination",
       "description": "Generated code passes invented keyword arguments to real installed package APIs.",
       "taxonomy": ["api_signature_hallucination"],
@@ -381,6 +393,7 @@
     },
     {
       "id": "dependency-package-hallucination",
+      "language": "javascript",
       "path": "fixtures/dependency_package_hallucination",
       "description": "Generated package manifest adds a package that does not exist.",
       "taxonomy": ["dependency_hallucination"],
@@ -422,6 +435,7 @@
     },
     {
       "id": "compound-ai-failure-edit",
+      "language": "multi",
       "path": "fixtures/compound_ai_failure_edit",
       "description": "One generated edit combines phantom helpers, unfinished code, invented package APIs, and hallucinated dependencies.",
       "taxonomy": [
@@ -492,6 +506,7 @@
     },
     {
       "id": "compound-api-range-scope",
+      "language": "multi",
       "path": "fixtures/compound_ai_failure_edit",
       "description": "A compound generated edit is scoped down to only the invented installed-package API call.",
       "taxonomy": [
@@ -558,6 +573,7 @@
     },
     {
       "id": "dependency-version-hallucination",
+      "language": "javascript",
       "path": "fixtures/dependency_version_hallucination",
       "description": "Generated package manifest pins a dependency/version that should be verified against the registry.",
       "taxonomy": ["dependency_hallucination"],
@@ -593,6 +609,7 @@
     },
     {
       "id": "repo-level-security-regression",
+      "language": "python",
       "path": "fixtures/repo_level_security_regression",
       "description": "Generated repo-level edit introduces string-built SQL and unsafe pickle deserialization.",
       "taxonomy": ["security_regression"],
@@ -632,6 +649,7 @@
     },
     {
       "id": "slopsquat-dependency",
+      "language": "python",
       "path": "fixtures/slopsquat_dependency",
       "description": "Generated requirements file pins a suspicious existing near-miss of a popular package.",
       "taxonomy": ["dependency_hallucination"],
@@ -681,6 +699,7 @@
     },
     {
       "id": "disabled-security-control",
+      "language": "python",
       "path": "fixtures/disabled_security_control",
       "description": "Generated integration disables TLS verification while calling an external service.",
       "taxonomy": ["security_regression", "incomplete_generation"],
@@ -717,6 +736,7 @@
     },
     {
       "id": "missing-auth-route",
+      "language": "python",
       "path": "fixtures/missing_auth_route",
       "description": "Generated mutating FastAPI route has no auth, permission, or security dependency guard.",
       "taxonomy": ["security_regression"],
@@ -748,6 +768,7 @@
     },
     {
       "id": "clean-auth-route",
+      "language": "python",
       "path": "fixtures/clean_auth_route",
       "description": "Generated mutating FastAPI route uses an explicit admin dependency guard.",
       "taxonomy": ["security_regression", "precision_guard"],
@@ -774,6 +795,7 @@
     },
     {
       "id": "async-swallowed-error",
+      "language": "python",
       "path": "fixtures/async_swallowed_error",
       "description": "Generated async integration swallows broad exceptions and returns None.",
       "taxonomy": ["incomplete_generation", "security_regression"],
@@ -805,6 +827,7 @@
     },
     {
       "id": "clean-async-error-handling",
+      "language": "python",
       "path": "fixtures/clean_async_error_handling",
       "description": "Generated async integration re-raises a narrow timeout instead of swallowing errors.",
       "taxonomy": ["incomplete_generation", "precision_guard"],
@@ -831,6 +854,7 @@
     },
     {
       "id": "clean-repo-level-security",
+      "language": "python",
       "path": "fixtures/clean_repo_level_security",
       "description": "Clean repo-level security edit uses parameterized SQL and JSON parsing.",
       "taxonomy": ["security_regression", "precision_guard"],
@@ -862,6 +886,7 @@
     },
     {
       "id": "go-module-version-hallucination",
+      "language": "go",
       "path": "fixtures/go_module_version_hallucination",
       "description": "Generated Go module manifest pins a real module to an invented version.",
       "taxonomy": ["dependency_hallucination"],
@@ -898,6 +923,7 @@
     },
     {
       "id": "mixed-manifest-hallucinations",
+      "language": "javascript",
       "path": "fixtures/mixed_manifest_hallucinations",
       "description": "A generated manifest mixes multiple missing packages with an invented version in one dependency edit.",
       "taxonomy": ["dependency_hallucination"],
@@ -956,6 +982,7 @@
     },
     {
       "id": "nested-manifest-workspace",
+      "language": "javascript",
       "path": "fixtures/nested_manifest_workspace",
       "description": "Generated dependency hallucinations live in a nested workspace manifest instead of the scan root.",
       "taxonomy": ["dependency_hallucination"],
@@ -1005,6 +1032,7 @@
     },
     {
       "id": "contract-phantom-helper",
+      "language": "python",
       "path": "fixtures/contract_phantom_helper",
       "description": "Generated handler calls a repo-specific helper listed in the AI contract but never defined.",
       "taxonomy": ["hallucinated_reference", "contract_guardrail"],
@@ -1035,6 +1063,7 @@
     },
     {
       "id": "contract-route-guard-missing",
+      "language": "python",
       "path": "fixtures/contract_route_guard_missing",
       "description": "Generated route is inside a contract-scoped API path but lacks a required auth guard decorator.",
       "taxonomy": ["contract_guardrail"],
@@ -1067,6 +1096,7 @@
     },
     {
       "id": "contract-route-guard-clean",
+      "language": "python",
       "path": "fixtures/contract_route_guard_clean",
       "description": "Generated route uses the custom guard decorator required by the contract.",
       "taxonomy": ["contract_guardrail", "precision_guard"],
@@ -1094,6 +1124,7 @@
     },
     {
       "id": "contract-dependency-manifest",
+      "language": "javascript",
       "path": "fixtures/contract_dependency_manifest",
       "description": "Contract enables dependency hallucination checks for a manifest with a fake package and impossible version.",
       "taxonomy": ["dependency_hallucination", "contract_guardrail"],
@@ -1145,6 +1176,7 @@
     },
     {
       "id": "contract-dependency-clean",
+      "language": "javascript",
       "path": "fixtures/contract_dependency_clean",
       "description": "Contract-enabled dependency checks stay quiet for known-good dependency versions.",
       "taxonomy": ["dependency_hallucination", "contract_guardrail", "precision_guard"],
@@ -1184,6 +1216,7 @@
     },
     {
       "id": "clean-dependency-manifest",
+      "language": "multi",
       "path": "fixtures/clean_dependency_manifest",
       "description": "Generated npm and Go manifests use dependency versions known to exist.",
       "taxonomy": ["precision_guard", "dependency_hallucination"],
@@ -1229,6 +1262,7 @@
     },
     {
       "id": "clean-api-signature",
+      "language": "python",
       "path": "fixtures/clean_api_signature",
       "description": "Generated code calls real installed package APIs with accepted keyword arguments.",
       "taxonomy": [
@@ -1259,6 +1293,7 @@
     },
     {
       "id": "clean-dynamic-api-surface",
+      "language": "python",
       "path": "fixtures/clean_dynamic_api_surface",
       "description": "Generated code uses dynamic access and keyword expansion around real installed package APIs without inventing members.",
       "taxonomy": [
@@ -1289,6 +1324,7 @@
     },
     {
       "id": "clean-range-scope",
+      "language": "python",
       "path": "fixtures/range_scoped_mixed_edit",
       "description": "A generated file has later AI defects, but the selected clean range must stay quiet.",
       "taxonomy": [
@@ -1323,7 +1359,86 @@
       }
     },
     {
+      "id": "typescript-local-api-hallucination",
+      "language": "typescript",
+      "path": "fixtures/typescript_local_api_hallucination",
+      "description": "Generated TypeScript invents named, type-only, namespace, and CommonJS exports on local modules.",
+      "taxonomy": ["hallucinated_reference"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic multi-shape fixture for deterministic local TypeScript and JavaScript API-surface truth."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "finding_count": 4,
+        "present": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "min_count": 2,
+            "file_contains": "src/app.ts",
+            "metadata": {
+              "language": "typescript",
+              "reference_kind": "named_import"
+            }
+          },
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "file_contains": "src/app.ts",
+            "metadata": {
+              "language": "typescript",
+              "reference_kind": "namespace_member"
+            }
+          },
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "file_contains": "src/app.ts",
+            "metadata": {
+              "language": "typescript",
+              "reference_kind": "commonjs_destructure"
+            }
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "clean-typescript-local-api-surface",
+      "language": "typescript",
+      "path": "fixtures/clean_typescript_local_api_surface",
+      "description": "Generated TypeScript uses real default, named, type-only, namespace, re-exported, and CommonJS local APIs.",
+      "taxonomy": ["hallucinated_reference", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic clean control for deterministic local TypeScript and JavaScript API-surface precision."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "finding_count": 0,
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference"
+          }
+        ]
+      }
+    },
+    {
       "id": "clean-generated-code",
+      "language": "python",
       "path": "fixtures/clean_generated_code",
       "description": "Generated code defines the helper it calls and contains no unfinished body.",
       "taxonomy": ["precision_guard"],

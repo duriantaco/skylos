@@ -40,6 +40,13 @@ IMPORTANCE_WEIGHTS = {
     "high": 2.0,
     "critical": 3.0,
 }
+BENCHMARK_LANGUAGES = {
+    "go",
+    "javascript",
+    "multi",
+    "python",
+    "typescript",
+}
 DEPENDENCY_STATUS_VALUES = {
     LEGACY_STATUS_EXISTS,
     *(state.value for state in DependencyTruthState),
@@ -259,6 +266,7 @@ def _validate_case(
         )
 
     _validate_taxonomy(case, case_id)
+    _validate_language(case, case_id)
     _validate_importance(case, case_id)
     _validate_source(case, case_id)
     _validate_expectations(case, case_id)
@@ -298,6 +306,17 @@ def _validate_importance(case: dict[str, Any], case_id: str) -> None:
     raise ValueError(
         f"AI-code-defect benchmark case {case_id} importance must be one of: {allowed}"
     )
+
+
+def _validate_language(case: dict[str, Any], case_id: str) -> None:
+    language = case.get("language")
+    if language is None:
+        return
+    if not isinstance(language, str) or language not in BENCHMARK_LANGUAGES:
+        allowed = ", ".join(sorted(BENCHMARK_LANGUAGES))
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} language must be one of: {allowed}"
+        )
 
 
 def _validate_source(case: dict[str, Any], case_id: str) -> None:
@@ -659,6 +678,7 @@ def _run_case(
     case_summary = {
         "id": case["id"],
         "path": case["path"],
+        "language": case.get("language", "unlabelled"),
         "taxonomy": list(case["taxonomy"]),
         "importance": case.get("importance", "high"),
         "elapsed_seconds": elapsed,
@@ -942,7 +962,25 @@ def _benchmark_metadata(summary_cases: list[dict[str, Any]]) -> dict[str, Any]:
         metadata["external_comparisons"] = comparisons
     metadata["evidence_contracts"] = _evidence_contract_metadata(summary_cases)
     metadata["runtime"] = _runtime_metadata(summary_cases)
+    metadata["languages"] = _language_metadata(summary_cases)
     return metadata
+
+
+def _language_metadata(summary_cases: list[dict[str, Any]]) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    labelled = 0
+    for case in summary_cases:
+        language = str(case.get("language") or "unlabelled")
+        counts[language] = counts.get(language, 0) + 1
+        if language != "unlabelled":
+            labelled += 1
+    total = len(summary_cases)
+    return {
+        "case_counts": dict(sorted(counts.items())),
+        "labelled_cases": labelled,
+        "total_cases": total,
+        "coverage_rate": (labelled / total) if total else 1.0,
+    }
 
 
 def _challenge_benchmark_metadata(summary_cases: list[dict[str, Any]]) -> dict[str, Any]:
