@@ -70,13 +70,17 @@ skylos verify . --file src/app.py --range 40:75 --project-context
 
 `skylos verify` schema version 2 returns `pass`, `fail`, or `incomplete`.
 `incomplete` means a requested proof could not be established, such as a
-third-party TS/JS import or computed namespace member that Skylos did not
-resolve; it exits `2` unless `--no-fail` is set. The `coverage` object lists
-completed checks, skipped checks, checked references, and skip reasons.
+third-party TS/JS import, computed namespace member, unsupported language-local
+API check, or parser surface that Skylos could not prove; it exits `2` unless
+`--no-fail` is set. The `coverage` object lists detected languages, expected
+checks, language support, missing checks, completed/skipped checks, checked
+references, and deterministic skip reasons.
 
-For TypeScript and JavaScript, verification checks named imports, default and
-type-only imports, static namespace members, re-exports, and CommonJS exports
-against local and workspace package surfaces without executing Node.js.
+Deterministic local/workspace API verification currently covers Python,
+TypeScript/JavaScript, Go, and Java without executing target code. PHP, Rust,
+Dart, C#, Kotlin, and Shell retain their existing static-analysis coverage,
+but their local API proof is reported as unsupported and therefore incomplete.
+See [AI Code Verification Coverage](./docs/ai-code-verification.md).
 
 Create a local AI hallucination contract for repo-specific generated-code
 truth. `skylos verify` auto-discovers `.skylos/ai-contract.yml`:
@@ -345,17 +349,18 @@ or `--include-folder` to override an excluded folder.
 
 ## Language Support
 
-| Language | Dead Code | Security | Quality | Notes |
-|:---|:---:|:---:|:---:|:---|
-| Python | Yes | Yes | Yes | strongest coverage; framework-aware static analysis and optional tracing |
-| TypeScript / JavaScript | Yes | Yes | Yes | Tree-sitter parsing, package graph reachability, framework conventions, local/workspace API hallucination checks |
-| Java | Yes | Yes | Yes | Tree-sitter parsing and structured security-flow analysis |
-| Go | Yes | Partial | Partial | native engine availability is reported in scan JSON and `skylos doctor --format json` |
-| PHP | Yes | Yes | Partial | PHP parser coverage plus taint-style security sinks and sources |
-| Rust | Yes | Yes | Partial | Rust parser coverage plus security sink/source checks |
-| Dart | Yes | Yes | Partial | Dart parser coverage plus selected security sinks and sources |
-| C# | Yes | Yes | Partial | C# symbol coverage plus selected ASP.NET, process, SQL, HTTP, and file sinks |
-| Shell | No | Yes | Partial | shell-script security checks for command injection, SSRF, and path traversal |
+| Language | Dead Code | Security | Quality | Local API Proof (`verify`) | Notes |
+|:---|:---:|:---:|:---:|:---:|:---|
+| Python | Yes | Yes | Yes | Supported | strongest coverage; framework-aware static analysis and optional tracing |
+| TypeScript / JavaScript | Yes | Yes | Yes | Supported | Tree-sitter parsing, package graph reachability, framework conventions |
+| Java | Yes | Yes | Yes | Supported | Tree-sitter parsing, structured security-flow analysis, conservative static-member proof |
+| Go | Yes | Partial | Partial | Supported | native engine status remains separate from deterministic workspace API proof |
+| PHP | Yes | Yes | Partial | Unsupported | PHP parser coverage plus taint-style security sinks and sources |
+| Rust | Yes | Yes | Partial | Unsupported | Rust parser coverage plus security sink/source checks |
+| Dart | Yes | Yes | Partial | Unsupported | Dart parser coverage plus selected security sinks and sources |
+| C# | Yes | Yes | Partial | Unsupported | C# symbol coverage plus selected ASP.NET, process, SQL, HTTP, and file sinks |
+| Kotlin | Yes | Partial | Partial | Unsupported | Kotlin symbol extraction with conservative static-analysis coverage |
+| Shell | No | Yes | Partial | Unsupported | shell-script security checks for command injection, SSRF, and path traversal |
 
 See [Rules Reference](https://docs.skylos.dev/rules-reference) for rule families
 and scanner scope.
