@@ -41,10 +41,17 @@ IMPORTANCE_WEIGHTS = {
     "critical": 3.0,
 }
 BENCHMARK_LANGUAGES = {
+    "csharp",
+    "dart",
     "go",
+    "java",
     "javascript",
+    "kotlin",
     "multi",
+    "php",
     "python",
+    "rust",
+    "shell",
     "typescript",
 }
 DEPENDENCY_STATUS_VALUES = {
@@ -343,6 +350,7 @@ def _validate_expectations(case: dict[str, Any], case_id: str) -> None:
         raise ValueError(f"AI-code-defect benchmark case {case_id} needs expectations")
 
     _validate_expectation_finding_count(expect, case_id)
+    _validate_verification_expectation(expect, case_id)
 
     total = 0
     for mode in ("present", "absent"):
@@ -378,6 +386,51 @@ def _validate_expectation_finding_count(
             f"AI-code-defect benchmark case {case_id} expect.finding_count "
             "must not be negative"
         )
+
+
+def _validate_verification_expectation(
+    expect: dict[str, Any],
+    case_id: str,
+) -> None:
+    verification = expect.get("verification")
+    if verification is None:
+        return
+    if not isinstance(verification, dict):
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} expect.verification must be an object"
+        )
+    for key, allowed in (
+        ("status", {"pass", "fail", "incomplete"}),
+        ("coverage_state", {"complete", "incomplete"}),
+    ):
+        value = verification.get(key)
+        if value is None:
+            continue
+        if value not in allowed:
+            values = ", ".join(sorted(allowed))
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} "
+                f"expect.verification.{key} must be one of: {values}"
+            )
+    checks = verification.get("checks")
+    if checks is None:
+        return
+    if not isinstance(checks, dict) or not checks:
+        raise ValueError(
+            f"AI-code-defect benchmark case {case_id} "
+            "expect.verification.checks must be a non-empty object"
+        )
+    for check_id, outcome in checks.items():
+        if not isinstance(check_id, str) or not check_id:
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} verification check IDs "
+                "must be non-empty strings"
+            )
+        if outcome not in {"pass", "fail", "incomplete"}:
+            raise ValueError(
+                f"AI-code-defect benchmark case {case_id} verification check "
+                f"'{check_id}' must expect pass, fail, or incomplete"
+            )
 
 
 def _validate_expectation(expectation: Any, case_id: str, mode: str) -> None:
@@ -683,6 +736,8 @@ def _run_case(
         "importance": case.get("importance", "high"),
         "elapsed_seconds": elapsed,
         "finding_count": len(findings),
+        "status": result.get("status"),
+        "coverage_state": _coverage_state(result),
         "failures": [failure.to_dict() for failure in failures],
         "present_total": counts["present_total"],
         "present_matched": counts["present_matched"],
@@ -855,6 +910,7 @@ def _evaluate_case(
 
     expect = case["expect"]
     _evaluate_finding_count(case, findings, failures)
+    _evaluate_verification_contract(case, result, failures)
 
     for expectation in expect["present"]:
         counts["present_total"] += 1
@@ -884,6 +940,81 @@ def _evaluate_case(
         )
 
     return failures, counts
+
+
+def _evaluate_verification_contract(
+    case: dict[str, Any],
+    result: dict[str, Any],
+    failures: list[AICodeDefectBenchmarkFailure],
+) -> None:
+    verification = case["expect"].get("verification")
+    if not isinstance(verification, dict):
+        return
+    expected_status = verification.get("status")
+    if expected_status is not None and result.get("status") != expected_status:
+        failures.append(
+            AICodeDefectBenchmarkFailure(
+                case["id"],
+                "verification",
+                "status",
+                {"status": expected_status},
+                [{"status": result.get("status")}],
+            )
+        )
+    expected_coverage = verification.get("coverage_state")
+    actual_coverage = _coverage_state(result)
+    if expected_coverage is not None and actual_coverage != expected_coverage:
+        failures.append(
+            AICodeDefectBenchmarkFailure(
+                case["id"],
+                "verification",
+                "coverage_state",
+                {"coverage_state": expected_coverage},
+                [{"coverage_state": actual_coverage}],
+            )
+        )
+    expected_checks = verification.get("checks")
+    if not isinstance(expected_checks, dict):
+        return
+    actual_checks = _coverage_checks(result)
+    for check_id, expected_outcome in expected_checks.items():
+        actual = actual_checks.get(check_id)
+        actual_outcome = actual.get("outcome") if actual is not None else None
+        if actual_outcome == expected_outcome:
+            continue
+        failures.append(
+            AICodeDefectBenchmarkFailure(
+                case["id"],
+                "verification",
+                "check_outcome",
+                {"id": check_id, "outcome": expected_outcome},
+                [actual] if actual is not None else [],
+            )
+        )
+
+
+def _coverage_state(result: dict[str, Any]) -> str | None:
+    coverage = result.get("coverage")
+    if not isinstance(coverage, dict):
+        return None
+    state = coverage.get("state")
+    return state if isinstance(state, str) else None
+
+
+def _coverage_checks(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    coverage = result.get("coverage")
+    if not isinstance(coverage, dict):
+        return {}
+    checks = coverage.get("checks")
+    if not isinstance(checks, list):
+        return {}
+    return {
+        str(check["id"]): check
+        for check in checks
+        if isinstance(check, dict)
+        and isinstance(check.get("id"), str)
+        and check.get("id")
+    }
 
 
 def _challenge_metadata_for_case(

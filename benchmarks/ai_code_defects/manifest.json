@@ -1437,6 +1437,152 @@
       }
     },
     {
+      "id": "go-local-api-hallucination",
+      "language": "go",
+      "path": "fixtures/go_local_api_hallucination",
+      "description": "Generated Go code calls an exported symbol that does not exist in a local module package.",
+      "taxonomy": ["hallucinated_reference"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic recall fixture for deterministic Go workspace API-surface verification."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "finding_count": 1,
+        "verification": {
+          "status": "fail",
+          "coverage_state": "complete",
+          "checks": {
+            "go_workspace_api_surface": "fail"
+          }
+        },
+        "present": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "file_contains": "cmd/app/main.go",
+            "metadata": {
+              "language": "go",
+              "reference_kind": "package_selector"
+            }
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "clean-go-local-api-surface",
+      "language": "go",
+      "path": "fixtures/clean_go_local_api_surface",
+      "description": "Generated Go code calls an existing exported symbol in a local module package.",
+      "taxonomy": ["hallucinated_reference", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic precision fixture for deterministic Go workspace API-surface verification."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "finding_count": 0,
+        "verification": {
+          "status": "pass",
+          "coverage_state": "complete",
+          "checks": {
+            "go_workspace_api_surface": "pass"
+          }
+        },
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference"
+          }
+        ]
+      }
+    },
+    {
+      "id": "java-local-api-hallucination",
+      "language": "java",
+      "path": "fixtures/java_local_api_hallucination",
+      "description": "Generated Java code calls a static member that does not exist on an explicitly imported local type.",
+      "taxonomy": ["hallucinated_reference"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic recall fixture for deterministic Java workspace API-surface verification."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "finding_count": 1,
+        "verification": {
+          "status": "fail",
+          "coverage_state": "complete",
+          "checks": {
+            "java_workspace_api_surface": "fail"
+          }
+        },
+        "present": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference",
+            "file_contains": "src/demo/app/App.java",
+            "metadata": {
+              "language": "java",
+              "reference_kind": "static_member"
+            }
+          }
+        ],
+        "absent": []
+      }
+    },
+    {
+      "id": "clean-java-local-api-surface",
+      "language": "java",
+      "path": "fixtures/clean_java_local_api_surface",
+      "description": "Generated Java code calls an existing static member on an explicitly imported local type.",
+      "taxonomy": ["hallucinated_reference", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/duriantaco/skylos",
+        "license": "MIT",
+        "notes": "Synthetic precision fixture for deterministic Java workspace API-surface verification."
+      },
+      "scan": {
+        "confidence": 60,
+        "project_context": true
+      },
+      "expect": {
+        "finding_count": 0,
+        "verification": {
+          "status": "pass",
+          "coverage_state": "complete",
+          "checks": {
+            "java_workspace_api_surface": "pass"
+          }
+        },
+        "present": [],
+        "absent": [
+          {
+            "rule_id": "SKY-L012",
+            "vibe_category": "hallucinated_reference"
+          }
+        ]
+      }
+    },
+    {
       "id": "clean-generated-code",
       "language": "python",
       "path": "fixtures/clean_generated_code",
