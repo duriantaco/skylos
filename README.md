@@ -68,6 +68,16 @@ Verify a changed file or range before an agent hands it to review:
 skylos verify . --file src/app.py --range 40:75 --project-context
 ```
 
+`skylos verify` schema version 2 returns `pass`, `fail`, or `incomplete`.
+`incomplete` means a requested proof could not be established, such as a
+third-party TS/JS import or computed namespace member that Skylos did not
+resolve; it exits `2` unless `--no-fail` is set. The `coverage` object lists
+completed checks, skipped checks, checked references, and skip reasons.
+
+For TypeScript and JavaScript, verification checks named imports, default and
+type-only imports, static namespace members, re-exports, and CommonJS exports
+against local and workspace package surfaces without executing Node.js.
+
 Create a local AI hallucination contract for repo-specific generated-code
 truth. `skylos verify` auto-discovers `.skylos/ai-contract.yml`:
 
@@ -338,9 +348,9 @@ or `--include-folder` to override an excluded folder.
 | Language | Dead Code | Security | Quality | Notes |
 |:---|:---:|:---:|:---:|:---|
 | Python | Yes | Yes | Yes | strongest coverage; framework-aware static analysis and optional tracing |
-| TypeScript / JavaScript | Yes | Yes | Yes | Tree-sitter parsing, package graph reachability, framework conventions |
+| TypeScript / JavaScript | Yes | Yes | Yes | Tree-sitter parsing, package graph reachability, framework conventions, local/workspace API hallucination checks |
 | Java | Yes | Yes | Yes | Tree-sitter parsing and structured security-flow analysis |
-| Go | Yes | Partial | Partial | dead-code and selected security benchmark coverage |
+| Go | Yes | Partial | Partial | native engine availability is reported in scan JSON and `skylos doctor --format json` |
 | PHP | Yes | Yes | Partial | PHP parser coverage plus taint-style security sinks and sources |
 | Rust | Yes | Yes | Partial | Rust parser coverage plus security sink/source checks |
 | Dart | Yes | Yes | Partial | Dart parser coverage plus selected security sinks and sources |
