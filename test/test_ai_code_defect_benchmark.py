@@ -14,6 +14,7 @@ from skylos.benchmarks.ai_code_defects import (
     run_manifest,
     validate_manifest,
 )
+from skylos.verify_change import verify_change_path
 
 
 MANIFEST_PATH = (
@@ -63,6 +64,10 @@ EXPECTED_CASE_IDS = {
     "clean-range-scope",
     "typescript-local-api-hallucination",
     "clean-typescript-local-api-surface",
+    "go-local-api-hallucination",
+    "clean-go-local-api-surface",
+    "java-local-api-hallucination",
+    "clean-java-local-api-surface",
     "clean-generated-code",
 }
 
@@ -106,8 +111,64 @@ EXPECTED_CASE_PATH_NAMES = [
     "range_scoped_mixed_edit",
     "typescript_local_api_hallucination",
     "clean_typescript_local_api_surface",
+    "go_local_api_hallucination",
+    "clean_go_local_api_surface",
+    "java_local_api_hallucination",
+    "clean_java_local_api_surface",
     "clean_generated_code",
 ]
+
+
+@pytest.mark.parametrize(
+    ("fixture", "expected_status", "check_id", "expected_outcome"),
+    [
+        (
+            "go_local_api_hallucination",
+            "fail",
+            "go_workspace_api_surface",
+            "fail",
+        ),
+        (
+            "clean_go_local_api_surface",
+            "pass",
+            "go_workspace_api_surface",
+            "pass",
+        ),
+        (
+            "java_local_api_hallucination",
+            "fail",
+            "java_workspace_api_surface",
+            "fail",
+        ),
+        (
+            "clean_java_local_api_surface",
+            "pass",
+            "java_workspace_api_surface",
+            "pass",
+        ),
+    ],
+)
+def test_checked_in_local_api_benchmarks_assert_verification_contract(
+    monkeypatch,
+    fixture,
+    expected_status,
+    check_id,
+    expected_outcome,
+):
+    monkeypatch.setenv("SKYLOS_JOBS", "1")
+    payload = verify_change_path(
+        MANIFEST_PATH.parent / "fixtures" / fixture,
+        project_context=True,
+        include_dependency_hallucinations=False,
+    )
+
+    assert payload["status"] == expected_status
+    assert payload["coverage"]["state"] == "complete"
+    check = next(
+        item for item in payload["coverage"]["checks"] if item["id"] == check_id
+    )
+    assert check["outcome"] == expected_outcome
+    assert check["finding_count"] == (1 if expected_outcome == "fail" else 0)
 
 
 def _finding(
@@ -562,7 +623,69 @@ def _fake_findings_for_case(case_path, scan_kwargs=None):
                 },
             ),
         ]
+    if case_name == "go_local_api_hallucination":
+        return [
+            _finding(
+                "SKY-L012",
+                "hallucinated_reference",
+                file_path="cmd/app/main.go",
+                metadata={
+                    "language": "go",
+                    "reference_kind": "package_selector",
+                },
+            )
+        ]
+    if case_name == "java_local_api_hallucination":
+        return [
+            _finding(
+                "SKY-L012",
+                "hallucinated_reference",
+                file_path="src/demo/app/App.java",
+                metadata={
+                    "language": "java",
+                    "reference_kind": "static_member",
+                },
+            )
+        ]
     return []
+
+
+def _fake_result_for_case(case_path, scan_kwargs=None):
+    findings = _fake_findings_for_case(case_path, scan_kwargs)
+    contracts = {
+        "go_local_api_hallucination": (
+            "fail",
+            "go_workspace_api_surface",
+            "fail",
+        ),
+        "clean_go_local_api_surface": (
+            "pass",
+            "go_workspace_api_surface",
+            "pass",
+        ),
+        "java_local_api_hallucination": (
+            "fail",
+            "java_workspace_api_surface",
+            "fail",
+        ),
+        "clean_java_local_api_surface": (
+            "pass",
+            "java_workspace_api_surface",
+            "pass",
+        ),
+    }
+    contract = contracts.get(Path(case_path).name)
+    if contract is None:
+        return {"findings": findings}
+    status, check_id, outcome = contract
+    return {
+        "status": status,
+        "findings": findings,
+        "coverage": {
+            "state": "complete",
+            "checks": [{"id": check_id, "outcome": outcome}],
+        },
+    }
 
 
 def test_checked_in_ai_code_defect_manifest_validates():
@@ -627,18 +750,18 @@ def test_ai_code_defect_runner_scores_expectations(monkeypatch):
 
     def fake_verify(case_path, **kwargs):
         seen.append((Path(case_path).name, kwargs))
-        return {"findings": _fake_findings_for_case(case_path, kwargs)}
+        return _fake_result_for_case(case_path, kwargs)
 
     ticks = iter(range(100))
     monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
 
     summary = run_manifest(MANIFEST_PATH, verify_func=fake_verify)
 
-    assert summary["case_count"] == 39
-    assert summary["pass_count"] == 39
+    assert summary["case_count"] == 43
+    assert summary["pass_count"] == 43
     assert summary["failure_count"] == 0
     assert summary["scores"]["overall_score"] == pytest.approx(100.0)
-    assert summary["metadata"]["languages"]["labelled_cases"] == 39
+    assert summary["metadata"]["languages"]["labelled_cases"] == 43
     assert summary["metadata"]["languages"]["coverage_rate"] == 1.0
 
     dependency_hallucination_case_names = {
@@ -688,11 +811,11 @@ def test_ai_code_defect_runner_empty_selection_runs_all_cases(monkeypatch):
 
     def fake_verify(case_path, **_kwargs):
         seen.append(Path(case_path).name)
-        return {"findings": _fake_findings_for_case(case_path, _kwargs)}
+        return _fake_result_for_case(case_path, _kwargs)
 
     summary = run_manifest(MANIFEST_PATH, selected_cases=None, verify_func=fake_verify)
 
-    assert summary["case_count"] == 39
+    assert summary["case_count"] == 43
     assert seen == EXPECTED_CASE_PATH_NAMES
 
 
@@ -821,6 +944,33 @@ def test_ai_code_defect_runner_reports_missing_expectation(monkeypatch):
     for failure in summary["cases"][0]["failures"]:
         failure_modes.add(failure["mode"])
     assert "present" in failure_modes
+
+
+def test_ai_code_defect_runner_enforces_verification_contract():
+    def fake_verify(_case_path, **_kwargs):
+        return {
+            "status": "incomplete",
+            "findings": [],
+            "coverage": {
+                "state": "incomplete",
+                "checks": [
+                    {
+                        "id": "java_workspace_api_surface",
+                        "outcome": "incomplete",
+                    }
+                ],
+            },
+        }
+
+    summary = run_manifest(
+        MANIFEST_PATH,
+        selected_cases={"clean-java-local-api-surface"},
+        verify_func=fake_verify,
+    )
+
+    assert summary["failure_count"] == 1
+    modes = {failure["mode"] for failure in summary["cases"][0]["failures"]}
+    assert modes == {"check_outcome", "coverage_state", "status"}
 
 
 def test_ai_code_defect_runner_matches_metadata_expectations(monkeypatch, tmp_path):

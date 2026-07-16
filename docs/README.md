@@ -6,6 +6,7 @@ This repository keeps lightweight local docs for features that need examples clo
 |:---|:---|
 | Generated codebase navigator for contributors | [Skylos Repo Map](./repo-map/index.html) |
 | CLI output modes, pretty reports, and TUI controls | [CLI Output Modes](./cli-output.md) |
+| Deterministic AI-code verification coverage and language support | [AI Code Verification](./ai-code-verification.md) |
 | Local contracts for verifying AI-written code | [AI Hallucination Contracts](./ai-hallucination-contracts.md) |
 | Pre-deployment agent verification, evidence reports, and attestation | [Agent Verification](./agent-verification.md) |
 | Rule ID prefixes and product terminology | [Rule Dictionary](../dictionary.md) |

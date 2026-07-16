@@ -181,8 +181,12 @@ def _attach_analysis_reports(analyzer, result):
     if isinstance(verification_checks, list):
         from skylos.core.verification_coverage import build_ai_verification_coverage
 
-        result["analysis_summary"]["ai_verification"] = (
-            build_ai_verification_coverage(verification_checks)
+        expected_checks = getattr(analyzer, "_ai_verification_expectations", None)
+        result["analysis_summary"]["ai_verification"] = build_ai_verification_coverage(
+            verification_checks,
+            expected_checks=expected_checks
+            if isinstance(expected_checks, list)
+            else None,
         )
 
     language_engines = getattr(analyzer, "_language_engine_reports", None)
@@ -336,6 +340,8 @@ def _attach_unused_ts_exports(result, unused_ts_exports):
         return
     result.setdefault("unused_exports", []).extend(unused_ts_exports)
     result["analysis_summary"]["unused_exports_count"] = len(unused_ts_exports)
+
+
 def _attach_grade(
     result,
     files,

@@ -86,6 +86,140 @@ def test_build_verify_change_response_marks_unproven_references_incomplete(tmp_p
     )
 
 
+def test_build_verify_change_response_summarizes_unfinished_required_check(tmp_path):
+    result = {
+        "analysis_summary": {
+            "ai_verification": {
+                "schema_version": 1,
+                "state": "incomplete",
+                "checks": [
+                    {
+                        "id": "php_workspace_api_surface",
+                        "status": "skipped",
+                        "outcome": "incomplete",
+                        "skipped_references": 0,
+                        "reasons": [{"code": "unsupported_capability", "count": 1}],
+                    }
+                ],
+            }
+        }
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    assert payload["status"] == "incomplete"
+    assert payload["summary"] == (
+        "Verification incomplete: 1 required check did not complete"
+    )
+
+
+def test_build_verify_change_response_findings_override_incomplete_coverage(tmp_path):
+    app = tmp_path / "app.java"
+    app.write_text("class App {}\n", encoding="utf-8")
+    result = {
+        "ai_defects": [
+            {
+                "rule_id": "SKY-L012",
+                "file": str(app),
+                "line": 1,
+                "message": "Missing local member.",
+            }
+        ],
+        "analysis_summary": {
+            "ai_verification": {
+                "schema_version": 1,
+                "state": "incomplete",
+                "checks": [
+                    {
+                        "id": "java_workspace_api_surface",
+                        "outcome": "incomplete",
+                        "skipped_references": 1,
+                    }
+                ],
+            }
+        },
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    assert payload["status"] == "fail"
+    assert payload["summary"] == "1 AI-code issue found"
+
+
+def test_build_verify_change_response_filtered_finding_keeps_proof_incomplete(tmp_path):
+    app = tmp_path / "app.java"
+    other = tmp_path / "other.java"
+    app.write_text("class App {}\n", encoding="utf-8")
+    other.write_text("class Other {}\n", encoding="utf-8")
+    result = {
+        "ai_defects": [
+            {
+                "rule_id": "SKY-L012",
+                "file": str(other),
+                "line": 1,
+                "message": "Missing local member.",
+            }
+        ],
+        "analysis_summary": {
+            "ai_verification": {
+                "schema_version": 1,
+                "state": "incomplete",
+                "checks": [
+                    {
+                        "id": "java_workspace_api_surface",
+                        "outcome": "fail",
+                        "skipped_references": 1,
+                        "finding_count": 1,
+                    }
+                ],
+            }
+        },
+    }
+
+    payload = build_verify_change_response(
+        result,
+        project_root=tmp_path,
+        target_file=app,
+    )
+
+    assert payload["findings"] == []
+    assert payload["status"] == "incomplete"
+
+
+def test_build_verify_change_response_never_passes_with_unrepresented_failed_check(
+    tmp_path,
+):
+    result = {
+        "analysis_summary": {
+            "ai_verification": {
+                "schema_version": 1,
+                "state": "complete",
+                "checks": [
+                    {
+                        "id": "java_workspace_api_surface",
+                        "status": "completed",
+                        "outcome": "fail",
+                        "skipped_references": 0,
+                        "finding_count": 1,
+                    }
+                ],
+            }
+        }
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    assert payload["findings"] == []
+    assert payload["status"] == "incomplete"
+    assert payload["coverage"]["state"] == "incomplete"
+    check = payload["coverage"]["checks"][0]
+    assert check["outcome"] == "incomplete"
+    assert check["finding_count"] == 0
+    assert check["reasons"] == [
+        {"code": "finding_evidence_missing_from_response", "count": 1}
+    ]
+
+
 def test_build_verify_change_response_preserves_finding_metadata(tmp_path):
     manifest = tmp_path / "package.json"
     manifest.write_text('{"dependencies": {"ghost": "1.0.0"}}\n')

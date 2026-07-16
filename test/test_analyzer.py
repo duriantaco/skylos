@@ -268,6 +268,8 @@ class TestSkylos:
             mock_dir,
             {
                 ".py",
+                ".pyi",
+                ".pyw",
                 ".go",
                 ".ts",
                 ".tsx",
@@ -3730,8 +3732,16 @@ def handler(request):
         assert ai_defects == []
         assert len(suppressed) == 1
         assert suppressed[0]["reason"] == "inline ignore comment"
+        check = next(
+            item
+            for item in result["analysis_summary"]["ai_verification"]["checks"]
+            if item["id"] == "python_local_api_reference"
+        )
+        assert check["outcome"] == "pass"
+        assert check["suppressed_findings"] == 1
+        assert {reason["code"] for reason in check["reasons"]} >= {"finding_suppressed"}
 
-    def test_analyze_subtree_resolves_repo_local_modules_outside_selection(
+    def test_analyze_subtree_marks_repo_local_modules_outside_selection_incomplete(
         self, tmp_path
     ):
         (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
@@ -3765,8 +3775,14 @@ def handler(request):
             f for f in result.get("ai_defects", []) if f.get("rule_id") == "SKY-L012"
         ]
 
-        assert len(ai_defects) == 1
-        assert ai_defects[0]["name"] == "security.require_auth"
+        assert ai_defects == []
+        check = next(
+            item
+            for item in result["analysis_summary"]["ai_verification"]["checks"]
+            if item["id"] == "python_local_api_reference"
+        )
+        assert check["outcome"] == "incomplete"
+        assert check["reasons"] == [{"code": "local_import_outside_scan", "count": 1}]
 
     def test_analyze_flags_stale_bare_call_resembling_local_symbol(self, tmp_path):
         pkg = tmp_path / "billing"

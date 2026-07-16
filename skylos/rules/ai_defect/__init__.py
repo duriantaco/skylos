@@ -19,6 +19,15 @@ from skylos.rules.ai_defect.api_surface_drift import detect_cli_surface_drift
 from skylos.rules.ai_defect.js_api_hallucination import (
     scan_js_local_api_hallucinations,
 )
+from skylos.rules.ai_defect.python_api_hallucination import (
+    scan_python_local_api_hallucinations,
+)
+from skylos.rules.ai_defect.go_api_hallucination import (
+    scan_go_local_api_hallucinations,
+)
+from skylos.rules.ai_defect.java_api_hallucination import (
+    scan_java_local_api_hallucinations,
+)
 
 __all__ = [
     "PhantomCallRule",
@@ -32,4 +41,7 @@ __all__ = [
     "detect_ci_permission_expansion",
     "detect_cli_surface_drift",
     "scan_js_local_api_hallucinations",
+    "scan_python_local_api_hallucinations",
+    "scan_go_local_api_hallucinations",
+    "scan_java_local_api_hallucinations",
 ]
