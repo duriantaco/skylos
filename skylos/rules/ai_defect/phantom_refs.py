@@ -10,6 +10,9 @@ from pathlib import Path
 from skylos.rules.vibe_dictionary import DEFAULT_VIBE_DICTIONARY
 
 
+PYTHON_SOURCE_SUFFIXES = (".py", ".pyi", ".pyw")
+
+
 @dataclass
 class _ScopeInfo:
     shadowed_names: set[str]
@@ -22,9 +25,13 @@ def scan_repo_phantom_security_references(
 ):
     vibe_dictionary = vibe_dictionary or DEFAULT_VIBE_DICTIONARY
     root = Path(project_root).resolve()
-    files = [Path(f).resolve() for f in py_files if Path(f).suffix == ".py"]
+    files = [
+        Path(f).resolve() for f in py_files if Path(f).suffix in PYTHON_SOURCE_SUFFIXES
+    ]
     target_paths = {
-        Path(f).resolve() for f in (target_files or files) if Path(f).suffix == ".py"
+        Path(f).resolve()
+        for f in (target_files or files)
+        if Path(f).suffix in PYTHON_SOURCE_SUFFIXES
     }
 
     module_to_file = {}
@@ -46,6 +53,11 @@ def scan_repo_phantom_security_references(
         file_to_module[file_path] = module_name
 
     local_modules = set(module_to_file)
+    package_modules = {
+        module_name
+        for module_name, file_path in module_to_file.items()
+        if _is_package_module_file(file_path)
+    }
     if not local_modules:
         return []
 
@@ -102,8 +114,57 @@ def scan_repo_phantom_security_references(
         _store_module_facts(current_module, tree)
         parent_map = _build_parent_map(tree)
         scope_infos = _build_scope_infos(tree, current_module, local_modules)
+        findings.extend(
+            _direct_local_import_findings(
+                file_path,
+                current_module,
+                tree,
+                local_modules,
+                module_members,
+                dynamic_modules,
+                package_modules,
+                _ensure_module_loaded,
+            )
+        )
 
         for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                if _attribute_is_call_target(node, parent_map):
+                    continue
+                if _attribute_is_decorator_target(node, parent_map):
+                    continue
+                if _attribute_is_nested_prefix(node, parent_map):
+                    continue
+                resolved = _resolve_local_module_member(
+                    expr=node,
+                    node=node,
+                    tree=tree,
+                    parent_map=parent_map,
+                    scope_infos=scope_infos,
+                    module_alias_exports=module_alias_exports,
+                    local_modules=local_modules,
+                    ensure_module_loaded=_ensure_module_loaded,
+                )
+                if not resolved:
+                    continue
+                target_module, member_name, expr_text = resolved
+                if not _ensure_module_loaded(target_module):
+                    continue
+                if target_module in dynamic_modules:
+                    continue
+                if member_name in module_members.get(target_module, set()):
+                    continue
+                findings.append(
+                    _build_reference_finding(
+                        file_path,
+                        node,
+                        expr_text,
+                        target_module,
+                        member_name,
+                    )
+                )
+                continue
+
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name):
                     bare_finding = _bare_call_finding(
@@ -173,8 +234,6 @@ def scan_repo_phantom_security_references(
                     continue
 
                 target_module, member_name, expr_text = resolved
-                if member_name not in vibe_dictionary.phantom_security_decorators:
-                    continue
                 if not _ensure_module_loaded(target_module):
                     continue
                 if target_module in dynamic_modules:
@@ -193,6 +252,50 @@ def scan_repo_phantom_security_references(
                 )
 
     return findings
+
+
+def _direct_local_import_findings(
+    file_path,
+    current_module,
+    tree,
+    local_modules,
+    module_members,
+    dynamic_modules,
+    package_modules,
+    ensure_module_loaded,
+):
+    findings = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        base = _resolve_import_from_base(current_module, node)
+        if base not in local_modules:
+            continue
+        if not ensure_module_loaded(base) or base in dynamic_modules:
+            continue
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            full_module = f"{base}.{alias.name}"
+            if full_module in local_modules:
+                continue
+            if alias.name in module_members.get(base, set()):
+                continue
+            if base in package_modules:
+                continue
+            findings.append(
+                _build_import_finding(
+                    file_path,
+                    node,
+                    base,
+                    alias.name,
+                )
+            )
+    return findings
+
+
+def _is_package_module_file(file_path):
+    return file_path.name in {"__init__.py", "__init__.pyi", "__init__.pyw"}
 
 
 def _repo_member_names(module_members):
@@ -274,8 +377,10 @@ def _module_name(root: Path, file_path: Path) -> str:
     if not parts:
         return ""
 
-    if parts[-1].endswith(".py"):
-        parts[-1] = parts[-1][:-3]
+    for suffix in PYTHON_SOURCE_SUFFIXES:
+        if parts[-1].endswith(suffix):
+            parts[-1] = parts[-1][: -len(suffix)]
+            break
     if parts[-1] == "__init__":
         parts.pop()
     return ".".join(parts)
@@ -573,6 +678,34 @@ def _is_decorator_expression(child, parent):
     return bool(decorator_list) and child in decorator_list
 
 
+def _attribute_is_call_target(node, parent_map):
+    parent = parent_map.get(node)
+    return isinstance(parent, ast.Call) and parent.func is node
+
+
+def _attribute_is_decorator_target(node, parent_map):
+    child = node
+    current = parent_map.get(node)
+    while current is not None:
+        if isinstance(current, ast.Call) and current.func is child:
+            child = current
+            current = parent_map.get(current)
+            continue
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return child in current.decorator_list
+        if isinstance(current, ast.Attribute) and current.value is child:
+            child = current
+            current = parent_map.get(current)
+            continue
+        break
+    return False
+
+
+def _attribute_is_nested_prefix(node, parent_map):
+    parent = parent_map.get(node)
+    return isinstance(parent, ast.Attribute) and parent.value is node
+
+
 def _resolve_import_from_base(current_module, node):
     module = node.module or ""
     if "." in current_module:
@@ -709,6 +842,62 @@ def _build_decorator_finding(file_path, node, expr_text, target_module, member_n
             f"Decorator '@{expr_text}' resolves to local module '{target_module}', "
             f"but '{member_name}' is not defined or re-exported there. "
             f"AI-generated code often hallucinates security decorators on local modules."
+        ),
+        "file": str(file_path),
+        "basename": file_path.name,
+        "line": node.lineno,
+        "col": node.col_offset,
+        "category": "ai_defect",
+        "defect_type": "hallucinated_reference",
+        "vibe_category": "hallucinated_reference",
+        "ai_likelihood": "high",
+    }
+
+
+def _build_reference_finding(
+    file_path,
+    node,
+    expr_text,
+    target_module,
+    member_name,
+):
+    return {
+        "rule_id": "SKY-L012",
+        "kind": "logic",
+        "severity": "CRITICAL",
+        "type": "module_member",
+        "name": expr_text,
+        "simple_name": member_name,
+        "value": "phantom",
+        "threshold": 0,
+        "message": (
+            f"Reference '{expr_text}' resolves to local module '{target_module}', "
+            f"but '{member_name}' is not defined or re-exported there."
+        ),
+        "file": str(file_path),
+        "basename": file_path.name,
+        "line": node.lineno,
+        "col": node.col_offset,
+        "category": "ai_defect",
+        "defect_type": "hallucinated_reference",
+        "vibe_category": "hallucinated_reference",
+        "ai_likelihood": "high",
+    }
+
+
+def _build_import_finding(file_path, node, target_module, member_name):
+    return {
+        "rule_id": "SKY-L012",
+        "kind": "logic",
+        "severity": "CRITICAL",
+        "type": "from_import",
+        "name": member_name,
+        "simple_name": member_name,
+        "value": "phantom",
+        "threshold": 0,
+        "message": (
+            f"Import from local module '{target_module}' requests '{member_name}', "
+            "but that name is not defined or re-exported there."
         ),
         "file": str(file_path),
         "basename": file_path.name,
