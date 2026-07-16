@@ -65,7 +65,7 @@ _RULES = (
     RuleCatalogEntry("SKY-L009", "Debug leftover", "quality"),
     RuleCatalogEntry("SKY-L010", "Security TODO marker", "quality"),
     RuleCatalogEntry("SKY-L011", "Disabled security control", "quality"),
-    RuleCatalogEntry("SKY-L012", "Phantom function call", "ai_defect"),
+    RuleCatalogEntry("SKY-L012", "Phantom symbol reference", "ai_defect"),
     RuleCatalogEntry("SKY-L013", "Insecure randomness", "quality"),
     RuleCatalogEntry("SKY-L014", "Hardcoded credential", "quality"),
     RuleCatalogEntry("SKY-L016", "Undefined config", "quality"),

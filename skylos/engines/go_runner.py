@@ -16,6 +16,32 @@ class GoEngineError(RuntimeError):
     pass
 
 
+def get_go_engine_status() -> dict[str, str]:
+    try:
+        engine_bin = resolve_go_engine_bin()
+    except GoEngineError as exc:
+        reason = str(exc).splitlines()[0] if str(exc) else "Go engine unavailable"
+        return {
+            "status": "unavailable",
+            "reason": reason,
+            "configured_by": "SKYLOS_GO_BIN" if os.getenv("SKYLOS_GO_BIN") else "discovery",
+        }
+
+    path = Path(engine_bin)
+    bundled_dir = Path(__file__).resolve().parent / "go"
+    if os.getenv("SKYLOS_GO_BIN"):
+        configured_by = "SKYLOS_GO_BIN"
+    elif path.parent == bundled_dir:
+        configured_by = "bundled"
+    else:
+        configured_by = "PATH"
+    return {
+        "status": "available",
+        "binary": str(path),
+        "configured_by": configured_by,
+    }
+
+
 def _is_runnable_go_engine(candidate: Path) -> bool:
     try:
         proc = subprocess.run(

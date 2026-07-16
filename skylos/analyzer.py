@@ -482,9 +482,13 @@ def _resolve_analysis_root(path_like: Path) -> Path:
 
     start = current
     home = Path.home().resolve()
+    workspace_root = _declared_js_workspace_root(start, home=home)
+    if workspace_root is not None:
+        return workspace_root
+
     probe = current
     for _ in range(20):
-        if (probe / "pyproject.toml").exists():
+        if (probe / "pyproject.toml").exists() or (probe / "package.json").exists():
             if probe == home and start != home:
                 break
             return probe
@@ -510,6 +514,70 @@ def _resolve_analysis_root(path_like: Path) -> Path:
         pass
 
     return current
+
+
+def _declared_js_workspace_root(start: Path, *, home: Path) -> Path | None:
+    from skylos.visitors.languages.typescript.workspace import (
+        discover_workspace_inventory,
+    )
+
+    probe = start
+    for _ in range(20):
+        if _may_declare_js_workspace(probe):
+            inventory = discover_workspace_inventory(probe)
+            for package in inventory.packages:
+                if _path_is_within(start, package.root):
+                    return probe
+        if probe == home and start != home:
+            break
+        if probe.parent == probe:
+            break
+        probe = probe.parent
+    return None
+
+
+def _may_declare_js_workspace(path: Path) -> bool:
+    return any(
+        (path / marker).is_file()
+        for marker in (
+            "package.json",
+            "pnpm-workspace.yaml",
+            "lerna.json",
+            "rush.json",
+            "tsconfig.json",
+        )
+    )
+
+
+def _path_is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def _go_engine_analysis_report(files) -> dict | None:
+    go_file_count = sum(1 for file_path in files if str(file_path).endswith(".go"))
+    if not go_file_count:
+        return None
+
+    from skylos.engines.go_runner import get_go_engine_status
+
+    engine_status = get_go_engine_status()
+    available = engine_status.get("status") == "available"
+    report = {
+        "status": "available" if available else "partial",
+        "file_count": go_file_count,
+        "engine": dict(engine_status),
+        "completed_checks": ["quality"],
+        "skipped_checks": [],
+    }
+    if available:
+        report["completed_checks"].extend(["dead_code", "security"])
+    else:
+        report["skipped_checks"] = ["dead_code", "security"]
+    return report
 
 
 def _no_source_danger_targets(
@@ -2043,6 +2111,10 @@ class Skylos:
             project_root = _resolve_analysis_root(project_root)
 
         files, root = self._discover_files(path, exclude_folders)
+        self._language_engine_reports = {}
+        go_engine_report = _go_engine_analysis_report(files)
+        if go_engine_report is not None:
+            self._language_engine_reports["go"] = go_engine_report
 
         from skylos.visitors.languages.typescript.workspace import (
             discover_workspace_inventory,
@@ -2196,6 +2268,7 @@ class Skylos:
         all_dangers = []
         all_quality = []
         all_ai_defects = []
+        self._ai_verification_checks = [] if enable_ai_defects else None
         all_suppressed = []
         empty_files = []
         file_contexts = []
@@ -3214,6 +3287,45 @@ class Skylos:
         except Exception:
             if os.getenv("SKYLOS_DEBUG"):
                 logger.error("MDX component import graph scan failed", exc_info=True)
+
+        if enable_ai_defects:
+            from skylos.core.verification_coverage import reconcile_check_findings
+            from skylos.rules.ai_defect.js_api_hallucination import (
+                failed_js_api_check,
+                scan_js_local_api_hallucinations,
+                skipped_js_api_check,
+            )
+
+            if "SKY-L012" in project_ignore:
+                self._ai_verification_checks.append(
+                    skipped_js_api_check("rule_ignored")
+                )
+            else:
+                try:
+                    js_findings, js_check = scan_js_local_api_hallucinations(
+                        project_root,
+                        files,
+                        ts_raw_imports,
+                        monorepo_resolver=monorepo_resolver,
+                    )
+                    before_count = len(all_ai_defects)
+                    _extend_unsuppressed_ai_defect_findings(
+                        js_findings,
+                        project_ignore=project_ignore,
+                        per_file_ignore_lines=per_file_ignore_lines,
+                        all_ai_defects=all_ai_defects,
+                        all_suppressed=all_suppressed,
+                    )
+                    accepted_count = len(all_ai_defects) - before_count
+                    self._ai_verification_checks.append(
+                        reconcile_check_findings(js_check, accepted_count)
+                    )
+                except Exception:
+                    self._ai_verification_checks.append(
+                        failed_js_api_check("detector_error")
+                    )
+                    if os.getenv("SKYLOS_DEBUG"):
+                        logger.error("JS API hallucination scan failed", exc_info=True)
 
         self._build_ts_import_graph(ts_raw_imports, monorepo_resolver)
 

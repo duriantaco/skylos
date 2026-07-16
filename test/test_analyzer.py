@@ -16,6 +16,7 @@ from skylos.analyzer import (
     proc_file,
     analyze,
     _architecture_iad_strict,
+    _go_engine_analysis_report,
     _resolve_analysis_root,
 )
 from skylos.visitors.languages.shell import SHELL_SOURCE_EXTS
@@ -3437,6 +3438,60 @@ def test_changed_files_secret_scan_skips_symlink_targets_outside_root(tmp_path):
 
 
 class TestRepoPhantomReferences:
+    def test_resolve_analysis_root_stops_at_nested_javascript_package(
+        self, tmp_path
+    ):
+        (tmp_path / "pyproject.toml").write_text("[tool.skylos]\n", encoding="utf-8")
+        package_root = tmp_path / "benchmarks" / "typescript-case"
+        source_root = package_root / "src"
+        source_root.mkdir(parents=True)
+        (package_root / "package.json").write_text(
+            '{"name": "typescript-case", "private": true}\n',
+            encoding="utf-8",
+        )
+
+        assert _resolve_analysis_root(source_root) == package_root
+
+    def test_go_engine_report_marks_engine_checks_partial(self):
+        with patch(
+            "skylos.engines.go_runner.get_go_engine_status",
+            return_value={
+                "status": "unavailable",
+                "reason": "Go engine binary not found",
+                "configured_by": "discovery",
+            },
+        ):
+            report = _go_engine_analysis_report([Path("main.go"), Path("helper.py")])
+
+        assert report["status"] == "partial"
+        assert report["completed_checks"] == ["quality"]
+        assert report["skipped_checks"] == ["dead_code", "security"]
+
+    def test_analyze_reports_unavailable_go_engine_in_summary(self, tmp_path):
+        source = tmp_path / "main.go"
+        source.write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+
+        with (
+            patch(
+                "skylos.engines.go_runner.get_go_engine_status",
+                return_value={
+                    "status": "unavailable",
+                    "reason": "Go engine binary not found",
+                    "configured_by": "discovery",
+                },
+            ),
+            patch(
+                "skylos.visitors.languages.go.go.run_go_engine_for_module",
+                side_effect=RuntimeError("Go engine binary not found"),
+            ),
+        ):
+            result = json.loads(analyze(str(tmp_path), grep_verify=False))
+
+        report = result["analysis_summary"]["language_engines"]["go"]
+        assert report["status"] == "partial"
+        assert report["skipped_checks"] == ["dead_code", "security"]
+        assert result["analysis_summary"]["incomplete_languages"] == ["go"]
+
     def test_resolve_analysis_root_ignores_home_git_root_without_project_marker(
         self, tmp_path, monkeypatch
     ):

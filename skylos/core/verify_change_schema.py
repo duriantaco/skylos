@@ -8,7 +8,7 @@ from skylos.contracts import contract_finding_metadata
 from skylos.core.evidence_contract import finding_evidence_contract
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 AI_VIBE_CATEGORIES = {
     "hallucinated_reference",
@@ -146,18 +146,24 @@ def build_verify_change_response(
         )
     )
 
-    return {
+    coverage = _verification_coverage(analysis_result)
+    status = _status_for_findings(findings, coverage)
+
+    response = {
         "schema_version": SCHEMA_VERSION,
         "tool": "verify_change",
-        "status": _status_for_findings(findings),
+        "status": status,
         "target": {
             "path": _target_path_for_payload(scan_target, target_file, project_root),
             "file": _target_file_for_payload(target_file, root),
             "range": _range_for_payload(parsed_range),
         },
         "findings": findings,
-        "summary": _summary(findings),
+        "summary": _summary(findings, status, coverage),
     }
+    if coverage is not None:
+        response["coverage"] = coverage
+    return response
 
 
 def _iter_ai_findings(
@@ -347,9 +353,18 @@ def _range_for_payload(line_range: tuple[int, int] | None) -> dict[str, int] | N
     return {"start_line": start, "end_line": end}
 
 
-def _summary(findings: list[dict[str, Any]]) -> str:
+def _summary(
+    findings: list[dict[str, Any]],
+    status: str,
+    coverage: dict[str, Any] | None,
+) -> str:
     count = len(findings)
     if count == 0:
+        if status == "incomplete":
+            skipped = _skipped_reference_count(coverage)
+            if skipped == 1:
+                return "Verification incomplete: 1 reference could not be proven"
+            return f"Verification incomplete: {skipped} references could not be proven"
         return "No AI-code issues found"
     if count == 1:
         issue_word = "issue"
@@ -434,10 +449,40 @@ def _validate_line_range(start: int, end: int) -> None:
         raise ValueError("line range end must be greater than or equal to start")
 
 
-def _status_for_findings(findings: list[dict[str, Any]]) -> str:
+def _status_for_findings(
+    findings: list[dict[str, Any]],
+    coverage: dict[str, Any] | None,
+) -> str:
     if findings:
         return "fail"
+    if isinstance(coverage, dict) and coverage.get("state") == "incomplete":
+        return "incomplete"
     return "pass"
+
+
+def _verification_coverage(
+    analysis_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    summary = analysis_result.get("analysis_summary")
+    if not isinstance(summary, dict):
+        return None
+    coverage = summary.get("ai_verification")
+    if not isinstance(coverage, dict):
+        return None
+    return dict(coverage)
+
+
+def _skipped_reference_count(coverage: dict[str, Any] | None) -> int:
+    if not isinstance(coverage, dict):
+        return 0
+    checks = coverage.get("checks")
+    if not isinstance(checks, list):
+        return 0
+    total = 0
+    for check in checks:
+        if isinstance(check, dict):
+            total += max(0, _optional_int(check.get("skipped_references")) or 0)
+    return total
 
 
 def _target_path_for_payload(
