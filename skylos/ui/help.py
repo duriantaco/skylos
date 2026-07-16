@@ -132,7 +132,12 @@ COMMANDS = [
         ],
         "group": "Utility",
     },
-    {"name": "skylos doctor", "desc": "Check installation health", "group": "Utility"},
+    {
+        "name": "skylos doctor [--format text|json]",
+        "desc": "Check installation health and language-engine availability",
+        "details": ["--format text|json  Print human-readable or machine-readable health"],
+        "group": "Utility",
+    },
     {
         "name": "skylos clean [--dry-run|--apply]",
         "desc": "Preview or apply safe dead-code cleanup",

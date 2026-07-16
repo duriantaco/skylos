@@ -18,9 +18,15 @@ harder cases:
 - nested workspace manifests with dependency hallucinations below the scan root
 - clean dependency manifests for package/version precision
 - installed-package API member and keyword-argument hallucinations
+- local TypeScript named, default, type-only, namespace, re-export, and
+  CommonJS API-surface hallucinations, plus a clean precision control
 - diff-aware assertion weakening in tests
 - exact finding-count expectations to catch noisy over-reporting
 - a clean generated-code absence guard
+
+Every checked-in case carries an explicit `language` label. Benchmark JSON
+reports per-language case counts and language-label coverage under
+`metadata.languages`.
 
 Registry-dependent dependency cases seed Skylos' normal dependency-version cache
 inside a temporary fixture copy, so benchmark results do not depend on live npm

@@ -204,7 +204,7 @@ def test_cli_guardrail_doctor_dispatch_exits_zero(monkeypatch):
         cli.main()
 
     assert exc.value.code == 0
-    mock_doctor.assert_called_once_with()
+    mock_doctor.assert_called_once_with([])
 
 
 def test_cli_guardrail_init_dispatch_exits_zero(monkeypatch):
@@ -638,6 +638,10 @@ def test_doctor_command_reports_core_statuses(tmp_path):
         patch("skylos.commands.doctor_cmd._llm_available", return_value=True),
         patch("skylos.commands.doctor_cmd._interactive_available", return_value=True),
         patch(
+            "skylos.commands.doctor_cmd._go_engine_status",
+            return_value={"status": "available", "binary": "/bin/skylos-go"},
+        ),
+        patch(
             "skylos.commands.doctor_cmd.load_config", return_value={"exclude": ["venv"]}
         ),
         patch("skylos.commands.doctor_cmd.Path.cwd", return_value=repo),
@@ -657,10 +661,40 @@ def test_doctor_command_reports_core_statuses(tmp_path):
     )
     assert "Python 3.12.1" in printed
     assert "Skylos 9.9.9" in printed
+    assert "Go engine available" in printed
     assert "Cloud connected" in printed
     assert "pyproject.toml [tool.skylos] config found" in printed
     assert "GitHub Actions workflow found" in printed
     assert "community rule pack(s) installed" in printed
+
+
+def test_doctor_command_json_reports_unavailable_go_engine(capsys):
+    with (
+        patch("skylos.commands.doctor_cmd.skylos.__version__", "9.9.9"),
+        patch(
+            "skylos.commands.doctor_cmd.platform.python_version", return_value="3.12.1"
+        ),
+        patch("skylos.commands.doctor_cmd._rust_available", return_value=True),
+        patch("skylos.commands.doctor_cmd._llm_available", return_value=False),
+        patch("skylos.commands.doctor_cmd._interactive_available", return_value=True),
+        patch(
+            "skylos.commands.doctor_cmd._go_engine_status",
+            return_value={
+                "status": "unavailable",
+                "reason": "Go engine binary not found",
+                "configured_by": "discovery",
+            },
+        ),
+    ):
+        from skylos.commands.doctor_cmd import run_doctor_command
+
+        exit_code = run_doctor_command(["--format", "json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == "degraded"
+    assert payload["checks"]["go_engine"]["status"] == "unavailable"
+    assert payload["checks"]["go_engine"]["reason"] == "Go engine binary not found"
 
 
 def test_discover_command_json_output_prints_report(tmp_path):

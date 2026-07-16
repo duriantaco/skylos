@@ -302,7 +302,7 @@ use the `SKY-A` prefix.
 | A103 | HIGH | CI permission expansion | GitHub Actions |
 | A104 | MEDIUM | Public CLI surface drift | Diff-aware CLI |
 | A105 | HIGH | Contract route guard missing | Python contract verify |
-| L012 | CRITICAL | Phantom function call / hallucinated security function | Python |
+| L012 | CRITICAL | Phantom function, import, or module-member reference | Python, TS/JS |
 | L023 | CRITICAL | Phantom decorator | Python |
 | D222 | CRITICAL | Dependency hallucination | Python |
 | D224 | HIGH | API signature hallucination | Python |

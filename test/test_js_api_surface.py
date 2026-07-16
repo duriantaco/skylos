@@ -106,7 +106,9 @@ module.exports.more = () => true;
     assert len(surfaces) == 1
     surface = surfaces[0]
     assert surface["name"] == "legacy-lib"
-    assert surface["exports"] == ["legacy", "more", "named"]
+    assert surface["exports"] == ["default", "legacy", "more", "named"]
+    assert surface["members"]["default"]["kind"] == "commonjs"
+    assert surface["members"]["default"]["source"] == "commonjs_default_facade"
     assert surface["members"]["legacy"]["kind"] == "value"
     assert surface["members"]["named"]["kind"] == "function"
     assert surface["members"]["more"]["kind"] == "function"
@@ -189,7 +191,11 @@ function install() {
     surfaces = build_js_api_surfaces(repo)
 
     assert len(surfaces) == 1
-    assert surfaces[0]["exports"] == ["visible"]
+    assert surfaces[0]["exports"] == ["default", "visible"]
+    assert surfaces[0]["metadata"]["complete"] is False
+    assert surfaces[0]["metadata"]["incomplete_reasons"] == [
+        "conditional_commonjs_export"
+    ]
 
 
 def test_js_api_surface_local_named_exports_require_existing_binding(tmp_path):

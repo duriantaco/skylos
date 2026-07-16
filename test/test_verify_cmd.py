@@ -112,6 +112,26 @@ def test_run_verify_command_fails_on_findings_unless_disabled(capsys):
     assert no_fail_code == 0
 
 
+def test_run_verify_command_uses_distinct_incomplete_exit_code(capsys):
+    payload = {
+        "schema_version": 2,
+        "tool": "verify_change",
+        "status": "incomplete",
+        "target": {"path": ".", "file": None, "range": None},
+        "findings": [],
+        "summary": "Verification incomplete: 1 reference could not be proven",
+    }
+
+    exit_code = run_verify_command(
+        ["."],
+        verify_change_path_func=lambda *args, **kwargs: payload,
+        parse_exclude_folders_func=lambda **_kwargs: (),
+    )
+
+    assert exit_code == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "incomplete"
+
+
 def test_run_verify_command_reads_stdin_manifest(monkeypatch, capsys):
     seen = {}
 

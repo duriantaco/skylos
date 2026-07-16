@@ -233,6 +233,8 @@ def _exit_code(payload: dict[str, Any], *, no_fail: bool) -> int:
         return 0
     if payload.get("status") == "fail":
         return 1
+    if payload.get("status") == "incomplete":
+        return 2
     return 0
 
 

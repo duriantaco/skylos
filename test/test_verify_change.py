@@ -42,7 +42,7 @@ def test_build_verify_change_response_filters_to_ai_findings(tmp_path):
 
     payload = build_verify_change_response(result, project_root=tmp_path)
 
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["tool"] == "verify_change"
     assert payload["status"] == "fail"
     assert payload["summary"] == "1 AI-code issue found"
@@ -55,6 +55,35 @@ def test_build_verify_change_response_filters_to_ai_findings(tmp_path):
     assert finding["range"]["file"] == "app.py"
     assert finding["range"]["start_line"] == 2
     assert finding["suggested_fix"]
+
+
+def test_build_verify_change_response_marks_unproven_references_incomplete(tmp_path):
+    result = {
+        "analysis_summary": {
+            "ai_verification": {
+                "schema_version": 1,
+                "state": "incomplete",
+                "completed_checks": ["typescript_local_api_surface"],
+                "skipped_checks": [],
+                "checks": [
+                    {
+                        "id": "typescript_local_api_surface",
+                        "status": "completed",
+                        "outcome": "incomplete",
+                        "skipped_references": 2,
+                    }
+                ],
+            }
+        }
+    }
+
+    payload = build_verify_change_response(result, project_root=tmp_path)
+
+    assert payload["status"] == "incomplete"
+    assert payload["coverage"]["state"] == "incomplete"
+    assert payload["summary"] == (
+        "Verification incomplete: 2 references could not be proven"
+    )
 
 
 def test_build_verify_change_response_preserves_finding_metadata(tmp_path):
@@ -578,6 +607,117 @@ def test_verify_change_path_runs_existing_vibe_rules(tmp_path):
     assert payload["status"] == "fail"
     assert any(f["rule_id"] == "SKY-L012" for f in payload["findings"])
     assert all(f["range"]["start_line"] == 2 for f in payload["findings"])
+
+
+def test_verify_change_path_fails_on_missing_local_typescript_export(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "security.ts").write_text(
+        "export function verifyToken() { return true; }\n",
+        encoding="utf-8",
+    )
+    (repo / "app.ts").write_text(
+        'import { verifyTenant } from "./security";\nverifyTenant();\n',
+        encoding="utf-8",
+    )
+
+    payload = verify_change_path(repo)
+
+    assert payload["status"] == "fail"
+    finding = next(
+        finding
+        for finding in payload["findings"]
+        if finding["rule_id"] == "SKY-L012"
+    )
+    assert finding["range"]["file"] == "app.ts"
+    assert finding["metadata"]["language"] == "typescript"
+    assert finding["metadata"]["reference_kind"] == "named_import"
+    assert payload["coverage"]["state"] == "complete"
+
+
+def test_verify_change_path_passes_clean_local_typescript_surface(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "security.ts").write_text(
+        "export function verifyToken() { return true; }\n",
+        encoding="utf-8",
+    )
+    (repo / "app.ts").write_text(
+        'import { verifyToken } from "./security";\nverifyToken();\n',
+        encoding="utf-8",
+    )
+
+    payload = verify_change_path(repo)
+
+    assert payload["status"] == "pass"
+    check = payload["coverage"]["checks"][0]
+    assert check["id"] == "typescript_local_api_surface"
+    assert check["outcome"] == "pass"
+    assert check["verified_references"] == 1
+
+
+def test_verify_change_path_is_incomplete_for_unresolved_typescript_dependency(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.ts").write_text(
+        'import { useState } from "react";\nuseState();\n',
+        encoding="utf-8",
+    )
+
+    payload = verify_change_path(repo)
+
+    assert payload["status"] == "incomplete"
+    assert payload["findings"] == []
+    check = payload["coverage"]["checks"][0]
+    assert check["outcome"] == "incomplete"
+    assert check["reasons"] == [
+        {"code": "external_or_unresolved_module", "count": 1}
+    ]
+
+
+def test_verify_change_file_uses_declared_monorepo_root(tmp_path):
+    repo = tmp_path / "repo"
+    app = repo / "apps" / "web"
+    api = repo / "packages" / "api"
+    (app / "src").mkdir(parents=True)
+    (api / "src").mkdir(parents=True)
+    (repo / "package.json").write_text(
+        json.dumps({"name": "root", "workspaces": ["apps/*", "packages/*"]}),
+        encoding="utf-8",
+    )
+    (app / "package.json").write_text(
+        json.dumps({"name": "web", "private": True}),
+        encoding="utf-8",
+    )
+    (api / "package.json").write_text(
+        json.dumps({"name": "@acme/api", "exports": "./src/index.ts"}),
+        encoding="utf-8",
+    )
+    (api / "src" / "index.ts").write_text(
+        "export function existing() { return true; }\n",
+        encoding="utf-8",
+    )
+    app_file = app / "src" / "app.ts"
+    app_file.write_text(
+        'import { missing } from "@acme/api";\nmissing();\n',
+        encoding="utf-8",
+    )
+
+    payload = verify_change_path(
+        app_file,
+        include_dependency_hallucinations=False,
+    )
+
+    assert payload["status"] == "fail"
+    finding = next(
+        finding
+        for finding in payload["findings"]
+        if finding["rule_id"] == "SKY-L012"
+    )
+    assert finding["metadata"]["module_source"] == "@acme/api"
+    assert finding["metadata"]["member_name"] == "missing"
 
 
 def test_verify_change_path_accepts_injected_analyzer_result(tmp_path):

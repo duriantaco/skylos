@@ -1644,10 +1644,10 @@ def _run_whitelist_command(argv):
     return run_whitelist_command(argv)
 
 
-def _run_doctor_command(_argv):
+def _run_doctor_command(argv):
     from skylos.commands.doctor_cmd import run_doctor_command
 
-    return run_doctor_command()
+    return run_doctor_command(argv)
 
 
 def _run_whoami_command(_argv):

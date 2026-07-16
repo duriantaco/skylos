@@ -40,8 +40,10 @@ def collect_js_exports_from_file(
     visited: set[Path],
     *,
     depth: int,
+    diagnostics: set[str] | None = None,
 ) -> None:
     if depth > MAX_JS_API_REEXPORT_DEPTH:
+        _add_diagnostic(diagnostics, "reexport_depth_limit")
         return
     if file_path in visited:
         return
@@ -54,17 +56,22 @@ def collect_js_exports_from_file(
         errors="ignore",
     )
     if source_text is None:
+        _add_diagnostic(diagnostics, "source_unreadable")
         return
     source = source_text.encode("utf-8", "ignore")
     if is_minified_js_source(str(file_path), source):
+        _add_diagnostic(diagnostics, "minified_source")
         return
 
     core = TypeScriptCore(str(file_path), source)
     core.scan()
-    local_bindings = _module_scope_exportable_bindings(source, core.root_node)
-
-    if core.root_node is None:
+    if core.root_node is None or _has_blocking_parse_error(core):
+        _add_diagnostic(diagnostics, "parse_error")
         return
+    local_bindings = _module_scope_exportable_bindings(source, core.root_node)
+    if _has_conditional_commonjs_export(core, source):
+        _add_diagnostic(diagnostics, "conditional_commonjs_export")
+
     commonjs_exports_alias_valid = True
     ambiguous_star_exports: set[str] = set()
     for node in core.root_node.named_children:
@@ -79,9 +86,12 @@ def collect_js_exports_from_file(
                 depth,
                 local_bindings,
                 ambiguous_star_exports,
+                diagnostics,
             )
         assignment = _top_level_assignment_expression(node)
         if assignment is not None:
+            if not _commonjs_assignment_is_static(source, assignment):
+                _add_diagnostic(diagnostics, "dynamic_commonjs_export")
             commonjs_exports_alias_valid = _collect_commonjs_assignment(
                 root,
                 file_path,
@@ -90,6 +100,8 @@ def collect_js_exports_from_file(
                 members,
                 exports_alias_valid=commonjs_exports_alias_valid,
             )
+        elif _expression_may_mutate_commonjs_exports(source, node):
+            _add_diagnostic(diagnostics, "dynamic_commonjs_export")
 def _collect_export_statement(
     root: Path,
     file_path: Path,
@@ -100,6 +112,7 @@ def _collect_export_statement(
     depth: int,
     local_bindings: dict[str, str],
     ambiguous_star_exports: set[str],
+    diagnostics: set[str] | None,
 ) -> None:
     text = _node_text(source, node).strip()
     source_literal = _export_source_literal(source, node)
@@ -110,9 +123,19 @@ def _collect_export_statement(
 
     resolved = _resolved_reexport_source(root, file_path, source_literal)
     if source_literal is not None and resolved is None:
+        if source_literal.startswith("."):
+            _add_diagnostic(diagnostics, "unresolved_local_reexport")
+        else:
+            _add_diagnostic(diagnostics, "external_reexport")
         return
 
-    reexport_members = _reexport_members(root, resolved, visited, depth)
+    reexport_members = _reexport_members(
+        root,
+        resolved,
+        visited,
+        depth,
+        diagnostics,
+    )
     if _collect_namespace_reexport(
         root,
         file_path,
@@ -230,10 +253,17 @@ def _reexport_members(
     resolved: Path | None,
     visited: set[Path],
     depth: int,
+    diagnostics: set[str] | None,
 ) -> dict[str, dict[str, Any]]:
     if resolved is None:
         return {}
-    return _collect_resolved_reexport_members(root, resolved, visited, depth)
+    return _collect_resolved_reexport_members(
+        root,
+        resolved,
+        visited,
+        depth,
+        diagnostics,
+    )
 
 
 def _collect_namespace_reexport(
@@ -368,6 +398,7 @@ def _collect_resolved_reexport_members(
     resolved: Path,
     visited: set[Path],
     depth: int,
+    diagnostics: set[str] | None,
 ) -> dict[str, dict[str, Any]]:
     members: dict[str, dict[str, Any]] = {}
     collect_js_exports_from_file(
@@ -376,8 +407,60 @@ def _collect_resolved_reexport_members(
         members,
         set(visited),
         depth=depth + 1,
+        diagnostics=diagnostics,
     )
     return members
+
+
+def _commonjs_assignment_is_static(source: bytes, node: Any) -> bool:
+    left = node.child_by_field_name("left")
+    right = node.child_by_field_name("right")
+    if left is None:
+        return True
+
+    chain = _member_chain(source, left)
+    if len(chain) >= 3 and chain[:2] == ["module", "exports"]:
+        return True
+    if len(chain) == 2 and chain[0] == "exports":
+        return True
+    if chain == ["module", "exports"]:
+        return right is not None and right.type == "object"
+    if "exports" not in _node_text(source, left):
+        return True
+    return False
+
+
+def _expression_may_mutate_commonjs_exports(source: bytes, node: Any) -> bool:
+    if node.type != "expression_statement":
+        return False
+    text = _node_text(source, node)
+    if "exports" not in text:
+        return False
+    return "Object.assign" in text or "Object.defineProperty" in text
+
+
+def _has_blocking_parse_error(core: TypeScriptCore) -> bool:
+    if core.root_node is None or not core.root_node.has_error:
+        return False
+    for node in core._iter_nodes(core.root_node):
+        if not node.is_error and not node.is_missing:
+            continue
+        parent = node.parent
+        if (
+            node.type == "ERROR"
+            and core._get_text(node) == "type"
+            and parent is not None
+            and parent.type == "export_statement"
+            and core._get_text(parent).lstrip().startswith("export type *")
+        ):
+            continue
+        return True
+    return False
+
+
+def _add_diagnostic(diagnostics: set[str] | None, reason: str) -> None:
+    if diagnostics is not None:
+        diagnostics.add(reason)
 def _collect_commonjs_assignment(
     root: Path,
     file_path: Path,
@@ -394,6 +477,15 @@ def _collect_commonjs_assignment(
 
     chain = _member_chain(source, left)
     if len(chain) >= 2 and chain[:2] == ["module", "exports"]:
+        _add_export_member(
+            root,
+            members,
+            "default",
+            "commonjs",
+            file_path,
+            _node_line(node),
+            source="commonjs_default_facade",
+        )
         if len(chain) == 2:
             _remove_commonjs_members(members)
             for name, kind in _object_export_members(source, right):
@@ -422,6 +514,15 @@ def _collect_commonjs_assignment(
         _add_export_member(
             root,
             members,
+            "default",
+            "commonjs",
+            file_path,
+            _node_line(node),
+            source="commonjs_default_facade",
+        )
+        _add_export_member(
+            root,
+            members,
             chain[1],
             _value_kind(right),
             file_path,
@@ -441,6 +542,57 @@ def _top_level_assignment_expression(node: Any) -> Any | None:
         if child.type == "assignment_expression":
             return child
     return None
+
+
+def _has_conditional_commonjs_export(core: TypeScriptCore, source: bytes) -> bool:
+    if core.root_node is None:
+        return False
+    for node in core._iter_nodes(core.root_node):
+        if node.type == "assignment_expression":
+            left = node.child_by_field_name("left")
+            if (
+                left is not None
+                and _targets_commonjs_exports(source, left)
+                and not _is_top_level_expression(node)
+            ):
+                return True
+        if (
+            node.type == "call_expression"
+            and _call_mutates_commonjs_exports(source, node)
+            and not _is_top_level_expression(node)
+        ):
+            return True
+    return False
+
+
+def _targets_commonjs_exports(source: bytes, node: Any) -> bool:
+    chain = _member_chain(source, node)
+    if len(chain) >= 2 and chain[:2] == ["module", "exports"]:
+        return True
+    return bool(chain) and chain[0] == "exports"
+
+
+def _call_mutates_commonjs_exports(source: bytes, node: Any) -> bool:
+    function = node.child_by_field_name("function")
+    if function is None or _node_text(source, function) not in {
+        "Object.assign",
+        "Object.defineProperty",
+    }:
+        return False
+    arguments = node.child_by_field_name("arguments")
+    if arguments is None or not arguments.named_children:
+        return False
+    return _targets_commonjs_exports(source, arguments.named_children[0])
+
+
+def _is_top_level_expression(node: Any) -> bool:
+    parent = node.parent
+    if parent is None or parent.type != "expression_statement":
+        return False
+    grandparent = parent.parent
+    return grandparent is not None and grandparent.type == "program"
+
+
 def _resolve_relative_source(root: Path, base_dir: Path, source: str) -> Path | None:
     if not source.startswith("."):
         return None
