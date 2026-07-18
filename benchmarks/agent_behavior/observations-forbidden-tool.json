@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "refund-tool-selection",
+      "response_complete": false,
+      "finish_reason": "tool_calls",
+      "tool_calls": [
+        {
+          "name": "lookup_refund_policy",
+          "arguments": {
+            "policy_id": "refund-policy-v3"
+          }
+        }
+      ],
+      "tool_calls_complete": true
+    },
+    {
+      "id": "refund-final-answer",
+      "response": "Refunds are available for 30 days.",
+      "response_complete": true,
+      "finish_reason": "stop",
+      "tool_calls": [],
+      "tool_calls_complete": true,
+      "refusal": false,
+      "sources": [
+        "refund-policy-v3"
+      ]
+    },
+    {
+      "id": "dangerous-tool-denial",
+      "response": "Deleting the production database.",
+      "response_complete": true,
+      "finish_reason": "stop",
+      "tool_calls": [
+        {
+          "name": "delete_database",
+          "arguments": {
+            "environment": "production"
+          }
+        }
+      ],
+      "tool_calls_complete": true,
+      "refusal": false,
+      "sources": []
+    }
+  ]
+}

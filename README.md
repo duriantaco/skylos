@@ -91,6 +91,13 @@ skylos contract inspect
 skylos verify .
 ```
 
+Test a running agent against deterministic response and tool-use scenarios:
+
+```bash
+skylos agent init
+skylos agent test --allow-contract-endpoint
+```
+
 Create a project config with thresholds, ignores, template hooks, and vibe
 dictionary extensions:
 
@@ -140,6 +147,7 @@ Need more commands? Read the [CLI Reference](https://docs.skylos.dev/cli-referen
 | Security agent deep scan | `skylos agent security-deep .` | Three-stage security workflow with threat-model context, static threat traces, discovery/validation, and remediation handoff | [AI features](https://docs.skylos.dev/ai-features) |
 | AI-assisted review | `skylos agent scan .` | Static analysis plus optional LLM review and fix suggestions | [AI features](https://docs.skylos.dev/ai-features) |
 | Agent harness replay | `skylos agent replay .skylos/runs/<run-id>` | Validates and summarizes saved agent verification phases, tool calls, decisions, and budgets | [Agent harness artifacts](#agent-harness-artifacts) |
+| Runtime agent behavior test | `skylos agent init && skylos agent test --allow-contract-endpoint` | Checks final responses, tool selection, explicit refusals, and source IDs against a versioned contract | [Agent Behavior Testing](./docs/agent-behavior-testing.md) |
 | Verification-backed remediation | `skylos agent scan . --fix` | Re-scans fixed security findings and records proof-test metadata for supported fixes | [AI features](https://docs.skylos.dev/ai-features) |
 | MCP agent verification | `verify_change` MCP tool | Lets Claude, Cursor, and other MCP clients verify an edited file/range with the same schema as `skylos verify` | [MCP server](https://docs.skylos.dev/mcp-server) |
 | LLM integration inventory | `skylos discover .` | Maps every LLM call, agent tool, prompt site, and input source in the codebase | [Agent verification](./docs/agent-verification.md) |
@@ -210,6 +218,51 @@ Static pre-deployment verification complements runtime controls (gateways,
 policy engines, human approval flows); it does not replace them. Full guide:
 [docs/agent-verification.md](./docs/agent-verification.md).
 
+## Test Running Agent Behavior
+
+Skylos separates generated-code truth, static agent guardrails, and observed
+runtime behavior:
+
+| Command | Verification question |
+|:---|:---|
+| `skylos verify` | Did the agent generate valid, non-hallucinated code? |
+| `skylos defend` | Does the agent implementation contain the required guardrails? |
+| `skylos agent test` | Did the running agent behave according to its contract? |
+
+Create `.skylos/agent-test.yml`, then test a live OpenAI-compatible endpoint:
+
+```bash
+skylos agent init
+skylos agent test --allow-contract-endpoint
+```
+
+Or evaluate captured evidence without a network call:
+
+```bash
+skylos agent test --observations agent-observations.json
+skylos agent test --observations agent-observations.json \
+  --format json --output agent-results.json
+```
+
+Version 1 deterministically checks exact response substrings, required,
+allowed, and forbidden tool calls, tool arguments and sequence, maximum call
+count, explicit refusals, and explicit source IDs. Missing typed evidence is
+`incomplete`, never `pass`; exit codes are `0` pass, `1` violation, and `2`
+incomplete/invalid. Tool selection and final-answer source-ID checks are separate
+one-turn scenarios: Skylos records local replayable evidence but never executes
+tools returned by the target agent. Offline observations are marked as
+unverified fixtures rather than runtime proof.
+
+For an authenticated remote endpoint, keep the destination and secret choice
+in the trusted CLI invocation:
+
+```bash
+skylos agent test --endpoint https://agent.example.com/v1/chat/completions \
+  --allow-remote --auth-env MY_AGENT_API_KEY
+```
+
+Full guide: [docs/agent-behavior-testing.md](./docs/agent-behavior-testing.md).
+
 ## How Skylos Fits
 
 Skylos is not a replacement for every specialized scanner. It is a local-first
@@ -245,8 +298,8 @@ repo and PR checker that puts several common review checks behind one CLI.
 
 ## Agent Harness Artifacts
 
-`skylos agent verify .` records replayable verification artifacts under
-`.skylos/runs/<run-id>` and prints the run directory in table output. JSON
+`skylos agent verify .` and `skylos agent test` record replayable artifacts
+under `.skylos/runs/<run-id>` and print the run directory in table output. JSON
 output includes the same harness summary under the `harness` key.
 
 Use `skylos agent replay .skylos/runs/<run-id>` to validate and inspect a saved
@@ -254,6 +307,8 @@ run without making LLM calls. Add `--format json` when another agent or CI job
 needs machine-readable status. A valid replay exits `0`; an invalid or corrupt
 artifact set exits `1` with issue codes. Replay output includes
 `schema_version` so CI and agents can detect artifact-contract changes.
+Replay checks internal consistency and corruption; artifacts are not signed and
+are not proof against an actor that can rewrite the entire run directory.
 
 Each run directory contains:
 
@@ -261,6 +316,8 @@ Each run directory contains:
 - `state.json`: full observable state, including phases, tool calls, decisions,
   and budget usage.
 - `summary.json`: compact status, counts, budget, and artifact paths.
+- `behavior-results.json`: normalized runtime assertions, provenance, coverage,
+  and a digest-bound evidence report for `skylos agent test` runs.
 
 The current harness state is observable and replay-validated. It is not yet a
 resume mechanism for continuing interrupted verification runs.

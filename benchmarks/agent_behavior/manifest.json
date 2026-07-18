@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "contract-pass",
+      "contract": "contract.yml",
+      "observations": "observations-pass.json",
+      "expected_status": "pass"
+    },
+    {
+      "id": "forbidden-tool-violation",
+      "contract": "contract.yml",
+      "observations": "observations-forbidden-tool.json",
+      "expected_status": "fail"
+    },
+    {
+      "id": "missing-typed-evidence",
+      "contract": "contract.yml",
+      "observations": "observations-incomplete.json",
+      "expected_status": "incomplete"
+    }
+  ]
+}

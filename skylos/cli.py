@@ -2928,6 +2928,10 @@ def _build_agent_parser():
 
     add_agent_replay_parser(agent_sub)
 
+    from skylos.commands.agent_test_cmd import add_agent_test_parsers
+
+    add_agent_test_parsers(agent_sub)
+
     p_watch = agent_sub.add_parser(
         "watch",
         help="Continuously maintain active-agent state for a repository",
@@ -3103,6 +3107,16 @@ def main() -> None:
             from skylos.commands.agent_replay_cmd import run_agent_replay_command
 
             sys.exit(run_agent_replay_command(agent_args, console))
+
+        if cmd == "init":
+            from skylos.commands.agent_test_cmd import run_agent_behavior_init
+
+            sys.exit(run_agent_behavior_init(agent_args, console))
+
+        if cmd == "test":
+            from skylos.commands.agent_test_cmd import run_agent_behavior_test
+
+            sys.exit(run_agent_behavior_test(agent_args, console))
 
         if cmd in {"watch", "pre-commit", "triage", "status", "serve"}:
             from skylos.agents.center import (

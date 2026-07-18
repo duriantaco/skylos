@@ -227,3 +227,7 @@ semantic failures (an agent doing an allowed-but-wrong action), or replace
 runtime controls. Pair pre-deployment verification with runtime measures
 (gateways, policy engines, human approval for high-stakes actions) — the two
 layers catch different failure classes.
+
+Use [Agent Behavior Testing](./agent-behavior-testing.md) to check a running
+agent's final responses, selected tools, explicit refusals, and source evidence
+against a checked-in contract.

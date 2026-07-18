@@ -30,5 +30,7 @@ node_modules
 .mcpregistry_github_token
 .mcpregistry_registry_token
 /PR_LOG.md
-/manual/
+/manual/*
+!/manual/agent_behavior/
+!/manual/agent_behavior/**
 /kiv/

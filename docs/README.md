@@ -9,6 +9,7 @@ This repository keeps lightweight local docs for features that need examples clo
 | Deterministic AI-code verification coverage and language support | [AI Code Verification](./ai-code-verification.md) |
 | Local contracts for verifying AI-written code | [AI Hallucination Contracts](./ai-hallucination-contracts.md) |
 | Pre-deployment agent verification, evidence reports, and attestation | [Agent Verification](./agent-verification.md) |
+| Runtime agent behavior contracts and deterministic scenario testing | [Agent Behavior Testing](./agent-behavior-testing.md) |
 | Rule ID prefixes and product terminology | [Rule Dictionary](../dictionary.md) |
 
 When GitHub Pages is enabled with the repository's `Repo map pages` workflow,

@@ -207,6 +207,16 @@ class HarnessRunner:
                 self.run.summary_path = None
             self._persist_state()
 
+    def enforce_budget(self) -> None:
+        enforce_elapsed_budget(self._started_monotonic, self.run.budget)
+
+    def remaining_seconds(self) -> float | None:
+        maximum = self.run.budget.max_seconds
+        if maximum is None:
+            return None
+        elapsed = time.monotonic() - self._started_monotonic
+        return max(0.0, maximum - elapsed)
+
     @staticmethod
     def _generate_run_id() -> str:
         timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -293,10 +303,7 @@ class HarnessRunner:
         ):
             self.update_usage(llm_calls=llm_calls, persist=False, live=False)
         fixes = summary.get("fixes")
-        if (
-            isinstance(fixes, int | float)
-            and "fixes" not in self._live_usage_keys
-        ):
+        if isinstance(fixes, int | float) and "fixes" not in self._live_usage_keys:
             self.update_usage(fixes=fixes, persist=False, live=False)
 
     def record_decision(
@@ -306,6 +313,7 @@ class HarnessRunner:
         code: str,
         target: dict[str, Any],
         details: dict[str, Any] | None = None,
+        persist: bool = True,
     ) -> None:
         self.run.decisions.append(
             HarnessDecision(
@@ -315,7 +323,8 @@ class HarnessRunner:
                 details=dict(details or {}),
             )
         )
-        self._persist_state()
+        if persist:
+            self._persist_state()
 
     def _set_artifact_paths(self) -> None:
         if self._trace_root is None:
