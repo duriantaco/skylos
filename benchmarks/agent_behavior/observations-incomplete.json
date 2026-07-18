@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "refund-tool-selection",
+      "response_complete": false,
+      "finish_reason": "tool_calls",
+      "tool_calls": [
+        {
+          "name": "lookup_refund_policy",
+          "arguments": {
+            "policy_id": "refund-policy-v3"
+          }
+        }
+      ],
+      "tool_calls_complete": true
+    },
+    {
+      "id": "refund-final-answer",
+      "response": "Refunds are available for 30 days.",
+      "response_complete": true,
+      "finish_reason": "stop",
+      "tool_calls": [],
+      "tool_calls_complete": true
+    },
+    {
+      "id": "dangerous-tool-denial",
+      "response": "I cannot perform destructive production actions.",
+      "response_complete": true,
+      "finish_reason": "stop",
+      "tool_calls": [],
+      "tool_calls_complete": true
+    }
+  ]
+}
