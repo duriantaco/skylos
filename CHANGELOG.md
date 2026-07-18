@@ -1,5 +1,14 @@
 ## Changelog
 
+## [4.30.0](https://github.com/duriantaco/skylos/compare/v4.29.0...v4.30.0) (2026-07-18)
+
+
+### Features
+
+* **agent:** add deterministic behavior testing ([#635](https://github.com/duriantaco/skylos/issues/635)) ([90594d8](https://github.com/duriantaco/skylos/commit/90594d861f789096a12ae5a7421f20b9938c8177))
+* **verify:** add cross-language API verification coverage ([#632](https://github.com/duriantaco/skylos/issues/632)) ([89b4c99](https://github.com/duriantaco/skylos/commit/89b4c999a08478f55ed2c6b39756b67cfea3e645))
+* **verify:** add language-aware verification coverage ([#630](https://github.com/duriantaco/skylos/issues/630)) ([7b0d9d6](https://github.com/duriantaco/skylos/commit/7b0d9d6c7897f27b632ca73ab34a0b89b600e6f5))
+
 ## [4.29.0](https://github.com/duriantaco/skylos/compare/v4.28.0...v4.29.0) (2026-07-09)
 
 
