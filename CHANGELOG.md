@@ -1,5 +1,12 @@
 ## Changelog
 
+## [4.31.0](https://github.com/duriantaco/skylos/compare/v4.30.0...v4.31.0) (2026-07-22)
+
+
+### Features
+
+* **audit:** add deep audit investigator ([#637](https://github.com/duriantaco/skylos/issues/637)) ([967de71](https://github.com/duriantaco/skylos/commit/967de71d26240e4073dfaffa939a51dee18acfa6))
+
 ## [4.30.0](https://github.com/duriantaco/skylos/compare/v4.29.0...v4.30.0) (2026-07-18)
 
 
