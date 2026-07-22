@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "cross-tenant-refund-vulnerable",
+      "fixture": "fixtures/cross_tenant_refund/vulnerable",
+      "entry_file": "api.py",
+      "candidates": [],
+      "expect": {
+        "status": "complete",
+        "finding_count": {"min": 1, "max": 2},
+        "min_tool_calls": 2,
+        "min_llm_calls": 3,
+        "required_rule_ids": ["SKY-AUDIT-LOGIC"],
+        "required_categories": ["authorization_scope"],
+        "required_symbols": ["refund_endpoint"],
+        "required_primary_files": ["api.py"],
+        "required_visited_files": [
+          "api.py",
+          "refunds/service.py",
+          "refunds/policy.py"
+        ],
+        "required_evidence_files": ["api.py", "refunds/policy.py"],
+        "forbidden_evidence_files": ["archive/policy.py"]
+      }
+    },
+    {
+      "id": "cross-tenant-refund-safe",
+      "fixture": "fixtures/cross_tenant_refund/safe",
+      "entry_file": "api.py",
+      "candidates": [],
+      "expect": {
+        "status": "complete",
+        "finding_count": {"exact": 0},
+        "min_tool_calls": 2,
+        "min_llm_calls": 3,
+        "required_visited_files": [
+          "api.py",
+          "refunds/service.py",
+          "refunds/policy.py"
+        ],
+        "required_clean_evidence_files": [
+          "api.py",
+          "refunds/service.py",
+          "refunds/policy.py"
+        ],
+        "forbidden_clean_evidence_files": ["archive/policy.py"]
+      }
+    }
+  ]
+}

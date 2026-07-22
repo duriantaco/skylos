@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
-from skylos.audit.processor import process_deep_audit_records
+from skylos.audit.processor import (
+    DEEP_AUDIT_ANALYSIS_VERSION,
+    process_deep_audit_records,
+)
 from skylos.audit.redaction import REDACTION
 from skylos.audit.store import AuditStore
 from skylos.audit.types import AuditCandidate, sha256_file
@@ -76,6 +80,59 @@ class ExplodingAnalyzer:
         return self.agent
 
 
+class RepositoryInvestigatorAgent:
+    def __init__(self, *, related_file: str | None = None):
+        self.related_file = related_file
+        self.calls: list[dict] = []
+        self.findings: list[dict] = []
+
+    def investigate(
+        self,
+        source,
+        file_path,
+        *,
+        context,
+        candidates,
+        tools,
+        run_id,
+    ):
+        if self.related_file:
+            tools.execute("read_file", {"path": self.related_file})
+        self.calls.append(
+            {
+                "source": source,
+                "file_path": file_path,
+                "context": context,
+                "candidate_count": len(candidates),
+                "run_id": run_id,
+            }
+        )
+        return SimpleNamespace(
+            findings=list(self.findings),
+            status="complete",
+            metadata={
+                "protocol_version": "test-investigator-v1",
+                **tools.metadata(),
+            },
+        )
+
+
+class RepositoryInvestigatorAnalyzer:
+    def __init__(self, *, related_file: str | None = None):
+        self.agent = RepositoryInvestigatorAgent(related_file=related_file)
+
+    def _get_agent(self, agent_type):
+        return self.agent
+
+
+class StaticContextBuilder:
+    def __init__(self, context: str):
+        self.context = context
+
+    def build_analysis_context(self, source, **kwargs):
+        return self.context
+
+
 def _candidate(
     candidate_id: str,
     *,
@@ -143,7 +200,7 @@ def _write_record(
         file_path=file_path,
         file_hash=sha256_file(file_path),
         language=language,
-        candidates=candidates or [_candidate("cand")],
+        candidates=(candidates if candidates is not None else [_candidate("cand")]),
         config_hash="cfg",
     )
     if status:
@@ -167,6 +224,7 @@ def _mark_analyzed_for_context(
             "run_id": "prior-run",
             "model": model,
             "provider": provider,
+            "analysis_version": DEEP_AUDIT_ANALYSIS_VERSION,
         }
     )
     store.write_file_record(record)
@@ -656,3 +714,380 @@ def test_process_deep_audit_records_merges_duplicate_findings(tmp_path: Path):
     record = store.read_file_record(app)
     assert record is not None
     assert len(record.findings) == 1
+
+
+def test_repository_investigator_processes_polyglot_records(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.ts"
+    app.write_text(
+        "export function updateOrder(order: Order) { order.status = 'done'; }\n",
+        encoding="utf-8",
+    )
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app, language="typescript")
+    analyzer = RepositoryInvestigatorAnalyzer()
+
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-polyglot",
+    )
+
+    record = store.read_file_record(app)
+    assert summary.processed_files == 1
+    assert summary.unsupported_files == 0
+    assert analyzer.agent.calls[0]["file_path"] == "app.ts"
+    assert record is not None
+    assert record.status == "analyzed"
+    assert record.analysis_history[-1]["protocol_version"] == "test-investigator-v1"
+    assert record.analysis_history[-1]["tool_schema_version"] == "audit-read-tools-v2"
+
+
+def test_repository_investigator_reviews_files_without_static_candidates(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "workflow.py"
+    app.write_text(
+        "def complete(order):\n    order.status = 'complete'\n",
+        encoding="utf-8",
+    )
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app, candidates=[])
+    analyzer = RepositoryInvestigatorAnalyzer()
+
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-holistic",
+    )
+
+    assert summary.considered_files == 1
+    assert summary.processed_files == 1
+    assert analyzer.agent.calls[0]["candidate_count"] == 0
+    assert store.read_file_record(app).status == "analyzed"
+
+
+def test_repository_investigator_replaces_stale_findings_after_clean_rerun(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "workflow.py"
+    app.write_text("def complete(order):\n    return order\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    record = _write_record(store, app)
+    record.findings = [
+        {
+            "audit_finding_id": "finding-old",
+            "rule_id": "SKY-AUDIT-LOGIC",
+            "message": "stale finding",
+        }
+    ]
+    store.write_file_record(record)
+
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=RepositoryInvestigatorAnalyzer(),
+        model="test-model",
+        run_id="run-clean-generation",
+    )
+
+    updated = store.read_file_record(app)
+    assert summary.processed_files == 1
+    assert updated is not None
+    assert updated.findings == []
+    assert updated.analysis_history[-1]["replaced_findings_count"] == 1
+
+
+def test_related_file_hash_change_invalidates_analyzed_context(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "routes.py"
+    policy = repo / "policy.py"
+    app.write_text(
+        "from policy import authorize\ndef update(user):\n    return authorize(user)\n",
+        encoding="utf-8",
+    )
+    policy.write_text(
+        "def authorize(user):\n    return user.is_authenticated\n",
+        encoding="utf-8",
+    )
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app)
+    analyzer = RepositoryInvestigatorAnalyzer(related_file="policy.py")
+
+    first = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-related-first",
+    )
+    unchanged = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-related-unchanged",
+    )
+    policy.write_text(
+        "def authorize(user):\n    return user.is_authenticated and user.active\n",
+        encoding="utf-8",
+    )
+    changed = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-related-changed",
+    )
+
+    assert first.processed_files == 1
+    assert unchanged.processed_files == 0
+    assert changed.processed_files == 1
+    assert len(analyzer.agent.calls) == 2
+
+
+def test_entry_file_change_after_scan_is_not_analyzed(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text("def handler():\n    return True\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app)
+    app.write_text("def handler():\n    return False\n", encoding="utf-8")
+    analyzer = RepositoryInvestigatorAnalyzer()
+
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-stale-entry",
+    )
+
+    record = store.read_file_record(app)
+    assert summary.error_files == 1
+    assert analyzer.agent.calls == []
+    assert record is not None
+    assert record.status == "error"
+    assert "source changed after candidate discovery" in str(record.analysis_history)
+
+
+def test_entry_freshness_hash_preserves_crlf_bytes(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_bytes(b"def handler():\r\n    return True\r\n")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app)
+    analyzer = RepositoryInvestigatorAnalyzer()
+
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-crlf-entry",
+    )
+
+    assert summary.processed_files == 1
+    assert "\r\n" in analyzer.agent.calls[0]["source"]
+
+
+def test_repository_investigator_redacts_precomputed_context(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text("def handler():\n    return True\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app)
+    raw_secret = _fake_github_token()
+    analyzer = RepositoryInvestigatorAnalyzer()
+    analyzer.context_builder = StaticContextBuilder(f"deployment token: {raw_secret}")
+
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-redacted-context",
+    )
+
+    assert summary.processed_files == 1
+    context = analyzer.agent.calls[0]["context"]
+    assert raw_secret not in context
+    assert REDACTION in context
+
+
+def test_repository_investigator_honors_persisted_scan_excludes(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    excluded = repo / "private.py"
+    app.write_text("def handler():\n    return True\n", encoding="utf-8")
+    excluded.write_text("def internal_policy():\n    return True\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg", exclude_paths=[excluded])
+    _write_record(store, app)
+    analyzer = RepositoryInvestigatorAnalyzer(related_file="private.py")
+
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-excluded-context",
+    )
+
+    assert summary.error_files == 1
+    assert analyzer.agent.calls == []
+    assert store.read_file_record(app).status == "error"
+
+
+def test_related_hash_metadata_survives_sensitive_looking_path_names(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    auth_dir = repo / "auth"
+    auth_dir.mkdir(parents=True)
+    app = repo / "app.py"
+    policy = auth_dir / "policy.py"
+    app.write_text("def handler():\n    return True\n", encoding="utf-8")
+    policy.write_text("def authorize():\n    return True\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app)
+    analyzer = RepositoryInvestigatorAnalyzer(related_file="auth/policy.py")
+
+    first = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-auth-path-first",
+    )
+    second = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-auth-path-second",
+    )
+
+    record = store.read_file_record(app)
+    related = record.analysis_history[-1]["related_files"]
+    policy_item = next(item for item in related if item["path"] == "auth/policy.py")
+    assert first.processed_files == 1
+    assert second.processed_files == 0
+    assert len(policy_item["sha256"]) == 64
+    assert policy_item["sha256"] != REDACTION
+
+
+def test_new_repository_file_invalidates_cached_clean_investigation(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text("def handler():\n    return True\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app)
+    analyzer = RepositoryInvestigatorAnalyzer()
+
+    first = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-catalog-first",
+    )
+    (repo / "middleware.py").write_text(
+        "def authorize(request):\n    return request.user is not None\n",
+        encoding="utf-8",
+    )
+    second = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-catalog-changed",
+    )
+
+    assert first.processed_files == 1
+    assert second.processed_files == 1
+    assert len(analyzer.agent.calls) == 2
+
+
+def test_no_candidate_investigation_error_remains_unresolved(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "app.py"
+    app.write_text("def handler():\n    return True\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app, candidates=[])
+    analyzer = RepositoryInvestigatorAnalyzer(related_file="missing.py")
+
+    summary = process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-no-candidate-error",
+    )
+
+    assert summary.error_files == 1
+    assert summary.remaining_pending_files == 1
+    assert summary.complete is False
+
+
+def test_distinct_logic_flaws_at_same_location_get_distinct_ids(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    app = repo / "workflow.py"
+    app.write_text("def update(order):\n    order.status = 'done'\n", encoding="utf-8")
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+    _write_record(store, app)
+    analyzer = RepositoryInvestigatorAnalyzer()
+    base = {
+        "rule_id": "SKY-AUDIT-LOGIC",
+        "issue_type": "bug",
+        "severity": "high",
+        "message": "logic flaw",
+        "location": {"file": "workflow.py", "line": 2},
+        "confidence": "high",
+        "metadata": {
+            "investigation_evidence": {
+                "category": "state_transition",
+                "actor": "caller",
+                "action": "update",
+                "resource": "order",
+                "trigger": "request",
+                "actual_behavior": "state changes",
+                "impact": "invalid state",
+            }
+        },
+    }
+    first = {**base, "metadata": {"investigation_evidence": {
+        **base["metadata"]["investigation_evidence"],
+        "invariant": "paid orders only",
+    }}}
+    second = {**base, "metadata": {"investigation_evidence": {
+        **base["metadata"]["investigation_evidence"],
+        "invariant": "unshipped orders only",
+    }}}
+    analyzer.agent.findings = [first, second]
+
+    process_deep_audit_records(
+        store=store,
+        analyzer=analyzer,
+        model="test-model",
+        run_id="run-distinct-logic-ids",
+    )
+
+    findings = store.read_file_record(app).findings
+    assert len(findings) == 2
+    assert len({finding["audit_finding_id"] for finding in findings}) == 2

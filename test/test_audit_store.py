@@ -57,6 +57,22 @@ def test_audit_store_writes_and_reads_file_record(tmp_path: Path):
     assert store.record_path("app.py").exists()
 
 
+def test_audit_store_persists_scan_exclusion_scope(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = AuditStore(repo)
+
+    store.init_project(
+        config_hash="cfg",
+        exclude_folders=["private", "generated/**"],
+        exclude_paths=[repo / "sensitive.py", "artifacts"],
+    )
+
+    exclude_folders, exclude_paths = store.read_scan_excludes()
+    assert exclude_folders == ("generated/**", "private")
+    assert exclude_paths == ("artifacts", "sensitive.py")
+
+
 def test_audit_store_rerun_deduplicates_candidates(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()

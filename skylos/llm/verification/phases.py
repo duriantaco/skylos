@@ -5,7 +5,7 @@ import os
 from typing import Any
 
 from skylos.llm.dead_code_verifier import Verdict, _parse_confidence
-from skylos.llm.verify_llm import HAIKU_PREFILTER_MAX_BATCH
+from skylos.llm.verification.llm import HAIKU_PREFILTER_MAX_BATCH
 
 from .candidate_selection import run_candidate_selection_phase
 from .runtime import VerificationOps, VerificationRuntime

@@ -1,10 +1,12 @@
+"""Prompts, calls, and response parsing for dead-code verification."""
+
 from __future__ import annotations
 
 import json
 import logging
 import time
 
-from .dead_code_verifier import DeadCodeVerifierAgent, Verdict
+from ..dead_code_verifier import DeadCodeVerifierAgent, Verdict
 
 logger = logging.getLogger(__name__)
 

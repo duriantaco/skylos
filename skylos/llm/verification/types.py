@@ -1,8 +1,10 @@
+"""Shared data types and modes for dead-code verification."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .dead_code_verifier import Verdict
+from ..dead_code_verifier import Verdict
 
 
 VERIFICATION_MODE_PRODUCTION = "production"

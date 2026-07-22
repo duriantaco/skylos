@@ -1,3 +1,5 @@
+"""Second-pass checks for definitions that survive initial verification."""
+
 from __future__ import annotations
 
 import json
@@ -6,8 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .dead_code_verifier import DeadCodeVerifierAgent, Verdict
-from .verify_llm import (
+from ..dead_code_verifier import DeadCodeVerifierAgent, Verdict
+from .llm import (
     BATCH_SURVIVOR_SYSTEM,
     MAX_BATCH_CONTEXT_CHARS,
     SURVIVOR_SYSTEM,
@@ -15,7 +17,7 @@ from .verify_llm import (
     _call_llm_with_retry,
     _parse_batch_survivor_response,
 )
-from .verify_types import SurvivorVerdict
+from .types import SurvivorVerdict
 from skylos.core.grep_verify import _run_grep
 
 logger = logging.getLogger(__name__)
@@ -32,100 +34,131 @@ def _batch_challenge_survivors(
     batch_contexts = []
     batch_size = 0
 
-    def _flush_batch():
-        nonlocal batch, batch_contexts, batch_size
-        if not batch:
-            return
-
-        combined = "\n\n---\n\n".join(
-            f"### Function {i + 1}: `{s.get('full_name', s.get('name'))}`\n{ctx}"
-            for i, (s, ctx) in enumerate(zip(batch, batch_contexts))
-        )
-        user_prompt = (
-            f"{combined}\n\nAssess all {len(batch)} functions above. "
-            f"Are their heuristic matches real or spurious? JSON array response:"
-        )
-
-        verdicts = _parse_batch_survivor_response(
-            agent, BATCH_SURVIVOR_SYSTEM, user_prompt, len(batch)
-        )
-
-        for surv, v_data in zip(batch, verdicts):
-            name = surv.get("name", "unknown")
-            full_name = surv.get("full_name", name)
-            confidence = surv.get("confidence", 0)
-            is_dead = v_data.get("is_dead", False)
-            rationale = v_data.get("rationale", "")
-            assessment = v_data.get("heuristic_assessment", "uncertain")
-
-            if is_dead:
-                verdict = Verdict.TRUE_POSITIVE
-                suggested = min(95, confidence + 30)
-            elif assessment == "real":
-                verdict = Verdict.FALSE_POSITIVE
-                suggested = max(20, confidence - 20)
-            else:
-                verdict = Verdict.UNCERTAIN
-                suggested = confidence
-
-            results.append(
-                SurvivorVerdict(
-                    name=name,
-                    full_name=full_name,
-                    file=surv.get("file", ""),
-                    line=surv.get("line", 0),
-                    heuristic_refs=surv.get("heuristic_refs", {}),
-                    verdict=verdict,
-                    rationale=rationale,
-                    original_confidence=confidence,
-                    suggested_confidence=suggested,
-                )
-            )
-
-        batch = []
-        batch_contexts = []
-        batch_size = 0
-
     for surv in survivors:
-        simple_name = surv.get("simple_name", surv.get("name", "").split(".")[-1])
-        full_name = surv.get("full_name", surv.get("name", ""))
-        file_path = surv.get("file", "")
-        line = surv.get("line", 0)
-        heuristic_refs = surv.get("heuristic_refs", {})
-
-        source = source_cache.get(file_path, "")
-        if source:
-            slines = source.splitlines()
-            start = max(0, line - 6)
-            end = min(len(slines), line + 20)
-            snippet = "\n".join(f"{i + 1:4d} | {slines[i]}" for i in range(start, end))
-        else:
-            snippet = "(source not available)"
-
-        match_sites = _find_heuristic_match_sites(
-            full_name, simple_name, source_cache, defs_map
-        )
-
-        ctx = (
-            f"- File: `{file_path}:{line}`\n"
-            f"- Heuristic refs: {json.dumps(heuristic_refs)}\n"
-            f"- Confidence: {surv.get('confidence', 0)}\n\n"
-            f"Source:\n{snippet}\n\n"
-            f"Match sites:\n{match_sites}"
-        )
-        ctx_len = len(ctx)
-
-        if batch and (
-            batch_size + ctx_len > MAX_BATCH_CONTEXT_CHARS or len(batch) >= 5
-        ):
-            _flush_batch()
+        context = _build_survivor_context(surv, source_cache, defs_map)
+        if _batch_would_overflow(batch, batch_size, context):
+            results.extend(_challenge_survivor_batch(agent, batch, batch_contexts))
+            batch = []
+            batch_contexts = []
+            batch_size = 0
 
         batch.append(surv)
-        batch_contexts.append(ctx)
-        batch_size += ctx_len
+        batch_contexts.append(context)
+        batch_size += len(context)
 
-    _flush_batch()
+    results.extend(_challenge_survivor_batch(agent, batch, batch_contexts))
     return results
+
+
+def _batch_would_overflow(
+    batch: list[dict],
+    batch_size: int,
+    context: str,
+) -> bool:
+    return bool(batch) and (
+        batch_size + len(context) > MAX_BATCH_CONTEXT_CHARS or len(batch) >= 5
+    )
+
+
+def _challenge_survivor_batch(
+    agent: DeadCodeVerifierAgent,
+    batch: list[dict],
+    batch_contexts: list[str],
+) -> list[SurvivorVerdict]:
+    if not batch:
+        return []
+    user_prompt = _build_batch_survivor_prompt(batch, batch_contexts)
+    verdicts = _parse_batch_survivor_response(
+        agent,
+        BATCH_SURVIVOR_SYSTEM,
+        user_prompt,
+        len(batch),
+    )
+    return [
+        _build_batch_survivor_verdict(survivor, verdict)
+        for survivor, verdict in zip(batch, verdicts)
+    ]
+
+
+def _build_batch_survivor_prompt(
+    batch: list[dict],
+    batch_contexts: list[str],
+) -> str:
+    combined = "\n\n---\n\n".join(
+        f"### Function {index + 1}: "
+        f"`{survivor.get('full_name', survivor.get('name'))}`\n{context}"
+        for index, (survivor, context) in enumerate(zip(batch, batch_contexts))
+    )
+    return (
+        f"{combined}\n\nAssess all {len(batch)} functions above. "
+        "Are their heuristic matches real or spurious? JSON array response:"
+    )
+
+
+def _build_batch_survivor_verdict(
+    survivor: dict,
+    verdict_data: dict,
+) -> SurvivorVerdict:
+    name = survivor.get("name", "unknown")
+    confidence = survivor.get("confidence", 0)
+    verdict, suggested = _survivor_verdict_values(verdict_data, confidence)
+    return SurvivorVerdict(
+        name=name,
+        full_name=survivor.get("full_name", name),
+        file=survivor.get("file", ""),
+        line=survivor.get("line", 0),
+        heuristic_refs=survivor.get("heuristic_refs", {}),
+        verdict=verdict,
+        rationale=verdict_data.get("rationale", ""),
+        original_confidence=confidence,
+        suggested_confidence=suggested,
+    )
+
+
+def _survivor_verdict_values(
+    verdict_data: dict,
+    confidence: int,
+) -> tuple[Verdict, int]:
+    if verdict_data.get("is_dead", False):
+        return Verdict.TRUE_POSITIVE, min(95, confidence + 30)
+    if verdict_data.get("heuristic_assessment", "uncertain") == "real":
+        return Verdict.FALSE_POSITIVE, max(20, confidence - 20)
+    return Verdict.UNCERTAIN, confidence
+
+
+def _build_survivor_context(
+    survivor: dict,
+    source_cache: dict[str, str],
+    defs_map: dict[str, Any],
+) -> str:
+    name = survivor.get("name", "")
+    simple_name = survivor.get("simple_name", name.split(".")[-1])
+    full_name = survivor.get("full_name", name)
+    file_path = survivor.get("file", "")
+    line = survivor.get("line", 0)
+    snippet = _survivor_source_snippet(source_cache.get(file_path, ""), line)
+    match_sites = _find_heuristic_match_sites(
+        full_name,
+        simple_name,
+        source_cache,
+        defs_map,
+    )
+    return (
+        f"- File: `{file_path}:{line}`\n"
+        f"- Heuristic refs: {json.dumps(survivor.get('heuristic_refs', {}))}\n"
+        f"- Confidence: {survivor.get('confidence', 0)}\n\n"
+        f"Source:\n{snippet}\n\n"
+        f"Match sites:\n{match_sites}"
+    )
+
+
+def _survivor_source_snippet(source: str, line: int) -> str:
+    if not source:
+        return "(source not available)"
+    lines = source.splitlines()
+    start = max(0, line - 6)
+    end = min(len(lines), line + 20)
+    return "\n".join(f"{index + 1:4d} | {lines[index]}" for index in range(start, end))
 
 
 def _find_heuristic_match_sites(
@@ -306,7 +339,12 @@ def _extract_local_on_listener_registration(
             file_path, "r", encoding="utf-8", errors="ignore"
         ) as source_file:
             source = source_file.read()
-    except Exception:
+    except Exception as exc:
+        logger.debug(
+            "Unable to read listener registration source %s: %s",
+            file_path,
+            exc,
+        )
         return None
 
     lines = source.splitlines()
@@ -371,45 +409,83 @@ def _find_local_on_emit_survivors(
     survivors: list[dict] = []
 
     for name, info in defs_map.items():
-        if not isinstance(info, dict):
+        location = _local_on_emit_candidate_location(name, info, flagged_names)
+        if location is None:
             continue
-        if name in flagged_names:
-            continue
-        if info.get("type") not in ("function", "method"):
-            continue
-        if info.get("called_by"):
-            continue
-
-        file_path = str(info.get("file", "") or "")
-        line = int(info.get("line", 0) or 0)
-        if not file_path or line <= 0:
-            continue
-
-        registration = _extract_local_on_listener_registration(file_path, line)
-        if not registration:
+        file_path, line = location
+        registration = _unmatched_local_on_registration(
+            file_path,
+            line,
+            project_root,
+        )
+        if registration is None:
             continue
         owner, event_name = registration
-
-        if not _supports_local_on_emit_registry(file_path, owner):
-            continue
-
-        emit_sites = _search_local_emit_sites(owner, event_name, project_root)
-        if emit_sites:
-            continue
-
         survivors.append(
-            {
-                "name": name.split(".")[-1],
-                "full_name": name,
-                "simple_name": name.split(".")[-1],
-                "file": file_path,
-                "line": line,
-                "type": info.get("type", "function"),
-                "confidence": info.get("confidence", 50),
-                "references": int(info.get("references", 0) or 0),
-                "_registry_owner": owner,
-                "_event_name": event_name,
-            }
+            _local_on_emit_survivor(
+                name,
+                info,
+                file_path=file_path,
+                line=line,
+                owner=owner,
+                event_name=event_name,
+            )
         )
 
     return survivors
+
+
+def _local_on_emit_candidate_location(
+    name: str,
+    info: Any,
+    flagged_names: set[str],
+) -> tuple[str, int] | None:
+    if not isinstance(info, dict) or name in flagged_names:
+        return None
+    if info.get("type") not in ("function", "method") or info.get("called_by"):
+        return None
+    file_path = str(info.get("file", "") or "")
+    line = int(info.get("line", 0) or 0)
+    if not file_path or line <= 0:
+        return None
+    return file_path, line
+
+
+def _unmatched_local_on_registration(
+    file_path: str,
+    line: int,
+    project_root: str | Path,
+) -> tuple[str, str] | None:
+    registration = _extract_local_on_listener_registration(file_path, line)
+    if registration is None:
+        return None
+    owner, event_name = registration
+    if not _supports_local_on_emit_registry(file_path, owner):
+        return None
+    if _search_local_emit_sites(owner, event_name, project_root):
+        return None
+    return owner, event_name
+
+
+def _local_on_emit_survivor(
+    name: str,
+    info: dict[str, Any],
+    *,
+    file_path: str,
+    line: int,
+    owner: str,
+    event_name: str,
+) -> dict[str, Any]:
+    simple_name = name.split(".")[-1]
+    return {
+        "name": simple_name,
+        "full_name": name,
+        "simple_name": simple_name,
+        "file": file_path,
+        "line": line,
+        "type": info.get("type", "function"),
+        "confidence": info.get("confidence", 50),
+        "references": int(info.get("references", 0) or 0),
+        "_registry_owner": owner,
+        "_event_name": event_name,
+    }

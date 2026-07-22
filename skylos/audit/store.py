@@ -25,6 +25,7 @@ from skylos.audit.types import (
     normalize_relative_path,
     utc_now,
 )
+from skylos.core.safe_cache_io import read_text_no_symlink
 
 
 class AuditStore:
@@ -48,7 +49,13 @@ class AuditStore:
         self.exports_dir = self.project_dir / "exports"
         self.current_scan_files: set[str] | None = None
 
-    def init_project(self, *, config_hash: str) -> None:
+    def init_project(
+        self,
+        *,
+        config_hash: str,
+        exclude_folders: list[str] | None = None,
+        exclude_paths: list[str | Path] | None = None,
+    ) -> None:
         self.files_dir.mkdir(parents=True, exist_ok=True)
         self.runs_dir.mkdir(parents=True, exist_ok=True)
         self.exports_dir.mkdir(parents=True, exist_ok=True)
@@ -68,9 +75,53 @@ class AuditStore:
             {
                 "schema_version": SCHEMA_VERSION,
                 "config_hash": config_hash,
+                "exclude_folders": sorted(
+                    {
+                        str(value)
+                        for value in (exclude_folders or ())
+                        if str(value).strip()
+                    }
+                ),
+                "exclude_paths": sorted(
+                    {
+                        normalized
+                        for value in (exclude_paths or ())
+                        if (
+                            normalized := self._normalize_optional_project_path(value)
+                        )
+                    }
+                ),
                 "updated_at": utc_now(),
             },
         )
+
+    def read_scan_excludes(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        text = read_text_no_symlink(
+            self.project_dir / "config.json",
+            max_bytes=1_000_000,
+            encoding="utf-8",
+            errors=None,
+        )
+        if text is None:
+            return (), ()
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return (), ()
+        if not isinstance(payload, dict):
+            return (), ()
+
+        def strings(key: str) -> tuple[str, ...]:
+            values = payload.get(key)
+            if not isinstance(values, list):
+                return ()
+            return tuple(
+                value
+                for value in values
+                if isinstance(value, str) and 0 < len(value) <= 1_000
+            )
+
+        return strings("exclude_folders"), strings("exclude_paths")
 
     def encoded_record_name(self, rel_path: str) -> str:
         normalized = rel_path.replace("\\", "/")
@@ -371,6 +422,12 @@ class AuditStore:
             except ValueError:
                 continue
         return allowed
+
+    def _normalize_optional_project_path(self, value: str | Path) -> str | None:
+        try:
+            return normalize_relative_path(self.project_root, value)
+        except ValueError:
+            return None
 
     def _write_json_atomic(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

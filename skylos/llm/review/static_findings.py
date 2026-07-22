@@ -1,6 +1,8 @@
+"""Static finding generation for agent review."""
+
 from __future__ import annotations
 
-from .schemas import CodeLocation, Confidence, Finding, IssueType, Severity
+from ..schemas import CodeLocation, Confidence, Finding, IssueType, Severity
 
 
 class AgentReviewStaticFindingMixin:
@@ -487,4 +489,3 @@ class AgentReviewStaticFindingMixin:
             )
             for child in ast.iter_child_nodes(node)
         )
-

@@ -259,6 +259,41 @@ class SecurityAuditAgent:
 
         return parse_llm_response(response, file_path)
 
+    def investigate(
+        self,
+        source,
+        file_path,
+        *,
+        context,
+        candidates,
+        tools,
+        limits=None,
+        run_id=None,
+        persist_trace=True,
+    ):
+        """Run a bounded, repository-aware Deep Audit investigation.
+
+        The processor owns and supplies the read-only capability. Keeping path
+        resolution and filesystem authority out of the model adapter prevents a
+        provider from silently broadening the tool boundary.
+        """
+
+        from .investigator import LogicInvestigator
+
+        investigator = LogicInvestigator(
+            self.get_adapter(),
+            limits=limits,
+            persist_trace=persist_trace,
+        )
+        return investigator.investigate(
+            source=source,
+            file_path=file_path,
+            context=context,
+            candidates=candidates,
+            tools=tools,
+            run_id=run_id,
+        )
+
 
 class ReviewAgent:
     def __init__(self, config=None):

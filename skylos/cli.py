@@ -919,6 +919,7 @@ def _normalize_agent_findings(payload, project_root: Path):
 def _agent_findings_to_result_json(findings):
     result = {
         "danger": [],
+        "ai_defects": [],
         "quality": [],
         "secrets": [],
         "unused_functions": [],
@@ -930,6 +931,7 @@ def _agent_findings_to_result_json(findings):
     category_map = {
         "security": "danger",
         "danger": "danger",
+        "ai_defects": "ai_defects",
         "quality": "quality",
         "secret": "secrets",
         "secrets": "secrets",
@@ -3257,7 +3259,6 @@ def main() -> None:
                     "benchmark": [],
                     "example": [],
                 }
-                analyzer_targets = set()
                 report_targets = set()
                 skipped_staged_files = 0
                 for relpath in staged_candidates:
@@ -3270,13 +3271,11 @@ def main() -> None:
                             continue
                         staged_source_files.append(relpath)
                         abs_path = str((project_root / relpath).resolve())
-                        analyzer_targets.add(abs_path)
                         report_targets.add(abs_path)
                         continue
                     if _is_config_candidate(relpath_obj):
                         staged_config_files.append(relpath)
                         abs_path = str((project_root / relpath).resolve())
-                        analyzer_targets.add(abs_path)
                         report_targets.add(abs_path)
                         continue
                     skipped_staged_files += 1
@@ -3298,19 +3297,25 @@ def main() -> None:
                         )
                     sys.exit(0)
 
-                changed_ranges = _get_cached_changed_line_ranges(
-                    project_root,
+                staged_changed_files = (
                     staged_source_files
                     + staged_config_files
                     + [
                         relpath
                         for paths in staged_secret_only_files.values()
                         for relpath in paths
-                    ],
+                    ]
+                )
+                changed_ranges = _get_cached_changed_line_ranges(
+                    project_root,
+                    staged_changed_files,
                 )
                 snapshot_dir = None
                 analysis_root = project_root
-                analysis_targets = analyzer_targets
+                analysis_targets = {
+                    str((analysis_root / relpath).resolve())
+                    for relpath in staged_changed_files
+                }
                 analysis_source_paths = [
                     str((project_root / relpath).resolve())
                     for relpath in staged_source_files
@@ -3334,7 +3339,7 @@ def main() -> None:
                             analysis_root = snapshot_root
                             analysis_targets = {
                                 str((analysis_root / relpath).resolve())
-                                for relpath in staged_source_files + staged_config_files
+                                for relpath in staged_changed_files
                             }
                             analysis_source_paths = [
                                 str((analysis_root / relpath).resolve())
@@ -3514,15 +3519,7 @@ def main() -> None:
                 staged_findings = normalize_findings(
                     result,
                     project_root,
-                    changed_files=(
-                        staged_source_files
-                        + staged_config_files
-                        + [
-                            relpath
-                            for paths in staged_secret_only_files.values()
-                            for relpath in paths
-                        ]
-                    ),
+                    changed_files=staged_changed_files,
                     include_dead_code=False,
                 )
                 staged_findings = [

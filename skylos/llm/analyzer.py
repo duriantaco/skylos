@@ -8,7 +8,7 @@ from .agents import AgentConfig, create_agent
 from .finding_evidence import filter_findings_with_evidence
 from .validator import ResultValidator, deduplicate_findings, merge_findings
 from .ui import SkylosUI, estimate_cost
-from .agent_review_routing import AgentReviewRoutingMixin, SECURITY_AUDIT_ISSUE
+from .review import AgentReviewRoutingMixin, SECURITY_AUDIT_ISSUE
 
 from .schemas import AnalysisResult, Confidence
 from skylos.config import load_config

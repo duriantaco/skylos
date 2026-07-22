@@ -607,6 +607,10 @@ def test_agent_pre_commit_scans_staged_test_files_for_secrets_alongside_source(
 
     assert exc_info.value.code == 1
     assert mock_analyze.call_args.args[0] == [str((repo / "app.py").resolve())]
+    assert mock_analyze.call_args.kwargs["changed_files"] == {
+        str((repo / "app.py").resolve()),
+        str((repo / "test" / "test_rules.py").resolve()),
+    }
     printed = " ".join(
         str(call.args[0]) for call in console.print.call_args_list if call.args
     )
