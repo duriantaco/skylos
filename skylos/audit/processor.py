@@ -4,6 +4,10 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from skylos.audit.investigator_tools import (
+    DEFAULT_EXCLUDED_FOLDERS,
+    AuditReadOnlyTools,
+)
 from skylos.audit.redaction import redact_text, sanitize_for_audit
 from skylos.audit.store import AuditStore
 from skylos.audit.types import (
@@ -22,9 +26,17 @@ from skylos.audit.types import (
     sha256_text,
     utc_now,
 )
+from skylos.core.safe_cache_io import read_project_text_no_symlink
+from skylos.llm.investigator import (
+    INVESTIGATOR_DEFINITION_HASH,
+    INVESTIGATOR_PROTOCOL_VERSION,
+    InvestigationIncompleteError,
+)
 
 SECURITY_AUDIT_ISSUE = "security_audit"
 PYTHON_LANGUAGE = "python"
+DEEP_AUDIT_ANALYSIS_VERSION = INVESTIGATOR_PROTOCOL_VERSION
+MAX_DEEP_AUDIT_SOURCE_BYTES = 1_000_000
 
 
 def process_deep_audit_records(
@@ -40,10 +52,31 @@ def process_deep_audit_records(
 ) -> AuditProcessSummary:
     run_id = run_id or f"process-{uuid4().hex[:12]}"
     allowed = store.processing_scope(allowed_files)
+    supports_investigator = _supports_repository_investigation(analyzer)
+    holistic_scope = supports_investigator
+    stored_exclude_folders, stored_exclude_paths = store.read_scan_excludes()
+    investigator_exclude_folders = tuple(
+        dict.fromkeys((*DEFAULT_EXCLUDED_FOLDERS, *stored_exclude_folders))
+    )
+    all_records = store.iter_file_records()
+    sensitive_files = {
+        record.file for record in all_records if _is_secret_bearing_record(record)
+    }
+    repository_catalog_digest: str | None = None
+    if supports_investigator:
+        catalog_probe = AuditReadOnlyTools(
+            store.project_root,
+            exclude_folders=investigator_exclude_folders,
+            denied_paths=sensitive_files,
+            excluded_paths=stored_exclude_paths,
+        )
+        repository_catalog_digest = str(
+            catalog_probe.metadata()["catalog_digest"]
+        )
     records = [
         record
-        for record in store.iter_file_records()
-        if record.candidates
+        for record in all_records
+        if (record.candidates or holistic_scope)
         and record.status != STATUS_DELETED
         and (allowed is None or record.file in allowed)
     ]
@@ -54,12 +87,12 @@ def process_deep_audit_records(
 
     queue: list[AuditFileRecord] = []
     for record in sorted(records, key=_record_sort_key):
-        if record.language != PYTHON_LANGUAGE:
+        if not supports_investigator and record.language != PYTHON_LANGUAGE:
             if _is_active_record(record, force=force):
                 _mark_unsupported(store, record, run_id=run_id)
             continue
 
-        if _has_secret_candidate(record):
+        if _is_secret_bearing_record(record):
             if _is_active_record(record, force=force):
                 _mark_secret_skipped(store, record, run_id=run_id)
             continue
@@ -69,6 +102,8 @@ def process_deep_audit_records(
             force=force,
             model=model,
             provider=provider,
+            holistic=holistic_scope,
+            repository_catalog_digest=repository_catalog_digest,
         ):
             queue.append(record)
 
@@ -78,7 +113,7 @@ def process_deep_audit_records(
     limited = len(queue) < total_queue
 
     for queued in queue:
-        if queued.status == STATUS_ANALYZED:
+        if queued.status in {STATUS_ANALYZED, STATUS_NOT_ANALYZED}:
             queued.status = STATUS_PENDING
             store.write_file_record(queued)
 
@@ -93,50 +128,74 @@ def process_deep_audit_records(
 
         file_path = store.project_root / record.file
         try:
-            result = _analyze_file_with_redaction(analyzer, file_path, record=record)
-            findings = _normalize_findings(result, record=record, file_path=file_path)
+            source = _read_current_record_source(store, record)
+            result = _analyze_file_with_redaction(
+                analyzer,
+                file_path,
+                store=store,
+                record=record,
+                source=source,
+                run_id=f"{run_id}-{sha256_text(record.file)[:8]}",
+                sensitive_files=sensitive_files,
+                exclude_folders=investigator_exclude_folders,
+                excluded_paths=set(stored_exclude_paths),
+                repository_catalog_digest=repository_catalog_digest,
+            )
+            if hasattr(result, "status") and result.status != "complete":
+                raise InvestigationIncompleteError(
+                    f"Investigator ended with status {result.status}"
+                )
+            findings = _normalize_findings(
+                result,
+                record=record,
+                file_path=file_path,
+                source=source,
+            )
         except Exception as exc:
             store.mark_error(record.file, f"Agent processing failed: {exc}")
             run_error_files += 1
             continue
 
-        existing_by_id = {
+        existing_ids = {
             str(item.get("audit_finding_id")): item
             for item in record.findings
             if isinstance(item, dict) and item.get("audit_finding_id")
         }
-        merged = [
-            item
-            for item in record.findings
-            if not (
-                isinstance(item, dict)
-                and item.get("audit_finding_id") in existing_by_id
-            )
-        ]
         for finding in findings:
             finding_id = str(finding.get("audit_finding_id"))
-            if finding_id not in existing_by_id:
+            if finding_id not in existing_ids:
                 findings_added += 1
-            existing_by_id[finding_id] = finding
-        merged.extend(existing_by_id.values())
 
         record.status = STATUS_ANALYZED
         record.locked_by_run_id = None
         record.locked_at = None
         record.last_analyzed_at = utc_now()
-        record.findings = sanitize_for_audit(merged)
+        record.findings = sanitize_for_audit(findings)
+        investigation_metadata = getattr(result, "metadata", None)
+        history_entry = {
+            "stage": "agent_process",
+            "run_id": run_id,
+            "model": model,
+            "provider": provider,
+            "analysis_version": DEEP_AUDIT_ANALYSIS_VERSION,
+            "findings_count": len(findings),
+            "candidate_count": len(record.candidates),
+            "replaced_findings_count": len(existing_ids),
+            "at": utc_now(),
+        }
+        if isinstance(investigation_metadata, dict):
+            history_entry["investigation"] = investigation_metadata
+            for key in (
+                "protocol_version",
+                "definition_hash",
+                "tool_schema_version",
+                "related_files",
+                "catalog_digest",
+            ):
+                if key in investigation_metadata:
+                    history_entry[key] = investigation_metadata[key]
         record.analysis_history.append(
-            sanitize_for_audit(
-                {
-                    "stage": "agent_process",
-                    "run_id": run_id,
-                    "model": model,
-                    "provider": provider,
-                    "findings_count": len(findings),
-                    "candidate_count": len(record.candidates),
-                    "at": utc_now(),
-                }
-            )
+            sanitize_for_audit(history_entry)
         )
         store.write_file_record(record)
         processed_files += 1
@@ -146,6 +205,7 @@ def process_deep_audit_records(
         model=model,
         provider=provider,
         allowed_files=allowed,
+        repository_catalog_digest=repository_catalog_digest,
     )
     remaining = state_counts["unresolved"]
     summary = AuditProcessSummary(
@@ -189,6 +249,65 @@ def _record_sort_key(record: AuditFileRecord) -> tuple[int, str]:
     )
 
 
+def _supports_repository_investigation(analyzer: Any) -> bool:
+    get_agent = getattr(analyzer, "_get_agent", None)
+    if not callable(get_agent):
+        return False
+    try:
+        agent = get_agent(SECURITY_AUDIT_ISSUE)
+    except Exception:
+        return False
+    return callable(getattr(agent, "investigate", None))
+
+
+def _read_current_record_source(
+    store: AuditStore,
+    record: AuditFileRecord,
+) -> str:
+    source = read_project_text_no_symlink(
+        store.project_root,
+        record.file,
+        max_bytes=MAX_DEEP_AUDIT_SOURCE_BYTES,
+        encoding="utf-8",
+        errors=None,
+        newline="",
+    )
+    if source is None:
+        raise InvestigationIncompleteError(
+            f"source file could not be read safely: {record.file}"
+        )
+    if sha256_text(source) != record.file_hash:
+        raise InvestigationIncompleteError(
+            f"source changed after candidate discovery: {record.file}"
+        )
+    return source
+
+
+def _related_context_is_current(
+    record: AuditFileRecord,
+    related_files: list[Any],
+) -> bool:
+    root = Path(record.project_root)
+    for item in related_files:
+        if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
+            return False
+        path = item.get("path")
+        expected_hash = item.get("sha256")
+        if not isinstance(path, str) or not isinstance(expected_hash, str):
+            return False
+        source = read_project_text_no_symlink(
+            root,
+            path,
+            max_bytes=MAX_DEEP_AUDIT_SOURCE_BYTES,
+            encoding="utf-8",
+            errors=None,
+            newline="",
+        )
+        if source is None or sha256_text(source) != expected_hash:
+            return False
+    return True
+
+
 def _normalized_allowed_files(
     store: AuditStore,
     allowed_files: list[str | Path] | set[str] | None,
@@ -225,11 +344,20 @@ def _should_process_record(
     force: bool,
     model: str,
     provider: str | None,
+    holistic: bool = False,
+    repository_catalog_digest: str | None = None,
 ) -> bool:
     if record.status == STATUS_ANALYZED:
         if force:
             return True
-        return not _agent_context_matches(record, model=model, provider=provider)
+        return not _agent_context_matches(
+            record,
+            model=model,
+            provider=provider,
+            repository_catalog_digest=repository_catalog_digest,
+        )
+    if holistic and record.status == STATUS_NOT_ANALYZED:
+        return True
     return record.status in {STATUS_PENDING, STATUS_PROCESSING, STATUS_ERROR}
 
 
@@ -238,11 +366,33 @@ def _agent_context_matches(
     *,
     model: str,
     provider: str | None,
+    repository_catalog_digest: str | None = None,
 ) -> bool:
     for item in reversed(record.analysis_history):
         if not isinstance(item, dict) or item.get("stage") != "agent_process":
             continue
-        return item.get("model") == model and item.get("provider") == provider
+        if item.get("model") != model or item.get("provider") != provider:
+            return False
+        if item.get("analysis_version") != DEEP_AUDIT_ANALYSIS_VERSION:
+            return False
+        if item.get("protocol_version") == INVESTIGATOR_PROTOCOL_VERSION:
+            if item.get("definition_hash") != INVESTIGATOR_DEFINITION_HASH:
+                return False
+        if (
+            repository_catalog_digest is not None
+            and item.get("catalog_digest") != repository_catalog_digest
+        ):
+            return False
+        related_files = item.get("related_files")
+        if repository_catalog_digest is not None and not isinstance(
+            related_files, list
+        ):
+            return False
+        if isinstance(related_files, list) and not _related_context_is_current(
+            record, related_files
+        ):
+            return False
+        return True
     return False
 
 
@@ -251,8 +401,10 @@ def _is_unresolved_record(
     *,
     model: str,
     provider: str | None,
+    repository_catalog_digest: str | None = None,
+    holistic: bool = False,
 ) -> bool:
-    if not record.candidates:
+    if not holistic and not record.candidates:
         return False
     if record.status in {
         STATUS_PENDING,
@@ -263,7 +415,12 @@ def _is_unresolved_record(
     }:
         return True
     if record.status == STATUS_ANALYZED:
-        return not _agent_context_matches(record, model=model, provider=provider)
+        return not _agent_context_matches(
+            record,
+            model=model,
+            provider=provider,
+            repository_catalog_digest=repository_catalog_digest,
+        )
     return False
 
 
@@ -271,6 +428,16 @@ def _has_secret_candidate(record: AuditFileRecord) -> bool:
     return any(
         candidate.redacted or candidate.rule_id.startswith("SKY-S")
         for candidate in record.candidates
+    )
+
+
+def _is_secret_bearing_record(record: AuditFileRecord) -> bool:
+    name = Path(record.file).name.lower()
+    return (
+        record.language == "env"
+        or name == ".env"
+        or name.startswith(".env.")
+        or _has_secret_candidate(record)
     )
 
 
@@ -339,14 +506,12 @@ def _normalize_findings(
     *,
     record: AuditFileRecord,
     file_path: Path,
+    source: str | None = None,
 ) -> list[dict[str, Any]]:
     if hasattr(findings, "findings"):
         findings = findings.findings
     normalized = []
-    try:
-        source = file_path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        source = ""
+    source = source or ""
 
     for finding in findings or []:
         if hasattr(finding, "to_dict"):
@@ -363,9 +528,18 @@ def _normalize_findings(
 
 
 def _analyze_file_with_redaction(
-    analyzer: Any, file_path: Path, *, record: AuditFileRecord
+    analyzer: Any,
+    file_path: Path,
+    *,
+    store: AuditStore,
+    record: AuditFileRecord,
+    source: str,
+    run_id: str,
+    sensitive_files: set[str],
+    exclude_folders: tuple[str, ...],
+    excluded_paths: set[str],
+    repository_catalog_digest: str | None,
 ) -> Any:
-    source = file_path.read_text(encoding="utf-8", errors="ignore")
     redacted_source = redact_text(source)
 
     get_agent = getattr(analyzer, "_get_agent", None)
@@ -377,6 +551,47 @@ def _analyze_file_with_redaction(
             file_path,
             record=record,
         )
+        context = redact_text(context) if context else None
+        investigate = getattr(agent, "investigate", None)
+        if callable(investigate):
+            tools = AuditReadOnlyTools(
+                store.project_root,
+                exclude_folders=exclude_folders,
+                denied_paths=sensitive_files,
+                excluded_paths=excluded_paths,
+            )
+            if (
+                repository_catalog_digest is not None
+                and tools.metadata()["catalog_digest"]
+                != repository_catalog_digest
+            ):
+                raise InvestigationIncompleteError(
+                    "repository changed before investigation started"
+                )
+            tools.register_initial_file(record.file)
+            if tools.related_file_hashes.get(record.file) != record.file_hash:
+                raise InvestigationIncompleteError(
+                    f"source changed before investigation started: {record.file}"
+                )
+            result = investigate(
+                redacted_source,
+                record.file,
+                context=context,
+                candidates=[candidate.to_dict() for candidate in record.candidates],
+                tools=tools,
+                run_id=run_id,
+            )
+            tools.assert_completion_safe()
+            authoritative_metadata = tools.metadata()
+            result_metadata = getattr(result, "metadata", None)
+            if isinstance(result_metadata, dict):
+                result_metadata.update(authoritative_metadata)
+            else:
+                try:
+                    result.metadata = authoritative_metadata
+                except (AttributeError, TypeError):
+                    pass
+            return result
         return agent.analyze(redacted_source, str(file_path), context=context)
 
     whole_file_analyzer = getattr(analyzer, "_analyze_whole_file", None)
@@ -506,12 +721,38 @@ def _finding_id(
         finding.get("location") if isinstance(finding.get("location"), dict) else {}
     )
     line = int(finding.get("line") or location.get("line") or 1)
+    end_line = int(finding.get("end_line") or location.get("end_line") or line)
+    metadata = finding.get("metadata")
+    evidence = None
+    if isinstance(metadata, dict):
+        evidence = metadata.get("investigation_evidence") or metadata.get(
+            "logic_evidence"
+        )
+    evidence_identity = ""
+    if isinstance(evidence, dict):
+        evidence_identity = sha256_text(
+            "|".join(
+                str(evidence.get(key) or "")
+                for key in (
+                    "category",
+                    "actor",
+                    "action",
+                    "resource",
+                    "trigger",
+                    "invariant",
+                    "actual_behavior",
+                    "impact",
+                )
+            )
+        )[:20]
     payload = {
         "path": normalize_relative_path(record.project_root, record.file),
         "rule_id": finding.get("rule_id"),
         "issue_type": finding.get("issue_type"),
         "symbol": finding.get("symbol"),
         "code_hash": code_region_hash(source, line),
+        "end_line": end_line,
+        "evidence_identity": evidence_identity,
     }
     return "finding-" + sha256_text(str(sorted(payload.items())))[:16]
 
@@ -522,6 +763,7 @@ def _audit_state_counts(
     model: str,
     provider: str | None,
     allowed_files: list[str | Path] | set[str] | None = None,
+    repository_catalog_digest: str | None = None,
 ) -> dict[str, int]:
     allowed = _normalized_allowed_files(store, allowed_files)
     counts = {
@@ -539,14 +781,24 @@ def _audit_state_counts(
             continue
         if record.status == STATUS_DELETED:
             continue
-        if not record.candidates:
+        holistic = repository_catalog_digest is not None
+        if not record.candidates and not holistic:
             continue
         if record.status in counts:
             counts[record.status] += 1
         if record.status == STATUS_ANALYZED and not _agent_context_matches(
-            record, model=model, provider=provider
+            record,
+            model=model,
+            provider=provider,
+            repository_catalog_digest=repository_catalog_digest,
         ):
             counts["stale_analyzed"] += 1
-        if _is_unresolved_record(record, model=model, provider=provider):
+        if _is_unresolved_record(
+            record,
+            model=model,
+            provider=provider,
+            repository_catalog_digest=repository_catalog_digest,
+            holistic=holistic,
+        ):
             counts["unresolved"] += 1
     return counts

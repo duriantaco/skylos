@@ -430,7 +430,9 @@ findings.
 | SKY-D103 | Legacy compliance alias for insecure deserialization. |
 | SKY-AUDIT | Deep-audit candidate or artifact marker. |
 | SKY-AUDIT-ENTRYPOINT | Deep-audit entrypoint candidate marker. |
+| SKY-AUDIT-LOGIC | Deep-audit repository investigation logic finding. |
 | SKY-AUDIT-PATH | Deep-audit security-sensitive path candidate marker. |
+| SKY-AUDIT-SECURITY | Deep-audit repository investigation security finding. |
 | SKY-DEAD | LLM dead-code verifier marker. |
 | SKY-DEAD-CHALLENGE | LLM dead-code challenge marker. |
 | SKY-DEBT | Agent command-center debt marker. |

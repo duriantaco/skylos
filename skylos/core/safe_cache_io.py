@@ -16,6 +16,7 @@ def read_text_no_symlink(
     max_bytes: int,
     encoding: str = "utf-8",
     errors: str | None = None,
+    newline: str | None = None,
 ) -> str | None:
     try:
         if Path(path).is_symlink():
@@ -37,7 +38,13 @@ def read_text_no_symlink(
             return None
         if stat_result.st_size > max_bytes:
             return None
-        with os.fdopen(fd, "r", encoding=encoding, errors=errors) as handle:
+        with os.fdopen(
+            fd,
+            "r",
+            encoding=encoding,
+            errors=errors,
+            newline=newline,
+        ) as handle:
             fd = None
             text = handle.read(max_bytes + 1)
     except (OSError, UnicodeError):
@@ -62,6 +69,7 @@ def read_project_text_no_symlink(
     max_bytes: int,
     encoding: str = "utf-8",
     errors: str | None = None,
+    newline: str | None = None,
 ) -> str | None:
     project_path = _project_relative_path(project_root, path)
     if project_path is None:
@@ -74,6 +82,7 @@ def read_project_text_no_symlink(
             max_bytes=max_bytes,
             encoding=encoding,
             errors=errors,
+            newline=newline,
         )
 
     directory_fd: int | None = None
@@ -91,7 +100,13 @@ def read_project_text_no_symlink(
         file_stat = os.fstat(file_fd)
         if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size > max_bytes:
             return None
-        with os.fdopen(file_fd, "r", encoding=encoding, errors=errors) as handle:
+        with os.fdopen(
+            file_fd,
+            "r",
+            encoding=encoding,
+            errors=errors,
+            newline=newline,
+        ) as handle:
             file_fd = None
             text = handle.read(max_bytes + 1)
     except (OSError, UnicodeError):
@@ -133,6 +148,7 @@ def _read_project_text_fallback(
     max_bytes: int,
     encoding: str,
     errors: str | None,
+    newline: str | None,
 ) -> str | None:
     current = root
     try:
@@ -149,6 +165,7 @@ def _read_project_text_fallback(
         max_bytes=max_bytes,
         encoding=encoding,
         errors=errors,
+        newline=newline,
     )
 
 
