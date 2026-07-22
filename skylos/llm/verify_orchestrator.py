@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import entry_points as _entry_points
 from .dead_code_verifier import (
     DeadCodeVerifierAgent,
     Verdict,
@@ -17,7 +16,8 @@ from .dead_code_verifier import (
     _parse_confidence,
     _parse_int,
 )
-from .verify_llm import (
+from .verification import entry_points as _entry_points
+from .verification.llm import (
     BATCH_SURVIVOR_SYSTEM as BATCH_SURVIVOR_SYSTEM,
     BATCH_VERIFY_SYSTEM,
     GRAPH_VERIFY_SYSTEM,
@@ -32,14 +32,14 @@ from .verify_llm import (
     _parse_batch_survivor_response as _parse_batch_survivor_response,
     _strip_markdown_fences as _strip_markdown_fences,
 )
-from .verify_survivors import (
+from .verification.survivors import (
     _batch_challenge_survivors,
     _find_heuristic_match_sites as _find_heuristic_match_sites,
     _find_local_on_emit_survivors,
     _find_survivors,
     challenge_survivor,
 )
-from .verify_types import (
+from .verification.types import (
     VALID_VERIFICATION_MODES,
     VERIFICATION_MODE_JUDGE_ALL,
     VERIFICATION_MODE_PRODUCTION,
