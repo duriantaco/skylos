@@ -17,7 +17,7 @@ from skylos.audit.investigator_tools import (
 def _repo(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
-    (root / "app.py").write_text(
+    (root / "app.py").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path helper
         "def handler(user):\n    return authorize(user)\n",
         encoding="utf-8",
     )
@@ -125,7 +125,10 @@ def test_secret_checks_cover_every_investigator_language(
     root = _repo(tmp_path)
     token = "aB3d-E5fG7hI9jK2mN4pQ6rS8tU0vW1xY"
     secret_file = root / f"private{suffix}"
-    secret_file.write_text(f"credential = '{token}'\n", encoding="utf-8")
+    secret_file.write_text(  # skylos: ignore[SKY-D324] literal pytest parametrization
+        f"credential = '{token}'\n",
+        encoding="utf-8",
+    )
     tools = AuditReadOnlyTools(root)
 
     with pytest.raises(AuditToolError, match="withheld as sensitive"):

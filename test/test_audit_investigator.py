@@ -213,7 +213,7 @@ class SequenceAdapter:
 def _write_policy_repo(tmp_path: Path, *, safe: bool) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
-    (root / "routes.py").write_text(
+    (root / "routes.py").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path helper
         "from policy import authorize_order\n\n"
         "def cancel_order(user, order):\n"
         "    if authorize_order(user, order):\n"
@@ -227,7 +227,10 @@ def _write_policy_repo(tmp_path: Path, *, safe: bool) -> Path:
         if safe
         else "def authorize_order(user, order):\n    return user.is_authenticated\n"
     )
-    (root / "policy.py").write_text(policy, encoding="utf-8")
+    (root / "policy.py").write_text(  # skylos: ignore[SKY-D324] pytest tmp_path helper
+        policy,
+        encoding="utf-8",
+    )
     return root
 
 
