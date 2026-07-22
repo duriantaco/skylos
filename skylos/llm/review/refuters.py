@@ -1,6 +1,8 @@
+"""Refutation passes for agent-review findings."""
+
 from __future__ import annotations
 
-from .schemas import IssueType
+from ..schemas import IssueType
 
 
 class AgentReviewRefuterMixin:
@@ -419,4 +421,3 @@ class AgentReviewRefuterMixin:
             finding.code_snippet,
         ]
         return " ".join(str(part or "") for part in parts).lower()
-
