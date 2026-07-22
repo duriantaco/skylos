@@ -182,6 +182,7 @@ def _empty_result() -> dict:
         "unused_parameters": [],
         "unused_classes": [],
         "danger": [],
+        "ai_defects": [],
         "quality": [],
         "secrets": [],
     }
@@ -383,6 +384,7 @@ def run_static_on_files(
         "unused_parameters",
         "unused_classes",
         "danger",
+        "ai_defects",
         "quality",
         "secrets",
     ]
@@ -446,6 +448,7 @@ def run_pipeline(
     static_findings = {
         "dead_code": [],
         "security": [],
+        "ai_defects": [],
         "quality": [],
         "secrets": [],
     }
@@ -511,6 +514,11 @@ def run_pipeline(
                 item["_category"] = "security"
                 static_findings["security"].append(item)
 
+            for item in static_result.get("ai_defects", []) or []:
+                item["_source"] = "static"
+                item["_category"] = "ai_defects"
+                static_findings["ai_defects"].append(item)
+
             for item in static_result.get("quality", []) or []:
                 item["_source"] = "static"
                 item["_category"] = "quality"
@@ -543,6 +551,7 @@ def run_pipeline(
                 f"{total_static} findings "
                 f"({len(static_findings['dead_code'])} dead code, "
                 f"{len(static_findings['security'])} security, "
+                f"{len(static_findings['ai_defects'])} AI defects, "
                 f"{len(static_findings['quality'])} quality)"
             )
 
@@ -813,7 +822,7 @@ def run_pipeline(
         phase_stats["phase_2b_seconds"] = round(time.time() - phase_2b_start, 1)
         return results
 
-    for category in ["security", "quality", "secrets"]:
+    for category in ["security", "ai_defects", "quality", "secrets"]:
         for f in static_findings.get(category, []):
             f["_confidence"] = "medium"
             all_findings.append(f)

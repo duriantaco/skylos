@@ -919,6 +919,7 @@ def _normalize_agent_findings(payload, project_root: Path):
 def _agent_findings_to_result_json(findings):
     result = {
         "danger": [],
+        "ai_defects": [],
         "quality": [],
         "secrets": [],
         "unused_functions": [],
@@ -930,6 +931,7 @@ def _agent_findings_to_result_json(findings):
     category_map = {
         "security": "danger",
         "danger": "danger",
+        "ai_defects": "ai_defects",
         "quality": "quality",
         "secret": "secrets",
         "secrets": "secrets",

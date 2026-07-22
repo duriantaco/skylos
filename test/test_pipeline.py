@@ -160,6 +160,7 @@ class TestEmptyResult:
             "unused_parameters",
             "unused_classes",
             "danger",
+            "ai_defects",
             "quality",
             "secrets",
         ]:
@@ -283,6 +284,36 @@ class TestRunStaticOnFiles:
     @patch(P_CUSTOM, return_value=None)
     @patch(P_EXCLUDE, return_value={"venv"})
     @patch(P_ANALYZE)
+    def test_filters_ai_defects_to_target_files(self, mock_analyze, _exc, _cust):
+        data = _fresh_static()
+        data["ai_defects"] = [
+            {
+                "file": "/proj/a.py",
+                "line": 8,
+                "message": "Assertion weakened",
+                "rule_id": "SKY-A101",
+            },
+            {
+                "file": "/proj/b.py",
+                "line": 12,
+                "message": "Missing tests for risky change",
+                "rule_id": "SKY-A102",
+            },
+        ]
+        mock_analyze.return_value = json.dumps(data)
+
+        result = run_static_on_files(
+            ["/proj/a.py"],
+            project_root=pathlib.Path("/proj"),
+        )
+
+        assert [finding["rule_id"] for finding in result["ai_defects"]] == [
+            "SKY-A101"
+        ]
+
+    @patch(P_CUSTOM, return_value=None)
+    @patch(P_EXCLUDE, return_value={"venv"})
+    @patch(P_ANALYZE)
     def test_keeps_full_defs_map(self, mock_analyze, _exc, _cust):
         mock_analyze.return_value = json.dumps(FAKE_STATIC_RESULT)
 
@@ -365,6 +396,48 @@ class TestPipelinePhase1:
 
         categories = {f.get("_category") for f in findings}
         assert "dead_code" in categories
+
+    @patch(P_LLM)
+    @patch(P_PROGRESS)
+    def test_preserves_static_ai_defects_in_final_findings(
+        self, _prog, mock_llm, tmp_path
+    ):
+        static_result = _fresh_static()
+        static_result["ai_defects"] = [
+            {
+                "file": str(tmp_path / "proj" / "a.py"),
+                "line": 1,
+                "message": "Assertion weakened",
+                "rule_id": "SKY-A101",
+                "severity": "high",
+            }
+        ]
+        mock_llm.return_value.analyze_files.return_value = MagicMock(findings=[])
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        py_file = proj / "a.py"
+        py_file.write_text("assert value\n", encoding="utf-8")
+
+        with patch(P_STATIC_FN, return_value=static_result):
+            findings = run_pipeline(
+                path=str(proj),
+                model="t",
+                api_key="k",
+                agent_args=_agent_args(static_only=True, skip_verification=True),
+                console=_console(),
+                changed_files=[str(py_file)],
+            )
+
+        ai_defects = [
+            finding
+            for finding in findings
+            if finding.get("_category") == "ai_defects"
+        ]
+        assert len(ai_defects) == 1
+        assert ai_defects[0]["rule_id"] == "SKY-A101"
+        assert ai_defects[0]["_source"] == "static"
+        assert ai_defects[0]["_confidence"] == "medium"
 
     @patch(P_LLM)
     def test_uses_gitignore_aware_discovery_for_phase_2b(self, mock_llm, tmp_path):

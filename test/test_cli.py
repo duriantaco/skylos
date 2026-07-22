@@ -20,6 +20,22 @@ from skylos.cli import (
 )
 
 
+def test_agent_findings_result_json_preserves_ai_defect_category():
+    result = cli._agent_findings_to_result_json(
+        [
+            {
+                "_category": "ai_defects",
+                "rule_id": "SKY-A101",
+                "file": "app.py",
+                "line": 4,
+            }
+        ]
+    )
+
+    assert [item["rule_id"] for item in result["ai_defects"]] == ["SKY-A101"]
+    assert result["quality"] == []
+
+
 class TestCleanFormatter:
     def test_clean_formatter_removes_metadata(self):
         """Test that CleanFormatter only returns the message."""
