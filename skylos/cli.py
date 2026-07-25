@@ -100,6 +100,7 @@ from rich.theme import Theme
 from rich.logging import RichHandler
 from rich.rule import Rule
 
+
 class _LazyInquirer:
     """Import inquirer only when an interactive prompt is actually used."""
 
@@ -127,6 +128,7 @@ inquirer = _LazyInquirer() if INTERACTIVE_AVAILABLE else None
 
 def _get_inquirer():
     return inquirer if INTERACTIVE_AVAILABLE else None
+
 
 logger = logging.getLogger(__name__)
 
@@ -372,6 +374,7 @@ def _empty_changed_deep_audit_payload(
                 "locked": 0,
                 "stale_analyzed": 0,
                 "limited": 0,
+                "rejected_source_files": 0,
             },
             complete=True,
             reason="no changed files to audit",
@@ -2463,8 +2466,7 @@ def _add_agent_security_deep_args(parser):
         "--scan-only",
         action="store_true",
         help=(
-            "Stage 1 only: update static threat-model/candidate state without "
-            "LLM calls"
+            "Stage 1 only: update static threat-model/candidate state without LLM calls"
         ),
     )
     parser.add_argument(
@@ -2587,8 +2589,7 @@ def _security_deep_workflow_payload(
     return {
         "name": "security-deep",
         "compatibility": (
-            "Equivalent to `skylos agent audit --deep` with clearer workflow "
-            "naming."
+            "Equivalent to `skylos agent audit --deep` with clearer workflow naming."
         ),
         "mode": mode,
         "stages": [
@@ -2621,10 +2622,7 @@ def _security_deep_workflow_payload(
 def _print_security_deep_workflow(console, workflow):
     console.print("[brand]Security Deep stages:[/brand]")
     for stage in workflow.get("stages", []):
-        console.print(
-            f"  Stage {stage['number']}: {stage['name']} "
-            f"({stage['status']})"
-        )
+        console.print(f"  Stage {stage['number']}: {stage['name']} ({stage['status']})")
 
 
 def _explicit_prompt_templates_from_args(agent_args, console):
@@ -3901,7 +3899,13 @@ def main() -> None:
                     model=locals().get("model"),
                     provider=locals().get("provider"),
                     allowed_files=changed_files if changed_scope else None,
+                    scan_summary=summary,
                     process_summary=process_summary,
+                    finding_run_id=(
+                        process_summary.run_id
+                        if changed_scope and process_summary is not None
+                        else None
+                    ),
                 )
 
             payload = {
@@ -3994,6 +3998,7 @@ def main() -> None:
                 heading = "scan-only" if process_summary is None else "scan"
                 if (
                     summary.candidate_count == 0
+                    and summary.rejected_source_files == 0
                     and process_summary is None
                     and revalidation_summary is None
                     and ci_summary is None
@@ -4018,6 +4023,9 @@ def main() -> None:
                     console.print(f"  Pending files: {summary.pending_files}")
                     console.print(f"  Processing files: {summary.processing_files}")
                     console.print(f"  Error files: {summary.error_files}")
+                    console.print(
+                        f"  Rejected source files: {summary.rejected_source_files}"
+                    )
                     console.print(f"  Not analyzed: {summary.not_analyzed_files}")
                     if summary.deleted_files:
                         console.print(f"  Deleted records: {summary.deleted_files}")

@@ -3,6 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from skylos.audit.freshness import latest_current_revalidation
+from skylos.audit.processor import (
+    agent_context_is_current,
+    current_repository_catalog_digest,
+)
 from skylos.audit.store import AuditStore
 from skylos.audit.types import (
     STATUS_ANALYZED,
@@ -14,6 +19,7 @@ from skylos.audit.types import (
     STATUS_SKIPPED,
     AuditCIGateSummary,
     AuditProcessSummary,
+    AuditScanSummary,
     normalize_relative_path,
 )
 
@@ -33,10 +39,16 @@ def evaluate_deep_audit_ci_gate(
     model: str | None = None,
     provider: str | None = None,
     allowed_files: list[str | Path] | None = None,
+    scan_summary: AuditScanSummary | None = None,
     process_summary: AuditProcessSummary | None = None,
+    finding_run_id: str | None = None,
 ) -> AuditCIGateSummary:
     threshold = _severity_value(fail_on)
     allowed = _normalized_allowed_files(store, allowed_files)
+    repository_catalog_digest = (
+        current_repository_catalog_digest(store) if model is not None else None
+    )
+    revalidation_catalog_cache: dict[tuple[Any, ...], bool] = {}
     counts = {
         "findings": 0,
         "pending": 0,
@@ -46,14 +58,21 @@ def evaluate_deep_audit_ci_gate(
         "locked": 0,
         "stale_analyzed": 0,
         "limited": 0,
+        "rejected_source_files": 0,
     }
+    if scan_summary is not None:
+        counts["rejected_source_files"] = max(
+            0,
+            int(scan_summary.rejected_source_files),
+        )
 
     for record in store.iter_file_records():
         if allowed is not None and record.file not in allowed:
             continue
         if record.status == STATUS_DELETED:
             continue
-        if not record.candidates and not record.findings:
+        model_review_unit = int(model is not None)
+        if not record.candidates and not record.findings and not model_review_unit:
             continue
 
         high_risk_candidates = [
@@ -61,7 +80,10 @@ def evaluate_deep_audit_ci_gate(
             for candidate in record.candidates
             if _severity_value(candidate.severity_hint) >= threshold
         ]
-        high_risk_candidate_count = len(high_risk_candidates)
+        high_risk_candidate_count = max(
+            len(high_risk_candidates),
+            model_review_unit,
+        )
 
         if record.status == STATUS_PENDING:
             counts["pending"] += high_risk_candidate_count
@@ -76,14 +98,28 @@ def evaluate_deep_audit_ci_gate(
         elif (
             record.status == STATUS_ANALYZED
             and model is not None
-            and not _agent_context_matches(record, model=model, provider=provider)
+            and not agent_context_is_current(
+                record,
+                model=model,
+                provider=provider,
+                repository_catalog_digest=repository_catalog_digest,
+            )
         ):
             counts["stale_analyzed"] += high_risk_candidate_count
 
         for finding in record.findings:
             if not isinstance(finding, dict):
                 continue
-            if _finding_is_refuted(record, finding):
+            if (
+                finding_run_id is not None
+                and finding.get("audit_produced_by_run_id") != finding_run_id
+            ):
+                continue
+            if _finding_is_refuted(
+                record,
+                finding,
+                catalog_cache=revalidation_catalog_cache,
+            ):
                 continue
             if _severity_value(finding.get("severity")) >= threshold:
                 counts["findings"] += 1
@@ -131,29 +167,24 @@ def _severity_value(value: Any) -> int:
     return SEVERITY_RANK.get(str(value or "info").lower(), 0)
 
 
-def _agent_context_matches(record, *, model: str, provider: str | None) -> bool:
-    for item in reversed(record.analysis_history):
-        if not isinstance(item, dict) or item.get("stage") != "agent_process":
-            continue
-        return item.get("model") == model and item.get("provider") == provider
-    return False
-
-
-def _finding_is_refuted(record, finding: dict[str, Any]) -> bool:
-    finding_id = str(finding.get("audit_finding_id") or "")
-    if not finding_id:
-        return False
-    for item in reversed(record.revalidation):
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("finding_id") or "") != finding_id:
-            continue
-        verdict = str(item.get("verdict") or "").lower()
-        return verdict in {"false_positive", "fixed"}
-    return False
+def _finding_is_refuted(
+    record,
+    finding: dict[str, Any],
+    *,
+    catalog_cache: dict[tuple[Any, ...], bool],
+) -> bool:
+    item = latest_current_revalidation(
+        record,
+        finding,
+        catalog_cache=catalog_cache,
+    )
+    verdict = str((item or {}).get("verdict") or "").lower()
+    return verdict in {"false_positive", "fixed"}
 
 
 def _gate_reason(counts: dict[str, int]) -> str:
+    if counts["rejected_source_files"]:
+        return "deep audit source files were rejected before analysis"
     if counts["findings"]:
         return "supported or unresolved findings meet the failure threshold"
     if counts["error"]:

@@ -21,6 +21,7 @@ from .evidence import (
     required_string_list,
     strict_positive_int,
     validate_evidence_list,
+    validate_finding_evidence_graph,
     validate_mitigation_checks,
 )
 from .models import (
@@ -149,6 +150,7 @@ def _validate_finding_evidence(
         mitigations=mitigations,
         tools=tools,
     )
+    validate_finding_evidence_graph(evidence, mitigation_evidence)
     _require_related_mitigation_evidence(classification, mitigation_evidence, tools)
     counterevidence = required_string_list(raw, "counterevidence", allow_empty=True)
     _validate_evidence_list_sizes(mitigations, counterevidence)

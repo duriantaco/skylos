@@ -2,9 +2,15 @@ import os
 import time
 from .base import BaseAdapter
 from skylos.cloud.credentials import get_key, PROVIDERS
+from skylos.llm.completion_diagnostics import (
+    OUTPUT_BUDGET_FINISH_REASON,
+    OUTPUT_BUDGET_SIGNAL,
+    normalize_finish_reason,
+)
 
 
 class LiteLLMAdapter(BaseAdapter):
+    MAX_DIAGNOSTIC_COUNT = 1_000_000_000
     RETRYABLE_ERROR_SNIPPETS = (
         "connection error",
         "connection refused",
@@ -33,6 +39,7 @@ class LiteLLMAdapter(BaseAdapter):
         timeout=None,
         retry_attempts=3,
         temperature=0.0,
+        reasoning_effort=None,
     ):
         super().__init__(model, api_key)
         self.enable_cache = enable_cache
@@ -40,11 +47,13 @@ class LiteLLMAdapter(BaseAdapter):
         self.timeout = timeout
         self.retry_attempts = max(1, int(retry_attempts or 1))
         self.temperature = temperature
+        self.reasoning_effort = reasoning_effort
         self.last_usage = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
         }
+        self.last_completion_diagnostic = self._empty_completion_diagnostic()
         self.total_usage = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -217,6 +226,7 @@ class LiteLLMAdapter(BaseAdapter):
             "completion_tokens": 0,
             "total_tokens": 0,
         }
+        self._reset_completion_diagnostic()
         self.total_usage = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -256,6 +266,64 @@ class LiteLLMAdapter(BaseAdapter):
         for key, value in usage.items():
             self.total_usage[key] += value
 
+    @staticmethod
+    def _field(value, name):
+        if isinstance(value, dict):
+            return value.get(name)
+        return getattr(value, name, None)
+
+    @classmethod
+    def _bounded_count(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return None
+        try:
+            count = int(value)
+        except (OverflowError, ValueError):
+            return None
+        if count < 0 or count > cls.MAX_DIAGNOSTIC_COUNT:
+            return None
+        return count
+
+    @classmethod
+    def _finish_reason(cls, choice):
+        return normalize_finish_reason(cls._field(choice, "finish_reason"))
+
+    @staticmethod
+    def _empty_completion_diagnostic():
+        return {
+            "finish_reason": None,
+            "content_chars": None,
+            "completion_tokens": None,
+            "reasoning_tokens": None,
+            "signal": None,
+        }
+
+    def _reset_completion_diagnostic(self):
+        self.last_completion_diagnostic = self._empty_completion_diagnostic()
+
+    def _record_completion_diagnostic(self, response, *, choice, content):
+        usage = self._field(response, "usage")
+        completion_details = self._field(usage, "completion_tokens_details")
+        completion_tokens = self._bounded_count(self._field(usage, "completion_tokens"))
+        reasoning_tokens = self._bounded_count(
+            self._field(completion_details, "reasoning_tokens")
+        )
+        finish_reason = self._finish_reason(choice)
+        normalized_content = content.strip() if isinstance(content, str) else ""
+        content_chars = len(normalized_content) if content is not None else 0
+        signal = (
+            OUTPUT_BUDGET_SIGNAL
+            if finish_reason == OUTPUT_BUDGET_FINISH_REASON
+            else None
+        )
+        self.last_completion_diagnostic = {
+            "finish_reason": finish_reason,
+            "content_chars": content_chars,
+            "completion_tokens": completion_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "signal": signal,
+        }
+
     def _complete_once(self, system_prompt, user_prompt, response_format=None):
         self._resolve_api_key()
 
@@ -289,10 +357,19 @@ class LiteLLMAdapter(BaseAdapter):
             "api_key": self.api_key,
         }
 
+        if self.explicit_provider is not None:
+            # New model aliases may not exist in the bundled LiteLLM model map
+            # yet. Preserve the caller's explicit provider so a valid model
+            # such as ``gpt-5.4`` is routed without requiring a transport-only
+            # ``openai/`` prefix.
+            kwargs["custom_llm_provider"] = self.explicit_provider
+
         if self.max_tokens is not None:
             kwargs["max_tokens"] = self.max_tokens
         if self.timeout is not None:
             kwargs["timeout"] = self.timeout
+        if self.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = self.reasoning_effort
 
         if self.api_base:
             kwargs["api_base"] = self.api_base
@@ -305,7 +382,20 @@ class LiteLLMAdapter(BaseAdapter):
 
         response = self.litellm.completion(**kwargs)
         self._record_usage(response)
-        return response.choices[0].message.content.strip()
+        choices = self._field(response, "choices")
+        choice = choices[0]
+        message = self._field(choice, "message")
+        content = self._field(message, "content")
+        self._record_completion_diagnostic(
+            response,
+            choice=choice,
+            content=content,
+        )
+        if content is None:
+            return ""
+        if not isinstance(content, str):
+            raise TypeError("LiteLLM completion content must be text or null")
+        return content.strip()
 
     def _stream_once(self, system_prompt, user_prompt):
         self._resolve_api_key()
@@ -342,10 +432,15 @@ class LiteLLMAdapter(BaseAdapter):
             "api_key": self.api_key,
         }
 
+        if self.explicit_provider is not None:
+            kwargs["custom_llm_provider"] = self.explicit_provider
+
         if self.max_tokens is not None:
             kwargs["max_tokens"] = self.max_tokens
         if self.timeout is not None:
             kwargs["timeout"] = self.timeout
+        if self.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = self.reasoning_effort
 
         if self.api_base:
             kwargs["api_base"] = self.api_base
@@ -384,8 +479,18 @@ class LiteLLMAdapter(BaseAdapter):
         return "Error: {}".format(text)
 
     def complete(self, system_prompt, user_prompt, response_format=None):
+        # ``last_usage`` describes this completion only.  Clear the previous
+        # response before attempting provider I/O so an error string cannot be
+        # charged with token counts left behind by an earlier successful call.
+        self.last_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        self._reset_completion_diagnostic()
         last_error = None
         for attempt in range(self.retry_attempts):
+            self._reset_completion_diagnostic()
             try:
                 return self._complete_once(
                     system_prompt,
@@ -393,6 +498,7 @@ class LiteLLMAdapter(BaseAdapter):
                     response_format=response_format,
                 )
             except Exception as e:
+                self._reset_completion_diagnostic()
                 last_error = e
                 if (
                     not self._should_retry_exception(e)

@@ -137,12 +137,17 @@ def get_git_changed_files(
 ):
     supported_exts = {
         ".py",
+        ".pyi",
+        ".pyw",
         ".go",
         ".ts",
         ".tsx",
         ".js",
         ".jsx",
         ".java",
+        ".cs",
+        ".kt",
+        ".kts",
         ".php",
         ".rs",
         ".dart",
@@ -158,6 +163,7 @@ def get_git_changed_files(
 
     def _collect_supported(output, repo_root):
         files = []
+        seen = set()
         for line in output.splitlines():
             full_path = pathlib.Path(repo_root) / line
             if (
@@ -166,8 +172,9 @@ def get_git_changed_files(
                 and pathlib.Path(line).suffix.lower() not in supported_exts
             ):
                 continue
-            if full_path.exists() or include_deleted:
+            if (full_path.exists() or include_deleted) and full_path not in seen:
                 files.append(full_path)
+                seen.add(full_path)
         return files
 
     try:
@@ -201,9 +208,15 @@ def get_git_changed_files(
             cwd=repo_root,
             timeout=30,
         ).decode("utf-8")
-        files = _collect_supported(output, repo_root)
-        if files:
-            return files
+        try:
+            untracked_output = subprocess.check_output(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                cwd=repo_root,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            ).decode("utf-8")
+        except Exception:
+            untracked_output = ""
 
         base_ref = os.environ.get("GITHUB_BASE_REF")
         if base_ref:
@@ -211,12 +224,15 @@ def get_git_changed_files(
         else:
             cmd = ["git", "diff", "--name-only", "origin/main...HEAD"]
         try:
-            output = subprocess.check_output(
+            branch_output = subprocess.check_output(
                 cmd, cwd=repo_root, stderr=subprocess.DEVNULL, timeout=30
             ).decode("utf-8")
-            return _collect_supported(output, repo_root)
         except Exception:
-            return []
+            branch_output = ""
+        return _collect_supported(
+            f"{output}\n{untracked_output}\n{branch_output}",
+            repo_root,
+        )
     except Exception as exc:
         if strict_base:
             raise ValueError("Unable to discover git changed files") from exc

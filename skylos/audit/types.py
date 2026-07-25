@@ -2,16 +2,36 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import skylos
+from skylos.core.safe_cache_io import (
+    read_project_text_no_symlink,
+    read_text_no_symlink,
+)
 
 SCHEMA_VERSION = 1
-CANDIDATE_ENGINE_VERSION = "deep-audit-v1"
+CANDIDATE_ENGINE_VERSION = "deep-audit-v2"
 DEFAULT_PROJECT_ID = "default"
+MAX_AUDIT_SOURCE_BYTES = 1_000_000
+
+SIGNAL_QUALITY_PROVEN = "proven"
+SIGNAL_QUALITY_STRONG = "strong"
+SIGNAL_QUALITY_EXPLORATORY = "exploratory"
+VALID_SIGNAL_QUALITIES = {
+    SIGNAL_QUALITY_PROVEN,
+    SIGNAL_QUALITY_STRONG,
+    SIGNAL_QUALITY_EXPLORATORY,
+}
+SIGNAL_QUALITY_RANK = {
+    SIGNAL_QUALITY_PROVEN: 2,
+    SIGNAL_QUALITY_STRONG: 1,
+    SIGNAL_QUALITY_EXPLORATORY: 0,
+}
 
 STATUS_PENDING = "pending"
 STATUS_PROCESSING = "processing"
@@ -40,12 +60,76 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+def read_audit_source_text(
+    project_root: str | Path,
+    path: str | Path,
+    *,
+    max_bytes: int = MAX_AUDIT_SOURCE_BYTES,
+) -> str | None:
+    """Read a contained regular source file without following symlinks."""
+
+    if max_bytes < 0:
+        return None
+    try:
+        root = Path(project_root).expanduser().resolve(strict=True)
+    except OSError:
+        return None
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    if not _is_regular_bounded_file(candidate, max_bytes=max_bytes):
+        return None
+    return read_project_text_no_symlink(
+        root,
+        candidate,
+        max_bytes=max_bytes,
+        encoding="utf-8",
+        errors=None,
+        newline="",
+    )
+
+
+def sha256_file(
+    path: str | Path,
+    *,
+    max_bytes: int = MAX_AUDIT_SOURCE_BYTES,
+    project_root: str | Path | None = None,
+) -> str:
+    """Hash a bounded regular source file without following its final symlink.
+
+    Supplying ``project_root`` additionally rejects symlinks in parent path
+    components and paths outside that root. The one-argument form remains
+    source-compatible for existing audit callers.
+    """
+
+    candidate = Path(path).expanduser()
+    if project_root is not None:
+        source = read_audit_source_text(
+            project_root,
+            candidate,
+            max_bytes=max_bytes,
+        )
+    elif _is_regular_bounded_file(candidate, max_bytes=max_bytes):
+        source = read_text_no_symlink(
+            candidate,
+            max_bytes=max_bytes,
+            encoding="utf-8",
+            errors=None,
+            newline="",
+        )
+    else:
+        source = None
+    if source is None:
+        raise OSError(f"Unable to safely hash audit source: {candidate}")
+    return sha256_text(source)
+
+
+def _is_regular_bounded_file(path: Path, *, max_bytes: int) -> bool:
+    try:
+        file_stat = path.lstat()
+    except OSError:
+        return False
+    return stat.S_ISREG(file_stat.st_mode) and file_stat.st_size <= max_bytes
 
 
 def stable_json_hash(value: Any) -> str:
@@ -54,6 +138,15 @@ def stable_json_hash(value: Any) -> str:
     except TypeError:
         payload = repr(value)
     return sha256_text(payload)
+
+
+def normalize_signal_quality(value: Any) -> str:
+    """Return a conservative, stable candidate-signal quality tier."""
+
+    normalized = str(value or "").strip().lower()
+    if normalized in VALID_SIGNAL_QUALITIES:
+        return normalized
+    return SIGNAL_QUALITY_EXPLORATORY
 
 
 def normalize_relative_path(project_root: str | Path, file_path: str | Path) -> str:
@@ -131,6 +224,14 @@ class AuditCandidate:
     sink_kind: str | None = None
     code_hash: str | None = None
     data: dict[str, Any] = field(default_factory=dict)
+    # Kept after all v1 fields so existing positional construction remains
+    # source-compatible. New code should pass this field by keyword.
+    signal_quality: str = SIGNAL_QUALITY_EXPLORATORY
+
+    def __post_init__(self) -> None:
+        # Persisted state and extension-provided candidates are untrusted inputs.
+        # Unknown tiers must never receive a stronger scheduling rank.
+        self.signal_quality = normalize_signal_quality(self.signal_quality)
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -141,6 +242,7 @@ class AuditCandidate:
             "severity_hint": self.severity_hint,
             "reason": self.reason,
             "evidence": self.evidence,
+            "signal_quality": self.signal_quality,
             "redacted": self.redacted,
             "priority": self.priority,
             "symbol": self.symbol,
@@ -161,6 +263,7 @@ class AuditCandidate:
             severity_hint=str(payload.get("severity_hint") or "medium").lower(),
             reason=str(payload.get("reason") or ""),
             evidence=str(payload.get("evidence") or "static"),
+            signal_quality=normalize_signal_quality(payload.get("signal_quality")),
             redacted=bool(payload.get("redacted", False)),
             priority=int(payload.get("priority") or 0),
             symbol=str(payload["symbol"]) if payload.get("symbol") else None,
@@ -193,6 +296,8 @@ class AuditFileRecord:
     config_hash: str = ""
     candidate_engine_version: str = CANDIDATE_ENGINE_VERSION
     schema_version: int = SCHEMA_VERSION
+    # Appended after every v1 field to preserve positional construction.
+    lock_lease_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -208,6 +313,7 @@ class AuditFileRecord:
             "analysis_history": list(self.analysis_history),
             "revalidation": list(self.revalidation),
             "locked_by_run_id": self.locked_by_run_id,
+            "lock_lease_id": self.lock_lease_id,
             "locked_at": self.locked_at,
             "last_scanned_at": self.last_scanned_at,
             "last_analyzed_at": self.last_analyzed_at,
@@ -259,6 +365,9 @@ class AuditFileRecord:
                 if payload.get("locked_by_run_id")
                 else None
             ),
+            lock_lease_id=(
+                str(payload["lock_lease_id"]) if payload.get("lock_lease_id") else None
+            ),
             locked_at=str(payload["locked_at"]) if payload.get("locked_at") else None,
             last_scanned_at=(
                 str(payload["last_scanned_at"])
@@ -290,12 +399,16 @@ class AuditScanSummary:
     error_files: int = 0
     deleted_files: int = 0
     complete: bool = True
+    coverage: dict[str, Any] = field(default_factory=dict)
+    # Appended to preserve positional compatibility with earlier summaries.
+    rejected_source_files: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "project_id": self.project_id,
             "project_root": self.project_root,
             "files_scanned": self.files_scanned,
+            "rejected_source_files": self.rejected_source_files,
             "records_written": self.records_written,
             "candidate_count": self.candidate_count,
             "redacted_candidates": self.redacted_candidates,
@@ -305,6 +418,7 @@ class AuditScanSummary:
             "error_files": self.error_files,
             "deleted_files": self.deleted_files,
             "complete": self.complete,
+            "coverage": dict(self.coverage),
         }
 
 
@@ -385,6 +499,7 @@ class AuditRevalidationSummary:
     forced: bool
     challenge: bool
     complete: bool
+    limited: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -403,4 +518,5 @@ class AuditRevalidationSummary:
             "forced": self.forced,
             "challenge": self.challenge,
             "complete": self.complete,
+            "limited": self.limited,
         }

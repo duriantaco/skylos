@@ -1,11 +1,33 @@
+"""Orchestration for evidence-grounded Deep Audit finding revalidation.
+
+The stable public entry point remains in this module. Evidence validation,
+verifier adapters, and policy/provenance logic live in the ``revalidation``
+package so each security boundary can be reviewed independently.
+"""
+
 from __future__ import annotations
 
-import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from skylos.audit.redaction import redact_text, sanitize_for_audit
+from skylos.audit.freshness import finding_fingerprint
+from skylos.audit.redaction import sanitize_for_audit
+from skylos.audit.revalidation.policy import (
+    CatalogFreshnessCache,
+    CatalogPolicy,
+    base_provenance,
+    catalog_policy,
+    finding_id,
+    has_current_verdict,
+    has_secret_candidate,
+    incomplete_verdict,
+    latest_verdict,
+    normalize_verdict,
+    read_current_source,
+)
+from skylos.audit.revalidation.verifiers import verify_finding
 from skylos.audit.store import AuditStore
 from skylos.audit.types import (
     STATUS_DELETED,
@@ -15,8 +37,218 @@ from skylos.audit.types import (
     utc_now,
 )
 
-VALID_VERDICTS = {"true_positive", "false_positive", "fixed", "uncertain"}
-SECURITY_AUDIT_ISSUE = "security_audit"
+
+@dataclass
+class _RunStats:
+    considered: int = 0
+    revalidated: int = 0
+    challenged: int = 0
+    skipped: int = 0
+    errors: int = 0
+    limited: bool = False
+    verdict_counts: dict[str, int] = field(
+        default_factory=lambda: {
+            "true_positive": 0,
+            "false_positive": 0,
+            "fixed": 0,
+            "uncertain": 0,
+        }
+    )
+
+    def count_result(self, verdict: str, *, challenged: bool) -> None:
+        self.verdict_counts[verdict] += 1
+        self.revalidated += 1
+        if challenged:
+            self.challenged += 1
+
+
+@dataclass
+class _RevalidationRun:
+    store: AuditStore
+    verifier: Any
+    model: str
+    provider: str | None
+    force: bool
+    challenge: bool
+    limit: int | None
+    run_id: str
+    policy: CatalogPolicy
+    catalog_cache: CatalogFreshnessCache = field(default_factory=dict)
+    stats: _RunStats = field(default_factory=_RunStats)
+
+    @property
+    def mode(self) -> str:
+        return "challenge" if self.challenge else "revalidate"
+
+    def process_records(self, records: list[AuditFileRecord]) -> None:
+        for record in records:
+            self._process_record(record)
+
+    def _process_record(self, record: AuditFileRecord) -> None:
+        current = self.store.read_file_record(record.file)
+        if current is None:
+            return
+        if has_secret_candidate(current):
+            self.stats.skipped += len(current.findings)
+            return
+        for finding in list(current.findings):
+            if isinstance(finding, dict):
+                self._process_finding(current, finding)
+
+    def _process_finding(
+        self,
+        record: AuditFileRecord,
+        finding: dict[str, Any],
+    ) -> None:
+        current_finding_id = finding_id(finding)
+        self.stats.considered += 1
+        if not self._finding_needs_work(record, finding, current_finding_id):
+            return
+        if self._limit_reached():
+            self.stats.limited = True
+            return
+        verdict = self._run_verifier(
+            record,
+            finding,
+            finding_id_value=current_finding_id,
+        )
+        normalized = normalize_verdict(verdict)
+        if normalized["complete"] is not True:
+            self.stats.errors += 1
+        entry = self._build_entry(
+            record,
+            finding,
+            finding_id_value=current_finding_id,
+            normalized=normalized,
+        )
+        self._persist_result(record, finding, entry, normalized)
+
+    def _finding_needs_work(
+        self,
+        record: AuditFileRecord,
+        finding: dict[str, Any],
+        finding_id_value: str,
+    ) -> bool:
+        if self.challenge and latest_verdict(record, finding_id_value) != "uncertain":
+            return False
+        return self.force or not has_current_verdict(
+            record,
+            finding,
+            model=self.model,
+            provider=self.provider,
+            challenge=self.challenge,
+            catalog_cache=self.catalog_cache,
+        )
+
+    def _limit_reached(self) -> bool:
+        return (
+            self.limit is not None
+            and self.limit >= 0
+            and self.stats.revalidated >= self.limit
+        )
+
+    def _run_verifier(
+        self,
+        record: AuditFileRecord,
+        finding: dict[str, Any],
+        *,
+        finding_id_value: str,
+    ) -> dict[str, Any]:
+        try:
+            source = read_current_source(self.store, record)
+            return verify_finding(
+                self.verifier,
+                store=self.store,
+                record=record,
+                finding=finding,
+                source=source,
+                mode=self.mode,
+                run_id=(
+                    f"{self.run_id}-{sha256_text(finding_id_value)[:8]}"
+                ),
+                catalog_policy=self.policy,
+            )
+        except Exception as exc:
+            return incomplete_verdict(f"Revalidation failed: {exc}")
+
+    def _build_entry(
+        self,
+        record: AuditFileRecord,
+        finding: dict[str, Any],
+        *,
+        finding_id_value: str,
+        normalized: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = {
+            "finding_id": finding_id_value,
+            "verdict": normalized["verdict"],
+            "reason": normalized["reason"],
+            "evidence": normalized["evidence"],
+            "evidence_validated": normalized["evidence_validated"],
+            "refuting_invariant": normalized["refuting_invariant"],
+            "complete": normalized["complete"],
+            "model": self.model,
+            "provider": self.provider,
+            "run_id": self.run_id,
+            "mode": self.mode,
+            "revalidated_at": utc_now(),
+            **base_provenance(record, finding, self.policy),
+            **normalized["provenance"],
+        }
+        return sanitize_for_audit(payload)
+
+    def _persist_result(
+        self,
+        record: AuditFileRecord,
+        finding: dict[str, Any],
+        entry: dict[str, Any],
+        normalized: dict[str, Any],
+    ) -> None:
+        persisted = self.store.append_revalidation_entry(
+            record.file,
+            expected_source_hash=record.file_hash,
+            expected_config_hash=record.config_hash,
+            expected_finding_hash=finding_fingerprint(finding),
+            entry=entry,
+        )
+        if not persisted:
+            self._count_persist_failure(normalized)
+            return
+        record.revalidation.append(entry)
+        self.stats.count_result(
+            normalized["verdict"],
+            challenged=self.challenge,
+        )
+
+    def _count_persist_failure(self, normalized: dict[str, Any]) -> None:
+        if normalized["complete"] is True:
+            self.stats.errors += 1
+        self.stats.count_result("uncertain", challenged=self.challenge)
+
+    def summary(self) -> AuditRevalidationSummary:
+        counts = self.stats.verdict_counts
+        return AuditRevalidationSummary(
+            run_id=self.run_id,
+            project_id=self.store.project_id,
+            project_root=str(self.store.project_root),
+            considered_findings=self.stats.considered,
+            revalidated_findings=self.stats.revalidated,
+            challenged_findings=self.stats.challenged,
+            skipped_findings=self.stats.skipped,
+            error_findings=self.stats.errors,
+            true_positive=counts["true_positive"],
+            false_positive=counts["false_positive"],
+            fixed=counts["fixed"],
+            uncertain=counts["uncertain"],
+            forced=self.force,
+            challenge=self.challenge,
+            complete=(
+                self.stats.skipped == 0
+                and self.stats.errors == 0
+                and not self.stats.limited
+            ),
+            limited=self.stats.limited,
+        )
 
 
 def revalidate_deep_audit_findings(
@@ -31,263 +263,41 @@ def revalidate_deep_audit_findings(
     limit: int | None = None,
     run_id: str | None = None,
 ) -> AuditRevalidationSummary:
-    run_id = run_id or f"revalidate-{uuid4().hex[:12]}"
+    current_run_id = run_id or f"revalidate-{uuid4().hex[:12]}"
     allowed = store.processing_scope(allowed_files)
-    records = [
-        record
-        for record in store.iter_file_records()
-        if record.findings
-        and record.status != STATUS_DELETED
-        and (allowed is None or record.file in allowed)
-    ]
-
-    considered = 0
-    revalidated = 0
-    challenged = 0
-    skipped = 0
-    errors = 0
-    verdict_counts = {
-        "true_positive": 0,
-        "false_positive": 0,
-        "fixed": 0,
-        "uncertain": 0,
-    }
-
-    for record in records:
-        current = store.read_file_record(record.file)
-        if current is None:
-            continue
-
-        if _has_secret_candidate(current):
-            skipped += len(current.findings)
-            continue
-
-        for finding in list(current.findings):
-            if limit is not None and limit >= 0 and revalidated >= limit:
-                break
-            if not isinstance(finding, dict):
-                continue
-            finding_id = _finding_id(finding)
-            considered += 1
-            if challenge and _latest_verdict(current, finding_id) != "uncertain":
-                continue
-            if not force and _has_current_verdict(
-                current,
-                finding_id,
-                model=model,
-                provider=provider,
-                challenge=challenge,
-            ):
-                continue
-
-            try:
-                verdict = _verify_finding(
-                    verifier,
-                    store=store,
-                    record=current,
-                    finding=finding,
-                    mode="challenge" if challenge else "revalidate",
-                )
-            except Exception as exc:
-                verdict = {
-                    "verdict": "uncertain",
-                    "reason": f"Revalidation failed: {exc}",
-                }
-                errors += 1
-
-            normalized = _normalize_verdict(verdict)
-            entry = sanitize_for_audit(
-                {
-                    "finding_id": finding_id,
-                    "verdict": normalized["verdict"],
-                    "reason": normalized["reason"],
-                    "model": model,
-                    "provider": provider,
-                    "run_id": run_id,
-                    "mode": "challenge" if challenge else "revalidate",
-                    "revalidated_at": utc_now(),
-                }
-            )
-            current.revalidation.append(entry)
-            verdict_counts[normalized["verdict"]] += 1
-            revalidated += 1
-            if challenge:
-                challenged += 1
-
-        store.write_file_record(current)
-
-    summary = AuditRevalidationSummary(
-        run_id=run_id,
-        project_id=store.project_id,
-        project_root=str(store.project_root),
-        considered_findings=considered,
-        revalidated_findings=revalidated,
-        challenged_findings=challenged,
-        skipped_findings=skipped,
-        error_findings=errors,
-        true_positive=verdict_counts["true_positive"],
-        false_positive=verdict_counts["false_positive"],
-        fixed=verdict_counts["fixed"],
-        uncertain=verdict_counts["uncertain"],
-        forced=force,
+    all_records = store.iter_file_records()
+    records = _eligible_records(all_records, allowed)
+    run = _RevalidationRun(
+        store=store,
+        verifier=verifier,
+        model=model,
+        provider=provider,
+        force=force,
         challenge=challenge,
-        complete=skipped == 0 and errors == 0,
+        limit=limit,
+        run_id=current_run_id,
+        policy=catalog_policy(store, all_records),
     )
+    run.process_records(records)
+    summary = run.summary()
     store.write_run(
-        run_id,
+        current_run_id,
         {
-            "mode": "challenge" if challenge else "revalidate",
+            "mode": run.mode,
             "summary": summary.to_dict(),
         },
     )
     return summary
 
 
-def _has_secret_candidate(record: AuditFileRecord) -> bool:
-    return any(
-        candidate.redacted or candidate.rule_id.startswith("SKY-S")
-        for candidate in record.candidates
-    )
-
-
-def _finding_id(finding: dict[str, Any]) -> str:
-    existing = finding.get("audit_finding_id")
-    if existing:
-        return str(existing)
-    payload = json.dumps(finding, sort_keys=True, default=str)
-    return "finding-" + sha256_text(payload)[:16]
-
-
-def _has_current_verdict(
-    record: AuditFileRecord,
-    finding_id: str,
-    *,
-    model: str,
-    provider: str | None,
-    challenge: bool,
-) -> bool:
-    mode = "challenge" if challenge else "revalidate"
-    return any(
-        isinstance(item, dict)
-        and str(item.get("finding_id") or "") == finding_id
-        and item.get("model") == model
-        and item.get("provider") == provider
-        and item.get("mode", "revalidate") == mode
-        for item in record.revalidation
-    )
-
-
-def _latest_verdict(record: AuditFileRecord, finding_id: str) -> str | None:
-    for item in reversed(record.revalidation):
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("finding_id") or "") == finding_id:
-            return str(item.get("verdict") or "").lower()
-    return None
-
-
-def _verify_finding(
-    verifier: Any,
-    *,
-    store: AuditStore,
-    record: AuditFileRecord,
-    finding: dict[str, Any],
-    mode: str,
-) -> dict[str, Any]:
-    context = _build_revalidation_context(store, record, finding, mode=mode)
-    verify_finding = getattr(verifier, "verify_finding", None)
-    if callable(verify_finding):
-        return verify_finding(
-            finding=sanitize_for_audit(finding),
-            context=context,
-            file_path=record.file,
-            mode=mode,
-        )
-
-    adapter_payload = _verify_with_agent_adapter(verifier, context=context, mode=mode)
-    if adapter_payload is not None:
-        return adapter_payload
-
-    return {
-        "verdict": "uncertain",
-        "reason": "No Deep Mode revalidation adapter was available.",
-    }
-
-
-def _build_revalidation_context(
-    store: AuditStore,
-    record: AuditFileRecord,
-    finding: dict[str, Any],
-    *,
-    mode: str,
-) -> dict[str, Any]:
-    file_path = store.project_root / record.file
-    try:
-        source = file_path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        source = ""
-    return sanitize_for_audit(
-        {
-            "mode": mode,
-            "file": record.file,
-            "language": record.language,
-            "status": record.status,
-            "finding": finding,
-            "candidates": [candidate.to_dict() for candidate in record.candidates],
-            "analysis_history": record.analysis_history[-5:],
-            "redacted_source": redact_text(source),
-        }
-    )
-
-
-def _verify_with_agent_adapter(
-    verifier: Any,
-    *,
-    context: dict[str, Any],
-    mode: str,
-) -> dict[str, Any] | None:
-    get_agent = getattr(verifier, "_get_agent", None)
-    if not callable(get_agent):
-        return None
-    agent = get_agent(SECURITY_AUDIT_ISSUE)
-    get_adapter = getattr(agent, "get_adapter", None)
-    if not callable(get_adapter):
-        return None
-    adapter = get_adapter()
-    complete = getattr(adapter, "complete", None)
-    if not callable(complete):
-        return None
-
-    system = (
-        "You are Skylos Deep Mode revalidator. Return JSON only with keys "
-        "verdict and reason. verdict must be one of true_positive, "
-        "false_positive, fixed, uncertain."
-    )
-    user = json.dumps(context, indent=2, sort_keys=True)
-    response = complete(system, user)
-    if not response:
-        return None
-    try:
-        payload = json.loads(str(response))
-    except json.JSONDecodeError:
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
-def _normalize_verdict(payload: dict[str, Any] | None) -> dict[str, str]:
-    verdict = str((payload or {}).get("verdict") or "uncertain").lower()
-    verdict_map = {
-        "supported": "true_positive",
-        "true": "true_positive",
-        "tp": "true_positive",
-        "refuted": "false_positive",
-        "false": "false_positive",
-        "fp": "false_positive",
-    }
-    verdict = verdict_map.get(verdict, verdict)
-    if verdict not in VALID_VERDICTS:
-        verdict = "uncertain"
-    reason = str((payload or {}).get("reason") or "").strip()
-    if not reason:
-        reason = "No reason provided."
-    return {"verdict": verdict, "reason": reason}
+def _eligible_records(
+    records: list[AuditFileRecord],
+    allowed: set[str] | None,
+) -> list[AuditFileRecord]:
+    return [
+        record
+        for record in records
+        if record.findings
+        and record.status != STATUS_DELETED
+        and (allowed is None or record.file in allowed)
+    ]

@@ -6,10 +6,13 @@ from pathlib import Path
 
 from skylos.audit.redaction import sanitize_for_audit
 from skylos.audit.types import (
+    MAX_AUDIT_SOURCE_BYTES,
+    SIGNAL_QUALITY_EXPLORATORY,
     AuditCandidate,
     code_region_hash,
     language_for_path,
     normalize_relative_path,
+    read_audit_source_text,
     sha256_text,
 )
 
@@ -338,10 +341,16 @@ def build_polyglot_signal_candidates(
     if not rules:
         return []
 
+    source = read_audit_source_text(
+        project_root,
+        file_path,
+        max_bytes=MAX_AUDIT_SOURCE_BYTES,
+    )
+    if source is None:
+        return []
     try:
         path = _resolve_polyglot_source_path(file_path, project_root=project_root)
-        source = path.read_text(encoding="utf-8", errors="ignore")
-    except (OSError, ValueError):
+    except ValueError:
         return []
 
     rel_path = normalize_relative_path(project_root, path)
@@ -370,6 +379,7 @@ def build_polyglot_signal_candidates(
                     severity_hint=rule.severity,
                     reason=rule.reason,
                     evidence="static",
+                    signal_quality=SIGNAL_QUALITY_EXPLORATORY,
                     redacted=False,
                     priority=_SEVERITY_PRIORITY.get(rule.severity, 400),
                     code_hash=code_region_hash(source, line_no),

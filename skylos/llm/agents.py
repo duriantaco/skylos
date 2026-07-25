@@ -105,6 +105,7 @@ class AgentConfig:
         enable_cache=True,
         prompt_templates=None,
         prompt_template_root=None,
+        reasoning_effort=None,
     ):
         self.model = model
         self.api_key = api_key
@@ -116,6 +117,7 @@ class AgentConfig:
         self.enable_cache = enable_cache
         self.prompt_templates = prompt_templates or {}
         self.prompt_template_root = prompt_template_root
+        self.reasoning_effort = reasoning_effort
         self.provider: str | None = None
         self.base_url: str | None = None
 
@@ -150,6 +152,7 @@ def create_llm_adapter(config):
         timeout=getattr(config, "timeout", None),
         retry_attempts=getattr(config, "retry_attempts", 3),
         temperature=getattr(config, "temperature", 0.0),
+        reasoning_effort=getattr(config, "reasoning_effort", None),
     )
 
 
