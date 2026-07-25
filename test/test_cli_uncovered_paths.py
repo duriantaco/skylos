@@ -203,8 +203,13 @@ def test_run_whitelist_creates_names_section_if_missing(tmp_path, monkeypatch):
 def test_get_git_changed_files_returns_existing_supported_files_only(tmp_path):
     root = tmp_path
     (root / "a.py").write_text("x=1", encoding="utf-8")
+    (root / "a.pyi").write_text("x: int", encoding="utf-8")
+    (root / "a.pyw").write_text("x=1", encoding="utf-8")
     (root / "b.tsx").write_text("export const x = 1", encoding="utf-8")
     (root / "c.go").write_text("package main", encoding="utf-8")
+    (root / "c.cs").write_text("class C {}", encoding="utf-8")
+    (root / "c.kt").write_text("class C", encoding="utf-8")
+    (root / "c.kts").write_text("val x = 1", encoding="utf-8")
     (root / "d.js").write_text("console.log('x')", encoding="utf-8")
     (root / "e.jsx").write_text("export const X = () => null", encoding="utf-8")
     (root / "b.txt").write_text("no", encoding="utf-8")
@@ -213,7 +218,10 @@ def test_get_git_changed_files_returns_existing_supported_files_only(tmp_path):
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return str(root).encode("utf-8")
         if cmd[:3] == ["git", "diff", "--name-only"]:
-            return b"a.py\nb.tsx\nc.go\nd.js\ne.jsx\nb.txt\nmissing.py\nmissing.ts\n"
+            return (
+                b"a.py\na.pyi\na.pyw\nb.tsx\nc.go\nc.cs\nc.kt\nc.kts\n"
+                b"d.js\ne.jsx\nb.txt\nmissing.py\nmissing.ts\n"
+            )
         raise AssertionError("unexpected cmd")
 
     with patch("skylos.cli.subprocess.check_output", side_effect=fake_check_output):
@@ -224,7 +232,65 @@ def test_get_git_changed_files_returns_existing_supported_files_only(tmp_path):
         names.append(p.name)
     names.sort()
 
-    assert names == ["a.py", "b.tsx", "c.go", "d.js", "e.jsx"]
+    assert names == [
+        "a.py",
+        "a.pyi",
+        "a.pyw",
+        "b.tsx",
+        "c.cs",
+        "c.go",
+        "c.kt",
+        "c.kts",
+        "d.js",
+        "e.jsx",
+    ]
+
+
+def test_get_git_changed_files_includes_untracked_supported_files(tmp_path):
+    root = tmp_path
+    (root / "tracked.py").write_text("x=1", encoding="utf-8")
+    (root / "untracked.kt").write_text("val x = 1", encoding="utf-8")
+    (root / "untracked.txt").write_text("ignored", encoding="utf-8")
+
+    def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return str(root).encode("utf-8")
+        if cmd == ["git", "diff", "--name-only", "HEAD"]:
+            return b"tracked.py\n"
+        if cmd == ["git", "ls-files", "--others", "--exclude-standard"]:
+            return b"untracked.kt\nuntracked.txt\ntracked.py\n"
+        raise AssertionError("unexpected cmd")
+
+    with patch("skylos.cli.subprocess.check_output", side_effect=fake_check_output):
+        files = cli.get_git_changed_files(root)
+
+    assert files == [root / "tracked.py", root / "untracked.kt"]
+
+
+def test_get_git_changed_files_unions_worktree_and_branch_changes(tmp_path):
+    root = tmp_path
+    for name in ("working.py", "untracked.py", "committed.py"):
+        (root / name).write_text("x=1", encoding="utf-8")
+
+    def fake_check_output(cmd, cwd=None, stderr=None, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return str(root).encode("utf-8")
+        if cmd == ["git", "diff", "--name-only", "HEAD"]:
+            return b"working.py\n"
+        if cmd == ["git", "ls-files", "--others", "--exclude-standard"]:
+            return b"untracked.py\n"
+        if cmd == ["git", "diff", "--name-only", "origin/main...HEAD"]:
+            return b"committed.py\nworking.py\n"
+        raise AssertionError(f"unexpected cmd: {cmd}")
+
+    with patch("skylos.cli.subprocess.check_output", side_effect=fake_check_output):
+        files = cli.get_git_changed_files(root)
+
+    assert files == [
+        root / "working.py",
+        root / "untracked.py",
+        root / "committed.py",
+    ]
 
 
 def test_get_git_changed_files_can_include_deleted_supported_files(tmp_path):
