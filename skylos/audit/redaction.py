@@ -70,7 +70,13 @@ def sanitize_for_audit(value: Any, *, key: str | None = None) -> Any:
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
         for item_key, item_value in value.items():
-            safe_key = str(item_key)
+            safe_key = redact_text(str(item_key))
+            if safe_key in sanitized:
+                base_key = safe_key
+                index = 2
+                while safe_key in sanitized:
+                    safe_key = f"{base_key}#{index}"
+                    index += 1
             sanitized[safe_key] = sanitize_for_audit(item_value, key=safe_key)
         return sanitized
 

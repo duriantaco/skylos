@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -10,6 +11,11 @@ from skylos.audit.polyglot import build_polyglot_signal_candidates
 from skylos.audit.store import AuditStore
 from skylos.audit.types import (
     DEFAULT_PROJECT_ID,
+    MAX_AUDIT_SOURCE_BYTES,
+    SIGNAL_QUALITY_EXPLORATORY,
+    SIGNAL_QUALITY_PROVEN,
+    SIGNAL_QUALITY_RANK,
+    SIGNAL_QUALITY_STRONG,
     STATUS_ERROR,
     STATUS_NOT_ANALYZED,
     STATUS_PENDING,
@@ -19,7 +25,7 @@ from skylos.audit.types import (
     code_region_hash,
     language_for_path,
     normalize_relative_path,
-    sha256_file,
+    read_audit_source_text,
     sha256_text,
     stable_json_hash,
 )
@@ -83,6 +89,23 @@ SECURITY_PATH_TOKENS = (
 )
 THREAT_TRACE_KIND = "threat_trace"
 THREAT_TRACE_RULE_ID = "SKY-AUDIT-TRACE"
+MAX_COVERAGE_RULE_BUCKETS = 128
+_AUDIT_COVERAGE_RULE_IDS = {
+    "SKY-AUDIT",
+    "SKY-AUDIT-ENTRYPOINT",
+    "SKY-AUDIT-LOGIC",
+    "SKY-AUDIT-PATH",
+    "SKY-AUDIT-SECURITY",
+    "SKY-AUDIT-TRACE",
+}
+_CANDIDATE_COVERAGE_KINDS = {
+    "entrypoint",
+    "finding_revalidation",
+    "path_signal",
+    "polyglot_static_signal",
+    "static_finding",
+    "threat_trace",
+}
 
 
 def scan_deep_audit_candidates(
@@ -113,13 +136,23 @@ def scan_deep_audit_candidates(
         }
     )
 
-    files = _discover_audit_files(
+    files, rejected_sources = _discover_audit_files(
         path,
         project_root=project_root,
         changed_files=changed_files,
         exclude_folders=parsed_excludes,
         exclude_paths=exclude_paths,
     )
+    source_cache = _source_cache(files, project_root=project_root)
+    safe_files: list[Path] = []
+    for file_path in files:
+        rel_path = normalize_relative_path(project_root, file_path)
+        if rel_path in source_cache:
+            safe_files.append(file_path)
+        else:
+            _record_rejected_source(rejected_sources, project_root, file_path)
+    files = safe_files
+    rejected_source_files = len(rejected_sources)
     static_result = run_static_on_files(
         files,
         project_root=project_root,
@@ -133,11 +166,13 @@ def scan_deep_audit_candidates(
         static_result,
         files,
         project_root=project_root,
+        source_cache=source_cache,
     )
     candidates_by_file = _build_static_candidates(
         files,
         project_root=project_root,
         static_result=static_result,
+        source_cache=source_cache,
     )
     _add_polyglot_signal_candidates(
         candidates_by_file,
@@ -182,9 +217,9 @@ def scan_deep_audit_candidates(
         }
         candidates = sorted(
             candidate_map.values(),
-            key=lambda item: (-item.priority, item.candidate_id),
+            key=_candidate_sort_key,
         )
-        file_hash = sha256_file(Path(file_path))
+        file_hash = sha256_text(source_cache[rel_path])
         record = store.upsert_scan_record(
             file_path=file_path,
             file_hash=file_hash,
@@ -216,7 +251,20 @@ def scan_deep_audit_candidates(
         not_analyzed_files=not_analyzed_files,
         error_files=error_files,
         deleted_files=len(deleted_records),
-        complete=(pending_files == 0 and processing_files == 0 and error_files == 0),
+        complete=(
+            pending_files == 0
+            and processing_files == 0
+            and error_files == 0
+            and rejected_source_files == 0
+        ),
+        coverage=_candidate_coverage(
+            files,
+            project_root=project_root,
+            candidates_by_file=candidates_by_file,
+            scope="changed_files" if changed_files is not None else "repository",
+            rejected_source_files=rejected_source_files,
+        ),
+        rejected_source_files=rejected_source_files,
     )
     run_id = f"scan-{uuid4().hex[:12]}"
     store.write_run(
@@ -234,21 +282,89 @@ def _project_root(path: str | Path) -> Path:
     return target.parent if target.is_file() else target
 
 
-def _resolve_audit_file(path: Path, project_root: Path) -> Path | None:
+def _resolve_audit_file(
+    path: Path,
+    project_root: Path,
+    *,
+    rejected_sources: set[str] | None = None,
+    report_rejection: bool = False,
+) -> Path | None:
     candidate = Path(path)
-    if candidate.is_symlink():
-        return None
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
     if not _is_audit_file(candidate):
         return None
+    try:
+        file_stat = candidate.lstat()
+    except OSError:
+        # Changed-file lists include deleted files; absence is not a read failure.
+        return None
+    if (
+        not stat.S_ISREG(file_stat.st_mode)
+        or file_stat.st_size > MAX_AUDIT_SOURCE_BYTES
+    ):
+        return _report_rejected_source(
+            rejected_sources,
+            project_root,
+            candidate,
+            enabled=report_rejection,
+        )
+    if (
+        read_audit_source_text(
+            project_root,
+            candidate,
+            max_bytes=MAX_AUDIT_SOURCE_BYTES,
+        )
+        is None
+    ):
+        return _report_rejected_source(
+            rejected_sources,
+            project_root,
+            candidate,
+            enabled=report_rejection,
+        )
+    resolved = _resolve_contained_file(candidate, project_root)
+    if resolved is None:
+        return _report_rejected_source(
+            rejected_sources,
+            project_root,
+            candidate,
+            enabled=report_rejection,
+        )
+    return resolved
+
+
+def _resolve_contained_file(candidate: Path, project_root: Path) -> Path | None:
     try:
         root = project_root.resolve(strict=True)
         resolved = candidate.resolve(strict=True)
         resolved.relative_to(root)
     except (OSError, ValueError):
         return None
-    if not resolved.is_file():
-        return None
-    return resolved
+    return resolved if resolved.is_file() else None
+
+
+def _report_rejected_source(
+    rejected_sources: set[str] | None,
+    project_root: Path,
+    candidate: Path,
+    *,
+    enabled: bool,
+) -> None:
+    if enabled and rejected_sources is not None:
+        _record_rejected_source(rejected_sources, project_root, candidate)
+
+
+def _record_rejected_source(
+    rejected_sources: set[str],
+    project_root: Path,
+    candidate: Path,
+) -> None:
+    try:
+        key = candidate.relative_to(project_root).as_posix()
+    except ValueError:
+        key = str(candidate)
+    rejected_sources.add(key)
 
 
 def _discover_audit_files(
@@ -258,34 +374,45 @@ def _discover_audit_files(
     changed_files: list[str | Path] | None,
     exclude_folders: list[str],
     exclude_paths: list[str | Path] | None,
-) -> list[Path]:
+) -> tuple[list[Path], set[str]]:
     excluded_paths = _normalized_exclude_paths(project_root, exclude_paths)
+    rejected_sources: set[str] = set()
     if changed_files is not None:
         files = []
         for item in changed_files:
-            try:
-                rel = normalize_relative_path(project_root, item)
-            except ValueError:
-                continue
-            candidate = project_root / rel
+            candidate = Path(item)
+            if not candidate.is_absolute():
+                candidate = project_root / candidate
             if should_exclude_path(candidate, project_root, exclude_folders):
                 continue
             if _is_excluded_output_path(candidate, project_root, excluded_paths):
                 continue
-            resolved = _resolve_audit_file(candidate, project_root)
-            if resolved is not None:
-                files.append(resolved)
-        return sorted(set(files))
+            resolved = _resolve_audit_file(
+                candidate,
+                project_root,
+                rejected_sources=rejected_sources,
+                report_rejection=True,
+            )
+            if resolved is None:
+                continue
+            files.append(resolved)
+        return sorted(set(files)), rejected_sources
 
     discovered = discover_source_files(
         path,
         [ext for ext in DEEP_AUDIT_EXTENSIONS if ext != ".env"],
         exclude_folders=exclude_folders,
     )
-    target = Path(path).resolve()
+    raw_target = Path(path)
+    target = raw_target.resolve()
     root = target.parent if target.is_file() else target
     if target.is_file():
-        resolved_target = _resolve_audit_file(target, project_root)
+        resolved_target = _resolve_audit_file(
+            raw_target,
+            project_root,
+            rejected_sources=rejected_sources,
+            report_rejection=True,
+        )
         if (
             resolved_target is not None
             and not should_exclude_path(target, root, exclude_folders)
@@ -298,17 +425,27 @@ def _discover_audit_files(
                 continue
             if _is_excluded_output_path(env_file, project_root, excluded_paths):
                 continue
-            resolved_env = _resolve_audit_file(env_file, project_root)
+            resolved_env = _resolve_audit_file(
+                env_file,
+                project_root,
+                rejected_sources=rejected_sources,
+                report_rejection=not env_file.is_symlink(),
+            )
             if resolved_env is not None:
                 discovered.append(resolved_env)
-    return sorted(
-        {
-            resolved
-            for file_path in discovered
-            if (resolved := _resolve_audit_file(file_path, project_root)) is not None
-            if not _is_excluded_output_path(file_path, project_root, excluded_paths)
-        }
-    )
+    resolved_files: set[Path] = set()
+    for file_path in discovered:
+        if _is_excluded_output_path(file_path, project_root, excluded_paths):
+            continue
+        resolved = _resolve_audit_file(
+            file_path,
+            project_root,
+            rejected_sources=rejected_sources,
+            report_rejection=True,
+        )
+        if resolved is not None:
+            resolved_files.add(resolved)
+    return sorted(resolved_files), rejected_sources
 
 
 def _is_audit_file(path: Path) -> bool:
@@ -352,8 +489,8 @@ def _build_static_candidates(
     *,
     project_root: Path,
     static_result: dict[str, Any],
+    source_cache: dict[str, str],
 ) -> dict[str, list[AuditCandidate]]:
-    source_cache = _source_cache(files, project_root=project_root)
     candidates_by_file: dict[str, list[AuditCandidate]] = {
         normalize_relative_path(project_root, file_path): [] for file_path in files
     }
@@ -401,6 +538,7 @@ def _merge_direct_secret_findings(
     files: list[Path],
     *,
     project_root: Path,
+    source_cache: dict[str, str],
 ) -> None:
     seen = {
         (
@@ -415,9 +553,8 @@ def _merge_direct_secret_findings(
     secrets = list(static_result.get("secrets", []) or [])
     for file_path in files:
         rel_path = normalize_relative_path(project_root, file_path)
-        try:
-            source = file_path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
+        source = source_cache.get(rel_path)
+        if source is None:
             continue
         findings = scan_secrets_ctx(
             {
@@ -491,6 +628,7 @@ def _add_repo_activation_candidates(
                 line=1,
                 severity_hint="medium",
                 reason=reason,
+                signal_quality=SIGNAL_QUALITY_EXPLORATORY,
                 priority=450 + min(meta.review_score, 250),
                 symbol=meta.module,
                 code_hash=sha256_text(reason)[:16],
@@ -515,7 +653,8 @@ def _add_polyglot_signal_candidates(
             (candidate.rule_id, candidate.line) for candidate in existing
         }
         for candidate in build_polyglot_signal_candidates(
-            file_path, project_root=project_root
+            file_path,
+            project_root=project_root,
         ):
             if (candidate.rule_id, candidate.line) in existing_locations:
                 continue
@@ -555,6 +694,9 @@ def _add_threat_trace_candidates(
                 severity_hint="high",
                 reason=reason,
                 evidence=trace.validation,
+                # This is a concrete static path, but exploitability and
+                # runtime reachability remain explicitly unvalidated.
+                signal_quality=SIGNAL_QUALITY_STRONG,
                 redacted=False,
                 priority=875,
                 symbol=trace.entrypoint,
@@ -594,6 +736,7 @@ def _add_path_signal_candidates(
                 line=1,
                 severity_hint="medium",
                 reason=reason,
+                signal_quality=SIGNAL_QUALITY_EXPLORATORY,
                 priority=350,
                 code_hash=sha256_text(reason)[:16],
                 data={"matched_tokens": matched},
@@ -638,6 +781,7 @@ def _candidate_from_finding(
         severity_hint=severity,
         reason=str(reason),
         evidence="static",
+        signal_quality=SIGNAL_QUALITY_STRONG,
         redacted=redacted,
         priority=SEVERITY_PRIORITY.get(severity, 400),
         symbol=str(symbol) if symbol else None,
@@ -646,6 +790,134 @@ def _candidate_from_finding(
         code_hash=code_hash,
         data=safe_finding if isinstance(safe_finding, dict) else {},
     )
+
+
+def _candidate_sort_key(candidate: AuditCandidate) -> tuple[int, int, str]:
+    """Order evidence quality independently from severity-derived priority."""
+
+    quality_rank = SIGNAL_QUALITY_RANK.get(candidate.signal_quality, 0)
+    return (-quality_rank, -candidate.priority, candidate.candidate_id)
+
+
+def _candidate_coverage(
+    files: list[Path],
+    *,
+    project_root: Path,
+    candidates_by_file: dict[str, list[AuditCandidate]],
+    scope: str,
+    rejected_source_files: int,
+) -> dict[str, Any]:
+    """Summarize observed candidate coverage without claiming measured recall."""
+
+    by_language: dict[str, dict[str, int]] = {}
+    by_rule: dict[str, dict[str, int]] = {}
+    by_signal_quality = {
+        SIGNAL_QUALITY_PROVEN: 0,
+        SIGNAL_QUALITY_STRONG: 0,
+        SIGNAL_QUALITY_EXPLORATORY: 0,
+    }
+    by_kind: dict[str, int] = {}
+    files_with_candidates = 0
+    candidate_count = 0
+
+    for file_path in files:
+        rel_path = normalize_relative_path(project_root, file_path)
+        language = language_for_path(file_path)
+        candidate_map = {
+            candidate.candidate_id: candidate
+            for candidate in candidates_by_file.get(rel_path, [])
+        }
+        candidates = list(candidate_map.values())
+        language_bucket = by_language.setdefault(
+            language,
+            {
+                "files_scanned": 0,
+                "files_with_candidates": 0,
+                "candidate_count": 0,
+            },
+        )
+        language_bucket["files_scanned"] += 1
+        if candidates:
+            files_with_candidates += 1
+            language_bucket["files_with_candidates"] += 1
+        language_bucket["candidate_count"] += len(candidates)
+        candidate_count += len(candidates)
+
+        rules_seen: set[str] = set()
+        for candidate in candidates:
+            by_signal_quality[candidate.signal_quality] = (
+                by_signal_quality.get(candidate.signal_quality, 0) + 1
+            )
+            kind = (
+                candidate.kind
+                if candidate.kind in _CANDIDATE_COVERAGE_KINDS
+                else "other"
+            )
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            rule_id = _coverage_rule_id(candidate.rule_id)
+            rule_bucket = by_rule.setdefault(
+                rule_id,
+                {"candidate_count": 0, "files_with_candidates": 0},
+            )
+            rule_bucket["candidate_count"] += 1
+            rules_seen.add(rule_id)
+        for rule_id in rules_seen:
+            by_rule[rule_id]["files_with_candidates"] += 1
+
+    return {
+        "schema_version": 1,
+        "metric": "candidate_observation_coverage",
+        "scope": scope,
+        "interpretation": (
+            "Observed scanner candidates only; this is not labeled recall."
+        ),
+        "files_scanned": len(files),
+        "rejected_source_files": rejected_source_files,
+        "files_with_candidates": files_with_candidates,
+        "files_without_candidates": len(files) - files_with_candidates,
+        "candidate_count": candidate_count,
+        "by_language": dict(sorted(by_language.items())),
+        "by_rule": _bounded_rule_buckets(by_rule),
+        "by_signal_quality": dict(sorted(by_signal_quality.items())),
+        "by_kind": dict(sorted(by_kind.items())),
+    }
+
+
+def _coverage_rule_id(value: Any) -> str:
+    rule_id = str(value or "").strip().upper()
+    if rule_id in _AUDIT_COVERAGE_RULE_IDS:
+        return rule_id
+    if not rule_id.startswith("SKY-"):
+        return "other"
+    suffix = rule_id[4:]
+    prefix = suffix[:-3]
+    digits = suffix[-3:]
+    if 1 <= len(prefix) <= 3 and prefix.isalpha() and digits.isdigit():
+        return rule_id
+    return "other"
+
+
+def _bounded_rule_buckets(
+    buckets: dict[str, dict[str, int]],
+) -> dict[str, dict[str, int]]:
+    if len(buckets) <= MAX_COVERAGE_RULE_BUCKETS:
+        return dict(sorted(buckets.items()))
+
+    ordered = sorted(
+        buckets.items(),
+        key=lambda item: (-item[1]["candidate_count"], item[0]),
+    )
+    visible = dict(ordered[: MAX_COVERAGE_RULE_BUCKETS - 1])
+    overflow = {"candidate_count": 0, "files_with_candidates": 0}
+    for _rule_id, metrics in ordered[MAX_COVERAGE_RULE_BUCKETS - 1 :]:
+        for key in overflow:
+            overflow[key] += metrics[key]
+    if "other" in visible:
+        for key in overflow:
+            visible["other"][key] += overflow[key]
+    else:
+        visible["other"] = overflow
+    return dict(sorted(visible.items()))
 
 
 def _candidate_id(
@@ -685,8 +957,11 @@ def _source_cache(files: list[Path], *, project_root: Path) -> dict[str, str]:
     cache: dict[str, str] = {}
     for file_path in files:
         rel_path = normalize_relative_path(project_root, file_path)
-        try:
-            cache[rel_path] = file_path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            cache[rel_path] = ""
+        source = read_audit_source_text(
+            project_root,
+            file_path,
+            max_bytes=MAX_AUDIT_SOURCE_BYTES,
+        )
+        if source is not None:
+            cache[rel_path] = source
     return cache
