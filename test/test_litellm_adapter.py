@@ -8,9 +8,12 @@ from skylos.adapters.litellm_adapter import LiteLLMAdapter
 
 
 class _FakeLitellmResponse:
-    def __init__(self, text: str, usage=None):
+    def __init__(self, text: str | None, usage=None, finish_reason=None):
         self.choices = [
-            types.SimpleNamespace(message=types.SimpleNamespace(content=text))
+            types.SimpleNamespace(
+                message=types.SimpleNamespace(content=text),
+                finish_reason=finish_reason,
+            )
         ]
         self.usage = usage
 
@@ -178,6 +181,22 @@ def test_complete_adds_timeout_when_present(monkeypatch):
     assert fake.last_kwargs["timeout"] == 12
 
 
+def test_complete_adds_reasoning_effort_when_present(monkeypatch):
+    fake = _FakeLiteLLMModule(text="ok")
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+
+    ad = LiteLLMAdapter(
+        model="gpt-5.4",
+        api_key="K",
+        provider="openai",
+        reasoning_effort="high",
+    )
+    _ = ad.complete("SYS", "USER")
+
+    assert fake.last_kwargs["reasoning_effort"] == "high"
+    assert fake.last_kwargs["custom_llm_provider"] == "openai"
+
+
 def test_complete_records_usage_tokens(monkeypatch):
     usage = types.SimpleNamespace(
         prompt_tokens=111,
@@ -207,6 +226,147 @@ def test_complete_records_usage_tokens(monkeypatch):
         "prompt_tokens": 111,
         "completion_tokens": 22,
         "total_tokens": 133,
+    }
+
+
+def test_complete_records_bounded_metadata_only_diagnostics(monkeypatch):
+    usage = types.SimpleNamespace(
+        prompt_tokens=111,
+        completion_tokens=22,
+        total_tokens=133,
+        completion_tokens_details=types.SimpleNamespace(reasoning_tokens=17),
+    )
+    fake = _FakeLiteLLMModule()
+
+    def completion(**kwargs):
+        fake.last_kwargs = kwargs
+        return _FakeLitellmResponse(
+            "  private provider response  ",
+            usage=usage,
+            finish_reason="stop",
+        )
+
+    fake.completion = completion
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+
+    ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K")
+
+    assert ad.complete("SYS", "USER") == "private provider response"
+    assert ad.last_completion_diagnostic == {
+        "finish_reason": "stop",
+        "content_chars": 25,
+        "completion_tokens": 22,
+        "reasoning_tokens": 17,
+        "signal": None,
+    }
+    assert "private provider response" not in repr(ad.last_completion_diagnostic)
+
+
+@pytest.mark.parametrize(
+    ("provider_finish_reason", "content", "expected_content_chars"),
+    [
+        ("length", None, 0),
+        ("max_tokens", '{"action":', 10),
+        ("MAX_TOKENS", "", 0),
+        ("max-output-tokens", "{", 1),
+        ("token limit", "{}", 2),
+    ],
+)
+def test_complete_normalizes_provider_output_budget_finish_reasons(
+    monkeypatch,
+    provider_finish_reason,
+    content,
+    expected_content_chars,
+):
+    usage = {
+        "prompt_tokens": 111,
+        "completion_tokens": 4096,
+        "total_tokens": 4207,
+        "completion_tokens_details": {"reasoning_tokens": 4096},
+    }
+    fake = _FakeLiteLLMModule()
+
+    def completion(**kwargs):
+        fake.last_kwargs = kwargs
+        return _FakeLitellmResponse(
+            content,
+            usage=usage,
+            finish_reason=provider_finish_reason,
+        )
+
+    fake.completion = completion
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+    ad = LiteLLMAdapter(model="gpt-5.4", api_key="K", provider="openai")
+
+    assert ad.complete("SYS", "USER") == (content or "")
+    assert ad.last_completion_diagnostic == {
+        "finish_reason": "length",
+        "content_chars": expected_content_chars,
+        "completion_tokens": 4096,
+        "reasoning_tokens": 4096,
+        "signal": "output_budget_exhausted",
+    }
+
+
+def test_complete_does_not_persist_unknown_finish_reason(monkeypatch):
+    fake = _FakeLiteLLMModule()
+
+    def completion(**kwargs):
+        fake.last_kwargs = kwargs
+        return _FakeLitellmResponse(
+            "ok",
+            finish_reason="repository-controlled-finish-reason",
+        )
+
+    fake.completion = completion
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+    ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K")
+
+    assert ad.complete("SYS", "USER") == "ok"
+    assert ad.last_completion_diagnostic["finish_reason"] is None
+    assert ad.last_completion_diagnostic["signal"] is None
+
+
+def test_complete_error_clears_usage_from_previous_success(monkeypatch):
+    usage = types.SimpleNamespace(
+        prompt_tokens=111,
+        completion_tokens=22,
+        total_tokens=133,
+    )
+
+    class _SuccessThenErrorLiteLLM:
+        def __init__(self):
+            self.calls = 0
+            self.drop_params = False
+
+        def completion(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return _FakeLitellmResponse("ok", usage=usage)
+            raise RuntimeError("provider unavailable")
+
+    fake = _SuccessThenErrorLiteLLM()
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+    ad = LiteLLMAdapter(model="gpt-4o-mini", api_key="K", retry_attempts=1)
+
+    assert ad.complete("SYS", "FIRST") == "ok"
+    assert ad.complete("SYS", "SECOND").startswith("Error:")
+    assert ad.last_usage == {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+    assert ad.total_usage == {
+        "prompt_tokens": 111,
+        "completion_tokens": 22,
+        "total_tokens": 133,
+    }
+    assert ad.last_completion_diagnostic == {
+        "finish_reason": None,
+        "content_chars": None,
+        "completion_tokens": None,
+        "reasoning_tokens": None,
+        "signal": None,
     }
 
 
@@ -300,6 +460,23 @@ def test_stream_adds_max_tokens_when_present(monkeypatch):
 
     assert "".join(parts) == "ok"
     assert fake.last_kwargs["max_tokens"] == 456
+
+
+def test_stream_adds_reasoning_effort_when_present(monkeypatch):
+    fake = _FakeLiteLLMModule(stream_chunks=["ok"])
+    _install_fake_litellm(monkeypatch, fake_module=fake)
+
+    ad = LiteLLMAdapter(
+        model="gpt-5.4",
+        api_key="K",
+        provider="openai",
+        reasoning_effort="high",
+    )
+    parts = list(ad.stream("SYS", "USER"))
+
+    assert "".join(parts) == "ok"
+    assert fake.last_kwargs["reasoning_effort"] == "high"
+    assert fake.last_kwargs["custom_llm_provider"] == "openai"
 
 
 def test_stream_error_yields_single_error_message(monkeypatch):

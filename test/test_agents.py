@@ -130,6 +130,27 @@ def test_create_llm_adapter_forwards_temperature(monkeypatch):
     assert captured["temperature"] == 0.05
 
 
+def test_create_llm_adapter_forwards_reasoning_effort(monkeypatch):
+    captured = {}
+
+    class FakeLiteLLMAdapter:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "skylos.adapters.litellm_adapter.LiteLLMAdapter", FakeLiteLLMAdapter
+    )
+
+    cfg = agents.AgentConfig(
+        model="gpt-5.4",
+        api_key="X",
+        reasoning_effort="high",
+    )
+    agents.create_llm_adapter(cfg)
+
+    assert captured["reasoning_effort"] == "high"
+
+
 def test_create_llm_adapter_forwards_timeout_and_retry_attempts(monkeypatch):
     captured = {}
 
