@@ -7,7 +7,10 @@ from typing import Any
 from skylos.audit.investigator_tools import AuditReadOnlyTools
 
 from .models import InvestigationIncompleteError
-from .protocol import EVIDENCE_SCHEMA
+from .protocol import EVIDENCE_PURPOSES, EVIDENCE_SCHEMA
+
+
+_STATE_EVIDENCE_PURPOSES = frozenset({"state_population", "state_consumption"})
 
 
 def validate_evidence_list(
@@ -47,16 +50,79 @@ def _validate_evidence_items(
             evidence_line,
             evidence_end,
         )
+        purpose = enum_string(item, "purpose", set(EVIDENCE_PURPOSES))
         evidence.append(
             {
                 "file": rel_path,
                 "line": start,
                 "end_line": end,
                 "role": required_string(item, "role"),
+                "purpose": purpose,
+                "causal_pair": _validate_causal_pair(
+                    item.get("causal_pair"),
+                    purpose=purpose,
+                    label=label,
+                ),
                 "file_hash": tools.related_file_hashes[rel_path],
             }
         )
     return evidence
+
+
+def validate_finding_evidence_graph(
+    evidence: list[dict[str, Any]],
+    mitigation_checks: list[dict[str, Any]],
+) -> None:
+    mitigation_citations = {
+        _evidence_signature(item)
+        for check in mitigation_checks
+        for item in check["evidence"]
+        if item["purpose"] == "mitigation"
+    }
+    for item in evidence:
+        if (
+            item["purpose"] == "mitigation"
+            and _evidence_signature(item) not in mitigation_citations
+        ):
+            raise InvestigationIncompleteError(
+                "finding mitigation citation is not linked to mitigation evidence"
+            )
+
+    causal_pairs: dict[str, set[str]] = {}
+    for item in evidence:
+        pair = item["causal_pair"]
+        if pair is not None:
+            causal_pairs.setdefault(pair, set()).add(item["purpose"])
+    for purposes in causal_pairs.values():
+        if purposes != _STATE_EVIDENCE_PURPOSES:
+            raise InvestigationIncompleteError(
+                "shared-state causal pair requires population and consumption evidence"
+            )
+
+
+def _evidence_signature(item: dict[str, Any]) -> tuple[str, int, int]:
+    return item["file"], item["line"], item["end_line"]
+
+
+def _validate_causal_pair(
+    value: Any,
+    *,
+    purpose: str,
+    label: str,
+) -> str | None:
+    if value is None:
+        if purpose in _STATE_EVIDENCE_PURPOSES:
+            raise InvestigationIncompleteError(
+                "shared-state evidence requires a causal pair"
+            )
+        return None
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > 80:
+        raise InvestigationIncompleteError(f"{label} causal_pair is invalid")
+    if purpose not in _STATE_EVIDENCE_PURPOSES:
+        raise InvestigationIncompleteError(
+            "causal pair is allowed only for shared-state evidence"
+        )
+    return value.strip()
 
 
 def validate_mitigation_checks(

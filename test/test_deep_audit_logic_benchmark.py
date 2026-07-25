@@ -81,12 +81,24 @@ def _vulnerable_finding() -> dict[str, Any]:
                 "line": 5,
                 "end_line": 7,
                 "role": "entry point passes the caller-selected order to refund service",
+                "purpose": "entry",
+                "causal_pair": None,
             },
             {
                 "file": "refunds/policy.py",
                 "line": 2,
                 "end_line": 2,
                 "role": "reachable authorization decision omits tenant binding",
+                "purpose": "mitigation",
+                "causal_pair": None,
+            },
+            {
+                "file": "refunds/service.py",
+                "line": 11,
+                "end_line": 14,
+                "role": "the unauthorized refund state is durably persisted",
+                "purpose": "effect",
+                "causal_pair": None,
             },
         ],
         "mitigations_checked": [
@@ -103,6 +115,8 @@ def _vulnerable_finding() -> dict[str, Any]:
                         "line": 2,
                         "end_line": 2,
                         "role": "authentication and role are checked without tenant ownership",
+                        "purpose": "mitigation",
+                        "causal_pair": None,
                     }
                 ],
             },
@@ -115,6 +129,8 @@ def _vulnerable_finding() -> dict[str, Any]:
                         "line": 7,
                         "end_line": 10,
                         "role": "state and amount checks do not establish order ownership",
+                        "purpose": "mitigation",
+                        "causal_pair": None,
                     }
                 ],
             },
@@ -137,18 +153,24 @@ def _safe_evidence() -> list[dict[str, Any]]:
                     "line": 5,
                     "end_line": 7,
                     "role": "entry point delegates the refund to the guarded service",
+                    "purpose": "mitigation",
+                    "causal_pair": None,
                 },
                 {
                     "file": "refunds/service.py",
                     "line": 5,
                     "end_line": 6,
                     "role": "service rejects callers denied by the reachable policy",
+                    "purpose": "mitigation",
+                    "causal_pair": None,
                 },
                 {
                     "file": "refunds/policy.py",
                     "line": 2,
                     "end_line": 6,
                     "role": "policy requires authentication, support role, and tenant ownership",
+                    "purpose": "mitigation",
+                    "causal_pair": None,
                 },
             ],
         }
@@ -232,7 +254,10 @@ def test_checked_in_logic_contract_passes_deterministic_replay() -> None:
     assert summary["pass_count"] == 2
     assert [case["actual"]["finding_count"] for case in summary["cases"]] == [1, 0]
     assert all(case["actual"]["tool_calls"] == 4 for case in summary["cases"])
-    assert all(case["actual"]["total_tokens"] == 75 for case in summary["cases"])
+    assert [case["actual"]["total_tokens"] for case in summary["cases"]] == [
+        90,
+        75,
+    ]
 
 
 def test_expected_contract_rejects_decoy_policy_as_clean_evidence() -> None:
