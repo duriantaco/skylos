@@ -10,4 +10,5 @@ def refund_order(actor, order, amount):
         raise ValueError("refund must equal the captured amount")
     order.status = "refunded"
     order.refunded_amount = amount
+    order.save(update_fields=["status", "refunded_amount"])
     return order
