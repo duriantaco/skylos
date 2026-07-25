@@ -166,6 +166,69 @@ def test_agent_audit_scan_only_runs_ci_gate(tmp_path: Path, monkeypatch):
     assert payload["ci"]["blocking_counts"]["pending"] == 1
 
 
+def test_agent_audit_fail_on_blocks_rejected_source_scan(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    out = tmp_path / "audit.json"
+    store = AuditStore(repo)
+    store.init_project(config_hash="cfg")
+
+    def fake_scan(path, *, changed_files=None):
+        return (
+            AuditScanSummary(
+                project_id="default",
+                project_root=str(repo),
+                files_scanned=0,
+                records_written=0,
+                candidate_count=0,
+                redacted_candidates=0,
+                pending_files=0,
+                not_analyzed_files=0,
+                complete=False,
+                coverage={"rejected_source_files": 1},
+                rejected_source_files=1,
+            ),
+            store,
+        )
+
+    monkeypatch.setattr(
+        "skylos.audit.candidates.scan_deep_audit_candidates",
+        fake_scan,
+    )
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "skylos",
+            "agent",
+            "audit",
+            str(repo),
+            "--deep",
+            "--scan-only",
+            "--fail-on",
+            "critical",
+            "--format",
+            "json",
+            "--output",
+            str(out),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert exc.value.code == 1
+    assert payload["summary"]["rejected_source_files"] == 1
+    assert payload["summary"]["complete"] is False
+    assert payload["ci"]["blocking_counts"]["rejected_source_files"] == 1
+    assert payload["ci"]["reason"] == (
+        "deep audit source files were rejected before analysis"
+    )
+
+
 def test_agent_audit_scan_only_writes_sarif_export_from_persisted_state(
     tmp_path: Path, monkeypatch
 ):

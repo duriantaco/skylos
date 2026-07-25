@@ -372,6 +372,7 @@ def _empty_changed_deep_audit_payload(
                 "locked": 0,
                 "stale_analyzed": 0,
                 "limited": 0,
+                "rejected_source_files": 0,
             },
             complete=True,
             reason="no changed files to audit",
@@ -3901,7 +3902,13 @@ def main() -> None:
                     model=locals().get("model"),
                     provider=locals().get("provider"),
                     allowed_files=changed_files if changed_scope else None,
+                    scan_summary=summary,
                     process_summary=process_summary,
+                    finding_run_id=(
+                        process_summary.run_id
+                        if changed_scope and process_summary is not None
+                        else None
+                    ),
                 )
 
             payload = {
@@ -3994,6 +4001,7 @@ def main() -> None:
                 heading = "scan-only" if process_summary is None else "scan"
                 if (
                     summary.candidate_count == 0
+                    and summary.rejected_source_files == 0
                     and process_summary is None
                     and revalidation_summary is None
                     and ci_summary is None
@@ -4018,6 +4026,9 @@ def main() -> None:
                     console.print(f"  Pending files: {summary.pending_files}")
                     console.print(f"  Processing files: {summary.processing_files}")
                     console.print(f"  Error files: {summary.error_files}")
+                    console.print(
+                        f"  Rejected source files: {summary.rejected_source_files}"
+                    )
                     console.print(f"  Not analyzed: {summary.not_analyzed_files}")
                     if summary.deleted_files:
                         console.print(f"  Deleted records: {summary.deleted_files}")
