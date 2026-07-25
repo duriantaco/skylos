@@ -3,6 +3,7 @@
   "cases": [
     {
       "id": "cross-tenant-refund-vulnerable",
+      "label": "vulnerable",
       "fixture": "fixtures/cross_tenant_refund/vulnerable",
       "entry_file": "api.py",
       "candidates": [],
@@ -20,12 +21,22 @@
           "refunds/service.py",
           "refunds/policy.py"
         ],
-        "required_evidence_files": ["api.py", "refunds/policy.py"],
-        "forbidden_evidence_files": ["archive/policy.py"]
+        "required_evidence_files": [
+          "api.py",
+          "refunds/service.py",
+          "refunds/policy.py"
+        ],
+        "required_finding_evidence_anchors": [
+          {"file": "refunds/policy.py", "line": 2, "token": "actor.role"},
+          {"file": "refunds/service.py", "line": 13, "token": "order.save"}
+        ],
+        "forbidden_evidence_files": ["archive/policy.py"],
+        "forbidden_mitigation_evidence_files": ["archive/policy.py"]
       }
     },
     {
       "id": "cross-tenant-refund-safe",
+      "label": "safe",
       "fixture": "fixtures/cross_tenant_refund/safe",
       "entry_file": "api.py",
       "candidates": [],
@@ -44,7 +55,413 @@
           "refunds/service.py",
           "refunds/policy.py"
         ],
+        "required_clean_evidence_anchors": [
+          {"file": "refunds/service.py", "line": 5, "token": "can_refund"},
+          {
+            "file": "refunds/policy.py",
+            "line": 5,
+            "token": "actor.tenant_id == order.tenant_id"
+          }
+        ],
         "forbidden_clean_evidence_files": ["archive/policy.py"]
+      }
+    },
+    {
+      "id": "middleware-order-vulnerable",
+      "label": "vulnerable",
+      "fixture": "fixtures/middleware_order/vulnerable",
+      "entry_file": "app.py",
+      "candidates": [],
+      "expect": {
+        "status": "complete",
+        "finding_count": {"min": 1, "max": 2},
+        "min_tool_calls": 2,
+        "min_llm_calls": 3,
+        "required_rule_ids": ["SKY-AUDIT-SECURITY"],
+        "required_categories": ["authentication_session"],
+        "required_symbols": ["update_account"],
+        "required_primary_files": ["app.py"],
+        "required_visited_files": [
+          "app.py",
+          "middleware/pipeline.py",
+          "middleware/auth.py",
+          "models.py"
+        ],
+        "required_evidence_files": [
+          "app.py",
+          "middleware/pipeline.py",
+          "models.py"
+        ],
+        "required_finding_evidence_anchors": [
+          {"file": "app.py", "line": 15, "token": ".save("},
+          {
+            "file": "middleware/pipeline.py",
+            "line": 5,
+            "token": "handler(request)"
+          },
+          {
+            "file": "middleware/pipeline.py",
+            "line": 6,
+            "token": "require_user(request)"
+          },
+          {"file": "models.py", "line": 12, "token": "is_authenticated"}
+        ],
+        "required_mitigation_evidence_files": ["middleware/auth.py"],
+        "forbidden_evidence_files": ["legacy/pipeline.py"],
+        "forbidden_mitigation_evidence_files": ["legacy/pipeline.py"]
+      }
+    },
+    {
+      "id": "middleware-order-safe",
+      "label": "safe",
+      "fixture": "fixtures/middleware_order/safe",
+      "entry_file": "app.py",
+      "candidates": [],
+      "expect": {
+        "status": "complete",
+        "finding_count": {"exact": 0},
+        "min_tool_calls": 2,
+        "min_llm_calls": 3,
+        "required_visited_files": [
+          "app.py",
+          "middleware/pipeline.py",
+          "middleware/auth.py"
+        ],
+        "required_clean_evidence_files": [
+          "app.py",
+          "middleware/pipeline.py",
+          "middleware/auth.py"
+        ],
+        "required_clean_evidence_anchors": [
+          {"file": "app.py", "line": 15, "token": ".save("},
+          {
+            "file": "middleware/pipeline.py",
+            "line": 5,
+            "token": "require_user(request)"
+          },
+          {
+            "file": "middleware/pipeline.py",
+            "line": 6,
+            "token": "handler(request)"
+          },
+          {
+            "file": "middleware/auth.py",
+            "line": 2,
+            "token": "is_authenticated"
+          }
+        ],
+        "forbidden_clean_evidence_files": ["legacy/pipeline.py"]
+      }
+    },
+    {
+      "id": "webhook-verification-vulnerable",
+      "label": "vulnerable",
+      "fixture": "fixtures/webhook_verification/vulnerable",
+      "entry_file": "webhook.py",
+      "candidates": [],
+      "expect": {
+        "status": "complete",
+        "finding_count": {"min": 1, "max": 2},
+        "min_tool_calls": 2,
+        "min_llm_calls": 3,
+        "required_rule_ids": ["SKY-AUDIT-SECURITY"],
+        "required_any_categories": [
+          "cryptographic_trust",
+          "authentication_session"
+        ],
+        "required_symbols": ["webhook"],
+        "required_primary_files": ["webhook.py"],
+        "required_visited_files": [
+          "webhook.py",
+          "processing/service.py",
+          "processing/signatures.py",
+          "processing/store.py"
+        ],
+        "required_evidence_files": [
+          "webhook.py",
+          "processing/service.py",
+          "processing/signatures.py",
+          "processing/store.py"
+        ],
+        "required_finding_evidence_anchors": [
+          {"file": "processing/service.py", "line": 10, "token": "apply_event"},
+          {
+            "file": "processing/service.py",
+            "line": 11,
+            "token": "verify_signature"
+          },
+          {"file": "processing/signatures.py", "line": 8, "token": "compare_digest"},
+          {"file": "processing/store.py", "line": 25, "token": "account.save"}
+        ],
+        "forbidden_evidence_files": ["archive/service.py"],
+        "forbidden_mitigation_evidence_files": ["archive/service.py"]
+      }
+    },
+    {
+      "id": "webhook-verification-lookalike",
+      "label": "lookalike",
+      "fixture": "fixtures/webhook_verification/lookalike",
+      "entry_file": "webhook.py",
+      "candidates": [],
+      "expect": {
+        "status": "complete",
+        "finding_count": {"exact": 0},
+        "min_tool_calls": 2,
+        "min_llm_calls": 3,
+        "required_visited_files": [
+          "webhook.py",
+          "processing/service.py",
+          "processing/signatures.py",
+          "processing/store.py",
+          "processing/models.py"
+        ],
+        "required_clean_evidence_files": [
+          "webhook.py",
+          "processing/service.py",
+          "processing/signatures.py",
+          "processing/store.py",
+          "processing/models.py"
+        ],
+        "required_clean_evidence_anchors": [
+          {
+            "file": "processing/service.py",
+            "line": 8,
+            "token": "verify_signature"
+          },
+          {"file": "processing/service.py", "line": 12, "token": "apply_event"},
+          {"file": "processing/signatures.py", "line": 8, "token": "compare_digest"},
+          {
+            "file": "processing/store.py",
+            "line": 15,
+            "token": "PLAN_BY_PRICE_ID"
+          },
+          {
+            "file": "processing/store.py",
+            "line": 18,
+            "token": "select_for_update"
+          },
+          {
+            "file": "processing/store.py",
+            "line": 21,
+            "token": "plan_version is not None"
+          },
+          {"file": "processing/store.py", "line": 25, "token": "account.save"},
+          {
+            "file": "processing/models.py",
+            "line": 5,
+            "token": "unique=True"
+          },
+          {"file": "processing/models.py", "line": 7, "token": "null=True"}
+        ],
+        "forbidden_clean_evidence_files": ["archive/service.py"]
+      }
+    },
+    {
+      "id": "tenant-cache-vulnerable",
+      "label": "vulnerable",
+      "fixture": "fixtures/tenant_cache/vulnerable",
+      "entry_file": "api.py",
+      "candidates": [],
+      "expect": {
+        "status": "complete",
+        "finding_count": {"min": 1, "max": 2},
+        "min_tool_calls": 2,
+        "min_llm_calls": 3,
+        "required_rule_ids": ["SKY-AUDIT-LOGIC"],
+        "required_categories": ["authorization_scope"],
+        "required_symbols": ["invoice_endpoint"],
+        "required_primary_files": ["api.py"],
+        "required_visited_files": [
+          "api.py",
+          "invoices/service.py",
+          "invoices/cache.py",
+          "invoices/backend.py",
+          "invoices/database.py"
+        ],
+        "required_evidence_files": [
+          "api.py",
+          "invoices/cache.py",
+          "invoices/backend.py"
+        ],
+        "required_finding_evidence_anchors": [
+          {"file": "invoices/cache.py", "line": 6, "token": "key = invoice_id"},
+          {"file": "invoices/backend.py", "line": 11, "token": "return _ENTRIES[key]"},
+          {"file": "invoices/backend.py", "line": 15, "token": "_ENTRIES[key]"}
+        ],
+        "required_mitigation_evidence_files": ["invoices/database.py"],
+        "forbidden_evidence_files": ["archive/cache.py"],
+        "forbidden_mitigation_evidence_files": ["archive/cache.py"]
+      }
+    },
+    {
+      "id": "tenant-cache-safe",
+      "label": "safe",
+      "fixture": "fixtures/tenant_cache/safe",
+      "entry_file": "api.py",
+      "candidates": [],
+      "expect": {
+        "status": "complete",
+        "finding_count": {"exact": 0},
+        "min_tool_calls": 2,
+        "min_llm_calls": 3,
+        "required_visited_files": [
+          "api.py",
+          "invoices/service.py",
+          "invoices/cache.py",
+          "invoices/backend.py",
+          "invoices/database.py"
+        ],
+        "required_clean_evidence_files": [
+          "api.py",
+          "invoices/service.py",
+          "invoices/cache.py",
+          "invoices/backend.py",
+          "invoices/database.py"
+        ],
+        "required_clean_evidence_anchors": [
+          {
+            "file": "invoices/cache.py",
+            "line": 6,
+            "token": "key = (tenant_id, invoice_id)"
+          },
+          {"file": "invoices/backend.py", "line": 11, "token": "return _ENTRIES[key]"},
+          {"file": "invoices/backend.py", "line": 15, "token": "_ENTRIES[key]"},
+          {"file": "invoices/database.py", "line": 5, "token": "tenant_id=tenant_id"}
+        ],
+        "forbidden_clean_evidence_files": ["archive/cache.py"]
+      }
+    },
+    {
+      "id": "payment-idempotency-vulnerable",
+      "label": "vulnerable",
+      "fixture": "fixtures/idempotency/vulnerable",
+      "entry_file": "payment_webhook.py",
+      "candidates": [],
+      "expect": {
+        "status": "complete",
+        "finding_count": {"min": 1, "max": 2},
+        "min_tool_calls": 2,
+        "min_llm_calls": 3,
+        "required_rule_ids": ["SKY-AUDIT-LOGIC"],
+        "required_any_categories": [
+          "atomicity",
+          "replay_idempotency",
+          "partial_failure"
+        ],
+        "required_symbols": ["payment_webhook"],
+        "required_primary_files": ["payment_webhook.py"],
+        "required_visited_files": [
+          "payment_webhook.py",
+          "payments/signatures.py",
+          "payments/service.py",
+          "payments/store.py",
+          "payments/gateway.py",
+          "payments/models.py"
+        ],
+        "required_evidence_files": [
+          "payment_webhook.py",
+          "payments/service.py",
+          "payments/store.py",
+          "payments/gateway.py"
+        ],
+        "required_finding_evidence_anchors": [
+          {"file": "payments/service.py", "line": 5, "token": "event_seen"},
+          {"file": "payments/service.py", "line": 7, "token": "gateway.capture"},
+          {"file": "payments/store.py", "line": 9, "token": "objects.create"},
+          {"file": "payments/gateway.py", "line": 5, "token": "ProviderCapture"}
+        ],
+        "forbidden_evidence_files": ["archive/service.py"],
+        "forbidden_mitigation_evidence_files": ["archive/service.py"]
+      }
+    },
+    {
+      "id": "payment-claim-first-vulnerable",
+      "label": "vulnerable",
+      "fixture": "fixtures/idempotency/claim_first",
+      "entry_file": "payment_webhook.py",
+      "candidates": [],
+      "expect": {
+        "status": "complete",
+        "finding_count": {"min": 1, "max": 2},
+        "min_tool_calls": 2,
+        "min_llm_calls": 3,
+        "required_rule_ids": ["SKY-AUDIT-LOGIC"],
+        "required_categories": ["partial_failure"],
+        "required_symbols": ["payment_webhook"],
+        "required_primary_files": ["payment_webhook.py"],
+        "required_visited_files": [
+          "payment_webhook.py",
+          "payments/signatures.py",
+          "payments/service.py",
+          "payments/store.py",
+          "payments/gateway.py",
+          "payments/models.py"
+        ],
+        "required_evidence_files": [
+          "payment_webhook.py",
+          "payments/service.py",
+          "payments/store.py",
+          "payments/gateway.py",
+          "payments/models.py"
+        ],
+        "required_finding_evidence_anchors": [
+          {"file": "payments/service.py", "line": 5, "token": "claim_once"},
+          {"file": "payments/service.py", "line": 7, "token": "gateway.capture"},
+          {"file": "payments/store.py", "line": 5, "token": "get_or_create"},
+          {"file": "payments/gateway.py", "line": 5, "token": "objects.create"},
+          {"file": "payments/models.py", "line": 5, "token": "unique=True"}
+        ],
+        "forbidden_evidence_files": ["archive/service.py"],
+        "forbidden_mitigation_evidence_files": ["archive/service.py"]
+      }
+    },
+    {
+      "id": "payment-idempotency-lookalike",
+      "label": "lookalike",
+      "fixture": "fixtures/idempotency/lookalike",
+      "entry_file": "payment_webhook.py",
+      "candidates": [],
+      "expect": {
+        "status": "complete",
+        "finding_count": {"exact": 0},
+        "min_tool_calls": 2,
+        "min_llm_calls": 3,
+        "required_visited_files": [
+          "payment_webhook.py",
+          "payments/signatures.py",
+          "payments/service.py",
+          "payments/store.py",
+          "payments/gateway.py",
+          "payments/models.py"
+        ],
+        "required_clean_evidence_files": [
+          "payment_webhook.py",
+          "payments/signatures.py",
+          "payments/service.py",
+          "payments/store.py",
+          "payments/gateway.py",
+          "payments/models.py"
+        ],
+        "required_clean_evidence_anchors": [
+          {
+            "file": "payments/signatures.py",
+            "line": 18,
+            "token": "compare_digest"
+          },
+          {"file": "payments/service.py", "line": 5, "token": "capture_once"},
+          {"file": "payments/service.py", "line": 6, "token": "ensure_pending"},
+          {"file": "payments/service.py", "line": 7, "token": "mark_completed"},
+          {"file": "payments/store.py", "line": 5, "token": "get_or_create"},
+          {"file": "payments/store.py", "line": 13, "token": "status=\"pending\""},
+          {"file": "payments/store.py", "line": 17, "token": "== 1"},
+          {"file": "payments/gateway.py", "line": 6, "token": "payment_id=payment_id"},
+          {"file": "payments/gateway.py", "line": 7, "token": "idempotency_key"},
+          {"file": "payments/gateway.py", "line": 9, "token": "not created"},
+          {"file": "payments/models.py", "line": 5, "token": "unique=True"},
+          {"file": "payments/models.py", "line": 11, "token": "unique=True"},
+          {"file": "payments/models.py", "line": 12, "token": "unique=True"}
+        ],
+        "forbidden_clean_evidence_files": ["archive/service.py"]
       }
     }
   ]
