@@ -389,6 +389,7 @@ class Visitor(ast.NodeVisitor):
         self._free_vars = defaultdict(set)
         self._lambda_counter = 0
         self._comprehension_scope_stack = []
+        self._type_parameter_scope_stack = []
         self.inferred_types = {}
         self.metaclass_classes = set()
         self.descriptor_classes = set()
@@ -784,6 +785,23 @@ class Visitor(ast.NodeVisitor):
                 if isinstance(kw.value, ast.Name):
                     self.add_ref(self.qual(kw.value.id))
 
+    def _type_parameter_names(self, node: ast.AST) -> set[str]:
+        return {
+            name
+            for type_param in getattr(node, "type_params", ())
+            if isinstance((name := getattr(type_param, "name", None)), str)
+        }
+
+    def _is_active_type_parameter(self, name: str) -> bool:
+        return any(
+            name in scope for scope in reversed(self._type_parameter_scope_stack)
+        )
+
+    def _visit_type_parameter_annotations(self, node: ast.AST) -> None:
+        for type_param in getattr(node, "type_params", ()):
+            self.visit_annotation(getattr(type_param, "bound", None))
+            self.visit_annotation(getattr(type_param, "default_value", None))
+
     def visit_FunctionDef(
         self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
     ) -> None:
@@ -995,7 +1013,21 @@ class Visitor(ast.NodeVisitor):
                 )
             self.current_function_params.append((ka.arg, param_name))
 
-        self.visit_arguments(node.args)
+        type_parameter_names = self._type_parameter_names(node)
+        if type_parameter_names:
+            self.visit_argument_defaults(node.args)
+            self._type_parameter_scope_stack.append(type_parameter_names)
+
+            current_params = self.current_function_params
+            self.current_function_params = []
+            try:
+                self._visit_type_parameter_annotations(node)
+            finally:
+                self.current_function_params = current_params
+
+            self.visit_argument_annotations(node.args)
+        else:
+            self.visit_arguments(node.args)
         self.visit_annotation(node.returns)
 
         if node.returns:
@@ -1029,6 +1061,8 @@ class Visitor(ast.NodeVisitor):
         self.local_var_maps.pop()
         self.local_type_maps.pop()
         self.local_constants.pop()
+        if type_parameter_names:
+            self._type_parameter_scope_stack.pop()
 
         self._current_function_qname = prev_function_qname
         self._nonlocal_names = prev_nonlocals
@@ -1250,9 +1284,6 @@ class Visitor(ast.NodeVisitor):
         for keyword in node.keywords:
             if keyword.arg == "metaclass":
                 self.metaclass_classes.add(node.name)
-                self.visit(keyword.value)
-            else:
-                self.visit(keyword.value)
 
         for deco in node.decorator_list:
             deco_name = self._get_decorator_name(deco)
@@ -1269,6 +1300,14 @@ class Visitor(ast.NodeVisitor):
             ):
                 self.attrs_classes.add(node.name)
             self.visit(deco)
+
+        type_parameter_names = self._type_parameter_names(node)
+        if type_parameter_names:
+            self._type_parameter_scope_stack.append(type_parameter_names)
+            self._visit_type_parameter_annotations(node)
+
+        for keyword in node.keywords:
+            self.visit(keyword.value)
 
         prev_in_protocol = self._in_protocol_class
         self._in_protocol_class = is_protocol
@@ -1341,6 +1380,9 @@ class Visitor(ast.NodeVisitor):
 
         if is_cst:
             self.in_cst_class -= 1
+
+        if type_parameter_names:
+            self._type_parameter_scope_stack.pop()
 
         self._in_protocol_class = prev_in_protocol
 
@@ -1454,6 +1496,21 @@ class Visitor(ast.NodeVisitor):
         self._extract_string_refs(node.value)
         self.generic_visit(node)
         self._track_instance_attr_types(node)
+
+    def visit_TypeAlias(self, node: ast.AST) -> None:
+        name_node = getattr(node, "name", None)
+        if isinstance(name_node, ast.Name):
+            self.type_alias_names.add(name_node.id)
+
+        type_parameter_names = self._type_parameter_names(node)
+        if type_parameter_names:
+            self._type_parameter_scope_stack.append(type_parameter_names)
+            self._visit_type_parameter_annotations(node)
+
+        self.visit_annotation(getattr(node, "value", None))
+
+        if type_parameter_names:
+            self._type_parameter_scope_stack.pop()
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         self.visit_annotation(node.annotation)
@@ -2070,6 +2127,9 @@ class Visitor(ast.NodeVisitor):
                     self.add_ref(fq)
                     return
 
+        if self._is_active_type_parameter(node.id):
+            return
+
         shadowed = self._shadowed_module_aliases.get(node.id)
         if shadowed:
             self.first_read_lineno.setdefault(shadowed, node.lineno)
@@ -2146,6 +2206,9 @@ class Visitor(ast.NodeVisitor):
                                     self._current_function_qname
                                 ].append((_param_name, type_name, node.attr))
                                 break
+
+            if self._is_active_type_parameter(base):
+                return
 
             if self.cls and base in {"self", "cls"}:
                 owner = f"{self.mod}.{self.cls}" if self.mod else self.cls
@@ -2246,7 +2309,7 @@ class Visitor(ast.NodeVisitor):
                     continue
                 self.add_ref(self.qual(tok))
 
-    def visit_arguments(self, args: ast.arguments) -> None:
+    def visit_argument_annotations(self, args: ast.arguments) -> None:
         current_params = self.current_function_params
         self.current_function_params = []
         try:
@@ -2260,6 +2323,13 @@ class Visitor(ast.NodeVisitor):
                 self.visit_annotation(args.vararg.annotation)
             if args.kwarg:
                 self.visit_annotation(args.kwarg.annotation)
+        finally:
+            self.current_function_params = current_params
+
+    def visit_argument_defaults(self, args: ast.arguments) -> None:
+        current_params = self.current_function_params
+        self.current_function_params = []
+        try:
             for default in args.defaults:
                 self.visit(default)
             for default in args.kw_defaults:
@@ -2267,6 +2337,10 @@ class Visitor(ast.NodeVisitor):
                     self.visit(default)
         finally:
             self.current_function_params = current_params
+
+    def visit_arguments(self, args: ast.arguments) -> None:
+        self.visit_argument_annotations(args)
+        self.visit_argument_defaults(args)
 
     def _annotation_to_string(self, node: ast.expr) -> Optional[str]:
         if isinstance(node, ast.Name):
