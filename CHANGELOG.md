@@ -1,5 +1,19 @@
 ## Changelog
 
+## [4.31.0](https://github.com/duriantaco/skylos/compare/v4.30.0...v4.31.0) (2026-07-27)
+
+
+### Features
+
+* **audit:** add deep audit investigator ([#637](https://github.com/duriantaco/skylos/issues/637)) ([967de71](https://github.com/duriantaco/skylos/commit/967de71d26240e4073dfaffa939a51dee18acfa6))
+* **audit:** harden Deep Audit evidence, CI, and benchmarks ([#643](https://github.com/duriantaco/skylos/issues/643)) ([050abd1](https://github.com/duriantaco/skylos/commit/050abd158be21a781541a821df278fc3d119b20d))
+
+
+### Bug Fixes
+
+* **analyzer:** recognize VS Code and JavaFX FXML callbacks ([#645](https://github.com/duriantaco/skylos/issues/645)) ([bc7eb42](https://github.com/duriantaco/skylos/commit/bc7eb423e401f2ef160cc13b714c2fb3ed0f598c))
+* **analyzer:** track PEP 695 type parameter refs ([#644](https://github.com/duriantaco/skylos/issues/644)) ([96f97d6](https://github.com/duriantaco/skylos/commit/96f97d68d1307721c41302fd0537457e7341723d))
+
 ## [4.30.0](https://github.com/duriantaco/skylos/compare/v4.29.0...v4.30.0) (2026-07-18)
 
 
