@@ -345,6 +345,127 @@ export const config = { key: "value" };
     assert len(fw.detected_frameworks) == 0
 
 
+def test_vscode_pseudoterminal_contract_callbacks(tmp_path):
+    code = """\
+import * as vscode from "vscode";
+
+class BuildTerminal implements vscode.Pseudoterminal {
+    open(dimensions: vscode.TerminalDimensions | undefined): void {}
+    close(): void {}
+    staleHelper(): void {}
+}
+"""
+    defs, fw = _scan(tmp_path, "terminal.ts", code)
+    names = _decorated_names(defs, fw)
+
+    assert "BuildTerminal.open" in names
+    assert "BuildTerminal.close" in names
+    assert "BuildTerminal.staleHelper" not in names
+
+
+def test_vscode_pseudoterminal_contract_import_bindings(tmp_path):
+    cases = [
+        (
+            'import type { Pseudoterminal } from "vscode";',
+            "Pseudoterminal",
+        ),
+        (
+            'import type { Pseudoterminal as TerminalContract } from "vscode";',
+            "TerminalContract",
+        ),
+        (
+            'import type * as editorApi from "vscode";',
+            "editorApi.Pseudoterminal",
+        ),
+        (
+            'import editorApi from "vscode";',
+            "editorApi.Pseudoterminal",
+        ),
+        (
+            'import editorApi = require("vscode");',
+            "editorApi.Pseudoterminal",
+        ),
+    ]
+
+    for index, (import_statement, contract_name) in enumerate(cases):
+        code = f"""\
+{import_statement}
+
+class BuildTerminal implements {contract_name} {{
+    open(): void {{}}
+    close(): void {{}}
+    staleHelper(): void {{}}
+}}
+"""
+        defs, fw = _scan(tmp_path, f"terminal-{index}.ts", code)
+        names = _decorated_names(defs, fw)
+
+        assert "BuildTerminal.open" in names
+        assert "BuildTerminal.close" in names
+        assert "BuildTerminal.staleHelper" not in names
+
+
+def test_vscode_provider_contract_callbacks(tmp_path):
+    contracts = {
+        "CodeLensProvider": {"provideCodeLenses", "resolveCodeLens"},
+        "DocumentLinkProvider": {"provideDocumentLinks", "resolveDocumentLink"},
+        "FileSystemProvider": {
+            "copy",
+            "createDirectory",
+            "delete",
+            "readDirectory",
+            "readFile",
+            "rename",
+            "stat",
+            "watch",
+            "writeFile",
+        },
+        "TaskProvider": {"provideTasks", "resolveTask"},
+        "TextDocumentContentProvider": {"provideTextDocumentContent"},
+        "TreeDataProvider": {
+            "getChildren",
+            "getParent",
+            "getTreeItem",
+            "resolveTreeItem",
+        },
+        "TreeDragAndDropController": {"handleDrag", "handleDrop"},
+    }
+
+    for index, (contract_name, callback_names) in enumerate(contracts.items()):
+        methods = "\n".join(
+            f"    {callback_name}(): void {{}}" for callback_name in callback_names
+        )
+        code = f"""\
+import type {{ {contract_name} }} from "vscode";
+
+class Provider implements {contract_name} {{
+{methods}
+    staleHelper(): void {{}}
+}}
+"""
+        defs, fw = _scan(tmp_path, f"provider-{index}.ts", code)
+        names = _decorated_names(defs, fw)
+
+        assert {f"Provider.{name}" for name in callback_names} <= names
+        assert "Provider.staleHelper" not in names
+
+
+def test_plain_open_and_close_methods_are_not_framework_callbacks(tmp_path):
+    code = """\
+import * as vscode from "vscode";
+
+interface Pseudoterminal {}
+
+class FileHandle implements Pseudoterminal {
+    open(): void {}
+    close(): void {}
+}
+"""
+    defs, fw = _scan(tmp_path, "file-handle.ts", code)
+
+    assert _decorated_names(defs, fw) == set()
+
+
 def test_non_convention_file_with_next_import(tmp_path):
     code = """\
 import { useRouter } from "next/navigation";
