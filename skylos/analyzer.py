@@ -3541,6 +3541,19 @@ class Skylos:
         self._call_arg_types = all_call_arg_types
 
         try:
+            from skylos.deadcode.java_fxml_refs import collect_java_fxml_refs
+
+            java_fxml_refs = collect_java_fxml_refs(
+                Path(root),
+                files,
+                exclude_folders=exclude_folders,
+            )
+            self.refs.extend(java_fxml_refs)
+        except Exception:
+            if os.getenv("SKYLOS_DEBUG"):
+                logger.error("Java FXML liveness scan failed", exc_info=True)
+
+        try:
             from skylos.deadcode.browser_refs import (
                 collect_browser_event_handler_refs,
             )

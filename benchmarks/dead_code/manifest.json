@@ -558,6 +558,71 @@
       }
     },
     {
+      "id": "java-fxml-controller-callbacks",
+      "path": "fixtures/java_fxml_controller",
+      "description": "JavaFX methods wired through FXML action metadata are framework callbacks, while unwired @FXML methods and ordinary helpers remain dead code.",
+      "languages": ["java"],
+      "taxonomy": ["java", "framework_precision", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/jakemarotta/FXMLExercise",
+        "license": "NOASSERTION",
+        "notes": "Distilled from @FXML controller callbacks reproduced at pinned revision a75a2c16042d06674fd2361238c9c4933cbdd4be."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "PrintController.java", "symbol": "staleAnnotated"},
+          {"kind": "function", "file": "PrintController.java", "symbol": "staleHelper"}
+        ],
+        "used": [
+          {"kind": "class", "file": "PrintController.java", "symbol": "PrintController"},
+          {"kind": "function", "file": "PrintController.java", "symbol": "printButtonAction"}
+        ]
+      }
+    },
+    {
+      "id": "typescript-vscode-pseudoterminal-callbacks",
+      "path": "fixtures/typescript_vscode_pseudoterminal",
+      "description": "VS Code Pseudoterminal and provider contract methods are host-invoked callbacks, while unrelated methods on the same classes remain dead code.",
+      "languages": ["typescript"],
+      "taxonomy": ["typescript", "framework_precision", "precision_guard"],
+      "importance": "critical",
+      "source": {
+        "repo": "https://github.com/microsoft/vscode-extension-samples",
+        "license": "MIT",
+        "notes": "Distilled from the task-provider sample at pinned revision 3d8442b16c7f353779e266f16295703b2b4a6dcc."
+      },
+      "scan": {
+        "confidence": 0,
+        "grep_verify": true
+      },
+      "budget": {
+        "max_seconds": 5.0
+      },
+      "expect": {
+        "unused": [
+          {"kind": "function", "file": "src/extension.ts", "symbol": "staleHelper"},
+          {"kind": "function", "file": "src/extension.ts", "symbol": "staleProviderHelper"}
+        ],
+        "used": [
+          {"kind": "function", "file": "src/extension.ts", "symbol": "activate"},
+          {"kind": "class", "file": "src/extension.ts", "symbol": "BuildTerminal"},
+          {"kind": "class", "file": "src/extension.ts", "symbol": "InternalTaskProvider"},
+          {"kind": "function", "file": "src/extension.ts", "symbol": "open"},
+          {"kind": "function", "file": "src/extension.ts", "symbol": "close"},
+          {"kind": "function", "file": "src/extension.ts", "symbol": "provideTasks"},
+          {"kind": "function", "file": "src/extension.ts", "symbol": "resolveTask"}
+        ]
+      }
+    },
+    {
       "id": "ts-js-package-reachability",
       "path": "fixtures/ts_js_package",
       "description": "TypeScript package entrypoints and imports should keep live exports reachable while stale TS and JS exports are reported.",

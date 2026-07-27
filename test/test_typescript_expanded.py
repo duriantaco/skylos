@@ -1120,6 +1120,101 @@ class TestTSMonorepoReachability:
         assert "activate" not in unused_exports
         assert "deactivate" not in unused_exports
 
+    def test_vscode_pseudoterminal_callbacks_are_framework_entrypoints(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "task-provider",
+                    "private": True,
+                    "main": "./out/extension.js",
+                    "engines": {"vscode": "^1.100.0"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (src_dir / "extension.ts").write_text(
+            """
+import * as vscode from "vscode";
+import type {
+    Pseudoterminal as TerminalContract,
+    TerminalDimensions,
+} from "vscode";
+
+export function activate() {
+    return new vscode.CustomExecution(
+        async (): Promise<TerminalContract> => new BuildTerminal()
+    );
+}
+
+class BuildTerminal implements TerminalContract {
+    open(_dimensions: TerminalDimensions | undefined): void {}
+    close(): void {}
+    staleHelper(): void {}
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(src_dir), conf=0, grep_verify=False))
+        unused_functions = {item["name"] for item in result.get("unused_functions", [])}
+
+        assert "BuildTerminal.open" not in unused_functions
+        assert "BuildTerminal.close" not in unused_functions
+        assert "BuildTerminal.staleHelper" in unused_functions
+
+    def test_vscode_task_provider_callbacks_are_framework_entrypoints(self, tmp_path):
+        from skylos.analyzer import analyze
+
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "task-provider",
+                    "private": True,
+                    "main": "./out/extension.js",
+                    "engines": {"vscode": "^1.100.0"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (src_dir / "extension.ts").write_text(
+            """
+import * as vscode from "vscode";
+
+export function activate(): vscode.Disposable {
+    return vscode.tasks.registerTaskProvider(
+        "build",
+        new InternalTaskProvider()
+    );
+}
+
+class InternalTaskProvider implements vscode.TaskProvider<vscode.Task> {
+    provideTasks(): vscode.Task[] {
+        return [];
+    }
+
+    resolveTask(task: vscode.Task): vscode.Task {
+        return task;
+    }
+
+    staleHelper(): void {}
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(src_dir), conf=0, grep_verify=False))
+        unused_functions = {item["name"] for item in result.get("unused_functions", [])}
+
+        assert "InternalTaskProvider.provideTasks" not in unused_functions
+        assert "InternalTaskProvider.resolveTask" not in unused_functions
+        assert "InternalTaskProvider.staleHelper" in unused_functions
+
     def test_direct_project_reference_keeps_referenced_package_entrypoint_live(
         self, tmp_path
     ):

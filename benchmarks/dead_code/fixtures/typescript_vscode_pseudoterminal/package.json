@@ -1,0 +1,8 @@
+{
+  "name": "vscode-pseudoterminal-fixture",
+  "private": true,
+  "main": "./out/extension.js",
+  "engines": {
+    "vscode": "^1.100.0"
+  }
+}

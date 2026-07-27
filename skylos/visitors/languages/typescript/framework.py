@@ -10,10 +10,39 @@ from .nextjs import (
 
 _REACT_WRAPPERS: set[str] = {"memo", "forwardRef"}
 
+# Host-invoked methods for the VS Code contracts exercised by the pinned
+# extension samples. Import binding checks below avoid treating local same-name
+# interfaces as framework contracts.
+_VSCODE_CONTRACT_METHODS: dict[str, frozenset[str]] = {
+    "CodeLensProvider": frozenset({"provideCodeLenses", "resolveCodeLens"}),
+    "DocumentLinkProvider": frozenset({"provideDocumentLinks", "resolveDocumentLink"}),
+    "FileSystemProvider": frozenset(
+        {
+            "copy",
+            "createDirectory",
+            "delete",
+            "readDirectory",
+            "readFile",
+            "rename",
+            "stat",
+            "watch",
+            "writeFile",
+        }
+    ),
+    "Pseudoterminal": frozenset({"open", "close", "handleInput", "setDimensions"}),
+    "TaskProvider": frozenset({"provideTasks", "resolveTask"}),
+    "TextDocumentContentProvider": frozenset({"provideTextDocumentContent"}),
+    "TreeDataProvider": frozenset(
+        {"getChildren", "getParent", "getTreeItem", "resolveTreeItem"}
+    ),
+    "TreeDragAndDropController": frozenset({"handleDrag", "handleDrop"}),
+}
+
 _QUERY_CACHE: dict[tuple[int, str], Query] = {}
 
 _FW_PATTERN = """
 (import_statement source: (string) @import_src)
+(import_require_clause source: (string) @import_src)
 (export_statement (function_declaration name: (identifier) @export_func_name))
 (export_statement (class_declaration name: (type_identifier) @export_class_name))
 (export_statement (identifier) @export_default_ident)
@@ -104,6 +133,7 @@ class TSFrameworkVisitor:
         self._scan_nextjs_named_exports()
         self._scan_react_patterns()
         self._scan_custom_hooks()
+        self._scan_vscode_contract_methods()
 
     def _get_text(self, node) -> str:
         return self._source[node.start_byte : node.end_byte].decode("utf-8")
@@ -118,6 +148,8 @@ class TSFrameworkVisitor:
                 self.detected_frameworks.add("next")
             if raw == "react" or raw.startswith("react/") or raw == "react-dom":
                 self.detected_frameworks.add("react")
+            if raw == "vscode":
+                self.detected_frameworks.add("vscode")
 
     def _scan_file_conventions(self) -> None:
         if is_nextjs_default_export_file(self._file_path):
@@ -245,3 +277,195 @@ class TSFrameworkVisitor:
         for node in self._captures.get("export_var_name", []):
             if self._get_text(node).startswith("use") and len(self._get_text(node)) > 3:
                 self.framework_decorated_lines.add(self._line_of(node))
+
+    def _scan_vscode_contract_methods(self) -> None:
+        if "vscode" not in self.detected_frameworks:
+            return
+
+        namespace_bindings, named_contract_bindings = (
+            self._vscode_contract_import_bindings()
+        )
+        if not namespace_bindings and not named_contract_bindings:
+            return
+
+        for name_node in self._captures.get("class_name", []):
+            class_node = name_node.parent
+            if class_node is None or class_node.type != "class_declaration":
+                continue
+            callback_names = self._vscode_class_callback_names(
+                class_node,
+                namespace_bindings,
+                named_contract_bindings,
+            )
+            class_body = _first_named_child_of_type(class_node, "class_body")
+            if class_body is None or not callback_names:
+                continue
+            self._mark_vscode_callback_methods(class_body, callback_names)
+
+    def _vscode_class_callback_names(
+        self,
+        class_node,
+        namespace_bindings: set[str],
+        named_contract_bindings: dict[str, str],
+    ) -> set[str]:
+        callback_names: set[str] = set()
+        heritage = _first_named_child_of_type(class_node, "class_heritage")
+        if heritage is None:
+            return callback_names
+
+        for clause in _named_children_of_type(heritage, "implements_clause"):
+            callback_names.update(
+                self._vscode_implemented_callback_names(
+                    clause,
+                    namespace_bindings,
+                    named_contract_bindings,
+                )
+            )
+        return callback_names
+
+    def _vscode_implemented_callback_names(
+        self,
+        implements_clause,
+        namespace_bindings: set[str],
+        named_contract_bindings: dict[str, str],
+    ) -> set[str]:
+        callback_names: set[str] = set()
+        for contract_node in implements_clause.named_children:
+            contract_name = self._vscode_contract_name(
+                contract_node,
+                namespace_bindings,
+                named_contract_bindings,
+            )
+            if contract_name is not None:
+                callback_names.update(_VSCODE_CONTRACT_METHODS.get(contract_name, ()))
+        return callback_names
+
+    def _vscode_contract_name(
+        self,
+        contract_node,
+        namespace_bindings: set[str],
+        named_contract_bindings: dict[str, str],
+    ) -> str | None:
+        contract_text = self._get_text(contract_node).split("<", 1)[0].strip()
+        if "." not in contract_text:
+            return named_contract_bindings.get(contract_text)
+
+        namespace_name, contract_name = contract_text.rsplit(".", 1)
+        if namespace_name in namespace_bindings:
+            return contract_name
+        return None
+
+    def _mark_vscode_callback_methods(
+        self,
+        class_body,
+        callback_names: set[str],
+    ) -> None:
+        for member in _named_children_of_type(class_body, "method_definition"):
+            method_name_node = member.child_by_field_name("name")
+            if method_name_node is None:
+                continue
+            if self._get_text(method_name_node) in callback_names:
+                self.framework_decorated_lines.add(self._line_of(method_name_node))
+
+    def _vscode_contract_import_bindings(self) -> tuple[set[str], dict[str, str]]:
+        namespace_bindings: set[str] = set()
+        named_contract_bindings: dict[str, str] = {}
+
+        for src_node in self._captures.get("import_src", []):
+            if self._get_text(src_node).strip("'\"") != "vscode":
+                continue
+
+            import_statement = _ancestor_of_type(src_node, "import_statement")
+            if import_statement is None:
+                continue
+            self._record_vscode_import_bindings(
+                import_statement,
+                namespace_bindings,
+                named_contract_bindings,
+            )
+
+        return namespace_bindings, named_contract_bindings
+
+    def _record_vscode_import_bindings(
+        self,
+        import_statement,
+        namespace_bindings: set[str],
+        named_contract_bindings: dict[str, str],
+    ) -> None:
+        for clause in import_statement.named_children:
+            if clause.type == "import_require_clause":
+                self._record_vscode_namespace_binding(clause, namespace_bindings)
+            elif clause.type == "import_clause":
+                self._record_vscode_import_clause_bindings(
+                    clause,
+                    namespace_bindings,
+                    named_contract_bindings,
+                )
+
+    def _record_vscode_import_clause_bindings(
+        self,
+        import_clause,
+        namespace_bindings: set[str],
+        named_contract_bindings: dict[str, str],
+    ) -> None:
+        for binding in import_clause.named_children:
+            if binding.type == "identifier":
+                namespace_bindings.add(self._get_text(binding))
+            elif binding.type == "namespace_import":
+                self._record_vscode_namespace_binding(
+                    binding,
+                    namespace_bindings,
+                )
+            elif binding.type == "named_imports":
+                self._record_vscode_named_imports(
+                    binding,
+                    named_contract_bindings,
+                )
+
+    def _record_vscode_namespace_binding(
+        self,
+        node,
+        namespace_bindings: set[str],
+    ) -> None:
+        identifier = _first_named_child_of_type(node, "identifier")
+        if identifier is not None:
+            namespace_bindings.add(self._get_text(identifier))
+
+    def _record_vscode_named_imports(
+        self,
+        named_imports,
+        named_contract_bindings: dict[str, str],
+    ) -> None:
+        for specifier in _named_children_of_type(named_imports, "import_specifier"):
+            binding = self._vscode_named_import_binding(specifier)
+            if binding is not None:
+                local_name, contract_name = binding
+                named_contract_bindings[local_name] = contract_name
+
+    def _vscode_named_import_binding(self, specifier) -> tuple[str, str] | None:
+        name_node = specifier.child_by_field_name("name")
+        if name_node is None:
+            return None
+
+        contract_name = self._get_text(name_node)
+        if contract_name not in _VSCODE_CONTRACT_METHODS:
+            return None
+
+        alias_node = specifier.child_by_field_name("alias")
+        local_name_node = alias_node if alias_node is not None else name_node
+        return self._get_text(local_name_node), contract_name
+
+
+def _named_children_of_type(node, node_type: str):
+    return (child for child in node.named_children if child.type == node_type)
+
+
+def _first_named_child_of_type(node, node_type: str):
+    return next(_named_children_of_type(node, node_type), None)
+
+
+def _ancestor_of_type(node, node_type: str):
+    current = node
+    while current is not None and current.type != node_type:
+        current = current.parent
+    return current

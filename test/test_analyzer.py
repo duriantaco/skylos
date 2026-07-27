@@ -3040,15 +3040,120 @@ class TrulyUnused {
         result = json.loads(result_json)
 
         unreachable_classes = {item["name"] for item in result["unused_classes"]}
-        unreachable_functions = {
-            item["name"] for item in result["unused_functions"]
-        }
+        unreachable_functions = {item["name"] for item in result["unused_functions"]}
 
         assert "PackagePrivateService" not in unreachable_classes
         assert "AuditRecord" not in unreachable_classes
         assert "OrderResource" not in unreachable_classes
         assert "TrulyUnused" in unreachable_classes
         assert "PackagePrivateService.staleHelper" in unreachable_functions
+
+    def test_analyze_java_fxml_callbacks_stay_live(self, tmp_path):
+        (tmp_path / "PrintController.java").write_text(
+            """
+import javafx.fxml.FXML;
+
+class PrintController {
+    @FXML
+    private void printButtonAction() {
+    }
+
+    @FXML
+    private void initialize() {
+    }
+
+    @FXML
+    private void staleAnnotated() {
+    }
+
+    private void staleHelper() {
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "view.fxml").write_text(
+            """
+<?xml version="1.0" encoding="UTF-8"?>
+<Button xmlns:fx="http://javafx.com/fxml/1"
+        fx:controller="PrintController"
+        id="#staleAnnotated"
+        onAction="#printButtonAction">
+    <!-- <Button onAction="#staleAnnotated" /> -->
+</Button>
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable_classes = {item["name"] for item in result["unused_classes"]}
+        unreachable_functions = {item["name"] for item in result["unused_functions"]}
+
+        assert "PrintController" not in unreachable_classes
+        assert "PrintController.printButtonAction" not in unreachable_functions
+        assert "PrintController.initialize" not in unreachable_functions
+        assert "PrintController.staleAnnotated" in unreachable_functions
+        assert "PrintController.staleHelper" in unreachable_functions
+
+    def test_analyze_java_programmatic_fxml_controller_callbacks_stay_live(
+        self, tmp_path
+    ):
+        (tmp_path / "SelfLoadingController.java").write_text(
+            """
+import javafx.fxml.FXML;
+import javafx.fxml.FXMLLoader;
+
+class SelfLoadingController {
+    SelfLoadingController() {
+        FXMLLoader loader = new FXMLLoader(
+            getClass().getResource("self-loading.fxml")
+        );
+        loader.setController(this);
+    }
+
+    private void inspectUnrelatedResource() {
+        getClass().getResource("unrelated.fxml");
+    }
+
+    @FXML
+    private void submitAction() {
+    }
+
+    @FXML
+    private void staleAnnotated() {
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "self-loading.fxml").write_text(
+            """
+<?xml version="1.0" encoding="UTF-8"?>
+<Button xmlns:fx="http://javafx.com/fxml/1"
+        onAction="#submitAction" />
+""",
+            encoding="utf-8",
+        )
+        (tmp_path / "unrelated.fxml").write_text(
+            """
+<?xml version="1.0" encoding="UTF-8"?>
+<Button xmlns:fx="http://javafx.com/fxml/1"
+        onAction="#staleAnnotated" />
+""",
+            encoding="utf-8",
+        )
+
+        result_json = analyze(str(tmp_path), conf=0, grep_verify=False)
+        result = json.loads(result_json)
+
+        unreachable_classes = {item["name"] for item in result["unused_classes"]}
+        unreachable_functions = {item["name"] for item in result["unused_functions"]}
+
+        assert "SelfLoadingController" not in unreachable_classes
+        assert "SelfLoadingController.submitAction" not in unreachable_functions
+        assert "SelfLoadingController.staleAnnotated" in unreachable_functions
 
     def test_analyze_java_junit5_annotations_mark_tests_live(self, tmp_path):
         (tmp_path / "BillingTest.java").write_text(
