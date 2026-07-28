@@ -430,6 +430,11 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             _add(result.get("quality", []), "QUALITY", None)
             _add(result.get("secrets", []), "SECRET", None)
             _add(result.get("custom_rules", []), "CUSTOM", None)
+            _add(
+                result.get("analysis_errors", []),
+                "ANALYSIS",
+                "SKY-ANALYSIS-INCOMPLETE",
+            )
 
             _add(
                 result.get("unused_functions", []),
@@ -476,6 +481,10 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
                 )
             else:
                 print(result_json)
+
+            incomplete_exit_code = _strict_scan_exit_code(result, args)
+            if incomplete_exit_code == 2:
+                raise SystemExit(incomplete_exit_code)
 
             if args.upload:
                 _attach_upload_project_context(result, project_root)
@@ -593,6 +602,17 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
         sys.exit(1)
 
     if args.gate:
+        incomplete_exit_code = _strict_scan_exit_code(result, args)
+        if incomplete_exit_code:
+            render_results(
+                console,
+                result,
+                tree=args.tree,
+                root_path=project_root,
+                limit=getattr(args, "limit", None),
+            )
+            raise SystemExit(incomplete_exit_code)
+
         should_upload_gate = bool(getattr(args, "upload", False)) and not bool(
             getattr(args, "no_upload", False)
         )
@@ -621,6 +641,16 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
             summary=bool(getattr(args, "summary", False)),
         )
         sys.exit(exit_code)
+
+    if args.interactive and result.get("analysis_errors"):
+        render_results(
+            console,
+            result,
+            tree=args.tree,
+            root_path=project_root,
+            limit=getattr(args, "limit", None),
+        )
+        raise SystemExit(2)
 
     if args.interactive:
         unused_functions = result.get("unused_functions", [])
@@ -760,7 +790,9 @@ def run_scan_command(argv: Sequence[str], *, cli_module: ModuleType) -> None:
     )
     danger_count = len(result.get("danger", []) or [])
     quality_count = len(result.get("quality", []) or [])
-    if getattr(args, "format", "rich") != "pretty":
+    if getattr(args, "format", "rich") != "pretty" and not result.get(
+        "analysis_errors"
+    ):
         print_badge(
             unused_total,
             logging.getLogger("skylos"),

@@ -72,6 +72,19 @@ def _github_dead_code_annotation(item, label):
 
 def _github_annotation_items(result):
     annotations = []
+    for error in result.get("analysis_errors", []) or []:
+        if not isinstance(error, dict):
+            continue
+        annotations.append(
+            {
+                "file": error.get("file") or "",
+                "line": error.get("line") or 1,
+                "msg": error.get("message") or "File analysis failed",
+                "title": "Skylos Analysis Incomplete",
+                "severity": "CRITICAL",
+            }
+        )
+
     for category in _GITHUB_FINDING_CATEGORIES:
         for finding in result.get(category, []) or []:
             annotations.append(_github_finding_annotation(finding))

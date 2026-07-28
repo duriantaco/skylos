@@ -3,6 +3,7 @@ import json
 import tempfile
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 from collections import defaultdict
@@ -1833,6 +1834,7 @@ class TestClass:
             f.flush()
 
             try:
+                result = proc_file(f.name, "test_module")
                 (
                     defs,
                     refs,
@@ -1855,7 +1857,7 @@ class TestClass:
                     used_attr_context,
                     source_lines,
                     *_extra,
-                ) = proc_file(f.name, "test_module")
+                ) = result
 
                 assert defs == []
                 assert refs == []
@@ -1870,8 +1872,49 @@ class TestClass:
                 assert empty_file_finding is None
                 assert isinstance(test_flags, TestAwareVisitor)
                 assert isinstance(framework_flags, FrameworkAwareVisitor)
+                analysis_error = result[25]
+                assert analysis_error["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+                assert analysis_error["kind"] == "syntax_error"
+                assert analysis_error["error_type"] == "SyntaxError"
+                assert analysis_error["line"] == 1
+                assert analysis_error["python_version"]
             finally:
                 Path(f.name).unlink()
+
+    def test_analyze_marks_syntax_error_incomplete_and_omits_grade(self, tmp_path):
+        invalid_file = tmp_path / "future_syntax.py"
+        invalid_file.write_text(
+            "def invalid_syntax(:\n    pass\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), grep_verify=False))
+
+        assert result["analysis_summary"]["analysis_error_count"] == 1
+        assert result["analysis_summary"]["grade_unavailable_reason"] == (
+            "analysis_incomplete"
+        )
+        assert "grade" not in result
+        assert result["analysis_errors"] == [
+            {
+                "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+                "severity": "HIGH",
+                "kind": "syntax_error",
+                "error_type": "SyntaxError",
+                "message": "invalid syntax",
+                "file": str(invalid_file),
+                "line": 1,
+                "column": 20,
+                "python_version": (
+                    f"{sys.version_info.major}.{sys.version_info.minor}."
+                    f"{sys.version_info.micro}"
+                ),
+                "suggestion": (
+                    "Use a Python runtime that supports this syntax; official "
+                    "container images provide matching -pythonX.Y tags."
+                ),
+            }
+        ]
 
     def test_proc_file_keeps_findings_when_dynamic_fstring_pattern_has_regex_chars(
         self, tmp_path

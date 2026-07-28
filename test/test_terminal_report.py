@@ -118,6 +118,30 @@ def test_pretty_renderer_shows_rescued_and_abstained_counts():
     assert "dead-code abstained: 1" in output
 
 
+def test_pretty_renderer_shows_incomplete_analysis_as_an_error(tmp_path):
+    result = {
+        "analysis_summary": {"total_files": 1, "analysis_error_count": 1},
+        "analysis_errors": [
+            {
+                "rule_id": "SKY-ANALYSIS-INCOMPLETE",
+                "severity": "HIGH",
+                "message": "invalid syntax",
+                "file": str(tmp_path / "future.py"),
+                "line": 1,
+            }
+        ],
+    }
+
+    console = _recording_console()
+    render_pretty_results(console, result, root_path=tmp_path)
+    output = console.export_text()
+
+    assert "analysis errors: 1" in output
+    assert "SKY-ANALYSIS-INCOMPLETE" in output
+    assert "invalid syntax" in output
+    assert "No findings to display" not in output
+
+
 def test_pretty_renderer_sanitizes_control_chars_from_finding_fields(tmp_path):
     source = tmp_path / "src" / "app.py"
     source.parent.mkdir()

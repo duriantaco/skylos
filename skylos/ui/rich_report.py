@@ -75,6 +75,58 @@ def _display_cap(items, limit):
     return items[:cap], max(0, len(items) - cap)
 
 
+def _render_analysis_errors(
+    console: Console,
+    result,
+    *,
+    root_path=None,
+    limit=None,
+):
+    errors = [
+        error
+        for error in (result.get("analysis_errors") or [])
+        if isinstance(error, dict)
+    ]
+    if not errors:
+        return
+
+    count = len(errors)
+    console.print(
+        Panel.fit(
+            f"[bad]Analysis incomplete: {count} file(s) could not be analyzed.[/bad]\n"
+            "[muted]No grade or clean result was produced; Skylos exits with code 2.[/muted]",
+            border_style="bad",
+        )
+    )
+
+    table = Table(title="Analysis Errors", expand=True)
+    table.add_column("File", style="bold", overflow="fold")
+    table.add_column("Line", justify="right", width=6)
+    table.add_column("Error", overflow="fold")
+    table.add_column("Runtime", style="muted", width=14)
+
+    visible, overflow = _display_cap(errors, limit)
+    for error in visible:
+        path = escape(_shorten_path(error.get("file"), root_path))
+        line = str(error.get("line") or 1)
+        kind = str(error.get("kind") or error.get("error_type") or "analysis error")
+        message = str(error.get("message") or "File analysis failed")
+        runtime = str(error.get("python_version") or "?")
+        table.add_row(
+            path,
+            line,
+            escape(f"{kind.replace('_', ' ')}: {message}"),
+            escape(f"Python {runtime}"),
+        )
+
+    console.print(table)
+    if overflow:
+        console.print(
+            f"  [muted]... and {overflow} more (use --limit to adjust)[/muted]"
+        )
+    console.print()
+
+
 def _score_style(score):
     if score >= 90:
         return "good"
@@ -711,6 +763,13 @@ def render_results(
         )
     )
     console.print()
+
+    _render_analysis_errors(
+        console,
+        result,
+        root_path=root_path,
+        limit=limit,
+    )
 
     grade_data = result.get("grade")
     if grade_data:

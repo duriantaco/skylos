@@ -56,8 +56,12 @@ jobs:
           flags: ${{ matrix.install_target == '.[llm]' && 'llm-extra' || 'default-install' }}
 
   docker_smoke:
-    name: docker-smoke
+    name: docker-smoke (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -65,10 +69,16 @@ jobs:
           persist-credentials: false
 
       - name: Build image
-        run: docker build -t skylos:test .
+        run: docker build --build-arg "PYTHON_VERSION=${{ matrix.python-version }}" -t skylos:test .
 
       - name: Check CLI version
         run: docker run --rm skylos:test --version
+
+      - name: Check Python runtime
+        shell: bash
+        run: |
+          actual="$(docker run --rm --entrypoint python skylos:test -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+          test "$actual" = "${{ matrix.python-version }}"
 
       - name: Run fixture scan
         run: |
@@ -78,6 +88,18 @@ jobs:
             skylos:test \
             . --json --no-provenance > /tmp/skylos-docker-smoke.json
           grep -q '"unused_functions"' /tmp/skylos-docker-smoke.json
+
+      - name: Scan current Python syntax
+        if: matrix.python-version == '3.14'
+        run: |
+          mkdir -p /tmp/skylos-python-syntax
+          printf 'type CacheEntry[T = str] = dict[str, T]\n\ndef stale_helper():\n    return CacheEntry()\n' > /tmp/skylos-python-syntax/example.py
+          docker run --rm \
+            -v "/tmp/skylos-python-syntax:/work" \
+            -w /work \
+            skylos:test \
+            . --json --no-provenance > /tmp/skylos-python-syntax.json
+          grep -q '"stale_helper"' /tmp/skylos-python-syntax.json
 
   test:
     name: test
