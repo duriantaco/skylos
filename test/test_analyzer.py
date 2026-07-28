@@ -1910,11 +1910,38 @@ class TestClass:
                     f"{sys.version_info.micro}"
                 ),
                 "suggestion": (
-                    "Use a Python runtime that supports this syntax; official "
-                    "container images provide matching -pythonX.Y tags."
+                    "Fix the reported syntax, or use a Python runtime that "
+                    "supports the project's syntax; official container images "
+                    "provide matching -pythonX.Y tags."
                 ),
             }
         ]
+
+    def test_analyze_marks_ast_compile_error_incomplete_and_omits_grade(
+        self, tmp_path
+    ):
+        invalid_file = tmp_path / "duplicate_arguments.py"
+        invalid_file.write_text(
+            "def broken(_: object, /, _: object) -> None:\n"
+            "    pass\n",
+            encoding="utf-8",
+        )
+
+        result = json.loads(analyze(str(tmp_path), grep_verify=False))
+
+        assert result["analysis_summary"]["analysis_error_count"] == 1
+        assert result["analysis_summary"]["grade_unavailable_reason"] == (
+            "analysis_incomplete"
+        )
+        assert "grade" not in result
+        assert len(result["analysis_errors"]) == 1
+        analysis_error = result["analysis_errors"][0]
+        assert analysis_error["rule_id"] == "SKY-ANALYSIS-INCOMPLETE"
+        assert analysis_error["kind"] == "syntax_error"
+        assert analysis_error["error_type"] == "SyntaxError"
+        assert "duplicate argument '_'" in analysis_error["message"]
+        assert analysis_error["file"] == str(invalid_file)
+        assert analysis_error["line"] == 1
 
     def test_proc_file_keeps_findings_when_dynamic_fstring_pattern_has_regex_chars(
         self, tmp_path

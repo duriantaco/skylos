@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import traceback
+import warnings
 from pathlib import Path
 from collections import Counter, defaultdict
 
@@ -3738,8 +3739,9 @@ def _analysis_error_payload(file, error, *, kind=None):
     }
     if is_syntax_error:
         payload["suggestion"] = (
-            "Use a Python runtime that supports this syntax; official container "
-            "images provide matching -pythonX.Y tags."
+            "Fix the reported syntax, or use a Python runtime that supports the "
+            "project's syntax; official container images provide matching "
+            "-pythonX.Y tags."
         )
     return payload
 
@@ -3777,7 +3779,13 @@ def proc_file(
         ignore_lines = get_skylos_ignore_lines(source)
         noqa_codes_by_line = get_noqa_codes_by_line(source)
 
-        tree = ast.parse(source)
+        tree = ast.parse(source, filename=str(file))
+        # ast.parse() can accept ASTs that Python later rejects, such as
+        # functions with duplicate argument names. Compile without executing
+        # so every compile-time SyntaxError follows the incomplete-analysis path.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            compile(tree, str(file), "exec", dont_inherit=True)
 
         raw_imports = collect_python_raw_imports(tree, file, mod)
 
