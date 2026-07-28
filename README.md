@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.duriantaco%2Fskylos.svg)](https://mcptoplist.com/server/io.github.duriantaco%2Fskylos)
+
 <div align="center">
     <img src="assets/DOG_1.png" alt="Skylos" width="260">
     <h1>Skylos</h1>
